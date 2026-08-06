@@ -1,4 +1,11 @@
-import 'dotenv/config';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// Resolved against this file rather than the working directory, so
+// `node server/src/index.js` from the repo root reads server/.env too.
+// Starting with the wrong credentials is not a failure you want to be quiet.
+dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env') });
 
 const dbName = process.env.PGDATABASE || 'cetizion_tracker';
 
