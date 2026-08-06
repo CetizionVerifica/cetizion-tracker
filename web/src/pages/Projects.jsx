@@ -1,0 +1,55 @@
+import { useNavigate } from 'react-router-dom';
+import { ListPage } from '../components/ListPage.jsx';
+import { Badge, Progress } from '../components/ui.jsx';
+import { useLookups } from '../lib/hooks.js';
+import { money, date, number } from '../lib/format.js';
+
+export default function Projects() {
+  const navigate = useNavigate();
+  const lookups = useLookups();
+
+  const columns = [
+    { key: 'project_id', header: 'Project', className: 'mono strong' },
+    { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}<div className="small muted">{r.primary_service}</div></> },
+    { key: 'project_manager', header: 'Manager' },
+    { key: 'po_count', header: 'POs', align: 'right', render: (r) => number(r.po_count) },
+    { key: 'total_contract_value', header: 'Contract', align: 'right', render: (r) => money(r.total_contract_value) },
+    { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received) },
+    { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now) },
+    { key: 'onboarding_percent', header: 'Onboarding', width: 130, render: (r) => (r.onboarding_total ? <Progress value={r.onboarding_percent} /> : <span className="muted">—</span>) },
+    { key: 'project_stage', header: 'Stage', render: (r) => <Badge>{r.project_stage}</Badge> },
+    { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },
+    { key: 'planned_delivery_date', header: 'Planned delivery', render: (r) => date(r.planned_delivery_date) },
+  ];
+
+  const fields = [
+    { name: 'project_id', label: 'Project ID', required: true, hint: 'e.g. PRJ-2026-008' },
+    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients },
+    { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
+    { name: 'project_manager', label: 'Project manager' },
+    { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+    { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
+    { name: 'planned_start_date', label: 'Planned start', type: 'date' },
+    { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
+    { name: 'percent_complete', label: '% complete', type: 'percent', hint: '0–100' },
+    { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
+  ];
+
+  return (
+    <ListPage
+      title="Projects"
+      subtitle="Every registered project, with its POs, stages and money rolled up"
+      resource="projects"
+      columns={columns}
+      fields={fields}
+      newLabel="Project"
+      formTitle="project"
+      searchPlaceholder="Search project, client, manager…"
+      onRowClick={(row) => navigate(`/projects/${row.project_id}`)}
+      filters={[
+        { name: 'project_stage', label: 'Stage', options: ['Not Started', 'Onboarding', 'In Progress', 'Delivered'] },
+        { name: 'payment_status', label: 'Payment', options: ['Overdue', 'Invoicing pending', 'Pending', 'Up to date', 'Fully Paid'] },
+      ]}
+    />
+  );
+}
