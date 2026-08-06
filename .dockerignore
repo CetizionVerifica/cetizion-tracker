@@ -1,0 +1,15 @@
+.git
+.gitignore
+README.md
+
+**/node_modules
+**/dist
+
+# Credentials never belong in an image. The example is documentation.
+**/.env
+**/.env.*
+!**/.env.example
+
+server/test
+**/*.log
+**/.DS_Store
