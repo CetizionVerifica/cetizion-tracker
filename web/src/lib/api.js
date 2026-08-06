@@ -8,18 +8,33 @@ export class ApiError extends Error {
   }
 }
 
+// A session can lapse while a tab sits open. The provider registers here so
+// that the first request to come back 401 drops the whole app to the sign-in
+// screen, rather than each page reporting its own puzzling error.
+let onUnauthorized = null;
+export const setUnauthorizedHandler = (handler) => {
+  onUnauthorized = handler;
+};
+
 async function request(path, { method = 'GET', body, signal } = {}) {
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
       signal,
+      credentials: 'include',
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
     throw new ApiError('Cannot reach the server — is the API running?');
+  }
+
+  // The sign-in call answers 401 for a wrong password, which is a message for
+  // that form to show, not a sign that the session went away.
+  if (response.status === 401 && !path.startsWith('/auth/')) {
+    onUnauthorized?.();
   }
 
   if (response.status === 204) return null;
@@ -55,4 +70,10 @@ export const api = {
   action: (path, body) => request(path, { method: 'POST', body: body || {} }),
   raw: (path, opts) => request(path, opts),
   exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
+  auth: {
+    me: () => request('/auth/me'),
+    login: (username, password) =>
+      request('/auth/login', { method: 'POST', body: { username, password } }),
+    logout: () => request('/auth/logout', { method: 'POST' }),
+  },
 };

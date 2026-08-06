@@ -17,6 +17,7 @@ import Settings from './pages/Settings.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
+import { useAuth } from './lib/auth.jsx';
 
 const NAV = [
   {
@@ -59,6 +60,7 @@ const NAV = [
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
+  const { user, signOut } = useAuth();
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
@@ -114,6 +116,13 @@ export default function App() {
             </div>
           ))}
         </nav>
+
+        <div className="sidebar__foot">
+          <span className="sidebar__user" title={user?.username}>{user?.username}</span>
+          <button type="button" className="btn btn--sm sidebar__signout" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
       </aside>
 
       <main className="main">

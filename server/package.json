@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
     "db:create": "node scripts/db.js create",
     "migrate": "node scripts/db.js migrate",
     "seed": "node scripts/db.js seed",
@@ -16,12 +17,17 @@
   },
   "dependencies": {
     "compression": "^1.7.5",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.6.2",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
     "pg": "^8.13.1",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
   }
 }

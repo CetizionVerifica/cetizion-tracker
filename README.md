@@ -31,16 +31,33 @@ npm run dev            # http://localhost:5173
 Open <http://localhost:5173>. The dev server proxies `/api` to port 4000, so the browser
 only ever talks to one origin.
 
+Sign in with `admin` / `cetizion-dev` — the development fallback. See
+[Sign-in](#sign-in) for the real thing.
+
 ### Configuration
 
-Everything has a working default. To change one, copy `server/.env.example` to
-`server/.env`:
+Everything has a working default in development. To change one, copy
+`server/.env.example` to `server/.env`:
 
-| Variable       | Default                                          |
-| -------------- | ------------------------------------------------ |
-| `PORT`         | `4000`                                           |
-| `DATABASE_URL` | `postgres://localhost:5432/cetizion_tracker`     |
-| `CORS_ORIGIN`  | `http://localhost:5173`                          |
+| Variable            | Default                                      |
+| ------------------- | -------------------------------------------- |
+| `PORT`              | `4000`                                       |
+| `DATABASE_URL`      | `postgres://localhost:5432/cetizion_tracker` |
+| `CORS_ORIGIN`       | `http://localhost:5173`                      |
+| `AUTH_USERNAME`     | `admin`                                      |
+| `AUTH_PASSWORD`     | `cetizion-dev` — **required in production**  |
+| `SESSION_SECRET`    | random per boot — **required in production** |
+| `SESSION_TTL_HOURS` | `12`                                         |
+| `COOKIE_SECURE`     | on when `NODE_ENV=production`                |
+| `TRUST_PROXY`       | `0`                                          |
+| `WEB_DIST_DIR`      | `../web/dist`                                |
+
+### Tests
+
+```bash
+cd server
+npm test               # the sign-in gate; needs no database
+```
 
 ### Database commands
 
@@ -145,12 +162,17 @@ cetizion-tracker/
 │   │   ├── db.js           create / migrate / seed
 │   │   └── generate_seed.py  workbook → SQL
 │   └── src/
+│       ├── app.js            the Express app, assembled
+│       ├── auth/             the sign-in gate (config, session, routes)
+│       ├── web.js            serves web/dist in production
 │       ├── lib/resources.js  one registry entry per resource, with its Zod schema
 │       ├── lib/crud.js       turns a registry entry into a REST router
 │       └── routes/           dashboards, workflow actions, lookups, CSV export
 └── web/
     └── src/
         ├── styles.css        the whole design system
+        ├── lib/auth.jsx      who is signed in
+        ├── components/AuthGate.jsx  the gate around the app
         ├── components/       ui.jsx, ListPage, RecordForm, action dialogs
         └── pages/            one file per screen
 ```
@@ -182,10 +204,56 @@ project — it belongs to a trip, which knows both.
 
 ---
 
+## Sign-in
+
+One user, one password, so a deployed link is not an open door. There are no accounts
+table and no roles — the credentials live in the environment beside `DATABASE_URL`.
+
+```
+AUTH_USERNAME=admin
+AUTH_PASSWORD=<a long password used nowhere else>
+SESSION_SECRET=<32+ random characters>
+```
+
+Generate the secret with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**In production the API will not start without `AUTH_PASSWORD` and `SESSION_SECRET`.**
+That is deliberate: a tracker that boots unlocked because a variable was missed is the
+exact failure this is here to prevent. In development both fall back — the password to
+`cetizion-dev` — so `npm run dev` needs no setup.
+
+How it works:
+
+- Signing in sets an `httpOnly`, `sameSite=lax` cookie holding a payload signed with
+  `SESSION_SECRET`. Nothing is stored server-side, so restarting the API or running two
+  of them keeps everyone signed in.
+- The cookie lasts `SESSION_TTL_HOURS` (12 by default). After that the app returns to
+  the sign-in screen on the next request.
+- Every `/api` route needs that cookie except `/api/health`, which the host needs to
+  poll and which reveals only that the database answered.
+- Ten failed attempts in fifteen minutes locks sign-in for the rest of the window.
+  Successful ones are not counted. A run of typos will lock you out too — that is the
+  cost of the lock being worth anything.
+- Changing `SESSION_SECRET` signs everyone out, which is how you revoke a session.
+
+Since there is one user, the password is the whole boundary. Make it long, and do not
+use it anywhere else.
+
+---
+
 ## API
 
 All responses are `{ "data": ... }`; errors are
 `{ "error": { "message": "...", "fields": { … } } }`.
+
+Every route below requires a signed-in session. Without one they answer `401`.
+
+**Sign-in** — `POST /api/auth/login` `{username, password}`, `POST /api/auth/logout`,
+`GET /api/auth/me`.
 
 **Resources** — `quotations`, `projects`, `purchase-orders`, `po-services`,
 `payment-stages`, `onboarding`, `travel-logs`, `vendor-invoices`, `expense-claims`,
@@ -236,14 +304,34 @@ CSV export means the spreadsheet is now an output, not the system of record.
 
 ---
 
+## Deploying
+
+The API serves the built front end, so one container is the whole app:
+
+```bash
+npm install            # from the repo root: installs both halves
+npm run build          # produces web/dist
+NODE_ENV=production npm start --prefix server
+```
+
+Set at minimum `DATABASE_URL`, `AUTH_PASSWORD` and `SESSION_SECRET`. Behind Traefik,
+nginx or a load balancer also set `TRUST_PROXY=1` so the sign-in limiter counts the
+visitor rather than the proxy. Serve it over HTTPS — the session cookie is marked
+`secure` in production and the browser will not send it over plain HTTP. If TLS
+genuinely is not available, `COOKIE_SECURE=false` is the escape hatch, and sign-in
+travels in the clear.
+
+`web/dist` is not committed, so `npm run build` has to run as part of the deploy.
+
+---
+
 ## Notes before production use
 
-This is an internal tool built to run on a trusted network. Before exposing it more
-widely you would want to add:
+Sign-in closes the front door. Still missing for wider use:
 
-- **Authentication and roles.** There is none — anyone who reaches the API can write.
-  The workbook has the same property, but a URL travels further than a file.
-- **An audit trail.** Rows carry `created_at` / `updated_at`, but not who changed what.
+- **Roles.** One account, full access. Anyone who can sign in can write anything.
+- **An audit trail.** Rows carry `created_at` / `updated_at`, but not who changed what —
+  which is nearly free to add now that requests carry a user.
 - **Incremental migrations.** `npm run migrate` rebuilds from scratch, which is right for
   setup and wrong once there is data you cannot regenerate.
 - **Backups** of the Postgres database.

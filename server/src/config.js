@@ -12,4 +12,7 @@ export const config = {
   dbName,
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   nodeEnv: process.env.NODE_ENV || 'development',
+  // How many reverse proxies sit in front of the API. 0 means none, so
+  // X-Forwarded-For is ignored and nobody can claim someone else's address.
+  trustProxy: Number(process.env.TRUST_PROXY || 0),
 };
