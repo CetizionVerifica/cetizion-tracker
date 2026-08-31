@@ -159,11 +159,13 @@ SELECT
     WHEN 'Partially Paid' THEN 'FINANCE: pay balance to '
       || COALESCE(tl.arranged_by, 'vendor')
     WHEN 'Enter amount' THEN 'HR: enter the invoice amount'
+    WHEN 'Enter date' THEN 'HR: enter the invoice date - it sets the pay-by date'
   END                                                     AS finance_action,
   CASE s.payment_status
     WHEN 'Overdue'        THEN 'danger'
     WHEN 'To Pay'         THEN 'warning'
     WHEN 'Partially Paid' THEN 'warning'
+    WHEN 'Enter date'     THEN 'warning'
     WHEN 'Paid'           THEN 'success'
     ELSE 'neutral'
   END                                                     AS status_tone
@@ -181,8 +183,10 @@ CROSS JOIN LATERAL (
     WHEN vi.vendor_invoice_no IS NULL        THEN 'Awaited'
     WHEN vi.invoice_amount IS NULL           THEN 'Enter amount'
     WHEN vi.amount_paid >= vi.invoice_amount THEN 'Paid'
-    WHEN b.pay_by IS NOT NULL
-     AND CURRENT_DATE > b.pay_by             THEN 'Overdue'
+    -- No invoice date means no pay-by date, so the bill can never fall
+    -- due and would otherwise sit here unnoticed. Chase the date.
+    WHEN vi.invoice_date IS NULL             THEN 'Enter date'
+    WHEN CURRENT_DATE > b.pay_by             THEN 'Overdue'
     WHEN vi.amount_paid > 0                  THEN 'Partially Paid'
     ELSE 'To Pay'
   END

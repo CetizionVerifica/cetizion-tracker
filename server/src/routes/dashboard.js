@@ -103,7 +103,7 @@ dashboardRouter.get('/worklist', async (req, res) => {
              employee_name, invoice_amount, amount_paid, pay_by, payment_status,
              days_overdue, finance_action
       FROM v_travel_vendor_invoices
-      WHERE payment_status IN ('Overdue','To Pay','Partially Paid','Enter amount')
+      WHERE payment_status IN ('Overdue','To Pay','Partially Paid','Enter amount','Enter date')
       ORDER BY CASE payment_status WHEN 'Overdue' THEN 0 ELSE 1 END,
                days_overdue DESC, pay_by NULLS LAST`),
     query(`

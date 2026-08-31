@@ -68,7 +68,7 @@ export default function VendorInvoices() {
         formIntro="Enter only what is on the bill — trip, employee, project and client are read back from the travel log."
         searchPlaceholder="Search invoice, vendor, trip…"
         filters={[
-          { name: 'payment_status', label: 'Status', options: ['Awaited', 'Enter amount', 'To Pay', 'Partially Paid', 'Overdue', 'Paid'] },
+          { name: 'payment_status', label: 'Status', options: ['Awaited', 'Enter amount', 'Enter date', 'To Pay', 'Partially Paid', 'Overdue', 'Paid'] },
         ]}
       />
 

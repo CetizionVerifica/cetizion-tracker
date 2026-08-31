@@ -260,7 +260,7 @@ export const resources = {
     view: 'v_travel_vendor_invoices',
     label: 'Vendor invoice',
     naturalKey: 'vendor_invoice_id',
-    defaultSort: 'invoice_date DESC NULLS LAST, id DESC',
+    defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
     search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
     filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id'],
     columns: [
