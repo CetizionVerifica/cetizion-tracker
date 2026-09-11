@@ -337,6 +337,8 @@ SELECT
   po.actual_delivery_date,
   po.project_manager_email,
   po.remarks,
+  po.document_id,
+  doc.file_name                                       AS document_name,
   sv.service_count,
   sv.service_value_total,
   st.stage_count,
@@ -363,6 +365,7 @@ SELECT
   END                                                 AS follow_up_action
 FROM purchase_orders po
 JOIN projects pr ON pr.project_id = po.project_id
+LEFT JOIN documents doc ON doc.id = po.document_id
 CROSS JOIN LATERAL (
   SELECT COUNT(*), COALESCE(SUM(service_value), 0)
   FROM po_services s WHERE s.po_number = po.po_number
@@ -493,6 +496,8 @@ SELECT
   q.po_received,
   q.project_id,
   q.remarks,
+  q.document_id,
+  doc.file_name                               AS document_name,
   r.invoiced,
   r.received,
   r.outstanding,
@@ -511,6 +516,7 @@ SELECT
     WHEN r.outstanding <= 0 AND r.received > 0 THEN 'All stages paid'
   END                                         AS payment_note
 FROM quotations q
+LEFT JOIN documents doc ON doc.id = q.document_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),

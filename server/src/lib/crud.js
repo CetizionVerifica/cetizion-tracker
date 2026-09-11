@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { isAttachableDocument, purgeDocument } from './documents.js';
 
 const MAX_LIMIT = 1000;
 
@@ -71,6 +72,37 @@ function validate(def, body, { partial }) {
   return pickWritable(def, parsed.data);
 }
 
+/**
+ * Quotations and POs may carry one document. A blank value never clears one
+ * already attached, and a new one must be an upload no other record uses.
+ * Returns the document being replaced, if any, so it can be removed once
+ * the record is saved.
+ */
+async function prepareDocument(def, values, id) {
+  if (values.document_id === null || values.document_id === undefined) {
+    delete values.document_id;
+    return null;
+  }
+
+  let previous = null;
+  if (id !== undefined) {
+    const params = [];
+    const { rows } = await query(
+      `SELECT document_id FROM ${ident(def.table)} WHERE ${idPredicate(def, id, params)}`,
+      params
+    );
+    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    previous = rows[0].document_id;
+  }
+
+  if (values.document_id !== previous && !(await isAttachableDocument(values.document_id))) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
+    });
+  }
+  return previous;
+}
+
 /** Where a resource has a human key (PRJ-2026-001) accept it in the URL too. */
 function idPredicate(def, id, params) {
   if (/^\d+$/.test(id)) {
@@ -114,6 +146,7 @@ export function crudRouter(name, def) {
 
   router.post('/', async (req, res) => {
     const values = validate(def, req.body, { partial: false });
+    if (def.hasDocument) await prepareDocument(def, values);
     const cols = Object.keys(values);
     if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
@@ -132,6 +165,8 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', async (req, res) => {
     const values = validate(def, req.body, { partial: true });
+    const previousDocument = def.hasDocument ? await prepareDocument(def, values, req.params.id) : null;
+
     const cols = Object.keys(values);
     if (!cols.length) throw new ApiError(422, 'Nothing to update');
 
@@ -145,6 +180,11 @@ export function crudRouter(name, def) {
     );
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
 
+    // The replaced file leaves storage once the new one is safely saved.
+    if (previousDocument && values.document_id !== previousDocument) {
+      await purgeDocument(previousDocument).catch((err) => console.error('[documents]', err));
+    }
+
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
       [rows[0].id]
@@ -155,11 +195,14 @@ export function crudRouter(name, def) {
   router.delete('/:id', async (req, res) => {
     const params = [];
     const pred = idPredicate(def, req.params.id, params);
-    const { rowCount } = await query(
-      `DELETE FROM ${ident(def.table)} WHERE ${pred}`,
+    const { rows } = await query(
+      `DELETE FROM ${ident(def.table)} WHERE ${pred} RETURNING *`,
       params
     );
-    if (!rowCount) throw new ApiError(404, `${def.label} not found`);
+    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    if (def.hasDocument && rows[0].document_id) {
+      await purgeDocument(rows[0].document_id).catch((err) => console.error('[documents]', err));
+    }
     res.status(204).end();
   });
 

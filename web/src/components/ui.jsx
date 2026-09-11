@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
 
 /* ------------------------------------------------------------------ card */
@@ -47,6 +48,24 @@ export function Badge({ children, tone, dot = false }) {
       {dot && <span className="badge__dot" />}
       {children}
     </span>
+  );
+}
+
+/* -------------------------------------------------------------- document */
+
+/** Opens a record's document in a new tab; a dash when it has none. */
+export function DocumentLink({ id, name }) {
+  if (!id) return <span className="muted">—</span>;
+  return (
+    <a
+      className="btn btn--sm btn--ghost"
+      href={api.documentUrl(id)}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={name || undefined}
+    >
+      View
+    </a>
   );
 }
 

@@ -24,6 +24,14 @@ export function number(value) {
   return new Intl.NumberFormat('en-IN').format(Number(value));
 }
 
+export function fileSize(bytes) {
+  if (bytes === null || bytes === undefined || bytes === '') return '—';
+  const n = Number(bytes);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${Number((n / 1024 / 1024).toFixed(1))} MB`;
+}
+
 export function percent(value, digits = 0) {
   if (value === null || value === undefined || value === '') return '—';
   return `${(Number(value) * 100).toFixed(digits)}%`;

@@ -30,6 +30,11 @@ exportRouter.get('/:resource.csv', async (req, res) => {
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ORDER BY ${def.defaultSort}`
   );
+  // Documents are opened from the app's tables; the spreadsheet leaves them out.
+  for (const row of rows) {
+    delete row.document_id;
+    delete row.document_name;
+  }
 
   const stamp = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

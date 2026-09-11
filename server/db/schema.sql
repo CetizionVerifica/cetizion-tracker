@@ -13,7 +13,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 DROP TABLE IF EXISTS employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, quotations, expense_categories,
-  travel_vendors, services, settings CASCADE;
+  travel_vendors, services, settings, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -43,6 +43,20 @@ CREATE TABLE expense_categories (
   id     serial PRIMARY KEY,
   name   text NOT NULL UNIQUE,
   active boolean NOT NULL DEFAULT true
+);
+
+-- ---------------------------------------------------------------------
+-- Documents — the uploaded file behind a quotation or a PO. The file
+--   lives in Cloudinary; storage_key is its public_id there.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE documents (
+  id            serial PRIMARY KEY,
+  storage_key   text NOT NULL UNIQUE,
+  file_name     text NOT NULL,
+  content_type  text NOT NULL,
+  size_bytes    int  NOT NULL CHECK (size_bytes > 0),
+  created_at    timestamptz NOT NULL DEFAULT now()
 );
 
 -- ---------------------------------------------------------------------
@@ -90,6 +104,7 @@ CREATE TABLE quotations (
   project_id         text REFERENCES projects(project_id)
                        ON UPDATE CASCADE ON DELETE SET NULL,
   remarks            text,
+  document_id        int UNIQUE REFERENCES documents(id),
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -114,6 +129,7 @@ CREATE TABLE purchase_orders (
   actual_delivery_date   date,
   project_manager_email  text,
   remarks                text,
+  document_id            int UNIQUE REFERENCES documents(id),
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now()
 );

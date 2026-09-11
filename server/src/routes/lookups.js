@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { config } from '../config.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 
@@ -37,6 +38,7 @@ lookupRouter.get('/', async (req, res) => {
       clients: clients.rows.map((r) => r.name),
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
       enums: STATUS,
+      limits: { document_max_bytes: config.documentMaxBytes },
     },
   });
 });

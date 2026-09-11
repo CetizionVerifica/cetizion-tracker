@@ -16,6 +16,7 @@ import { mountWebApp } from './web.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { lookupRouter, settingsRouter } from './routes/lookups.js';
 import { exportRouter } from './routes/export.js';
+import { documentRouter } from './routes/documents.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -54,6 +55,7 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/lookups', lookupRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
+app.use('/api/documents', documentRouter);
 
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.

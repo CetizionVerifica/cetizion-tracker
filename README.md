@@ -51,6 +51,9 @@ Everything has a working default in development. To change one, copy
 | `COOKIE_SECURE`     | on when `NODE_ENV=production`                |
 | `TRUST_PROXY`       | `0`                                          |
 | `WEB_DIST_DIR`      | `../web/dist`                                |
+| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | none — needed for document uploads           |
+| `CLOUDINARY_FOLDER` | `cetizion-tracker` — use another folder locally |
+| `DOCUMENT_MAX_MB`   | `10` (the Cloudinary Free plan limit)        |
 
 ### Tests
 
@@ -65,11 +68,16 @@ npm test               # the sign-in gate; needs no database
 | -------------------- | ------------------------------------------------------- |
 | `npm run db:create`  | Create the database if it does not exist                |
 | `npm run migrate`    | Drop and rebuild the schema and views                   |
+| `npm run db:upgrade` | Apply `db/migrations`, then rebuild the views — keeps data |
 | `npm run seed`       | Load `db/seed.sql` — the real data from your workbook    |
 | `npm run seed:demo`  | Load `db/demo.sql` — the workbook's worked example       |
 | `npm run reset`      | create → migrate → seed, in that order                  |
 
 `npm run migrate` **drops every table**. It is a rebuild, not an incremental migration.
+On a database that holds real data (production), use `npm run db:upgrade` instead: it
+runs every file in `db/migrations` — each written so running it twice is harmless — and
+rebuilds the views, which hold no data. A schema change goes in both `schema.sql` and a
+new migration file.
 
 ---
 
@@ -321,6 +329,10 @@ visitor rather than the proxy. Serve it over HTTPS — the session cookie is mar
 genuinely is not available, `COOKIE_SECURE=false` is the escape hatch, and sign-in
 travels in the clear.
 
+Quotations and POs can carry an uploaded document, stored privately in Cloudinary with
+only its reference in Postgres. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and
+`CLOUDINARY_API_SECRET` too — without them uploads are refused.
+
 `web/dist` is not committed, so `npm run build` has to run as part of the deploy.
 
 ---
@@ -332,6 +344,6 @@ Sign-in closes the front door. Still missing for wider use:
 - **Roles.** One account, full access. Anyone who can sign in can write anything.
 - **An audit trail.** Rows carry `created_at` / `updated_at`, but not who changed what —
   which is nearly free to add now that requests carry a user.
-- **Incremental migrations.** `npm run migrate` rebuilds from scratch, which is right for
-  setup and wrong once there is data you cannot regenerate.
+- **Migration tracking.** `npm run db:upgrade` re-runs every file in `db/migrations`, so
+  each must be safe to repeat; nothing records which ones have already run.
 - **Backups** of the Postgres database.

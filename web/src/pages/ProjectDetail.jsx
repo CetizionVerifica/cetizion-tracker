@@ -310,6 +310,7 @@ export default function ProjectDetail() {
             { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
             { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+            { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

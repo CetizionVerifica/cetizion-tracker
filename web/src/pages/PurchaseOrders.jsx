@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Alert } from '../components/ui.jsx';
+import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, number, percent } from '../lib/format.js';
 
@@ -31,6 +31,7 @@ export default function PurchaseOrders() {
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
     { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
     { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
+    { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
   ];
 
   const fields = [
@@ -43,6 +44,7 @@ export default function PurchaseOrders() {
     { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
     { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Setting this makes on-delivery stages invoiceable' },
     { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+    { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 
