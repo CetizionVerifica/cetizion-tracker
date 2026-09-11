@@ -78,6 +78,7 @@ CREATE TABLE quotations (
   client_name        text NOT NULL,
   contact_person     text,
   service_quoted     text,
+  sector             text,
   sales_person       text,
   sales_person_email text,
   quotation_date     date,

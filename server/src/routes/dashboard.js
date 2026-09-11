@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
+import { customerReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 
 export const dashboardRouter = Router();
 
@@ -137,6 +138,16 @@ dashboardRouter.get('/worklist', async (req, res) => {
       won_without_project: gaps.rows,
     },
   });
+});
+
+/**
+ * Sector-wise POs and new vs repeat customers, for an optional
+ * ?from=&to= range on the quotation date.
+ */
+dashboardRouter.get('/sales-report', async (req, res) => {
+  const period = reportPeriod(req.query);
+  const [sectors, customers] = await Promise.all([sectorReport(period), customerReport(period)]);
+  res.json({ data: { period, sectors, customers } });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

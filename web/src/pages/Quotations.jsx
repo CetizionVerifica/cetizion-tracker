@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge } from '../components/ui.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
@@ -8,12 +8,14 @@ import { money, date } from '../lib/format.js';
 
 export default function Quotations() {
   const lookups = useLookups();
+  const [params] = useSearchParams();
   const [converting, setConverting] = useState(null);
   const [version, setVersion] = useState(0);
 
   const columns = [
     { key: 'quotation_no', header: 'Quotation', className: 'mono', render: (r) => <>{r.quotation_no}<div className="small muted">{date(r.quotation_date)}</div></> },
     { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}{r.contact_person && <div className="small muted">{r.contact_person}</div>}</> },
+    { key: 'sector', header: 'Sector' },
     { key: 'service_quoted', header: 'Service', className: 'wrap' },
     { key: 'sales_person', header: 'Owner' },
     { key: 'quotation_value', header: 'Value', align: 'right', render: (r) => money(r.quotation_value, r.currency) },
@@ -39,7 +41,8 @@ export default function Quotations() {
   const fields = [
     { name: 'quotation_no', label: 'Quotation number', required: true, hint: 'e.g. CTZ/QT/2026/063' },
     { name: 'quotation_date', label: 'Quotation date', type: 'date' },
-    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients },
+    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
+    { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors, hint: 'Pick from the list, or type a new sector' },
     { name: 'contact_person', label: 'Contact person' },
     { name: 'service_quoted', label: 'Service quoted', type: 'combo', options: lookups.services, span: 2 },
     { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
@@ -63,9 +66,13 @@ export default function Quotations() {
         fields={fields}
         newLabel="Quotation"
         formTitle="quotation"
-        searchPlaceholder="Search client, quotation no, service…"
+        searchPlaceholder="Search client, quotation no, service, sector…"
+        // The sales report links here with ?sector=__none__ to list the
+        // quotations still missing a sector.
+        initialFilters={params.get('sector') ? { sector: params.get('sector') } : undefined}
         filters={[
           { name: 'status', label: 'Status', options: lookups.enums?.quotation || [] },
+          { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
           { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
         ]}
       />

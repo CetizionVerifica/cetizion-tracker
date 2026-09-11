@@ -17,15 +17,24 @@ const TARGETS = [
 const children = [];
 let stopping = false;
 
+// On Windows npm is a .cmd shim, which Node can only launch through a shell.
+const isWindows = process.platform === 'win32';
+
 function stopAll(code = 0) {
   if (stopping) return;
   stopping = true;
-  for (const child of children) child.kill('SIGTERM');
+  for (const child of children) {
+    // Killing the shell alone would leave the dev servers running on Windows.
+    if (isWindows) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+    else child.kill('SIGTERM');
+  }
   setTimeout(() => process.exit(code), 200);
 }
 
 for (const target of TARGETS) {
-  const child = spawn('npm', target.args, { cwd: target.cwd, shell: false });
+  const child = isWindows
+    ? spawn(`npm ${target.args.join(' ')}`, { cwd: target.cwd, shell: true })
+    : spawn('npm', target.args, { cwd: target.cwd });
   children.push(child);
 
   const prefix = `${target.colour}[${target.name}][0m `;

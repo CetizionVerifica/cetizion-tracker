@@ -1,15 +1,27 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
+import { nameKey } from '../lib/salesReport.js';
 
 export const lookupRouter = Router();
+
+// Offered before any quotation carries a sector. Whatever is typed on a
+// quotation joins the list, so this is a starting point, not a limit.
+const SECTOR_SUGGESTIONS = ['Agriculture', 'Metal Industry', 'Pharmaceutical', 'Other'];
+
+/** Sectors in use, plus the starting suggestions not already among them. */
+function sectorOptions(used) {
+  const seen = new Set(used.map((name) => name.toLowerCase()));
+  return [...used, ...SECTOR_SUGGESTIONS.filter((name) => !seen.has(name.toLowerCase()))]
+    .sort((a, b) => a.localeCompare(b));
+}
 
 /**
  * Everything the forms need to offer a dropdown instead of a free-text
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
-  const [services, vendors, categories, projects, pos, trips, people, clients, settings] =
+  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings] =
     await Promise.all([
       query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
@@ -22,6 +34,13 @@ lookupRouter.get('/', async (req, res) => {
               WHERE sales_person IS NOT NULL ORDER BY 1`),
       query(`SELECT DISTINCT client_name AS name FROM quotations
               WHERE client_name IS NOT NULL ORDER BY 1`),
+      // One suggestion per sector as the reports group them, in its most
+      // used spelling, so the list nudges people towards that spelling.
+      query(`SELECT mode() WITHIN GROUP (ORDER BY btrim(sector)) AS name
+               FROM quotations
+              WHERE btrim(sector) <> ''
+              GROUP BY ${nameKey('sector')}
+              ORDER BY 1`),
       query('SELECT key, value, notes FROM settings ORDER BY key'),
     ]);
 
@@ -35,6 +54,7 @@ lookupRouter.get('/', async (req, res) => {
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
       clients: clients.rows.map((r) => r.name),
+      sectors: sectorOptions(sectors.rows.map((r) => r.name)),
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
       enums: STATUS,
     },

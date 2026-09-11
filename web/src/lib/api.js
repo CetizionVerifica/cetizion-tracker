@@ -70,6 +70,7 @@ export const api = {
   action: (path, body) => request(path, { method: 'POST', body: body || {} }),
   raw: (path, opts) => request(path, opts),
   exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
+  reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   auth: {
     me: () => request('/auth/me'),
     login: (username, password) =>

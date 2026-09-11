@@ -484,6 +484,7 @@ SELECT
   q.client_name,
   q.contact_person,
   q.service_quoted,
+  q.sector,
   q.sales_person,
   q.sales_person_email,
   q.quotation_date,
