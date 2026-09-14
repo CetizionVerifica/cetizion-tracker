@@ -23,7 +23,7 @@ function sectorOptions(used) {
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
-  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings] =
+  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations] =
     await Promise.all([
       query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
@@ -51,6 +51,9 @@ lookupRouter.get('/', async (req, res) => {
               GROUP BY ${nameKey('sector')}
               ORDER BY 1`),
       query('SELECT key, value, notes FROM settings ORDER BY key'),
+      // For linking an enquiry to an existing quotation, and a PO to its won one.
+      query(`SELECT quotation_no, client_name, status, project_id
+               FROM quotations ORDER BY quotation_date DESC NULLS LAST, quotation_no DESC`),
     ]);
 
   res.json({
@@ -65,6 +68,8 @@ lookupRouter.get('/', async (req, res) => {
       clients: clients.rows.map((r) => r.name),
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
+      quotations: quotations.rows,
+      won_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && q.project_id),
       enums: STATUS,
       limits: { document_max_bytes: config.documentMaxBytes },
     },
@@ -84,13 +89,16 @@ settingsRouter.get('/', async (req, res) => {
 
 settingsRouter.patch('/:key', async (req, res) => {
   const value = req.body?.value;
-  if (typeof value !== 'string' || value.trim() === '') {
+  const isRate = req.params.key.startsWith('fx_rate_');
+  // A blank rate is how the report knows a currency is not set, so a rate
+  // can be cleared; every other setting needs a value.
+  if (typeof value !== 'string' || (value.trim() === '' && !isRate)) {
     return res.status(422).json({
       error: { message: 'Enter a value', fields: { value: 'Required' } },
     });
   }
   // A rate the report cannot multiply by would silently drop deals from the INR totals.
-  if (req.params.key.startsWith('fx_rate_') && !(/^\d+(\.\d+)?$/.test(value.trim()) && Number(value) > 0)) {
+  if (isRate && value.trim() !== '' && !(/^\d+(\.\d+)?$/.test(value.trim()) && Number(value) > 0)) {
     return res.status(422).json({
       error: { message: 'Enter the INR value of 1 unit, e.g. 90.25', fields: { value: 'Enter a number above 0' } },
     });

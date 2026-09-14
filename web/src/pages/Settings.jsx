@@ -65,6 +65,7 @@ function SettingsValues() {
           <strong>Vendor invoice window</strong> drives the "invoice overdue from vendor" flag.
           The default payment terms are only suggestions — actual terms live on each PO.
           <strong> FX rates</strong> are the INR value of 1 unit, used to show FX deals in INR on the sales report.
+          Save a rate blank to mark it not set again.
         </span>
       </Alert>
       <DataTable
@@ -86,7 +87,7 @@ function SettingsValues() {
                   className="input"
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  placeholder={r.key.startsWith('fx_rate_') ? 'e.g. 90.25' : undefined}
+                  placeholder={r.key.startsWith('fx_rate_') ? 'e.g. 90.25, or blank for not set' : undefined}
                   autoFocus
                   style={{ maxWidth: 280 }}
                 />

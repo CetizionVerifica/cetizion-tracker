@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, useToast } from '../components/ui.jsx';
-import { useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
 
 const WON = 'Won - Quotation Sent';
@@ -34,7 +34,9 @@ export default function Enquiries() {
     },
   ];
 
-  const fields = [
+  // A function of the record being edited, so its linked quotation is always
+  // an option even when the cached lookups predate it.
+  const fields = (record) => [
     { name: 'enquiry_no', label: 'Enquiry number', required: true, hint: 'e.g. CTZ/ENQ/2026/001' },
     { name: 'enquiry_date', label: 'Enquiry date', type: 'date' },
     { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
@@ -43,7 +45,20 @@ export default function Enquiries() {
     { name: 'service', label: 'Service', type: 'combo', options: lookups.services },
     { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
     { name: 'sales_person_email', label: 'Sales person email', type: 'email' },
-    { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'In Progress', required: true, hint: `"${WON}" creates the quotation` },
+    { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'In Progress', required: true, hint: `"${WON}" creates the quotation, unless one is linked` },
+    {
+      name: 'quotation_no',
+      label: 'Existing quotation',
+      type: 'select',
+      span: 2,
+      hint: 'For an enquiry that was already quoted: link that quotation instead of creating a new one',
+      options: [
+        ...(record?.quotation_no && !lookups.quotations.some((q) => q.quotation_no === record.quotation_no)
+          ? [{ value: record.quotation_no, label: record.quotation_no }]
+          : []),
+        ...lookups.quotations.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.status})` })),
+      ],
+    },
   ];
 
   return (
@@ -55,12 +70,12 @@ export default function Enquiries() {
       fields={fields}
       newLabel="Enquiry"
       formTitle="enquiry"
-      formIntro={`Set the status to "${WON}" and a quotation is created under Quotations with these details.`}
+      formIntro={`Set the status to "${WON}" and a quotation is created under Quotations with these details — or link one that already exists.`}
       searchPlaceholder="Search client, enquiry no, service, sector…"
-      onSaved={(saved, previous) => {
-        if (saved?.quotation_no && saved.quotation_no !== previous?.quotation_no) {
-          toast(`Quotation ${saved.quotation_no} created`, 'success');
-        }
+      onSaved={(saved) => {
+        // A new quotation, or a new link, changes the quotation list the form offers.
+        invalidateLookups();
+        if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
       }}
       filters={[
         { name: 'status', label: 'Status', options: statuses },

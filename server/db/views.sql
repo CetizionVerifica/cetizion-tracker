@@ -328,6 +328,7 @@ SELECT
   po.id,
   po.po_number,
   po.project_id,
+  po.quotation_no,
   pr.client_name,
   po.po_date,
   po.po_value,

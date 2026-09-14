@@ -260,9 +260,16 @@ export function salesReportDocDefinition(data) {
   if (rt.not_registered > 0) {
     const withProject = rt.not_registered - rt.no_project;
     warnings.push(
-      `No PO registered yet for ${rt.not_registered} of ${rt.orders_won} won orders in ${year}` +
-      ` (${rt.no_project} without a project, ${withProject} with a project but no PO).` +
+      `No PO linked yet for ${rt.not_registered} of ${rt.orders_won} won orders in ${year}` +
+      ` (${rt.no_project} without a project, ${withProject} with a project but no linked PO).` +
       ' Their PO value, invoiced and received are not in the invoicing figures yet.'
+    );
+  }
+  const unlinked = revenue.unlinked_pos ?? [];
+  if (unlinked.length) {
+    warnings.push(
+      `${unlinked.length} purchase order${unlinked.length === 1 ? ' is' : 's are'} not linked to a won quotation, so revenue` +
+      ` does not count ${unlinked.length === 1 ? 'it' : 'them'}: ${unlinked.map((po) => po.po_number).join(', ')}.`
     );
   }
 
@@ -572,7 +579,7 @@ export function salesReportDocDefinition(data) {
         'Clients and sectors are grouped by spelling: capital letters and extra spaces are ignored, any other difference is a separate name.',
         'Repeat client = 2 or more won POs up to the end of the period; every other client is a single enquiry client. Repeat orders = won POs after a client\'s first.',
         'Order intake = won quotation values in INR. Average deal = order intake ÷ the orders that have a value.',
-        'PO value, invoiced, received and due now come from each won order\'s purchase order. Balance = PO value − received.',
+        'PO value, invoiced, received and due now come from the purchase orders linked to each won order, so a PO counts once. Balance = PO value − received.',
       ],
       fontSize: 8.5,
       color: INK_700,

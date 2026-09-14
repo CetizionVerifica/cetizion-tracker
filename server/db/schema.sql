@@ -64,7 +64,9 @@ CREATE TABLE documents (
   file_name     text NOT NULL,
   content_type  text NOT NULL,
   size_bytes    int  NOT NULL CHECK (size_bytes > 0),
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  -- Set when removal starts; a marked document can never be attached.
+  purging_at    timestamptz
 );
 
 -- ---------------------------------------------------------------------
@@ -145,6 +147,8 @@ CREATE TABLE enquiries (
 );
 
 CREATE INDEX ON enquiries (status);
+-- A quotation belongs to at most one enquiry.
+CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- Purchase orders  (PO Register) — a project may hold several
@@ -163,12 +167,16 @@ CREATE TABLE purchase_orders (
   actual_delivery_date   date,
   project_manager_email  text,
   remarks                text,
+  -- The won quotation this PO fulfils; revenue counts the PO against it, once.
+  quotation_no           text REFERENCES quotations(quotation_no)
+                           ON UPDATE CASCADE ON DELETE SET NULL,
   document_id            int UNIQUE REFERENCES documents(id),
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON purchase_orders (project_id);
+CREATE INDEX purchase_orders_quotation_no_idx ON purchase_orders (quotation_no);
 
 -- Client name is not stored on the PO — it is read from the project,
 -- honouring the workbook's "type any fact in exactly one place" rule.

@@ -1,5 +1,6 @@
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { nameKey } from './names.js';
 
 /**
  * Sales reports, read straight from the quotations table.
@@ -14,8 +15,8 @@ import { ApiError } from '../middleware/error.js';
  * are two.
  */
 
-/** SQL grouping key for a free-text name: same spelling, same group. */
-export const nameKey = (column) => `lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`;
+// Same spelling, same group — defined once in names.js for reports and list filters alike.
+export { nameKey };
 
 // $1 = from, $2 = to, either null for an open end. A row with no date
 // cannot be placed in a period, so it only counts when neither end is set.
@@ -50,6 +51,8 @@ const byCurrency = (a, b) => (a === 'INR' ? -1 : b === 'INR' ? 1 : a.localeCompa
 
 const isIsoDate = (value) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  // JavaScript accepts year 0000; Postgres does not, and would fail mid-query.
+  if (Number(value.slice(0, 4)) < 1) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 };

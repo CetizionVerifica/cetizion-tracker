@@ -104,7 +104,11 @@ test('the report carries every section with its figures', () => {
 test('problems in the data are called out, not hidden', () => {
   const text = textOf(salesReportDocDefinition(fixture()));
   assert.ok(text.includes('1 of 2 won POs have no sector'));
-  assert.ok(text.includes('No PO registered yet for 1 of 2 won orders in 2026 (1 without a project, 0 with a project but no PO)'));
+  assert.ok(text.includes('No PO linked yet for 1 of 2 won orders in 2026 (1 without a project, 0 with a project but no linked PO)'));
+
+  const unlinked = fixture();
+  unlinked.revenue = { ...unlinked.revenue, unlinked_pos: [{ po_number: 'PO-9', project_id: 'PRJ-1', quotation_no: null }] };
+  assert.ok(textOf(salesReportDocDefinition(unlinked)).includes('1 purchase order is not linked to a won quotation, so revenue does not count it: PO-9.'));
 
   const noRate = fixture();
   noRate.fx.rows[0] = { ...noRate.fx.rows[0], rate: null, amount_inr: null };

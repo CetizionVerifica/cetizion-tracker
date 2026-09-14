@@ -87,6 +87,8 @@ export default function SalesReport() {
     ...Object.fromEntries(Object.entries(revenueQuery).filter(([, value]) => value)),
     tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
+  // Lists opened from a figure show the same period that figure counts.
+  const quotationsUrl = (filters) => `/quotations?${new URLSearchParams({ ...filters, ...params })}`;
 
   const { data, loading, error, refetch } = useFetch(
     () => (backwards ? null : api.raw(`/dashboard/sales-report?${new URLSearchParams(params)}`)),
@@ -106,8 +108,10 @@ export default function SalesReport() {
         title="Sales reports"
         subtitle="Sector-wise funnel, FX deals, clients and revenue"
         actions={
-          backwards ? (
-            <button type="button" className="btn btn--primary" disabled>Download PDF</button>
+          backwards || error ? (
+            <button type="button" className="btn btn--primary" disabled title="Fix the period or reload the report first">
+              Download PDF
+            </button>
           ) : (
             <a className="btn btn--primary" href={api.reportPdfUrl(pdfParams)} download>Download PDF</a>
           )
@@ -176,7 +180,7 @@ export default function SalesReport() {
                 value={number(sectors.summary.pos_without_sector)}
                 meta={sectors.summary.pos_without_sector > 0 ? 'Set the sector on these quotations' : 'Every won PO has a sector'}
                 tone={sectors.summary.pos_without_sector > 0 ? 'warn' : 'ok'}
-                to="/quotations?sector=__none__"
+                to={quotationsUrl({ status: 'Won - PO Received', sector: '__none__' })}
               />
               <Stat
                 label="Clients"
@@ -197,7 +201,7 @@ export default function SalesReport() {
                     key: 'sector',
                     header: 'Sector',
                     className: 'strong',
-                    render: (row) => (row.not_set ? <Link to="/quotations?sector=__none__">Not set</Link> : row.sector),
+                    render: (row) => (row.not_set ? <Link to={quotationsUrl({ sector: '__none__' })}>Not set</Link> : row.sector),
                   },
                   { key: 'enquiries', header: 'Enquiries', align: 'right' },
                   { key: 'pos', header: 'POs won', align: 'right' },
@@ -245,7 +249,7 @@ export default function SalesReport() {
                   {
                     key: 'sector',
                     header: 'Sector',
-                    render: (row) => (row.not_set ? <Link to="/quotations?sector=__none__">Not set</Link> : row.sector),
+                    render: (row) => (row.not_set ? <Link to={quotationsUrl({ status: 'Won - PO Received', sector: '__none__' })}>Not set</Link> : row.sector),
                   },
                   { key: 'currency', header: 'Currency', render: (row) => <Badge tone="info">{row.currency}</Badge> },
                   { key: 'deals', header: 'Won POs', align: 'right' },
@@ -355,9 +359,11 @@ export default function SalesReport() {
               />
             </Card>
 
-            <RevenueReport onChange={setRevenueQuery} />
           </>
         )}
+
+        {/* Mounted regardless of the sales data, so its year and filters survive a bad period or a failed load. */}
+        <RevenueReport onChange={setRevenueQuery} />
       </div>
     </>
   );

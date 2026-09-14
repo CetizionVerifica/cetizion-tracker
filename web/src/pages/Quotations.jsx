@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, DocumentLink } from '../components/ui.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
-import { useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
 
 export default function Quotations() {
@@ -69,9 +69,16 @@ export default function Quotations() {
         newLabel="Quotation"
         formTitle="quotation"
         searchPlaceholder="Search client, quotation no, service, sector…"
-        // The sales report links here with ?sector=__none__ to list the
-        // quotations still missing a sector.
-        initialFilters={params.get('sector') ? { sector: params.get('sector') } : undefined}
+        // The sales report links here with the filters behind a figure
+        // (e.g. ?status=Won - PO Received&sector=__none__&from=&to=), so the
+        // list shows exactly the quotations that figure counts.
+        initialFilters={Object.fromEntries(
+          ['status', 'sector', 'sales_person', 'from', 'to'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
+        )}
+        dateFilterLabel="Quotation date"
+        // A saved quotation can change the lists other forms offer (won
+        // quotations for a PO, existing ones for an enquiry).
+        onSaved={() => invalidateLookups()}
         // An enquiry links here with ?q=<quotation no> to show its quotation.
         initialSearch={params.get('q') || undefined}
         filters={[

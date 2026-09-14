@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { isAttachableDocument, purgeDocument } from './documents.js';
+import { lockAttachableDocument, purgeDocument } from './documents.js';
+import { nameKey, normalizeName } from './names.js';
+import { reportPeriod } from './salesReport.js';
 
 const MAX_LIMIT = 1000;
 
@@ -30,12 +32,34 @@ function buildWhere(def, reqQuery, params) {
     if (raw === undefined || raw === '') continue;
     const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean);
     if (!values.length) continue;
+    // Free-text names match the way the sales reports group them: case and
+    // extra spaces ignored, and a blank value counts as not set.
+    const normalized = def.normalizedFilters?.includes(col);
     if (values.length === 1 && values[0] === '__none__') {
-      clauses.push(`${ident(col)} IS NULL`);
+      clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NULL` : `${ident(col)} IS NULL`);
       continue;
     }
-    params.push(values);
-    clauses.push(`${ident(col)}::text = ANY($${params.length})`);
+    if (normalized) {
+      params.push(values.map(normalizeName));
+      clauses.push(`${nameKey(ident(col))} = ANY($${params.length})`);
+    } else {
+      params.push(values);
+      clauses.push(`${ident(col)}::text = ANY($${params.length})`);
+    }
+  }
+
+  // ?from=&to= on the resource's date column, so a list opened from a
+  // report covers the same period as the figure it came from.
+  if (def.dateFilter && (reqQuery.from || reqQuery.to)) {
+    const { from, to } = reportPeriod(reqQuery);
+    if (from) {
+      params.push(from);
+      clauses.push(`${ident(def.dateFilter)} >= $${params.length}::date`);
+    }
+    if (to) {
+      params.push(to);
+      clauses.push(`${ident(def.dateFilter)} <= $${params.length}::date`);
+    }
   }
 
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -72,37 +96,6 @@ function validate(def, body, { partial }) {
   return pickWritable(def, parsed.data);
 }
 
-/**
- * Quotations and POs may carry one document. A blank value never clears one
- * already attached, and a new one must be an upload no other record uses.
- * Returns the document being replaced, if any, so it can be removed once
- * the record is saved.
- */
-async function prepareDocument(def, values, id) {
-  if (values.document_id === null || values.document_id === undefined) {
-    delete values.document_id;
-    return null;
-  }
-
-  let previous = null;
-  if (id !== undefined) {
-    const params = [];
-    const { rows } = await query(
-      `SELECT document_id FROM ${ident(def.table)} WHERE ${idPredicate(def, id, params)}`,
-      params
-    );
-    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-    previous = rows[0].document_id;
-  }
-
-  if (values.document_id !== previous && !(await isAttachableDocument(values.document_id))) {
-    throw new ApiError(422, 'Please check the highlighted fields', {
-      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
-    });
-  }
-  return previous;
-}
-
 /** Where a resource has a human key (PRJ-2026-001) accept it in the URL too. */
 function idPredicate(def, id, params) {
   if (/^\d+$/.test(id)) {
@@ -114,13 +107,46 @@ function idPredicate(def, id, params) {
   return `${ident(def.naturalKey)} = $${params.length}`;
 }
 
+/**
+ * Quotations and POs may carry one document. A blank value never clears one
+ * already attached. A new one must be an upload no record uses, and it stays
+ * locked until the save commits, so two saves cannot both attach it and a
+ * purge cannot remove it underneath the record. Returns the document being
+ * replaced, if any, so it can be removed once the record is committed.
+ */
+async function claimDocument(client, def, values, id) {
+  if (values.document_id === null || values.document_id === undefined) {
+    delete values.document_id;
+    return null;
+  }
+
+  let previous = null;
+  if (id !== undefined) {
+    const params = [];
+    const { rows } = await client.query(
+      `SELECT document_id FROM ${ident(def.table)} WHERE ${idPredicate(def, id, params)} FOR UPDATE`,
+      params
+    );
+    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    previous = rows[0].document_id;
+  }
+
+  if (values.document_id !== previous && !(await lockAttachableDocument(client, values.document_id))) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
+    });
+  }
+  return previous;
+}
+
 export function crudRouter(name, def) {
   const router = Router();
   const readFrom = def.view || def.table;
 
-  // A resource's onSave(client, { before, after }) hook makes follow-on
-  // writes, so the row and whatever the hook writes commit together.
-  const write = (fn) => (def.onSave ? transaction(fn) : fn({ query }));
+  // A save with follow-on work runs in one transaction: whatever an
+  // onSave(client, { before, after }) hook writes, and a document attached
+  // under lock, commit together with the record or not at all.
+  const write = (fn) => (def.onSave || def.hasDocument ? transaction(fn) : fn({ query }));
 
   router.get('/', async (req, res) => {
     const params = [];
@@ -150,39 +176,38 @@ export function crudRouter(name, def) {
 
   router.post('/', async (req, res) => {
     const values = validate(def, req.body, { partial: false });
-    if (def.hasDocument) await prepareDocument(def, values);
-    const cols = Object.keys(values);
-    if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
-    const id = await write(async (client) => {
+    const { id, extra } = await write(async (client) => {
+      if (def.hasDocument) await claimDocument(client, def, values);
+      const cols = Object.keys(values);
+      if (!cols.length) throw new ApiError(422, 'Nothing to save');
+
       const { rows } = await client.query(
         `INSERT INTO ${ident(def.table)} (${cols.map(ident).join(', ')})
          VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
          RETURNING *`,
         cols.map((c) => values[c])
       );
-      await def.onSave?.(client, { before: null, after: rows[0] });
-      return rows[0].id;
+      const extra = await def.onSave?.(client, { before: null, after: rows[0] });
+      return { id: rows[0].id, extra };
     });
+
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
       [id]
     );
-    res.status(201).json({ data: full[0] });
+    // A hook may report what it did, e.g. the quotation a won enquiry created.
+    res.status(201).json({ data: { ...full[0], ...extra } });
   });
 
   router.patch('/:id', async (req, res) => {
     const values = validate(def, req.body, { partial: true });
-    const previousDocument = def.hasDocument ? await prepareDocument(def, values, req.params.id) : null;
 
-    const cols = Object.keys(values);
-    if (!cols.length) throw new ApiError(422, 'Nothing to update');
+    const { id, extra, previousDocument } = await write(async (client) => {
+      const previousDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
+      const cols = Object.keys(values);
+      if (!cols.length) throw new ApiError(422, 'Nothing to update');
 
-    const params = cols.map((c) => values[c]);
-    const pred = idPredicate(def, req.params.id, params);
-    const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
-
-    const id = await write(async (client) => {
       let before = null;
       if (def.onSave) {
         const keyParams = [];
@@ -193,17 +218,20 @@ export function crudRouter(name, def) {
         ));
       }
 
+      const params = cols.map((c) => values[c]);
+      const pred = idPredicate(def, req.params.id, params);
+      const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
       const { rows } = await client.query(
         `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
         params
       );
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-      await def.onSave?.(client, { before, after: rows[0] });
-      return rows[0].id;
+      const extra = await def.onSave?.(client, { before, after: rows[0] });
+      return { id: rows[0].id, extra, previousDocument };
     });
 
-    // The replaced file leaves storage once the new one is safely saved.
-    if (previousDocument && values.document_id !== previousDocument) {
+    // The replaced file leaves storage only once the new one is committed.
+    if (previousDocument && values.document_id !== undefined && values.document_id !== previousDocument) {
       await purgeDocument(previousDocument).catch((err) => console.error('[documents]', err));
     }
 
@@ -211,7 +239,7 @@ export function crudRouter(name, def) {
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
       [id]
     );
-    res.json({ data: full[0] });
+    res.json({ data: { ...full[0], ...extra } });
   });
 
   router.delete('/:id', async (req, res) => {

@@ -94,7 +94,7 @@ export function RevenueReport({ onChange }) {
     ? [...new Set([...report.total.order_unconverted.map((a) => a.currency), ...report.total.po_missing_rates])].sort()
     : [];
   const filtered = Boolean(filters.sector || filters.sales_person);
-  const toggleMonth = (row) => setOpenMonth(row.month === openMonth ? '' : row.month);
+  const toggleMonth = (row) => row.month && setOpenMonth(row.month === openMonth ? '' : row.month);
 
   return (
     <>
@@ -108,7 +108,7 @@ export function RevenueReport({ onChange }) {
           </select>
           <select className="select" aria-label="Month" value={openMonth} onChange={(e) => setOpenMonth(e.target.value)}>
             <option value="">Month: all</option>
-            {(report?.months || []).map((m) => (
+            {(report?.months || []).filter((m) => m.month).map((m) => (
               <option key={m.month} value={m.month}>{m.label} ({m.orders_won} won)</option>
             ))}
           </select>
@@ -151,7 +151,7 @@ export function RevenueReport({ onChange }) {
           {report.total.not_registered > 0 && (
             <Alert tone="warning">
               <strong>
-                No PO registered yet for {report.total.not_registered} of {report.total.orders_won} won orders in {year}
+                No PO linked yet for {report.total.not_registered} of {report.total.orders_won} won orders in {year}
               </strong>
               , so their PO value, invoiced and received are not in the invoicing table yet.
               <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
@@ -162,11 +162,26 @@ export function RevenueReport({ onChange }) {
                 )}
                 {report.total.not_registered - report.total.no_project > 0 && (
                   <li>
-                    {report.total.not_registered - report.total.no_project} have a project but no PO yet: pick their month and
-                    use <strong>Add PO</strong>.
+                    {report.total.not_registered - report.total.no_project} have a project but no PO linked to them: pick their
+                    month and use <strong>Add PO</strong>, or pick the quotation on the project's existing PO.
                   </li>
                 )}
               </ul>
+            </Alert>
+          )}
+          {report.unlinked_pos.length > 0 && (
+            <Alert tone="warning">
+              <strong>
+                {report.unlinked_pos.length} purchase order{report.unlinked_pos.length === 1 ? ' is' : 's are'} not linked to a won quotation
+              </strong>
+              , so revenue does not count {report.unlinked_pos.length === 1 ? 'it' : 'them'}:{' '}
+              {report.unlinked_pos.map((po, i) => (
+                <span key={po.po_number}>
+                  {i > 0 && ', '}
+                  <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po.po_number)}`}>{po.po_number}</Link>
+                </span>
+              ))}
+              . Open the PO, choose <strong>Edit PO</strong> and pick its won quotation.
             </Alert>
           )}
           {missingRates.length > 0 && (
@@ -184,7 +199,7 @@ export function RevenueReport({ onChange }) {
           >
             <DataTable
               columns={ORDER_COLUMNS}
-              rows={report.months.map((m) => ({ ...m, id: m.month }))}
+              rows={report.months.map((m) => ({ ...m, id: m.month ?? 'undated' }))}
               onRowClick={toggleMonth}
               footer={totalRow(ORDER_COLUMNS, report.total)}
             />
@@ -198,7 +213,7 @@ export function RevenueReport({ onChange }) {
           >
             <DataTable
               columns={INVOICING_COLUMNS}
-              rows={report.months.map((m) => ({ ...m, id: m.month }))}
+              rows={report.months.map((m) => ({ ...m, id: m.month ?? 'undated' }))}
               onRowClick={toggleMonth}
               footer={totalRow(INVOICING_COLUMNS, report.total)}
             />

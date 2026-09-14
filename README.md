@@ -54,6 +54,7 @@ Everything has a working default in development. To change one, copy
 | `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | none — needed for document uploads           |
 | `CLOUDINARY_FOLDER` | `cetizion-tracker` — use another folder locally |
 | `DOCUMENT_MAX_MB`   | `10` (the Cloudinary Free plan limit)        |
+| `BUSINESS_TIME_ZONE` | `Asia/Kolkata` — the year in reference numbers and server-stamped dates |
 
 ### Tests
 

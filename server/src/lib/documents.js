@@ -1,6 +1,6 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { config } from '../config.js';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
 /**
@@ -76,9 +76,19 @@ export async function uploadDocument({ buffer, fileName, contentType, owner }) {
   }
 }
 
-/** True when the document exists and no quotation or PO uses it yet. */
-export async function isAttachableDocument(id) {
-  const { rowCount } = await query(`SELECT 1 FROM documents d WHERE d.id = $1 AND ${UNATTACHED}`, [id]);
+/**
+ * Lock a document for attaching and say whether it may be attached: it must
+ * exist, not be on its way out, and not be used by any quotation or PO.
+ * Call it inside the transaction that writes the record, so the lock holds
+ * until that commits — a second save, or a purge, waits and then sees it.
+ */
+export async function lockAttachableDocument(client, id) {
+  const { rowCount: available } = await client.query(
+    'SELECT 1 FROM documents WHERE id = $1 AND purging_at IS NULL FOR UPDATE',
+    [id]
+  );
+  if (!available) return false;
+  const { rowCount } = await client.query(`SELECT 1 FROM documents d WHERE d.id = $1 AND ${UNATTACHED}`, [id]);
   return rowCount > 0;
 }
 
@@ -106,28 +116,46 @@ export async function fetchDocument(id) {
 }
 
 /**
- * Remove a document nothing uses any more: from Cloudinary first, then its
- * row. If Cloudinary cannot be reached the row stays, still unattached, and
- * the orphan sweep tries again later.
+ * Remove a document nothing uses any more. It is first marked for removal,
+ * under the same row lock an attaching save takes, so from that commit on
+ * nothing can attach it. Only then is its file deleted from Cloudinary, and
+ * last its row. If Cloudinary cannot be reached the marked row stays and the
+ * orphan sweep tries again; no record can point at it meanwhile.
  */
 export async function purgeDocument(id) {
   if (!storageReady) return;
-  const { rows } = await query(`SELECT storage_key FROM documents d WHERE d.id = $1 AND ${UNATTACHED}`, [id]);
-  if (!rows.length) return;
+
+  const storageKey = await transaction(async (client) => {
+    const { rows } = await client.query('SELECT storage_key FROM documents WHERE id = $1 FOR UPDATE', [id]);
+    if (!rows.length) return null;
+    const { rowCount: unattached } = await client.query(
+      `SELECT 1 FROM documents d WHERE d.id = $1 AND ${UNATTACHED}`,
+      [id]
+    );
+    if (!unattached) return null;
+    await client.query('UPDATE documents SET purging_at = COALESCE(purging_at, now()) WHERE id = $1', [id]);
+    return rows[0].storage_key;
+  });
+  if (!storageKey) return;
 
   try {
-    await destroyStored(rows[0].storage_key);
+    await destroyStored(storageKey);
   } catch (err) {
-    console.error(`[documents] could not delete ${rows[0].storage_key}; will retry`, err.message ?? err);
+    console.error(`[documents] could not delete ${storageKey}; will retry`, err.message ?? err);
     return;
   }
-  await query(`DELETE FROM documents d WHERE d.id = $1 AND ${UNATTACHED}`, [id]);
+  await query('DELETE FROM documents WHERE id = $1 AND purging_at IS NOT NULL', [id]);
 }
 
-/** Clear out uploads whose form was never saved, once they are a day old. */
+/**
+ * Finish removals that were interrupted, and clear out uploads whose form
+ * was never saved once they are a day old.
+ */
 export async function purgeOrphanedDocuments() {
   const { rows } = await query(
-    `SELECT id FROM documents d WHERE d.created_at < now() - interval '1 day' AND ${UNATTACHED}`
+    `SELECT id FROM documents d
+      WHERE d.purging_at IS NOT NULL
+         OR (d.created_at < now() - interval '1 day' AND ${UNATTACHED})`
   );
   for (const { id } of rows) await purgeDocument(id);
 }

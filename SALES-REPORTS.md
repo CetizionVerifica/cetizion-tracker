@@ -70,9 +70,13 @@ Two of the six planned sales reports, built on the existing `quotations` table
   is listed, so a month with no orders shows zeros.
 - **Order intake** = won quotation values in INR. **Average deal** = order intake ÷ the
   orders that have a value.
-- **PO value, Invoiced, Received, Due now** come from each won quotation's purchase order
-  (through its project). **Balance** = PO value − Received. A won order with no PO
-  registered is counted in Orders won but not in these columns, and is flagged.
+- **PO value, Invoiced, Received, Due now** come from the purchase orders **linked** to each
+  won quotation (the PO's *Won quotation* field). A PO counts once, against that quotation,
+  even when its project holds several won quotations. A new PO is linked automatically when
+  its project has one won quotation; otherwise pick it on the PO. **Balance** = PO value −
+  Received. A won order with no linked PO is counted in Orders won but not in these
+  columns, and a PO not linked to a won quotation is listed so it can be fixed.
+- **Undated won quotations** appear in a **No date** row when no date range is chosen.
 - **Money stays in its own currency** in the sector and FX tables. The client and revenue
   tables convert to INR at the Settings rate.
 - A quotation with no date is only counted when no date range is chosen.

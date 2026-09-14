@@ -4,6 +4,7 @@ import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './u
 import { RecordForm } from './RecordForm.jsx';
 import { api } from '../lib/api.js';
 import { useDebounced, useList } from '../lib/hooks.js';
+import { date } from '../lib/format.js';
 
 /**
  * The standard list screen: search, filters, CSV export, create / edit /
@@ -27,6 +28,7 @@ export function ListPage({
   emptyState,
   initialFilters,
   initialSearch,
+  dateFilterLabel = 'Date',
   refreshToken,
   onSaved,
   rowActions = true,
@@ -144,6 +146,21 @@ export function ListPage({
                 })}
               </select>
             ))}
+
+            {/* A date range arrives only from a report link, so show it and let it be removed. */}
+            {(filterValues.from || filterValues.to) && (
+              <span className="small nowrap">
+                {dateFilterLabel}: {filterValues.from ? date(filterValues.from) : 'start'} – {filterValues.to ? date(filterValues.to) : 'today'}
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-label="Remove date filter"
+                  onClick={() => setFilterValues(({ from, to, ...rest }) => rest)}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
 
             {(search || Object.keys(filterValues).length > 0) && (
               <button

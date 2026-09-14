@@ -8,6 +8,7 @@ import {
   invoicingCsvRows, ordersCsvRows, revenueDetailCsvRows, revenueFilters, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
+import { businessYear } from '../lib/businessDate.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -48,8 +49,11 @@ const SALES_REPORTS = {
 exportRouter.get('/sales-report.pdf', async (req, res) => {
   const period = reportPeriod(req.query);
   const rawYear = String(req.query.year ?? '').trim();
-  if (rawYear && !/^\d{4}$/.test(rawYear)) throw new ApiError(422, 'Use a four-digit year');
-  const year = rawYear ? Number(rawYear) : new Date().getFullYear();
+  // Postgres has no year 0, so 0000 would fail as a date deep inside a query.
+  if (rawYear && !(/^\d{4}$/.test(rawYear) && Number(rawYear) >= 1)) {
+    throw new ApiError(422, 'Use a four-digit year from 0001');
+  }
+  const year = rawYear || String(businessYear());
   const filters = revenueFilters(req.query);
 
   const [sectors, customers, fx, revenue] = await Promise.all([
@@ -59,7 +63,7 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
     revenueReport({ from: `${year}-01-01`, to: `${year}-12-31` }, filters),
   ]);
   const pdf = await salesReportPdf({
-    period, year, filters, sectors, customers, fx, revenue,
+    period, year: Number(year), filters, sectors, customers, fx, revenue,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });

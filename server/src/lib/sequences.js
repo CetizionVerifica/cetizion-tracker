@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { businessToday } from './businessDate.js';
 
 const SEQUENCES = {
   enquiry: { table: 'enquiries', column: 'enquiry_no', pattern: 'CTZ/ENQ/{year}/{n:3}' },
@@ -21,7 +22,8 @@ export const isSequence = (kind) => Object.hasOwn(SEQUENCES, kind);
  */
 export async function nextId(kind, client = { query }) {
   const spec = SEQUENCES[kind];
-  const year = String(new Date().getFullYear());
+  // The business's year: on 1 January before 05:30 IST the server's UTC clock still says last year.
+  const year = businessToday().slice(0, 4);
   const prefix = spec.pattern.replace('{year}', year).replace(/\{n:\d+\}$/, '');
   const width = Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3);
 
