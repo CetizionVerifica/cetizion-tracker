@@ -77,6 +77,7 @@ export const resources = {
     table: 'quotations',
     view: 'v_quotations',
     label: 'Quotation',
+    hasDocument: true,
     naturalKey: 'quotation_no',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
@@ -84,7 +85,7 @@ export const resources = {
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
-      'currency', 'status', 'po_received', 'project_id', 'remarks',
+      'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
     ],
     schema: z.object({
       quotation_no: requiredStr(60),
@@ -101,6 +102,7 @@ export const resources = {
       po_received: bool(),
       project_id: str(40),
       remarks: str(1000),
+      document_id: int({ min: 1 }),
     }),
   },
 
@@ -135,6 +137,7 @@ export const resources = {
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
+    hasDocument: true,
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
     search: ['po_number', 'project_id', 'client_name'],
@@ -142,7 +145,7 @@ export const resources = {
     columns: [
       'po_number', 'project_id', 'po_date', 'po_value', 'currency',
       'payment_terms_days', 'actual_initiation_date', 'actual_delivery_date',
-      'project_manager_email', 'remarks',
+      'project_manager_email', 'remarks', 'document_id',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -155,6 +158,7 @@ export const resources = {
       actual_delivery_date: date(),
       project_manager_email: str(160),
       remarks: str(1000),
+      document_id: int({ min: 1 }),
     }),
   },
 

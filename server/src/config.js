@@ -22,4 +22,13 @@ export const config = {
   // How many reverse proxies sit in front of the API. 0 means none, so
   // X-Forwarded-For is ignored and nobody can claim someone else's address.
   trustProxy: Number(process.env.TRUST_PROXY || 0),
+  // Quotation and PO documents live in Cloudinary; Postgres keeps the reference.
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+    apiKey: process.env.CLOUDINARY_API_KEY || '',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+    folder: process.env.CLOUDINARY_FOLDER || 'cetizion-tracker',
+  },
+  // Cloudinary's Free plan refuses files over 10 MB.
+  documentMaxBytes: Math.round((Number(process.env.DOCUMENT_MAX_MB) || 10) * 1024 * 1024),
 };

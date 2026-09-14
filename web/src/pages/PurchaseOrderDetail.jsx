@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import {
-  Card, Stat, Badge, DataTable, KeyValues, ErrorState, Empty, Alert, useToast,
+  Card, Stat, Badge, DataTable, KeyValues, ErrorState, Empty, Alert, DocumentLink, useToast,
 } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -107,6 +107,7 @@ export default function PurchaseOrderDetail() {
               { label: 'Actual delivery', value: date(po.actual_delivery_date) },
               { label: 'Manager email', value: po.project_manager_email },
               { label: 'Payment status', value: <Badge>{po.payment_status}</Badge> },
+              { label: 'PO document', value: <DocumentLink id={po.document_id} name={po.document_name} /> },
               po.remarks && { label: 'Remarks', value: po.remarks },
             ]}
           />
@@ -233,6 +234,7 @@ export default function PurchaseOrderDetail() {
             { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
             { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Makes on-delivery stages invoiceable' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+            { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

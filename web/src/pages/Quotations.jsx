@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge } from '../components/ui.jsx';
+import { Badge, DocumentLink } from '../components/ui.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
@@ -36,6 +36,7 @@ export default function Quotations() {
     },
     { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => (r.project_id ? money(r.outstanding) : <span className="muted">—</span>) },
     { key: 'payment_status', header: 'Payment', render: (r) => (r.payment_status ? <Badge>{r.payment_status}</Badge> : <span className="muted">—</span>) },
+    { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
   ];
 
   const fields = [
@@ -52,6 +53,7 @@ export default function Quotations() {
     { name: 'status', label: 'Status', type: 'select', options: lookups.enums?.quotation || [], default: 'Submitted', required: true },
     { name: 'po_received', label: 'PO received', type: 'boolean', default: 'false' },
     { name: 'project_id', label: 'Project ID', type: 'combo', options: lookups.projects.map((p) => p.project_id), hint: 'Leave blank until the project is registered' },
+    { name: 'document_id', label: 'Quotation document', type: 'document', owner: 'quotations', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 

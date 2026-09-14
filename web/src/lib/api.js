@@ -16,15 +16,22 @@ export const setUnauthorizedHandler = (handler) => {
   onUnauthorized = handler;
 };
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+// A file travels as the raw request body; its name and type ride in headers.
+const fileHeaders = (file) => ({
+  'Content-Type': 'application/octet-stream',
+  'X-File-Name': encodeURIComponent(file.name),
+  'X-File-Type': file.type || '',
+});
+
+async function request(path, { method = 'GET', body, file, signal } = {}) {
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
       signal,
       credentials: 'include',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: file ? fileHeaders(file) : body ? { 'Content-Type': 'application/json' } : undefined,
+      body: file || (body ? JSON.stringify(body) : undefined),
     });
   } catch (err) {
     if (err.name === 'AbortError') throw err;
@@ -69,6 +76,9 @@ export const api = {
     request(`/${resource}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   action: (path, body) => request(path, { method: 'POST', body: body || {} }),
   raw: (path, opts) => request(path, opts),
+  uploadDocument: (file, owner) =>
+    request(`/documents?for=${encodeURIComponent(owner)}`, { method: 'POST', file }),
+  documentUrl: (id) => `${BASE}/documents/${id}`,
   exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   auth: {

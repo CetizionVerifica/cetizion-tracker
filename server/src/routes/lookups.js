@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { config } from '../config.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
@@ -57,6 +58,7 @@ lookupRouter.get('/', async (req, res) => {
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
       enums: STATUS,
+      limits: { document_max_bytes: config.documentMaxBytes },
     },
   });
 });

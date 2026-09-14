@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
-import { api } from '../lib/api.js';
+import { api, ApiError } from '../lib/api.js';
+import { fileSize } from '../lib/format.js';
 import { useToast } from './ui.jsx';
 
 /**
@@ -8,7 +9,10 @@ import { useToast } from './ui.jsx';
  * field list, so all forms validate, report and save identically.
  *
  * A field: { name, label, type, required, options, hint, span, help }
- * type: text | number | money | percent | date | select | combo | textarea | email
+ * type: text | number | money | percent | date | select | combo | textarea | email | document
+ *
+ * A document field also takes { owner, maxBytes }: owner is the kind of
+ * record the file belongs to (quotations, purchase-orders).
  */
 export function RecordForm({
   title,
@@ -42,11 +46,57 @@ export function RecordForm({
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Files chosen in document fields, and what each became once uploaded.
+  const [picked, setPicked] = useState({});
+  const uploads = useRef(new Map());
 
   const set = (name, value) => {
     setValues((v) => ({ ...v, [name]: value }));
     setErrors((e) => (e[name] ? { ...e, [name]: undefined } : e));
   };
+
+  /** Returns false when the file is refused, so the input can be cleared. */
+  const pickFile = (field, file) => {
+    if (file && field.maxBytes && file.size > field.maxBytes) {
+      setPicked((p) => ({ ...p, [field.name]: null }));
+      setErrors((e) => ({
+        ...e,
+        [field.name]: `This file is ${fileSize(file.size)} — the limit is ${fileSize(field.maxBytes)}`,
+      }));
+      return false;
+    }
+    setPicked((p) => ({ ...p, [field.name]: file }));
+    setErrors((e) => (e[field.name] ? { ...e, [field.name]: undefined } : e));
+    return true;
+  };
+
+  // A chosen file is uploaded first and the record saved with its id. Each
+  // upload is remembered, so fixing another field and saving again does not
+  // send the same file twice.
+  async function attachDocuments(payload) {
+    for (const field of fields) {
+      if (field.type !== 'document') continue;
+
+      const file = picked[field.name];
+      if (file) {
+        if (!uploads.current.has(file)) {
+          try {
+            const { data } = await api.uploadDocument(file, field.owner);
+            uploads.current.set(file, data);
+          } catch (err) {
+            throw new ApiError(err.message, { fields: { [field.name]: err.message } });
+          }
+        }
+        payload[field.name] = uploads.current.get(file).id;
+      }
+
+      if (field.required && !payload[field.name]) {
+        throw new ApiError('Attach a document to save', {
+          fields: { [field.name]: 'Attach a document to save' },
+        });
+      }
+    }
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -63,6 +113,7 @@ export function RecordForm({
     }
 
     try {
+      await attachDocuments(payload);
       const saved = isEdit
         ? await api.update(resource, record.id, payload)
         : await api.create(resource, payload);
@@ -106,6 +157,9 @@ export function RecordForm({
                 value={values[field.name]}
                 error={errors[field.name]}
                 onChange={(v) => set(field.name, v)}
+                record={record}
+                file={picked[field.name]}
+                onFile={(file) => pickFile(field, file)}
               />
             </div>
           ))}
@@ -115,7 +169,7 @@ export function RecordForm({
   );
 }
 
-function FormField({ field, value, error, onChange }) {
+function FormField({ field, value, error, onChange, record, file, onFile }) {
   const common = {
     value: value ?? '',
     error,
@@ -124,6 +178,7 @@ function FormField({ field, value, error, onChange }) {
     placeholder: field.placeholder,
   };
 
+  let hint = field.hint;
   let control;
   switch (field.type) {
     case 'select':
@@ -155,13 +210,54 @@ function FormField({ field, value, error, onChange }) {
     case 'email':
       control = <Input type="email" {...common} />;
       break;
+    case 'document':
+      hint ??= `Any file type${field.maxBytes ? `, up to ${fileSize(field.maxBytes)}` : ''}`;
+      control = (
+        <DocumentInput
+          current={value ? { id: value, name: record?.document_name } : null}
+          file={file}
+          onFile={onFile}
+          error={error}
+          disabled={field.disabled}
+        />
+      );
+      break;
     default:
       control = <Input type="text" {...common} />;
   }
 
   return (
-    <Field label={field.label} required={field.required} hint={field.hint} error={error}>
+    <Field label={field.label} required={field.required} hint={hint} error={error}>
       {control}
     </Field>
+  );
+}
+
+/** A file picker that also shows, and links to, the document already attached. */
+function DocumentInput({ current, file, onFile, error, disabled }) {
+  return (
+    <>
+      <input
+        type="file"
+        className={`input ${error ? 'has-error' : ''}`}
+        disabled={disabled}
+        onChange={(e) => {
+          if (!onFile(e.target.files?.[0] || null)) e.target.value = '';
+        }}
+      />
+      {file ? (
+        <span className="field__hint">
+          {file.name} · {fileSize(file.size)}
+          {current && ' · replaces the current document'}
+        </span>
+      ) : current ? (
+        <span className="field__hint">
+          Current:{' '}
+          <a href={api.documentUrl(current.id)} target="_blank" rel="noopener noreferrer">
+            {current.name || 'view document'}
+          </a>
+        </span>
+      ) : null}
+    </>
   );
 }

@@ -51,6 +51,9 @@ Everything has a working default in development. To change one, copy
 | `COOKIE_SECURE`     | on when `NODE_ENV=production`                |
 | `TRUST_PROXY`       | `0`                                          |
 | `WEB_DIST_DIR`      | `../web/dist`                                |
+| `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET` | none — needed for document uploads           |
+| `CLOUDINARY_FOLDER` | `cetizion-tracker` — use another folder locally |
+| `DOCUMENT_MAX_MB`   | `10` (the Cloudinary Free plan limit)        |
 
 ### Tests
 
@@ -325,6 +328,10 @@ visitor rather than the proxy. Serve it over HTTPS — the session cookie is mar
 `secure` in production and the browser will not send it over plain HTTP. If TLS
 genuinely is not available, `COOKIE_SECURE=false` is the escape hatch, and sign-in
 travels in the clear.
+
+Quotations and POs can carry an uploaded document, stored privately in Cloudinary with
+only its reference in Postgres. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and
+`CLOUDINARY_API_SECRET` too — without them uploads are refused.
 
 `web/dist` is not committed, so `npm run build` has to run as part of the deploy.
 
