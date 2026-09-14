@@ -26,13 +26,15 @@ export function ListPage({
   extraActions,
   emptyState,
   initialFilters,
+  initialSearch,
   refreshToken,
+  onSaved,
   rowActions = true,
   canDelete = true,
   banner,
 }) {
   const toast = useToast();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch || '');
   // Arriving from a dashboard tile pre-selects the matching filter, so the
   // dropdown shows why the list is short.
   const [filterValues, setFilterValues] = useState(() => initialFilters || {});
@@ -203,7 +205,10 @@ export function ListPage({
           fields={typeof fields === 'function' ? fields(editing === 'new' ? null : editing) : fields}
           record={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
-          onSaved={refetch}
+          onSaved={(saved) => {
+            refetch();
+            onSaved?.(saved, editing === 'new' ? null : editing);
+          }}
         />
       )}
 

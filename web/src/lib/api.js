@@ -81,6 +81,7 @@ export const api = {
   documentUrl: (id) => `${BASE}/documents/${id}`,
   exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
+  reportPdfUrl: (params) => `${BASE}/export/sales-report.pdf${qs(params)}`,
   auth: {
     me: () => request('/auth/me'),
     login: (username, password) =>

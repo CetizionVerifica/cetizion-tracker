@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ENQUIRY_WON, quoteWonEnquiry } from './enquiries.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -57,6 +58,7 @@ const bool = () =>
 const enumOf = (values) => z.enum(values);
 
 export const STATUS = {
+  enquiry: ['In Progress', 'Declined', ENQUIRY_WON],
   quotation: ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'],
   trigger: ['On PO Registration', 'On Delivery', 'Manual'],
   onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
@@ -73,6 +75,33 @@ export const STATUS = {
 // ---------------------------------------------------------------------
 
 export const resources = {
+  enquiries: {
+    table: 'enquiries',
+    view: null,
+    label: 'Enquiry',
+    naturalKey: 'enquiry_no',
+    defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
+    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
+    filters: ['status', 'sales_person', 'client_name', 'sector'],
+    // quotation_no is not writable: only a won enquiry sets it.
+    columns: [
+      'enquiry_no', 'enquiry_date', 'client_name', 'sector', 'contact_person',
+      'sales_person', 'sales_person_email', 'service', 'status',
+    ],
+    schema: z.object({
+      enquiry_no: requiredStr(60),
+      enquiry_date: date(),
+      client_name: requiredStr(160),
+      sector: str(120),
+      contact_person: str(120),
+      sales_person: str(120),
+      sales_person_email: str(160),
+      service: str(300),
+      status: enumOf(STATUS.enquiry).default('In Progress'),
+    }),
+    onSave: quoteWonEnquiry,
+  },
+
   quotations: {
     table: 'quotations',
     view: 'v_quotations',

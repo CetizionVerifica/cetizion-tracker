@@ -72,6 +72,8 @@ export default function Quotations() {
         // The sales report links here with ?sector=__none__ to list the
         // quotations still missing a sector.
         initialFilters={params.get('sector') ? { sector: params.get('sector') } : undefined}
+        // An enquiry links here with ?q=<quotation no> to show its quotation.
+        initialSearch={params.get('q') || undefined}
         filters={[
           { name: 'status', label: 'Status', options: lookups.enums?.quotation || [] },
           { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },

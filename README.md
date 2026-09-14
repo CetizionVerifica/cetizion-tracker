@@ -133,8 +133,9 @@ something to show.
 
 ### The flow, unchanged
 
-1. Log the enquiry on **Quotations**.
-2. When it is won, press **Register project** — this creates the project, links the
+1. Log the enquiry on **Enquiries**. Setting its status to *Won - Quotation Sent* creates
+   the quotation on **Quotations** with the enquiry's details, and links the two.
+2. When the quotation is won, press **Register project** — this creates the project, links the
    quotation and optionally adds the 11-step onboarding checklist.
 3. Register the **purchase order**. A project can hold several.
 4. Add its **service lines** and set its **payment stages** (50/50, 30/70, 40/30/30 —
@@ -263,7 +264,7 @@ Every route below requires a signed-in session. Without one they answer `401`.
 **Sign-in** — `POST /api/auth/login` `{username, password}`, `POST /api/auth/logout`,
 `GET /api/auth/me`.
 
-**Resources** — `quotations`, `projects`, `purchase-orders`, `po-services`,
+**Resources** — `enquiries`, `quotations`, `projects`, `purchase-orders`, `po-services`,
 `payment-stages`, `onboarding`, `travel-logs`, `vendor-invoices`, `expense-claims`,
 `services`, `travel-vendors`, `expense-categories`. Each supports:
 

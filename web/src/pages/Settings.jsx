@@ -64,19 +64,34 @@ function SettingsValues() {
         <span>
           <strong>Vendor invoice window</strong> drives the "invoice overdue from vendor" flag.
           The default payment terms are only suggestions — actual terms live on each PO.
+          <strong> FX rates</strong> are the INR value of 1 unit, used to show FX deals in INR on the sales report.
         </span>
       </Alert>
       <DataTable
         loading={loading}
         rows={rows}
         columns={[
-          { key: 'key', header: 'Setting', className: 'mono', render: (r) => r.key.replace(/_/g, ' ') },
+          {
+            key: 'key',
+            header: 'Setting',
+            className: 'mono',
+            render: (r) => (r.key.startsWith('fx_rate_') ? `FX rate: 1 ${r.key.slice(8)} in INR` : r.key.replace(/_/g, ' ')),
+          },
           {
             key: 'value',
             header: 'Value',
             render: (r) =>
               editing === r.key ? (
-                <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus style={{ maxWidth: 280 }} />
+                <input
+                  className="input"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder={r.key.startsWith('fx_rate_') ? 'e.g. 90.25' : undefined}
+                  autoFocus
+                  style={{ maxWidth: 280 }}
+                />
+              ) : r.value === '' ? (
+                <span className="muted">Not set</span>
               ) : (
                 <span className="strong">{r.value}</span>
               ),

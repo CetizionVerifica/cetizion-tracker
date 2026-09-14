@@ -2,8 +2,12 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { resources } from '../lib/resources.js';
 import {
-  customerCsvRows, customerReport, reportPeriod, sectorCsvRows, sectorReport,
+  customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
+import {
+  invoicingCsvRows, ordersCsvRows, revenueDetailCsvRows, revenueFilters, revenueReport,
+} from '../lib/revenueReport.js';
+import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -31,16 +35,49 @@ function sendCsv(res, filename, rows) {
 const SALES_REPORTS = {
   sectors: { build: sectorReport, toRows: sectorCsvRows },
   customers: { build: customerReport, toRows: customerCsvRows },
+  fx: { build: fxReport, toRows: fxCsvRows },
+  orders: { build: revenueReport, toRows: ordersCsvRows },
+  invoicing: { build: revenueReport, toRows: invoicingCsvRows },
+  'revenue-detail': { build: revenueReport, toRows: revenueDetailCsvRows },
 };
 
-/** The sales reports, for the same ?from=&to= range the report page shows. */
+/**
+ * The whole sales report as one PDF: ?from=&to= for the sales sections, and
+ * ?year=&sector=&sales_person= for the revenue section, exactly as on screen.
+ */
+exportRouter.get('/sales-report.pdf', async (req, res) => {
+  const period = reportPeriod(req.query);
+  const rawYear = String(req.query.year ?? '').trim();
+  if (rawYear && !/^\d{4}$/.test(rawYear)) throw new ApiError(422, 'Use a four-digit year');
+  const year = rawYear ? Number(rawYear) : new Date().getFullYear();
+  const filters = revenueFilters(req.query);
+
+  const [sectors, customers, fx, revenue] = await Promise.all([
+    sectorReport(period),
+    customerReport(period),
+    fxReport(period),
+    revenueReport({ from: `${year}-01-01`, to: `${year}-12-31` }, filters),
+  ]);
+  const pdf = await salesReportPdf({
+    period, year, filters, sectors, customers, fx, revenue,
+    generatedAt: new Date(),
+    timeZone: reportTimeZone(req.query.tz),
+  });
+
+  const span = period.from || period.to ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}` : '';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="cetizion-sales-report${span}.pdf"`);
+  res.send(pdf);
+});
+
+/** The sales reports, for the same ?from=&to= range (and filters) the report page shows. */
 exportRouter.get('/sales-report/:report.csv', async (req, res) => {
   const name = req.params.report;
   if (!Object.hasOwn(SALES_REPORTS, name)) throw new ApiError(404, 'Unknown report');
 
   const period = reportPeriod(req.query);
   const report = SALES_REPORTS[name];
-  const rows = report.toRows(await report.build(period));
+  const rows = report.toRows(await report.build(period, revenueFilters(req.query)));
 
   const span = period.from || period.to
     ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}`

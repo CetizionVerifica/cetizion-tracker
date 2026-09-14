@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { isAttachableDocument, purgeDocument } from './documents.js';
 
@@ -118,6 +118,10 @@ export function crudRouter(name, def) {
   const router = Router();
   const readFrom = def.view || def.table;
 
+  // A resource's onSave(client, { before, after }) hook makes follow-on
+  // writes, so the row and whatever the hook writes commit together.
+  const write = (fn) => (def.onSave ? transaction(fn) : fn({ query }));
+
   router.get('/', async (req, res) => {
     const params = [];
     const where = buildWhere(def, req.query, params);
@@ -150,15 +154,19 @@ export function crudRouter(name, def) {
     const cols = Object.keys(values);
     if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
-    const { rows } = await query(
-      `INSERT INTO ${ident(def.table)} (${cols.map(ident).join(', ')})
-       VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
-       RETURNING id`,
-      cols.map((c) => values[c])
-    );
+    const id = await write(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO ${ident(def.table)} (${cols.map(ident).join(', ')})
+         VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
+         RETURNING *`,
+        cols.map((c) => values[c])
+      );
+      await def.onSave?.(client, { before: null, after: rows[0] });
+      return rows[0].id;
+    });
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
-      [rows[0].id]
+      [id]
     );
     res.status(201).json({ data: full[0] });
   });
@@ -174,11 +182,25 @@ export function crudRouter(name, def) {
     const pred = idPredicate(def, req.params.id, params);
     const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
 
-    const { rows } = await query(
-      `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING id`,
-      params
-    );
-    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    const id = await write(async (client) => {
+      let before = null;
+      if (def.onSave) {
+        const keyParams = [];
+        const keyPred = idPredicate(def, req.params.id, keyParams);
+        ({ rows: [before] } = await client.query(
+          `SELECT * FROM ${ident(def.table)} WHERE ${keyPred} FOR UPDATE`,
+          keyParams
+        ));
+      }
+
+      const { rows } = await client.query(
+        `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
+        params
+      );
+      if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+      await def.onSave?.(client, { before, after: rows[0] });
+      return rows[0].id;
+    });
 
     // The replaced file leaves storage once the new one is safely saved.
     if (previousDocument && values.document_id !== previousDocument) {
@@ -187,7 +209,7 @@ export function crudRouter(name, def) {
 
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
-      [rows[0].id]
+      [id]
     );
     res.json({ data: full[0] });
   });

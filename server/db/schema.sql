@@ -12,7 +12,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 
 DROP TABLE IF EXISTS employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, quotations, expense_categories,
+  purchase_orders, projects, enquiries, quotations, expense_categories,
   travel_vendors, services, settings, documents CASCADE;
 
 -- ---------------------------------------------------------------------
@@ -25,6 +25,14 @@ CREATE TABLE settings (
   notes       text,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- INR for 1 unit of each currency, for the sales report. Blank until set.
+INSERT INTO settings (key, value, notes) VALUES
+  ('fx_rate_EUR', '', 'INR for 1 EUR. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_USD', '', 'INR for 1 USD. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_GBP', '', 'INR for 1 GBP. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_AED', '', 'INR for 1 AED. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_SGD', '', 'INR for 1 SGD. Used to show FX deals in INR on the sales report.');
 
 CREATE TABLE services (
   id       serial PRIMARY KEY,
@@ -112,6 +120,31 @@ CREATE TABLE quotations (
 
 CREATE INDEX ON quotations (project_id);
 CREATE INDEX ON quotations (status);
+
+-- ---------------------------------------------------------------------
+-- Enquiries — logged before anything is quoted. Marking one
+-- 'Won - Quotation Sent' has the API create and link its quotation.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE enquiries (
+  id                 serial PRIMARY KEY,
+  enquiry_no         text NOT NULL UNIQUE,
+  enquiry_date       date,
+  client_name        text NOT NULL,
+  sector             text,
+  contact_person     text,
+  sales_person       text,
+  sales_person_email text,
+  service            text,
+  status             text NOT NULL DEFAULT 'In Progress'
+                       CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
+  quotation_no       text REFERENCES quotations(quotation_no)
+                       ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ON enquiries (status);
 
 -- ---------------------------------------------------------------------
 -- Purchase orders  (PO Register) — a project may hold several
@@ -297,7 +330,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['projects','quotations','purchase_orders',
+  FOREACH t IN ARRAY ARRAY['projects','quotations','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
       'travel_vendor_invoices','employee_expense_claims','settings']
   LOOP

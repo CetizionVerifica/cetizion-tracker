@@ -56,7 +56,7 @@ export function today() {
 export function toneFor(status) {
   if (!status) return 'neutral';
   const s = String(status).toLowerCase();
-  if (/overdue|rejected|lost/.test(s)) return 'danger';
+  if (/overdue|rejected|lost|declined/.test(s)) return 'danger';
   if (/to invoice|to pay|invoicing pending|pending|partly|partially|on hold|awaited|enter amount|to reimburse|due/.test(s))
     return 'warning';
   if (/paid|reimbursed|done|won|delivered|up to date|on time|no dues/.test(s)) return 'success';

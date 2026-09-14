@@ -16,23 +16,65 @@ Two of the six planned sales reports, built on the existing `quotations` table
   sector can be typed in. There is also a Sector column and a Sector filter, which
   includes **Not set** to find quotations still missing one.
 - **Sales reports page** (sidebar → Sales → Sales reports):
-  - Date range on the quotation date, with *All time / This financial year / This month*.
-  - **Sector-wise POs:** a chart and a table showing POs, customers and won value per sector.
-  - **Customer analysis:** every customer quoted in the period, with tabs for
-    Repeat / New / No order yet.
-  - A **Download CSV** button on each report, which opens in Excel and follows the chosen dates.
+  - Date range, with *All time / This financial year / This month*. Enquiries follow the
+    enquiry date, everything else the quotation date.
+  - **Sector-wise POs:** a table per sector with Enquiries, POs won, Lost, Pipeline,
+    Win %, Won value and FX deals, plus a Total row, and a chart of POs by sector.
+  - **FX deals:** every client with won POs in a currency other than INR, with its
+    sector, currency, number of POs, won value and the quotation numbers.
+  - **FX deals** also shows the rate and the **Won value (INR)** for each deal.
+  - **Repeat clients**, **Single enquiry clients** and a **Client summary**, each with
+    Client group, Enquiries, POs won, Win %, Won value (INR) and Repeat orders.
+  - **Revenue**, for one calendar year (Jan–Dec), with its own **Year**, **Month**,
+    **Sector** and **Sales person** filters. It does not follow the period above.
+    - **Order intake by month:** Orders won, Order intake (INR), Average deal (INR).
+    - **Invoicing & collections by month:** POs, PO value, Invoiced, Received, Due now
+      and Balance, all in INR.
+    - Pick a month (or click its row) to see its orders one by one, with the same
+      figures per order and a link to register the project or add the PO.
+  - A **Download CSV** button on each report, which opens in Excel and follows the chosen
+    dates and filters.
+  - **Download PDF** (top right): the whole report as one A4 landscape PDF, with a cover
+    page with the key figures, then sector-wise POs, FX deals, client analysis, revenue
+    (with every order won in the year) and notes. It uses the period above and the Revenue
+    section's year and filters, exactly as on screen. The server builds it with `pdfmake`
+    from the same data as the page; nothing is stored and no outside service is used.
+- **Settings page:** an **FX rate** per currency (INR for 1 EUR, USD, GBP, AED, SGD).
+  Blank until someone enters it. Until then those deals are shown next to the INR values
+  as "rate not set" instead of being guessed.
 
 ## The rules the reports follow
 
 - **A PO** is a quotation with status **Won - PO Received**. Many won deals have no PO
   registered in the PO register yet, so counting that register would miss them.
+- **Enquiries** are the rows on the Enquiries page. **Lost** is a quotation marked Lost.
+  **Pipeline** is every other quotation (Submitted, Under Negotiation, On Hold), so
+  POs won + Lost + Pipeline = all quotations in the period.
+- **Win %** = POs won ÷ (POs won + Lost). Open deals have no outcome yet, so they are
+  left out. It shows — when nothing has been decided.
+- **FX deal** = a won PO in any currency other than INR. The FX deals total matches the
+  FX deals column of the sector table.
 - **Same spelling = same client / same sector.** Capital letters and extra spaces are
   ignored ("Hetero" = "hetero "). Any other difference is a separate client
   ("Hindalco" ≠ "Hindalco - Kuppam").
-- **Repeat customer:** 2 or more won orders up to the end of the chosen period.
-  **New customer:** exactly 1. **No order yet:** quoted but nothing won.
-- **Money stays in its own currency.** INR, EUR and USD are shown side by side and never
-  added together.
+- **Repeat client:** 2 or more won POs up to the end of the chosen period.
+  **Single enquiry client:** every other client, including one won PO, quoted but not
+  won, or only on the Enquiries page. Each client is in exactly one group.
+- **Clients are counted once.** A client's enquiries and quotations are joined by spelling
+  into one row. An enquiry that became a quotation counts once under Enquiries, and its
+  quotation counts only under POs won / Lost.
+- **Repeat orders** = won POs after the first one (up to the end of the period).
+- **Won value (INR)** = INR deals + FX deals × the Settings rate. It matches the INR won
+  value in the sector table plus the INR total of the FX table.
+- **Revenue months** follow the quotation date of the won order. Every month in the range
+  is listed, so a month with no orders shows zeros.
+- **Order intake** = won quotation values in INR. **Average deal** = order intake ÷ the
+  orders that have a value.
+- **PO value, Invoiced, Received, Due now** come from each won quotation's purchase order
+  (through its project). **Balance** = PO value − Received. A won order with no PO
+  registered is counted in Orders won but not in these columns, and is flagged.
+- **Money stays in its own currency** in the sector and FX tables. The client and revenue
+  tables convert to INR at the Settings rate.
 - A quotation with no date is only counted when no date range is chosen.
 
 ## Files changed

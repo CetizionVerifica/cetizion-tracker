@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
+import { isSequence, nextId } from '../lib/sequences.js';
 
 export const lookupRouter = Router();
 
@@ -31,14 +32,21 @@ lookupRouter.get('/', async (req, res) => {
       query(`SELECT po_number, project_id, client_name, po_value, currency
                FROM v_purchase_orders ORDER BY po_number DESC`),
       query('SELECT travel_id, employee_name, destination FROM travel_logs ORDER BY travel_id DESC'),
-      query(`SELECT DISTINCT sales_person AS name FROM quotations
-              WHERE sales_person IS NOT NULL ORDER BY 1`),
-      query(`SELECT DISTINCT client_name AS name FROM quotations
-              WHERE client_name IS NOT NULL ORDER BY 1`),
+      // Enquiries come first in the pipeline, so their names are offered too.
+      query(`SELECT sales_person AS name FROM quotations WHERE sales_person IS NOT NULL
+             UNION
+             SELECT sales_person FROM enquiries WHERE sales_person IS NOT NULL
+             ORDER BY 1`),
+      query(`SELECT client_name AS name FROM quotations
+             UNION
+             SELECT client_name FROM enquiries
+             ORDER BY 1`),
       // One suggestion per sector as the reports group them, in its most
       // used spelling, so the list nudges people towards that spelling.
       query(`SELECT mode() WITHIN GROUP (ORDER BY btrim(sector)) AS name
-               FROM quotations
+               FROM (SELECT sector FROM quotations
+                     UNION ALL
+                     SELECT sector FROM enquiries) s
               WHERE btrim(sector) <> ''
               GROUP BY ${nameKey('sector')}
               ORDER BY 1`),
@@ -81,6 +89,12 @@ settingsRouter.patch('/:key', async (req, res) => {
       error: { message: 'Enter a value', fields: { value: 'Required' } },
     });
   }
+  // A rate the report cannot multiply by would silently drop deals from the INR totals.
+  if (req.params.key.startsWith('fx_rate_') && !(/^\d+(\.\d+)?$/.test(value.trim()) && Number(value) > 0)) {
+    return res.status(422).json({
+      error: { message: 'Enter the INR value of 1 unit, e.g. 90.25', fields: { value: 'Enter a number above 0' } },
+    });
+  }
   const { rows } = await query(
     'UPDATE settings SET value = $1 WHERE key = $2 RETURNING key, value, notes',
     [value.trim(), req.params.key]
@@ -89,41 +103,14 @@ settingsRouter.patch('/:key', async (req, res) => {
   res.json({ data: rows[0] });
 });
 
-const SEQUENCES = {
-  quotation: { table: 'quotations', column: 'quotation_no', pattern: 'CTZ/QT/{year}/{n:3}' },
-  project: { table: 'projects', column: 'project_id', pattern: 'PRJ-{year}-{n:3}' },
-  travel: { table: 'travel_logs', column: 'travel_id', pattern: 'TRV-{year}-{n:3}' },
-  claim: { table: 'employee_expense_claims', column: 'claim_id', pattern: 'CLM-{year}-{n:3}' },
-  vendor_invoice: {
-    table: 'travel_vendor_invoices',
-    column: 'vendor_invoice_id',
-    pattern: 'VINV-{year}-{n:3}',
-  },
-};
-
 /**
  * Suggest the next reference in a series (CTZ/QT/2026/063, PRJ-2026-008).
  * Only a suggestion — the field stays editable, and uniqueness is still
  * enforced by the database.
  */
 lookupRouter.get('/next-id/:kind', async (req, res) => {
-  const spec = SEQUENCES[req.params.kind];
-  if (!spec) return res.status(404).json({ error: { message: 'Unknown id series' } });
-
-  const year = String(new Date().getFullYear());
-  const prefix = spec.pattern.replace('{year}', year).replace(/\{n:\d+\}$/, '');
-  const width = Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3);
-
-  const { rows } = await query(
-    `SELECT ${spec.column} AS value FROM ${spec.table} WHERE ${spec.column} LIKE $1`,
-    [`${prefix}%`]
-  );
-
-  const highest = rows.reduce((max, r) => {
-    const tail = String(r.value).slice(prefix.length);
-    const n = /^\d+$/.test(tail) ? Number(tail) : 0;
-    return Math.max(max, n);
-  }, 0);
-
-  res.json({ data: { next: `${prefix}${String(highest + 1).padStart(width, '0')}` } });
+  if (!isSequence(req.params.kind)) {
+    return res.status(404).json({ error: { message: 'Unknown id series' } });
+  }
+  res.json({ data: { next: await nextId(req.params.kind) } });
 });
