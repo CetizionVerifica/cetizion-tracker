@@ -12,8 +12,8 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 
 DROP TABLE IF EXISTS employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, quotations, expense_categories,
-  travel_vendors, services, settings CASCADE;
+  purchase_orders, projects, enquiries, quotations, expense_categories,
+  travel_vendors, services, settings, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -25,6 +25,14 @@ CREATE TABLE settings (
   notes       text,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- INR for 1 unit of each currency, for the sales report. Blank until set.
+INSERT INTO settings (key, value, notes) VALUES
+  ('fx_rate_EUR', '', 'INR for 1 EUR. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_USD', '', 'INR for 1 USD. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_GBP', '', 'INR for 1 GBP. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_AED', '', 'INR for 1 AED. Used to show FX deals in INR on the sales report.'),
+  ('fx_rate_SGD', '', 'INR for 1 SGD. Used to show FX deals in INR on the sales report.');
 
 CREATE TABLE services (
   id       serial PRIMARY KEY,
@@ -43,6 +51,22 @@ CREATE TABLE expense_categories (
   id     serial PRIMARY KEY,
   name   text NOT NULL UNIQUE,
   active boolean NOT NULL DEFAULT true
+);
+
+-- ---------------------------------------------------------------------
+-- Documents — the uploaded file behind a quotation or a PO. The file
+--   lives in Cloudinary; storage_key is its public_id there.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE documents (
+  id            serial PRIMARY KEY,
+  storage_key   text NOT NULL UNIQUE,
+  file_name     text NOT NULL,
+  content_type  text NOT NULL,
+  size_bytes    int  NOT NULL CHECK (size_bytes > 0),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  -- Set when removal starts; a marked document can never be attached.
+  purging_at    timestamptz
 );
 
 -- ---------------------------------------------------------------------
@@ -78,6 +102,7 @@ CREATE TABLE quotations (
   client_name        text NOT NULL,
   contact_person     text,
   service_quoted     text,
+  sector             text,
   sales_person       text,
   sales_person_email text,
   quotation_date     date,
@@ -90,12 +115,40 @@ CREATE TABLE quotations (
   project_id         text REFERENCES projects(project_id)
                        ON UPDATE CASCADE ON DELETE SET NULL,
   remarks            text,
+  document_id        int UNIQUE REFERENCES documents(id),
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON quotations (project_id);
 CREATE INDEX ON quotations (status);
+
+-- ---------------------------------------------------------------------
+-- Enquiries — logged before anything is quoted. Marking one
+-- 'Won - Quotation Sent' has the API create and link its quotation.
+-- ---------------------------------------------------------------------
+
+CREATE TABLE enquiries (
+  id                 serial PRIMARY KEY,
+  enquiry_no         text NOT NULL UNIQUE,
+  enquiry_date       date,
+  client_name        text NOT NULL,
+  sector             text,
+  contact_person     text,
+  sales_person       text,
+  sales_person_email text,
+  service            text,
+  status             text NOT NULL DEFAULT 'In Progress'
+                       CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
+  quotation_no       text REFERENCES quotations(quotation_no)
+                       ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ON enquiries (status);
+-- A quotation belongs to at most one enquiry.
+CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- Purchase orders  (PO Register) — a project may hold several
@@ -114,11 +167,16 @@ CREATE TABLE purchase_orders (
   actual_delivery_date   date,
   project_manager_email  text,
   remarks                text,
+  -- The won quotation this PO fulfils; revenue counts the PO against it, once.
+  quotation_no           text REFERENCES quotations(quotation_no)
+                           ON UPDATE CASCADE ON DELETE SET NULL,
+  document_id            int UNIQUE REFERENCES documents(id),
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON purchase_orders (project_id);
+CREATE INDEX purchase_orders_quotation_no_idx ON purchase_orders (quotation_no);
 
 -- Client name is not stored on the PO — it is read from the project,
 -- honouring the workbook's "type any fact in exactly one place" rule.
@@ -280,7 +338,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['projects','quotations','purchase_orders',
+  FOREACH t IN ARRAY ARRAY['projects','quotations','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
       'travel_vendor_invoices','employee_expense_claims','settings']
   LOOP

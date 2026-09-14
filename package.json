@@ -2,6 +2,7 @@
   "name": "cetizion-tracker",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Sales, projects, payments and travel expenses for Cetizion",
   "scripts": {
     "setup": "npm --prefix server install && npm --prefix web install && npm --prefix server run reset",

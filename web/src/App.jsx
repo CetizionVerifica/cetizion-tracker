@@ -3,7 +3,9 @@ import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 
 import Overview from './pages/Overview.jsx';
 import Worklist from './pages/Worklist.jsx';
+import Enquiries from './pages/Enquiries.jsx';
 import Quotations from './pages/Quotations.jsx';
+import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
@@ -29,7 +31,11 @@ const NAV = [
   },
   {
     label: 'Sales',
-    items: [{ to: '/quotations', icon: '◆', label: 'Quotations' }],
+    items: [
+      { to: '/enquiries', icon: '◇', label: 'Enquiries' },
+      { to: '/quotations', icon: '◆', label: 'Quotations' },
+      { to: '/sales-report', icon: '◔', label: 'Sales reports' },
+    ],
   },
   {
     label: 'Delivery',
@@ -129,7 +135,9 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
+          <Route path="/sales-report" element={<SalesReport />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/purchase-orders" element={<PurchaseOrders />} />

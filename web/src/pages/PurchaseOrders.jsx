@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Alert } from '../components/ui.jsx';
+import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, number, percent } from '../lib/format.js';
 
@@ -10,7 +10,7 @@ export default function PurchaseOrders() {
 
   const columns = [
     { key: 'po_number', header: 'PO', className: 'mono strong', render: (r) => <>{r.po_number}<div className="small muted">{date(r.po_date)}</div></> },
-    { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}<div className="small muted mono">{r.project_id}</div></> },
+    { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}<div className="small muted mono">{r.project_id}{r.quotation_no ? ` · ${r.quotation_no}` : ' · no quotation linked'}</div></> },
     { key: 'po_value', header: 'PO value', align: 'right', render: (r) => money(r.po_value, r.currency) },
     { key: 'service_count', header: 'Services', align: 'right', render: (r) => number(r.service_count) },
     {
@@ -31,11 +31,19 @@ export default function PurchaseOrders() {
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
     { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
     { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
+    { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
   ];
 
   const fields = [
     { name: 'po_number', label: 'PO number', required: true },
     { name: 'project_id', label: 'Project', required: true, type: 'select', options: lookups.projects.map((p) => ({ value: p.project_id, label: `${p.project_id} — ${p.client_name}` })) },
+    {
+      name: 'quotation_no',
+      label: 'Won quotation',
+      type: 'select',
+      options: lookups.won_quotations.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
+      hint: 'The order this PO fulfils, on the same project. Left blank, it is linked when the project has one won quotation',
+    },
     { name: 'po_date', label: 'PO date', type: 'date', hint: 'Registering the date makes advance stages invoiceable' },
     { name: 'po_value', label: 'PO value', type: 'money', required: true },
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
@@ -43,6 +51,7 @@ export default function PurchaseOrders() {
     { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
     { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Setting this makes on-delivery stages invoiceable' },
     { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+    { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 

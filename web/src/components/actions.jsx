@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
+import { invalidateLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
@@ -300,6 +301,8 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
         apply_onboarding_template: applyTemplate,
       })
     );
+    // The quotation now has a project, so it belongs in the PO forms' won-quotation lists.
+    if (ok) invalidateLookups();
     if (ok) onClose();
   };
 

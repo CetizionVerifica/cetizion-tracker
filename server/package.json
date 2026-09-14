@@ -11,11 +11,13 @@
     "test": "node --test \"test/**/*.test.js\"",
     "db:create": "node scripts/db.js create",
     "migrate": "node scripts/db.js migrate",
+    "db:upgrade": "node scripts/db.js upgrade",
     "seed": "node scripts/db.js seed",
     "seed:demo": "node scripts/db.js demo",
     "reset": "node scripts/db.js reset"
   },
   "dependencies": {
+    "cloudinary": "^2.11.0",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -24,6 +26,7 @@
     "express-rate-limit": "^8.6.2",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
+    "pdfmake": "^0.3.11",
     "pg": "^8.13.1",
     "zod": "^3.24.1"
   },

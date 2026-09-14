@@ -55,7 +55,7 @@ export function useLookups() {
       })
       .catch(() => {});
   }, []);
-  return data || { services: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], settings: {}, enums: {} };
+  return data || { services: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], sectors: [], settings: {}, quotations: [], won_quotations: [], enums: {}, limits: {} };
 }
 
 export function invalidateLookups() {

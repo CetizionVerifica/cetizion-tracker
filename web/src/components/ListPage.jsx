@@ -4,6 +4,7 @@ import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './u
 import { RecordForm } from './RecordForm.jsx';
 import { api } from '../lib/api.js';
 import { useDebounced, useList } from '../lib/hooks.js';
+import { date } from '../lib/format.js';
 
 /**
  * The standard list screen: search, filters, CSV export, create / edit /
@@ -26,13 +27,16 @@ export function ListPage({
   extraActions,
   emptyState,
   initialFilters,
+  initialSearch,
+  dateFilterLabel = 'Date',
   refreshToken,
+  onSaved,
   rowActions = true,
   canDelete = true,
   banner,
 }) {
   const toast = useToast();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch || '');
   // Arriving from a dashboard tile pre-selects the matching filter, so the
   // dropdown shows why the list is short.
   const [filterValues, setFilterValues] = useState(() => initialFilters || {});
@@ -143,6 +147,21 @@ export function ListPage({
               </select>
             ))}
 
+            {/* A date range arrives only from a report link, so show it and let it be removed. */}
+            {(filterValues.from || filterValues.to) && (
+              <span className="small nowrap">
+                {dateFilterLabel}: {filterValues.from ? date(filterValues.from) : 'start'} – {filterValues.to ? date(filterValues.to) : 'today'}
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  aria-label="Remove date filter"
+                  onClick={() => setFilterValues(({ from, to, ...rest }) => rest)}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+
             {(search || Object.keys(filterValues).length > 0) && (
               <button
                 type="button"
@@ -203,7 +222,10 @@ export function ListPage({
           fields={typeof fields === 'function' ? fields(editing === 'new' ? null : editing) : fields}
           record={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
-          onSaved={refetch}
+          onSaved={(saved) => {
+            refetch();
+            onSaved?.(saved, editing === 'new' ? null : editing);
+          }}
         />
       )}
 
