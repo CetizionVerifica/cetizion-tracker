@@ -4,16 +4,20 @@
  *
  *   npm run db:create   create the database if it is not there yet
  *   npm run migrate     apply schema.sql then views.sql  (drops + rebuilds)
- *   npm run db:upgrade  apply db/migrations then views.sql  (keeps all data)
+ *   npm run db:upgrade  apply pending db/migrations, then views.sql if needed  (keeps all data)
  *   npm run seed        load db/seed.sql  (the real workbook data)
  *   npm run seed:demo   load db/demo.sql  (the workbook's worked example)
  *   npm run reset       create + migrate + seed, in that order
+ *
+ * In production db:upgrade needs no one to run it: the container does it
+ * before the API starts (src/start.js).
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { config } from '../src/config.js';
+import { markMigrationsApplied, runMigrations } from '../src/migrations.js';
 
 const dbDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 
@@ -67,16 +71,12 @@ const commands = {
   migrate: async () => {
     await run('schema.sql');
     await run('views.sql');
+    // schema.sql already holds every migration, so none may run on top of it.
+    await markMigrationsApplied({ connectionString: config.databaseUrl });
+    console.log('✓ migrations recorded as applied');
   },
-  // For a database that already holds real data. Every migration file is
-  // written to be safe to re-run, and views.sql only rebuilds views.
-  upgrade: async () => {
-    const files = readdirSync(join(dbDir, 'migrations'))
-      .filter((file) => file.endsWith('.sql'))
-      .sort();
-    for (const file of files) await run(join('migrations', file));
-    await run('views.sql');
-  },
+  // For a database that already holds real data: only what has not run yet.
+  upgrade: () => runMigrations({ connectionString: config.databaseUrl }),
   seed: () => run('seed.sql'),
   demo: () => run('demo.sql'),
   reset: async () => {

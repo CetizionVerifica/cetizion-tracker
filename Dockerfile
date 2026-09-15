@@ -37,7 +37,9 @@ COPY --from=web /build/dist ./web/dist
 USER node
 EXPOSE 4000
 
-# `npm run migrate` drops every table, so it is deliberately not run here.
-# The schema is applied once, by hand, against the database.
+# start.js applies any pending db/migrations (and views.sql when needed),
+# then starts the API; a failed migration stops the container instead.
+# `npm run migrate` drops every table, so it is never run here. A brand-new
+# database still gets schema.sql once, by hand, before the first deploy.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "server/src/index.js"]
+CMD ["node", "server/src/start.js"]
