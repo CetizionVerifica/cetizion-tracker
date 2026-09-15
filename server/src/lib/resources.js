@@ -177,6 +177,7 @@ export const resources = {
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
     filters: ['project_id', 'payment_status', 'client_name', 'quotation_no'],
+    dateFilter: 'po_date',
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',

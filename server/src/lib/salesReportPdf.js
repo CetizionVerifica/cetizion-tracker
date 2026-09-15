@@ -1,12 +1,20 @@
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import pdfmake from 'pdfmake';
+import { amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
+import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
+import {
+  clientAnalysis, enquiryAnalysis, headline, inrValue, managementFixes, quotationStatusAnalysis, revenueAnalysis,
+  sectorAnalysis, serviceAnalysis,
+} from './salesReviewAnalysis.js';
 
 /**
- * The whole sales report as one A4 landscape PDF, built on the server from
- * the same report data the page and the CSV downloads use, so the numbers
- * cannot disagree. Nothing is stored and no outside service is involved.
+ * The Sales & Enquiry Performance Review: an A4 portrait management report
+ * with charts and a written analysis, built on the server from the same data
+ * as the Sales reports page. Nothing is stored and no outside service is used.
  */
+
+export { money };
 
 const require = createRequire(import.meta.url);
 const ROBOTO = require('pdfmake/fonts/Roboto.js');
@@ -18,44 +26,33 @@ pdfmake.setFonts(ROBOTO);
 pdfmake.setUrlAccessPolicy(() => false);
 pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
 
-// The app's palette (web/src/styles.css).
-const BRAND_700 = '#0f766e';
-const BRAND_600 = '#0d9488';
-const BRAND_200 = '#99f6e4';
-const BRAND_100 = '#ccfbf1';
-const BRAND_50 = '#f0fdfa';
+const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
 const INK_900 = '#0f172a';
 const INK_700 = '#334155';
 const INK_500 = '#64748b';
 const INK_200 = '#e2e8f0';
-const INK_100 = '#f1f5f9';
 const INK_50 = '#f8fafc';
-const WARN_BG = '#fffbeb';
+const NAVY_50 = '#eef2f8';
 const WARN_FG = '#b45309';
-const WARN_BR = '#fde68a';
+const TONES = {
+  good: { bar: GREEN, fg: GREEN, bg: '#eef6f1' },
+  watch: { bar: GOLD, fg: '#8a6414', bg: '#fbf6e9' },
+  risk: { bar: RED, fg: RED, bg: '#fbefec' },
+  action: { bar: BLUE, fg: BLUE, bg: '#edf3f9' },
+  note: { bar: INK_500, fg: INK_700, bg: INK_50 },
+};
 
-const PAGE_WIDTH = 841.89 - 72; // A4 landscape less the side margins
+const MARGIN_X = 42;
+const W = Math.floor(595.28 - MARGIN_X * 2); // A4 portrait less the side margins
 const WON = 'Won - PO Received';
-
-// ---------------------------------------------------------------------
-// Formatting — the same conventions as the web app
-// ---------------------------------------------------------------------
-
-const SYMBOL = { INR: '₹', EUR: '€', USD: '$', GBP: '£', AED: 'AED ', SGD: 'S$' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** Indian grouping for rupees, western grouping for everything else. */
-export function money(value, currency = 'INR') {
-  if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
-  const n = Number(value);
-  const locale = currency === 'INR' ? 'en-IN' : 'en-US';
-  const digits = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.abs(n));
-  return `${n < 0 ? '-' : ''}${SYMBOL[currency] ?? `${currency} `}${digits}`;
-}
+const r2 = (n) => Math.round(n * 100) / 100;
+const share = (part, whole) => (whole > 0 ? part / whole : null);
 
-const number = (value) => (value === null || value === undefined ? '—' : new Intl.NumberFormat('en-IN').format(Number(value)));
-const percent = (value) => (value === null || value === undefined ? '—' : `${Math.round(Number(value) * 100)}%`);
-const amounts = (list) => (list?.length ? list.map((a) => money(a.amount, a.currency)).join(' · ') : '—');
+// ---------------------------------------------------------------------
+// Dates
+// ---------------------------------------------------------------------
 
 function dateLabel(value) {
   if (!value) return '—';
@@ -91,6 +88,25 @@ function generatedStamp(date, timeZone) {
   return `${parts.day} ${MONTHS[Number(parts.month) - 1]} ${parts.year}, ${parts.hour}:${parts.minute} (${timeZone})`;
 }
 
+const dateIn = (date, timeZone) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+
+/** Days in a month, leap years included. */
+function daysInMonth(year, month) {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][Number(month) - 1];
+}
+
+/** "Sep" when every month is in one year, "Sep ’26" otherwise. */
+function shortMonths(months) {
+  const years = new Set(months.filter((m) => m.month).map((m) => m.month.slice(0, 4)));
+  return months.map((m) => {
+    if (!m.month) return 'No date';
+    const name = MONTHS[Number(m.month.slice(5, 7)) - 1];
+    return years.size <= 1 ? name : `${name} ’${m.month.slice(2, 4)}`;
+  });
+}
+
 // ---------------------------------------------------------------------
 // Building blocks
 // ---------------------------------------------------------------------
@@ -98,8 +114,8 @@ function generatedStamp(date, timeZone) {
 const TABLE_LAYOUT = {
   hLineWidth: (i, node) => (i === 0 || i === node.table.body.length ? 0 : i === node.table.headerRows ? 0.8 : 0.4),
   vLineWidth: () => 0,
-  hLineColor: (i, node) => (i === node.table.headerRows ? BRAND_700 : INK_200),
-  fillColor: (row, node) => (row < node.table.headerRows ? BRAND_700 : row % 2 === 0 ? INK_50 : null),
+  hLineColor: (i, node) => (i === node.table.headerRows ? NAVY : INK_200),
+  fillColor: (row, node) => (row < node.table.headerRows ? NAVY : row % 2 === 0 ? INK_50 : null),
   paddingLeft: () => 5,
   paddingRight: () => 5,
   paddingTop: () => 3.5,
@@ -115,11 +131,11 @@ const lines = (main, ...notes) => {
 };
 
 /**
- * A report table: brand header, zebra rows, right-aligned figures, and an
+ * A report table: navy header, zebra rows, right-aligned figures and an
  * optional bold Total row. column.value(row) and column.total(total) return
  * a string or a pdfmake node.
  */
-function reportTable({ columns, rows, total, empty, fontSize = 8, compact = false }) {
+function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact = false }) {
   if (!rows.length) return { text: empty, style: 'empty' };
   const cell = (content, col) =>
     content !== null && typeof content === 'object'
@@ -132,83 +148,100 @@ function reportTable({ columns, rows, total, empty, fontSize = 8, compact = fals
   ];
   if (total) {
     body.push(columns.map((col, i) => ({
-      ...cell(i === 0 ? 'Total' : col.total ? col.total(total) : '', col),
+      ...cell(i === 0 ? (col.totalLabel ?? 'Total') : col.total ? col.total(total) : '', col),
       bold: true,
-      fillColor: BRAND_50,
+      fillColor: NAVY_50,
     })));
   }
   return {
     table: { headerRows: 1, dontBreakRows: true, widths: columns.map((col) => col.width ?? '*'), body },
-    // Wide tables trade cell padding for column width so they fit the page.
     layout: compact ? { ...TABLE_LAYOUT, paddingLeft: () => 3, paddingRight: () => 3 } : TABLE_LAYOUT,
     fontSize,
   };
 }
 
-function sectionHeading(numberLabel, title, lead) {
-  return [
-    { text: [{ text: `${numberLabel}   `, color: BRAND_600 }, title], style: 'h1' },
-    { canvas: [{ type: 'line', x1: 0, y1: 0, x2: PAGE_WIDTH, y2: 0, lineWidth: 1.2, lineColor: BRAND_200 }], margin: [0, 3, 0, 4] },
-    lead ? { text: lead, style: 'lead' } : null,
-  ].filter(Boolean);
+const rule = (margin = [0, 3, 0, 7]) => ({
+  canvas: [{ type: 'line', x1: 0, y1: 0, x2: W, y2: 0, lineWidth: 0.8, lineColor: INK_200 }],
+  margin,
+});
+
+/** A numbered section. Its heading, lead and first block stay on one page. */
+function section(no, title, lead, first = []) {
+  return {
+    stack: [
+      { text: [{ text: `${no}.`, color: BLUE }, `  ${title}`], style: 'h1' },
+      rule(),
+      lead ? { text: lead, style: 'body' } : null,
+      ...first,
+    ].filter(Boolean),
+    unbreakable: true,
+    margin: [0, 16, 0, 0],
+  };
 }
 
 /** Keep a sub-heading on the same page as a short table under it. */
-function subsection(title, lead, table, rowCount) {
-  const block = [{ text: title, style: 'h2' }, lead ? { text: lead, style: 'lead' } : null, table].filter(Boolean);
+function subsection(title, lead, content, rowCount) {
+  const block = [{ text: title, style: 'h2' }, lead ? { text: lead, style: 'lead' } : null, content].filter(Boolean);
   return rowCount <= 14 ? { stack: block, unbreakable: true } : { stack: block };
 }
 
-function kpiCard(label, value, meta) {
+function figure(no, caption, chart, emptyText) {
+  if (!chart) return { text: emptyText, style: 'empty' };
+  return {
+    stack: [{ svg: chart.svg, width: chart.width }, { text: `Figure ${no} — ${caption}`, style: 'caption' }],
+    unbreakable: true,
+    margin: [0, 4, 0, 8],
+  };
+}
+
+/** A coloured analysis box: TAG and the finding, as in a management review. */
+function callout({ tag, tone, text }) {
+  const c = TONES[tone] ?? TONES.note;
   return {
     table: {
       widths: ['*'],
       body: [[{
-        stack: [
-          { text: label.toUpperCase(), style: 'kpiLabel' },
-          { text: value, style: 'kpiValue' },
-          { text: meta, style: 'kpiMeta' },
-        ],
-        margin: [9, 7, 9, 7],
+        text: [{ text: `${tag}   `, bold: true, color: c.fg, fontSize: 7.5, characterSpacing: 0.5 }, { text, color: INK_900 }],
+        fillColor: c.bg,
+        margin: [10, 6, 10, 6],
+        fontSize: 8.5,
+        lineHeight: 1.3,
       }]],
     },
     layout: {
-      hLineWidth: () => 0.6,
-      vLineWidth: (i) => (i === 0 ? 3 : 0.6),
-      hLineColor: () => INK_200,
-      vLineColor: (i) => (i === 0 ? BRAND_600 : INK_200),
+      hLineWidth: () => 0,
+      vLineWidth: (i) => (i === 0 ? 3 : 0),
+      vLineColor: () => c.bar,
       paddingLeft: () => 0,
       paddingRight: () => 0,
       paddingTop: () => 0,
       paddingBottom: () => 0,
     },
+    unbreakable: true,
+    margin: [0, 0, 0, 6],
   };
 }
 
-function sectorBars(rows) {
-  const won = rows.filter((row) => row.pos > 0);
-  if (!won.length) return { text: 'No won POs in this period.', style: 'empty' };
-  const width = 190;
-  const max = Math.max(...won.map((row) => row.pos));
+const insightsBlock = (insights) => (insights.length ? { stack: insights.map(callout), margin: [0, 2, 0, 0] } : null);
+
+/** A two-column "Measure | Value" table. */
+const measureTable = (rows) =>
+  reportTable({
+    columns: [
+      { header: 'Measure', value: (r) => r[0] },
+      { header: 'Value', value: (r) => r[1], align: 'right', width: 90 },
+    ],
+    rows,
+  });
+
+function tile(value, label, meta) {
   return {
-    stack: won.map((row) => ({
-      stack: [
-        {
-          columns: [
-            { text: row.sector, width: '*', bold: true },
-            { text: `${row.pos} PO${row.pos === 1 ? '' : 's'} · ${row.customers} client${row.customers === 1 ? '' : 's'}`, width: 'auto', color: INK_500 },
-          ],
-          fontSize: 7.5,
-        },
-        {
-          canvas: [
-            { type: 'rect', x: 0, y: 0, w: width, h: 6, r: 3, color: INK_100 },
-            { type: 'rect', x: 0, y: 0, w: Math.max(3, (width * row.pos) / max), h: 6, r: 3, color: BRAND_600 },
-          ],
-          margin: [0, 2, 0, 7],
-        },
-      ],
-    })),
+    stack: [
+      { text: value, style: 'tileValue' },
+      { text: label, style: 'tileLabel' },
+      meta ? { text: meta, style: 'tileMeta' } : null,
+    ].filter(Boolean),
+    margin: [10, 8, 10, 8],
   };
 }
 
@@ -218,383 +251,628 @@ function sectorBars(rows) {
 
 export function salesReportDocDefinition(data) {
   const {
-    period = {}, year, filters = {}, sectors, customers, fx, revenue,
-    generatedAt = new Date(), timeZone = 'UTC',
+    period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
+    rates = { INR: 1 }, generatedAt = new Date(), timeZone = 'UTC',
   } = data;
 
   const stamp = generatedStamp(generatedAt, timeZone);
+  const today = dateIn(generatedAt, timeZone);
   const periodText = periodLabel(period);
-  const filterText = [
-    filters.sector ? `Sector: ${filters.sector === '__none__' ? 'Not set' : filters.sector}` : null,
-    filters.sales_person ? `Sales person: ${filters.sales_person}` : null,
-  ].filter(Boolean).join(' · ') || 'None';
+  // For use inside a sentence: "Sections 1–5 cover all dates."
+  const periodPhrase = period.from || period.to ? periodText : 'all dates';
+  // The revenue section covers a calendar year, or one month of it.
+  const revenueLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
+  const revenueScope = month ? revenueLabel : `calendar year ${year}`;
+  const revenueFrom = month ? `${year}-${month}-01` : `${year}-01-01`;
+  const revenueTo = month ? `${year}-${month}-${String(daysInMonth(year, month)).padStart(2, '0')}` : `${year}-12-31`;
+  const samePeriods = period.from === revenueFrom && period.to === revenueTo;
+
+  // Sector won value in INR, at the same Settings rates as everything else.
+  const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: row.pos + row.lost + row.pipeline, ...inrValue(row.amounts, rates) }));
+  const sectorTotal = {
+    ...sectors.summary,
+    quotations: sectors.summary.pos + sectors.summary.lost + sectors.summary.pipeline,
+    ...inrValue(sectors.summary.amounts, rates),
+  };
 
   // Exchange rates the figures used, and any currency left unconverted.
-  const rates = new Map();
-  for (const row of [...fx.rows, ...revenue.rows]) {
-    if (row.currency !== 'INR' && !rates.has(row.currency)) rates.set(row.currency, row.rate);
-  }
+  const used = new Set([
+    ...sectors.summary.amounts.map((a) => a.currency),
+    ...(revenue.rates ?? []).map((r) => r.currency),
+  ]);
+  used.delete('INR');
   const missingRates = [...new Set([
     ...fx.summary.missing_rates,
+    ...sectorTotal.unconverted.map((a) => a.currency),
     ...customers.summary.total.unconverted.map((a) => a.currency),
-    ...revenue.total.order_unconverted.map((a) => a.currency),
-    ...revenue.total.po_missing_rates,
+    ...revenue.orders.total.order_unconverted.map((a) => a.currency),
+    ...revenue.invoicing.total.missing_rates,
   ])].sort();
-  const ratesText = rates.size
-    ? [...rates].sort(([a], [b]) => a.localeCompare(b)).map(([currency, rate]) =>
-        rate === null ? `${currency}: not set` : `1 ${currency} = ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 }).format(rate)}`
+  const ratesText = used.size
+    ? [...used].sort().map((currency) =>
+        rates[currency] ? `1 ${currency} = ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 }).format(rates[currency])}` : `${currency}: not set`
       ).join('   ·   ')
     : 'Not needed — every amount in this report is in INR';
 
-  const t = customers.summary.total;
-  const rt = revenue.total;
+  // ------------------------------------------------------------ analysis
+  const eA = enquiryAnalysis(enquiries, today);
+  const qA = quotationStatusAnalysis(quotationStatus);
+  const sA = sectorAnalysis(sectors, sectorRows);
+  const vA = serviceAnalysis(services);
+  const kA = clientAnalysis(customers);
+  const rA = revenueAnalysis(revenue, revenueLabel);
+  const head = headline({ enquiries, sectors, customers, revenue, revenueLabel, priority: rA.priority });
+  const fixes = managementFixes({ gaps, sectors, services, revenue, missingRates });
 
-  // ------------------------------------------------------------ warnings
-  const warnings = [];
-  if (sectors.summary.pos_without_sector > 0) {
-    warnings.push(`${sectors.summary.pos_without_sector} of ${sectors.summary.pos} won POs have no sector, so they are shown under "Not set".`);
-  }
-  if (missingRates.length) {
-    warnings.push(`No exchange rate is set for ${missingRates.join(', ')}. Those amounts are left out of the INR figures and shown next to them instead.`);
-  }
-  if (rt.not_registered > 0) {
-    const withProject = rt.not_registered - rt.no_project;
-    warnings.push(
-      `No PO linked yet for ${rt.not_registered} of ${rt.orders_won} won orders in ${year}` +
-      ` (${rt.no_project} without a project, ${withProject} with a project but no linked PO).` +
-      ' Their PO value, invoiced and received are not in the invoicing figures yet.'
-    );
-  }
-  const unlinked = revenue.unlinked_pos ?? [];
-  if (unlinked.length) {
-    warnings.push(
-      `${unlinked.length} purchase order${unlinked.length === 1 ? ' is' : 's are'} not linked to a won quotation, so revenue` +
-      ` does not count ${unlinked.length === 1 ? 'it' : 'them'}: ${unlinked.map((po) => po.po_number).join(', ')}.`
-    );
-  }
+  const et = enquiries.total;
+  const ct = customers.summary.total;
+  const p = revenue.invoicing.total;
+  const overdue = revenue.payment_status.rows.find((row) => row.status === 'Overdue')?.pos ?? 0;
 
   // ------------------------------------------------------------- page 1
+  const findings = [eA, qA, sA, vA, kA, rA].map((a) => a.insights.find((i) => i.tone !== 'note')).filter(Boolean);
+  if (fixes.length) {
+    findings.push({
+      tag: 'DATA GAPS',
+      tone: 'watch',
+      text: `${plural(fixes.length, 'gap')} in the source data limit${fixes.length === 1 ? 's' : ''} this report; section 7 lists what to fix.`,
+    });
+  }
+
   const cover = [
     {
       table: {
-        widths: ['*', 'auto'],
-        body: [[
-          {
-            stack: [
-              { text: 'CETIZION', style: 'brandTag' },
-              { text: 'Sales Report', style: 'title' },
-              { text: 'Sales performance, clients and revenue', style: 'subtitle' },
-            ],
-            fillColor: BRAND_700,
-            margin: [18, 16, 0, 16],
-          },
-          {
-            stack: [
-              { text: 'SALES PERIOD', style: 'brandTag', alignment: 'right' },
-              { text: periodText, color: '#ffffff', fontSize: 11, bold: true, alignment: 'right', margin: [0, 2, 0, 6] },
-              { text: 'REVENUE YEAR', style: 'brandTag', alignment: 'right' },
-              { text: String(year), color: '#ffffff', fontSize: 11, bold: true, alignment: 'right', margin: [0, 2, 0, 0] },
-            ],
-            fillColor: BRAND_700,
-            margin: [0, 16, 18, 16],
-          },
-        ]],
+        widths: ['*'],
+        body: [[{
+          stack: [
+            { text: 'CETIZION VERIFICA PRIVATE LIMITED', style: 'brandTag' },
+            { text: 'Sales & Enquiry Performance Review', style: 'title' },
+            { text: `Sales period: ${periodText}     |     Revenue: ${month ? revenueLabel : `Calendar year ${year}`}`, style: 'subtitle' },
+          ],
+          fillColor: NAVY,
+          margin: [18, 16, 18, 16],
+        }]],
       },
       layout: 'noBorders',
     },
     {
+      text: `Prepared ${stamp}  ·  Source: Enquiries page (${plural(et.enquiries, 'enquiry', 'enquiries')}), quotation register ` +
+        `(${plural(sectorTotal.quotations, 'quotation')}) and purchase-order register (${plural(p.pos, 'PO')} dated in ${revenueLabel})`,
+      style: 'small',
+      margin: [0, 6, 0, 0],
+    },
+    { text: 'AT A GLANCE', style: 'kicker' },
+    {
       table: {
-        widths: [78, '*', 78, '*'],
+        widths: ['*', '*', '*'],
         body: [
-          [{ text: 'Generated', style: 'paramKey' }, { text: stamp, style: 'paramValue' },
-            { text: 'Revenue filters', style: 'paramKey' }, { text: filterText, style: 'paramValue' }],
-          [{ text: 'Exchange rates', style: 'paramKey' }, { text: ratesText, style: 'paramValue', colSpan: 3 }, {}, {}],
+          [
+            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} declined`),
+            tile(number(sectors.summary.pos), 'POs won', `Win rate ${percent(sectors.summary.win_rate)} on decided quotations`),
+            tile(compactInr(ct.won_value_inr), 'Won value (INR)', ct.unconverted.length ? `+ ${amounts(ct.unconverted)} without a rate` : `${plural(ct.clients, 'client')}`),
+          ],
+          [
+            tile(compactInr(p.invoiced_inr), `Invoiced · ${revenueLabel}`, `${percent(p.invoiced_rate)} of ${compactInr(p.po_value_inr)} PO value`),
+            tile(compactInr(p.received_inr), `Cash received · ${revenueLabel}`, `${percent(p.collection_rate)} of invoiced`),
+            tile(compactInr(p.due_now_inr), `Due now · ${revenueLabel}`, `${plural(overdue, 'PO')} overdue`),
+          ],
         ],
       },
       layout: {
-        hLineWidth: (i, node) => (i === node.table.body.length ? 0.6 : 0),
-        vLineWidth: () => 0,
+        hLineWidth: () => 0.6,
+        vLineWidth: () => 0.6,
         hLineColor: () => INK_200,
-        paddingTop: () => 4,
-        paddingBottom: () => 4,
-        paddingLeft: () => 2,
+        vLineColor: () => INK_200,
+        fillColor: () => '#f7f9fc',
+        paddingLeft: () => 0,
+        paddingRight: () => 0,
+        paddingTop: () => 0,
+        paddingBottom: () => 0,
       },
-      margin: [0, 8, 0, 12],
+      margin: [0, 0, 0, 10],
     },
-    {
-      columns: [
-        kpiCard('Won POs', number(sectors.summary.pos), `Win rate ${percent(sectors.summary.win_rate)} · ${number(sectors.summary.lost)} lost`),
-        kpiCard(
-          'Won value (INR)',
-          money(t.won_value_inr),
-          t.unconverted.length ? `+ ${amounts(t.unconverted)} without a rate` : fx.rows.length ? 'FX deals converted at the rates above' : 'All deals in INR'
-        ),
-        kpiCard('Pipeline', number(sectors.summary.pipeline), 'Open quotations'),
-        kpiCard('Clients', number(t.clients), `${number(customers.summary.repeat.clients)} repeat · ${number(customers.summary.single.clients)} single enquiry`),
-        kpiCard(`Order intake ${year}`, money(rt.order_intake_inr), `${number(rt.orders_won)} orders · average ${money(rt.average_deal_inr)}`),
-      ],
-      columnGap: 8,
-    },
-    warnings.length
+    callout(head),
+    samePeriods
+      ? null
+      : callout({
+          tag: 'PLEASE NOTE',
+          tone: 'note',
+          text: `Sections 1–5 cover ${periodPhrase}. Section 6 covers ${revenueScope}, the year and month chosen in the Revenue section of the Sales reports page.`,
+        }),
+    { text: 'KEY FINDINGS', style: 'kicker' },
+    findings.length
       ? {
           table: {
-            widths: ['*'],
-            body: [[{
-              stack: [
-                { text: 'Needs attention', bold: true, color: WARN_FG, fontSize: 8.5, margin: [0, 0, 0, 3] },
-                { ul: warnings, fontSize: 8, color: INK_700 },
-              ],
-              fillColor: WARN_BG,
-              margin: [10, 7, 10, 7],
-            }]],
+            widths: [96, '*'],
+            body: findings.map((f) => [
+              { text: f.tag, bold: true, fontSize: 7.5, color: (TONES[f.tone] ?? TONES.note).fg, characterSpacing: 0.4, margin: [0, 1, 0, 0] },
+              { text: f.text, fontSize: 8.5, lineHeight: 1.3, color: INK_900 },
+            ]),
           },
-          layout: { hLineWidth: () => 0.6, vLineWidth: () => 0.6, hLineColor: () => WARN_BR, vLineColor: () => WARN_BR },
-          margin: [0, 12, 0, 0],
+          layout: {
+            hLineWidth: (i, node) => (i === 0 || i === node.table.body.length ? 0 : 0.4),
+            vLineWidth: () => 0,
+            hLineColor: () => INK_200,
+            paddingLeft: () => 0,
+            paddingRight: () => 6,
+            paddingTop: () => 5,
+            paddingBottom: () => 5,
+          },
         }
-      : null,
-  ].filter(Boolean);
-
-  // ------------------------------------------------ 1. sector-wise POs
-  const sectorSection = [
-    { text: '', margin: [0, 14, 0, 0] },
-    ...sectionHeading('1', 'Sector-wise POs', `${periodText} · enquiries by enquiry date, everything else by quotation date · won value in each deal's own currency`),
+      : { text: 'There is not enough activity in this period for findings.', style: 'empty' },
+    { text: 'IN THIS REPORT', style: 'kicker' },
     {
       columns: [
+        { ol: ['Enquiry volume', 'Quotation status', 'Sector-wise performance', 'Service-wise sales'], style: 'small' },
         {
-          width: '*',
-          stack: [reportTable({
-            columns: [
-              { header: 'Sector', value: (r) => r.sector, width: '*' },
-              { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 48 },
-              { header: 'POs won', value: (r) => number(r.pos), total: (s) => number(s.pos), align: 'right', width: 44 },
-              { header: 'Lost', value: (r) => number(r.lost), total: (s) => number(s.lost), align: 'right', width: 32 },
-              { header: 'Pipeline', value: (r) => number(r.pipeline), total: (s) => number(s.pipeline), align: 'right', width: 42 },
-              { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 36 },
-              { header: 'Won value', value: (r) => amounts(r.amounts), total: (s) => amounts(s.amounts), align: 'right', width: 150 },
-              { header: 'FX deals', value: (r) => number(r.fx_deals), total: (s) => number(s.fx_deals), align: 'right', width: 40 },
-            ],
-            rows: sectors.rows,
-            total: sectors.summary,
-            empty: 'No enquiries or quotations in this period.',
-          })],
-        },
-        {
-          width: 200,
-          stack: [{ text: 'POs by sector', style: 'h2', margin: [0, 0, 0, 6] }, sectorBars(sectors.rows)],
-        },
-      ],
-      columnGap: 18,
-    },
-  ];
-
-  // ---------------------------------------------------- 2. FX deals
-  const fxSection = [
-    ...sectionHeading('2', 'FX deals', `${periodText} · won POs billed in a currency other than INR · INR value = won value × the exchange rate above`),
-    reportTable({
-      columns: [
-        { header: 'Client', value: (r) => lines(r.customer, note(r.quotation_nos)), width: '*' },
-        { header: 'Sector', value: (r) => r.sector, width: 110 },
-        { header: 'Currency', value: (r) => r.currency, width: 48 },
-        { header: 'Won POs', value: (r) => number(r.deals), total: (s) => number(s.deals), align: 'right', width: 46 },
-        {
-          header: 'Won value',
-          value: (r) => lines(money(r.amount, r.currency), r.deals_without_value > 0 ? note(`${r.deals_without_value} with no value`) : null),
-          total: (s) => amounts(s.amounts),
-          align: 'right',
-          width: 110,
-        },
-        { header: 'Rate', value: (r) => (r.rate === null ? 'Not set' : `₹${r.rate} / ${r.currency}`), align: 'right', width: 80 },
-        {
-          header: 'Won value (INR)',
-          value: (r) => (r.amount_inr === null ? 'Rate not set' : money(r.amount_inr)),
-          total: (s) => lines(money(s.amount_inr), s.missing_rates.length ? note(`excludes ${s.missing_rates.join(', ')}`, 'warnNote') : null),
-          align: 'right',
-          width: 100,
-        },
-      ],
-      rows: fx.rows,
-      total: fx.summary,
-      empty: 'No FX deals in this period: every won PO is in INR.',
-    }),
-  ];
-
-  // ------------------------------------------------ 3. client analysis
-  const clientColumns = [
-    { header: 'Client group', value: (r) => r.client, width: '*' },
-    { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 60 },
-    { header: 'POs won', value: (r) => number(r.pos), total: (s) => number(s.pos), align: 'right', width: 60 },
-    { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 60 },
-    {
-      header: 'Won value (INR)',
-      value: (r) => lines(money(r.won_value_inr), r.unconverted.length ? note(`+ ${amounts(r.unconverted)} (rate not set)`, 'warnNote') : null),
-      total: (s) => lines(money(s.won_value_inr), s.unconverted.length ? note(`+ ${amounts(s.unconverted)} (rate not set)`, 'warnNote') : null),
-      align: 'right',
-      width: 150,
-    },
-    { header: 'Repeat orders', value: (r) => number(r.repeat_orders), total: (s) => number(s.repeat_orders), align: 'right', width: 70 },
-  ];
-  const repeatRows = customers.rows.filter((row) => row.pos_to_date >= 2);
-  const singleRows = customers.rows.filter((row) => row.pos_to_date < 2);
-
-  const clientSection = [
-    ...sectionHeading('3', 'Client analysis', `${periodText} · each client counted once · repeat = 2 or more won POs up to the end of the period · repeat orders = won POs after the first`),
-    subsection(
-      `Repeat clients (${repeatRows.length})`,
-      null,
-      reportTable({ columns: clientColumns, rows: repeatRows, total: customers.summary.repeat, empty: 'No repeat clients in this period.' }),
-      repeatRows.length
-    ),
-    subsection(
-      `Single enquiry clients (${singleRows.length})`,
-      'Every other client: one won PO, quoted but not won yet, or only on the Enquiries page',
-      reportTable({ columns: clientColumns, rows: singleRows, total: customers.summary.single, empty: 'No single enquiry clients in this period.' }),
-      singleRows.length
-    ),
-    subsection(
-      'Client summary',
-      null,
-      reportTable({
-        columns: [
-          { header: 'Client type', value: (r) => r.label, width: '*' },
-          { header: 'Clients', value: (r) => number(r.clients), total: (s) => number(s.clients), align: 'right', width: 60 },
-          ...clientColumns.slice(1),
-        ],
-        rows: [
-          { label: 'Repeat clients', ...customers.summary.repeat },
-          { label: 'Single enquiry clients', ...customers.summary.single },
-        ],
-        total: t,
-        empty: '',
-      }),
-      3
-    ),
-  ];
-
-  // -------------------------------------------------------- 4. revenue
-  const monthRows = revenue.months;
-  const revenueSection = [
-    ...sectionHeading('4', `Revenue ${year}`, `Calendar year ${year} · orders by their won quotation's date · filters: ${filterText}`),
-    {
-      columns: [
-        {
-          width: 290,
           stack: [
-            { text: 'Order intake by month', style: 'h2', margin: [0, 0, 0, 4] },
-            reportTable({
-              columns: [
-                { header: 'Month', value: (r) => r.label, width: 52 },
-                { header: 'Orders won', value: (r) => number(r.orders_won), total: (s) => number(s.orders_won), align: 'right', width: 44 },
-                {
-                  header: 'Order intake (INR)',
-                  value: (r) => lines(money(r.order_intake_inr), r.order_unconverted.length ? note(`+ ${amounts(r.order_unconverted)}`, 'warnNote') : null),
-                  total: (s) => lines(money(s.order_intake_inr), s.order_unconverted.length ? note(`+ ${amounts(s.order_unconverted)}`, 'warnNote') : null),
-                  align: 'right',
-                  width: '*',
-                },
-                { header: 'Average deal (INR)', value: (r) => money(r.average_deal_inr), total: (s) => money(s.average_deal_inr), align: 'right', width: 68 },
-              ],
-              rows: monthRows,
-              total: rt,
-              empty: `No months in ${year}.`,
-            }),
-          ],
-        },
-        {
-          width: '*',
-          stack: [
-            { text: 'Invoicing & collections by month', style: 'h2', margin: [0, 0, 0, 4] },
-            reportTable({
-              columns: [
-                { header: 'Month', value: (r) => r.label, width: 48 },
-                {
-                  header: 'POs',
-                  value: (r) => lines(number(r.pos), r.not_registered > 0 ? note(`${r.not_registered} without PO`, 'warnNote') : null),
-                  total: (s) => lines(number(s.pos), s.not_registered > 0 ? note(`${s.not_registered} without PO`, 'warnNote') : null),
-                  align: 'right',
-                  width: 50,
-                },
-                { header: 'PO value (INR)', value: (r) => money(r.po_value_inr), total: (s) => money(s.po_value_inr), align: 'right', width: '*' },
-                { header: 'Invoiced (INR)', value: (r) => money(r.invoiced_inr), total: (s) => money(s.invoiced_inr), align: 'right', width: '*' },
-                { header: 'Received (INR)', value: (r) => money(r.received_inr), total: (s) => money(s.received_inr), align: 'right', width: '*' },
-                { header: 'Due now (INR)', value: (r) => money(r.due_now_inr), total: (s) => money(s.due_now_inr), align: 'right', width: '*' },
-                { header: 'Balance (INR)', value: (r) => money(r.balance_inr), total: (s) => money(s.balance_inr), align: 'right', width: '*' },
-              ],
-              rows: monthRows,
-              total: rt,
-              empty: `No months in ${year}.`,
-            }),
+            { ol: ['Client analysis', 'Revenue and collections', 'What management needs to fix'], start: 5, style: 'small' },
+            { text: 'Appendix: FX deals, client lists, notes and definitions', style: 'small', margin: [12, 0, 0, 0] },
           ],
         },
       ],
       columnGap: 14,
     },
-    {
-      stack: [
-        { text: `Orders won in ${year} (${revenue.rows.length})`, style: 'h2', margin: [0, 14, 0, 2] },
-        { text: 'PO value, invoiced, received and balance come from each order\'s purchase order · Balance = PO value − received', style: 'lead' },
-        reportTable({
-          fontSize: 7,
-          compact: true,
-          // 12 columns with 3pt padding each side leave 698pt; the fixed
-          // widths below take 578 and Client takes the rest.
-          columns: [
-            { header: 'Date', value: (r) => dateLabel(r.quotation_date), width: 44 },
-            { header: 'Quotation', value: (r) => r.quotation_no, width: 66 },
-            { header: 'Client', value: (r) => r.client, width: '*' },
-            { header: 'Sector', value: (r) => r.sector, width: 58 },
-            { header: 'Sales person', value: (r) => r.sales_person ?? '—', width: 48 },
-            {
-              header: 'Order value',
-              value: (r) => lines(
-                r.quotation_value === null ? 'No value' : money(r.quotation_value, r.currency),
-                r.currency !== 'INR' && r.quotation_value !== null ? note(r.order_value_inr === null ? 'rate not set' : money(r.order_value_inr)) : null
-              ),
-              align: 'right',
-              width: 58,
-            },
-            { header: 'PO', value: (r) => (r.po_count > 0 ? r.po_numbers : r.project_id ? 'No PO yet' : 'No project yet'), width: 52 },
-            { header: 'PO value (INR)', value: (r) => money(r.po_value_inr), align: 'right', width: 52 },
-            { header: 'Invoiced (INR)', value: (r) => money(r.invoiced_inr), align: 'right', width: 52 },
-            { header: 'Received (INR)', value: (r) => money(r.received_inr), align: 'right', width: 52 },
-            { header: 'Balance (INR)', value: (r) => money(r.balance_inr), align: 'right', width: 52 },
-            { header: 'Status', value: (r) => r.payment_status ?? '—', width: 44 },
-          ],
-          rows: revenue.rows,
-          empty: `No orders won in ${year}${filterText === 'None' ? '' : ' matching the filters'}.`,
-        }),
-      ],
-    },
+  ].filter(Boolean);
+
+  // ------------------------------------------------ 1. enquiry volume
+  const months = enquiries.months;
+  const volumeChart = et.enquiries
+    ? stackedColumns({
+        categories: shortMonths(months),
+        series: [
+          { name: 'Quotation sent', color: GREEN, values: months.map((m) => m.quoted) },
+          { name: 'In progress', color: GOLD, values: months.map((m) => m.in_progress) },
+          { name: 'Declined', color: RED, values: months.map((m) => m.declined) },
+        ],
+        width: W,
+        height: 190,
+        yTitle: 'Enquiries',
+        integer: true,
+      })
+    : null;
+  const volumeMeasures = [
+    ['Enquiries received', number(et.enquiries)],
+    ['Average per month', decimal(enquiries.average_per_month)],
+    ['Busiest month', enquiries.busiest ? `${enquiries.busiest.label} — ${number(enquiries.busiest.enquiries)}` : '—'],
+    ['Quotation sent', number(et.quoted)],
+    ['In progress', number(et.in_progress)],
+    ['Declined', number(et.declined)],
+    ...(gaps.undated_enquiries ? [['Enquiries with no date (not counted)', number(gaps.undated_enquiries)]] : []),
+  ];
+  const volumeSection = [
+    section(1, 'Enquiry volume', eA.lead, [figure(1, 'Enquiries by month and status', volumeChart, '')]),
+    et.enquiries
+      ? { columns: [{ width: 210, stack: [measureTable(volumeMeasures)] }, { width: '*', stack: eA.insights.map(callout) }], columnGap: 14, unbreakable: true }
+      : insightsBlock(eA.insights),
   ];
 
-  // --------------------------------------------------------- 5. notes
-  const notesSection = [
-    ...sectionHeading('5', 'Notes & definitions'),
+  // ------------------------------------------------ 2. quotation status
+  const wonValueCell = (value, unconverted, withoutValue) =>
+    lines(
+      money(value),
+      unconverted?.length ? note(`+ ${amounts(unconverted)} (no rate)`, 'warnNote') : null,
+      withoutValue ? note(`${withoutValue} with no value`) : null
+    );
+  const STATUS_STYLE = {
+    Submitted: { label: 'Submitted', color: SKY, field: 'submitted' },
+    'Under Negotiation': { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
+    'On Hold': { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
+    [WON]: { label: 'Won - PO received', color: GREEN, field: 'won' },
+    Lost: { label: 'Lost', color: RED, field: 'lost' },
+  };
+  const qt = quotationStatus.total;
+  const statusRows = quotationStatus.rows.map((row) => ({ ...row, ...(STATUS_STYLE[row.status] ?? { label: row.status, color: BLUE }) }));
+  const statusSection = [
+    section(2, 'Quotation status', qA.lead, [
+      figure(2, 'Quotations by month and status', qt.quotations
+        ? stackedColumns({
+            categories: shortMonths(quotationStatus.months),
+            series: statusRows.filter((row) => row.field).map((row) => ({
+              name: row.label,
+              color: row.color,
+              values: quotationStatus.months.map((m) => m[row.field]),
+            })),
+            width: W,
+            height: 190,
+            yTitle: 'Quotations',
+            integer: true,
+          })
+        : null, 'No quotations were raised in this period.'),
+    ]),
+    qt.quotations
+      ? {
+          columns: [
+            {
+              width: 236,
+              stack: [figure(3, 'Quotation status split', donut({
+                slices: statusRows.map((row) => ({ label: row.label, value: row.quotations, color: row.color, legend: `${row.label} — ${number(row.quotations)}` })),
+                size: 104,
+                legendWidth: 132,
+                centerValue: number(qt.quotations),
+                centerLabel: qt.quotations === 1 ? 'quotation' : 'quotations',
+              }), '')],
+            },
+            { width: '*', stack: qA.insights.map(callout) },
+          ],
+          columnGap: 14,
+          unbreakable: true,
+        }
+      : insightsBlock(qA.insights),
+    reportTable({
+      columns: [
+        { header: 'Quotation status', value: (r) => r.label },
+        { header: 'Quotations', value: (r) => number(r.quotations), total: (s) => number(s.quotations), align: 'right', width: 60 },
+        { header: '% of quotations', value: (r) => percent(share(r.quotations, qt.quotations)), total: (s) => (s.quotations ? '100%' : '—'), align: 'right', width: 76 },
+        {
+          header: 'Quoted value (INR)',
+          value: (r) => wonValueCell(r.value_inr, r.unconverted, r.without_value),
+          total: (s) => wonValueCell(s.value_inr, s.unconverted, s.without_value),
+          align: 'right',
+          width: 120,
+        },
+      ],
+      rows: qt.quotations ? statusRows : [],
+      total: qt,
+      empty: '',
+    }),
+  ];
+
+  // ------------------------------------------------ 3. sector-wise
+  const sectorBars = sectorRows
+    .filter((row) => row.pos > 0)
+    .sort((a, b) => a.not_set - b.not_set || b.won_value_inr - a.won_value_inr || b.pos - a.pos)
+    .map((row) => ({
+      label: row.sector,
+      value: row.won_value_inr,
+      valueLabel: `${row.won_value_inr ? compactInr(row.won_value_inr) : '—'}   (${plural(row.pos, 'PO')})`,
+      color: row.not_set ? COLORS.pale : undefined,
+    }));
+  const sectorSection = [
+    section(3, 'Sector-wise performance', sA.lead, [
+      figure(4, 'Won value by sector (INR)', horizontalBars({ items: sectorBars, width: W, labelWidth: 140, valueWidth: 110, formatAxis: compactInr }), 'No POs were won in this period.'),
+    ]),
+    reportTable({
+      columns: [
+        { header: 'Sector', value: (r) => r.sector },
+        { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 42 },
+        { header: 'Quotations', value: (r) => number(r.quotations), total: (s) => number(s.quotations), align: 'right', width: 48 },
+        { header: 'POs won', value: (r) => number(r.pos), total: (s) => number(s.pos), align: 'right', width: 38 },
+        { header: 'Lost', value: (r) => number(r.lost), total: (s) => number(s.lost), align: 'right', width: 28 },
+        { header: 'Pipeline', value: (r) => number(r.pipeline), total: (s) => number(s.pipeline), align: 'right', width: 38 },
+        { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 32 },
+        {
+          header: 'Won value (INR)',
+          value: (r) => wonValueCell(r.won_value_inr, r.unconverted, r.pos_without_value),
+          total: (s) => wonValueCell(s.won_value_inr, s.unconverted),
+          align: 'right',
+          width: 92,
+        },
+      ],
+      rows: sectorRows,
+      total: sectorTotal,
+      empty: 'No enquiries or quotations in this period.',
+      compact: true,
+    }),
+    { text: '', margin: [0, 6, 0, 0] },
+    insightsBlock(sA.insights),
+  ];
+
+  // ------------------------------------------------ 4. service-wise
+  const serviceBars = services.rows
+    .filter((row) => row.won > 0)
+    .sort((a, b) => a.other - b.other || b.won_value_inr - a.won_value_inr)
+    .map((row) => ({
+      label: row.service,
+      value: row.won_value_inr,
+      valueLabel: `${row.won_value_inr ? compactInr(row.won_value_inr) : '—'}   (${plural(row.won, 'PO')})`,
+      color: row.other ? COLORS.pale : undefined,
+    }));
+  const serviceSection = [
+    section(4, 'Service-wise sales', vA.lead, [
+      figure(5, 'Won value by service line (INR)', horizontalBars({ items: serviceBars, width: W, labelWidth: 170, valueWidth: 105, formatAxis: compactInr }), 'No POs were won in this period.'),
+    ]),
+    reportTable({
+      columns: [
+        { header: 'Service line', value: (r) => r.service, totalLabel: 'Total (each quotation once)' },
+        { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 42 },
+        { header: 'Quotations', value: (r) => number(r.quotations), total: (s) => number(s.quotations), align: 'right', width: 48 },
+        { header: 'POs won', value: (r) => number(r.won), total: (s) => number(s.won), align: 'right', width: 38 },
+        { header: 'Lost', value: (r) => number(r.lost), total: (s) => number(s.lost), align: 'right', width: 28 },
+        { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 32 },
+        {
+          header: 'Won value (INR)',
+          value: (r) => wonValueCell(r.won_value_inr, r.won_unconverted, r.won_without_value),
+          total: (s) => wonValueCell(s.won_value_inr, s.won_unconverted),
+          align: 'right',
+          width: 92,
+        },
+      ],
+      rows: services.rows,
+      total: services.summary,
+      empty: 'No enquiries or quotations in this period.',
+      compact: true,
+    }),
+    { text: '', margin: [0, 6, 0, 0] },
+    insightsBlock(vA.insights),
+  ];
+
+  // ------------------------------------------------ 5. clients
+  const repeatRows = customers.rows.filter((row) => row.pos_to_date >= 2);
+  const singleRows = customers.rows.filter((row) => row.pos_to_date < 2);
+  const topClients = customers.rows
+    .filter((row) => row.won_value_inr > 0)
+    .sort((a, b) => b.won_value_inr - a.won_value_inr)
+    .slice(0, 6);
+  const clientDonut = donut({
+    slices: [
+      { label: 'Repeat clients', value: customers.summary.repeat.clients, color: NAVY, legend: `Repeat — ${number(customers.summary.repeat.clients)} (${compactInr(customers.summary.repeat.won_value_inr)})` },
+      { label: 'Single enquiry clients', value: customers.summary.single.clients, color: SKY, legend: `Single — ${number(customers.summary.single.clients)} (${compactInr(customers.summary.single.won_value_inr)})` },
+    ],
+    size: 104,
+    legendWidth: 126,
+    centerValue: number(ct.clients),
+    centerLabel: ct.clients === 1 ? 'client' : 'clients',
+  });
+  const topClientBars = horizontalBars({
+    items: topClients.map((row) => ({ label: row.client, value: row.won_value_inr, valueLabel: compactInr(row.won_value_inr) })),
+    width: W - 244,
+    labelWidth: 96,
+    valueWidth: 56,
+    rowHeight: 19,
+    formatAxis: compactInr,
+  });
+  const clientColumns = [
+    { header: 'Client group', value: (r) => r.client },
+    { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 46 },
+    { header: 'POs won', value: (r) => number(r.pos), total: (s) => number(s.pos), align: 'right', width: 42 },
+    { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 36 },
     {
+      header: 'Won value (INR)',
+      value: (r) => wonValueCell(r.won_value_inr, r.unconverted),
+      total: (s) => wonValueCell(s.won_value_inr, s.unconverted),
+      align: 'right',
+      width: 96,
+    },
+    { header: 'Repeat orders', value: (r) => number(r.repeat_orders), total: (s) => number(s.repeat_orders), align: 'right', width: 50 },
+  ];
+  const repeatNames = [...repeatRows]
+    .sort((a, b) => b.pos_to_date - a.pos_to_date)
+    .map((row) => `${row.client} (${plural(row.pos_to_date, 'PO')})`);
+  const clientSection = [
+    section(5, 'Client analysis', kA.lead, [
+      ct.clients
+        ? {
+            stack: [
+              {
+                columns: [
+                  { width: 230, stack: [clientDonut ? { svg: clientDonut.svg, width: clientDonut.width } : { text: '' }] },
+                  {
+                    width: '*',
+                    stack: [
+                      { text: 'Top clients by won value', style: 'chartTitle' },
+                      topClientBars ? { svg: topClientBars.svg, width: topClientBars.width } : { text: 'No won value in this period.', style: 'empty' },
+                    ],
+                  },
+                ],
+                columnGap: 14,
+              },
+              { text: 'Figure 6 — Repeat and single enquiry clients, and the top clients by won value', style: 'caption', margin: [0, 4, 0, 8] },
+            ],
+          }
+        : { text: 'No clients in this period.', style: 'empty' },
+    ]),
+    reportTable({
+      columns: [
+        { header: 'Client type', value: (r) => r.label },
+        { header: 'Clients', value: (r) => number(r.clients), total: (s) => number(s.clients), align: 'right', width: 42 },
+        ...clientColumns.slice(1),
+      ],
+      rows: [
+        { label: 'Repeat clients', ...customers.summary.repeat },
+        { label: 'Single enquiry clients', ...customers.summary.single },
+      ],
+      total: ct,
+      compact: true,
+    }),
+    repeatNames.length ? { text: [{ text: 'Clients with repeat orders: ', bold: true }, `${repeatNames.join(', ')}.`], style: 'body', margin: [0, 6, 0, 6] } : { text: '', margin: [0, 6, 0, 0] },
+    insightsBlock(kA.insights),
+  ];
+
+  // ------------------------------------------------ 6. revenue
+  const poCount = (r) => lines(number(r.pos), r.pos_unconverted > 0 ? note(`${r.pos_unconverted} rate not set`, 'warnNote') : null);
+  const poMoneyColumns = [
+    { header: 'POs', value: poCount, total: poCount, align: 'right', width: 34 },
+    { header: 'PO value (INR)', value: (r) => money(r.po_value_inr), total: (s) => money(s.po_value_inr), align: 'right' },
+    { header: 'Invoiced (INR)', value: (r) => money(r.invoiced_inr), total: (s) => money(s.invoiced_inr), align: 'right' },
+    { header: 'Received (INR)', value: (r) => money(r.received_inr), total: (s) => money(s.received_inr), align: 'right' },
+    { header: 'Due now (INR)', value: (r) => money(r.due_now_inr), total: (s) => money(s.due_now_inr), align: 'right' },
+  ];
+  const noPos = `No purchase orders dated in ${revenueLabel}.`;
+  const cashChart = p.pos
+    ? stackedColumns({
+        categories: ['PO value', 'Invoiced', 'Received', 'Due now'],
+        series: [{ name: 'INR', colors: [NAVY, BLUE, GREEN, RED], values: [p.po_value_inr, p.invoiced_inr, p.received_inr, p.due_now_inr] }],
+        width: W,
+        height: 170,
+        legend: false,
+        formatValue: compactInr,
+      })
+    : null;
+  const intakeMonths = revenue.orders.months;
+  const intakeChart = stackedColumns({
+    categories: shortMonths(intakeMonths),
+    series: [{ name: 'Order intake', color: NAVY, values: intakeMonths.map((m) => m.order_intake_inr) }],
+    width: W,
+    height: 160,
+    legend: false,
+    formatValue: compactInr,
+  });
+  const revenueSection = [
+    section(6, 'Revenue and collections', rA.lead, [
+      figure(7, `From PO value to cash, ${revenueLabel}${p.pos ? ` — ${percent(p.invoiced_rate)} of PO value invoiced, ${percent(p.collection_rate)} of invoices collected` : ''}`, cashChart, noPos),
+    ]),
+    p.pos
+      ? {
+          columns: [
+            {
+              width: 230,
+              stack: [reportTable({
+                columns: [
+                  { header: 'Stage', value: (r) => r[0] },
+                  { header: 'Amount (INR)', value: (r) => money(r[1]), align: 'right', width: 70 },
+                  { header: '% of PO value', value: (r) => percent(share(r[1], p.po_value_inr)), align: 'right', width: 56 },
+                ],
+                rows: [['PO value', p.po_value_inr], ['Invoiced', p.invoiced_inr], ['Received', p.received_inr], ['Due now', p.due_now_inr]],
+                compact: true,
+              })],
+            },
+            { width: '*', stack: rA.insights.map(callout) },
+          ],
+          columnGap: 14,
+          unbreakable: true,
+        }
+      : insightsBlock(rA.insights),
+    {
+      stack: [
+        { text: 'Order intake by month', style: 'h2' },
+        { text: 'Won quotations by quotation date, in INR · Average deal = order intake ÷ the orders that have a value', style: 'lead' },
+        figure(8, `Order intake by month (INR), ${revenueLabel}`, intakeChart, `No orders were won in ${revenueLabel}.`),
+      ],
+      unbreakable: true,
+    },
+    reportTable({
+      columns: [
+        { header: 'Month', value: (r) => r.label, width: 70 },
+        { header: 'Orders won', value: (r) => number(r.orders_won), total: (s) => number(s.orders_won), align: 'right', width: 60 },
+        {
+          header: 'Order intake (INR)',
+          value: (r) => lines(money(r.order_intake_inr), r.order_unconverted.length ? note(`+ ${amounts(r.order_unconverted)} (rate not set)`, 'warnNote') : null),
+          total: (s) => lines(money(s.order_intake_inr), s.order_unconverted.length ? note(`+ ${amounts(s.order_unconverted)} (rate not set)`, 'warnNote') : null),
+          align: 'right',
+        },
+        { header: 'Average deal (INR)', value: (r) => money(r.average_deal_inr), total: (s) => money(s.average_deal_inr), align: 'right' },
+      ],
+      rows: intakeMonths,
+      total: revenue.orders.total,
+      empty: `No months in ${revenueLabel}.`,
+    }),
+    subsection(
+      'Invoicing & collections by month',
+      'Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received',
+      {
+        stack: [
+          reportTable({
+            columns: [{ header: 'Month', value: (r) => r.label, width: 54 }, ...poMoneyColumns],
+            rows: revenue.invoicing.months,
+            total: p,
+            empty: noPos,
+          }),
+          {
+            text: [
+              'Collection rate ', { text: percent(p.collection_rate), bold: true },
+              { text: `  received ÷ invoiced (${money(p.received_inr)} of ${money(p.invoiced_inr)})`, color: INK_500 },
+              '      Invoiced ', { text: percent(p.invoiced_rate), bold: true },
+              { text: `  of PO value (${money(p.invoiced_inr)} of ${money(p.po_value_inr)})`, color: INK_500 },
+            ],
+            alignment: 'right',
+            fontSize: 8,
+            margin: [0, 5, 0, 0],
+          },
+        ],
+      },
+      revenue.invoicing.months.length + 2
+    ),
+    subsection(
+      'Payment status',
+      'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
+      reportTable({
+        columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
+        rows: revenue.payment_status.rows,
+        total: revenue.payment_status.total,
+        empty: noPos,
+      }),
+      revenue.payment_status.rows.length + 1
+    ),
+  ];
+
+  // ------------------------------------------------ 7. what to fix
+  const fixSection = [
+    section(7, 'What management needs to fix',
+      fixes.length
+        ? `${plural(fixes.length, 'change')} to the source data would remove the blind spots in this report.`
+        : null,
+      [
+        fixes.length
+          ? { ol: fixes.map((fix) => ({ text: [{ text: `${fix.title}. `, bold: true, color: INK_900 }, fix.detail], margin: [0, 0, 0, 5] })), style: 'body' }
+          : callout({ tag: 'ALL CLEAR', tone: 'good', text: 'No gaps were found in the source data for this period.' }),
+      ]),
+    { text: [{ text: 'Exchange rates used: ', bold: true }, ratesText], style: 'small', margin: [0, 4, 0, 0] },
+  ];
+
+  // ------------------------------------------------ appendix
+  const appendix = [
+    { text: 'Appendix', style: 'h1', pageBreak: 'before' },
+    rule(),
+    subsection('A.  FX deals', `${periodText} · won POs billed in a currency other than INR · INR value = won value × the exchange rate`, reportTable({
+      columns: [
+        { header: 'Client', value: (r) => lines(r.customer, note(r.quotation_nos)) },
+        { header: 'Sector', value: (r) => r.sector, width: 70 },
+        { header: 'Currency', value: (r) => r.currency, width: 38 },
+        { header: 'Won POs', value: (r) => number(r.deals), total: (s) => number(s.deals), align: 'right', width: 34 },
+        {
+          header: 'Won value',
+          value: (r) => lines(money(r.amount, r.currency), r.deals_without_value > 0 ? note(`${r.deals_without_value} with no value`) : null),
+          total: (s) => amounts(s.amounts),
+          align: 'right',
+          width: 72,
+        },
+        { header: 'Rate', value: (r) => (r.rate === null ? 'Not set' : `₹${r.rate} / ${r.currency}`), align: 'right', width: 60 },
+        {
+          header: 'Won value (INR)',
+          value: (r) => (r.amount_inr === null ? 'Rate not set' : money(r.amount_inr)),
+          total: (s) => lines(money(s.amount_inr), s.missing_rates.length ? note(`excludes ${s.missing_rates.join(', ')}`, 'warnNote') : null),
+          align: 'right',
+          width: 72,
+        },
+      ],
+      rows: fx.rows,
+      total: fx.summary,
+      empty: 'No FX deals in this period: every won PO is in INR.',
+      compact: true,
+    }), fx.rows.length + 1),
+    subsection(`B.  Repeat clients (${repeatRows.length})`, '2 or more won POs up to the end of the period · repeat orders = won POs after the first',
+      reportTable({ columns: clientColumns, rows: repeatRows, total: customers.summary.repeat, empty: 'No repeat clients in this period.', compact: true }),
+      repeatRows.length),
+    subsection(`C.  Single enquiry clients (${singleRows.length})`, 'Every other client: one won PO, quoted but not won yet, or only on the Enquiries page',
+      reportTable({ columns: clientColumns, rows: singleRows, total: customers.summary.single, empty: 'No single enquiry clients in this period.', compact: true }),
+      singleRows.length),
+    subsection('D.  Notes and definitions', null, {
       ul: [
-        `Sections 1–3 cover ${periodText}: quotations by quotation date, enquiries by enquiry date. Section 4 covers calendar year ${year}${filterText === 'None' ? '' : ` (${filterText})`}.`,
-        `A PO is a quotation marked "${WON}". Enquiries are the rows on the Enquiries page; an enquiry that became a quotation counts once, as an enquiry.`,
-        'Pipeline = quotations Submitted, Under Negotiation or On Hold, so POs won + Lost + Pipeline = all quotations in the period.',
-        'Win % = POs won ÷ (POs won + Lost). Open deals have no outcome yet, so they are left out.',
-        'FX deal = a won PO in a currency other than INR. INR values use the exchange rates set in Settings; an amount with no rate is shown separately, never guessed.',
+        `Sections 1–5 cover ${periodPhrase}: enquiries by enquiry date, quotations by quotation date. Section 6 covers ${revenueScope}.`,
+        'Enquiries are the rows on the Enquiries page, counted by their status there: In Progress, Declined, or Won - Quotation Sent ("quotation sent").',
+        'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
+        `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
+        'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',
+        'Won value (INR) converts each quotation at the exchange rate set in Settings. An amount in a currency with no rate is shown separately, never guessed.',
+        'Service lines are matched from the service text by keywords. A quotation naming several services counts in each of its lines; the Total row counts it once. "Other services" is text that matches no line.',
         'Clients and sectors are grouped by spelling: capital letters and extra spaces are ignored, any other difference is a separate name.',
         'Repeat client = 2 or more won POs up to the end of the period; every other client is a single enquiry client. Repeat orders = won POs after a client\'s first.',
-        'Order intake = won quotation values in INR. Average deal = order intake ÷ the orders that have a value.',
-        'PO value, invoiced, received and due now come from the purchase orders linked to each won order, so a PO counts once. Balance = PO value − received.',
+        'Order intake = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received. Collection rate = received ÷ invoiced.',
+        'The written analysis is produced from these figures by fixed rules, so the same data always reads the same way: a rate of 60% or more reads as strong and under 40% as weak; one sector with half of won value, or two clients with 35%, is flagged as concentration; under 50% of PO value invoiced, or under 70% of invoices collected, is named as the priority. No AI or outside service is used.',
       ],
-      fontSize: 8.5,
-      color: INK_700,
-      lineHeight: 1.3,
-    },
+      style: 'body',
+    }, 1), // kept whole: a list split across a page break leaves a near-empty last page
   ];
 
   return {
     pageSize: 'A4',
-    pageOrientation: 'landscape',
-    pageMargins: [36, 46, 36, 40],
+    pageOrientation: 'portrait',
+    pageMargins: [MARGIN_X, 48, MARGIN_X, 42],
     info: {
-      title: `Cetizion Sales Report — ${periodText}`,
+      title: `Cetizion Sales & Enquiry Performance Review — ${periodText}`,
       author: 'Cetizion Tracker',
-      subject: `Sales ${periodText}; revenue ${year}`,
+      subject: `Sales ${periodText}; revenue ${revenueLabel}`,
       creator: 'Cetizion Tracker',
     },
     defaultStyle: { font: 'Roboto', fontSize: 8, color: INK_900, lineHeight: 1.15 },
@@ -603,45 +881,48 @@ export function salesReportDocDefinition(data) {
         ? { text: '' }
         : {
             columns: [
-              { text: 'CETIZION  ·  SALES REPORT', style: 'runningHead' },
-              { text: `Sales ${periodText}  ·  Revenue ${year}`, style: 'runningHead', alignment: 'right' },
+              { text: 'CETIZION  ·  SALES & ENQUIRY PERFORMANCE REVIEW', style: 'runningHead' },
+              { text: `Sales ${periodText}  ·  Revenue ${revenueLabel}`, style: 'runningHead', alignment: 'right' },
             ],
-            margin: [36, 22, 36, 0],
+            margin: [MARGIN_X, 22, MARGIN_X, 0],
           },
     footer: (currentPage, pageCount) => ({
       columns: [
         { text: `Generated ${stamp}  ·  Internal and confidential`, style: 'footer' },
         { text: `Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
       ],
-      margin: [36, 14, 36, 0],
+      margin: [MARGIN_X, 14, MARGIN_X, 0],
     }),
     content: [
       ...cover,
+      { text: '', pageBreak: 'after' },
+      ...volumeSection,
+      ...statusSection,
       ...sectorSection,
-      { text: '', pageBreak: 'before' },
-      ...fxSection,
-      { text: '', margin: [0, 10, 0, 0] },
+      ...serviceSection,
       ...clientSection,
-      { text: '', pageBreak: 'before' },
       ...revenueSection,
-      { text: '', pageBreak: 'before' },
-      ...notesSection,
-    ],
+      ...fixSection,
+      ...appendix,
+    ].filter(Boolean),
     styles: {
-      brandTag: { fontSize: 7, bold: true, color: BRAND_100, characterSpacing: 1.5 },
-      title: { fontSize: 24, bold: true, color: '#ffffff', margin: [0, 2, 0, 1] },
-      subtitle: { fontSize: 9.5, color: BRAND_100 },
-      h1: { fontSize: 13, bold: true, color: INK_900 },
-      h2: { fontSize: 9.5, bold: true, color: INK_900, margin: [0, 10, 0, 3] },
-      lead: { fontSize: 7.5, color: INK_500, margin: [0, 0, 0, 6] },
+      brandTag: { fontSize: 7.5, bold: true, color: '#c9dbf0', characterSpacing: 1.2 },
+      title: { fontSize: 21, bold: true, color: '#ffffff', margin: [0, 4, 0, 4] },
+      subtitle: { fontSize: 8.5, color: '#dbe5f2' },
+      kicker: { fontSize: 8, bold: true, color: BLUE, characterSpacing: 1.2, margin: [0, 12, 0, 5] },
+      h1: { fontSize: 13.5, bold: true, color: NAVY },
+      h2: { fontSize: 9.5, bold: true, color: NAVY, margin: [0, 12, 0, 3] },
+      chartTitle: { fontSize: 8.5, bold: true, color: NAVY, margin: [96, 0, 0, 4] },
+      body: { fontSize: 9, color: INK_700, lineHeight: 1.35, margin: [0, 0, 0, 6] },
+      lead: { fontSize: 7.5, color: INK_500, margin: [0, 0, 0, 5] },
+      caption: { fontSize: 7.5, italics: true, color: INK_500, margin: [0, 3, 0, 0] },
+      small: { fontSize: 7.5, color: INK_500, lineHeight: 1.3 },
       th: { bold: true, color: '#ffffff', fontSize: 7.5 },
       cellNote: { fontSize: 6.5, color: INK_500 },
       warnNote: { fontSize: 6.5, color: WARN_FG },
-      kpiLabel: { fontSize: 6.5, bold: true, color: INK_500, characterSpacing: 0.6 },
-      kpiValue: { fontSize: 15, bold: true, color: INK_900, margin: [0, 3, 0, 2] },
-      kpiMeta: { fontSize: 7, color: INK_500 },
-      paramKey: { fontSize: 7.5, color: INK_500 },
-      paramValue: { fontSize: 8, color: INK_900 },
+      tileValue: { fontSize: 17, bold: true, color: NAVY },
+      tileLabel: { fontSize: 7.5, bold: true, color: INK_700, margin: [0, 2, 0, 0] },
+      tileMeta: { fontSize: 7, color: INK_500, margin: [0, 1, 0, 0] },
       runningHead: { fontSize: 7, color: INK_500, characterSpacing: 0.4 },
       footer: { fontSize: 7, color: INK_500 },
       empty: { fontSize: 8, italics: true, color: INK_500, margin: [0, 2, 0, 8] },
