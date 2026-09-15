@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Alert } from '../components/ui.jsx';
+import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, percent } from '../lib/format.js';
@@ -38,6 +38,7 @@ export default function PaymentStages() {
     { key: 'stage_percent', header: '%', align: 'right', render: (r) => percent(r.stage_percent) },
     { key: 'stage_amount', header: 'Stage value', align: 'right', render: (r) => money(r.stage_amount, r.currency) },
     { key: 'invoice_no', header: 'Invoice', className: 'mono small', render: (r) => (r.invoice_no ? <>{r.invoice_no}<div className="muted">{date(r.invoice_date)}</div></> : <span className="muted">—</span>) },
+    { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
     { key: 'invoice_due_date', header: 'Due', render: (r) => date(r.invoice_due_date) },
     { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
     { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
@@ -71,6 +72,7 @@ export default function PaymentStages() {
     { name: 'stage_percent', label: 'Stage %', type: 'percent', required: true, hint: 'All stages on a PO should total 100' },
     { name: 'invoice_no', label: 'Invoice number' },
     { name: 'invoice_date', label: 'Invoice date', type: 'date' },
+    { name: 'document_id', label: 'Invoice document', type: 'document', owner: 'payment-stages', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     { name: 'amount_received', label: 'Amount received', type: 'money', default: '0' },
     { name: 'payment_received_date', label: 'Payment date', type: 'date' },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },

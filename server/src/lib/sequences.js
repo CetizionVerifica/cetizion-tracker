@@ -16,6 +16,19 @@ const SEQUENCES = {
 
 export const isSequence = (kind) => Object.hasOwn(SEQUENCES, kind);
 
+/** The column a series numbers, e.g. enquiry_no. */
+export const sequenceColumn = (kind) => SEQUENCES[kind].column;
+
+/**
+ * Take the next reference in a series for a record being created. Call it
+ * inside the transaction that inserts the record: saves in the same series
+ * wait for each other, so two can never be handed the same number.
+ */
+export async function claimNextId(kind, client) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [SEQUENCES[kind].column]);
+  return nextId(kind, client);
+}
+
 /**
  * The next reference in a series (CTZ/QT/2026/063, PRJ-2026-008). Pass a
  * transaction client to read the series inside that transaction.

@@ -40,7 +40,7 @@ export default function Quotations() {
   ];
 
   const fields = [
-    { name: 'quotation_no', label: 'Quotation number', required: true, hint: 'e.g. CTZ/QT/2026/063' },
+    { name: 'quotation_no', label: 'Quotation number', auto: 'quotation' },
     { name: 'quotation_date', label: 'Quotation date', type: 'date' },
     { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
     { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors, hint: 'Pick from the list, or type a new sector' },

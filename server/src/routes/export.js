@@ -5,9 +5,10 @@ import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
 import {
-  invoicingCsvRows, ordersCsvRows, revenueDetailCsvRows, revenueFilters, revenueReport,
+  invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
+import { dataGaps, enquiryReport, exchangeRates, quotationStatusReport, serviceReport } from '../lib/salesReviewData.js';
 import { businessYear } from '../lib/businessDate.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -39,12 +40,18 @@ const SALES_REPORTS = {
   fx: { build: fxReport, toRows: fxCsvRows },
   orders: { build: revenueReport, toRows: ordersCsvRows },
   invoicing: { build: revenueReport, toRows: invoicingCsvRows },
-  'revenue-detail': { build: revenueReport, toRows: revenueDetailCsvRows },
+  'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
 };
+
+/** Days in a month, leap years included (Date.UTC would misread years below 100). */
+function daysInMonth(year, month) {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
 
 /**
  * The whole sales report as one PDF: ?from=&to= for the sales sections, and
- * ?year=&sector=&sales_person= for the revenue section, exactly as on screen.
+ * ?year=&month= (01–12, optional) for the revenue section, exactly as on screen.
  */
 exportRouter.get('/sales-report.pdf', async (req, res) => {
   const period = reportPeriod(req.query);
@@ -54,16 +61,25 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
     throw new ApiError(422, 'Use a four-digit year from 0001');
   }
   const year = rawYear || String(businessYear());
-  const filters = revenueFilters(req.query);
+  const month = String(req.query.month ?? '').trim() || null;
+  if (month && !/^(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(422, 'Use a month from 01 to 12');
+  const revenuePeriod = month
+    ? { from: `${year}-${month}-01`, to: `${year}-${month}-${String(daysInMonth(Number(year), Number(month))).padStart(2, '0')}` }
+    : { from: `${year}-01-01`, to: `${year}-12-31` };
 
-  const [sectors, customers, fx, revenue] = await Promise.all([
+  const [sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates] = await Promise.all([
     sectorReport(period),
     customerReport(period),
     fxReport(period),
-    revenueReport({ from: `${year}-01-01`, to: `${year}-12-31` }, filters),
+    revenueReport(revenuePeriod),
+    enquiryReport(period),
+    quotationStatusReport(period),
+    serviceReport(period),
+    dataGaps(period),
+    exchangeRates(),
   ]);
   const pdf = await salesReportPdf({
-    period, year: Number(year), filters, sectors, customers, fx, revenue,
+    period, year: Number(year), month, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });
@@ -81,7 +97,7 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
 
   const period = reportPeriod(req.query);
   const report = SALES_REPORTS[name];
-  const rows = report.toRows(await report.build(period, revenueFilters(req.query)));
+  const rows = report.toRows(await report.build(period));
 
   const span = period.from || period.to
     ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}`

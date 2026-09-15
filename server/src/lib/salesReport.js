@@ -20,7 +20,7 @@ export { nameKey };
 
 // $1 = from, $2 = to, either null for an open end. A row with no date
 // cannot be placed in a period, so it only counts when neither end is set.
-const inPeriod = (column) => `COALESCE(($1::date IS NULL OR ${column} >= $1::date)
+export const inPeriod = (column) => `COALESCE(($1::date IS NULL OR ${column} >= $1::date)
                         AND ($2::date IS NULL OR ${column} <= $2::date), false)`;
 
 export const IN_PERIOD = inPeriod('quotation_date');
