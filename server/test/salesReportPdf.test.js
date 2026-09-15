@@ -1,32 +1,76 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { money, reportTimeZone, salesReportDocDefinition, salesReportPdf } from '../src/lib/salesReportPdf.js';
+import { monthRows, paymentStatusRows, summariseOrders, summarisePurchaseOrders } from '../src/lib/revenueReport.js';
+import { enquirySummary, quotationStatusSummary, serviceRows } from '../src/lib/salesReviewData.js';
 
-// Report data in the exact shapes salesReport.js and revenueReport.js return.
-const month = (m, extra = {}) => ({
-  month: `2026-${String(m).padStart(2, '0')}`,
-  label: `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]} 2026`,
-  orders_won: 0, order_intake_inr: 0, average_deal_inr: null, orders_without_value: 0, order_unconverted: [],
-  pos: 0, po_value_inr: 0, invoiced_inr: 0, received_inr: 0, due_now_inr: 0, balance_inr: 0,
-  not_registered: 0, no_project: 0, pos_unconverted: 0, po_missing_rates: [],
-  ...extra,
-});
+// Report data in the exact shapes the report modules return; the revenue,
+// enquiry and service parts are built with those modules' own functions.
 const group = (extra) => ({
   clients: 0, enquiries: 0, pos: 0, lost: 0, win_rate: null, won_value_inr: 0, repeat_orders: 0,
   pos_without_value: 0, unconverted: [], ...extra,
 });
 
-function fixture(overrides = {}) {
-  const sepTotals = {
-    orders_won: 2, order_intake_inr: 1281601, average_deal_inr: 640800.5, pos: 1, po_value_inr: 100000,
-    invoiced_inr: 50000, received_inr: 30000, due_now_inr: 20000, balance_inr: 70000, not_registered: 1, no_project: 1,
-  };
+function revenueFrom(orders, pos, period = { from: '2026-01-01', to: '2026-12-31' }) {
+  const poTotal = summarisePurchaseOrders(pos);
   return {
-    period: { from: '2026-04-01', to: '2026-09-14' },
+    orders: { months: monthRows(orders, period, summariseOrders), total: summariseOrders(orders) },
+    invoicing: { months: monthRows(pos, period, summarisePurchaseOrders), total: poTotal },
+    payment_status: { rows: paymentStatusRows(pos), total: poTotal },
+    years: [2026],
+    rates: [{ currency: 'EUR', rate: 110.43 }],
+  };
+}
+
+const ORDERS = [
+  { quotation_no: 'CTZ/QT/2026/070', month: '2026-09', currency: 'INR', quotation_value: 100000, rate: 1, order_value_inr: 100000 },
+  { quotation_no: 'CTZ/QT/2026/045', month: '2026-09', currency: 'EUR', quotation_value: 10700, rate: 110.43, order_value_inr: 1181601 },
+];
+const POS = [
+  // 50/50 split: stage 1 invoiced ₹50,000 and ₹30,000 received.
+  { po_number: 'PO-1', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'Pending', po_value_inr: 100000, invoiced_inr: 50000, received_inr: 30000, due_now_inr: 20000 },
+  { po_number: 'PO-2', month: '2026-08', currency: 'INR', rate: 1, payment_status: 'Fully Paid', po_value_inr: 40000, invoiced_inr: 40000, received_inr: 40000, due_now_inr: 0 },
+];
+
+const ENQUIRIES = [
+  { enquiry_no: 'ENQ-1', client: 'Hetero', enquiry_date: '2026-08-03', month: '2026-08', status: 'Won - Quotation Sent', quotation_status: 'Won - PO Received', quotation_value: 100000, currency: 'INR', rate: 1 },
+  { enquiry_no: 'ENQ-2', client: 'Harman', enquiry_date: '2026-08-20', month: '2026-08', status: 'Won - Quotation Sent', quotation_status: 'Lost', quotation_value: 50000, currency: 'INR', rate: 1 },
+  { enquiry_no: 'ENQ-3', client: 'Orion', enquiry_date: '2026-06-01', month: '2026-06', status: 'In Progress', quotation_status: null, quotation_value: null, currency: null, rate: null },
+  { enquiry_no: 'ENQ-4', client: 'Midal', enquiry_date: '2026-09-02', month: '2026-09', status: 'Declined', quotation_status: null, quotation_value: null, currency: null, rate: null },
+];
+ENQUIRIES.sort((a, b) => a.enquiry_date.localeCompare(b.enquiry_date));
+
+// The same 5 quotations the sector fixture counts: 2 won, 1 lost, 2 open.
+const QUOTE_STATUS = [
+  { quotation_no: 'Q-1', month: '2026-05', status: 'Submitted', quotation_value: null, currency: 'INR', rate: 1 },
+  { quotation_no: 'Q-2', month: '2026-06', status: 'Under Negotiation', quotation_value: 300000, currency: 'INR', rate: 1 },
+  { quotation_no: 'Q-3', month: '2026-08', status: 'Lost', quotation_value: 50000, currency: 'INR', rate: 1 },
+  { quotation_no: 'CTZ/QT/2026/045', month: '2026-09', status: 'Won - PO Received', quotation_value: 10700, currency: 'EUR', rate: 110.43 },
+  { quotation_no: 'CTZ/QT/2026/070', month: '2026-09', status: 'Won - PO Received', quotation_value: 100000, currency: 'INR', rate: 1 },
+];
+
+const QUOTES = [
+  { service: 'EcoVadis, ISO 37001', status: 'Won - PO Received', quotation_value: 100000, currency: 'INR', rate: 1 },
+  { service: 'ASI Certification', status: 'Won - PO Received', quotation_value: 10700, currency: 'EUR', rate: 110.43 },
+  { service: 'PSCI', status: 'Lost', quotation_value: 50000, currency: 'INR', rate: 1 },
+  { service: 'Something new', status: 'Submitted', quotation_value: null, currency: 'INR', rate: 1 },
+];
+
+const GAPS = {
+  quotations: 4, quotations_without_value: 1, won_without_value: 0, won_without_po: 1, quotations_without_sector: 2,
+  quotations_without_sales_person: 0, enquiries: 4, enquiries_without_sector: 0, quoted_enquiries_unlinked: 0,
+  undated_quotations: 0, undated_enquiries: 0,
+};
+
+function fixture(overrides = {}) {
+  const period = { from: '2026-04-01', to: '2026-09-14' };
+  return {
+    period,
     year: 2026,
-    filters: {},
+    month: null,
     generatedAt: new Date('2026-09-14T10:30:00Z'),
     timeZone: 'Asia/Kolkata',
+    rates: { INR: 1, EUR: 110.43 },
     sectors: {
       rows: [
         { sector: 'Pharmaceutical', not_set: false, enquiries: 1, pos: 1, lost: 1, pipeline: 2, customers: 1, pos_without_value: 0, fx_deals: 0, amounts: [{ currency: 'INR', amount: 100000 }], win_rate: 0.5 },
@@ -49,31 +93,36 @@ function fixture(overrides = {}) {
         total: group({ clients: 2, enquiries: 1, pos: 2, lost: 1, win_rate: 2 / 3, won_value_inr: 200000, repeat_orders: 1 }),
       },
     },
-    revenue: {
-      months: Array.from({ length: 12 }, (_, i) => month(i + 1, i === 8 ? sepTotals : {})),
-      total: month(1, { ...sepTotals, label: 'Total' }),
-      rows: [
-        { quotation_no: 'CTZ/QT/2026/070', quotation_date: '2026-09-12', month: '2026-09', client: 'ABC', sector: 'Pharmaceutical', sales_person: 'Ramesh', currency: 'INR', quotation_value: 100000, rate: 1, order_value_inr: 100000, project_id: 'PRJ-2026-009', po_count: 1, po_numbers: 'PO-1', payment_status: 'Pending', po_value_inr: 100000, invoiced_inr: 50000, received_inr: 30000, due_now_inr: 20000, balance_inr: 70000 },
-        { quotation_no: 'CTZ/QT/2026/045', quotation_date: '2026-09-02', month: '2026-09', client: 'Midal Cables', sector: 'Not set', sales_person: null, currency: 'EUR', quotation_value: 10700, rate: 110.43, order_value_inr: 1181601, project_id: null, po_count: 0, po_numbers: null, payment_status: null, po_value_inr: null, invoiced_inr: null, received_inr: null, due_now_inr: null, balance_inr: null },
-      ],
-      years: [2026],
-    },
+    revenue: revenueFrom(ORDERS, POS),
+    enquiries: enquirySummary(ENQUIRIES, period),
+    quotationStatus: quotationStatusSummary(QUOTE_STATUS, period),
+    services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }]),
+    gaps: GAPS,
     ...overrides,
   };
 }
 
-/** Every piece of text in a pdfmake document definition. */
+/** Every piece of text in a pdfmake document definition, charts left out. */
 function allText(node, out = []) {
   if (typeof node === 'string') out.push(node);
   else if (Array.isArray(node)) node.forEach((child) => allText(child, out));
   else if (node && typeof node === 'object') {
     for (const [key, value] of Object.entries(node)) {
-      if (!['styles', 'layout', 'canvas', 'info'].includes(key)) allText(value, out);
+      if (!['styles', 'layout', 'canvas', 'info', 'svg'].includes(key)) allText(value, out);
     }
   }
   return out;
 }
 const textOf = (doc) => allText(doc.content).join('\n');
+
+function charts(node, out = []) {
+  if (Array.isArray(node)) node.forEach((child) => charts(child, out));
+  else if (node && typeof node === 'object') {
+    if (typeof node.svg === 'string') out.push(node.svg);
+    Object.values(node).forEach((value) => charts(value, out));
+  }
+  return out;
+}
 
 test('money uses Indian grouping for rupees and western grouping otherwise', () => {
   assert.equal(money(1281601), '₹12,81,601');
@@ -88,44 +137,129 @@ test('an unknown time zone falls back to UTC', () => {
   assert.equal(reportTimeZone(''), 'UTC');
 });
 
-test('the report carries every section with its figures', () => {
-  const text = textOf(salesReportDocDefinition(fixture()));
-  for (const heading of ['Sector-wise POs', 'FX deals', 'Client analysis', 'Repeat clients (1)', 'Single enquiry clients (1)',
-    'Client summary', 'Revenue 2026', 'Order intake by month', 'Invoicing & collections by month', 'Orders won in 2026 (2)', 'Notes & definitions']) {
-    assert.ok(text.includes(heading), `missing "${heading}"`);
+test('the review is an A4 portrait report with every section, in order', () => {
+  const doc = salesReportDocDefinition(fixture());
+  assert.equal(doc.pageSize, 'A4');
+  assert.equal(doc.pageOrientation, 'portrait');
+  const text = textOf(doc);
+  const headings = ['Sales & Enquiry Performance Review', 'AT A GLANCE', 'KEY FINDINGS', 'Enquiry volume', 'Quotation status',
+    'Sector-wise performance', 'Service-wise sales', 'Client analysis', 'Revenue and collections', 'What management needs to fix',
+    'Appendix', 'A.  FX deals', 'D.  Notes and definitions'];
+  let at = -1;
+  for (const heading of headings) {
+    const next = text.indexOf(heading, at + 1);
+    assert.ok(next > at, `"${heading}" missing or out of order`);
+    at = next;
   }
-  for (const figure of ['Pharmaceutical', '€10,700', '₹11,81,601', '1 EUR = ₹110.43', 'Midal Cables', 'Hetero', 'Harman',
-    '₹12,81,601', '₹6,40,801', '₹70,000', 'Sep 2026', 'Dec 2026', 'CTZ/QT/2026/070', 'No project yet', '67%']) {
+  assert.ok(!text.includes('Balance'), 'no Balance figures');
+});
+
+test('enquiry counts come from the Enquiries page', () => {
+  const text = textOf(salesReportDocDefinition(fixture()));
+  // 4 enquiries: 2 quotation sent, 1 in progress, 1 declined. Apr–Sep is 6 months, quiet months included.
+  assert.ok(text.includes('4 enquiries were logged on the Enquiries page over 6 months, an average of 0.7 a month.'));
+  assert.ok(text.includes('2 of 4 enquiries (50%) reached a quotation; 1 was declined and 1 is still in progress.'));
+  assert.ok(text.includes('Aug 2026 — 2'), 'busiest month');
+  // Oldest open enquiry: 1 Jun → 14 Sep = 105 days.
+  assert.ok(text.includes('the oldest, Orion (ENQ-3), has been open 105 days'));
+});
+
+test('quotation status comes from the Quotations page statuses', () => {
+  const text = textOf(salesReportDocDefinition(fixture()));
+  assert.ok(text.includes('5 quotations were raised in the period: 1 submitted, 1 under negotiation, 0 on hold, 2 won and 1 lost.'));
+  assert.ok(text.includes('2 won and 1 lost: a 67% win rate on decided quotations, with ₹12.8 L won.'));
+  assert.ok(text.includes('2 quotations are still open, worth ₹3 L, and 1 of them has no value entered, so the real pipeline is larger.'));
+  for (const figure of ['Quotation status', 'Submitted', 'Under negotiation', 'On hold', 'Won - PO received', 'Lost',
+    // Won ₹1,00,000 + €10,700 × 110.43; all quotations ₹16,31,601; 2 of 5 won.
+    '₹12,81,601', '₹16,31,601', '₹3,00,000', '1 with no value', '40%']) {
+    assert.ok(text.includes(figure), `missing "${figure}"`);
+  }
+  assert.ok(!text.includes('Outcome of quoted enquiries'), 'the enquiry outcome table is gone');
+});
+
+test('figures carry through: sectors, services, clients and revenue', () => {
+  const text = textOf(salesReportDocDefinition(fixture()));
+  for (const figure of [
+    // Sector won value in INR: ₹1,00,000 and €10,700 × 110.43.
+    '₹1,00,000', '₹11,81,601', '₹12,81,601',
+    // Services: the bundled EcoVadis + ISO quotation counts in both lines.
+    'EcoVadis', 'ISO certification & management systems', 'ASI / Copper Mark / LME', 'Other services', 'Total (each quotation once)',
+    '1 quotation names more than one service',
+    // Clients.
+    'Clients with repeat orders: ', 'Hetero (2 POs)',
+    // POs: ₹1,40,000 value, ₹90,000 invoiced, ₹70,000 received, ₹20,000 due; 64% invoiced, 78% collected.
+    '₹1,40,000', '₹90,000', '₹70,000', '₹20,000', '78%', '64%',
+    'Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid',
+    '1 EUR = ₹110.43',
+  ]) {
     assert.ok(text.includes(figure), `missing "${figure}"`);
   }
   assert.ok(text.includes('14 Sep 2026, 16:00 (Asia/Kolkata)'), 'generated stamp in the viewer time zone');
 });
 
-test('problems in the data are called out, not hidden', () => {
+test('the analysis names the priority and the data gaps', () => {
   const text = textOf(salesReportDocDefinition(fixture()));
-  assert.ok(text.includes('1 of 2 won POs have no sector'));
-  assert.ok(text.includes('No PO linked yet for 1 of 2 won orders in 2026 (1 without a project, 0 with a project but no linked PO)'));
+  assert.ok(text.includes('THE HEADLINE'));
+  assert.ok(text.includes('2 of 4 enquiries reached a quotation; 67% of decided quotations were won (2 POs, ₹2 L); 64% of 2026 PO value has been invoiced and 78% of invoices collected.'));
+  assert.ok(text.includes('Enter a value on every quotation. '));
+  assert.ok(text.includes('1 won quotation has no purchase order registered'));
+  assert.ok(text.includes('Use consistent service names. '));
+  // No value, won without a PO, no sector, and a service matching no line.
+  assert.ok(text.includes('4 gaps in the source data limit this report'));
 
-  const unlinked = fixture();
-  unlinked.revenue = { ...unlinked.revenue, unlinked_pos: [{ po_number: 'PO-9', project_id: 'PRJ-1', quotation_no: null }] };
-  assert.ok(textOf(salesReportDocDefinition(unlinked)).includes('1 purchase order is not linked to a won quotation, so revenue does not count it: PO-9.'));
-
-  const noRate = fixture();
-  noRate.fx.rows[0] = { ...noRate.fx.rows[0], rate: null, amount_inr: null };
-  noRate.fx.summary = { ...noRate.fx.summary, amount_inr: 0, missing_rates: ['EUR'] };
-  const missing = textOf(salesReportDocDefinition(noRate));
-  assert.ok(missing.includes('No exchange rate is set for EUR'));
-  assert.ok(missing.includes('Rate not set'));
+  const billing = fixture({
+    revenue: revenueFrom(ORDERS, [{ po_number: 'PO-9', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'To Invoice', po_value_inr: 500000, invoiced_inr: 100000, received_inr: 100000, due_now_inr: 0 }]),
+  });
+  const billingText = textOf(salesReportDocDefinition(billing));
+  assert.ok(billingText.includes('Billing is the bigger gap, not collections: only 20% of PO value has been invoiced, and 1 PO has a stage due to be billed now.'));
+  assert.ok(billingText.includes('The main gap is billing'));
 });
 
-test('filters and an empty year still produce a complete report', async () => {
-  const empty = fixture({ filters: { sector: '__none__', sales_person: 'Ramesh' } });
-  empty.revenue = { months: Array.from({ length: 12 }, (_, i) => month(i + 1)), total: month(1), rows: [], years: [] };
-  empty.fx = { rows: [], summary: { deals: 0, amounts: [], amount_inr: 0, missing_rates: [] } };
+test('every chart is drawn, in the report font', () => {
+  const svgs = charts(salesReportDocDefinition(fixture()).content);
+  assert.ok(svgs.length >= 8, `expected at least 8 charts, got ${svgs.length}`);
+  for (const svg of svgs) {
+    assert.ok(svg.startsWith('<svg '));
+    assert.ok(!/font-family="(?!Roboto)/.test(svg), 'only Roboto');
+  }
+  assert.ok(svgs.some((svg) => svg.includes('Quotation sent') && svg.includes('Declined')), 'enquiries by month');
+  assert.ok(svgs.some((svg) => svg.includes('Under negotiation') && svg.includes('On hold') && svg.includes('Won - PO received')), 'quotations by status');
+  assert.ok(svgs.some((svg) => svg.includes('₹12.8 L')), 'won value by sector in lakh');
+});
+
+test('problems in the data are called out, not hidden', () => {
+  const noRate = fixture({
+    revenue: revenueFrom(ORDERS, [...POS, { po_number: 'PO-3', month: '2026-09', currency: 'USD', rate: null, payment_status: 'Overdue', po_value_inr: null, invoiced_inr: null, received_inr: null, due_now_inr: null }]),
+  });
+  const missing = textOf(salesReportDocDefinition(noRate));
+  assert.ok(missing.includes('No rate is set in Settings for USD'));
+  assert.ok(missing.includes('1 rate not set'));
+
+  const undated = fixture();
+  undated.revenue = { ...undated.revenue, undated_pos: ['PO-9'] };
+  assert.ok(textOf(salesReportDocDefinition(undated)).includes('1 purchase order has no PO date, so it is left out of the revenue figures: PO-9.'));
+});
+
+test('one month of revenue is labelled as that month', () => {
+  const september = fixture({ month: '09', revenue: revenueFrom(ORDERS, POS, { from: '2026-09-01', to: '2026-09-30' }) });
+  const text = textOf(salesReportDocDefinition(september));
+  assert.ok(text.includes('Revenue: Sep 2026'));
+  assert.ok(text.includes('Section 6 covers Sep 2026'));
+});
+
+test('an empty period still produces a complete report', async () => {
+  const empty = fixture({
+    revenue: revenueFrom([], []),
+    fx: { rows: [], summary: { deals: 0, amounts: [], amount_inr: 0, missing_rates: [] } },
+    enquiries: enquirySummary([], {}),
+    quotationStatus: quotationStatusSummary([], {}),
+    services: serviceRows([], []),
+    gaps: { ...GAPS, quotations: 0, quotations_without_value: 0, won_without_po: 0, quotations_without_sector: 0, enquiries: 0 },
+  });
   const text = textOf(salesReportDocDefinition(empty));
-  assert.ok(text.includes('Sector: Not set · Sales person: Ramesh'));
+  assert.ok(text.includes('No enquiries were logged on the Enquiries page in this period.'));
   assert.ok(text.includes('No FX deals in this period'));
-  assert.ok(text.includes('No orders won in 2026 matching the filters'));
+  assert.ok(text.includes('Payment status'));
 
   const pdf = await salesReportPdf(empty);
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
@@ -135,5 +269,5 @@ test('renders a real multi-page PDF', async () => {
   const pdf = await salesReportPdf(fixture());
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   const pages = pdf.toString('latin1').match(/\/Type \/Page\b/g) || [];
-  assert.ok(pages.length >= 4, `expected at least 4 pages, got ${pages.length}`);
+  assert.ok(pages.length >= 5, `expected at least 5 pages, got ${pages.length}`);
 });
