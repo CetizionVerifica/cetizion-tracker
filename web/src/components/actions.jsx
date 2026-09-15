@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups } from '../lib/hooks.js';
@@ -17,7 +17,7 @@ function useAction({ onDone, successMessage }) {
     setFieldErrors({});
     try {
       const result = await fn();
-      toast(successMessage, 'success');
+      toast(typeof successMessage === 'function' ? successMessage(result?.data) : successMessage, 'success');
       onDone?.(result?.data);
       return true;
     } catch (err) {
@@ -60,13 +60,26 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLa
 export function RecordInvoiceDialog({ stage, onClose, onDone }) {
   const [invoiceNo, setInvoiceNo] = useState(stage.invoice_no || '');
   const [invoiceDate, setInvoiceDate] = useState(stage.invoice_date || today());
+  const [document, setDocument] = useState(null);
+  // What each chosen file became once uploaded, so a retry after a failed save
+  // does not send the same file to storage again.
+  const uploads = useRef(new Map());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Invoice recorded' });
 
   const submit = async (e) => {
     e.preventDefault();
-    const ok = await run(() =>
-      api.action(`/payment-stages/${stage.id}/invoice`, { invoice_no: invoiceNo, invoice_date: invoiceDate })
-    );
+    const ok = await run(async () => {
+      if (document && !uploads.current.has(document)) {
+        const { data } = await api.uploadDocument(document, 'payment-stages');
+        uploads.current.set(document, data);
+      }
+      return api.action(`/payment-stages/${stage.id}/invoice`, {
+        invoice_no: invoiceNo,
+        invoice_date: invoiceDate,
+        // No file chosen keeps the document already attached.
+        document_id: document ? uploads.current.get(document).id : null,
+      });
+    });
     if (ok) onClose();
   };
 
@@ -94,6 +107,21 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
       </Field>
       <Field label="Invoice date" required error={fieldErrors.invoice_date}>
         <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+      </Field>
+      <Field
+        label="Invoice document"
+        hint={stage.document_id ? 'Choose a file to replace the current one, or leave empty to keep it' : 'Optional: PDF or image'}
+        error={fieldErrors.document_id}
+      >
+        <Input type="file" onChange={(e) => setDocument(e.target.files?.[0] || null)} />
+        {stage.document_id && (
+          <div className="small muted">
+            Current:{' '}
+            <a href={api.documentUrl(stage.document_id)} target="_blank" rel="noopener noreferrer">
+              {stage.document_name || 'view document'}
+            </a>
+          </div>
+        )}
       </Field>
     </ActionModal>
   );
@@ -277,23 +305,26 @@ export function ReimburseClaimDialog({ claim, onClose, onDone }) {
 /* -------------------------------------------- quotation → project */
 
 export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
-  const [projectId, setProjectId] = useState('');
+  // Only a guide: the server assigns the number when the project is created.
+  const [nextProjectId, setNextProjectId] = useState('');
   const [manager, setManager] = useState('');
   const [managerEmail, setManagerEmail] = useState('');
   const [start, setStart] = useState('');
   const [delivery, setDelivery] = useState('');
   const [applyTemplate, setApplyTemplate] = useState(true);
-  const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Project registered' });
+  const { busy, error, fieldErrors, run } = useAction({
+    onDone,
+    successMessage: (data) => `Project ${data?.project?.project_id ?? ''} registered`,
+  });
 
   useEffect(() => {
-    api.raw('/lookups/next-id/project').then((r) => setProjectId(r.data.next)).catch(() => {});
+    api.raw('/lookups/next-id/project').then((r) => setNextProjectId(r.data.next)).catch(() => {});
   }, []);
 
   const submit = async (e) => {
     e.preventDefault();
     const ok = await run(() =>
       api.action(`/quotations/${quotation.id}/convert`, {
-        project_id: projectId,
         project_manager: manager,
         project_manager_email: managerEmail,
         planned_start_date: start,
@@ -322,8 +353,14 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
         can raise the advance invoice.
       </Alert>
       <div className="form-grid">
-        <Field label="Project ID" required error={fieldErrors.project_id} hint="Suggested from the last one used">
-          <Input value={projectId} onChange={(e) => setProjectId(e.target.value)} className="input mono" />
+        <Field label="Project ID" hint="Assigned automatically when you save">
+          <Input
+            value=""
+            placeholder={nextProjectId ? `${nextProjectId} (next number)` : 'Assigned on save'}
+            className="input mono"
+            disabled
+            readOnly
+          />
         </Field>
         <Field label="Project manager">
           <Input value={manager} onChange={(e) => setManager(e.target.value)} />

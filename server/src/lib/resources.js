@@ -81,6 +81,8 @@ export const resources = {
     view: null,
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
+    // enquiry_no is assigned on create (CTZ/ENQ/2026/004) and never changed.
+    autoId: 'enquiry',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
     filters: ['status', 'sales_person', 'client_name', 'sector'],
@@ -92,7 +94,7 @@ export const resources = {
       'sales_person', 'sales_person_email', 'service', 'status', 'quotation_no',
     ],
     schema: z.object({
-      enquiry_no: requiredStr(60),
+      enquiry_no: str(60),
       enquiry_date: date(),
       client_name: requiredStr(160),
       sector: str(120),
@@ -112,6 +114,8 @@ export const resources = {
     label: 'Quotation',
     hasDocument: true,
     naturalKey: 'quotation_no',
+    // quotation_no is assigned on create (CTZ/QT/2026/064) and never changed.
+    autoId: 'quotation',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
     filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status'],
@@ -123,7 +127,7 @@ export const resources = {
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
     ],
     schema: z.object({
-      quotation_no: requiredStr(60),
+      quotation_no: str(60),
       client_name: requiredStr(160),
       contact_person: str(120),
       service_quoted: str(300),
@@ -146,6 +150,8 @@ export const resources = {
     view: 'v_projects',
     label: 'Project',
     naturalKey: 'project_id',
+    // project_id is assigned on create (PRJ-2026-012) and never changed.
+    autoId: 'project',
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
     filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person'],
@@ -155,7 +161,7 @@ export const resources = {
       'planned_delivery_date', 'percent_complete', 'remarks',
     ],
     schema: z.object({
-      project_id: requiredStr(40),
+      project_id: str(40),
       client_name: requiredStr(160),
       primary_service: str(300),
       project_manager: str(120),
@@ -163,7 +169,8 @@ export const resources = {
       sales_person: str(120),
       planned_start_date: date(),
       planned_delivery_date: date(),
-      percent_complete: num({ min: 0, max: 1 }),
+      // The column is NOT NULL; a blank form field means not started.
+      percent_complete: num({ min: 0, max: 1 }).transform((v) => v ?? 0),
       remarks: str(1000),
     }),
   },
@@ -173,6 +180,8 @@ export const resources = {
     view: 'v_purchase_orders',
     label: 'Purchase order',
     hasDocument: true,
+    // Deleting a PO deletes its payment stages, and with them their invoice documents.
+    cascadeDocuments: { sql: 'SELECT document_id FROM payment_stages WHERE po_number = $1 FOR UPDATE', key: 'po_number' },
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
@@ -221,13 +230,15 @@ export const resources = {
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
+    // The invoice document: replaced on edit, deleted from Cloudinary with the stage.
+    hasDocument: true,
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
     filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name'],
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
-      'reminder_sent_on', 'remarks',
+      'reminder_sent_on', 'remarks', 'document_id',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -240,6 +251,7 @@ export const resources = {
       amount_received: num({ min: 0 }).default(0),
       payment_received_date: date(),
       reminder_sent_on: date(),
+      document_id: int({ min: 1 }),
       remarks: str(1000),
     }),
   },

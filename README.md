@@ -305,7 +305,9 @@ GET /api/dashboard/overview      headline numbers
 GET /api/dashboard/worklist      everything waiting on someone
 GET /api/dashboard/travel        travel spend analysis
 GET /api/lookups                 dropdown data, in one request
-GET /api/lookups/next-id/:kind   suggests CTZ/QT/2026/063, PRJ-2026-008, …
+GET /api/lookups/next-id/:kind   the next number in a series (CTZ/QT/2026/063, PRJ-2026-008, …) —
+                                 enquiry, quotation and project numbers are assigned by the
+                                 server on create and cannot be typed or changed
 GET /api/settings                the assumptions the views read
 GET /api/export/:resource.csv    any list, as a spreadsheet
 ```

@@ -13,6 +13,12 @@ A quotation or PO can carry one uploaded document. It is **optional**.
   detail page shows it too. PDFs, images and text files open in the browser; anything
   else downloads.
 - **Deleting** a quotation or PO also deletes its file from Cloudinary.
+- **Invoice documents on payment stages:** the **Record the invoice** popup and the
+  **Payment schedule** edit form have an optional invoice document. It is stored in
+  `<CLOUDINARY_FOLDER>/payment-stages`. Leaving the field empty keeps the current file;
+  choosing a new one replaces it (the new file goes into the same folder and the old one is
+  deleted from Cloudinary). Deleting the stage, deleting its PO, or replacing the PO's stages
+  with "Set the payment stages" deletes the file from Cloudinary too.
 - **CSV export** does not include anything about documents.
 
 ## How it is stored

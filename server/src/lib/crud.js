@@ -4,6 +4,7 @@ import { ApiError } from '../middleware/error.js';
 import { lockAttachableDocument, purgeDocument } from './documents.js';
 import { nameKey, normalizeName } from './names.js';
 import { reportPeriod } from './salesReport.js';
+import { claimNextId, sequenceColumn } from './sequences.js';
 
 const MAX_LIMIT = 1000;
 
@@ -108,7 +109,7 @@ function idPredicate(def, id, params) {
 }
 
 /**
- * Quotations and POs may carry one document. A blank value never clears one
+ * Quotations, POs and payment stages may carry one document. A blank value never clears one
  * already attached. A new one must be an upload no record uses, and it stays
  * locked until the save commits, so two saves cannot both attach it and a
  * purge cannot remove it underneath the record. Returns the document being
@@ -144,9 +145,10 @@ export function crudRouter(name, def) {
   const readFrom = def.view || def.table;
 
   // A save with follow-on work runs in one transaction: whatever an
-  // onSave(client, { before, after }) hook writes, and a document attached
-  // under lock, commit together with the record or not at all.
-  const write = (fn) => (def.onSave || def.hasDocument ? transaction(fn) : fn({ query }));
+  // onSave(client, { before, after }) hook writes, a document attached under
+  // lock, and a reference number taken from its series commit together with
+  // the record or not at all.
+  const write = (fn) => (def.onSave || def.hasDocument || def.autoId ? transaction(fn) : fn({ query }));
 
   router.get('/', async (req, res) => {
     const params = [];
@@ -179,6 +181,8 @@ export function crudRouter(name, def) {
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
+      // The reference number (CTZ/ENQ/2026/004) is always the next in its series, never typed.
+      if (def.autoId) values[sequenceColumn(def.autoId)] = await claimNextId(def.autoId, client);
       const cols = Object.keys(values);
       if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
@@ -202,6 +206,8 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', async (req, res) => {
     const values = validate(def, req.body, { partial: true });
+    // An assigned reference number stays as it was given.
+    if (def.autoId) delete values[sequenceColumn(def.autoId)];
 
     const { id, extra, previousDocument } = await write(async (client) => {
       const previousDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
@@ -243,15 +249,27 @@ export function crudRouter(name, def) {
   });
 
   router.delete('/:id', async (req, res) => {
-    const params = [];
-    const pred = idPredicate(def, req.params.id, params);
-    const { rows } = await query(
-      `DELETE FROM ${ident(def.table)} WHERE ${pred} RETURNING *`,
-      params
-    );
-    if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-    if (def.hasDocument && rows[0].document_id) {
-      await purgeDocument(rows[0].document_id).catch((err) => console.error('[documents]', err));
+    const remove = async (client) => {
+      const params = [];
+      const pred = idPredicate(def, req.params.id, params);
+      const { rows: [target] } = await client.query(
+        `SELECT * FROM ${ident(def.table)} WHERE ${pred} FOR UPDATE`,
+        params
+      );
+      if (!target) throw new ApiError(404, `${def.label} not found`);
+
+      // Rows the delete cascades to (a PO's payment stages) may carry documents of their own.
+      const cascaded = def.cascadeDocuments
+        ? (await client.query(def.cascadeDocuments.sql, [target[def.cascadeDocuments.key]])).rows.map((row) => row.document_id)
+        : [];
+      await client.query(`DELETE FROM ${ident(def.table)} WHERE id = $1`, [target.id]);
+      return [def.hasDocument ? target.document_id : null, ...cascaded].filter(Boolean);
+    };
+    const documents = def.hasDocument || def.cascadeDocuments ? await transaction(remove) : await remove({ query });
+
+    // Files leave Cloudinary only once the delete is committed.
+    for (const documentId of documents) {
+      await purgeDocument(documentId).catch((err) => console.error('[documents]', err));
     }
     res.status(204).end();
   });

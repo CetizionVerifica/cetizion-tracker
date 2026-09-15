@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
+import { lockAttachableDocument, purgeDocument } from '../lib/documents.js';
+import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 
@@ -115,8 +117,8 @@ projectRouter.post('/:projectId/onboarding/apply-template', async (req, res) => 
 // Quotation → project.  The workbook's step 1→2 handoff, in one action.
 // ---------------------------------------------------------------------
 
+// No project_id: a registered project always gets the next number in the series.
 const convertSchema = z.object({
-  project_id: z.preprocess(blank, z.string().trim().min(1, 'Required').max(40)),
   project_manager: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
   project_manager_email: z.preprocess(blank, z.string().trim().max(160).nullable().optional()),
   planned_start_date: dateStr,
@@ -129,30 +131,31 @@ quotationRouter.post('/:id/convert', async (req, res) => {
 
   const data = await transaction(async (client) => {
     const { rows: qrows } = await client.query(
-      'SELECT * FROM quotations WHERE id = $1 OR quotation_no = $1::text',
+      // Locked, so two "Register" clicks on the same quotation cannot both create a project:
+      // the second waits, then sees the project the first one linked.
+      'SELECT * FROM quotations WHERE id = $1 OR quotation_no = $1::text FOR UPDATE',
       [req.params.id]
     );
     if (!qrows.length) throw new ApiError(404, 'Quotation not found');
     const quotation = qrows[0];
 
-    const existing = await client.query('SELECT * FROM projects WHERE project_id = $1', [body.project_id]);
-    let project = existing.rows[0];
-
-    if (!project) {
-      const { rows } = await client.query(
-        `INSERT INTO projects (project_id, client_name, primary_service, project_manager,
-                               project_manager_email, sales_person, planned_start_date,
-                               planned_delivery_date, remarks)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [
-          body.project_id, quotation.client_name, quotation.service_quoted,
-          body.project_manager, body.project_manager_email, quotation.sales_person,
-          body.planned_start_date ?? null, body.planned_delivery_date ?? null,
-          `Won from quotation ${quotation.quotation_no}`,
-        ]
-      );
-      project = rows[0];
+    if (quotation.project_id) {
+      throw new ApiError(422, `This quotation is already registered as project ${quotation.project_id}`);
     }
+
+    const projectId = await claimNextId('project', client);
+    const { rows: [project] } = await client.query(
+      `INSERT INTO projects (project_id, client_name, primary_service, project_manager,
+                             project_manager_email, sales_person, planned_start_date,
+                             planned_delivery_date, remarks)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        projectId, quotation.client_name, quotation.service_quoted,
+        body.project_manager, body.project_manager_email, quotation.sales_person,
+        body.planned_start_date ?? null, body.planned_delivery_date ?? null,
+        `Won from quotation ${quotation.quotation_no}`,
+      ]
+    );
 
     await client.query(
       `UPDATE quotations
@@ -233,16 +236,19 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     throw new ApiError(422, `Stages must add up to 100% — they currently total ${(total * 100).toFixed(1)}%`);
   }
 
-  const createdIds = await transaction(async (client) => {
+  const { createdIds, removedDocuments } = await transaction(async (client) => {
     const exists = await client.query('SELECT 1 FROM purchase_orders WHERE po_number = $1', [po]);
     if (!exists.rowCount) throw new ApiError(404, 'Purchase order not found');
 
+    let removedDocuments = [];
     if (body.replace) {
-      await client.query(
+      const { rows: removed } = await client.query(
         `DELETE FROM payment_stages
-          WHERE po_number = $1 AND invoice_no IS NULL AND amount_received = 0`,
+          WHERE po_number = $1 AND invoice_no IS NULL AND amount_received = 0
+          RETURNING document_id`,
         [po]
       );
+      removedDocuments = removed.map((row) => row.document_id).filter(Boolean);
     }
 
     const start = await client.query(
@@ -260,8 +266,13 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
       );
       created.push(r[0].id);
     }
-    return created;
+    return { createdIds: created, removedDocuments };
   });
+
+  // Files of the stages that were replaced leave Cloudinary once the change is committed.
+  for (const documentId of removedDocuments) {
+    await purgeDocument(documentId).catch((err) => console.error('[documents]', err));
+  }
 
   const { rows } = await query(
     'SELECT * FROM v_payment_stages WHERE id = ANY($1) ORDER BY stage_no',
@@ -277,17 +288,37 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
 const invoiceSchema = z.object({
   invoice_no: z.preprocess(blank, z.string().trim().min(1, 'Invoice number is required').max(60)),
   invoice_date: z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')),
+  document_id: z.number().int().positive().nullable().optional(),
 });
 
 stageRouter.post('/:id/invoice', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Payment stage not found');
   const body = parse(invoiceSchema, req.body || {});
-  const { rows } = await query(
-    `UPDATE payment_stages SET invoice_no = $1, invoice_date = $2
-      WHERE id = $3 RETURNING id`,
-    [body.invoice_no, body.invoice_date, req.params.id]
-  );
-  if (!rows.length) throw new ApiError(404, 'Payment stage not found');
-  const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
+  const { id, replaced } = await transaction(async (client) => {
+    const { rows: [stage] } = await client.query(
+      'SELECT id, document_id FROM payment_stages WHERE id = $1 FOR UPDATE',
+      [Number(req.params.id)]
+    );
+    if (!stage) throw new ApiError(404, 'Payment stage not found');
+
+    // No file chosen keeps the invoice document already attached; a new one replaces it.
+    const documentId = body.document_id ?? stage.document_id;
+    if (documentId !== stage.document_id && !(await lockAttachableDocument(client, documentId))) {
+      throw new ApiError(422, 'Please check the highlighted fields', {
+        fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
+      });
+    }
+    await client.query(
+      'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
+      [body.invoice_no, body.invoice_date, documentId, stage.id]
+    );
+    return { id: stage.id, replaced: documentId !== stage.document_id ? stage.document_id : null };
+  });
+
+  // The replaced file leaves Cloudinary only once the new one is committed.
+  if (replaced) await purgeDocument(replaced).catch((err) => console.error('[documents]', err));
+
+  const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [id]);
   res.json({ data: full[0] });
 });
 
