@@ -15,8 +15,10 @@ CREATE TABLE IF NOT EXISTS documents (
 
 ALTER TABLE quotations      ADD COLUMN IF NOT EXISTS document_id int REFERENCES documents(id);
 ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS document_id int REFERENCES documents(id);
+ALTER TABLE payment_stages ADD COLUMN IF NOT EXISTS document_id int REFERENCES documents(id);
 
 -- A document belongs to one record, so replacing it can never pull the
 -- file out from under another.
 CREATE UNIQUE INDEX IF NOT EXISTS quotations_document_id_key      ON quotations (document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_document_id_key ON purchase_orders (document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS payment_stages_document_id_key ON payment_stages (document_id);

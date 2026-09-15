@@ -23,7 +23,7 @@ export default function Projects() {
   ];
 
   const fields = [
-    { name: 'project_id', label: 'Project ID', required: true, hint: 'e.g. PRJ-2026-008' },
+    { name: 'project_id', label: 'Project ID', auto: 'project' },
     { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients },
     { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
     { name: 'project_manager', label: 'Project manager' },

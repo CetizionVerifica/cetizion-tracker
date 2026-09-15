@@ -1,5 +1,5 @@
 import { businessToday } from './businessDate.js';
-import { nextId } from './sequences.js';
+import { claimNextId } from './sequences.js';
 
 export const ENQUIRY_WON = 'Won - Quotation Sent';
 
@@ -19,9 +19,8 @@ export async function quoteWonEnquiry(client, { before, after }) {
   // the link on purpose, so an unrelated edit must not create another.
   if (before?.status === ENQUIRY_WON) return undefined;
 
-  // Two enquiries won at the same moment must not be handed the same number.
-  await client.query("SELECT pg_advisory_xact_lock(hashtext('quotation_no'))");
-  const quotationNo = await nextId('quotation', client);
+  // Two quotations created at the same moment must not be handed the same number.
+  const quotationNo = await claimNextId('quotation', client);
 
   await client.query(
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,

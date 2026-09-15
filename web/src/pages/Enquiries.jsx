@@ -37,7 +37,7 @@ export default function Enquiries() {
   // A function of the record being edited, so its linked quotation is always
   // an option even when the cached lookups predate it.
   const fields = (record) => [
-    { name: 'enquiry_no', label: 'Enquiry number', required: true, hint: 'e.g. CTZ/ENQ/2026/001' },
+    { name: 'enquiry_no', label: 'Enquiry number', auto: 'enquiry' },
     { name: 'enquiry_date', label: 'Enquiry date', type: 'date' },
     { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
     { name: 'sector', label: 'Sector', type: 'combo', options: sectors, hint: 'Pick from the list, or type a new sector' },
