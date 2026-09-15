@@ -39,11 +39,15 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 if (config.nodeEnv !== 'test') app.use(morgan('dev'));
 
+// When this process started. The deploy job watches it change to know the
+// new container is serving, which also means its migrations went through.
+const STARTED_AT = new Date().toISOString();
+
 // Public: the platform needs somewhere to point a health check, and this
-// says nothing beyond "the database answered".
+// says nothing beyond "the database answered" and when the API started.
 app.get('/api/health', async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
-  res.json({ status: 'ok', time: rows[0].now });
+  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT });
 });
 
 app.use('/api/auth', authRouter);

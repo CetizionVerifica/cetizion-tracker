@@ -1,0 +1,146 @@
+# Every pull request and every push to main runs the checks. A push to main
+# that passes all of them is deployed: Dokploy deploys the `production`
+# branch, and the deploy job moves that branch to the commit just checked.
+# The container applies pending migrations before it starts the API.
+
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a pull request replaces its run; runs on main queue
+  # instead, so a deploy is never cut off halfway.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  APP_URL: https://tracker.cetizionverifica.com
+
+jobs:
+  server:
+    name: Server tests and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The same major version as production.
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base commit is needed to rebuild the schema production has now.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        run: npm ci
+
+      - name: Test
+        working-directory: server
+        run: npm test
+
+      - name: Migrations upgrade the deployed schema to match schema.sql
+        # The schema to start from: on a pull request, its base branch's; on
+        # a push to main, what production runs, falling back to the commit
+        # before the push.
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ -n "$PR_BASE_SHA" ]; then
+            base="$PR_BASE_SHA"
+          elif base="$(git rev-parse --verify --quiet origin/production)"; then
+            :
+          else
+            base="$BEFORE_SHA"
+          fi
+          scripts/ci/check-migrations.sh "$base"
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+  image:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image Dokploy deploys
+        run: docker build --tag cetizion-tracker:ci .
+
+  deploy:
+    name: Deploy to production
+    # Only a push to main, and only once every check above has passed.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [server, web, image]
+    runs-on: ubuntu-latest
+    permissions:
+      # To move the production branch.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Note the container serving now
+        id: current
+        run: |
+          started_at="$(curl -fsS --max-time 10 "$APP_URL/api/health" | jq -r '.started_at // empty' || true)"
+          echo "Serving since: ${started_at:-unknown}"
+          echo "started_at=$started_at" >> "$GITHUB_OUTPUT"
+
+      - name: Move production to this commit
+        id: release
+        run: |
+          if [ "$(git rev-parse --verify --quiet origin/production)" = "$GITHUB_SHA" ]; then
+            echo "production is already at $GITHUB_SHA; nothing to deploy."
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fast-forward only. If production has a commit main does not (a
+          # hand-made rollback or hotfix), this stops rather than overwrite it.
+          git push origin "$GITHUB_SHA:refs/heads/production"
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the new container to serve
+        if: steps.release.outputs.moved == 'true'
+        run: scripts/ci/wait-for-deploy.sh "$APP_URL" "${{ steps.current.outputs.started_at }}"

@@ -60,7 +60,10 @@ Everything has a working default in development. To change one, copy
 
 ```bash
 cd server
-npm test               # the sign-in gate; needs no database
+npm test               # needs no database; the migration runner's tests are skipped
+
+# With a Postgres the tests may create throwaway databases on, those run too:
+TEST_DATABASE_URL=postgres://localhost:5432/postgres npm test
 ```
 
 ### Database commands
@@ -69,16 +72,28 @@ npm test               # the sign-in gate; needs no database
 | -------------------- | ------------------------------------------------------- |
 | `npm run db:create`  | Create the database if it does not exist                |
 | `npm run migrate`    | Drop and rebuild the schema and views                   |
-| `npm run db:upgrade` | Apply `db/migrations`, then rebuild the views — keeps data |
+| `npm run db:upgrade` | Apply pending `db/migrations`, then views if needed — keeps data |
 | `npm run seed`       | Load `db/seed.sql` — the real data from your workbook    |
 | `npm run seed:demo`  | Load `db/demo.sql` — the workbook's worked example       |
 | `npm run reset`      | create → migrate → seed, in that order                  |
 
 `npm run migrate` **drops every table**. It is a rebuild, not an incremental migration.
-On a database that holds real data (production), use `npm run db:upgrade` instead: it
-runs every file in `db/migrations` — each written so running it twice is harmless — and
-rebuilds the views, which hold no data. A schema change goes in both `schema.sql` and a
-new migration file.
+On a database that holds real data, `npm run db:upgrade` runs only the files in
+`db/migrations` that have not run yet, in name order, and records each in
+`schema_migrations`. It rebuilds the views, which hold no data, when `views.sql` changed
+or a migration ran. Production needs no one to run it: the container does it on every
+start (see [Deploying](#deploying)).
+
+A schema change goes in two places: `schema.sql`, and a new file in `db/migrations`
+numbered after the last (`010_…sql`). Each migration:
+
+- **runs once**, in its own transaction together with its record, so it is applied
+  whole or not at all. Leave `BEGIN`/`COMMIT` out of the file; the runner refuses one
+  that has them.
+- **is never edited once merged.** A changed file is not run again; put the fix in a new
+  migration.
+- **is checked by CI**, which applies it to the schema production has and fails if the
+  result differs from a database built from `schema.sql`.
 
 ---
 
@@ -166,12 +181,15 @@ cetizion-tracker/
 │   ├── db/
 │   │   ├── schema.sql      tables — only facts a person types
 │   │   ├── views.sql       every formula the workbook had, as SQL
+│   │   ├── migrations/     numbered changes for a database that holds data
 │   │   ├── seed.sql        generated from your workbook
 │   │   └── demo.sql        the workbook's worked example
 │   ├── scripts/
-│   │   ├── db.js           create / migrate / seed
+│   │   ├── db.js           create / migrate / upgrade / seed
 │   │   └── generate_seed.py  workbook → SQL
 │   └── src/
+│       ├── start.js          production entry: pending migrations, then the API
+│       ├── migrations.js     the migration runner (schema_migrations, advisory lock)
 │       ├── app.js            the Express app, assembled
 │       ├── auth/             the sign-in gate (config, session, routes)
 │       ├── web.js            serves web/dist in production
@@ -339,6 +357,66 @@ only its reference in Postgres. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY
 
 `web/dist` is not committed, so `npm run build` has to run as part of the deploy.
 
+### CI/CD: from a merge to production
+
+```
+pull request ──► checks
+merge to main ─► checks ─► deploy job moves `production` ─► Dokploy builds and starts
+                  │                                            the container: pending
+                  └─ any failure: nothing is deployed          migrations, then the API
+```
+
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`:
+
+| Job | What it does |
+| --- | --- |
+| Server tests and migrations | `npm test` against a Postgres 17 service, then `scripts/ci/check-migrations.sh`: builds the schema production has (a pull request's base; for `main`, the `production` branch) with its seed data, upgrades it with this commit's migrations as the container would, upgrades again to confirm nothing is left, and diffs the result against a database built from `schema.sql` |
+| Web build | `npm run build` for the front end |
+| Docker image builds | The image Dokploy deploys still builds |
+| Deploy to production | On `main` only, once the three above pass: fast-forwards the `production` branch to this commit, then waits until `/api/health` reports a new `started_at`, i.e. the new container is serving |
+
+**Dokploy deploys the `production` branch, not `main`.** A push to `main` that fails a
+check is never deployed. Nobody pushes to `production` by hand, except to roll back.
+
+Run the migration check locally before pushing a schema change:
+
+```bash
+TEST_DATABASE_URL=postgres://localhost:5432/postgres scripts/ci/check-migrations.sh origin/production
+```
+
+### Database changes ship with the code
+
+`npm start`, and the Docker image, run `src/start.js`: it applies any pending migrations,
+then starts the API. There is no step to remember.
+
+- A deploy with no schema change logs `database schema is up to date` and starts.
+- A migration that fails is rolled back and **the API does not start**, so the app never
+  serves requests against a schema its code does not match. The log names the file and
+  the error, and the deploy job fails. Dokploy starts a new container before stopping
+  the old one and rolls back a container that does not come up, so the previous version
+  keeps serving. Fix it in a new commit and merge again.
+- **Migrations must work with the code already running.** The old container still
+  serves while the new one migrates: add columns and tables freely, but remove or rename
+  one only in a later deploy, after no running code reads it.
+- Two containers starting together are safe: an advisory lock makes the second wait,
+  then find nothing to do.
+- A brand-new, empty database still needs `schema.sql` and `views.sql` once, by hand
+  (`npm run migrate`). From then on migrations take care of it.
+
+### Rolling back
+
+Point `production` at the last good commit; Dokploy deploys it:
+
+```bash
+git push --force origin <good-commit>:production
+```
+
+Code rolls back; the database does not. A migration already applied stays applied,
+which is why migrations must work with the code before them. The next merge to `main`
+deploys as usual, since `main` still contains the commit rolled back to. Only a commit
+made on `production` alone (never do this; fix on `main`) stops the deploy job, which
+refuses to overwrite it.
+
 ---
 
 ## Notes before production use
@@ -348,6 +426,4 @@ Sign-in closes the front door. Still missing for wider use:
 - **Roles.** One account, full access. Anyone who can sign in can write anything.
 - **An audit trail.** Rows carry `created_at` / `updated_at`, but not who changed what —
   which is nearly free to add now that requests carry a user.
-- **Migration tracking.** `npm run db:upgrade` re-runs every file in `db/migrations`, so
-  each must be safe to repeat; nothing records which ones have already run.
 - **Backups** of the Postgres database.
