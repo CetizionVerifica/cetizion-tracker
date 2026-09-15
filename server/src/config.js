@@ -9,6 +9,18 @@ dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'
 
 const dbName = process.env.PGDATABASE || 'cetizion_tracker';
 
+/** A time zone Intl knows, or the fallback — a typo should not stop the API starting. */
+function timeZoneOr(value, fallback) {
+  if (!value) return fallback;
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: value });
+    return value;
+  } catch {
+    console.warn(`[config] BUSINESS_TIME_ZONE "${value}" is not a time zone; using ${fallback}`);
+    return fallback;
+  }
+}
+
 export const config = {
   port: Number(process.env.PORT || 4000),
   databaseUrl:
@@ -22,4 +34,17 @@ export const config = {
   // How many reverse proxies sit in front of the API. 0 means none, so
   // X-Forwarded-For is ignored and nobody can claim someone else's address.
   trustProxy: Number(process.env.TRUST_PROXY || 0),
+  // Where the business is. Dates the server stamps itself — the year in a
+  // reference number, the date of a quotation made from a won enquiry —
+  // follow this zone, not the container's UTC clock.
+  businessTimeZone: timeZoneOr(process.env.BUSINESS_TIME_ZONE, 'Asia/Kolkata'),
+  // Quotation and PO documents live in Cloudinary; Postgres keeps the reference.
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+    apiKey: process.env.CLOUDINARY_API_KEY || '',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+    folder: process.env.CLOUDINARY_FOLDER || 'cetizion-tracker',
+  },
+  // Cloudinary's Free plan refuses files over 10 MB.
+  documentMaxBytes: Math.round((Number(process.env.DOCUMENT_MAX_MB) || 10) * 1024 * 1024),
 };

@@ -4,11 +4,12 @@
  *
  *   npm run db:create   create the database if it is not there yet
  *   npm run migrate     apply schema.sql then views.sql  (drops + rebuilds)
+ *   npm run db:upgrade  apply db/migrations then views.sql  (keeps all data)
  *   npm run seed        load db/seed.sql  (the real workbook data)
  *   npm run seed:demo   load db/demo.sql  (the workbook's worked example)
  *   npm run reset       create + migrate + seed, in that order
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -66,9 +67,15 @@ const commands = {
   migrate: async () => {
     await run('schema.sql');
     await run('views.sql');
-    // Idempotent additions (import holding area etc.) also applied at API start-up.
-    const { readdirSync } = await import('node:fs');
-    for (const f of readdirSync(join(dbDir, 'migrations')).filter((x) => x.endsWith('.sql')).sort()) await run(join('migrations', f));
+  },
+  // For a database that already holds real data. Every migration file is
+  // written to be safe to re-run, and views.sql only rebuilds views.
+  upgrade: async () => {
+    const files = readdirSync(join(dbDir, 'migrations'))
+      .filter((file) => file.endsWith('.sql'))
+      .sort();
+    for (const file of files) await run(join('migrations', file));
+    await run('views.sql');
   },
   seed: () => run('seed.sql'),
   demo: () => run('demo.sql'),

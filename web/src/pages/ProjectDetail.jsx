@@ -402,18 +402,36 @@ export default function ProjectDetail() {
           title="New purchase order"
           subtitle={`For ${p.project_id} — ${p.client_name}`}
           resource="purchase-orders"
-          record={{ project_id: p.project_id, currency: 'INR', payment_terms_days: 30 }}
+          record={{
+            project_id: p.project_id,
+            currency: 'INR',
+            payment_terms_days: 30,
+            // With one won quotation on the project, that is the order this PO fulfils.
+            quotation_no: quotations.filter((q) => q.status === 'Won - PO Received').length === 1
+              ? quotations.find((q) => q.status === 'Won - PO Received').quotation_no
+              : '',
+          }}
           onClose={close}
           onSaved={refetch}
           intro="Once the PO date is set, any stage triggered On PO Registration becomes invoiceable straight away."
           fields={[
             { name: 'po_number', label: 'PO number', required: true },
             { name: 'project_id', label: 'Project', required: true, disabled: true },
+            {
+              name: 'quotation_no',
+              label: 'Won quotation',
+              type: 'select',
+              options: quotations
+                .filter((q) => q.status === 'Won - PO Received')
+                .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${money(q.quotation_value, q.currency)}` })),
+              hint: 'The order this PO fulfils; revenue counts the PO against it',
+            },
             { name: 'po_date', label: 'PO date', type: 'date' },
             { name: 'po_value', label: 'PO value', type: 'money', required: true },
             { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
             { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+            { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

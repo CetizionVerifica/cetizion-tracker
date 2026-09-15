@@ -243,6 +243,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
         client_name: r.client,
         contact_person: r.contact,
         service_quoted: r.service,
+        sector: r.industry,
         sales_person: r.sales_person,
         quotation_value: r.po_amount ?? r.quoted_price,
         currency: r.currency || rules.default_currency,

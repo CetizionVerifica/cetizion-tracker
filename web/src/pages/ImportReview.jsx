@@ -35,6 +35,7 @@ const FIELDS = {
     { name: 'client_name', label: 'Client' },
     { name: 'contact_person', label: 'Contact person' },
     { name: 'service_quoted', label: 'Service quoted', span: 2 },
+    { name: 'sector', label: 'Sector' },
     { name: 'sales_person', label: 'Sales person' },
     { name: 'quotation_value', label: 'Quotation value', type: 'number' },
     { name: 'currency', label: 'Currency', type: 'select', options: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'] },

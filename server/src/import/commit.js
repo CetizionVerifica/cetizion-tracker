@@ -118,7 +118,7 @@ export async function commitBatch(batch, items, { user }) {
               if (!rows.length) throw new Error(`existing project ${item.existing_ref} not found`);
               if (replacing) await update(client, 'projects', changes('projects', p, ['primary_service']), 'project_id = $1', [item.existing_ref]);
               if (!parent.project_id) await client.query(`UPDATE quotations SET project_id = $1, po_received = true, status = 'Won - PO Received' WHERE id = $2`, [item.existing_ref, parent.id]);
-              results.set(item.seq, { ref: item.existing_ref, project_id: item.existing_ref });
+              results.set(item.seq, { ref: item.existing_ref, project_id: item.existing_ref, quotation_no: parent.ref });
               written.push({ seq: item.seq, ref: item.existing_ref, action: replacing ? 'replaced' : 'kept' });
               break;
             }
@@ -141,7 +141,7 @@ export async function commitBatch(batch, items, { user }) {
                 await client.query(`INSERT INTO onboarding_tasks (project_id, step_no, stage, step) VALUES ($1,$2,$3,$4)`, [pid, i + 1, stage, text]);
               }
             }
-            results.set(item.seq, { ref: pid, project_id: pid });
+            results.set(item.seq, { ref: pid, project_id: pid, quotation_no: parent.ref });
             written.push({ seq: item.seq, ref: pid, action: pid === p.project_id ? 'created' : `created as ${pid} (planned id was taken)` });
             break;
           }
@@ -151,12 +151,15 @@ export async function commitBatch(batch, items, { user }) {
               const { rowCount } = await client.query('SELECT 1 FROM purchase_orders WHERE po_number = $1', [p.po_number]);
               if (!rowCount) throw new Error(`existing PO ${p.po_number} not found`);
               if (replacing) await update(client, 'purchase_orders', changes('purchase-orders', p, ['po_date', 'po_value', 'currency', 'payment_terms_days', 'actual_delivery_date', 'remarks']), 'po_number = $1', [p.po_number]);
+              // An older PO with no quotation link gets one from the sheet's row.
+              if (parent?.quotation_no) await client.query('UPDATE purchase_orders SET quotation_no = COALESCE(quotation_no, $1) WHERE po_number = $2', [parent.quotation_no, p.po_number]);
               results.set(item.seq, { ref: p.po_number, po_number: p.po_number });
               written.push({ seq: item.seq, ref: p.po_number, action: replacing ? 'replaced' : 'kept' });
               break;
             }
             const projectId = parent?.project_id || p.project_id;
-            const data = validate('purchase-orders', { ...p, project_id: projectId });
+            // Name the won quotation this PO fulfils, so revenue counts it once.
+            const data = validate('purchase-orders', { ...p, project_id: projectId, quotation_no: parent?.quotation_no || null });
             const po = await insert(client, 'purchase_orders', data);
             results.set(item.seq, { ref: po.po_number, po_number: po.po_number });
             written.push({ seq: item.seq, ref: po.po_number, action: 'created' });

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import {
-  Card, Stat, Badge, DataTable, KeyValues, ErrorState, Empty, Alert, useToast,
+  Card, Stat, Badge, DataTable, KeyValues, ErrorState, Empty, Alert, DocumentLink, useToast,
 } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -101,12 +101,19 @@ export default function PurchaseOrderDetail() {
         <Card title="Purchase order details">
           <KeyValues
             items={[
+              {
+                label: 'Won quotation',
+                value: po.quotation_no
+                  ? <Link className="mono" to={`/quotations?q=${encodeURIComponent(po.quotation_no)}`}>{po.quotation_no}</Link>
+                  : <span className="muted">Not linked — revenue does not count this PO</span>,
+              },
               { label: 'PO date', value: date(po.po_date) },
               { label: 'Payment terms', value: `${po.payment_terms_days} days` },
               { label: 'Actual initiation', value: date(po.actual_initiation_date) },
               { label: 'Actual delivery', value: date(po.actual_delivery_date) },
               { label: 'Manager email', value: po.project_manager_email },
               { label: 'Payment status', value: <Badge>{po.payment_status}</Badge> },
+              { label: 'PO document', value: <DocumentLink id={po.document_id} name={po.document_name} /> },
               po.remarks && { label: 'Remarks', value: po.remarks },
             ]}
           />
@@ -226,6 +233,21 @@ export default function PurchaseOrderDetail() {
           onClose={close}
           onSaved={refetch}
           fields={[
+            {
+              name: 'quotation_no',
+              label: 'Won quotation',
+              type: 'select',
+              span: 2,
+              hint: 'The order this PO fulfils; revenue counts the PO against it',
+              options: [
+                ...(po.quotation_no && !lookups.won_quotations.some((q) => q.quotation_no === po.quotation_no)
+                  ? [{ value: po.quotation_no, label: po.quotation_no }]
+                  : []),
+                ...lookups.won_quotations
+                  .filter((q) => q.project_id === po.project_id)
+                  .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name}` })),
+              ],
+            },
             { name: 'po_date', label: 'PO date', type: 'date', hint: 'Makes advance stages invoiceable' },
             { name: 'po_value', label: 'PO value', type: 'money', required: true },
             { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
@@ -233,6 +255,7 @@ export default function PurchaseOrderDetail() {
             { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
             { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Makes on-delivery stages invoiceable' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+            { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

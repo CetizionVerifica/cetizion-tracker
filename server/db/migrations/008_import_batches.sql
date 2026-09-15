@@ -1,11 +1,11 @@
--- Bulk import holding area.
+-- 008 — bulk import holding area.
 --
 -- A batch is one uploaded file. Its items are the records the importer
--- derived from that file, held here — NOT in the live tables — until an
+-- derived from that file, held here, not in the live tables, until an
 -- admin has reviewed every step and pressed "Complete and commit".
 --
--- Idempotent: applied at API start-up, so an existing database gains
--- these tables without `npm run migrate` (which drops everything).
+-- Safe on a live database: it only creates tables that are not there yet,
+-- and running it a second time changes nothing.
 
 CREATE TABLE IF NOT EXISTS import_batches (
   id            serial PRIMARY KEY,

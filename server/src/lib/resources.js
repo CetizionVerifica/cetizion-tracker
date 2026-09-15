@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ENQUIRY_WON, quoteWonEnquiry } from './enquiries.js';
+import { linkPurchaseOrder } from './purchaseOrders.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -57,6 +59,7 @@ const bool = () =>
 const enumOf = (values) => z.enum(values);
 
 export const STATUS = {
+  enquiry: ['In Progress', 'Declined', ENQUIRY_WON],
   quotation: ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'],
   trigger: ['On PO Registration', 'On Delivery', 'Manual'],
   onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
@@ -73,24 +76,58 @@ export const STATUS = {
 // ---------------------------------------------------------------------
 
 export const resources = {
+  enquiries: {
+    table: 'enquiries',
+    view: null,
+    label: 'Enquiry',
+    naturalKey: 'enquiry_no',
+    defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
+    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
+    filters: ['status', 'sales_person', 'client_name', 'sector'],
+    normalizedFilters: ['sales_person', 'client_name', 'sector'],
+    // quotation_no links a quotation that already exists; left blank, a won
+    // enquiry creates one (quoteWonEnquiry).
+    columns: [
+      'enquiry_no', 'enquiry_date', 'client_name', 'sector', 'contact_person',
+      'sales_person', 'sales_person_email', 'service', 'status', 'quotation_no',
+    ],
+    schema: z.object({
+      enquiry_no: requiredStr(60),
+      enquiry_date: date(),
+      client_name: requiredStr(160),
+      sector: str(120),
+      contact_person: str(120),
+      sales_person: str(120),
+      sales_person_email: str(160),
+      service: str(300),
+      status: enumOf(STATUS.enquiry).default('In Progress'),
+      quotation_no: str(60),
+    }),
+    onSave: quoteWonEnquiry,
+  },
+
   quotations: {
     table: 'quotations',
     view: 'v_quotations',
     label: 'Quotation',
+    hasDocument: true,
     naturalKey: 'quotation_no',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
-    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'payment_status'],
+    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status'],
+    normalizedFilters: ['sales_person', 'client_name', 'sector'],
+    dateFilter: 'quotation_date',
     columns: [
-      'quotation_no', 'client_name', 'contact_person', 'service_quoted',
+      'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
-      'currency', 'status', 'po_received', 'project_id', 'remarks',
+      'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
     ],
     schema: z.object({
       quotation_no: requiredStr(60),
       client_name: requiredStr(160),
       contact_person: str(120),
       service_quoted: str(300),
+      sector: str(120),
       sales_person: str(120),
       sales_person_email: str(160),
       quotation_date: date(),
@@ -100,6 +137,7 @@ export const resources = {
       po_received: bool(),
       project_id: str(40),
       remarks: str(1000),
+      document_id: int({ min: 1 }),
     }),
   },
 
@@ -134,14 +172,16 @@ export const resources = {
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
+    hasDocument: true,
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
-    search: ['po_number', 'project_id', 'client_name'],
-    filters: ['project_id', 'payment_status', 'client_name'],
+    search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
+    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no'],
+    // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
-      'po_number', 'project_id', 'po_date', 'po_value', 'currency',
+      'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
       'payment_terms_days', 'actual_initiation_date', 'actual_delivery_date',
-      'project_manager_email', 'remarks',
+      'project_manager_email', 'remarks', 'document_id',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -154,7 +194,10 @@ export const resources = {
       actual_delivery_date: date(),
       project_manager_email: str(160),
       remarks: str(1000),
+      document_id: int({ min: 1 }),
+      quotation_no: str(60),
     }),
+    onSave: linkPurchaseOrder,
   },
 
   'po-services': {
