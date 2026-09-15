@@ -9,7 +9,7 @@ export function Card({ title, hint, actions, children, flush = false, className 
     <section className={`card ${className}`}>
       {(title || actions) && (
         <header className="card__head">
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="card__lead">
             {title && <div className="card__title">{title}</div>}
             {hint && <div className="card__hint">{hint}</div>}
           </div>
@@ -52,7 +52,7 @@ export function Badge({ children, tone, dot = false }) {
 
 /* ----------------------------------------------------------------- table */
 
-export function DataTable({ columns, rows, empty, onRowClick, footer, loading }) {
+export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName }) {
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 
@@ -72,7 +72,7 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading })
           {rows.map((row, i) => (
             <tr
               key={row.id ?? i}
-              className={onRowClick ? 'is-clickable' : ''}
+              className={[onRowClick ? 'is-clickable' : '', rowClassName ? rowClassName(row) || '' : ''].join(' ').trim()}
               onClick={onRowClick ? (e) => {
                 if (e.target.closest('button, a, input, select')) return;
                 onRowClick(row);

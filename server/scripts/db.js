@@ -66,6 +66,9 @@ const commands = {
   migrate: async () => {
     await run('schema.sql');
     await run('views.sql');
+    // Idempotent additions (import holding area etc.) also applied at API start-up.
+    const { readdirSync } = await import('node:fs');
+    for (const f of readdirSync(join(dbDir, 'migrations')).filter((x) => x.endsWith('.sql')).sort()) await run(join('migrations', f));
   },
   seed: () => run('seed.sql'),
   demo: () => run('demo.sql'),

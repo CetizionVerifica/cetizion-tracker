@@ -25,7 +25,11 @@ function stopAll(code = 0) {
 }
 
 for (const target of TARGETS) {
-  const child = spawn('npm', target.args, { cwd: target.cwd, shell: false });
+  // On Windows npm is npm.cmd, which only runs through a shell; the args are
+  // fixed strings from TARGETS, so joining them into one command is safe.
+  const child = process.platform === 'win32'
+    ? spawn(['npm', ...target.args].join(' '), { cwd: target.cwd, shell: true })
+    : spawn('npm', target.args, { cwd: target.cwd, shell: false });
   children.push(child);
 
   const prefix = `${target.colour}[${target.name}][0m `;
