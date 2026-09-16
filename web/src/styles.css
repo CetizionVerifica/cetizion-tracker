@@ -641,3 +641,12 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .chip__lead { all: unset; cursor: pointer; color: #b45309; }
 .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 700px) { .cal__day { min-height: 60px; } .cal__visit { font-size: 10px; } }
+
+/* Client portal (#47) */
+.portal { max-width: 980px; }
+.portal__tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--ink-200); padding-bottom: 8px; }
+.portal__tab { all: unset; cursor: pointer; padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+.portal__tab.is-on { background: var(--brand-600, #0d9488); color: #fff; }
+.portal__item { border: 1px solid var(--ink-200); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.portal__row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.portal .table { width: 100%; }

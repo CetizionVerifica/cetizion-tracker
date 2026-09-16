@@ -5,6 +5,7 @@ import { Badge, Card, ConfirmDialog, DataTable, Empty, ErrorState, KeyValues, Mo
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
+import { PortalSettings } from '../components/PortalSettings.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -54,6 +55,7 @@ export default function CompanyDetail() {
     { key: 'pos', label: `Purchase orders (${c.purchase_orders.length})` },
     { key: 'certificates', label: 'Certificates' },
     { key: 'activity', label: 'Activity' },
+    { key: 'portal', label: 'Client portal' },
   ];
 
   const contactFields = [
@@ -183,6 +185,7 @@ export default function CompanyDetail() {
         )}
         {tab === 'certificates' && <DeliverablesTable params={{ company_id: c.id }} preset={{ company_id: String(c.id) }} compact title="What this client holds" hint="Certificates, scorecards and reports we issued, across cycles." />}
         {tab === 'activity' && <Timeline entity="company" id={String(c.id)} />}
+        {tab === 'portal' && <PortalSettings companyId={c.id} />}
       </div>
 
       {editing && (

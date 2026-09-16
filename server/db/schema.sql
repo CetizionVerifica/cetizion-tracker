@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -260,6 +260,8 @@ CREATE TABLE companies (
   city        text,
   notes       text,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  portal_enabled boolean NOT NULL DEFAULT false,
+  portal_sections text[] NOT NULL DEFAULT '{projects,documents,invoices,certificates,contact}',
   last_contacted_at timestamptz,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -281,6 +283,7 @@ CREATE TABLE contacts (
   whatsapp_opt_in_at timestamptz,
   whatsapp_opt_in_source text,
   last_contacted_at  timestamptz,
+  portal_access      boolean NOT NULL DEFAULT true,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -2022,5 +2025,45 @@ CREATE TRIGGER z_webhook_visit AFTER INSERT ON visits FOR EACH ROW EXECUTE FUNCT
 INSERT INTO settings (key, value, notes) VALUES
   ('incoming_enquiries_enabled', 'false', 'Accept enquiries posted to /api/hooks/enquiries with a valid signature (INCOMING_WEBHOOK_SECRET).')
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client portal (#47)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portal_links (
+  id          serial PRIMARY KEY,
+  contact_id  int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS portal_sessions (
+  id            text PRIMARY KEY,
+  contact_id    int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  company_id    int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  expires_at    timestamptz NOT NULL,
+  revoked_at    timestamptz,
+  last_seen_at  timestamptz,
+  ip            text,
+  user_agent    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_sessions_contact_idx ON portal_sessions (contact_id);
+
+CREATE TABLE IF NOT EXISTS portal_audit (
+  id          bigserial PRIMARY KEY,
+  session_id  text,
+  contact_id  int REFERENCES contacts(id) ON DELETE SET NULL,
+  company_id  int REFERENCES companies(id) ON DELETE CASCADE,
+  action      text NOT NULL,
+  target      text,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_audit_company_idx ON portal_audit (company_id, created_at DESC);
 
 COMMIT;

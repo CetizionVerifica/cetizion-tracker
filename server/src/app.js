@@ -39,6 +39,7 @@ import { inboxRouter } from './routes/inbox.js';
 import { profitabilityRouter } from './routes/profitability.js';
 import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
+import { portalAdminRouter, portalRouter } from './routes/portal.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -100,6 +101,8 @@ app.use('/api/public/accept', publicAcceptanceRouter);
 app.use('/api/mail', mailWebhookRouter);
 // Signed incoming events (#49), off unless switched on in Settings.
 app.use('/api/hooks', incomingHooksRouter);
+// The client portal (#47) has its own sign-in and session; see routes/portal.js.
+app.use('/api/portal', portalRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
@@ -131,6 +134,7 @@ app.use('/api/inbox', inboxRouter);
 app.use('/api/profitability', profitabilityRouter);
 app.use('/api/visits', visitsRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/portal-admin', portalAdminRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
