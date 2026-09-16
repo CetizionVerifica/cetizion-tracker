@@ -53,7 +53,11 @@ export default function BulkImport() {
     <>
       <PageHeader title="Bulk import" subtitle="Upload a sheet, review what the importer derived, then commit it in one go" />
       <div className="page stack">
-        <Card title="Upload a sheet" hint="Excel or CSV. Nothing is written to the live data until you press Complete and commit on the final review.">
+        <Card
+          title="Upload a sheet"
+          hint="Excel or CSV. Nothing is written to the live data until you press Complete and commit on the final review."
+          actions={<a className="btn btn--sm" href={api.importTemplateUrl()} download>Download the template</a>}
+        >
           <form onSubmit={upload} className="stack">
             {error && <Alert tone="danger">{error}</Alert>}
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>

@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import XLSX from 'xlsx';
 import { query } from '../db.js';
+import { buildWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
@@ -105,23 +107,42 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
   sendCsv(res, `cetizion-sales-${name}${span}`, rows);
 });
 
-/**
- * Any list can still leave as a spreadsheet — the point is that the
- * spreadsheet is now an export, not the system of record.
- */
-exportRouter.get('/:resource.csv', async (req, res) => {
+/** A list as rows, with the same search and filters the page applies (#45). */
+async function listRows(req) {
   const def = resources[req.params.resource];
   if (!def) throw new ApiError(404, 'Unknown export');
-
+  const params = [];
+  const where = buildWhere(def, req.query, params);
   const { rows } = await query(
-    `SELECT * FROM "${def.view || def.table}" ORDER BY ${def.defaultSort}`
+    `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
+    params
   );
   // Documents are opened from the app's tables; the spreadsheet leaves them out.
   for (const row of rows) {
     delete row.document_id;
     delete row.document_name;
   }
+  return rows;
+}
 
+/**
+ * Any list can still leave as a spreadsheet — the point is that the
+ * spreadsheet is now an export, not the system of record. What leaves is
+ * what the page shows: the same search and filters apply.
+ */
+exportRouter.get('/:resource.csv', async (req, res) => {
+  const rows = await listRows(req);
   const stamp = new Date().toISOString().slice(0, 10);
   sendCsv(res, `cetizion-${req.params.resource}-${stamp}`, rows);
+});
+
+exportRouter.get('/:resource.xlsx', async (req, res) => {
+  const rows = await listRows(req);
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, req.params.resource.slice(0, 31));
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="cetizion-${req.params.resource}-${stamp}.xlsx"`);
+  res.send(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }));
 });

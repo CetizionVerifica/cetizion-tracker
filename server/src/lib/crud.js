@@ -16,7 +16,7 @@ const ident = (name) => `"${String(name).replace(/"/g, '')}"`;
  * search and filter columns. Anything the client asks for that is not in
  * those lists is ignored rather than interpolated.
  */
-function buildWhere(def, reqQuery, params) {
+export function buildWhere(def, reqQuery, params) {
   const clauses = [];
 
   const search = (reqQuery.q || '').trim();

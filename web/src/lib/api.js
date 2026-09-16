@@ -94,7 +94,9 @@ export const api = {
   uploadDocument: (file, owner) =>
     request(`/documents?for=${encodeURIComponent(owner)}`, { method: 'POST', file }),
   documentUrl: (id) => `${BASE}/documents/${id}`,
-  exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
+  exportUrl: (resource, params) => `${BASE}/export/${resource}.csv${qs(params)}`,
+  exportXlsxUrl: (resource, params) => `${BASE}/export/${resource}.xlsx${qs(params)}`,
+  importTemplateUrl: () => `${BASE}/import/template.csv`,
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   reportPdfUrl: (params) => `${BASE}/export/sales-report.pdf${qs(params)}`,
   auth: {

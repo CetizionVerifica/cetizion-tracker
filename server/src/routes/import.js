@@ -86,6 +86,18 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
 // Keep uploaded bytes for re-planning within the process lifetime.
 const fileCache = new Map();
 
+/** A CSV template with the columns the importer understands and one example row. */
+importRouter.get('/template.csv', (req, res) => {
+  const headers = ['S.No', 'Client Name', 'Industry Type', 'Lead Name', 'Deal Stage', 'Proposal Name', 'Proposal Sent Date', 'Quotation No',
+    'PO Received On', 'PO Number', 'PO Amount', 'Invoice Number', 'Ammount received', 'Pending', 'Follow up Comments', 'Remarks', 'Sales Person'];
+  const example = ['1', 'Laurus Labs', 'Pharma', 'Ravi Kumar', 'Closed Won (100%)', 'EcoVadis', '12.03.2026', '',
+    '19.03.2026', '4530056073', '7,96,500/-', '118', '1,59,300/-', '', '', 'Invoice shared for 20% adv', 'Vishnu'];
+  const cell = (v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="cetizion-sales-sheet-template.csv"');
+  res.send(`${headers.map(cell).join(',')}\n${example.map(cell).join(',')}\n`);
+});
+
 importRouter.post('/batches', upload.single('file'), async (req, res) => {
   if (!req.file) throw new ApiError(422, 'Choose a file to upload');
   let rules = {};
