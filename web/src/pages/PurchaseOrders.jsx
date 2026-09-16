@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
@@ -7,6 +7,7 @@ import { money, date, number, percent } from '../lib/format.js';
 export default function PurchaseOrders() {
   const navigate = useNavigate();
   const lookups = useLookups();
+  const [params] = useSearchParams();
 
   const columns = [
     { key: 'po_number', header: 'PO', className: 'mono strong', render: (r) => <>{r.po_number}<div className="small muted">{date(r.po_date)}</div></> },
@@ -66,6 +67,12 @@ export default function PurchaseOrders() {
       formTitle="purchase order"
       formIntro="Register the PO first, then add its service lines and payment stages on the PO's own page."
       searchPlaceholder="Search PO number, client, project…"
+      // The sales report's payment status table links here with the status
+      // and period behind a row, so the list shows exactly those POs.
+      initialFilters={Object.fromEntries(
+        ['payment_status', 'from', 'to'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
+      )}
+      dateFilterLabel="PO date"
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
         { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'] },

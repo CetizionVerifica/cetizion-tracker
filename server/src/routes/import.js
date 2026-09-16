@@ -21,6 +21,7 @@ import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
 import { buildPlan, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
+import { businessYear } from '../lib/businessDate.js';
 
 export const importRouter = Router();
 
@@ -47,7 +48,7 @@ async function liveSnapshot() {
     quotations: q.rows, purchase_orders: po.rows, projects: pr.rows, services: sv.rows, stages: st.rows,
     next_quotation_no: Number(nq.rows[0].n) + 1,
     next_project_no: Number(np.rows[0].n) + 1,
-    year: new Date().getFullYear(),
+    year: businessYear(),
   };
 }
 

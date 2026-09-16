@@ -49,6 +49,8 @@ SELECT
   ROUND(po.po_value * ps.stage_percent, 2)               AS stage_amount,
   ps.invoice_no,
   ps.invoice_date,
+  ps.document_id,
+  doc.file_name AS document_name,
   ps.amount_received,
   ps.payment_received_date,
   ps.reminder_sent_on,
@@ -79,6 +81,7 @@ SELECT
 FROM payment_stages ps
 JOIN purchase_orders po ON po.po_number = ps.po_number
 JOIN projects        pr ON pr.project_id = po.project_id
+LEFT JOIN documents doc ON doc.id = ps.document_id
 -- b: the stage's own facts.  A stage is due to invoice once its trigger
 --    has happened (PO registered / delivery recorded / manual).
 CROSS JOIN LATERAL (

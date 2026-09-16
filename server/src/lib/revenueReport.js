@@ -1,35 +1,31 @@
 import { query } from '../db.js';
-import { nameKey } from './names.js';
-import { IN_PERIOD, RATES } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
 
 /**
- * Revenue by month: what was won, and what has since been invoiced and
- * collected against it.
+ * Revenue for a period, in two halves read from different places:
  *
- * A quotation marked "Won - PO Received" is the order, placed in the month
- * of its quotation date. Its money after that lives on the purchase orders
- * linked to it (purchase_orders.quotation_no): PO value, invoiced, received
- * and due now, read from v_purchase_orders. A PO counts only through that
- * link, so it is counted once even when its project holds several won
- * quotations. Every amount is converted to INR at the Settings rate; an
- * amount whose rate is not set is left out of the INR figures and reported
- * separately, never guessed.
+ * - Order intake: quotations marked "Won - PO Received", by quotation date.
+ * - Invoicing & collections, and payment status: every purchase order, by
+ *   its PO date, with PO value, invoiced, received, due now and payment
+ *   status exactly as the Purchase orders list shows them — so the totals
+ *   here are the totals of that list.
+ *
+ * Amounts are converted to INR at the Settings rate; an amount whose rate is
+ * not set is left out of the INR figures and reported, never guessed.
  */
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "Sep 2026" for "2026-09"; "No date" for an order whose quotation has none. */
+/** "Sep 2026" for "2026-09"; "No date" for a row without one. */
 export const monthLabel = (month) =>
   month ? `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}` : 'No date';
 
+/** The Purchase orders list's payment statuses, most urgent first. */
+export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'];
+
 const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
-
-/** Optional ?sector=&sales_person= on top of the period. Sector "__none__" = not set. */
-export function revenueFilters(reqQuery) {
-  const pick = (name) => String(reqQuery[name] ?? '').trim() || null;
-  return { sector: pick('sector'), sales_person: pick('sales_person') };
-}
+const ratio = (part, whole) => (whole ? part / whole : null);
 
 function monthsBetween(first, last) {
   const months = [];
@@ -43,49 +39,12 @@ function monthsBetween(first, last) {
   return months;
 }
 
-function summarise(orders) {
-  const valued = orders.filter((row) => row.order_value_inr !== null);
-  const unconverted = new Map();
-  for (const row of orders) {
-    if (row.quotation_value !== null && row.rate === null) {
-      unconverted.set(row.currency, r2((unconverted.get(row.currency) || 0) + row.quotation_value));
-    }
-  }
-  const registered = orders.filter((row) => row.po_count > 0);
-  const converted = registered.filter((row) => !row.po_rate_missing);
-  const intake = sum(valued, 'order_value_inr');
-  const poValue = sum(converted, 'po_value_inr');
-  const received = sum(converted, 'received_inr');
-
-  return {
-    orders_won: orders.length,
-    order_intake_inr: intake,
-    // Averaged over the orders the intake actually includes.
-    average_deal_inr: valued.length ? r2(intake / valued.length) : null,
-    orders_without_value: orders.filter((row) => row.quotation_value === null).length,
-    order_unconverted: [...unconverted].map(([currency, amount]) => ({ currency, amount })),
-    pos: registered.reduce((total, row) => total + row.po_count, 0),
-    po_value_inr: poValue,
-    invoiced_inr: sum(converted, 'invoiced_inr'),
-    received_inr: received,
-    due_now_inr: sum(converted, 'due_now_inr'),
-    balance_inr: r2(poValue - received),
-    // Won orders with no PO linked to them yet.
-    not_registered: orders.length - registered.length,
-    // Of those, the ones that still need a project before a PO can be added.
-    no_project: orders.filter((row) => !row.project_id).length,
-    pos_unconverted: registered.length - converted.length,
-    po_missing_rates: [...new Set(registered.flatMap((row) => row.po_missing_currencies))].sort(),
-  };
-}
-
 /**
- * The month rows for a set of orders: every month from the first to the
- * last in range, so a quiet month shows as zero, then one "No date" row for
- * orders whose quotation has no date — which can only happen when no date
- * range is chosen. The rows always add up to the total.
+ * One row per month in range, quiet months as zero, then a "No date" row for
+ * anything without a date — which only happens when no range is chosen. The
+ * rows always add up to the total.
  */
-export function revenueMonths(rows, { from, to } = {}) {
+export function monthRows(rows, { from, to } = {}, summarise) {
   const dated = rows.filter((row) => row.month);
   const first = (from || dated[0]?.month || to || '').slice(0, 7);
   const last = (to || dated.at(-1)?.month || from || '').slice(0, 7);
@@ -100,91 +59,121 @@ export function revenueMonths(rows, { from, to } = {}) {
   return months;
 }
 
-export async function revenueReport({ from, to }, { sector = null, sales_person = null } = {}) {
-  const [orders, years, unlinked] = await Promise.all([
+/** Won quotations: how many, their value in INR, and the average deal. */
+export function summariseOrders(orders) {
+  const valued = orders.filter((row) => row.order_value_inr !== null);
+  const unconverted = new Map();
+  for (const row of orders) {
+    if (row.quotation_value !== null && row.rate === null) {
+      unconverted.set(row.currency, r2((unconverted.get(row.currency) || 0) + row.quotation_value));
+    }
+  }
+  const intake = sum(valued, 'order_value_inr');
+  return {
+    orders_won: orders.length,
+    order_intake_inr: intake,
+    // Averaged over the orders the intake actually includes.
+    average_deal_inr: valued.length ? r2(intake / valued.length) : null,
+    orders_without_value: orders.filter((row) => row.quotation_value === null).length,
+    order_unconverted: [...unconverted].map(([currency, amount]) => ({ currency, amount })),
+  };
+}
+
+/** Purchase orders: their money in INR, and how much of it is billed and collected. */
+export function summarisePurchaseOrders(pos) {
+  const converted = pos.filter((row) => row.rate !== null);
+  const poValue = sum(converted, 'po_value_inr');
+  const invoiced = sum(converted, 'invoiced_inr');
+  const received = sum(converted, 'received_inr');
+  return {
+    pos: pos.length,
+    po_value_inr: poValue,
+    invoiced_inr: invoiced,
+    received_inr: received,
+    due_now_inr: sum(converted, 'due_now_inr'),
+    // Received ÷ invoiced, and invoiced ÷ PO value; nothing to divide by means no rate.
+    collection_rate: ratio(received, invoiced),
+    invoiced_rate: ratio(invoiced, poValue),
+    pos_unconverted: pos.length - converted.length,
+    missing_rates: [...new Set(pos.filter((row) => row.rate === null).map((row) => row.currency))].sort(),
+  };
+}
+
+/** Every payment status, even with no POs, so the table always reads the same way. */
+export function paymentStatusRows(pos) {
+  const rows = PAYMENT_STATUSES.map((status) => ({
+    status,
+    ...summarisePurchaseOrders(pos.filter((row) => row.payment_status === status)),
+  }));
+  // A status the list may gain later still counts, rather than going missing from the total.
+  const other = pos.filter((row) => !PAYMENT_STATUSES.includes(row.payment_status));
+  if (other.length) rows.push({ status: 'Other', ...summarisePurchaseOrders(other) });
+  return rows;
+}
+
+export async function revenueReport({ from, to }) {
+  const [orders, purchaseOrders, years, undated] = await Promise.all([
     query(
-      `WITH ${RATES},
-       pos AS (
-         SELECT p.quotation_no,
-                COUNT(*)::int                                                       AS po_count,
-                string_agg(p.po_number, ', ' ORDER BY p.po_number)                  AS po_numbers,
-                string_agg(DISTINCT p.payment_status, ', ')                         AS payment_status,
-                bool_or(r.rate IS NULL)                                             AS po_rate_missing,
-                COALESCE(array_agg(DISTINCT p.currency) FILTER (WHERE r.rate IS NULL), '{}') AS po_missing_currencies,
-                ROUND(SUM(p.po_value * r.rate), 2)                                  AS po_value_inr,
-                ROUND(SUM(p.total_invoiced * r.rate), 2)                            AS invoiced_inr,
-                ROUND(SUM(p.total_received * r.rate), 2)                            AS received_inr,
-                ROUND(SUM(p.balance_due_now * r.rate), 2)                           AS due_now_inr
-           FROM v_purchase_orders p
-           LEFT JOIN rates r ON r.currency = p.currency
-          WHERE p.quotation_no IS NOT NULL
-          GROUP BY p.quotation_no
-       )
-       SELECT q.id,
-              q.quotation_no,
-              q.quotation_date,
-              to_char(q.quotation_date, 'YYYY-MM')                AS month,
-              btrim(q.client_name)                                AS client,
-              COALESCE(NULLIF(btrim(q.sector), ''), 'Not set')    AS sector,
-              q.sales_person,
+      `WITH ${RATES}
+       SELECT q.quotation_no,
+              to_char(q.quotation_date, 'YYYY-MM')  AS month,
               q.currency,
               q.quotation_value,
               qr.rate,
-              ROUND(q.quotation_value * qr.rate, 2)               AS order_value_inr,
-              q.project_id,
-              COALESCE(po.po_count, 0)                            AS po_count,
-              po.po_numbers,
-              po.payment_status,
-              COALESCE(po.po_rate_missing, false)                 AS po_rate_missing,
-              COALESCE(po.po_missing_currencies, '{}')            AS po_missing_currencies,
-              po.po_value_inr,
-              po.invoiced_inr,
-              po.received_inr,
-              po.due_now_inr
+              ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
          FROM quotations q
          LEFT JOIN rates qr ON qr.currency = q.currency
-         LEFT JOIN pos po   ON po.quotation_no = q.quotation_no
-        WHERE q.status = 'Won - PO Received'
-          AND ${IN_PERIOD}
-          AND ($3::text IS NULL
-               OR CASE WHEN $3::text = '__none__' THEN NULLIF(${nameKey('q.sector')}, '') IS NULL
-                       ELSE ${nameKey('q.sector')} = ${nameKey('$3::text')} END)
-          AND ($4::text IS NULL OR ${nameKey('q.sales_person')} = ${nameKey('$4::text')})
+        WHERE q.status = 'Won - PO Received' AND ${IN_PERIOD}
         ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
-      [from, to, sector, sales_person]
+      [from, to]
     ),
-    // Years with won orders, for the year picker, whatever the filters.
     query(
-      `SELECT DISTINCT EXTRACT(YEAR FROM quotation_date)::int AS year
-         FROM quotations
-        WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
-        ORDER BY 1 DESC`
+      `WITH ${RATES}
+       SELECT p.po_number,
+              to_char(p.po_date, 'YYYY-MM')          AS month,
+              p.currency,
+              r.rate,
+              p.payment_status,
+              ROUND(p.po_value * r.rate, 2)          AS po_value_inr,
+              ROUND(p.total_invoiced * r.rate, 2)    AS invoiced_inr,
+              ROUND(p.total_received * r.rate, 2)    AS received_inr,
+              ROUND(p.balance_due_now * r.rate, 2)   AS due_now_inr
+         FROM v_purchase_orders p
+         LEFT JOIN rates r ON r.currency = p.currency
+        WHERE ${inPeriod('p.po_date')}
+        ORDER BY p.po_date NULLS LAST, p.po_number`,
+      [from, to]
     ),
-    // POs that revenue cannot place: no quotation named, or one that is not won.
+    // Years with won orders or dated POs, for the year picker.
     query(
-      `SELECT p.po_number, p.project_id, p.quotation_no
-         FROM purchase_orders p
-        WHERE NOT EXISTS (SELECT 1 FROM quotations q
-                           WHERE q.quotation_no = p.quotation_no AND q.status = 'Won - PO Received')
-        ORDER BY p.po_number`
+      `SELECT year FROM (
+         SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
+           FROM quotations WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
+         UNION
+         SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
+       ) y
+       ORDER BY year DESC`
     ),
+    // A PO without a PO date cannot be placed in a year or month.
+    query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number'),
   ]);
 
-  const rows = orders.rows;
-  for (const row of rows) {
-    // A PO amount in a currency without a rate is unknown in INR, not zero.
-    if (row.po_rate_missing) {
-      row.po_value_inr = row.invoiced_inr = row.received_inr = row.due_now_inr = null;
-    }
-    row.balance_inr = row.po_count > 0 && !row.po_rate_missing ? r2(row.po_value_inr - row.received_inr) : null;
+  const period = { from, to };
+  const poTotal = summarisePurchaseOrders(purchaseOrders.rows);
+  // Exchange rates behind the INR figures, so the PDF can say which it used.
+  const rates = new Map();
+  for (const row of [...orders.rows, ...purchaseOrders.rows]) {
+    if (row.currency !== 'INR' && !rates.has(row.currency)) rates.set(row.currency, row.rate);
   }
-
   return {
-    months: revenueMonths(rows, { from, to }),
-    total: summarise(rows),
-    rows,
+    orders: { months: monthRows(orders.rows, period, summariseOrders), total: summariseOrders(orders.rows) },
+    invoicing: { months: monthRows(purchaseOrders.rows, period, summarisePurchaseOrders), total: poTotal },
+    payment_status: { rows: paymentStatusRows(purchaseOrders.rows), total: poTotal },
     years: years.rows.map((row) => row.year),
-    unlinked_pos: unlinked.rows,
+    rates: [...rates].map(([currency, rate]) => ({ currency, rate })),
+    // With a date range those POs are left out of every PO figure above, so
+    // name them; without one they are already counted in a "No date" row.
+    undated_pos: from || to ? undated.rows.map((row) => row.po_number) : [],
   };
 }
 
@@ -192,11 +181,17 @@ export async function revenueReport({ from, to }, { sector = null, sales_person 
 // CSV shapes
 // ---------------------------------------------------------------------
 
-const withTotal = ({ months, total }) => [...months, { label: 'Total', ...total }];
 const notInInr = (list) => list.map((a) => `${a.currency} ${a.amount}`).join('; ');
+const moneyColumns = (row) => ({
+  'PO value (INR)': row.po_value_inr,
+  'Invoiced (INR)': row.invoiced_inr,
+  'Received (INR)': row.received_inr,
+  'Due now (INR)': row.due_now_inr,
+  'POs left out (rate not set)': row.pos_unconverted,
+});
 
-export function ordersCsvRows(report) {
-  return withTotal(report).map((row) => ({
+export function ordersCsvRows({ orders }) {
+  return [...orders.months, { label: 'Total', ...orders.total }].map((row) => ({
     Month: row.label,
     'Orders won': row.orders_won,
     'Order intake (INR)': row.order_intake_inr,
@@ -206,38 +201,18 @@ export function ordersCsvRows(report) {
   }));
 }
 
-export function invoicingCsvRows(report) {
-  return withTotal(report).map((row) => ({
+export function invoicingCsvRows({ invoicing }) {
+  return [...invoicing.months, { label: 'Total', ...invoicing.total }].map((row) => ({
     Month: row.label,
     POs: row.pos,
-    'PO value (INR)': row.po_value_inr,
-    'Invoiced (INR)': row.invoiced_inr,
-    'Received (INR)': row.received_inr,
-    'Due now (INR)': row.due_now_inr,
-    'Balance (INR)': row.balance_inr,
-    'Won without a linked PO': row.not_registered,
-    'Of which no project yet': row.no_project,
-    'POs left out (rate not set)': row.pos_unconverted,
+    ...moneyColumns(row),
   }));
 }
 
-export function revenueDetailCsvRows({ rows }) {
-  return rows.map((row) => ({
-    Month: monthLabel(row.month),
-    Quotation: row.quotation_no,
-    Date: row.quotation_date ?? '',
-    Client: row.client,
-    Sector: row.sector,
-    'Sales person': row.sales_person ?? '',
-    Currency: row.currency,
-    'Order value': row.quotation_value ?? '',
-    'Order value (INR)': row.order_value_inr ?? '',
-    PO: row.po_numbers ?? 'Not linked',
-    'PO value (INR)': row.po_value_inr ?? '',
-    'Invoiced (INR)': row.invoiced_inr ?? '',
-    'Received (INR)': row.received_inr ?? '',
-    'Due now (INR)': row.due_now_inr ?? '',
-    'Balance (INR)': row.balance_inr ?? '',
-    'Payment status': row.payment_status ?? '',
+export function paymentStatusCsvRows({ payment_status: status }) {
+  return [...status.rows, { status: 'Total', ...status.total }].map((row) => ({
+    'Payment status': row.status,
+    POs: row.pos,
+    ...moneyColumns(row),
   }));
 }

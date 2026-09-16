@@ -6,7 +6,7 @@
   "description": "API for the Cetizion sales, project, payment and travel tracker",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/start.js",
     "dev": "node --watch-path=src src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "db:create": "node scripts/db.js create",

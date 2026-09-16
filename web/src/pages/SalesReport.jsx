@@ -7,14 +7,12 @@ import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money, number, percent, today } from '../lib/format.js';
 
-/** Quick ranges on the quotation date. The financial year starts in April. */
+/** Quick ranges on the quotation date. Reports run on the calendar year (Jan–Dec). */
 function ranges() {
   const end = today();
-  const [year, month] = end.split('-').map(Number);
-  const fyStart = month >= 4 ? year : year - 1;
   return [
     { key: 'all', label: 'All time', from: '', to: '' },
-    { key: 'fy', label: 'This financial year', from: `${fyStart}-04-01`, to: end },
+    { key: 'year', label: 'This calendar year', from: `${end.slice(0, 4)}-01-01`, to: end },
     { key: 'month', label: 'This month', from: `${end.slice(0, 7)}-01`, to: end },
   ];
 }

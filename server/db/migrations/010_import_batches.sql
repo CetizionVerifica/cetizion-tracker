@@ -1,4 +1,4 @@
--- 008 — bulk import holding area.
+-- 010 — bulk import holding area.
 --
 -- A batch is one uploaded file. Its items are the records the importer
 -- derived from that file, held here, not in the live tables, until an

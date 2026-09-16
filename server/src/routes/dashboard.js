@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
-import { revenueFilters, revenueReport } from '../lib/revenueReport.js';
+import { revenueReport } from '../lib/revenueReport.js';
 
 export const dashboardRouter = Router();
 
@@ -154,13 +154,13 @@ dashboardRouter.get('/sales-report', async (req, res) => {
 });
 
 /**
- * Order intake, invoicing and collections per month, for an optional
- * ?from=&to= range and ?sector=&sales_person= filters.
+ * Order intake (won quotations), invoicing & collections and payment status
+ * (purchase orders) per month, for an optional ?from=&to= range — the page
+ * sends a calendar year, or one month of it.
  */
 dashboardRouter.get('/revenue-report', async (req, res) => {
   const period = reportPeriod(req.query);
-  const filters = revenueFilters(req.query);
-  res.json({ data: { period, filters, ...(await revenueReport(period, filters)) } });
+  res.json({ data: { period, ...(await revenueReport(period)) } });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

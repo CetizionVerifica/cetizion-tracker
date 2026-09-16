@@ -214,6 +214,7 @@ CREATE TABLE payment_stages (
   stage_percent         numeric(6,4) NOT NULL CHECK (stage_percent > 0),
   invoice_no            text,
   invoice_date          date,
+  document_id           int UNIQUE REFERENCES documents(id),
   amount_received       numeric(16,2) NOT NULL DEFAULT 0,
   payment_received_date date,
   reminder_sent_on      date,
@@ -349,7 +350,7 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------- bulk import
--- Holding area for uploaded sales sheets (see migrations/008_import_batches.sql).
+-- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).
 CREATE TABLE IF NOT EXISTS import_batches (
   id            serial PRIMARY KEY,
   filename      text NOT NULL,

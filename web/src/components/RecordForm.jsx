@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { fileSize } from '../lib/format.js';
@@ -13,6 +13,9 @@ import { useToast } from './ui.jsx';
  *
  * A document field also takes { owner, maxBytes }: owner is the kind of
  * record the file belongs to (quotations, purchase-orders).
+ *
+ * A field with { auto: 'enquiry' } is a reference number the server assigns
+ * when the record is created: shown read-only, never sent.
  */
 export function RecordForm({
   title,
@@ -49,6 +52,18 @@ export function RecordForm({
   // Files chosen in document fields, and what each became once uploaded.
   const [picked, setPicked] = useState({});
   const uploads = useRef(new Map());
+  // On a new record, the next number in each assigned series, shown as a guide.
+  const [previews, setPreviews] = useState({});
+
+  useEffect(() => {
+    if (isEdit) return;
+    for (const field of fields) {
+      if (!field.auto) continue;
+      api.raw(`/lookups/next-id/${field.auto}`)
+        .then((r) => setPreviews((p) => ({ ...p, [field.name]: r.data.next })))
+        .catch(() => {});
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (name, value) => {
     setValues((v) => ({ ...v, [name]: value }));
@@ -106,6 +121,7 @@ export function RecordForm({
 
     const payload = {};
     for (const field of fields) {
+      if (field.auto) continue;
       let value = values[field.name];
       if (field.type === 'percent' && value !== '') value = Number(value) / 100;
       if (field.type === 'boolean') value = value === 'true';
@@ -117,7 +133,8 @@ export function RecordForm({
       const saved = isEdit
         ? await api.update(resource, record.id, payload)
         : await api.create(resource, payload);
-      toast(isEdit ? 'Changes saved' : 'Created', 'success');
+      const assigned = fields.find((field) => field.auto && saved?.data?.[field.name]);
+      toast(isEdit ? 'Changes saved' : assigned ? `Created ${saved.data[assigned.name]}` : 'Created', 'success');
       onSaved?.(saved?.data);
       onClose();
     } catch (err) {
@@ -160,6 +177,8 @@ export function RecordForm({
                 record={record}
                 file={picked[field.name]}
                 onFile={(file) => pickFile(field, file)}
+                preview={previews[field.name]}
+                isEdit={isEdit}
               />
             </div>
           ))}
@@ -169,7 +188,26 @@ export function RecordForm({
   );
 }
 
-function FormField({ field, value, error, onChange, record, file, onFile }) {
+function FormField({ field, value, error, onChange, record, file, onFile, preview, isEdit }) {
+  if (field.auto) {
+    return (
+      <Field
+        label={field.label}
+        hint={isEdit ? 'Assigned automatically — it cannot be changed' : 'Assigned automatically when you save'}
+        error={error}
+      >
+        <Input
+          type="text"
+          className="input mono"
+          value={value ?? ''}
+          placeholder={preview ? `${preview} (next number)` : 'Assigned on save'}
+          disabled
+          readOnly
+        />
+      </Field>
+    );
+  }
+
   const common = {
     value: value ?? '',
     error,

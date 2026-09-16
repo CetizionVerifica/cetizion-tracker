@@ -51,7 +51,7 @@ const encodeHeaderValue = (value) =>
 documentRouter.post('/', receiveFile, async (req, res) => {
   const owner = String(req.query.for ?? '');
   if (!isDocumentOwner(owner)) {
-    throw new ApiError(422, 'Documents can only be attached to quotations and purchase orders');
+    throw new ApiError(422, 'Documents can only be attached to quotations, purchase orders, and payment stages');
   }
   if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
     throw new ApiError(422, 'Choose a file to upload');

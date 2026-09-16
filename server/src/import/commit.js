@@ -15,6 +15,7 @@
  */
 import { transaction } from '../db.js';
 import { resources, ONBOARDING_TEMPLATE } from '../lib/resources.js';
+import { claimNextId } from '../lib/sequences.js';
 
 const ORDER = ['quotation', 'project', 'purchase_order', 'service', 'stage', 'invoice', 'receipt'];
 
@@ -95,15 +96,10 @@ export async function commitBatch(batch, items, { user }) {
               written.push({ seq: item.seq, ref: q.quotation_no, action: replacing ? 'replaced' : n ? 'kept, blanks filled' : 'kept' });
               break;
             }
-            // Number may have been taken since the plan was made; roll forward.
+            // The planned number may have been taken since the plan was made:
+            // then take the next in the series, the way the Quotations page does.
             let no = p.quotation_no;
-            for (let guard = 0; guard < 500; guard++) {
-              const { rowCount } = await client.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [no]);
-              if (!rowCount) break;
-              const m = /^(.*\/)(\d+)$/.exec(no);
-              if (!m) throw new Error(`quotation number ${no} already in use`);
-              no = `${m[1]}${String(Number(m[2]) + 1).padStart(m[2].length, '0')}`;
-            }
+            if ((await client.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [no])).rowCount) no = await claimNextId('quotation', client);
             const data = validate('quotations', { ...p, quotation_no: no, project_id: null });
             const q = await insert(client, 'quotations', data);
             results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
@@ -123,13 +119,7 @@ export async function commitBatch(batch, items, { user }) {
               break;
             }
             let pid = p.project_id;
-            for (let guard = 0; guard < 500; guard++) {
-              const { rowCount } = await client.query('SELECT 1 FROM projects WHERE project_id = $1', [pid]);
-              if (!rowCount) break;
-              const m = /^(.*-)(\d+)$/.exec(pid);
-              if (!m) throw new Error(`project id ${pid} already in use`);
-              pid = `${m[1]}${String(Number(m[2]) + 1).padStart(m[2].length, '0')}`;
-            }
+            if ((await client.query('SELECT 1 FROM projects WHERE project_id = $1', [pid])).rowCount) pid = await claimNextId('project', client);
             const data = validate('projects', {
               project_id: pid, client_name: parent.client_name || p.client_name, primary_service: p.primary_service || parent.service,
               sales_person: parent.sales_person || null, remarks: `Won from quotation ${parent.ref}`,
