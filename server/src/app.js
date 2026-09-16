@@ -23,6 +23,7 @@ import { userRouter } from './routes/users.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import { quotationDocRouter } from './routes/quotations.js';
+import { pipelineRouter } from './routes/pipeline.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -78,6 +79,7 @@ app.use('/api/users', userRouter);
 // two-segment paths (/:id/full, /:id/convert) are matched first.
 app.use('/api/companies', companyRouter);
 app.use('/api/emails', emailRouter);
+app.use('/api/pipeline', pipelineRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
 app.use('/api/purchase-orders', poRouter);

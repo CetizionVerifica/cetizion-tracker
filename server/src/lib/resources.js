@@ -191,7 +191,7 @@ export const resources = {
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -199,6 +199,7 @@ export const resources = {
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
       'valid_until', 'terms', 'place_of_supply_state',
+      'stage_id', 'probability', 'expected_close_date', 'next_step', 'lost_reason_id', 'lost_notes', 'competitor',
     ],
     schema: z.object({
       quotation_no: str(60),
@@ -220,6 +221,13 @@ export const resources = {
       valid_until: date(),
       terms: str(4000),
       place_of_supply_state: str(80),
+      stage_id: int({ min: 1 }),
+      probability: int({ min: 0, max: 100 }),
+      expected_close_date: date(),
+      next_step: str(300),
+      lost_reason_id: int({ min: 1 }),
+      lost_notes: str(1000),
+      competitor: str(160),
     }),
   },
 
@@ -460,6 +468,37 @@ export const resources = {
       reimbursement_date: date(),
       remarks: str(1000),
     }),
+  },
+
+  'pipeline-stages': {
+    table: 'pipeline_stages',
+    view: null,
+    label: 'Pipeline stage',
+    defaultSort: 'sort_order, id',
+    search: ['name'],
+    filters: ['type', 'active'],
+    columns: ['name', 'probability', 'type', 'maps_to_status', 'sort_order', 'color', 'rotting_days', 'active'],
+    schema: z.object({
+      name: requiredStr(80),
+      probability: int({ min: 0, max: 100 }),
+      type: enumOf(['open', 'paused', 'won', 'lost']).default('open'),
+      maps_to_status: enumOf(STATUS.quotation).default('Submitted'),
+      sort_order: int().default(0),
+      color: str(20),
+      rotting_days: int({ min: 1, max: 365 }),
+      active: bool(),
+    }),
+  },
+
+  'lost-reasons': {
+    table: 'lost_reasons',
+    view: null,
+    label: 'Lost reason',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
   services: {

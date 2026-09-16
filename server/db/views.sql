@@ -549,6 +549,24 @@ SELECT
   q.accepted_at,
   q.accepted_by_name,
   (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  q.stage_id,
+  st.name                                     AS stage,
+  st.type                                     AS stage_type,
+  st.sort_order                               AS stage_order,
+  st.color                                    AS stage_color,
+  q.probability,
+  ROUND(COALESCE(q.quotation_value, 0) * COALESCE(q.probability, 0) / 100.0, 2) AS weighted_value,
+  q.expected_close_date,
+  q.next_step,
+  q.stage_changed_at,
+  GREATEST(0, (CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date))::int AS days_in_stage,
+  (st.rotting_days IS NOT NULL AND st.type = 'open'
+     AND CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date > st.rotting_days) AS stale,
+  q.lost_reason_id,
+  lr.name                                     AS lost_reason,
+  q.lost_notes,
+  q.competitor,
+  q.closed_at,
   CASE WHEN q.valid_until IS NOT NULL AND q.valid_until < CURRENT_DATE
         AND q.status IN ('Submitted','Under Negotiation') THEN true ELSE false END AS expired,
   r.invoiced,
@@ -570,6 +588,8 @@ SELECT
   END                                         AS payment_note
 FROM quotations q
 LEFT JOIN documents doc ON doc.id = q.document_id
+LEFT JOIN pipeline_stages st ON st.id = q.stage_id
+LEFT JOIN lost_reasons lr ON lr.id = q.lost_reason_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),

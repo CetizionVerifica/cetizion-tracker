@@ -7,7 +7,32 @@ import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
 
+/**
+ * Quotations sent from the tracker whose validity passed more than the grace
+ * period ago are marked lost as expired. Only sent ones: anything typed in
+ * or imported without a send is left for a person to decide.
+ */
+async function expireQuotations() {
+  const { rows: [{ value: grace }] } = await query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'quotation_expiry_grace_days'), '14') AS value`);
+  const { rows } = await query(
+    `UPDATE quotations q
+        SET lost_reason_id = (SELECT id FROM lost_reasons WHERE name = 'Quotation expired'),
+            lost_notes = 'Validity date ' || q.valid_until || ' passed',
+            status = 'Lost'
+      WHERE q.status IN ('Submitted', 'Under Negotiation') AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL
+        AND q.valid_until IS NOT NULL AND q.valid_until + ($1::int) < CURRENT_DATE
+      RETURNING q.quotation_no, q.client_name, q.valid_until`,
+    [Number(grace) || 14]
+  );
+  return { grace_days: Number(grace) || 14, expired: rows };
+}
+
 export const JOBS = {
+  'quotations.expire': {
+    description: 'Mark quotations sent from the tracker as lost (expired) once their validity has passed by the grace period',
+    cron: '15 8 * * *',
+    run: () => expireQuotations(),
+  },
   'reminders.payment': {
     description: 'Email each client with overdue invoices, once per interval, and note the chase on the stage',
     cron: '0 9 * * 1-5',        // weekday mornings, business time zone
