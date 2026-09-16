@@ -8,7 +8,7 @@ is waiting on a decision. Updated with every pull request. Last update:
 
 The tracker holds the company's quotations, projects, purchase orders, payment
 stages, invoices and travel spend. The team has logged 47 improvement items on
-GitHub. Seven were already fixed by the team, and twenty more are now done in four batches. Five are being handled by PavithraCJ and shivam-balyan.
+GitHub. Seven were already fixed by the team, and twenty-five more are now done in five batches. Five are being handled by PavithraCJ and shivam-balyan.
 Three need a decision from the lead. The remaining 30 are planned in six
 batches below, and Sami is working through them in order.
 
@@ -177,6 +177,40 @@ on, the lead registers the tracker as an app in Microsoft 365 (about 15
 minutes; steps are in the environment example file) and connects the
 mailboxes.
 
+### Batch 5: running the business (done, checkpoint 5)
+
+**Project profitability (#39).** Every project shows what it earns against
+what it costs: travel bills, expense claims, and new costs such as external
+auditors or lab fees, with their bills attached. Missing amounts are shown as
+gaps rather than guessed. A report answers which service line, client or
+sector makes the most margin, and a project whose costs pass 80% of its PO
+value gets a review task.
+
+**Visit scheduling (#42).** Audits and site visits are planned on a calendar
+with the team, dates and site. The tracker warns when someone is already
+booked, on leave or off that day, shows each person's load for the month,
+creates the trip from the visit, and reminds the team the evening before.
+Finishing a visit can make its payment stage ready to invoice.
+
+**Automation hooks (#49).** n8n (or any system) can be told the moment a deal
+is won, an invoice is issued or goes overdue, a payment arrives, and more.
+Calls are signed, retried for a day if they fail, and can be replayed. A
+website form can also post enquiries in. Two ready recipes are documented.
+
+**Client portal (#47).** A client can sign in with a link sent to their email
+and see their own projects, documents, invoices (with a statement to
+download) and certificates, and send us a message that lands in the sales
+inbox. It is off until switched on for a client, and every view is logged.
+Automated tests prove one client can never see another's data.
+
+**Accounting (#48).** Invoices and payments from the accounts are compared
+with the tracker, and every difference is listed until it is fixed or
+explained. Payments in the books can be copied onto the invoice. Draft
+invoices are prepared with the right GST split, and the accountant gets TDS
+by client and quarter and a GST sales file in the GSTR-1 format. It works
+today with export files from Zoho Books or Tally; a live connection needs the
+lead to choose the system and share access.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -206,6 +240,9 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Decisions needed
 
+- **Tally or Zoho Books** for #48, and access to it (a Zoho self-client, or a
+  tunnel to the Tally machine).
+
 - **Rewrite the front end now or later (#17)?** The lead proposes moving to
   Next.js. Until decided, everything is built in the current app; a rewrite
   afterwards would redo that UI work.
@@ -229,3 +266,5 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 - 2026-09-17: Batch 4 finished (one-click contact, client acceptance links,
   certificates register, Microsoft 365 email, shared inbox). Checkpoint 4
   tagged; nothing pushed.
+- 2026-09-17: Batch 5 finished (profitability, visit scheduling, webhooks,
+  client portal, accounting). Checkpoint 5 tagged; nothing pushed.
