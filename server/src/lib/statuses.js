@@ -16,10 +16,20 @@ export const QUOTATION_STATUS = {
   lost: 'Lost',
 };
 
+// Since #24 an enquiry is a lead: several open statuses, Unqualified
+// instead of Declined, Converted once quoted.
 export const ENQUIRY_STATUS = {
-  open: 'In Progress',
-  declined: 'Declined',
-  quoted: 'Won - Quotation Sent',
+  open: ['New', 'Contacted', 'Qualified', 'Nurture'],
+  declined: 'Unqualified',
+  quoted: 'Converted',
+};
+
+// The enquiry statuses before #24, still sent by older clients and scripts;
+// the migration renamed the stored values the same way.
+export const LEGACY_ENQUIRY_STATUS = {
+  'In Progress': 'Contacted',
+  Declined: 'Unqualified',
+  'Won - Quotation Sent': ENQUIRY_STATUS.quoted,
 };
 
 /**
@@ -27,14 +37,14 @@ export const ENQUIRY_STATUS = {
  * A report that lists statuses in its own reading order keeps its own list.
  */
 export const STATUS = {
-  enquiry: [ENQUIRY_STATUS.open, ENQUIRY_STATUS.declined, ENQUIRY_STATUS.quoted],
+  enquiry: [...ENQUIRY_STATUS.open, ENQUIRY_STATUS.quoted, ENQUIRY_STATUS.declined],
   quotation: [
     QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.won,
     QUOTATION_STATUS.lost, QUOTATION_STATUS.onHold,
   ],
-  trigger: ['On PO Registration', 'On Delivery', 'Manual'],
-  unit: ['engagement', 'site', 'day', 'audit', 'report', 'year'],
+  trigger: ['On PO Registration', 'On Delivery', 'On Milestone', 'Manual'],
   onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
   approval: ['Submitted', 'Approved', 'Rejected', 'On Hold'],
   currency: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'],
+  unit: ['engagement', 'site', 'day', 'audit', 'report', 'year'],
 };

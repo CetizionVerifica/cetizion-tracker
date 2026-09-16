@@ -153,8 +153,9 @@ export const resources = {
     autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
+    dateFilter: 'enquiry_date',
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -173,8 +174,17 @@ export const resources = {
       sales_person: str(120),
       sales_person_email: str(160),
       service: str(300),
-      status: enumOf(STATUS.enquiry).default('In Progress'),
+      status: enumOf(STATUS.enquiry).default('New'),
       quotation_no: str(60),
+      source_id: int({ min: 1 }),
+      estimated_value: num({ min: 0 }),
+      currency: enumOf(STATUS.currency).default('INR'),
+      expected_decision_date: date(),
+      next_follow_up_at: date(),
+      unqualified_reason_id: int({ min: 1 }),
+      unqualified_notes: str(1000),
+      services_interested: str(500),
+      notes: str(2000),
     }),
     onSave: quoteWonEnquiry,
   },
@@ -488,6 +498,17 @@ export const resources = {
       rotting_days: int({ min: 1, max: 365 }),
       active: bool(),
     }),
+  },
+
+  'lead-sources': {
+    table: 'lead_sources',
+    view: null,
+    label: 'Lead source',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
   'lost-reasons': {

@@ -344,7 +344,7 @@ export function salesReportDocDefinition(data) {
         widths: ['*', '*', '*'],
         body: [
           [
-            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} declined`),
+            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} unqualified`),
             tile(number(sectors.summary.pos), 'POs won', `Win rate ${percent(sectors.summary.win_rate)} on decided quotations`),
             tile(compactInr(ct.won_value_inr), 'Won value (INR)', ct.unconverted.length ? `+ ${amounts(ct.unconverted)} without a rate` : `${plural(ct.clients, 'client')}`),
           ],
@@ -413,7 +413,7 @@ export function salesReportDocDefinition(data) {
         series: [
           { name: 'Quotation sent', color: GREEN, values: months.map((m) => m.quoted) },
           { name: 'In progress', color: GOLD, values: months.map((m) => m.in_progress) },
-          { name: 'Declined', color: RED, values: months.map((m) => m.declined) },
+          { name: 'Unqualified', color: RED, values: months.map((m) => m.declined) },
         ],
         width: W,
         height: 190,

@@ -12,7 +12,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 
 DROP TABLE IF EXISTS users, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, enquiries, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
+  purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
 
 -- ---------------------------------------------------------------------
@@ -309,6 +309,22 @@ CREATE TABLE quotation_revisions (
 CREATE INDEX quotation_revisions_quotation_id_idx ON quotation_revisions (quotation_id, revision);
 
 -- ---------------------------------------------------------------------
+-- Lead sources (#24)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE lead_sources (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+INSERT INTO lead_sources (name, sort_order) VALUES
+  ('Existing client', 1), ('Referral', 2), ('Website', 3), ('Inbound email or call', 4),
+  ('Event or webinar', 5), ('Partner or certification body', 6), ('Outreach', 7), ('Other', 8)
+ON CONFLICT (name) DO NOTHING;
+
+-- ---------------------------------------------------------------------
 -- Enquiries — logged before anything is quoted. Marking one
 -- 'Won - Quotation Sent' has the API create and link its quotation.
 -- ---------------------------------------------------------------------
@@ -327,15 +343,28 @@ CREATE TABLE enquiries (
   sales_person       text,
   sales_person_email text,
   service            text,
-  status             text NOT NULL DEFAULT 'In Progress'
-                       CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
+  status             text NOT NULL DEFAULT 'New'
+                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
   quotation_no       text REFERENCES quotations(quotation_no)
                        ON UPDATE CASCADE ON DELETE SET NULL,
+  -- A lead (#24)
+  source_id              int REFERENCES lead_sources(id) ON DELETE SET NULL,
+  estimated_value        numeric(16,2),
+  currency               text NOT NULL DEFAULT 'INR',
+  expected_decision_date date,
+  next_follow_up_at      date,
+  first_responded_at     timestamptz,
+  unqualified_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  unqualified_notes      text,
+  services_interested    text,
+  notes                  text,
+  converted_at           timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
+CREATE INDEX enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -658,6 +687,32 @@ CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
 
 INSERT INTO settings (key, value, notes) VALUES
   ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------- enquiry stamps
+-- Stamps: the first response, the conversion, and a default follow-up date.
+CREATE OR REPLACE FUNCTION enquiry_stamps() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.status = 'New' AND NEW.status <> 'New' AND NEW.first_responded_at IS NULL THEN
+    NEW.first_responded_at := now();
+  END IF;
+  IF NEW.status = 'Converted' AND (TG_OP = 'INSERT' OR OLD.status <> 'Converted') THEN
+    NEW.converted_at := COALESCE(NEW.converted_at, now());
+  END IF;
+  IF NEW.status IN ('Converted', 'Unqualified') THEN
+    NEW.next_follow_up_at := NULL;
+  ELSIF NEW.next_follow_up_at IS NULL AND (TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status) THEN
+    NEW.next_follow_up_at := CURRENT_DATE + (setting_num('lead_follow_up_default_days', 3))::int;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER c_enquiry_stamps BEFORE INSERT OR UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_stamps();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('lead_first_response_hours', '24', 'Target hours from a new enquiry to the first contact. Enquiries past it are flagged.'),
+  ('lead_follow_up_default_days', '3', 'Days ahead the next follow-up is set when an enquiry is created or moves stage without one.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies

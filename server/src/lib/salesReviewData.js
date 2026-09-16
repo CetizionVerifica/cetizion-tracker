@@ -14,6 +14,7 @@ import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
  */
 
 export { ENQUIRY_STATUS };
+const isOpenEnquiry = (row) => ENQUIRY_STATUS.open.includes(row.status);
 const WON = QUOTATION_STATUS.won;
 const LOST = QUOTATION_STATUS.lost;
 
@@ -48,7 +49,7 @@ export function summariseEnquiries(rows) {
   const quoted = rows.filter((row) => row.status === ENQUIRY_STATUS.quoted).length;
   return {
     enquiries: rows.length,
-    in_progress: rows.filter((row) => row.status === ENQUIRY_STATUS.open).length,
+    in_progress: rows.filter(isOpenEnquiry).length,
     declined: rows.filter((row) => row.status === ENQUIRY_STATUS.declined).length,
     quoted,
     quote_rate: share(quoted, rows.length),
@@ -60,7 +61,7 @@ export function enquirySummary(rows, period = {}) {
   const months = monthRows(rows, period, summariseEnquiries);
   const dated = months.filter((m) => m.month);
   const busiest = dated.reduce((best, m) => (m.enquiries > (best?.enquiries ?? 0) ? m : best), null);
-  const oldestOpen = rows.find((row) => row.status === ENQUIRY_STATUS.open && row.enquiry_date);
+  const oldestOpen = rows.find((row) => isOpenEnquiry(row) && row.enquiry_date);
   return {
     months,
     total: summariseEnquiries(rows),

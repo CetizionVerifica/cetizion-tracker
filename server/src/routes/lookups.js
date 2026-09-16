@@ -25,7 +25,7 @@ function sectorOptions(used) {
  */
 lookupRouter.get('/', async (req, res) => {
   const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
-         currenciesInUse, stages, lostReasons] =
+         currenciesInUse, stages, lostReasons, leadSources] =
     await Promise.all([
       query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
@@ -66,6 +66,7 @@ lookupRouter.get('/', async (req, res) => {
               ORDER BY 1`),
       query('SELECT id, name, probability, type, maps_to_status, color FROM pipeline_stages WHERE active ORDER BY sort_order'),
       query('SELECT id, name FROM lost_reasons WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name FROM lead_sources WHERE active ORDER BY sort_order, name'),
     ]);
 
   res.json({
@@ -90,6 +91,7 @@ lookupRouter.get('/', async (req, res) => {
       unregistered_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && !q.project_id),
       pipeline_stages: stages.rows,
       lost_reasons: lostReasons.rows,
+      lead_sources: leadSources.rows,
       enums: STATUS,
       currencies_in_use: currenciesInUse.rows.map((r) => r.currency),
       limits: { document_max_bytes: config.documentMaxBytes },
