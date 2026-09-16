@@ -54,6 +54,8 @@ async function recordEvents(entity, id) {
     for (const po of pos) push(po.created_at, `PO ${po.po_number} registered`, `${po.currency} ${po.po_value}`);
     const { rows: steps } = await query('SELECT step, completed_date FROM onboarding_tasks WHERE project_id = $1 AND completed_date IS NOT NULL', [id]);
     for (const s of steps) push(s.completed_date, `Checklist: ${s.step}`);
+    const { rows: vis } = await query('SELECT title, type, status, starts_at, completed_at, created_at FROM visits WHERE project_id = $1', [id]);
+    for (const v of vis) push(v.status === 'done' ? v.completed_at : v.created_at, v.status === 'done' ? `Visit done: ${v.title}` : `Visit ${v.status}: ${v.title}`, `${v.type.replace('_', ' ')} on ${new Date(v.starts_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
     const { rows: dels } = await query('SELECT type, reference, title, issued_on, created_at, status, valid_until FROM deliverables WHERE project_id = $1', [id]);
     for (const d of dels) push(d.issued_on || d.created_at, `${d.type.replace('_', ' ')} ${d.reference || d.title} ${d.status === 'draft' ? 'drafted' : 'issued'}`, [d.title, d.valid_until ? `valid until ${d.valid_until}` : null, d.status !== 'issued' ? d.status : null].filter(Boolean).join(' · '));
   } else if (entity === 'purchase_order') {

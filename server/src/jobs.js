@@ -10,6 +10,7 @@ import { runRenewals } from './lib/renewals.js';
 import { runNotifications } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
+import { runVisitReminders } from './lib/visits.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 
 /**
@@ -47,6 +48,11 @@ export const JOBS = {
     description: 'Email each client with overdue invoices, once per interval, and note the chase on the stage',
     cron: '0 9 * * 1-5',        // weekday mornings, business time zone
     run: (opts) => runPaymentReminders(opts),
+  },
+  'visits.reminders': {
+    description: 'Remind the team, and the client where chosen, before a visit',
+    cron: '0 17 * * *',
+    run: () => runVisitReminders(),
   },
   'mail.sync': {
     description: 'Pull new client email from connected mailboxes and keep push subscriptions alive',

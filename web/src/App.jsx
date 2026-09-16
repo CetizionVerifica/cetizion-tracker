@@ -8,6 +8,7 @@ import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Deliverables from './pages/Deliverables.jsx';
+import Schedule from './pages/Schedule.jsx';
 import Quotations from './pages/Quotations.jsx';
 import QuotationDetail from './pages/QuotationDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
@@ -65,6 +66,7 @@ const NAV = [
     items: [
       { to: '/projects', icon: '▤', label: 'Projects' },
       { to: '/purchase-orders', icon: '▦', label: 'Purchase orders' },
+      { to: '/schedule', icon: '▤', label: 'Schedule' },
       { to: '/deliverables', icon: '✪', label: 'Certificates' },
     ],
   },
@@ -194,6 +196,7 @@ export default function App() {
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/deliverables" element={<Deliverables />} />
+          <Route path="/schedule" element={<Schedule />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/quotations/:key" element={<QuotationDetail />} />

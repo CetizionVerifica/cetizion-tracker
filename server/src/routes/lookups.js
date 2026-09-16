@@ -82,6 +82,7 @@ lookupRouter.get('/', async (req, res) => {
       purchase_orders: pos.rows,
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
+      staff: (await query('SELECT id, name, role FROM staff WHERE active ORDER BY name')).rows,
       clients: clients.rows.map((r) => r.name),
       companies: clients.rows,
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
