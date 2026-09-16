@@ -26,6 +26,7 @@
  *   receipt        PO number + stage (money already recorded on that stage)
  */
 import { parseMoney } from './parse.js';
+import { sameService, similarName } from '../lib/names.js';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
@@ -78,37 +79,6 @@ export function invoiceNumber(raw, date, prefix) {
   if (new RegExp(`^${prefix}/`, 'i').test(s)) return s;          // already in full form
   if (/^\d{4}-\d{2}\//.test(s)) return `${prefix}/${s}`;         // "2026-27/PI-003" carries its own year
   return `${prefix}/${financialYear(date)}/${s}`;
-}
-
-/* ------------------------------------------------------------------ */
-/* Name matching, for the one case with no fixed identifier            */
-/* ------------------------------------------------------------------ */
-
-const GENERIC = new Set(['ltd', 'limited', 'pvt', 'private', 'india', 'inc', 'llp', 'co', 'company', 'the', 'and', 'of', 'unit', 'plant', 'site']);
-const tokens = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !GENERIC.has(t));
-
-/** "Hindalco Alupuram" ~ "Hindalco - Alupuram" ~ "Hindalco Industries Alupuram unit". */
-export function similarName(a, b) {
-  const na = norm(a); const nb = norm(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  if ((na.length >= 5 && nb.includes(na)) || (nb.length >= 5 && na.includes(nb))) return true;
-  const ta = tokens(a); const tb = tokens(b);
-  if (!ta.length || !tb.length) return false;
-  const shared = ta.filter((t) => tb.includes(t));
-  return shared.length >= 1 && shared.some((t) => t.length >= 4) && shared.length / Math.min(ta.length, tb.length) >= 0.5;
-}
-const SERVICE_FILLER = new Set(['proposal', 'for', 'of', 'and', 'the', 'assessment', 'audit', 'service', 'services', 'report', 'project', 'work', 'quote', 'quotation']);
-const serviceTokens = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !SERVICE_FILLER.has(t));
-/** "LCA" ~ "LCA proposal" ~ "LCA (Life cycle assessment)"; "ASI Surveillance Audit" !~ "ASI Recertification". */
-export function sameService(a, b) {
-  const na = norm(a); const nb = norm(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const ta = serviceTokens(a); const tb = serviceTokens(b);
-  if (!ta.length || !tb.length) return false;
-  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-  return short.every((t) => long.includes(t));
 }
 
 /** Pull the mapped fields out of one raw sheet row. */

@@ -76,6 +76,46 @@ export const STATUS = {
 // ---------------------------------------------------------------------
 
 export const resources = {
+  companies: {
+    table: 'companies',
+    view: 'v_companies',
+    label: 'Company',
+    defaultSort: 'name',
+    search: ['name', 'sector', 'city', 'gstin'],
+    filters: ['sector', 'city'],
+    normalizedFilters: ['sector', 'city'],
+    columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
+    schema: z.object({
+      name: requiredStr(200),
+      sector: str(120),
+      gstin: str(20),
+      website: str(200),
+      address: str(500),
+      city: str(120),
+      notes: str(2000),
+    }),
+  },
+
+  contacts: {
+    table: 'contacts',
+    view: null,
+    label: 'Contact',
+    defaultSort: 'name',
+    search: ['name', 'email', 'phone', 'role'],
+    filters: ['company_id', 'is_billing'],
+    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes'],
+    schema: z.object({
+      company_id: int({ min: 1 }),
+      name: requiredStr(160),
+      email: str(160),
+      phone: str(40),
+      role: str(120),
+      is_billing: bool(),
+      opt_out_reminders: bool(),
+      notes: str(1000),
+    }),
+  },
+
   enquiries: {
     table: 'enquiries',
     view: null,
@@ -85,7 +125,7 @@ export const resources = {
     autoId: 'enquiry',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
@@ -118,7 +158,7 @@ export const resources = {
     autoId: 'quotation',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -154,7 +194,7 @@ export const resources = {
     autoId: 'project',
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
-    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person'],
+    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id'],
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
@@ -185,7 +225,7 @@ export const resources = {
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
-    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no'],
+    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
