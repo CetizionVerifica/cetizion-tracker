@@ -34,6 +34,7 @@ import { notificationsRouter } from './routes/notifications.js';
 import { communicationsRouter } from './routes/communications.js';
 import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js';
 import { deliverablesRouter } from './routes/deliverables.js';
+import { mailboxRouter, mailThreadRouter, mailWebhookRouter } from './routes/mailboxes.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -76,6 +77,8 @@ app.use('/api/auth', authRouter);
 // Public by design: a client opens their own quotation with a single-use
 // token (#53). The router rate-limits itself and shows nothing else.
 app.use('/api/public/accept', publicAcceptanceRouter);
+// Microsoft Graph posts mail notifications here; each is checked against its subscription's secret.
+app.use('/api/mail', mailWebhookRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
@@ -101,6 +104,8 @@ app.use('/api/cashflow', cashflowRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/communications', communicationsRouter);
 app.use('/api/deliverables', deliverablesRouter);
+app.use('/api/mailboxes', mailboxRouter);
+app.use('/api/mail', mailThreadRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);

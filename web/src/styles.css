@@ -607,3 +607,12 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .accept__done { background: #fef3c7; border-radius: 8px; padding: 12px; }
 .accept__done--ok { background: #dcfce7; }
 .accept__foot { border-top: 1px solid var(--ink-100); padding-top: 12px; }
+
+/* Synced email (#29) */
+.mail { border: 1px solid var(--ink-200); border-radius: 8px; overflow: hidden; }
+.mail--outbound { border-left: 3px solid var(--brand-500, #14b8a6); }
+.mail__head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 10px; background: var(--ink-50, #f8fafc); }
+.mail__when { margin-left: auto; }
+.mail__body { width: 100%; height: 220px; border: 0; background: #fff; display: block; }
+.mail__snippet { padding: 8px 10px; }
+.btn.is-disabled { opacity: .5; pointer-events: none; }

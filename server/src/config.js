@@ -47,6 +47,16 @@ export const config = {
   },
   // Cloudinary's Free plan refuses files over 10 MB.
   documentMaxBytes: Math.round((Number(process.env.DOCUMENT_MAX_MB) || 10) * 1024 * 1024),
+  // Connected mailboxes (#29): a Microsoft Entra app registration.
+  microsoft: {
+    tenantId: process.env.MS_TENANT_ID || '',
+    clientId: process.env.MS_CLIENT_ID || '',
+    clientSecret: process.env.MS_CLIENT_SECRET || '',
+    redirectUri: process.env.MS_REDIRECT_URI || '',
+    appOnly: process.env.MS_APP_ONLY === 'true',
+    webhookUrl: process.env.MAIL_WEBHOOK_URL || '',
+    tokenKey: process.env.MAIL_TOKEN_KEY || '',
+  },
   // Outgoing email (#21). Mode defaults to log, so nothing leaves a server
   // until someone deliberately sets live (or sandbox with an allowlist).
   mail: {

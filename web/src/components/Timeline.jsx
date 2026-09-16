@@ -3,6 +3,7 @@ import { Badge, Card, ConfirmDialog, Empty, Field, Input, Modal, Select, Textare
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, fileSize, today } from '../lib/format.js';
+import { EmailThreadDialog } from './EmailThread.jsx';
 
 /**
  * Tasks, notes, files and the timeline of one record (#22). Drop it on any
@@ -18,6 +19,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
   const [note, setNote] = useState(null);       // 'new' | record
   const [task, setTask] = useState(null);       // 'new' | record
   const [file, setFile] = useState(false);
+  const [thread, setThread] = useState(null);   // synced email thread id
   const [touch, setTouch] = useState(null);     // { channel, contact_id } for the log dialog
   const [removing, setRemoving] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -63,6 +65,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
                   <span className={`strong ${it.record?.status === 'done' ? 'muted' : ''}`}>{it.title}</span>
                   {it.kind === 'task' && it.record.priority === 'high' && <Badge tone="danger">high</Badge>}
                   {it.kind === 'task' && it.record.status !== 'done' && it.record.due_at && it.record.due_at < today() && <Badge tone="danger">overdue</Badge>}
+                  {it.kind === 'email' && it.thread_id && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setThread(it.thread_id)}>Open</button>}
                   {it.kind === 'file' && <a className="btn btn--sm btn--ghost" href={api.documentUrl(it.document_id)} target="_blank" rel="noopener noreferrer">Open</a>}
                   <span className="small muted timeline__when">{new Date(it.at).toLocaleString()}{it.by ? ` · ${it.by}` : ''}</span>
                 </div>
@@ -83,6 +86,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
       {note && <NoteDialog entity={entity} id={id} record={note === 'new' ? null : note} onClose={() => setNote(null)} onSaved={() => { setNote(null); refetch(); }} />}
       {task && <TaskDialog entity={entity} id={id} record={task === 'new' ? null : task} people={lookups.sales_people} onClose={() => setTask(null)} onSaved={() => { setTask(null); refetch(); }} />}
       {file && <FileDialog entity={entity} id={id} maxBytes={lookups.limits?.document_max_bytes} onClose={() => setFile(false)} onSaved={() => { setFile(false); refetch(); }} />}
+      {thread && <EmailThreadDialog threadId={thread} onClose={() => setThread(null)} onReplied={refetch} />}
       {touch && <TouchDialog entity={entity} id={id} start={touch} onClose={() => setTouch(null)} onSaved={() => { setTouch(null); refetch(); }} />}
       {removing && <ConfirmDialog title="Remove this?" message="It leaves the timeline for good." confirmLabel="Remove" busy={busy} onConfirm={remove} onClose={() => setRemoving(null)} />}
     </Card>
