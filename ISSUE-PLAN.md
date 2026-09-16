@@ -83,8 +83,8 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #50 | MCP server so Claude can answer questions from live tracker data | todo | Read-only, admin-scoped. |
-| #38 | Error tracking, uptime checks and metrics | todo | We add the code side; the lead sets up the services. |
+| #50 | MCP server so Claude can answer questions from live tracker data | done (batch 6, not yet checkpointed) | MCP server at /api/mcp with hashed tokens (admin or one sales person), 9 read tools and 4 guarded writes, all logged; scoping tests; docs/mcp.md. Migration 032. |
+| #38 | Error tracking, uptime checks and metrics | done (batch 6, not yet checkpointed) | pino request logs with masked tokens, SDK-free Sentry/GlitchTip reports, /metrics, deep health, alerts from an ops.watch job; docs/operations.md. Migration 033. The lead sets up Uptime Kuma and the Sentry project. |
 | #35 | A staging environment with its own database | todo | Lead: Dokploy. We: configuration and seed. |
 | #33 | Database backups, off-site, with a restore drill | todo | Lead: server access. We: the scripts and the drill runbook. |
 | #34 | Close the public database port, rotate secrets, harden the app | todo | Lead: server. We: password policy, rate limits, headers. |
@@ -157,3 +157,4 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 - 2026-09-17: Batch 3 done and tagged `checkpoint/batch-3`. The migration check caught a fresh-install ordering bug in the #28 schema; fixed before tagging.
 - 2026-09-17: Batch 4 done and tagged `checkpoint/batch-4`. #29 and #30 are built and tested against a stand-in mailbox; they go live when the lead registers the Microsoft app. Also fixed: the orphan-file sweep would have removed timeline attachments after a day.
 - 2026-09-17: Batch 5 done and tagged `checkpoint/batch-5`. Also fixed: the background worker could not start (pg-boss 12 import), found while testing webhooks.
+- 2026-09-17: Paused mid Batch 6 at the end of the session. #50 and #38 done and committed; #35, #33, #34 next, then checkpoint 6. README already links docs/backups.md, docs/security.md and docs/staging.md, which those issues add.
