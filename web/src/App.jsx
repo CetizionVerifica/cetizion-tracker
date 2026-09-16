@@ -20,6 +20,7 @@ import TravelDashboard from './pages/TravelDashboard.jsx';
 import Settings from './pages/Settings.jsx';
 import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
+import Emails from './pages/Emails.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
@@ -67,6 +68,7 @@ const NAV = [
     items: [
       { to: '/settings', icon: '⚙', label: 'Settings' },
       { to: '/import', icon: '⇪', label: 'Bulk import' },
+      { to: '/emails', icon: '✉', label: 'Emails & jobs' },
     ],
   },
 ];
@@ -174,6 +176,7 @@ export default function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/import" element={<BulkImport />} />
           <Route path="/import/:id" element={<ImportReview />} />
+          <Route path="/emails" element={<Emails />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

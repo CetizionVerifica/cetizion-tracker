@@ -168,9 +168,10 @@ a:hover { text-decoration: underline; }
 /* --------------------------------------------------------------- layout */
 
 .grid { display: grid; gap: 16px; }
-.grid--stats { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-.grid--2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
-.grid--3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+/* min(..., 100%) so a column is never wider than the page on a narrow window. */
+.grid--stats { grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); }
+.grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
+.grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row--between { justify-content: space-between; }
