@@ -12,7 +12,7 @@
 
 BEGIN;
 
-DROP VIEW IF EXISTS v_companies, v_quotations, v_projects, v_purchase_orders,
+DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
@@ -440,6 +440,7 @@ SELECT
   p.planned_delivery_date,
   p.percent_complete,
   p.remarks,
+  p.estimated_cost,
   po.po_count,
   po.total_contract_value,
   po.total_invoiced,
@@ -655,3 +656,92 @@ SELECT
 FROM companies c;
 
 COMMIT;
+
+-- ---------------------------------------------------------------------
+-- Project profitability (#39): revenue against delivery cost, in INR.
+-- Paid cost is money gone; committed is billed or claimed but not yet
+-- paid. A cost or PO with no amount or no exchange rate is counted in
+-- gaps and left out of the sums, never taken as zero silently.
+-- ---------------------------------------------------------------------
+CREATE VIEW v_project_profitability AS
+WITH fx AS (
+  SELECT 'INR'::text AS currency, 1::numeric AS rate
+  UNION ALL
+  SELECT substr(key, 9),
+         CASE WHEN btrim(value) ~ '^[0-9]+(\.[0-9]+)?$' THEN NULLIF(btrim(value)::numeric, 0) END
+    FROM settings WHERE key LIKE 'fx\_rate\_%' AND key <> 'fx_rate_INR'
+),
+po AS (
+  SELECT v.project_id,
+         SUM(v.po_value * fx.rate)       AS revenue,
+         SUM(v.total_invoiced * fx.rate) AS invoiced,
+         SUM(v.total_received * fx.rate) AS received,
+         COUNT(*) FILTER (WHERE fx.rate IS NULL) AS revenue_gaps,
+         MIN(v.po_date)                  AS first_po_date
+    FROM v_purchase_orders v LEFT JOIN fx ON fx.currency = v.currency
+   GROUP BY v.project_id
+),
+trips AS (
+  SELECT t.travel_id, p.project_id FROM travel_logs t JOIN purchase_orders p ON p.po_number = t.po_number
+),
+vendors AS (
+  SELECT tr.project_id,
+         SUM(vi.amount_paid) AS paid,
+         SUM(GREATEST(COALESCE(vi.invoice_amount, vi.amount_paid) - vi.amount_paid, 0)) AS committed,
+         COUNT(*) FILTER (WHERE vi.invoice_amount IS NULL) AS gaps
+    FROM travel_vendor_invoices vi JOIN trips tr ON tr.travel_id = vi.travel_id
+   GROUP BY tr.project_id
+),
+claims AS (
+  SELECT tr.project_id,
+         SUM(c.amount_reimbursed) AS paid,
+         SUM(GREATEST(c.amount_claimed - c.amount_reimbursed, 0)) FILTER (WHERE c.approval_status <> 'Rejected') AS committed
+    FROM employee_expense_claims c JOIN trips tr ON tr.travel_id = c.travel_id
+   GROUP BY tr.project_id
+),
+manual AS (
+  SELECT pc.project_id,
+         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'paid')      AS paid,
+         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'committed') AS committed,
+         COUNT(*) FILTER (WHERE pc.amount IS NULL OR fx.rate IS NULL)    AS gaps
+    FROM project_costs pc LEFT JOIN fx ON fx.currency = pc.currency
+   GROUP BY pc.project_id
+),
+totals AS (
+  SELECT p.project_id,
+         COALESCE(po.revenue, 0) AS revenue,
+         COALESCE(po.invoiced, 0) AS invoiced,
+         COALESCE(po.received, 0) AS received,
+         COALESCE(v.paid, 0) AS travel_vendor_paid,
+         COALESCE(v.committed, 0) AS travel_vendor_committed,
+         COALESCE(c.paid, 0) AS claims_paid,
+         COALESCE(c.committed, 0) AS claims_committed,
+         COALESCE(m.paid, 0) AS other_paid,
+         COALESCE(m.committed, 0) AS other_committed,
+         COALESCE(po.revenue_gaps, 0) AS revenue_gaps,
+         COALESCE(v.gaps, 0) + COALESCE(m.gaps, 0) AS cost_gaps,
+         po.first_po_date
+    FROM projects p
+    LEFT JOIN po ON po.project_id = p.project_id
+    LEFT JOIN vendors v ON v.project_id = p.project_id
+    LEFT JOIN claims c ON c.project_id = p.project_id
+    LEFT JOIN manual m ON m.project_id = p.project_id
+)
+SELECT
+  p.project_id, p.client_name, p.company_id, p.primary_service, p.sales_person, p.project_manager,
+  p.estimated_cost, p.created_at, t.first_po_date,
+  round(t.revenue, 2) AS revenue,
+  round(t.invoiced, 2) AS invoiced,
+  round(t.received, 2) AS received,
+  t.travel_vendor_paid, t.travel_vendor_committed, t.claims_paid, t.claims_committed,
+  round(t.other_paid, 2) AS other_paid, round(t.other_committed, 2) AS other_committed,
+  round(t.travel_vendor_paid + t.claims_paid + t.other_paid, 2) AS cost_paid,
+  round(t.travel_vendor_committed + t.claims_committed + t.other_committed, 2) AS cost_committed,
+  round(t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed, 2) AS total_cost,
+  round(t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed), 2) AS margin,
+  CASE WHEN t.revenue > 0 THEN round(100 * (t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed)) / t.revenue, 1) END AS margin_percent,
+  CASE WHEN p.estimated_cost IS NOT NULL
+       THEN round((t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed) - p.estimated_cost, 2) END AS cost_variance,
+  t.revenue_gaps::int AS revenue_gaps, t.cost_gaps::int AS cost_gaps,
+  (t.revenue > 0 AND round(100 * (t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed)) / t.revenue, 1) < setting_num('margin_alert_percent', 20)) AS low_margin
+FROM projects p JOIN totals t ON t.project_id = p.project_id;

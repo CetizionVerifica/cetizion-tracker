@@ -14,6 +14,7 @@ import { query } from '../db.js';
 import { businessToday } from './businessDate.js';
 import { sendMail } from './mail.js';
 import { dailyDigest } from './emailTemplates.js';
+import { costAlerts } from '../routes/profitability.js';
 
 /**
  * Raise one notification.
@@ -93,7 +94,9 @@ export async function collectNotifications({ today = businessToday(), db = { que
     await add({ kind: 'inbox', title: `No reply yet: ${c.subject || '(no subject)'}`, body: `${c.inbox} · ${c.from_name || c.from_email}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'}`, link: `/inbox?c=${c.id}`, dedupeKey: `inbox-late:${c.id}:${day}` });
   }
 
-  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length } };
+  const costs = await costAlerts({ db, notify: (n, d) => add(n, d) });
+
+  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length, cost_alerts: costs.length } };
 }
 
 /** The daily job: the sweep, then one digest email with everything still unread. */

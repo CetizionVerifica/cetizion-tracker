@@ -20,6 +20,7 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
+import Profitability from './pages/Profitability.jsx';
 import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
@@ -73,6 +74,7 @@ const NAV = [
       { to: '/payment-stages', icon: '₹', label: 'Payment schedule', badge: 'stages' },
       { to: '/collections', icon: '◔', label: 'Collections' },
       { to: '/cashflow', icon: '◐', label: 'Cash-flow forecast' },
+      { to: '/profitability', icon: '%', label: 'Profitability' },
     ],
   },
   {
@@ -205,6 +207,7 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/profitability" element={<Profitability />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/mailboxes" element={<Mailboxes />} />
           <Route path="/inbox" element={<Inbox />} />

@@ -266,7 +266,7 @@ export const resources = {
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
-      'planned_delivery_date', 'percent_complete', 'remarks',
+      'planned_delivery_date', 'percent_complete', 'remarks', 'estimated_cost',
     ],
     schema: z.object({
       project_id: str(40),
@@ -284,6 +284,7 @@ export const resources = {
       // is written by linkProjectQuotation. Declared here so it survives
       // validation and reaches onSave.
       quotation_no: str(60),
+      estimated_cost: num({ min: 0 }),
     }),
     onSave: linkProjectQuotation,
   },
@@ -593,6 +594,30 @@ export const resources = {
       body: requiredStr(10000),
       author: str(120),
       pinned: bool(),
+    }),
+  },
+
+  'project-costs': {
+    table: 'project_costs',
+    view: null,
+    label: 'Project cost',
+    hasDocument: true,
+    defaultSort: 'incurred_on DESC NULLS LAST, id DESC',
+    search: ['description', 'vendor'],
+    filters: ['project_id', 'category', 'status'],
+    columns: ['project_id', 'po_number', 'category', 'description', 'vendor', 'amount', 'currency', 'incurred_on', 'status', 'document_id', 'created_by'],
+    schema: z.object({
+      project_id: requiredStr(40),
+      po_number: str(80),
+      category: enumOf(['subcontractor', 'auditor_fee', 'certification_body', 'lab_testing', 'travel', 'accommodation', 'materials', 'other']).default('subcontractor'),
+      description: requiredStr(300),
+      vendor: str(160),
+      amount: num({ min: 0 }),
+      currency: str(3).transform((v) => (v === undefined ? v : v ? v.toUpperCase() : 'INR')),
+      incurred_on: date(),
+      status: enumOf(['committed', 'paid']).default('committed'),
+      document_id: int({ min: 1 }),
+      created_by: str(120),
     }),
   },
 

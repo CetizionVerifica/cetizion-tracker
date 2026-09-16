@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -306,6 +306,7 @@ CREATE TABLE projects (
   sales_person          text,
   planned_start_date    date,
   planned_delivery_date date,
+  estimated_cost        numeric(16,2) CHECK (estimated_cost >= 0),
   percent_complete      numeric(5,4) NOT NULL DEFAULT 0
                           CHECK (percent_complete BETWEEN 0 AND 1),
   remarks               text,
@@ -1703,5 +1704,38 @@ Regards,
 {{my_name}}')
 ) AS v(name, body)
 WHERE NOT EXISTS (SELECT 1 FROM canned_responses c WHERE c.name = v.name);
+
+-- ---------------------------------------------------------------------
+-- Project costs (#39)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS project_costs (
+  id           serial PRIMARY KEY,
+  project_id   text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  po_number    text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  category     text NOT NULL DEFAULT 'subcontractor'
+                 CHECK (category IN ('subcontractor','auditor_fee','certification_body','lab_testing','travel','accommodation','materials','other')),
+  description  text NOT NULL,
+  vendor       text,
+  amount       numeric(16,2) CHECK (amount >= 0),
+  currency     text NOT NULL DEFAULT 'INR',
+  incurred_on  date,
+  status       text NOT NULL DEFAULT 'committed' CHECK (status IN ('committed','paid')),
+  document_id  int REFERENCES documents(id),
+  source       text NOT NULL DEFAULT 'manual',
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS project_costs_project_idx ON project_costs (project_id);
+
+DROP TRIGGER IF EXISTS project_costs_set_updated_at ON project_costs;
+CREATE TRIGGER project_costs_set_updated_at BEFORE UPDATE ON project_costs
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('margin_alert_percent', '20', 'Projects with a margin below this percentage are flagged red.'),
+  ('cost_alert_share_percent', '80', 'When a project''s costs pass this share of its PO value, its manager gets a task.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

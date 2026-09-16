@@ -1,4 +1,7 @@
 import { useNavigate } from 'react-router-dom';
+import { marginTone } from '../components/ProjectProfit.jsx';
+import { api } from '../lib/api.js';
+import { useFetch } from '../lib/hooks.js';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Progress } from '../components/ui.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
@@ -12,6 +15,8 @@ const projectAmount = (row, value) =>
 export default function Projects() {
   const navigate = useNavigate();
   const lookups = useLookups();
+  const profit = useFetch(() => api.raw('/profitability'));
+  const margins = Object.fromEntries((profit.data?.data ?? []).map((p) => [p.project_id, p]));
 
   const columns = [
     { key: 'project_id', header: 'Project', className: 'mono strong' },
@@ -24,6 +29,10 @@ export default function Projects() {
     { key: 'total_received', header: 'Received', align: 'right', render: (r) => projectAmount(r, r.total_received) },
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => projectAmount(r, r.balance_due_now) },
     { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? projectAmount(r, r.balance_to_bill) : <span className="muted">—</span>) },
+    { key: 'total_contract_value', header: 'Contract', align: 'right', render: (r) => money(r.total_contract_value) },
+    { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received) },
+    { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now) },
+    { key: 'margin', header: 'Margin', align: 'right', render: (r) => { const m = margins[r.project_id]; return m?.margin_percent == null ? <span className="muted">—</span> : <span title={`Margin ${m.margin} · cost ${m.total_cost}`}><Badge tone={marginTone(Number(m.margin_percent))}>{m.margin_percent}%</Badge>{m.low_margin && ' ⚑'}</span>; } },
     { key: 'onboarding_percent', header: 'Onboarding', width: 130, render: (r) => (r.onboarding_total ? <Progress value={r.onboarding_percent} /> : <span className="muted">—</span>) },
     { key: 'project_stage', header: 'Stage', render: (r) => <Badge>{r.project_stage}</Badge> },
     { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },
@@ -51,6 +60,7 @@ export default function Projects() {
     { name: 'planned_start_date', label: 'Planned start', type: 'date' },
     { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
     { name: 'percent_complete', label: '% complete', type: 'percent', hint: '0–100' },
+    { name: 'estimated_cost', label: 'Planned cost', type: 'money', hint: 'Delivery cost expected, for planned against actual' },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 

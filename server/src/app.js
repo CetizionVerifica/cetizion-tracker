@@ -36,6 +36,7 @@ import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js
 import { deliverablesRouter } from './routes/deliverables.js';
 import { mailboxRouter, mailThreadRouter, mailWebhookRouter } from './routes/mailboxes.js';
 import { inboxRouter } from './routes/inbox.js';
+import { profitabilityRouter } from './routes/profitability.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -122,6 +123,7 @@ app.use('/api/deliverables', deliverablesRouter);
 app.use('/api/mailboxes', mailboxRouter);
 app.use('/api/mail', mailThreadRouter);
 app.use('/api/inbox', inboxRouter);
+app.use('/api/profitability', profitabilityRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);

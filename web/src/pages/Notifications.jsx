@@ -12,7 +12,7 @@ import { useFetch } from '../lib/hooks.js';
 const KINDS = {
   task_due: ['Task due', 'info'], task_overdue: ['Task overdue', 'danger'], follow_up: ['Follow-up', 'info'],
   approval: ['Approval', 'warning'], invoice_overdue: ['Overdue invoice', 'danger'], renewal: ['Renewal', 'success'],
-  expiring: ['Expiring quotation', 'warning'], acceptance: ['Client acceptance', 'success'], inbox: ['Inbox', 'info'],
+  expiring: ['Expiring quotation', 'warning'], acceptance: ['Client acceptance', 'success'], inbox: ['Inbox', 'info'], cost_alert: ['Project cost', 'danger'],
 };
 
 export default function Notifications() {
