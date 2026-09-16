@@ -43,11 +43,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #23 | Quotations as real documents: catalogue, line items, GST, validity, revisions, PDF | todo | Needs #20. Largest item in the batch. |
-| #24 | Enquiries as leads: qualification, sources, follow-ups | todo | Needs #20. The importer gains an Enquiries step here. |
-| #25 | Quotation pipeline: stages with probability, kanban, lost reasons, forecast | todo | Needs #23, #24. |
-| #26 | PO received to project in one step, payment-schedule and onboarding templates | todo | Needs #23, #25. The importer's default splits become these templates. |
-| #46 | Discount and exception approvals on quotations | todo | Builds on #23. |
+| #23 | Quotations as real documents: catalogue, line items, GST, validity, revisions, PDF | done (checkpoint 2) | Services catalogue, quotation_lines with GST and computed totals, validity and terms from Settings, revisions with history, pdfmake PDF, send by email, acceptance; quotation page. Quotation templates (named line sets) not built: the catalogue covers the need for now. Migration 013. |
+| #24 | Enquiries as leads: qualification, sources, follow-ups | done (checkpoint 2) | New/Contacted/Qualified/Nurture/Converted/Unqualified, lead sources, estimate carried to the quotation, follow-up and decision dates, first-response stamp, unqualified reasons. Owner stays the sales-person text until #18 lands. Migration 015. |
+| #25 | Quotation pipeline: stages with probability, kanban, lost reasons, forecast | done (checkpoint 2) | Seven stages with probabilities, status kept in step by trigger, drag-and-drop board, lost reasons and competitor, weighted forecast by expected close month, expiry job. Migration 014. |
+| #26 | PO received to project in one step, payment-schedule and onboarding templates | done (checkpoint 2) | Register PO dialog: project (new or existing of the same client), PO linked to the quotation, service lines from the quotation lines, stages from a template with credit days and milestone triggers, checklist with target dates. Templates admin page. Migration 016. |
+| #46 | Discount and exception approvals on quotations | done (checkpoint 2) | Overall discount computed from the lines; above the Settings threshold the quotation waits for approval before sending; hand-raised exceptions; approve/reject with emails. Migration 017. |
 
 ### Batch 3: getting paid
 
@@ -101,9 +101,11 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 | Tag | Issues | State |
 | --- | --- | --- |
 | `checkpoint/batch-1` | #45, #20, #21, #36, #37 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
+| `checkpoint/batch-2` | #23, #24, #25, #26, #46 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
 
 ## Log
 
 - 2026-09-17: plan written. Bulk import merged with today's `main` and green on
   all four checks. #45 claimed on this branch.
 - 2026-09-17: Batch 1 done and tagged `checkpoint/batch-1`.
+- 2026-09-17: Batch 2 done and tagged `checkpoint/batch-2`.
