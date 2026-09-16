@@ -33,11 +33,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #45 | Bulk import, export and data fixes | in progress | Importer built and tested on `feature/bulk-import`. Left to add from the issue: CSV template per import type, Excel export from lists, an audit entry per import. |
-| #20 | Companies and contacts instead of typed client names | todo | Needed by #23, #24, #27, #29, #31. Includes de-duplicating the 68 client spellings, which the importer's name matching can help with. |
-| #21 | Background jobs and email sending | todo | Needed by #22, #27, #28. Worker process, email log, sending kill switch. Needs an SMTP mailbox from the lead. |
-| #36 | End-to-end tests (Playwright) for the critical flows | todo | Protects every later change. Quotation to PO to payment, and the import. |
-| #37 | Dependency, container, code and secret scanning in CI | todo | CI configuration only. |
+| #45 | Bulk import, export and data fixes | done (checkpoint 1) | Importer with AI-assisted review and duplicate handling; CSV template; CSV and Excel exports that follow the list's filters; every import recorded as a batch with file, user, counts and time. |
+| #20 | Companies and contacts instead of typed client names | done (checkpoint 1) | companies + contacts tables, records linked by trigger from the typed name, Companies page with look-alike merge, company page with contacts and records. Migration 011. |
+| #21 | Background jobs and email sending | done (checkpoint 1) | pg-boss worker, email_log, EMAIL_MODE log/sandbox/live, kill switch in Settings, payment reminders and finance digest, Emails & jobs admin page. Migration 012. Plain HTML templates instead of react-email (no build step). Needs SMTP details from the lead to go live. |
+| #36 | End-to-end tests (Playwright) for the critical flows | done (checkpoint 1) | Sign-in, quotation to company, import and commit. CI job on a fresh seeded database. PO and payment flows to be added as those screens change in Batch 2. |
+| #37 | Dependency, container, code and secret scanning in CI | done (checkpoint 1) | npm audit, CodeQL, gitleaks, Trivy, Dependabot. Runs on the first push. |
 
 ### Batch 2: selling
 
@@ -93,7 +93,17 @@ The lead's own order puts #33, #34 and #35 first. They are last here only
 because they need server access we do not have; the moment the lead gives it,
 they jump to the front.
 
+## Checkpoints
+
+All work sits on the local branch `work/all-issues`, one commit per issue,
+with a tag after every five issues. Nothing is pushed until Sami says so.
+
+| Tag | Issues | State |
+| --- | --- | --- |
+| `checkpoint/batch-1` | #45, #20, #21, #36, #37 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
+
 ## Log
 
 - 2026-09-17: plan written. Bulk import merged with today's `main` and green on
   all four checks. #45 claimed on this branch.
+- 2026-09-17: Batch 1 done and tagged `checkpoint/batch-1`.

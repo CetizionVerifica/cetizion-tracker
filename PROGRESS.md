@@ -47,6 +47,32 @@ passing the same checks the deployment pipeline runs. Waiting to be pushed for
 review. Three small additions from the issue remain: a downloadable template,
 Excel export from lists, and an audit entry per import.
 
+### Batch 1: foundations (done, checkpoint 1)
+
+**Every client once (#20).** The tracker used to hold the client only as
+typed text, so "Hindalco Alupuram" and "Hindalco - Alupuram" were two
+clients. Now a company record exists once for each client, with its sector,
+GSTIN, address and the people we deal with there. Every quotation, enquiry
+and project links to it automatically, whatever was typed, and a Companies
+page shows everything held per client. Where two spellings slipped through,
+the page points them out and merges them in one click.
+
+**Reminders that run on their own (#21).** A worker process now runs
+scheduled jobs. Each weekday morning it emails every client with overdue
+invoices, once a week at most per invoice, to the billing contact they
+named, and sends finance a digest of what to invoice and what is overdue.
+Nothing is sent until the server is switched to live; until then every email
+is only recorded, and an admin can stop all sending with one switch. Every
+email the system composes is kept in a log with its full text.
+
+**Import finished (#45).** A downloadable template, Excel export from every
+list, and exports that carry the same filters as the screen.
+
+**Safety nets (#36, #37).** Automated browser tests now sign in, quote a
+client, import a sheet and commit it, on every change. The build also scans
+dependencies, the container image, the code and the history for known
+vulnerabilities and leaked secrets, and proposes dependency updates weekly.
+
 ### Smaller fixes made along the way
 
 - The project page's onboarding checklist can be edited, reordered and extended.
@@ -99,3 +125,5 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 - 2026-09-17: Bulk import merged with the team's latest code (invoice
   documents, migrations on start-up, CI/CD). All checks green. Plan and
   working rules written.
+- 2026-09-17: Batch 1 finished (companies, reminders, import extras, browser
+  tests, security scanning). Checkpoint 1 tagged locally; nothing pushed yet.

@@ -75,11 +75,16 @@ For anything that touches the importer, also run the graded workbooks (see
 PROGRESS.md for what they cover); the rules score must stay at 100% and the AI
 review must catch every planted case with no false flags.
 
-## Batches
+## Batches and checkpoints
 
-Issues are worked in batches of five, in the order in ISSUE-PLAN.md. A batch is
-done when all five pull requests are open and green. Within a batch, start with
-the issue the others depend on.
+Issues are worked in batches of five, in the order in ISSUE-PLAN.md. Within a
+batch, start with the issue the others depend on.
+
+While the backlog is being worked through in one go, everything sits on the
+local integration branch `work/all-issues`, one commit per issue, and every
+five issues get a tag `checkpoint/batch-N` once the four checks are green.
+Nothing is pushed until Sami says so; at that point the branch goes up for
+one pull request per batch, or per issue if the lead prefers smaller reviews.
 
 ## Documents to keep current
 
