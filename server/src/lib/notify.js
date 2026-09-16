@@ -85,7 +85,15 @@ export async function collectNotifications({ today = businessToday(), db = { que
     await add({ kind: 'acceptance', title: `${a.quotation_no}: acceptance link not opened yet`, body: `${a.client_name}${a.sent_to ? ` · sent to ${a.sent_to}` : ''}`, entity: 'quotation', entityId: a.quotation_no, link: `/quotations/${enc(a.quotation_no)}`, dedupeKey: `unseen:${a.id}` });
   }
 
-  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length } };
+  const { rows: late } = await db.query(
+    `SELECT c.id, c.assignee, c.from_email, c.from_name, c.response_due_at, t.subject, i.name AS inbox
+       FROM inbox_conversations c JOIN email_threads t ON t.id = c.thread_id JOIN inboxes i ON i.id = c.inbox_id
+      WHERE c.status = 'open' AND c.response_due_at < now()`);
+  for (const c of late) {
+    await add({ kind: 'inbox', title: `No reply yet: ${c.subject || '(no subject)'}`, body: `${c.inbox} · ${c.from_name || c.from_email}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'}`, link: `/inbox?c=${c.id}`, dedupeKey: `inbox-late:${c.id}:${day}` });
+  }
+
+  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length } };
 }
 
 /** The daily job: the sweep, then one digest email with everything still unread. */

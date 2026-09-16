@@ -1,0 +1,241 @@
+/**
+ * The shared sales inbox (#30).
+ *
+ *   GET    /api/inbox/inboxes                       inboxes and their shared mailboxes
+ *   POST   /api/inbox/inboxes                       { name, account_id, default_assignment, members, first_response_hours, signature }
+ *   PATCH  /api/inbox/inboxes/:id
+ *   GET    /api/inbox?view=mine|unassigned|all|overdue&status=&inbox_id=&q=
+ *   GET    /api/inbox/summary                       counts for the sidebar
+ *   GET    /api/inbox/:id                           the conversation with its thread
+ *   PATCH  /api/inbox/:id                           { assignee, status, priority, labels, snoozed_until }
+ *   POST   /api/inbox/:id/reply                     { html | body, canned_id }  from the shared address
+ *   POST   /api/inbox/:id/convert                   { service, sales_person, source_id, ... } a prefilled enquiry
+ *   GET    /api/inbox/canned · POST · PATCH /canned/:id · DELETE /canned/:id
+ */
+import { Router } from 'express';
+import { z } from 'zod';
+import { query, transaction } from '../db.js';
+import { ApiError } from '../middleware/error.js';
+import { claimNextId } from '../lib/sequences.js';
+import { replyToThread } from '../lib/mailbox/sync.js';
+import { fillTemplate } from '../lib/inbox.js';
+
+export const inboxRouter = Router();
+
+const who = (req) => req.user?.username || 'admin';
+const fields = (parsed) => new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const toHtml = (text) => String(text).split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+
+// ------------------------------------------------------------ inboxes
+const inboxSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  account_id: z.coerce.number().int().positive(),
+  default_assignment: z.enum(['owner_of_company', 'round_robin', 'unassigned']).default('owner_of_company'),
+  members: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+  first_response_hours: z.coerce.number().int().min(1).max(720).nullish(),
+  signature: z.string().max(2000).nullish(),
+  active: z.boolean().optional(),
+});
+
+inboxRouter.get('/inboxes', async (req, res) => {
+  const { rows } = await query(
+    `SELECT i.*, a.email, a.status AS mailbox_status,
+            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id AND c.status = 'open') AS open
+       FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id ORDER BY i.name`);
+  const { rows: shared } = await query(`SELECT id, email FROM connected_accounts WHERE is_shared AND status <> 'disconnected' AND id NOT IN (SELECT account_id FROM inboxes) ORDER BY email`);
+  res.json({ data: rows, available_mailboxes: shared });
+});
+
+inboxRouter.post('/inboxes', async (req, res) => {
+  const parsed = inboxSchema.safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const v = parsed.data;
+  const { rows: [a] } = await query(`SELECT is_shared FROM connected_accounts WHERE id = $1 AND status <> 'disconnected'`, [v.account_id]);
+  if (!a) throw new ApiError(422, 'Please check the highlighted fields', { fields: { account_id: 'Choose a connected mailbox' } });
+  if (!a.is_shared) await query('UPDATE connected_accounts SET is_shared = true WHERE id = $1', [v.account_id]);
+  const { rows: [i] } = await query(
+    `INSERT INTO inboxes (name, account_id, default_assignment, members, first_response_hours, signature) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [v.name, v.account_id, v.default_assignment, v.members, v.first_response_hours ?? null, v.signature ?? null]).catch((e) => { if (e.code === '23505') throw new ApiError(409, 'That mailbox already has an inbox'); throw e; });
+  res.status(201).json({ data: i });
+});
+
+inboxRouter.patch('/inboxes/:id', async (req, res) => {
+  const parsed = inboxSchema.partial().omit({ account_id: true }).safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  if (!set.length) throw new ApiError(422, 'Nothing to change');
+  const { rows: [i] } = await query(`UPDATE inboxes SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
+  if (!i) throw new ApiError(404, 'Inbox not found');
+  res.json({ data: i });
+});
+
+// ------------------------------------------------------------ canned responses
+inboxRouter.get('/canned', async (req, res) => {
+  const { rows } = await query('SELECT * FROM canned_responses WHERE shared OR owner = $1 ORDER BY name', [who(req)]);
+  res.json({ data: rows });
+});
+const cannedSchema = z.object({ name: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(10000), shared: z.boolean().default(true) });
+inboxRouter.post('/canned', async (req, res) => {
+  const parsed = cannedSchema.safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const { rows: [c] } = await query('INSERT INTO canned_responses (name, body, shared, owner) VALUES ($1,$2,$3,$4) RETURNING *', [parsed.data.name, parsed.data.body, parsed.data.shared, who(req)]);
+  res.status(201).json({ data: c });
+});
+inboxRouter.patch('/canned/:id', async (req, res) => {
+  const parsed = cannedSchema.partial().safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  if (!set.length) throw new ApiError(422, 'Nothing to change');
+  const { rows: [c] } = await query(`UPDATE canned_responses SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
+  if (!c) throw new ApiError(404, 'Not found');
+  res.json({ data: c });
+});
+inboxRouter.delete('/canned/:id', async (req, res) => {
+  await query('DELETE FROM canned_responses WHERE id = $1', [Number(req.params.id)]);
+  res.status(204).end();
+});
+
+// ------------------------------------------------------------ conversations
+const LIST = `
+  SELECT c.*, i.name AS inbox_name, t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
+         co.name AS company_name, ct.name AS contact_name,
+         (c.status = 'open' AND c.response_due_at IS NOT NULL AND c.response_due_at < now()) AS overdue
+    FROM inbox_conversations c
+    JOIN inboxes i ON i.id = c.inbox_id
+    JOIN email_threads t ON t.id = c.thread_id
+    LEFT JOIN companies co ON co.id = c.company_id
+    LEFT JOIN contacts ct ON ct.id = c.contact_id`;
+
+// Snoozed conversations wake when their time comes.
+const wake = () => query(`UPDATE inbox_conversations SET status = 'open', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until <= now()`);
+
+inboxRouter.get('/summary', async (req, res) => {
+  await wake();
+  const { rows: [r] } = await query(
+    `SELECT COUNT(*) FILTER (WHERE status = 'open')::int AS open,
+            COUNT(*) FILTER (WHERE status = 'open' AND assignee IS NULL)::int AS unassigned,
+            COUNT(*) FILTER (WHERE status = 'open' AND assignee = $1)::int AS mine,
+            COUNT(*) FILTER (WHERE status = 'open' AND response_due_at < now())::int AS overdue
+       FROM inbox_conversations`, [who(req)]);
+  res.json({ data: r });
+});
+
+inboxRouter.get('/', async (req, res) => {
+  await wake();
+  const params = []; const where = [];
+  const add = (sql, v) => { params.push(v); where.push(sql.replaceAll('?', `$${params.length}`)); };
+  const view = String(req.query.view || 'all');
+  if (view === 'mine') add('c.assignee = ?', String(req.query.assignee || who(req)));
+  if (view === 'unassigned') where.push('c.assignee IS NULL');
+  if (view === 'overdue') where.push(`c.status = 'open' AND c.response_due_at < now()`);
+  if (req.query.status) add('c.status = ANY(?)', String(req.query.status).split(','));
+  else if (view !== 'overdue') where.push(`c.status IN ('open','pending_client')`);
+  if (req.query.inbox_id) add('c.inbox_id = ?', Number(req.query.inbox_id));
+  if (req.query.q) add('(t.subject ILIKE ? OR c.from_email ILIKE ? OR c.from_name ILIKE ? OR co.name ILIKE ?)', `%${req.query.q}%`);
+  const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY (c.status = 'open') DESC, c.response_due_at NULLS LAST, t.last_message_at DESC LIMIT 500`, params);
+  res.json({ data: rows });
+});
+
+async function loadConversation(id) {
+  const { rows: [c] } = await query(`${LIST} WHERE c.id = $1`, [id]);
+  if (!c) throw new ApiError(404, 'Conversation not found');
+  return c;
+}
+
+inboxRouter.get('/:id', async (req, res) => {
+  res.json({ data: await loadConversation(Number(req.params.id)) });
+});
+
+const patchSchema = z.object({
+  assignee: z.string().trim().max(120).nullish(),
+  status: z.enum(['open', 'pending_client', 'snoozed', 'closed']).optional(),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
+  labels: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+  snoozed_until: z.string().datetime({ offset: true }).nullish(),
+});
+
+inboxRouter.patch('/:id', async (req, res) => {
+  const parsed = patchSchema.safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const v = { ...parsed.data };
+  if (v.assignee === '') v.assignee = null;
+  if (v.status === 'snoozed' && !v.snoozed_until) throw new ApiError(422, 'Please check the highlighted fields', { fields: { snoozed_until: 'Until when?' } });
+  if (v.status && v.status !== 'snoozed') v.snoozed_until = null;
+  const set = Object.entries(v).filter(([, x]) => x !== undefined);
+  if (v.status === 'closed') set.push(['closed_at', new Date().toISOString()]);
+  else if (v.status) set.push(['closed_at', null]);
+  if (!set.length) throw new ApiError(422, 'Nothing to change');
+  const { rowCount } = await query(`UPDATE inbox_conversations SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1`, [Number(req.params.id), ...set.map(([, x]) => x)]);
+  if (!rowCount) throw new ApiError(404, 'Conversation not found');
+  res.json({ data: await loadConversation(Number(req.params.id)) });
+});
+
+inboxRouter.post('/:id/reply', async (req, res) => {
+  const parsed = z.object({ body: z.string().max(20000).optional(), html: z.string().max(100000).optional(), canned_id: z.coerce.number().int().positive().optional(), close: z.boolean().optional() }).safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const c = await loadConversation(Number(req.params.id));
+  const { rows: [inbox] } = await query('SELECT signature FROM inboxes WHERE id = $1', [c.inbox_id]);
+  let text = parsed.data.body || '';
+  if (parsed.data.canned_id) {
+    const { rows: [t] } = await query('SELECT body FROM canned_responses WHERE id = $1', [parsed.data.canned_id]);
+    if (!t) throw new ApiError(422, 'Unknown canned response');
+    text = text || t.body;
+  }
+  text = fillTemplate(text, { contact_name: c.contact_name || c.from_name || 'Sir/Madam', company_name: c.company_name || '', my_name: who(req) });
+  const html = parsed.data.html || (text.trim() ? toHtml(text) : '');
+  if (!html) throw new ApiError(422, 'Please check the highlighted fields', { fields: { body: 'Write a reply' } });
+  const signed = inbox?.signature ? `${html}${toHtml(fillTemplate(inbox.signature, { my_name: who(req) }))}` : html;
+  try {
+    const r = await replyToThread(c.thread_id, signed, who(req));
+    if (!c.assignee) await query('UPDATE inbox_conversations SET assignee = $2 WHERE id = $1 AND assignee IS NULL', [c.id, who(req)]);
+    if (parsed.data.close) await query(`UPDATE inbox_conversations SET status = 'closed', closed_at = now() WHERE id = $1`, [c.id]);
+    res.json({ data: { ...r, conversation: await loadConversation(c.id) } });
+  } catch (err) {
+    if (err.status) throw new ApiError(err.status, err.message);
+    throw new ApiError(502, `The reply could not be sent: ${err.message}`);
+  }
+});
+
+const convertSchema = z.object({
+  client_name: z.string().trim().max(200).optional(),
+  contact_person: z.string().trim().max(120).optional(),
+  service: z.string().trim().max(300).optional(),
+  sales_person: z.string().trim().max(120).optional(),
+  source_id: z.coerce.number().int().positive().optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+inboxRouter.post('/:id/convert', async (req, res) => {
+  const parsed = convertSchema.safeParse(req.body || {});
+  if (!parsed.success) throw fields(parsed);
+  const c = await loadConversation(Number(req.params.id));
+  if (c.enquiry_no) throw new ApiError(409, `Already converted to ${c.enquiry_no}`);
+  const v = parsed.data;
+  const client = v.client_name || c.company_name;
+  if (!client) throw new ApiError(422, 'Please check the highlighted fields', { fields: { client_name: 'Which company is this?' } });
+  const enquiry = await transaction(async (db) => {
+    const { rows: [src] } = v.source_id ? { rows: [{ id: v.source_id }] } : await db.query(`SELECT id FROM lead_sources WHERE name = 'Inbound email or call'`);
+    const { rows: [{ first }] } = await db.query('SELECT MIN(sent_at) AS first FROM email_messages WHERE thread_id = $1', [c.thread_id]);
+    const no = await claimNextId('enquiry', db);
+    const { rows: [e] } = await db.query(
+      `INSERT INTO enquiries (enquiry_no, enquiry_date, client_name, contact_person, sales_person, service, status, source_id, notes, first_responded_at)
+       VALUES ($1, ($2::timestamptz AT TIME ZONE 'Asia/Kolkata')::date, $3, $4, $5, $6, 'New', $7, $8, $9) RETURNING *`,
+      [no, first || new Date().toISOString(), client, v.contact_person || c.contact_name || c.from_name || null, v.sales_person || c.assignee || null,
+        v.service || c.subject || null, src?.id ?? null, v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, c.first_response_at]);
+    await db.query('UPDATE inbox_conversations SET enquiry_no = $2, company_id = COALESCE(company_id, $3) WHERE id = $1', [c.id, e.enquiry_no, e.company_id]);
+    await db.query(`UPDATE email_threads SET entity = 'enquiry', entity_id = $2, company_id = COALESCE(company_id, $3) WHERE id = $1`, [c.thread_id, e.enquiry_no, e.company_id]);
+    // A sender we had no contact for becomes one, so the next email matches.
+    if (e.company_id && c.from_email && !c.contact_id) {
+      const { rows: [ct] } = await db.query(
+        `INSERT INTO contacts (company_id, name, email, notes) VALUES ($1,$2,$3,'Added from the inbox')
+         ON CONFLICT (company_id, lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))) DO UPDATE SET email = COALESCE(contacts.email, EXCLUDED.email) RETURNING id`,
+        [e.company_id, (c.from_name || c.from_email.split('@')[0]).slice(0, 160), c.from_email]);
+      await db.query('UPDATE inbox_conversations SET contact_id = $2 WHERE id = $1', [c.id, ct.id]);
+      await db.query('UPDATE email_threads SET contact_id = $2 WHERE id = $1', [c.thread_id, ct.id]);
+    }
+    return e;
+  });
+  res.status(201).json({ data: enquiry });
+});

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { dueAfter, fillTemplate, pickAssignee } from '../src/lib/inbox.js';
 import { applyVisibility, classify, cleanHtml, isBlocked, openTokens, referencesIn, sealTokens, snippet } from '../src/lib/mailbox/rules.js';
 
 // The rules behind mailbox sync (#29); none of these needs a database.
@@ -55,4 +56,22 @@ test('tokens are sealed with the key and cannot be read or altered without it', 
   assert.throws(() => openTokens(sealed, 'key-2'));
   const parts = sealed.split('.'); parts[3] = Buffer.from('tampered').toString('base64');
   assert.throws(() => openTokens(parts.join('.'), 'key-1'));
+});
+
+// The shared inbox (#30)
+
+test('a new conversation goes to the company owner, else round robin, else nobody', () => {
+  assert.equal(pickAssignee({ rule: 'owner_of_company', companyOwner: 'Priya', members: ['A', 'B'] }).assignee, 'Priya');
+  assert.deepEqual(pickAssignee({ rule: 'owner_of_company', companyOwner: null, members: ['A', 'B'], last: 'A' }), { assignee: 'B', last: 'B' });
+  assert.deepEqual(pickAssignee({ rule: 'round_robin', companyOwner: 'Priya', members: ['A', 'B'], last: 'B' }), { assignee: 'A', last: 'A' });
+  assert.equal(pickAssignee({ rule: 'unassigned', companyOwner: 'Priya', members: ['A'] }).assignee, null);
+});
+
+test('a first-response deadline that lands on a Sunday moves to Monday', () => {
+  assert.equal(dueAfter('2026-09-17T10:00:00Z', 24), '2026-09-18T10:00:00.000Z');
+  assert.equal(dueAfter('2026-09-19T10:00:00Z', 24), '2026-09-21T10:00:00.000Z');
+});
+
+test('canned responses fill their variables and blank the unknown ones', () => {
+  assert.equal(fillTemplate('Dear {{contact_name}}, from {{ my_name }}{{nope}}', { contact_name: 'Asha', my_name: 'Sami' }), 'Dear Asha, from Sami');
 });

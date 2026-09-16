@@ -30,6 +30,7 @@ import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Emails from './pages/Emails.jsx';
 import Mailboxes from './pages/Mailboxes.jsx';
+import Inbox from './pages/Inbox.jsx';
 import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
@@ -49,6 +50,7 @@ const NAV = [
   {
     label: 'Sales',
     items: [
+      { to: '/inbox', icon: '✉', label: 'Inbox', badge: 'inbox' },
       { to: '/companies', icon: '⌂', label: 'Companies' },
       { to: '/enquiries', icon: '◇', label: 'Enquiries' },
       { to: '/quotations', icon: '◆', label: 'Quotations' },
@@ -116,12 +118,14 @@ export default function App() {
   const { data } = useFetch(() => api.raw('/dashboard/worklist'), [location.pathname]);
   const w = data?.data;
   const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
+  const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
   const counts = {
     worklist: w
       ? w.payment_stages.length + w.vendor_invoices.length + w.expense_claims.length +
         w.late_deliveries.length + w.won_without_project.length
       : null,
     notifications: nData?.data?.unread ?? null,
+    inbox: iData?.data?.open ?? null,
     stages: w?.payment_stages.length ?? null,
     vendors: w?.vendor_invoices.length ?? null,
     claims: w?.expense_claims.length ?? null,
@@ -132,6 +136,7 @@ export default function App() {
     vendors: w ? w.vendor_invoices.some((v) => v.payment_status === 'Overdue') : false,
     claims: false,
     notifications: false,
+    inbox: (iData?.data?.overdue ?? 0) > 0,
   };
 
   return (
@@ -202,6 +207,7 @@ export default function App() {
           <Route path="/cashflow" element={<Cashflow />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/mailboxes" element={<Mailboxes />} />
+          <Route path="/inbox" element={<Inbox />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />

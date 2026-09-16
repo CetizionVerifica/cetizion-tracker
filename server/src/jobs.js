@@ -10,6 +10,7 @@ import { runRenewals } from './lib/renewals.js';
 import { runNotifications } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
+import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace

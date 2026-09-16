@@ -616,3 +616,9 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .mail__body { width: 100%; height: 220px; border: 0; background: #fff; display: block; }
 .mail__snippet { padding: 8px 10px; }
 .btn.is-disabled { opacity: .5; pointer-events: none; }
+
+/* Shared inbox (#30) */
+.inbox { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+.inbox__list tr { cursor: pointer; }
+.inbox__list tr.is-selected td { background: var(--brand-50, #f0fdfa); }
+@media (max-width: 1000px) { .inbox { grid-template-columns: minmax(0, 1fr); } }
