@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -548,12 +548,89 @@ CREATE TABLE payment_stages (
   credit_days           int CHECK (credit_days >= 0),
   milestone_name        text,
   milestone_reached_on  date,
+  -- Collections (#27)
+  on_hold               boolean NOT NULL DEFAULT false,
+  hold_reason           text,
+  promise_to_pay_date   date,
+  reminder_level        int NOT NULL DEFAULT 0,
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (po_number, stage_no)
 );
 
 CREATE INDEX ON payment_stages (po_number);
+
+-- ---------------------------------------------------------------------
+-- Payments and the chasing log (#27)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE payments (
+  id           serial PRIMARY KEY,
+  stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
+  amount       numeric(16,2) NOT NULL CHECK (amount >= 0),
+  tds_amount   numeric(16,2) NOT NULL DEFAULT 0 CHECK (tds_amount >= 0),
+  received_on  date NOT NULL,
+  mode         text NOT NULL DEFAULT 'bank_transfer'
+                 CHECK (mode IN ('bank_transfer','cheque','upi','cash','other')),
+  reference    text,
+  notes        text,
+  recorded_by  text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX payments_stage_idx ON payments (stage_id, received_on);
+
+-- The stage's received total and date follow its payments. TDS counts as
+-- settled: the client paid it to the government on our behalf.
+CREATE OR REPLACE FUNCTION payments_changed() RETURNS trigger AS $$
+DECLARE sid int;
+BEGIN
+  sid := COALESCE(NEW.stage_id, OLD.stage_id);
+  UPDATE payment_stages ps
+     SET amount_received = COALESCE((SELECT SUM(amount + tds_amount) FROM payments WHERE stage_id = sid), 0),
+         payment_received_date = (SELECT MAX(received_on) FROM payments WHERE stage_id = sid)
+   WHERE ps.id = sid;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_changed AFTER INSERT OR UPDATE OR DELETE ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_changed();
+
+-- The first receipt on a stage that already carries a received amount
+-- (seeded, imported, or typed before receipts existed) first books that
+-- amount as an opening receipt, so nothing already received is lost.
+CREATE OR REPLACE FUNCTION payments_opening() RETURNS trigger AS $$
+DECLARE cur record;
+BEGIN
+  IF NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
+  IF NOT EXISTS (SELECT 1 FROM payments WHERE stage_id = NEW.stage_id) THEN
+    SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
+    IF cur.amount_received > 0 THEN
+      INSERT INTO payments (stage_id, amount, received_on, mode, notes)
+      VALUES (NEW.stage_id, cur.amount_received, COALESCE(cur.payment_received_date, CURRENT_DATE), 'other', 'Opening balance from the stage');
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_opening BEFORE INSERT ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_opening();
+
+CREATE TABLE collection_log (
+  id                   serial PRIMARY KEY,
+  stage_id             int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  company_id           int REFERENCES companies(id) ON DELETE SET NULL,
+  channel              text NOT NULL DEFAULT 'call' CHECK (channel IN ('email','call','whatsapp','meeting','note')),
+  happened_at          timestamptz NOT NULL DEFAULT now(),
+  by_whom              text,
+  summary              text NOT NULL,
+  promise_to_pay_date  date,
+  next_action_on       date,
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX collection_log_stage_idx ON collection_log (stage_id, happened_at DESC);
+CREATE INDEX collection_log_company_idx ON collection_log (company_id, happened_at DESC);
 
 -- ---------------------------------------------------------------------
 -- Onboarding / lifecycle checklist  (Onboarding)
@@ -867,6 +944,10 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO settings (key, value, notes) VALUES
   ('discount_approval_threshold_percent', '10', 'A quotation discounted above this overall % waits for approval before it can be sent.'),
   ('approver_email', '', 'Who is emailed when a quotation needs approval. Blank: the finance email.')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies

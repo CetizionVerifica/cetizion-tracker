@@ -359,6 +359,7 @@ export const resources = {
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
       'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
+      'on_hold', 'hold_reason', 'promise_to_pay_date',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -376,6 +377,9 @@ export const resources = {
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
       milestone_reached_on: date(),
+      on_hold: bool(),
+      hold_reason: str(500),
+      promise_to_pay_date: date(),
     }),
   },
 
@@ -504,6 +508,26 @@ export const resources = {
       color: str(20),
       rotting_days: int({ min: 1, max: 365 }),
       active: bool(),
+    }),
+  },
+
+  payments: {
+    table: 'payments',
+    view: null,
+    label: 'Payment',
+    defaultSort: 'received_on DESC, id DESC',
+    search: ['reference', 'notes'],
+    filters: ['stage_id', 'mode'],
+    columns: ['stage_id', 'amount', 'tds_amount', 'received_on', 'mode', 'reference', 'notes', 'recorded_by'],
+    schema: z.object({
+      stage_id: int({ min: 1 }),
+      amount: num({ min: 0 }),
+      tds_amount: num({ min: 0 }).default(0),
+      received_on: date(),
+      mode: enumOf(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).default('bank_transfer'),
+      reference: str(120),
+      notes: str(1000),
+      recorded_by: str(120),
     }),
   },
 

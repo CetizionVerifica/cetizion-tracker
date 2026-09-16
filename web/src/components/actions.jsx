@@ -127,15 +127,23 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
 export function RecordPaymentDialog({ stage, onClose, onDone }) {
   const outstanding = Math.max(Number(stage.stage_amount || 0) - Number(stage.amount_received || 0), 0);
   const [amount, setAmount] = useState(String(outstanding));
+  const [tds, setTds] = useState('');
+  const [mode, setMode] = useState('bank_transfer');
+  const [reference, setReference] = useState('');
   const [paidOn, setPaidOn] = useState(today());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Payment recorded' });
 
   const submit = async (e) => {
     e.preventDefault();
+    // A receipt row (#27): what came in now, plus any TDS the client deducted.
     const ok = await run(() =>
       api.action(`/payment-stages/${stage.id}/payment`, {
-        amount_received: Number(amount) + Number(stage.amount_received || 0),
+        amount_received: Number(amount),
+        tds_amount: tds ? Number(tds) : 0,
+        payment_mode: mode,
+        reference,
         payment_received_date: paidOn,
+        mode: 'add',
       })
     );
     if (ok) onClose();
@@ -162,6 +170,19 @@ export function RecordPaymentDialog({ stage, onClose, onDone }) {
       <Field label="Received on" error={fieldErrors.payment_received_date}>
         <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
       </Field>
+      <div className="form-grid">
+        <Field label="TDS deducted" hint="Counts as settled">
+          <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} />
+        </Field>
+        <Field label="Mode">
+          <Select value={mode} placeholder={null} options={[{ value: 'bank_transfer', label: 'Bank transfer' }, { value: 'cheque', label: 'Cheque' }, { value: 'upi', label: 'UPI' }, { value: 'cash', label: 'Cash' }, { value: 'other', label: 'Other' }]} onChange={(e) => setMode(e.target.value)} />
+        </Field>
+        <div className="span-all">
+          <Field label="Reference" hint="UTR, cheque number">
+            <Input value={reference} onChange={(e) => setReference(e.target.value)} />
+          </Field>
+        </div>
+      </div>
     </ActionModal>
   );
 }

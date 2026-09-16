@@ -404,19 +404,32 @@ const receiptSchema = z.object({
   amount_received: requiredMoney,
   payment_received_date: dateStr,
   mode: z.enum(['set', 'add']).optional().default('set'),
+  tds_amount: z.preprocess(blank, z.coerce.number().min(0).optional()),
+  payment_mode: z.preprocess(blank, z.enum(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).optional()),
+  notes: z.preprocess(blank, z.string().trim().max(1000).optional()),
 });
 
 stageRouter.post('/:id/payment', async (req, res) => {
   const body = parse(receiptSchema, req.body || {});
-  const { rows } = await query(
-    `UPDATE payment_stages
-        SET amount_received = CASE WHEN $3 = 'add'
-                                   THEN amount_received + $1 ELSE $1 END,
-            payment_received_date = COALESCE($2, payment_received_date)
-      WHERE id = $4 RETURNING id`,
-    [body.amount_received, body.payment_received_date ?? null, body.mode, req.params.id]
-  );
-  if (!rows.length) throw new ApiError(404, 'Payment stage not found');
+  // Since #27 every receipt is its own row; the stage total follows by trigger.
+  // mode 'add' (or a receipt object) records a delta; 'set' records what brings the total to the figure.
+  const { rows: [stage] } = await query('SELECT id, amount_received FROM payment_stages WHERE id = $1', [req.params.id]);
+  if (!stage) throw new ApiError(404, 'Payment stage not found');
+  const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
+  if (delta > 0 || Number(body.tds_amount || 0) > 0) {
+    await query(
+      `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
+       VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
+      [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
+    );
+  } else if (body.mode === 'set') {
+    // Bringing the total down: keep the figure honest with an adjusting row.
+    await query(`INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by) VALUES ($1, 0, COALESCE($2::date, CURRENT_DATE), 'other', $3, $4)`,
+      [stage.id, body.payment_received_date ?? null, `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]);
+    await query('UPDATE payment_stages SET amount_received = $2 WHERE id = $1', [stage.id, body.amount_received]);
+  }
+  const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
   res.json({ data: full[0] });
 });

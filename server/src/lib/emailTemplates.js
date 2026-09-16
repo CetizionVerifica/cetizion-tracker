@@ -37,10 +37,11 @@ function table(headers, rows) {
  * A payment reminder to one client for its overdue stages.
  * stages: [{ po_number, stage_name, invoice_no, invoice_date, invoice_due_date, currency, stage_amount, amount_received, days_overdue }]
  */
-export function paymentReminder({ company, contactName, stages, financeEmail }) {
+export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3 }) {
   const total = stages.reduce((n, s) => n + (Number(s.stage_amount) - Number(s.amount_received || 0)), 0);
   const currency = stages[0]?.currency || 'INR';
-  const subject = `Payment reminder: ${stages.length === 1 ? `invoice ${stages[0].invoice_no}` : `${stages.length} invoices`} due from ${company}`;
+  const prefix = level >= finalLevel ? 'Final reminder' : level === 2 ? 'Second reminder' : 'Payment reminder';
+  const subject = `${prefix}: ${stages.length === 1 ? `invoice ${stages[0].invoice_no}` : `${stages.length} invoices`} due from ${company}`;
   const lines = stages.map((s) => `- Invoice ${s.invoice_no} (${s.po_number}, ${s.stage_name}): ${inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency)} outstanding, due ${date(s.invoice_due_date)}, ${s.days_overdue} days overdue`);
   const text = `Dear ${contactName || company},
 
@@ -54,7 +55,7 @@ If payment has already been made, please share the transaction reference so we c
 
 Thank you,
 Cetizion Verifica`;
-  const html = layout('Payment reminder', `
+  const html = layout(prefix, `
 <p>Dear ${esc(contactName || company)},</p>
 <p>This is a reminder that the following ${stages.length === 1 ? 'invoice is' : 'invoices are'} past due:</p>
 ${table(['Invoice', 'PO / stage', 'Outstanding', 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
