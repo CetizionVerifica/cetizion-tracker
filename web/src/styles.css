@@ -569,3 +569,16 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .timeline__when { margin-left: auto; white-space: nowrap; }
 .timeline__detail { margin-top: 4px; white-space: pre-wrap; color: var(--ink-700); font-size: 13px; }
 .timeline__actions { margin-top: 4px; display: flex; gap: 4px; }
+
+/* ---------------------------------------------------------------- cash flow (#40) */
+.cashflow { display: flex; flex-direction: column; gap: 6px; }
+.cashflow__row { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; align-items: center; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; }
+.cashflow__row:hover, .cashflow__row.is-open { background: var(--ink-100); }
+.cashflow__label { font-weight: 600; font-size: 13px; }
+.cashflow__bars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cashflow__bar { display: flex; height: 10px; background: var(--ink-100); border-radius: 5px; overflow: hidden; }
+.cashflow__in { background: var(--brand-600); display: block; height: 100%; }
+.cashflow__pipe { background: var(--brand-200); display: block; height: 100%; }
+.cashflow__out { background: var(--danger-fg); opacity: .8; display: block; height: 100%; }
+.cashflow__nums { display: flex; gap: 12px; font-size: 12px; white-space: nowrap; color: var(--ink-600); }
+@media (max-width: 700px) { .cashflow__row { grid-template-columns: 1fr; gap: 4px; } .cashflow__nums { flex-wrap: wrap; gap: 8px; } }

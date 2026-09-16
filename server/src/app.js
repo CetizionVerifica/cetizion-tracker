@@ -29,6 +29,7 @@ import { approvalRouter } from './routes/approvals.js';
 import { taskSummaryRouter, timelineRouter } from './routes/activity.js';
 import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
+import { cashflowRouter } from './routes/cashflow.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -88,6 +89,7 @@ app.use('/api/pipeline', pipelineRouter);
 app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
+app.use('/api/cashflow', cashflowRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
