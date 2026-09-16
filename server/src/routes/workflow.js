@@ -5,6 +5,7 @@ import { lockAttachableDocument, purgeDocument } from '../lib/documents.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
+import { normalizeName } from '../lib/names.js';
 
 export const projectRouter = Router();
 export const poRouter = Router();
@@ -171,11 +172,10 @@ quotationRouter.post('/:id/convert', async (req, res) => {
       }
       const existingProject = prows[0];
 
-      // Cross-client safety: client_name is a free-text field in both tables.
-      // The application already treats the same spelling as the same client
-      // (see the lookups route and the sales report grouping convention).
-      // We compare the trimmed, case-insensitive strings, matching that convention.
-      if (existingProject.client_name.trim().toLowerCase() !== quotation.client_name.trim().toLowerCase()) {
+      // Cross-client safety: use the application's canonical normalizeName() which collapses
+      // repeated interior spaces in addition to trimming and lowercasing, so "Hindalco  Ltd"
+      // and "Hindalco Ltd" are treated as the same client (consistent with sales-report grouping).
+      if (normalizeName(existingProject.client_name) !== normalizeName(quotation.client_name)) {
         throw new ApiError(
           422,
           `Project ${body.project_id} belongs to a different client ` +

@@ -326,8 +326,12 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
   // Only show projects that belong to the same client as this quotation.
   // If none exist, we show an empty state — we never fall back to other clients'
   // projects because the backend rejects cross-client links anyway.
+  // Uses the same normalization as the backend (server/src/lib/names.js normalizeName):
+  //   trim + collapse repeated interior spaces + lowercase
+  // so "Hindalco  Ltd" and "Hindalco Ltd" are treated as the same client.
+  const normClient = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
   const sameClientProjects = allProjects.filter(
-    (p) => p.client_name.trim().toLowerCase() === (quotation.client_name || '').trim().toLowerCase()
+    (p) => normClient(p.client_name) === normClient(quotation.client_name)
   );
   const noSameClientProjects = sameClientProjects.length === 0;
 
