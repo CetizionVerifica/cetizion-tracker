@@ -15,6 +15,7 @@ import { businessToday } from './businessDate.js';
 import { sendMail } from './mail.js';
 import { dailyDigest } from './emailTemplates.js';
 import { costAlerts } from '../routes/profitability.js';
+import { emit } from './webhooks.js';
 
 /**
  * Raise one notification.
@@ -47,6 +48,7 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: tasks } = await db.query(`SELECT * FROM tasks WHERE status <> 'done' AND due_at <= $1 ORDER BY due_at`, [today]);
   for (const t of tasks) {
     const overdue = t.due_at < today;
+    if (overdue) await emit('task.overdue', { entity: t.entity, entityId: t.entity_id, data: { task_id: t.id, title: t.title, due_at: t.due_at, assignee: t.assignee } }, db);
     await add({ username: t.assignee || null, kind: overdue ? 'task_overdue' : 'task_due', title: `${overdue ? 'Overdue' : 'Due today'}: ${t.title}`, body: `${t.entity.replace('_', ' ')} ${t.entity_id}${t.assignee ? ` · ${t.assignee}` : ''}`, entity: t.entity, entityId: t.entity_id, link: '/tasks', dedupeKey: `task:${t.id}:${day}` });
   }
 
@@ -63,6 +65,12 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: overdue } = await db.query(`SELECT id, po_number, stage_name, invoice_no, client_name, days_overdue FROM v_payment_stages WHERE stage_status = 'Overdue' AND days_overdue <= 1`);
   for (const s of overdue) {
     await add({ kind: 'invoice_overdue', title: `Invoice ${s.invoice_no} is now overdue`, body: `${s.client_name} · ${s.po_number} · ${s.stage_name}`, entity: 'payment_stage', entityId: s.id, link: '/collections', dedupeKey: `overdue:${s.id}` });
+  }
+
+  // For automation: an overdue invoice is announced on its first day and at 15, 30, 45, 60 and 90 days.
+  const { rows: milestones } = await db.query(`SELECT id, po_number, stage_name, invoice_no, client_name, days_overdue, stage_amount, currency FROM v_payment_stages WHERE stage_status = 'Overdue' AND days_overdue IN (1, 15, 30, 45, 60, 90)`);
+  for (const s of milestones) {
+    await emit('invoice.overdue', { entity: 'payment_stage', entityId: s.id, value: s.stage_amount, data: { invoice_no: s.invoice_no, po_number: s.po_number, stage: s.stage_name, client_name: s.client_name, days_overdue: s.days_overdue, amount: s.stage_amount, currency: s.currency } }, db);
   }
 
   const { rows: renewals } = await db.query(`SELECT e.id, e.client_name, e.service_name, e.next_due_on, q.quotation_no FROM engagements e LEFT JOIN quotations q ON q.id = e.renewal_quotation_id WHERE e.status = 'renewal_open' AND e.renewal_opened_at >= $1::date - 1`, [today]);

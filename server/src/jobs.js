@@ -11,6 +11,7 @@ import { runNotifications } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
 import { runVisitReminders } from './lib/visits.js';
+import { runWebhooks } from './lib/webhooks.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 
 /**
@@ -49,6 +50,12 @@ export const JOBS = {
     cron: '0 9 * * 1-5',        // weekday mornings, business time zone
     run: (opts) => runPaymentReminders(opts),
   },
+  'webhooks.deliver': {
+    description: 'Send webhook events to their endpoints and retry failed ones',
+    cron: '* * * * *',
+    quiet: (r) => r.fanned + r.delivered + r.retrying + r.failed > 0,
+    run: () => runWebhooks(),
+  },
   'visits.reminders': {
     description: 'Remind the team, and the client where chosen, before a visit',
     cron: '0 17 * * *',
@@ -57,6 +64,7 @@ export const JOBS = {
   'mail.sync': {
     description: 'Pull new client email from connected mailboxes and keep push subscriptions alive',
     cron: '*/5 * * * *',
+    quiet: (r) => r.results.some((x) => x.stored > 0 || x.error),
     run: () => syncAll(),
   },
   'deliverables.daily': {
@@ -98,6 +106,17 @@ export const isJob = (name) => Object.hasOwn(JOBS, name);
 export async function runJob(name, { startedBy = 'schedule' } = {}) {
   const job = JOBS[name];
   if (!job) throw new Error(`unknown job ${name}`);
+  // Frequent jobs are only recorded when they did something or failed.
+  if (job.quiet && startedBy === 'schedule') {
+    try {
+      const result = await job.run({ startedBy });
+      if (job.quiet(result)) await query(`INSERT INTO job_runs (name, started_by, status, finished_at, result) VALUES ($1, $2, 'done', now(), $3)`, [name, startedBy, JSON.stringify(result)]);
+      return { status: 'done', result };
+    } catch (err) {
+      await query(`INSERT INTO job_runs (name, started_by, status, finished_at, error) VALUES ($1, $2, 'failed', now(), $3)`, [name, startedBy, String(err.stack || err).slice(0, 2000)]);
+      return { status: 'failed', error: err.message };
+    }
+  }
   const { rows: [run] } = await query('INSERT INTO job_runs (name, started_by) VALUES ($1, $2) RETURNING id', [name, startedBy]);
   try {
     const result = await job.run({ startedBy });

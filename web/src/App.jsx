@@ -32,6 +32,7 @@ import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Emails from './pages/Emails.jsx';
 import Mailboxes from './pages/Mailboxes.jsx';
+import Webhooks from './pages/Webhooks.jsx';
 import Inbox from './pages/Inbox.jsx';
 import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
@@ -95,6 +96,7 @@ const NAV = [
       { to: '/import', icon: '⇪', label: 'Bulk import' },
       { to: '/emails', icon: '✉', label: 'Emails & jobs' },
       { to: '/mailboxes', icon: '✉', label: 'Mailboxes' },
+      { to: '/webhooks', icon: '⇄', label: 'Webhooks' },
       { to: '/templates', icon: '▤', label: 'Templates' },
     ],
   },
@@ -213,6 +215,7 @@ export default function App() {
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/mailboxes" element={<Mailboxes />} />
+          <Route path="/webhooks" element={<Webhooks />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
