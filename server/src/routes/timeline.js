@@ -12,6 +12,7 @@ import { ApiError } from '../middleware/error.js';
 export const timelineRouter = Router();
 export const taskSummaryRouter = Router();
 
+const TOUCH = { call: 'Call', whatsapp: 'WhatsApp', meeting: 'Meeting', sms: 'SMS', email: 'Email', other: 'Contact' };
 const ENTITIES = new Set(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']);
 
 /** The record's own dated milestones, as timeline events. */
@@ -82,18 +83,20 @@ timelineRouter.get('/', async (req, res) => {
   const emailWhere = entity === 'company'
     ? `(entity = 'company' AND entity_id = $1) OR (entity = 'quotation' AND entity_id IN (SELECT quotation_no FROM quotations WHERE company_id = $1::int))`
     : `entity = $2 AND entity_id = $1`;
-  const [notes, tasks, files, emails, events] = await Promise.all([
+  const [notes, tasks, files, emails, events, touches] = await Promise.all([
     wants('note') ? query('SELECT id, body, author, pinned, created_at, updated_at FROM notes WHERE entity = $2 AND entity_id = $1', [id, entity]) : { rows: [] },
     wants('task') ? query('SELECT * FROM tasks WHERE entity = $2 AND entity_id = $1', [id, entity]) : { rows: [] },
     wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
     wants('email') ? query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE ${emailWhere}`, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
     wants('event') ? recordEvents(entity, id) : [],
+    wants('touch') ? query(`SELECT cm.*, ct.name AS contact_name FROM communications cm LEFT JOIN contacts ct ON ct.id = cm.contact_id WHERE (cm.entity = $2 AND cm.entity_id = $1) OR ($2 = 'company' AND cm.company_id::text = $1)`, [id, entity]) : { rows: [] },
   ]);
   const items = [
     ...notes.rows.map((n) => ({ kind: 'note', at: n.created_at, id: n.id, title: n.pinned ? 'Pinned note' : 'Note', detail: n.body, by: n.author, pinned: n.pinned, record: n })),
     ...tasks.rows.map((t) => ({ kind: 'task', at: t.completed_at || t.created_at, id: t.id, title: `${t.status === 'done' ? 'Done: ' : ''}${t.title}`, detail: [t.type.replace('_', ' '), t.due_at ? `due ${t.due_at}` : null, t.assignee ? `for ${t.assignee}` : null].filter(Boolean).join(' · '), by: t.created_by, record: t })),
     ...files.rows.map((f) => ({ kind: 'file', at: f.created_at, id: f.id, title: f.label || f.file_name, detail: `${f.file_name} · ${Math.round(f.size_bytes / 1024)} KB`, by: f.uploaded_by, document_id: f.document_id, record: f })),
     ...emails.rows.map((e) => ({ kind: 'email', at: e.created_at, id: e.id, title: e.subject, detail: `to ${e.to_email} · ${e.status}${e.reason ? ` (${e.reason})` : ''}`, by: e.sent_by, record: e })),
+    ...touches.rows.map((c) => ({ kind: 'touch', at: c.started_at, id: c.id, title: `${TOUCH[c.channel] || c.channel}${c.direction === 'inbound' ? ' from' : ' with'} ${c.contact_name || 'the client'}${c.outcome ? ` · ${c.outcome.replace('_', ' ')}` : ''}`, detail: [c.summary, c.duration_seconds ? `${Math.round(c.duration_seconds / 60)} min` : null, c.attendees ? `with ${c.attendees}` : null].filter(Boolean).join(' · '), by: c.username, record: c })),
     ...events,
   ].sort((a, b) => new Date(b.at) - new Date(a.at));
   res.json({ data: items, open_tasks: tasks.rows.filter((t) => t.status !== 'done').length });

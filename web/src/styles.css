@@ -582,3 +582,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cashflow__out { background: var(--danger-fg); opacity: .8; display: block; height: 100%; }
 .cashflow__nums { display: flex; gap: 12px; font-size: 12px; white-space: nowrap; color: var(--ink-600); }
 @media (max-width: 700px) { .cashflow__row { grid-template-columns: 1fr; gap: 4px; } .cashflow__nums { flex-wrap: wrap; gap: 8px; } }
+
+/* One-click contact (#31) */
+.contact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--ink-100); }
+.contact-bar .select { width: auto; max-width: 260px; }

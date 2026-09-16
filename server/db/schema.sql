@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -260,6 +260,7 @@ CREATE TABLE companies (
   city        text,
   notes       text,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  last_contacted_at timestamptz,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
@@ -273,6 +274,13 @@ CREATE TABLE contacts (
   is_billing         boolean NOT NULL DEFAULT false,
   opt_out_reminders  boolean NOT NULL DEFAULT false,
   notes              text,
+  whatsapp_number    text,
+  preferred_channel  text,
+  best_time_to_call  text,
+  do_not_contact     boolean NOT NULL DEFAULT false,
+  whatsapp_opt_in_at timestamptz,
+  whatsapp_opt_in_source text,
+  last_contacted_at  timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -351,6 +359,7 @@ CREATE TABLE quotations (
   expected_close_date    date,
   next_step              text,
   stage_changed_at       timestamptz,
+  last_contacted_at      timestamptz,
   lost_reason_id         int REFERENCES lost_reasons(id) ON DELETE SET NULL,
   lost_notes             text,
   competitor             text,
@@ -466,6 +475,7 @@ CREATE TABLE enquiries (
   services_interested    text,
   notes                  text,
   converted_at           timestamptz,
+  last_contacted_at      timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -1202,6 +1212,55 @@ END $$ LANGUAGE plpgsql;
 CREATE TRIGGER task_stamps BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION task_stamps();
 CREATE TRIGGER tasks_set_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER notes_set_updated_at BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- One-click contact and the touch log (#31)
+CREATE TABLE IF NOT EXISTS communications (
+  id                 serial PRIMARY KEY,
+  channel            text NOT NULL CHECK (channel IN ('call','whatsapp','meeting','sms','email','other')),
+  direction          text NOT NULL DEFAULT 'outbound' CHECK (direction IN ('inbound','outbound')),
+  outcome            text CHECK (outcome IN ('connected','no_answer','left_message','wrong_number','sent','held')),
+  entity             text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id          text NOT NULL,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
+  username           text,
+  started_at         timestamptz NOT NULL DEFAULT now(),
+  duration_seconds   int CHECK (duration_seconds >= 0),
+  summary            text,
+  attendees          text,
+  next_step_task_id  int REFERENCES tasks(id) ON DELETE SET NULL,
+  provider           text NOT NULL DEFAULT 'manual',
+  provider_ref       text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS communications_entity_idx ON communications (entity, entity_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS communications_company_idx ON communications (company_id, started_at DESC);
+
+-- A touch moves "last contacted" forward on everything it concerns.
+CREATE OR REPLACE FUNCTION communication_touch() RETURNS trigger AS $$
+BEGIN
+  IF NEW.outcome IN ('no_answer','wrong_number') THEN
+    RETURN NEW;
+  END IF;
+  UPDATE contacts SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.contact_id;
+  UPDATE companies SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.company_id;
+  IF NEW.entity = 'quotation' THEN
+    UPDATE quotations SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE quotation_no = NEW.entity_id;
+  ELSIF NEW.entity = 'enquiry' THEN
+    UPDATE enquiries SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at),
+                         first_responded_at = COALESCE(first_responded_at, NEW.started_at)
+     WHERE enquiry_no = NEW.entity_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS communication_touch ON communications;
+CREATE TRIGGER communication_touch AFTER INSERT ON communications FOR EACH ROW EXECUTE FUNCTION communication_touch();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('no_contact_days', '7', 'Open deals and overdue invoices with no touch for this many days are listed under "No contact".')
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- bulk import
 -- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).

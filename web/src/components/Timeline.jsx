@@ -8,8 +8,8 @@ import { date, fileSize, today } from '../lib/format.js';
  * Tasks, notes, files and the timeline of one record (#22). Drop it on any
  * detail page: <Timeline entity="quotation" id={quotation_no} />.
  */
-const KINDS = [{ value: 'note', label: 'Notes' }, { value: 'task', label: 'Tasks' }, { value: 'file', label: 'Files' }, { value: 'email', label: 'Emails' }, { value: 'event', label: 'Milestones' }];
-const ICON = { note: '✎', task: '☐', file: '⎘', email: '✉', event: '●' };
+const KINDS = [{ value: 'note', label: 'Notes' }, { value: 'task', label: 'Tasks' }, { value: 'file', label: 'Files' }, { value: 'email', label: 'Emails' }, { value: 'touch', label: 'Calls & meetings' }, { value: 'event', label: 'Milestones' }];
+const ICON = { note: '✎', task: '☐', file: '⎘', email: '✉', event: '●', touch: '☏' };
 
 export function Timeline({ entity, id, title = 'Activity' }) {
   const toast = useToast();
@@ -18,6 +18,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
   const [note, setNote] = useState(null);       // 'new' | record
   const [task, setTask] = useState(null);       // 'new' | record
   const [file, setFile] = useState(false);
+  const [touch, setTouch] = useState(null);     // { channel, contact_id } for the log dialog
   const [removing, setRemoving] = useState(null);
   const [busy, setBusy] = useState(false);
   const { data, loading, refetch } = useFetch(() => api.raw(`/timeline?entity=${entity}&id=${encodeURIComponent(id)}${kind ? `&kind=${kind}` : ''}`), [entity, id, kind]);
@@ -48,6 +49,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
         </div>
       }
     >
+      <ContactBar entity={entity} id={id} onLog={setTouch} />
       {loading && !data ? <div className="skeleton" style={{ height: 80, margin: 18 }} /> : items.length === 0 ? (
         <Empty title="Nothing here yet" text="Add a note, a task or a file. Emails sent about this record and its milestones appear here on their own." />
       ) : (
@@ -81,6 +83,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
       {note && <NoteDialog entity={entity} id={id} record={note === 'new' ? null : note} onClose={() => setNote(null)} onSaved={() => { setNote(null); refetch(); }} />}
       {task && <TaskDialog entity={entity} id={id} record={task === 'new' ? null : task} people={lookups.sales_people} onClose={() => setTask(null)} onSaved={() => { setTask(null); refetch(); }} />}
       {file && <FileDialog entity={entity} id={id} maxBytes={lookups.limits?.document_max_bytes} onClose={() => setFile(false)} onSaved={() => { setFile(false); refetch(); }} />}
+      {touch && <TouchDialog entity={entity} id={id} start={touch} onClose={() => setTouch(null)} onSaved={() => { setTouch(null); refetch(); }} />}
       {removing && <ConfirmDialog title="Remove this?" message="It leaves the timeline for good." confirmLabel="Remove" busy={busy} onConfirm={remove} onClose={() => setRemoving(null)} />}
     </Card>
   );
@@ -159,3 +162,81 @@ function FileDialog({ entity, id, maxBytes, onClose, onSaved }) {
   );
 }
 
+
+const CHANNELS = [{ value: 'call', label: 'Call' }, { value: 'whatsapp', label: 'WhatsApp' }, { value: 'meeting', label: 'Meeting' }, { value: 'email', label: 'Email' }, { value: 'sms', label: 'SMS' }, { value: 'other', label: 'Other' }];
+const OUTCOMES = { call: ['connected', 'no_answer', 'left_message', 'wrong_number'], whatsapp: ['sent', 'connected'], meeting: ['held'], email: ['sent'], sms: ['sent'], other: ['connected'] };
+
+/**
+ * One-click contact (#31): email, call or WhatsApp the people behind this
+ * record, then log the touch. Do-not-contact people show greyed out.
+ */
+export function ContactBar({ entity, id, onLog }) {
+  const { data } = useFetch(() => api.raw(`/communications/contacts?entity=${entity}&id=${encodeURIComponent(id)}`), [entity, id]);
+  const [pick, setPick] = useState('');
+  const contacts = data?.data?.contacts ?? [];
+  if (!data?.data?.company_id) return null;
+  const c = contacts.find((x) => String(x.id) === pick) || contacts[0];
+  const go = (channel, href) => {
+    if (href) window.open(href, channel === 'whatsapp' ? '_blank' : '_self', 'noopener');
+    // Give the other app a moment to take over, then offer to log what happened.
+    setTimeout(() => onLog({ channel, contact_id: c?.id ?? null }), 400);
+  };
+  return (
+    <div className="contact-bar">
+      {contacts.length === 0 ? (
+        <span className="small muted">No contacts on this client yet. Add one on the company page to email, call or WhatsApp in one click.</span>
+      ) : (
+        <>
+          {contacts.length > 1 ? (
+            <Select value={pick || String(c.id)} placeholder={null} options={contacts.map((x) => ({ value: String(x.id), label: `${x.name}${x.role ? ` · ${x.role}` : ''}${x.blocked ? ' (do not contact)' : ''}` }))} onChange={(e) => setPick(e.target.value)} />
+          ) : <span className="strong small">{c.name}{c.role ? ` · ${c.role}` : ''}</span>}
+          {c.blocked ? <Badge tone="danger">{c.blocked}</Badge> : (
+            <>
+              <button type="button" className="btn btn--sm" disabled={!c.links.email} title={c.email || 'No email'} onClick={() => go('email', c.links.email)}>✉ Email</button>
+              <button type="button" className="btn btn--sm" disabled={!c.links.call} title={c.phone || 'No phone'} onClick={() => { if (c.phone) navigator.clipboard?.writeText(c.phone).catch(() => {}); go('call', c.links.call); }}>☏ Call</button>
+              <button type="button" className="btn btn--sm" disabled={!c.links.whatsapp} title={c.whatsapp_number || c.phone || 'No number'} onClick={() => go('whatsapp', c.links.whatsapp)}>◍ WhatsApp</button>
+            </>
+          )}
+          {c.last_contacted_at && <span className="small muted">last contacted {date(c.last_contacted_at)}</span>}
+          {c.preferred_channel && <span className="small muted">prefers {c.preferred_channel}{c.best_time_to_call ? `, ${c.best_time_to_call}` : ''}</span>}
+        </>
+      )}
+      {!c?.blocked && <button type="button" className="btn btn--sm btn--ghost" onClick={() => onLog({ channel: 'call', contact_id: c?.id ?? null })}>+ Log a touch</button>}
+    </div>
+  );
+}
+
+function TouchDialog({ entity, id, start, onClose, onSaved }) {
+  const toast = useToast();
+  const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const [v, setV] = useState({ channel: start.channel, direction: 'outbound', outcome: OUTCOMES[start.channel][0], started_at: now, duration_minutes: '', summary: '', attendees: '', next_title: '', next_due: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k, val) => setV((s) => ({ ...s, [k]: val, ...(k === 'channel' ? { outcome: OUTCOMES[val][0] } : {}) }));
+  async function save(e) {
+    e.preventDefault(); setBusy(true);
+    try {
+      await api.action('/communications', {
+        entity, entity_id: id, contact_id: start.contact_id, channel: v.channel, direction: v.direction, outcome: v.outcome,
+        started_at: new Date(v.started_at).toISOString(), duration_minutes: v.duration_minutes === '' ? null : Number(v.duration_minutes),
+        summary: v.summary || null, attendees: v.attendees || null,
+        next_step: v.next_title.trim() ? { title: v.next_title.trim(), due_at: v.next_due || null } : null,
+      });
+      toast('Logged', 'success'); onSaved();
+    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); setBusy(false); }
+  }
+  return (
+    <Modal title="Log a touch" subtitle="What happened, and what comes next. The next step becomes a task." onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Skip</button><button type="submit" form="touch-form" className="btn btn--primary" disabled={busy}>Log it</button></>}>
+      <form id="touch-form" onSubmit={save} className="form-grid">
+        <Field label="Channel"><Select value={v.channel} placeholder={null} options={CHANNELS} onChange={(e) => set('channel', e.target.value)} /></Field>
+        <Field label="Direction"><Select value={v.direction} placeholder={null} options={[{ value: 'outbound', label: 'We reached out' }, { value: 'inbound', label: 'They reached us' }]} onChange={(e) => set('direction', e.target.value)} /></Field>
+        <Field label="Outcome"><Select value={v.outcome} placeholder={null} options={OUTCOMES[v.channel].map((o) => ({ value: o, label: o.replace('_', ' ') }))} onChange={(e) => set('outcome', e.target.value)} /></Field>
+        <Field label="When"><Input type="datetime-local" value={v.started_at} onChange={(e) => set('started_at', e.target.value)} /></Field>
+        {(v.channel === 'call' || v.channel === 'meeting') && <Field label="Minutes"><Input type="number" min="0" value={v.duration_minutes} onChange={(e) => set('duration_minutes', e.target.value)} /></Field>}
+        {v.channel === 'meeting' && <Field label="Attendees"><Input value={v.attendees} onChange={(e) => set('attendees', e.target.value)} /></Field>}
+        <div className="span-all"><Field label="Notes"><Textarea rows={3} value={v.summary} onChange={(e) => set('summary', e.target.value)} placeholder="What was agreed" autoFocus /></Field></div>
+        <Field label="Next step"><Input value={v.next_title} onChange={(e) => set('next_title', e.target.value)} placeholder="Send revised quote" /></Field>
+        <Field label="By"><Input type="date" value={v.next_due} onChange={(e) => set('next_due', e.target.value)} /></Field>
+      </form>
+    </Modal>
+  );
+}
