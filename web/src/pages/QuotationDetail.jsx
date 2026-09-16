@@ -4,6 +4,7 @@ import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, ConfirmDialog, DataTable, DocumentLink, Empty, ErrorState, Field, Input, KeyValues, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
+import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -25,6 +26,7 @@ export default function QuotationDetail() {
   const [sending, setSending] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [converting, setConverting] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
@@ -66,7 +68,8 @@ export default function QuotationDetail() {
             {open && !approvalBlocked && <button type="button" className="btn" onClick={() => setSending(true)}>Send</button>}
             {open && !q.accepted_at && <button type="button" className="btn" onClick={() => setAccepting(true)}>Client accepted</button>}
             {!won && <button type="button" className="btn" onClick={() => setRevising(true)}>Revise</button>}
-            {won && !q.project_id && <button type="button" className="btn btn--primary" onClick={() => setConverting(true)}>Register project</button>}
+            {!q.purchase_orders.length && <button type="button" className="btn btn--primary" onClick={() => setRegistering(true)}>Register PO</button>}
+            {won && !q.project_id && <button type="button" className="btn" onClick={() => setConverting(true)}>Project only</button>}
             <button type="button" className="btn btn--primary" onClick={() => setEditing(true)}>Edit</button>
           </>
         }
@@ -160,6 +163,9 @@ export default function QuotationDetail() {
       )}
       {accepting && (
         <AcceptDialog quotation={q} busy={busy} onClose={() => setAccepting(false)} onConfirm={async (name) => { const r = await act('accept', { accepted_by_name: name }, 'Acceptance recorded'); if (r) setAccepting(false); }} />
+      )}
+      {registering && (
+        <RegisterPoDialog quotation={q} onClose={() => setRegistering(false)} onDone={() => { invalidateLookups(); refetch(); }} />
       )}
       {converting && (
         <ConvertQuotationDialog quotation={q} onClose={() => setConverting(false)} onDone={() => { setConverting(false); invalidateLookups(); refetch(); }} />

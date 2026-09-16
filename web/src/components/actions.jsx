@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
@@ -487,30 +488,30 @@ const PRESETS = {
   '100 on delivery': [100],
 };
 
-// stage_percent is numeric(6,4) and the server accepts a 0.0001 drift, which
-// is 0.01 of a percent. Rounding any coarser than that makes a split the dialog
-// cannot express — 33.33% kept leaves 66.67%, which 0.1 steps can never hit.
-const pct = (n) => Math.round(n * 100) / 100;
-
-/** A preset covers the whole PO; fit it to whatever share is still free. */
-const scale = (percents, allocatable) => {
-  if (Math.abs(allocatable - 100) < 0.005) return percents;
-  const scaled = percents.map((p) => pct((p * allocatable) / 100));
-  // Rounding lands on the last stage, so the split still adds up exactly.
-  scaled[scaled.length - 1] = pct(scaled.at(-1) + (allocatable - scaled.reduce((a, b) => a + b, 0)));
-  return scaled;
-};
-
-export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
-  // What is already invoiced or paid stays, so only the rest is up for
-  // splitting. 100% of the PO with half of it billed would schedule 150%.
-  const locked = pct(Number(lockedPercent || 0) * 100);
-  const allocatable = pct(100 - locked);
-  // Nothing left to split: every stage is invoiced or paid, and those are never
-  // replaced. Offering a form the server must reject wastes the user's time.
-  const nothingToSplit = allocatable < 0.01;
-  const [preset, setPreset] = useState('50/50');
-  const [stages, setStages] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
+// stage_percent is numeric(6,4) and the server accepts a 0.0001 drift, which
+// is 0.01 of a percent. Rounding any coarser than that makes a split the dialog
+// cannot express — 33.33% kept leaves 66.67%, which 0.1 steps can never hit.
+const pct = (n) => Math.round(n * 100) / 100;
+
+/** A preset covers the whole PO; fit it to whatever share is still free. */
+const scale = (percents, allocatable) => {
+  if (Math.abs(allocatable - 100) < 0.005) return percents;
+  const scaled = percents.map((p) => pct((p * allocatable) / 100));
+  // Rounding lands on the last stage, so the split still adds up exactly.
+  scaled[scaled.length - 1] = pct(scaled.at(-1) + (allocatable - scaled.reduce((a, b) => a + b, 0)));
+  return scaled;
+};
+
+export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
+  // What is already invoiced or paid stays, so only the rest is up for
+  // splitting. 100% of the PO with half of it billed would schedule 150%.
+  const locked = pct(Number(lockedPercent || 0) * 100);
+  const allocatable = pct(100 - locked);
+  // Nothing left to split: every stage is invoiced or paid, and those are never
+  // replaced. Offering a form the server must reject wastes the user's time.
+  const nothingToSplit = allocatable < 0.01;
+  const [preset, setPreset] = useState('50/50');
+  const [stages, setStages, lookups, useLookups, The, saved, templates, come, first, fixed, splits, stay, as, fallback, presets, Object, fromEntries, lookups, payment_terms_templates, t, t, name, t, lines, l, l, lookups, payment_terms_templates, find, t, t, is_default, name, presets] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
   const { busy, error, run } = useAction({ onDone, successMessage: 'Payment stages created' });
 
   function buildStages(percents) {
@@ -584,10 +585,11 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         <Select
           value={preset}
           placeholder={null}
-          options={Object.keys(PRESETS)}
+          options={Object.keys(presets)}
           onChange={(e) => {
             setPreset(e.target.value);
             setStages(buildStages(scale(PRESETS[e.target.value], allocatable)));
+            setStages(buildStages(presets[e.target.value]));
           }}
         />
       </Field>

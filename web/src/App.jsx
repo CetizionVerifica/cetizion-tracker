@@ -23,6 +23,7 @@ import Settings from './pages/Settings.jsx';
 import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Emails from './pages/Emails.jsx';
+import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
@@ -72,6 +73,7 @@ const NAV = [
       { to: '/settings', icon: '⚙', label: 'Settings' },
       { to: '/import', icon: '⇪', label: 'Bulk import' },
       { to: '/emails', icon: '✉', label: 'Emails & jobs' },
+      { to: '/templates', icon: '▤', label: 'Templates' },
     ],
   },
 ];
@@ -182,6 +184,7 @@ export default function App() {
           <Route path="/import" element={<BulkImport />} />
           <Route path="/import/:id" element={<ImportReview />} />
           <Route path="/emails" element={<Emails />} />
+          <Route path="/templates" element={<Templates />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

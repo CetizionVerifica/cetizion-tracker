@@ -39,7 +39,10 @@ SELECT
   pr.client_name,
   po.po_value,
   po.currency,
-  po.payment_terms_days                                  AS terms_days,
+  COALESCE(ps.credit_days, po.payment_terms_days)        AS terms_days,
+  ps.credit_days,
+  ps.milestone_name,
+  ps.milestone_reached_on,
   po.po_date,
   po.actual_delivery_date                                AS delivery_date,
   ps.stage_no,
@@ -91,9 +94,10 @@ CROSS JOIN LATERAL (
          CASE ps.trigger_event
            WHEN 'On PO Registration' THEN po.po_date IS NOT NULL
            WHEN 'On Delivery'        THEN po.actual_delivery_date IS NOT NULL
+           WHEN 'On Milestone'       THEN ps.milestone_reached_on IS NOT NULL
            ELSE true
          END,
-         ps.invoice_date + po.payment_terms_days
+         ps.invoice_date + COALESCE(ps.credit_days, po.payment_terms_days)
 ) b(amount, due_to_invoice, invoice_due_date)
 CROSS JOIN LATERAL (
   SELECT CASE

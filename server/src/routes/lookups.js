@@ -24,8 +24,8 @@ function sectorOptions(used) {
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
-  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
-         currenciesInUse, stages, lostReasons, leadSources] =
+  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
+         currenciesInUse, stages, lostReasons, leadSources, ptt, pttLines, obt] =
     await Promise.all([
       query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
@@ -67,6 +67,9 @@ lookupRouter.get('/', async (req, res) => {
       query('SELECT id, name, probability, type, maps_to_status, color FROM pipeline_stages WHERE active ORDER BY sort_order'),
       query('SELECT id, name FROM lost_reasons WHERE active ORDER BY sort_order, name'),
       query('SELECT id, name FROM lead_sources WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, is_default FROM payment_terms_templates WHERE active ORDER BY sort_order, name'),
+      query('SELECT template_id, stage_name, percent, trigger_event, credit_days, milestone_name FROM payment_terms_template_lines ORDER BY template_id, sort_order, id'),
+      query('SELECT id, name, is_default FROM onboarding_templates WHERE active ORDER BY sort_order, name'),
     ]);
 
   res.json({
@@ -92,6 +95,8 @@ lookupRouter.get('/', async (req, res) => {
       pipeline_stages: stages.rows,
       lost_reasons: lostReasons.rows,
       lead_sources: leadSources.rows,
+      payment_terms_templates: ptt.rows.map((t) => ({ ...t, lines: pttLines.rows.filter((l) => l.template_id === t.id) })),
+      onboarding_templates: obt.rows,
       enums: STATUS,
       currencies_in_use: currenciesInUse.rows.map((r) => r.currency),
       limits: { document_max_bytes: config.documentMaxBytes },
