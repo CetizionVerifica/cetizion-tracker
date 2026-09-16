@@ -8,6 +8,7 @@ import {
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
+import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
@@ -340,6 +341,7 @@ export default function ProjectDetail() {
             />
           </Card>
         )}
+        <DeliverablesTable params={{ project_id: projectId }} preset={{ project_id: projectId }} compact title="Deliverables" hint="Issue the certificate or report this project produced. An expiry date schedules the renewal." />
         <Timeline entity="project" id={projectId} />
       </div>
 

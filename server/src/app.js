@@ -33,6 +33,7 @@ import { cashflowRouter } from './routes/cashflow.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { communicationsRouter } from './routes/communications.js';
 import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js';
+import { deliverablesRouter } from './routes/deliverables.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -99,6 +100,7 @@ app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/communications', communicationsRouter);
+app.use('/api/deliverables', deliverablesRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);

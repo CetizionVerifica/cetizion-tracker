@@ -54,6 +54,8 @@ async function recordEvents(entity, id) {
     for (const po of pos) push(po.created_at, `PO ${po.po_number} registered`, `${po.currency} ${po.po_value}`);
     const { rows: steps } = await query('SELECT step, completed_date FROM onboarding_tasks WHERE project_id = $1 AND completed_date IS NOT NULL', [id]);
     for (const s of steps) push(s.completed_date, `Checklist: ${s.step}`);
+    const { rows: dels } = await query('SELECT type, reference, title, issued_on, created_at, status, valid_until FROM deliverables WHERE project_id = $1', [id]);
+    for (const d of dels) push(d.issued_on || d.created_at, `${d.type.replace('_', ' ')} ${d.reference || d.title} ${d.status === 'draft' ? 'drafted' : 'issued'}`, [d.title, d.valid_until ? `valid until ${d.valid_until}` : null, d.status !== 'issued' ? d.status : null].filter(Boolean).join(' · '));
   } else if (entity === 'purchase_order') {
     const { rows: [po] } = await query('SELECT * FROM v_purchase_orders WHERE po_number = $1', [id]);
     if (!po) return events;
