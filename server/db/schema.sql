@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1395,6 +1395,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_dedupe_key ON notifications (ded
 INSERT INTO settings (key, value, notes) VALUES
   ('digest_email', '', 'Where the daily digest goes. Blank: the finance email.'),
   ('quotation_expiry_warning_days', '7', 'Days before a quotation expires at which its owner is told.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client acceptance links (#53)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS quotation_acceptances (
+  id                 serial PRIMARY KEY,
+  quotation_id       int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  revision           int NOT NULL DEFAULT 0,
+  token_hash         text NOT NULL UNIQUE,
+  sent_to            text,
+  status             text NOT NULL DEFAULT 'sent'
+                       CHECK (status IN ('sent','viewed','accepted','changes_requested','expired','revoked')),
+  expires_at         timestamptz NOT NULL,
+  viewed_at          timestamptz,
+  view_count         int NOT NULL DEFAULT 0,
+  decided_at         timestamptz,
+  decided_by_name    text,
+  decided_by_email   text,
+  comments           text,
+  ip                 text,
+  user_agent         text,
+  snapshot           jsonb,
+  pdf_sha256         text,
+  pdf_document_id    int REFERENCES documents(id),
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS quotation_acceptances_quotation_idx ON quotation_acceptances (quotation_id, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('public_app_url', '', 'The address clients use to open acceptance links, e.g. https://tracker.cetizionverifica.com. Blank: the address the app was opened on.'),
+  ('acceptance_unviewed_days', '3', 'Days after which an unopened acceptance link is flagged to the owner.')
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

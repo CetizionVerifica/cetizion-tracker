@@ -32,6 +32,7 @@ import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { communicationsRouter } from './routes/communications.js';
+import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -71,6 +72,10 @@ app.get('/api/health', async (req, res) => {
 
 app.use('/api/auth', authRouter);
 
+// Public by design: a client opens their own quotation with a single-use
+// token (#53). The router rate-limits itself and shows nothing else.
+app.use('/api/public/accept', publicAcceptanceRouter);
+
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
 
@@ -100,6 +105,7 @@ app.use('/api/projects', projectRouter);
 app.use('/api/purchase-orders', poRouter);
 app.use('/api/quotations', registerRouter);
 app.use('/api/quotations', approvalRouter);
+app.use('/api/quotations', acceptanceRouter);
 app.use('/api/quotations', quotationDocRouter);
 app.use('/api/quotations', quotationRouter);
 app.use('/api/payment-stages', stageRouter);

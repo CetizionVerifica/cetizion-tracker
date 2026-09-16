@@ -26,7 +26,7 @@ async function loadQuotation(key, client = { query }) {
   return rows[0];
 }
 
-async function fullQuotation(key) {
+export async function fullQuotation(key) {
   const q = await loadQuotation(key);
   const [lines, revisions, company, contact, enquiry, project, pos, settings] = await Promise.all([
     query('SELECT ql.*, s.name AS service_name FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),

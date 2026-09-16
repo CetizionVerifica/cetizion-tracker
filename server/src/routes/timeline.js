@@ -30,6 +30,13 @@ async function recordEvents(entity, id) {
     push(q.closed_at, q.status === 'Lost' ? `Lost${q.lost_reason ? `: ${q.lost_reason}` : ''}` : `Won${q.project_id ? ` · project ${q.project_id}` : ''}`, q.lost_notes);
     const { rows: revs } = await query('SELECT revision, note, created_by, created_at FROM quotation_revisions WHERE quotation_id = $1', [q.id]);
     for (const r of revs) push(r.created_at, `Revision ${r.revision + 1}`, r.note || (r.created_by ? `by ${r.created_by}` : null));
+    const { rows: links } = await query('SELECT * FROM quotation_acceptances WHERE quotation_id = $1', [q.id]);
+    for (const l of links) {
+      push(l.created_at, 'Acceptance link sent', [l.sent_to, `revision ${l.revision}`, l.created_by ? `by ${l.created_by}` : null].filter(Boolean).join(' · '));
+      push(l.viewed_at, 'Client opened the acceptance link', l.view_count > 1 ? `${l.view_count} views` : null);
+      if (l.status === 'accepted') push(l.decided_at, `Accepted online by ${l.decided_by_name}`, [l.decided_by_email, l.ip ? `from ${l.ip}` : null, l.pdf_sha256 ? `PDF ${l.pdf_sha256.slice(0, 12)}` : null].filter(Boolean).join(' · '));
+      if (l.status === 'changes_requested') push(l.decided_at, `${l.decided_by_name} asked for changes`, l.comments);
+    }
     const { rows: pos } = await query('SELECT po_number, po_date, po_value, currency, created_at FROM purchase_orders WHERE quotation_no = $1', [id]);
     for (const p of pos) push(p.created_at, `PO ${p.po_number} registered`, `${p.currency} ${p.po_value}`);
   } else if (entity === 'enquiry') {

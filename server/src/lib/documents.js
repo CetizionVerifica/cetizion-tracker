@@ -14,6 +14,7 @@ import { ApiError } from '../middleware/error.js';
 
 const { cloudName, apiKey, apiSecret, folder } = config.cloudinary;
 const storageReady = Boolean(cloudName && apiKey && apiSecret);
+export const documentStorageReady = storageReady;
 if (storageReady) {
   cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
 }

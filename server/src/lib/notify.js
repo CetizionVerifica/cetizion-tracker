@@ -77,7 +77,15 @@ export async function collectNotifications({ today = businessToday(), db = { que
     await add({ kind: 'expiring', title: `${q.quotation_no} expires on ${q.valid_until}`, body: `${q.client_name}: chase, extend or revise`, entity: 'quotation', entityId: q.quotation_no, link: `/quotations/${enc(q.quotation_no)}`, dedupeKey: `expiring:${q.quotation_no}:${q.valid_until}` });
   }
 
-  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length } };
+  const { rows: [{ value: unseenDays }] } = await db.query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'acceptance_unviewed_days'), '3') AS value`);
+  const { rows: unseen } = await db.query(
+    `SELECT a.id, a.sent_to, a.created_at, q.quotation_no, q.client_name FROM quotation_acceptances a JOIN quotations q ON q.id = a.quotation_id
+      WHERE a.status = 'sent' AND a.expires_at > now() AND a.created_at < $1::date - $2::int`, [today, Number(unseenDays) || 3]);
+  for (const a of unseen) {
+    await add({ kind: 'acceptance', title: `${a.quotation_no}: acceptance link not opened yet`, body: `${a.client_name}${a.sent_to ? ` · sent to ${a.sent_to}` : ''}`, entity: 'quotation', entityId: a.quotation_no, link: `/quotations/${enc(a.quotation_no)}`, dedupeKey: `unseen:${a.id}` });
+  }
+
+  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length } };
 }
 
 /** The daily job: the sweep, then one digest email with everything still unread. */

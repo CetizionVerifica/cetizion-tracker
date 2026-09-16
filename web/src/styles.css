@@ -586,3 +586,24 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 /* One-click contact (#31) */
 .contact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--ink-100); }
 .contact-bar .select { width: auto; max-width: 260px; }
+
+/* Client acceptance page (#53) */
+.accept { min-height: 100vh; background: var(--ink-50, #f8fafc); padding: 24px 16px; }
+.accept__card { max-width: 860px; margin: 0 auto; background: #fff; color: #0f172a; border: 1px solid var(--ink-200); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.accept__card h1 { font-size: 20px; margin: 4px 0; }
+.accept__card h2 { font-size: 16px; margin: 0; }
+.accept__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.accept__seller { font-weight: 600; color: var(--brand-700, #0f766e); }
+.accept__muted { color: #64748b; font-size: 13px; }
+.accept__totals { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.accept__totals > div { display: flex; gap: 24px; min-width: 240px; justify-content: space-between; }
+.accept__total { font-weight: 700; font-size: 16px; border-top: 1px solid var(--ink-200); padding-top: 4px; }
+.accept__terms summary { cursor: pointer; font-weight: 600; }
+.accept__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.accept__form { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--ink-200); padding-top: 16px; }
+.accept__form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; }
+.accept__form .accept__tick { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 400; }
+.accept__error { color: #b91c1c; font-size: 13px; }
+.accept__done { background: #fef3c7; border-radius: 8px; padding: 12px; }
+.accept__done--ok { background: #dcfce7; }
+.accept__foot { border-top: 1px solid var(--ink-100); padding-top: 12px; }
