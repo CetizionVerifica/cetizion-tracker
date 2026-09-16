@@ -2,7 +2,6 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
-import morgan from 'morgan';
 import compression from 'compression';
 
 import { config } from './config.js';
@@ -42,6 +41,9 @@ import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
 import { accountingRouter } from './routes/accounting.js';
 import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
+import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
+import { requestLogger } from './lib/ops/logger.js';
+import { httpMetrics } from './lib/ops/metrics.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -77,7 +79,8 @@ app.use(cors({
 // The raw bytes are kept for routes that check a signature over them.
 app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
-if (config.nodeEnv !== 'test') app.use(morgan('dev'));
+app.use(requestLogger);
+app.use(httpMetrics);
 
 // When this process started. The deploy job watches it change to know the
 // new container is serving, which also means its migrations went through.
@@ -90,6 +93,8 @@ const STARTED_AT = new Date().toISOString();
 // unauthenticated caller the same thing, because the sign-in form has to
 // know which field to draw.
 app.get('/api/health', async (req, res) => {
+// ?deep=1 is for signed-in people only (#38); the plain answer stays public.
+app.get('/api/health', healthHandler, async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
   res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, auth_mode: authConfig.mode });
 });
@@ -141,6 +146,7 @@ app.use('/api/webhooks', webhooksRouter);
 app.use('/api/portal-admin', portalAdminRouter);
 app.use('/api/accounting', accountingRouter);
 app.use('/api/api-tokens', apiTokenRouter);
+app.use('/api/client-errors', clientErrorRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
@@ -162,6 +168,9 @@ for (const [name, def] of Object.entries(resources)) {
 // An unknown /api path is a 404 in JSON; anything else is a front-end route
 // and belongs to the SPA.
 app.use('/api', notFound);
+// Prometheus metrics (#38): a bearer token or a staff session, never public.
+app.use('/metrics', metricsRouter);
+
 mountWebApp(app);
 app.use(notFound);
 app.use(errorHandler);

@@ -29,7 +29,6 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.0.0",
-    "morgan": "^1.10.0",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.10",
     "pdfmake": "^0.3.11",

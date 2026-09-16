@@ -5,6 +5,7 @@
  */
 import pdfmake from './pdf.js';
 import { money as formatMoney } from './reportFormat.js';
+import { timed } from './ops/metrics.js';
 
 const INK = '#0f172a'; const MUTED = '#64748b'; const LINE = '#e2e8f0'; const BRAND = '#0f766e';
 
@@ -74,5 +75,5 @@ export function quotationDocument(q) {
 }
 
 export function quotationPdf(q) {
-  return pdfmake.createPdf(quotationDocument(q)).getBuffer();
+  return timed('quotation', () => pdfmake.createPdf(quotationDocument(q)).getBuffer());
 }

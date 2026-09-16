@@ -7,6 +7,9 @@ import AuthGate from './components/AuthGate.jsx';
 import { AuthProvider } from './lib/auth.jsx';
 import AcceptQuotation from './pages/AcceptQuotation.jsx';
 import Portal from './pages/Portal.jsx';
+import { startErrorReporting } from './lib/errorReporting.js';
+
+startErrorReporting();
 import './styles.css';
 
 // A client's acceptance link (#53) opens outside the signed-in app.

@@ -2166,4 +2166,9 @@ CREATE TABLE IF NOT EXISTS api_token_log (
 
 CREATE INDEX IF NOT EXISTS api_token_log_token_idx ON api_token_log (token_id, created_at DESC);
 
+-- Operational alerts (#38)
+INSERT INTO settings (key, value, notes) VALUES
+  ('alert_email', '', 'Who is emailed about failed jobs, backups, sign-in attacks, certificates and disk space. Blank: ALERT_EMAIL, else nobody.')
+ON CONFLICT (key) DO NOTHING;
+
 COMMIT;
