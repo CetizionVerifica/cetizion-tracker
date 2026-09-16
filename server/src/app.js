@@ -41,6 +41,7 @@ import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
 import { accountingRouter } from './routes/accounting.js';
+import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -104,6 +105,8 @@ app.use('/api/mail', mailWebhookRouter);
 app.use('/api/hooks', incomingHooksRouter);
 // The client portal (#47) has its own sign-in and session; see routes/portal.js.
 app.use('/api/portal', portalRouter);
+// MCP clients authenticate with an API token instead of a session (#50).
+app.use('/api/mcp', mcpRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
@@ -137,6 +140,7 @@ app.use('/api/visits', visitsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/portal-admin', portalAdminRouter);
 app.use('/api/accounting', accountingRouter);
+app.use('/api/api-tokens', apiTokenRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
