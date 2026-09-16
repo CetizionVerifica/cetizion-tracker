@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
-import { invalidateLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
@@ -31,7 +31,7 @@ function useAction({ onDone, successMessage }) {
   return { busy, error, fieldErrors, run };
 }
 
-function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLabel, children, size = 'sm' }) {
+function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLabel, submitDisabled = false, children, size = 'sm' }) {
   return (
     <Modal
       title={title}
@@ -41,7 +41,7 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLa
       footer={
         <>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" form="action-form" className="btn btn--primary" disabled={busy}>
+          <button type="submit" form="action-form" className="btn btn--primary" disabled={busy || submitDisabled}>
             {busy ? 'Saving…' : submitLabel}
           </button>
         </>
@@ -305,6 +305,10 @@ export function ReimburseClaimDialog({ claim, onClose, onDone }) {
 /* -------------------------------------------- quotation → project */
 
 export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
+  // 'new' = create new project (default); 'existing' = link to an existing one.
+  const [mode, setMode] = useState('new');
+
+  // ---- "Create new project" state ----
   // Only a guide: the server assigns the number when the project is created.
   const [nextProjectId, setNextProjectId] = useState('');
   const [manager, setManager] = useState('');
@@ -312,6 +316,21 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
   const [start, setStart] = useState('');
   const [delivery, setDelivery] = useState('');
   const [applyTemplate, setApplyTemplate] = useState(true);
+
+  // ---- "Add to existing project" state ----
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  // useLookups() is already called in the parent but we need it here too.
+  // It is cached after the first call so there is no extra network request.
+  const { projects: allProjects } = useLookups();
+
+  // Only show projects that belong to the same client as this quotation.
+  // If none exist, we show an empty state — we never fall back to other clients'
+  // projects because the backend rejects cross-client links anyway.
+  const sameClientProjects = allProjects.filter(
+    (p) => p.client_name.trim().toLowerCase() === (quotation.client_name || '').trim().toLowerCase()
+  );
+  const noSameClientProjects = sameClientProjects.length === 0;
+
   const { busy, error, fieldErrors, run } = useAction({
     onDone,
     successMessage: (data) => `Project ${data?.project?.project_id ?? ''} registered`,
@@ -321,17 +340,32 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
     api.raw('/lookups/next-id/project').then((r) => setNextProjectId(r.data.next)).catch(() => {});
   }, []);
 
+  // Reset the existing-project selector when switching modes.
+  const handleModeChange = (newMode) => {
+    setMode(newMode);
+    if (newMode === 'existing') setSelectedProjectId(sameClientProjects[0]?.project_id || '');
+  };
+
   const submit = async (e) => {
     e.preventDefault();
-    const ok = await run(() =>
-      api.action(`/quotations/${quotation.id}/convert`, {
+
+    let payload;
+    if (mode === 'existing') {
+      // Existing-project path: send only project_id; the backend does the rest.
+      if (!selectedProjectId) return; // nothing selected yet — guard only
+      payload = { project_id: selectedProjectId };
+    } else {
+      // New-project path: identical to the pre-regression behaviour.
+      payload = {
         project_manager: manager,
         project_manager_email: managerEmail,
         planned_start_date: start,
         planned_delivery_date: delivery,
         apply_onboarding_template: applyTemplate,
-      })
-    );
+      };
+    }
+
+    const ok = await run(() => api.action(`/quotations/${quotation.id}/convert`, payload));
     // The quotation now has a project, so it belongs in the PO forms' won-quotation lists.
     if (ok) invalidateLookups();
     if (ok) onClose();
@@ -345,44 +379,102 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
       onSubmit={submit}
       busy={busy}
       error={error}
-      submitLabel="Create project"
+      submitLabel={mode === 'existing' ? 'Link to project' : 'Create project'}
+      submitDisabled={mode === 'existing' && (noSameClientProjects || !selectedProjectId)}
       size=""
     >
       <Alert>
         The quotation is marked won and linked to this project. Register the PO next so finance
         can raise the advance invoice.
       </Alert>
-      <div className="form-grid">
-        <Field label="Project ID" hint="Assigned automatically when you save">
-          <Input
-            value=""
-            placeholder={nextProjectId ? `${nextProjectId} (next number)` : 'Assigned on save'}
-            className="input mono"
-            disabled
-            readOnly
+
+      {/* Mode toggle */}
+      <div className="row" style={{ gap: 20 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input
+            type="radio"
+            name="convert-mode"
+            value="new"
+            checked={mode === 'new'}
+            onChange={() => handleModeChange('new')}
           />
-        </Field>
-        <Field label="Project manager">
-          <Input value={manager} onChange={(e) => setManager(e.target.value)} />
-        </Field>
-        <Field label="Manager email">
-          <Input type="email" value={managerEmail} onChange={(e) => setManagerEmail(e.target.value)} />
-        </Field>
-        <Field label="Planned start">
-          <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </Field>
-        <Field label="Planned delivery">
-          <Input type="date" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
-        </Field>
-        <Field label="Onboarding checklist" hint="Adds the 11 standard lifecycle steps">
-          <Select
-            value={applyTemplate ? 'yes' : 'no'}
-            placeholder={null}
-            options={[{ value: 'yes', label: 'Add standard checklist' }, { value: 'no', label: 'Skip for now' }]}
-            onChange={(e) => setApplyTemplate(e.target.value === 'yes')}
+          Create new project
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input
+            type="radio"
+            name="convert-mode"
+            value="existing"
+            checked={mode === 'existing'}
+            onChange={() => handleModeChange('existing')}
           />
-        </Field>
+          Add to existing project
+        </label>
       </div>
+
+      {/* ---- Add to existing project ---- */}
+      {mode === 'existing' && (
+        noSameClientProjects ? (
+          <p className="small muted">
+            No existing projects found for <strong>{quotation.client_name}</strong>.
+            Create a new project first or choose &ldquo;Create new project&rdquo;.
+          </p>
+        ) : (
+          <Field
+            label="Existing project"
+            hint={`Showing ${sameClientProjects.length} project(s) for ${quotation.client_name}`}
+            error={fieldErrors.project_id}
+          >
+            <select
+              className="select"
+              value={selectedProjectId}
+              onChange={(e) => setSelectedProjectId(e.target.value)}
+            >
+              <option value="">— select a project —</option>
+              {sameClientProjects.map((p) => (
+                <option key={p.project_id} value={p.project_id}>
+                  {p.project_id} — {p.client_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )
+      )}
+
+      {/* ---- Create new project ---- */}
+      {mode === 'new' && (
+        <div className="form-grid">
+          <Field label="Project ID" hint="Assigned automatically when you save">
+            <Input
+              value=""
+              placeholder={nextProjectId ? `${nextProjectId} (next number)` : 'Assigned on save'}
+              className="input mono"
+              disabled
+              readOnly
+            />
+          </Field>
+          <Field label="Project manager">
+            <Input value={manager} onChange={(e) => setManager(e.target.value)} />
+          </Field>
+          <Field label="Manager email">
+            <Input type="email" value={managerEmail} onChange={(e) => setManagerEmail(e.target.value)} />
+          </Field>
+          <Field label="Planned start">
+            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+          </Field>
+          <Field label="Planned delivery">
+            <Input type="date" value={delivery} onChange={(e) => setDelivery(e.target.value)} />
+          </Field>
+          <Field label="Onboarding checklist" hint="Adds the 11 standard lifecycle steps">
+            <Select
+              value={applyTemplate ? 'yes' : 'no'}
+              placeholder={null}
+              options={[{ value: 'yes', label: 'Add standard checklist' }, { value: 'no', label: 'Skip for now' }]}
+              onChange={(e) => setApplyTemplate(e.target.value === 'yes')}
+            />
+          </Field>
+        </div>
+      )}
     </ActionModal>
   );
 }

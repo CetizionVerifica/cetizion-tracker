@@ -121,7 +121,9 @@ export function RecordForm({
 
     const payload = {};
     for (const field of fields) {
-      if (field.auto) continue;
+      // On edit: reference-number fields are immutable — never send them.
+      // On create: include them so the user's explicit value (or blank for auto) reaches the server.
+      if (field.auto && isEdit) continue;
       let value = values[field.name];
       if (field.type === 'percent' && value !== '') value = Number(value) / 100;
       if (field.type === 'boolean') value = value === 'true';
@@ -190,19 +192,43 @@ export function RecordForm({
 
 function FormField({ field, value, error, onChange, record, file, onFile, preview, isEdit }) {
   if (field.auto) {
+    if (isEdit) {
+      // Edit mode: the reference number is immutable — show it as read-only.
+      return (
+        <Field
+          label={field.label}
+          hint="Assigned on create — cannot be changed"
+          error={error}
+        >
+          <Input
+            type="text"
+            className="input mono"
+            value={value ?? ''}
+            disabled
+            readOnly
+          />
+        </Field>
+      );
+    }
+    // Create mode: the field is editable so the user can enter a historical number.
+    // Leaving it blank triggers auto-assignment on the server; the preview shows what
+    // the next auto-number would be, as a guide.
     return (
       <Field
         label={field.label}
-        hint={isEdit ? 'Assigned automatically — it cannot be changed' : 'Assigned automatically when you save'}
+        hint={
+          preview
+            ? `Leave blank to assign ${preview} automatically, or enter a historical number`
+            : 'Leave blank to assign the next number automatically, or enter a historical number'
+        }
         error={error}
       >
         <Input
           type="text"
           className="input mono"
           value={value ?? ''}
-          placeholder={preview ? `${preview} (next number)` : 'Assigned on save'}
-          disabled
-          readOnly
+          placeholder={preview ?? 'Assigned on save'}
+          onChange={(e) => onChange(e.target.value)}
         />
       </Field>
     );

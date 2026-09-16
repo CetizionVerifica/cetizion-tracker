@@ -23,21 +23,30 @@ export const sequenceColumn = (kind) => SEQUENCES[kind].column;
  * Take the next reference in a series for a record being created. Call it
  * inside the transaction that inserts the record: saves in the same series
  * wait for each other, so two can never be handed the same number.
+ *
+ * Pass an explicit year string (e.g. '2025') for historical records whose
+ * date falls in a different year than today. Omit it to use the current
+ * business year (existing behaviour for all normal creates).
  */
-export async function claimNextId(kind, client) {
+export async function claimNextId(kind, client, year) {
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [SEQUENCES[kind].column]);
-  return nextId(kind, client);
+  return nextId(kind, client, year);
 }
 
 /**
  * The next reference in a series (CTZ/QT/2026/063, PRJ-2026-008). Pass a
  * transaction client to read the series inside that transaction.
+ *
+ * year — optional 4-digit string (e.g. '2025'). Defaults to the current
+ *         business year when omitted.
  */
-export async function nextId(kind, client = { query }) {
+export async function nextId(kind, client = { query }, year) {
   const spec = SEQUENCES[kind];
-  // The business's year: on 1 January before 05:30 IST the server's UTC clock still says last year.
-  const year = businessToday().slice(0, 4);
-  const prefix = spec.pattern.replace('{year}', year).replace(/\{n:\d+\}$/, '');
+  // Use the explicitly requested year, or fall back to the business's current year.
+  // On 1 January before 05:30 IST the server's UTC clock still says last year,
+  // so businessToday() is always used rather than new Date().getFullYear().
+  const resolvedYear = year ?? businessToday().slice(0, 4);
+  const prefix = spec.pattern.replace('{year}', resolvedYear).replace(/\{n:\d+\}$/, '');
   const width = Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3);
 
   const { rows } = await client.query(

@@ -181,8 +181,22 @@ export function crudRouter(name, def) {
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
-      // The reference number (CTZ/ENQ/2026/004) is always the next in its series, never typed.
-      if (def.autoId) values[sequenceColumn(def.autoId)] = await claimNextId(def.autoId, client);
+
+      if (def.autoId) {
+        const col = sequenceColumn(def.autoId);
+        if (values[col] == null) {
+          // Reference field is blank — auto-generate using the record's own date for the year.
+          // This ensures a quotation dated 2025-11-15 gets a CTZ/QT/2025/... number even when
+          // today is 2026.
+          const rawDate = def.autoIdDateField ? values[def.autoIdDateField] : null;
+          const year = (typeof rawDate === 'string' && rawDate.length >= 4)
+            ? rawDate.slice(0, 4)
+            : undefined; // undefined → claimNextId falls back to current business year
+          values[col] = await claimNextId(def.autoId, client, year);
+        }
+        // else: user supplied an explicit reference number — preserve it exactly.
+        // The DB UNIQUE constraint returns HTTP 409 on a duplicate (already handled in error.js).
+      }
       const cols = Object.keys(values);
       if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
@@ -206,8 +220,33 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', async (req, res) => {
     const values = validate(def, req.body, { partial: true });
-    // An assigned reference number stays as it was given.
-    if (def.autoId) delete values[sequenceColumn(def.autoId)];
+
+    // Reference-number guard: the field is immutable after creation.
+    // Rules:
+    //   - field absent from payload     → nothing to do (normal update proceeds)
+    //   - field present, same as stored → no-op, drop it silently
+    //   - field present, ANY other value (null, blank→null, different string) → 422
+    if (def.autoId) {
+      const col = sequenceColumn(def.autoId);
+      if (Object.prototype.hasOwnProperty.call(values, col)) {
+        // Client sent the reference column — fetch the current stored value.
+        // This runs before the transaction so a plain query() is always correct here.
+        const keyParams = [];
+        const keyPred = idPredicate(def, req.params.id, keyParams);
+        const { rows: existing } = await query(
+          `SELECT ${ident(col)} FROM ${ident(def.table)} WHERE ${keyPred}`,
+          keyParams
+        );
+        const currentValue = existing[0]?.[col] ?? null;
+        if (values[col] !== currentValue) {
+          throw new ApiError(422, 'Please check the highlighted fields', {
+            fields: { [col]: 'This reference number is assigned on create and cannot be changed' },
+          });
+        }
+        // Same value echoed back — harmless no-op, drop it from the payload.
+        delete values[col];
+      }
+    }
 
     const { id, extra, previousDocument } = await write(async (client) => {
       const previousDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
