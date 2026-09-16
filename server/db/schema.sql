@@ -592,8 +592,6 @@ CREATE INDEX engagements_company_idx ON engagements (company_id);
 -- One engagement per delivered PO and service.
 CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, service_name) WHERE po_number IS NOT NULL;
 
-CREATE TRIGGER engagements_set_updated_at BEFORE UPDATE ON engagements
-  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
 -- Payments and the chasing log (#27)
@@ -784,6 +782,7 @@ BEGIN
       'po_services','payment_stages','onboarding_tasks','travel_logs',
       'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
       'sequence_counters']
+      'travel_vendor_invoices','employee_expense_claims','settings','engagements']
   LOOP
     EXECUTE format(
       'CREATE TRIGGER %I_set_updated_at BEFORE UPDATE ON %I
