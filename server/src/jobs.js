@@ -7,6 +7,7 @@ import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
 import { runRenewals } from './lib/renewals.js';
+import { runNotifications } from './lib/notify.js';
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
@@ -43,6 +44,11 @@ export const JOBS = {
     description: 'Email each client with overdue invoices, once per interval, and note the chase on the stage',
     cron: '0 9 * * 1-5',        // weekday mornings, business time zone
     run: (opts) => runPaymentReminders(opts),
+  },
+  'notifications.daily': {
+    description: 'Raise notifications for tasks, follow-ups, approvals, new overdue invoices, renewals and expiring quotations; email the digest',
+    cron: '0 8 * * *',
+    run: (opts) => runNotifications(opts),
   },
   'finance.digest': {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',

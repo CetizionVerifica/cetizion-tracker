@@ -87,6 +87,17 @@ ${overdue.length ? table(['Client', 'Invoice', 'Outstanding', 'Overdue'], overdu
   return { subject, text, html };
 }
 
+/** The daily digest (#44): everything unread in the notification centre. */
+export function dailyDigest({ today, items }) {
+  const subject = `Tracker digest ${date(today)}: ${items.length} thing${items.length === 1 ? '' : 's'} need attention`;
+  const text = `Tracker digest for ${date(today)}
+
+${items.map((n) => `- ${n.title}${n.body ? ` (${n.body})` : ''}`).join('\n')}
+`;
+  const html = layout(`Tracker digest, ${date(today)}`, table(['What', 'Details'], items.map((n) => [n.title, n.body || ''])));
+  return { subject, text, html };
+}
+
 export function testEmail({ to, mode }) {
   const subject = 'Cetizion Tracker: test email';
   const text = `This is a test email from the Cetizion Tracker to ${to}. Delivery mode: ${mode}. If you are reading this, sending works.`;

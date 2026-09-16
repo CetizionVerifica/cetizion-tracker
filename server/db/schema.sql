@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1291,5 +1291,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+-- ---------------------------------------------------------------------
+-- Notifications (#44)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notifications (
+  id          serial PRIMARY KEY,
+  username    text NOT NULL DEFAULT 'admin',
+  kind        text NOT NULL,
+  title       text NOT NULL,
+  body        text,
+  entity      text,
+  entity_id   text,
+  link        text,
+  dedupe_key  text,
+  read_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (username, read_at, created_at DESC);
+-- The same thing is not raised twice on the same day.
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_dedupe_key ON notifications (dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('digest_email', '', 'Where the daily digest goes. Blank: the finance email.'),
+  ('quotation_expiry_warning_days', '7', 'Days before a quotation expires at which its owner is told.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

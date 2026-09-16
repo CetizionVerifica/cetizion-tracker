@@ -30,6 +30,7 @@ import { taskSummaryRouter, timelineRouter } from './routes/activity.js';
 import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
+import { notificationsRouter } from './routes/notifications.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -90,6 +91,7 @@ app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);

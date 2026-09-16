@@ -19,6 +19,7 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
+import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
@@ -38,6 +39,7 @@ const NAV = [
     label: 'Overview',
     items: [
       { to: '/', icon: '◈', label: 'Dashboard', end: true },
+      { to: '/notifications', icon: '◔', label: 'Notifications', badge: 'notifications' },
       { to: '/worklist', icon: '◉', label: 'Action list', badge: 'worklist' },
       { to: '/tasks', icon: '☐', label: 'Tasks' },
     ],
@@ -109,11 +111,13 @@ export default function App() {
   // on someone, visible without opening anything.
   const { data } = useFetch(() => api.raw('/dashboard/worklist'), [location.pathname]);
   const w = data?.data;
+  const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   const counts = {
     worklist: w
       ? w.payment_stages.length + w.vendor_invoices.length + w.expense_claims.length +
         w.late_deliveries.length + w.won_without_project.length
       : null,
+    notifications: nData?.data?.unread ?? null,
     stages: w?.payment_stages.length ?? null,
     vendors: w?.vendor_invoices.length ?? null,
     claims: w?.expense_claims.length ?? null,
@@ -123,6 +127,7 @@ export default function App() {
     stages: w ? w.payment_stages.some((s) => s.stage_status === 'Overdue') : false,
     vendors: w ? w.vendor_invoices.some((v) => v.payment_status === 'Overdue') : false,
     claims: false,
+    notifications: false,
   };
 
   return (
@@ -190,6 +195,7 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />

@@ -15,6 +15,7 @@ import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { approvalDecision, approvalRequest } from '../lib/emailTemplates.js';
 import { sendMail } from '../lib/mail.js';
+import { notify } from '../lib/notify.js';
 
 export const approvalRouter = Router();
 
@@ -40,6 +41,7 @@ approvalRouter.post('/:key/approval/request', async (req, res) => {
     `UPDATE quotations SET approval_status = 'pending', approval_reason = $2, approval_requested_at = now(), approval_requested_by = $3,
             approval_decided_at = NULL, approved_by = NULL, approval_note = NULL, approved_discount_percent = NULL
       WHERE id = $1 RETURNING approval_status, approval_requested_at`, [q.id, parsed.data.reason, req.user?.username || 'admin']);
+  await notify({ kind: 'approval', title: `Approval requested: ${q.quotation_no}`, body: `${q.client_name} · ${parsed.data.reason}`, entity: 'quotation', entityId: q.quotation_no, link: `/quotations/${encodeURIComponent(q.quotation_no)}`, dedupeKey: `approval-request:${q.quotation_no}:${Date.now()}` });
   const to = await approverEmail();
   let email = null;
   if (to) {
