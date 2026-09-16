@@ -33,6 +33,7 @@ export const STATUS = {
     QUOTATION_STATUS.lost, QUOTATION_STATUS.onHold,
   ],
   trigger: ['On PO Registration', 'On Delivery', 'Manual'],
+  unit: ['engagement', 'site', 'day', 'audit', 'report', 'year'],
   onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
   approval: ['Submitted', 'Approved', 'Rejected', 'On Hold'],
   currency: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'],

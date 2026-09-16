@@ -22,6 +22,7 @@ import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
+import { quotationDocRouter } from './routes/quotations.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -80,6 +81,7 @@ app.use('/api/emails', emailRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
 app.use('/api/purchase-orders', poRouter);
+app.use('/api/quotations', quotationDocRouter);
 app.use('/api/quotations', quotationRouter);
 app.use('/api/payment-stages', stageRouter);
 app.use('/api/vendor-invoices', vendorInvoiceRouter);

@@ -27,7 +27,7 @@ lookupRouter.get('/', async (req, res) => {
   const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
          currenciesInUse] =
     await Promise.all([
-      query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query('SELECT project_id, client_name FROM projects ORDER BY project_id DESC'),
@@ -69,6 +69,7 @@ lookupRouter.get('/', async (req, res) => {
   res.json({
     data: {
       services: services.rows.map((r) => r.name),
+      catalogue: services.rows,
       travel_vendors: vendors.rows.map((r) => r.name),
       expense_categories: categories.rows.map((r) => r.name),
       projects: projects.rows,

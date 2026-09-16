@@ -7,6 +7,7 @@ import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Quotations from './pages/Quotations.jsx';
+import QuotationDetail from './pages/QuotationDetail.jsx';
 import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
@@ -163,6 +164,7 @@ export default function App() {
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
+          <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/sales-report" element={<SalesReport />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
