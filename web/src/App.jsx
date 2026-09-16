@@ -3,6 +3,7 @@ import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 
 import Overview from './pages/Overview.jsx';
 import Worklist from './pages/Worklist.jsx';
+import Tasks from './pages/Tasks.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
@@ -35,6 +36,7 @@ const NAV = [
     items: [
       { to: '/', icon: '◈', label: 'Dashboard', end: true },
       { to: '/worklist', icon: '◉', label: 'Action list', badge: 'worklist' },
+      { to: '/tasks', icon: '☐', label: 'Tasks' },
     ],
   },
   {
@@ -164,6 +166,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/enquiries" element={<Enquiries />} />

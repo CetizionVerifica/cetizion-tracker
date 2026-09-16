@@ -507,6 +507,63 @@ export const resources = {
     }),
   },
 
+  tasks: {
+    table: 'tasks',
+    view: null,
+    label: 'Task',
+    defaultSort: 'due_at NULLS LAST, id',
+    search: ['title', 'description', 'entity_id', 'assignee'],
+    filters: ['entity', 'entity_id', 'status', 'assignee', 'priority', 'type'],
+    columns: ['entity', 'entity_id', 'title', 'description', 'due_at', 'status', 'priority', 'type', 'assignee', 'created_by'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      title: requiredStr(300),
+      description: str(2000),
+      due_at: date(),
+      status: enumOf(['todo', 'in_progress', 'done']).default('todo'),
+      priority: enumOf(['low', 'normal', 'high']).default('normal'),
+      type: enumOf(['call', 'email', 'meeting', 'follow_up', 'document', 'other']).default('follow_up'),
+      assignee: str(120),
+      created_by: str(120),
+    }),
+  },
+
+  notes: {
+    table: 'notes',
+    view: null,
+    label: 'Note',
+    defaultSort: 'pinned DESC, created_at DESC',
+    search: ['body'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'body', 'author', 'pinned'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      body: requiredStr(10000),
+      author: str(120),
+      pinned: bool(),
+    }),
+  },
+
+  attachments: {
+    table: 'attachments',
+    view: null,
+    label: 'Attachment',
+    hasDocument: true,
+    defaultSort: 'created_at DESC',
+    search: ['label'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      document_id: int({ min: 1 }),
+      label: str(200),
+      uploaded_by: str(120),
+    }),
+  },
+
   'payment-terms-templates': {
     table: 'payment_terms_templates',
     view: null,

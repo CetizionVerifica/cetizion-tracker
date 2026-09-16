@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, ErrorState, KeyValues, Modal, Select, Stat, Tabs, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -50,6 +51,7 @@ export default function CompanyDetail() {
     { key: 'quotations', label: `Quotations (${c.quotations.length})` },
     { key: 'projects', label: `Projects (${c.projects.length})` },
     { key: 'pos', label: `Purchase orders (${c.purchase_orders.length})` },
+    { key: 'activity', label: 'Activity' },
   ];
 
   const contactFields = [
@@ -171,6 +173,7 @@ export default function CompanyDetail() {
             ]} empty={<Empty title="No purchase orders" />} />
           </Card>
         )}
+        {tab === 'activity' && <Timeline entity="company" id={String(c.id)} />}
       </div>
 
       {editing && (

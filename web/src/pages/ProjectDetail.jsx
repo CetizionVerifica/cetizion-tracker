@@ -7,6 +7,7 @@ import {
 } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
@@ -339,6 +340,7 @@ export default function ProjectDetail() {
             />
           </Card>
         )}
+        <Timeline entity="project" id={projectId} />
       </div>
 
       {dialog?.type === 'newStep' && (

@@ -21,7 +21,7 @@ if (storageReady) {
 const ASSET = { resource_type: 'raw', type: 'authenticated' };
 
 /** Record types that carry a document; each gets its own Cloudinary folder. */
-const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages']);
+const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments']);
 export const isDocumentOwner = (owner) => OWNERS.has(owner);
 
 // A document may be attached, or deleted, only while no record points at it.
