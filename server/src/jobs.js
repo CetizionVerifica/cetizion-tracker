@@ -6,6 +6,7 @@
 import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
+import { runRenewals } from './lib/renewals.js';
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
@@ -32,6 +33,11 @@ export const JOBS = {
     description: 'Mark quotations sent from the tracker as lost (expired) once their validity has passed by the grace period',
     cron: '15 8 * * *',
     run: () => expireQuotations(),
+  },
+  'renewals.daily': {
+    description: 'Turn delivered renewable work into engagements, open renewal quotations inside the lead time, close renewed or lapsed ones',
+    cron: '45 8 * * *',
+    run: () => runRenewals(),
   },
   'reminders.payment': {
     description: 'Email each client with overdue invoices, once per interval, and note the chase on the stage',

@@ -511,6 +511,25 @@ export const resources = {
     }),
   },
 
+  engagements: {
+    table: 'engagements',
+    view: null,
+    label: 'Engagement',
+    defaultSort: 'next_due_on',
+    search: ['client_name', 'service_name', 'po_number'],
+    filters: ['status', 'company_id', 'owner'],
+    columns: ['client_name', 'service_name', 'valid_until', 'next_due_on', 'status', 'owner', 'notes'],
+    schema: z.object({
+      client_name: requiredStr(160),
+      service_name: requiredStr(300),
+      valid_until: date(),
+      next_due_on: date(),
+      status: enumOf(['active', 'renewal_open', 'renewed', 'lapsed', 'cancelled']).default('active'),
+      owner: str(120),
+      notes: str(2000),
+    }),
+  },
+
   payments: {
     table: 'payments',
     view: null,

@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -559,6 +559,41 @@ CREATE TABLE payment_stages (
 );
 
 CREATE INDEX ON payment_stages (po_number);
+
+-- ---------------------------------------------------------------------
+-- Engagements: what a client holds and when it renews (#28)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE engagements (
+  id                     serial PRIMARY KEY,
+  company_id             int REFERENCES companies(id) ON DELETE SET NULL,
+  client_name            text NOT NULL,
+  service_id             int REFERENCES services(id) ON DELETE SET NULL,
+  service_name           text NOT NULL,
+  project_id             text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  po_number              text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_id           int REFERENCES quotations(id) ON DELETE SET NULL,
+  cycle                  int NOT NULL DEFAULT 1,
+  started_on             date,
+  valid_until            date,
+  next_due_on            date NOT NULL,
+  status                 text NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active','renewal_open','renewed','lapsed','cancelled')),
+  renewal_quotation_id   int REFERENCES quotations(id) ON DELETE SET NULL,
+  renewal_opened_at      timestamptz,
+  owner                  text,
+  notes                  text,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX engagements_due_idx ON engagements (status, next_due_on);
+CREATE INDEX engagements_company_idx ON engagements (company_id);
+-- One engagement per delivered PO and service.
+CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, service_name) WHERE po_number IS NOT NULL;
+
+CREATE TRIGGER engagements_set_updated_at BEFORE UPDATE ON engagements
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ---------------------------------------------------------------------
 -- Payments and the chasing log (#27)
