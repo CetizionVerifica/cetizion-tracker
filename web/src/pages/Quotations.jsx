@@ -45,7 +45,7 @@ export default function Quotations() {
     { key: 'service_quoted', header: 'Service', className: 'wrap' },
     { key: 'sales_person', header: 'Owner' },
     { key: 'quotation_value', header: 'Value', align: 'right', render: (r) => money(r.quotation_value, r.currency) },
-    { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
+    { key: 'status', header: 'Status', render: (r) => <>{<Badge>{r.status}</Badge>}{r.approval_status === 'pending' && <div><Badge tone="warning">approval</Badge></div>}{r.approval_status === 'rejected' && <div><Badge tone="danger">rejected</Badge></div>}</> },
     {
       key: 'project_id',
       header: 'Project',

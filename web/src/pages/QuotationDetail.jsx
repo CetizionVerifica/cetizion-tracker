@@ -27,6 +27,8 @@ export default function QuotationDetail() {
   const [accepting, setAccepting] = useState(false);
   const [converting, setConverting] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [deciding, setDeciding] = useState(null);   // 'approved' | 'rejected'
   const [busy, setBusy] = useState(false);
 
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
@@ -68,6 +70,7 @@ export default function QuotationDetail() {
             {open && !approvalBlocked && <button type="button" className="btn" onClick={() => setSending(true)}>Send</button>}
             {open && !q.accepted_at && <button type="button" className="btn" onClick={() => setAccepting(true)}>Client accepted</button>}
             {!won && <button type="button" className="btn" onClick={() => setRevising(true)}>Revise</button>}
+            {open && q.approval_status !== 'pending' && <button type="button" className="btn" onClick={() => setRequesting(true)}>Ask approval</button>}
             {!q.purchase_orders.length && <button type="button" className="btn btn--primary" onClick={() => setRegistering(true)}>Register PO</button>}
             {won && !q.project_id && <button type="button" className="btn" onClick={() => setConverting(true)}>Project only</button>}
             <button type="button" className="btn btn--primary" onClick={() => setEditing(true)}>Edit</button>
@@ -76,7 +79,17 @@ export default function QuotationDetail() {
       />
       <div className="page stack">
         {q.expired && open && <Alert tone="warning"><span>This quotation passed its validity date ({date(q.valid_until)}). Revise it to reopen it with a fresh date, or mark it lost.</span></Alert>}
-        {q.approval_status === 'pending' && <Alert tone="warning"><span>The discount on this quotation is above the threshold and waits for approval before it can be sent.</span></Alert>}
+        {q.approval_status === 'pending' && (
+          <Alert tone="warning">
+            <span>
+              <strong>Waiting for approval</strong>{q.approval_reason ? `: ${q.approval_reason}` : ` — overall discount ${Number(q.discount_percent)}% is above the ${q.settings?.discount_approval_threshold_percent || 10}% threshold`}. It cannot be sent until approved.
+              {' '}<button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => setDeciding('approved')}>Approve</button>{' '}
+              <button type="button" className="btn btn--sm" disabled={busy} onClick={() => setDeciding('rejected')}>Reject</button>
+            </span>
+          </Alert>
+        )}
+        {q.approval_status === 'rejected' && <Alert tone="danger"><span><strong>Rejected</strong>{q.approved_by ? ` by ${q.approved_by}` : ''}{q.approval_note ? `: ${q.approval_note}` : ''}. Revise the discount or terms, then ask again.</span></Alert>}
+        {q.approval_status === 'approved' && <Alert tone="success"><span><strong>Approved</strong>{q.approved_by ? ` by ${q.approved_by}` : ''}{q.approval_decided_at ? ` on ${new Date(q.approval_decided_at).toLocaleDateString()}` : ''}{q.approval_note ? `: ${q.approval_note}` : ''}.</span></Alert>}
 
         <div className="grid grid--2">
           <Card title="Quotation">
@@ -100,6 +113,8 @@ export default function QuotationDetail() {
               q.line_count ? { label: 'GST', value: money(q.tax_total, cur) } : null,
               { label: 'Total', value: <strong>{money(q.line_count ? q.total : q.quotation_value, cur)}</strong> },
               { label: 'Currency', value: cur },
+              q.discount_percent ? { label: 'Overall discount', value: `${Number(q.discount_percent)}%` } : null,
+              { label: 'Approval', value: <Badge tone={q.approval_status === 'approved' ? 'success' : q.approval_status === 'pending' ? 'warning' : q.approval_status === 'rejected' ? 'danger' : 'neutral'}>{q.approval_status.replace('_', ' ')}</Badge> },
               q.purchase_orders.length ? { label: 'Purchase orders', value: q.purchase_orders.map((p) => <div key={p.po_number}><Link className="mono" to={`/purchase-orders/${encodeURIComponent(p.po_number)}`}>{p.po_number}</Link> · {money(p.po_value, p.currency)} · <Badge>{p.payment_status}</Badge></div>) } : null,
               { label: 'Payment', value: q.payment_status ? <Badge>{q.payment_status}</Badge> : null },
             ].filter(Boolean)} />
@@ -164,6 +179,12 @@ export default function QuotationDetail() {
       {accepting && (
         <AcceptDialog quotation={q} busy={busy} onClose={() => setAccepting(false)} onConfirm={async (name) => { const r = await act('accept', { accepted_by_name: name }, 'Acceptance recorded'); if (r) setAccepting(false); }} />
       )}
+      {requesting && (
+        <ReasonDialog title="Ask for approval" label="What needs approving" placeholder="Special payment terms: 100% on delivery" busy={busy} onClose={() => setRequesting(false)} onConfirm={async (reason) => { const r = await act('approval/request', { reason }, (x) => `Sent for approval${x.email ? ` (email ${x.email.status})` : ''}`); if (r) setRequesting(false); }} />
+      )}
+      {deciding && (
+        <ReasonDialog title={deciding === 'approved' ? 'Approve this quotation' : 'Reject this quotation'} label="Note" optional busy={busy} onClose={() => setDeciding(null)} onConfirm={async (note) => { const r = await act('approval/decide', { decision: deciding, note }, `Quotation ${deciding}`); if (r) setDeciding(null); }} />
+      )}
       {registering && (
         <RegisterPoDialog quotation={q} onClose={() => setRegistering(false)} onDone={() => { invalidateLookups(); refetch(); }} />
       )}
@@ -208,6 +229,15 @@ function LineForm({ quotation, line, catalogue, settings, onClose, onSaved }) {
         <Field label="Order"><Input type="number" step="1" value={v.sort_order} onChange={(e) => set('sort_order', e.target.value)} /></Field>
         <div className="span-all small muted">Line amount before GST: <strong>{money(amount, quotation.currency)}</strong></div>
       </form>
+    </Modal>
+  );
+}
+
+function ReasonDialog({ title, label, placeholder, optional, busy, onClose, onConfirm }) {
+  const [text, setText] = useState('');
+  return (
+    <Modal title={title} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn--primary" disabled={busy || (!optional && !text.trim())} onClick={() => onConfirm(text.trim())}>{busy ? 'Saving…' : 'Confirm'}</button></>}>
+      <Field label={label} required={!optional}><Textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} /></Field>
     </Modal>
   );
 }
