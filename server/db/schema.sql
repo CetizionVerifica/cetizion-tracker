@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -2065,5 +2065,76 @@ CREATE TABLE IF NOT EXISTS portal_audit (
 );
 
 CREATE INDEX IF NOT EXISTS portal_audit_company_idx ON portal_audit (company_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- Accounting integration (#48)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS accounting_mappings (
+  id          serial PRIMARY KEY,
+  kind        text NOT NULL CHECK (kind IN ('customer','service','ledger','tax')),
+  tracker_ref text NOT NULL,
+  books_ref   text NOT NULL,
+  books_name  text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (kind, tracker_ref)
+);
+
+CREATE TABLE IF NOT EXISTS books_entries (
+  id              serial PRIMARY KEY,
+  source          text NOT NULL CHECK (source IN ('zoho','tally','file')),
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment','credit_note')),
+  books_id        text NOT NULL,
+  number          text,
+  customer_name   text,
+  customer_gstin  text,
+  company_id      int REFERENCES companies(id) ON DELETE SET NULL,
+  entry_date      date,
+  due_date        date,
+  taxable_amount  numeric(16,2),
+  tax_amount      numeric(16,2),
+  total_amount    numeric(16,2),
+  tds_amount      numeric(16,2),
+  currency        text NOT NULL DEFAULT 'INR',
+  reference       text,
+  status          text,
+  raw             jsonb,
+  imported_at     timestamptz NOT NULL DEFAULT now(),
+  imported_by     text,
+  UNIQUE (source, kind, books_id)
+);
+
+CREATE INDEX IF NOT EXISTS books_entries_number_idx ON books_entries (kind, upper(regexp_replace(number, '\s', '', 'g')));
+
+CREATE TABLE IF NOT EXISTS reconciliation_items (
+  id              serial PRIMARY KEY,
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment')),
+  match_key       text NOT NULL UNIQUE,
+  stage_id        int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  payment_id      int REFERENCES payments(id) ON DELETE SET NULL,
+  books_entry_id  int REFERENCES books_entries(id) ON DELETE CASCADE,
+  status          text NOT NULL CHECK (status IN ('matched','amount_differs','date_differs','missing_in_books','missing_in_tracker','resolved')),
+  differences     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  note            text,
+  resolved_by     text,
+  resolved_at     timestamptz,
+  checked_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS reconciliation_items_status_idx ON reconciliation_items (status);
+
+CREATE TABLE IF NOT EXISTS accounting_log (
+  id          bigserial PRIMARY KEY,
+  action      text NOT NULL,
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  done_by     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('accounting_provider', 'none', 'Where the books are: none, zoho, tally or file (export files uploaded by hand).'),
+  ('accounting_apply_payments', 'false', 'Record payments found in the books on the matching tracker invoice automatically.'),
+  ('company_state_code', '', 'Two-digit GST state code of our registration (e.g. 27 for Maharashtra). Decides CGST+SGST or IGST on draft invoices.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

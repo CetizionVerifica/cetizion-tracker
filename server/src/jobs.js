@@ -12,6 +12,7 @@ import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
 import { runVisitReminders } from './lib/visits.js';
 import { runWebhooks } from './lib/webhooks.js';
+import { runAccountingSync } from './routes/accounting.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 
 /**
@@ -49,6 +50,11 @@ export const JOBS = {
     description: 'Email each client with overdue invoices, once per interval, and note the chase on the stage',
     cron: '0 9 * * 1-5',        // weekday mornings, business time zone
     run: (opts) => runPaymentReminders(opts),
+  },
+  'accounting.sync': {
+    description: 'Read invoices and payments from the books (Zoho Books), compare them with the tracker, apply payments if allowed',
+    cron: '30 6 * * *',
+    run: () => runAccountingSync(),
   },
   'webhooks.deliver': {
     description: 'Send webhook events to their endpoints and retry failed ones',
