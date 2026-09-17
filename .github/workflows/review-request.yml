@@ -1,0 +1,41 @@
+# Every pull request somebody else opens asks Hayyan612 for a review, so
+# nothing waits for a person to notice it. CODEOWNERS would be the usual way,
+# but it only requests reviewers on private repositories with a paid plan.
+
+name: Request review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+
+env:
+  REVIEWER: Hayyan612
+
+jobs:
+  request:
+    name: Ask for a review
+    # Drafts wait until they are marked ready; GitHub refuses a review request
+    # from the author of the pull request, so their own PRs are skipped.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request the reviewer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ "$AUTHOR" = "$REVIEWER" ]; then
+            echo "PR #$PR is by $REVIEWER; GitHub does not allow requesting a review from the author."
+            exit 0
+          fi
+          if gh api --method POST "repos/${{ github.repository }}/pulls/$PR/requested_reviewers" \
+               -f "reviewers[]=$REVIEWER" >/dev/null; then
+            echo "Requested a review from $REVIEWER on #$PR."
+          else
+            # A review already requested, or already submitted, is not a failure.
+            echo "::warning::Could not request a review from $REVIEWER on #$PR; it may already be requested."
+          fi
