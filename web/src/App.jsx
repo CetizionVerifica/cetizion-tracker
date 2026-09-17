@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Overview from './pages/Overview.jsx';
 import Worklist from './pages/Worklist.jsx';
@@ -40,6 +40,12 @@ import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
 import { useAuth } from './lib/auth.jsx';
+
+// A fresh review (tab, filters, messages) for each batch.
+function ImportReviewPage() {
+  const { id } = useParams();
+  return <ImportReview key={id} />;
+}
 
 const NAV = [
   {
@@ -226,7 +232,7 @@ export default function App() {
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/import" element={<BulkImport />} />
-          <Route path="/import/:id" element={<ImportReview />} />
+          <Route path="/import/:id" element={<ImportReviewPage />} />
           <Route path="/emails" element={<Emails />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="*" element={<NotFound />} />

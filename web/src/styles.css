@@ -162,6 +162,8 @@ a:hover { text-decoration: underline; }
 .topbar__title { flex: 1 1 240px; min-width: 0; }
 .topbar__sub { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
 .topbar__actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.topbar__actions { min-width: 0; max-width: 100%; }
+.topbar__actions .input { max-width: 100%; }
 
 .page { padding: 24px 28px 56px; max-width: 1600px; width: 100%; }
 
@@ -419,7 +421,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   padding: 11px 14px; border-radius: var(--radius-sm);
   border: 1px solid var(--info-br); background: var(--info-bg); color: var(--info-fg);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
+.alert > * { min-width: 0; }
+.alert .btn { white-space: normal; text-align: left; height: auto; }
 .alert--danger { border-color: var(--danger-br); background: var(--danger-bg); color: var(--danger-fg); }
 .alert--warning { border-color: var(--warn-br); background: var(--warn-bg); color: var(--warn-fg); }
 .alert--success { border-color: var(--ok-br); background: var(--ok-bg); color: var(--ok-fg); }

@@ -301,3 +301,9 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 - 2026-09-18: Batch 6 finished (Claude access, monitoring, security,
   backups, staging). Checkpoint 6 tagged; nothing pushed. Next: full testing,
   then the move to Next.js (#17).
+- 2026-09-17: Full testing pass with the real sales sheet imported and a
+  messy 500-row sheet through Bulk import. Fixed: rows with a negative amount
+  or an over-long value now show as errors in the review instead of making
+  the whole commit fail; the review no longer shows another batch's message;
+  search boxes and warning banners fit narrow screens. 116 server tests and
+  4 browser tests pass. Nothing pushed.

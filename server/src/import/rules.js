@@ -26,6 +26,7 @@
  *   receipt        PO number + stage (money already recorded on that stage)
  */
 import { parseMoney } from './parse.js';
+import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.js';
 
 export const DEFAULT_RULES = {
@@ -350,8 +351,33 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
   }
 
+  for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
   const summary = summarise(items, skipped);
   return { items, skipped, summary, rules };
+}
+
+const AMOUNT_FIELDS = ['quotation_value', 'po_value', 'service_value', 'amount_received'];
+const SCHEMAS = { quotation: 'quotations', project: 'projects' };
+
+/**
+ * What would stop the commit, shown at review time instead: a negative
+ * amount, or a value the record's own form would refuse (too long, wrong
+ * type). Checks only the fields present, since ids are filled at commit.
+ */
+export function reviewFlags(step, payload, flags = []) {
+  const kept = flags.filter((f) => f.code !== 'negative_amount' && f.code !== 'invalid_value');
+  const bad = AMOUNT_FIELDS.filter((k) => payload?.[k] !== null && payload?.[k] !== undefined && payload[k] !== '' && Number(payload[k]) < 0);
+  if (bad.length) kept.push({ level: 'error', code: 'negative_amount', message: `Negative amount in ${bad.map((k) => k.replace(/_/g, ' ')).join(', ')}: correct it or untick the row`, by: 'rule' });
+  const resource = resources[SCHEMAS[step]];
+  if (resource && payload) {
+    const present = Object.fromEntries(Object.entries(payload).filter(([k, v]) => v !== null && v !== undefined && v !== '' && !(AMOUNT_FIELDS.includes(k) && bad.includes(k))));
+    const parsed = resource.schema.partial().safeParse(present);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((x) => `${String(x.path[0]).replace(/_/g, ' ')}: ${x.message}`).join('; ');
+      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Correct it or untick the row`, by: 'rule' });
+    }
+  }
+  return kept;
 }
 
 export function summarise(items, skipped = []) {

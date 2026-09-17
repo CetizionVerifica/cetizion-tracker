@@ -19,7 +19,7 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
 import { businessYear } from '../lib/businessDate.js';
 
@@ -188,10 +188,8 @@ importRouter.patch('/items/:id', async (req, res) => {
     // "No proposal date in the sheet" stops being useful once a date is typed in.
     const clears = { quotation_date: ['no_date'], contact_person: ['no_contact'], po_date: ['no_po_date'], invoice_date: ['no_invoice_date'] };
     const dropCodes = touched.flatMap((t) => clears[t] || []);
-    if (dropCodes.length) {
-      const flags = (rows[0].flags || []).filter((f) => !dropCodes.includes(f.code));
-      vals.push(JSON.stringify(flags)); sets.push(`flags = $${vals.length}`);
-    }
+    const flags = reviewFlags(rows[0].step, merged, (rows[0].flags || []).filter((f) => !dropCodes.includes(f.code)));
+    vals.push(JSON.stringify(flags)); sets.push(`flags = $${vals.length}`);
   }
   if (!sets.length) throw new ApiError(422, 'Nothing to update');
   vals.push(id);
