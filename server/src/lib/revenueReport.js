@@ -1,5 +1,8 @@
 import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
+import { MONTH_NAMES } from './reportFormat.js';
+import { r2, share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
@@ -14,8 +17,6 @@ import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
  * not set is left out of the INR figures and reported, never guessed.
  */
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 /** "Sep 2026" for "2026-09"; "No date" for a row without one. */
 export const monthLabel = (month) =>
   month ? `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}` : 'No date';
@@ -23,9 +24,7 @@ export const monthLabel = (month) =>
 /** The Purchase orders list's payment statuses, most urgent first. */
 export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'];
 
-const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
-const ratio = (part, whole) => (whole ? part / whole : null);
 
 function monthsBetween(first, last) {
   const months = [];
@@ -92,8 +91,8 @@ export function summarisePurchaseOrders(pos) {
     received_inr: received,
     due_now_inr: sum(converted, 'due_now_inr'),
     // Received ÷ invoiced, and invoiced ÷ PO value; nothing to divide by means no rate.
-    collection_rate: ratio(received, invoiced),
-    invoiced_rate: ratio(invoiced, poValue),
+    collection_rate: share(received, invoiced),
+    invoiced_rate: share(invoiced, poValue),
     pos_unconverted: pos.length - converted.length,
     missing_rates: [...new Set(pos.filter((row) => row.rate === null).map((row) => row.currency))].sort(),
   };
@@ -128,7 +127,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
               ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
          FROM quotations q
          LEFT JOIN rates qr ON qr.currency = q.currency
-        WHERE q.status = 'Won - PO Received' AND ${IN_PERIOD}
+        WHERE q.status = '${QUOTATION_STATUS.won}' AND ${IN_PERIOD}
         ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
       [from, to]
     ),
@@ -154,7 +153,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
       ? query(
         `SELECT year FROM (
            SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
-             FROM quotations WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
+             FROM quotations WHERE status = '${QUOTATION_STATUS.won}' AND quotation_date IS NOT NULL
            UNION
            SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
          ) y
