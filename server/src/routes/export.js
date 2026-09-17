@@ -8,7 +8,7 @@ import {
   invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
-import { dataGaps, enquiryReport, exchangeRates, quotationStatusReport, serviceReport } from '../lib/salesReviewData.js';
+import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
 import { businessYear } from '../lib/businessDate.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -43,6 +43,35 @@ const SALES_REPORTS = {
   'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
 };
 
+// Report builders started at once for the PDF. Two of them fan out into
+// several queries each, so at most 5 of the pool's 10 connections are in use.
+const REPORT_CONCURRENCY = 2;
+
+/**
+ * Run tasks a few at a time, results in the order they were given. Several
+ * report builders fan out into queries of their own, so the limit is well
+ * under the database pool size and the rest of the app keeps its connections.
+ */
+async function runWithLimit(tasks, limit) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  let failure = null;
+  const worker = async () => {
+    while (next < tasks.length && !failure) {
+      const index = next;
+      next += 1;
+      try {
+        results[index] = await tasks[index]();
+      } catch (err) {
+        failure ??= err;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  if (failure) throw failure;
+  return results;
+}
+
 /** Days in a month, leap years included (Date.UTC would misread years below 100). */
 function daysInMonth(year, month) {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -67,20 +96,20 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
     ? { from: `${year}-${month}-01`, to: `${year}-${month}-${String(daysInMonth(Number(year), Number(month))).padStart(2, '0')}` }
     : { from: `${year}-01-01`, to: `${year}-12-31` };
 
-  const [sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates] = await Promise.all([
-    sectorReport(period),
-    customerReport(period),
-    fxReport(period),
-    revenueReport(revenuePeriod),
-    enquiryReport(period),
-    quotationStatusReport(period),
-    serviceReport(period),
-    dataGaps(period),
-    exchangeRates(),
-  ]);
+  const [sectors, customers, fx, revenue, review, gaps, rates] = await runWithLimit([
+    () => sectorReport(period),
+    () => customerReport(period),
+    () => fxReport(period),
+    // The PDF has no year picker, so the query behind it is skipped.
+    () => revenueReport(revenuePeriod, { includeYears: false }),
+    () => salesReviewSections(period),
+    () => dataGaps(period),
+    () => exchangeRates(),
+  ], REPORT_CONCURRENCY);
   const pdf = await salesReportPdf({
     period, year: Number(year), month, revenuePeriod,
-    sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates,
+    sectors, customers, fx, revenue, gaps, rates,
+    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });
