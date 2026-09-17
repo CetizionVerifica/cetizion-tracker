@@ -111,7 +111,12 @@ export function paymentStatusRows(pos) {
   return rows;
 }
 
-export async function revenueReport({ from, to }) {
+/**
+ * The revenue figures for a period. `years` fills the Sales reports page's
+ * year picker; the PDF has no picker, so it passes includeYears: false and
+ * that query is not run.
+ */
+export async function revenueReport({ from, to }, { includeYears = true } = {}) {
   const [orders, purchaseOrders, years, undated] = await Promise.all([
     query(
       `WITH ${RATES}
@@ -145,15 +150,17 @@ export async function revenueReport({ from, to }) {
       [from, to]
     ),
     // Years with won orders or dated POs, for the year picker.
-    query(
-      `SELECT year FROM (
-         SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
-           FROM quotations WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
-         UNION
-         SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
-       ) y
-       ORDER BY year DESC`
-    ),
+    includeYears
+      ? query(
+        `SELECT year FROM (
+           SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
+             FROM quotations WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
+           UNION
+           SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
+         ) y
+         ORDER BY year DESC`
+      )
+      : { rows: [] },
     // A PO without a PO date cannot be placed in a year or month.
     query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number'),
   ]);
