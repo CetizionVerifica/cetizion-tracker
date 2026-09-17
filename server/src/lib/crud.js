@@ -94,7 +94,11 @@ function validate(def, body, { partial }) {
       ),
     });
   }
-  return pickWritable(def, parsed.data);
+  const values = pickWritable(def, parsed.data);
+  if (!partial) return values;
+  // An update writes only what it was sent. zod 4 applies .default() inside
+  // .partial() too, so without this an edit to a PO's remarks resets its value to 0.
+  return Object.fromEntries(Object.entries(values).filter(([col]) => Object.hasOwn(body, col)));
 }
 
 /**
