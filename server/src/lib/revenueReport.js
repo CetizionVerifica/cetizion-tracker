@@ -1,7 +1,7 @@
 import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
-import { r2, share } from './reportMath.js';
+import { r2, share as ratio } from './reportMath.js';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**
@@ -27,7 +27,6 @@ export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'No stages', 'Pending'
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
 
 const rateKey = (d) => `${d.currency}:${d.rate}:${d.effective_from}`;
-const ratio = (part, whole) => (whole > 0 ? part / whole : null);
 
 /** The PO-date rates behind po_value, deduplicated. */
 function rateDetails(rows) {
@@ -135,7 +134,10 @@ export function summarisePurchaseOrders(pos) {
     // no invoice is real and stays in Received, but counting it here would
     // push the rate above 100%.
     collection_rate: ratio(sum(pos, 'received_invoiced_inr'), invoiced),
-    invoiced_rate: ratio(invoicedOfPricedPos, poValue),
+    // Only when every PO has a PO-date rate. Otherwise invoiced covers POs
+    // that PO value does not, and the share printed beside those two amounts
+    // would not be the one a reader gets by dividing them.
+    invoiced_rate: pos.length === converted.length ? ratio(invoicedOfPricedPos, poValue) : null,
     pos_unconverted: pos.length - converted.length,
     stages_unconverted: stagesUnconverted,
     missing_rates: [...new Set(

@@ -465,7 +465,9 @@ export const resources = {
       from_currency: enumOf(STATUS.currency.filter((c) => c !== 'INR')),
       // INR is the only target: every report figure is an INR figure.
       to_currency: z.literal('INR').default('INR'),
-      rate: num({ min: 0.000001 }).refine((v) => v !== null && v !== undefined, 'Required'),
+      // numeric(18,6) holds 12 digits before the point; anything larger is a
+      // typo, and letting it through turns a bad rate into a 500.
+      rate: num({ min: 0.000001, max: 1000000 }).refine((v) => v !== null && v !== undefined, 'Required'),
       effective_from: date().refine((v) => v !== null && v !== undefined, 'Required'),
       source: enumOf(['manual', 'feed']).default('manual'),
       entered_by: str(120),

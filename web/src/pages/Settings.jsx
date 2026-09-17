@@ -52,11 +52,18 @@ function ExchangeRates() {
   for (const row of rows) if (!latest.has(row.from_currency)) latest.set(row.from_currency, row.id);
   // Only currencies something is actually recorded in: warning about a rate
   // nothing needs trains people to ignore the warning.
-  const inUse = lookups.currencies_in_use ?? currencies;
+  const inUse = lookups.currencies_in_use ?? [];
   const missing = inUse.filter((c) => c !== 'INR' && !latest.has(c));
 
   async function remove(row) {
-    if (!window.confirm(`Delete the ${row.from_currency} rate effective ${row.effective_from}? Figures dated on or after it will fall back to the previous rate.`)) return;
+    // The earliest rate for a currency has nothing before it, so deleting it
+    // does not "fall back" — everything older simply stops converting.
+    const earliest = !rows.some((r) => r.from_currency === row.from_currency
+      && r.effective_from < row.effective_from);
+    const warning = earliest
+      ? `Delete the ${row.from_currency} rate effective ${row.effective_from}? It is the earliest ${row.from_currency} rate, so every figure dated before the next one would be left out of the INR totals and reported unconverted.`
+      : `Delete the ${row.from_currency} rate effective ${row.effective_from}? Figures dated on or after it will fall back to the previous rate.`;
+    if (!window.confirm(warning)) return;
     try {
       await api.remove('exchange-rates', row.id);
       toast('Rate deleted', 'success');

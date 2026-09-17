@@ -24,7 +24,15 @@ export const JOBS = {
   'documents.purge': {
     description: 'Finish interrupted document removals and clear uploads whose form was never saved',
     cron: '0 3 * * *',           // overnight, when nobody is uploading
-    run: () => purgeOrphanedDocuments(),
+    run: async () => {
+      const result = await purgeOrphanedDocuments();
+      // Nothing removed and everything refused: the run is a failure, or a
+      // permanently stuck document is retried nightly and never surfaces.
+      if (result.found > 0 && result.purged === 0) {
+        throw new Error(`every document refused: ${JSON.stringify(result.failed).slice(0, 500)}`);
+      }
+      return result;
+    },
   },
 };
 

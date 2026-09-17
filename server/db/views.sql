@@ -458,6 +458,9 @@ SELECT
     WHEN st.stages_to_invoice > 0              THEN 'Invoicing pending'
     WHEN po.po_count > 0
      AND po.fully_paid_pos = po.po_count       THEN 'Fully Paid'
+    -- POs exist but none has a payment schedule: nothing is owed only because
+    -- nothing has been scheduled, the same as on the PO itself.
+    WHEN po.po_count > 0 AND st.stage_count = 0 THEN 'No stages'
     WHEN po.balance_due_now <= 0               THEN 'Up to date'
     ELSE 'Pending'
   END                                                       AS payment_status,
@@ -504,9 +507,10 @@ CROSS JOIN LATERAL (
 ) ob(onboarding_done, onboarding_total, onboarding_percent)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
-         COUNT(*) FILTER (WHERE stage_status = 'To Invoice')
+         COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
+         COUNT(*)
   FROM v_payment_stages ps WHERE ps.project_id = p.project_id
-) st(overdue_stages, stages_to_invoice);
+) st(overdue_stages, stages_to_invoice, stage_count);
 
 -- ---------------------------------------------------------------------
 -- Quotations — the four "reflected" columns sales sees without

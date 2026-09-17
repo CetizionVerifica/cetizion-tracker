@@ -117,3 +117,55 @@ describe('reference numbers are never reissued', { skip: !ADMIN_URL && 'set TEST
       assert.equal(await nextId('quotation', client, YEAR), `CTZ/QT/${YEAR}/002`);
     }));
 });
+
+/**
+ * Migration 014's backfill. The counter tests above build from schema.sql,
+ * where the table starts empty — this runs the migration itself against rows
+ * that already carry references, which is what production will do.
+ */
+describe('014 seeds the counters from references already issued', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+  const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '014_sequence_counters.sql'), 'utf8');
+
+  const seedRows = async (client) => {
+    await client.query(`DELETE FROM sequence_counters`);
+    await client.query(`INSERT INTO quotations (quotation_no, client_name, quotation_date)
+      VALUES ('CTZ/QT/2026/063','Acme','2026-05-01'), ('CTZ/QT/2025/007','Acme','2025-05-01')`);
+    await client.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-2026-008','Acme')`);
+    // The vendor's own number, not a reference this app issues. A loose match
+    // would read "2627" out of it and seed a counter for a year that is not one.
+    await client.query(`INSERT INTO travel_logs (travel_id, employee_name) VALUES ('TRV-2026-001','Someone')`);
+    await client.query(`INSERT INTO travel_vendor_invoices (vendor_invoice_id, travel_id)
+      VALUES ('HT/26-27/966', 'TRV-2026-001')`);
+  };
+
+  test('each series starts where it actually left off', () =>
+    withDatabase(async (client) => {
+      await seedRows(client);
+      await client.query(MIGRATION);
+      const { rows } = await client.query(
+        'SELECT kind, year, last_n FROM sequence_counters ORDER BY kind, year');
+      assert.deepEqual(rows, [
+        { kind: 'project', year: '2026', last_n: 8 },
+        { kind: 'quotation', year: '2025', last_n: 7 },
+        { kind: 'quotation', year: '2026', last_n: 63 },
+        { kind: 'travel', year: '2026', last_n: 1 },
+      ]);
+    }));
+
+  test('a foreign reference number never becomes a counter', () =>
+    withDatabase(async (client) => {
+      await seedRows(client);
+      await client.query(MIGRATION);
+      const { rows } = await client.query(
+        `SELECT count(*)::int AS n FROM sequence_counters WHERE kind = 'vendor_invoice'`);
+      assert.equal(rows[0].n, 0, "the vendor's own HT/26-27/966 is not our series");
+    }));
+
+  test('the next reference carries on from the seeded counter', () =>
+    withDatabase(async (client) => {
+      await seedRows(client);
+      await client.query(MIGRATION);
+      assert.equal(await claimNextId('quotation', client, '2026'), 'CTZ/QT/2026/064');
+      assert.equal(await claimNextId('project', client, '2026'), 'PRJ-2026-009');
+    }));
+});

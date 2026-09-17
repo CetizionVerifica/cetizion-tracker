@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Progress } from '../components/ui.jsx';
-import { useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, date, number } from '../lib/format.js';
 
 const projectAmount = (row, value) =>
@@ -65,9 +65,12 @@ export default function Projects() {
       formTitle="project"
       searchPlaceholder="Search project, client, manager…"
       onRowClick={(row) => navigate(`/projects/${row.project_id}`)}
+      // Saving can register a won quotation, which takes it off the list the
+      // form offers — the lookups are cached for the session until cleared.
+      onSaved={() => invalidateLookups()}
       filters={[
         { name: 'project_stage', label: 'Stage', options: ['Not Started', 'Onboarding', 'In Progress', 'Delivered'] },
-        { name: 'payment_status', label: 'Payment', options: ['Overdue', 'Invoicing pending', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'payment_status', label: 'Payment', options: ['Overdue', 'Invoicing pending', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
       ]}
     />
   );

@@ -6,7 +6,7 @@ import test, { describe } from 'node:test';
 import pg from 'pg';
 
 /**
- * Migration 010 on a database that already holds real data: the Settings
+ * Migration 013 on a database that already holds real data: the Settings
  * rates must carry over so that every figure is the same the moment the
  * switch happens. Needs a Postgres the runner may create databases on: set
  * TEST_DATABASE_URL (CI does).
@@ -16,7 +16,7 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '013_exchange_rates.sql'), 'utf8');
 
-// The shape 010 arrives at: the tables it reads, and the trigger it attaches.
+// The shape 013 arrives at: the tables it reads, and the trigger it attaches.
 const BEFORE = `
 CREATE TABLE settings (key text PRIMARY KEY, value text NOT NULL, notes text,
                        updated_at timestamptz NOT NULL DEFAULT now());
@@ -26,6 +26,8 @@ CREATE TABLE quotations (id serial PRIMARY KEY, quotation_no text NOT NULL UNIQU
                          currency text NOT NULL DEFAULT 'INR');
 CREATE TABLE purchase_orders (po_number text PRIMARY KEY, po_date date,
                               currency text NOT NULL DEFAULT 'INR');
+CREATE TABLE payment_stages (id serial PRIMARY KEY, po_number text, invoice_date date,
+                             payment_received_date date);
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
@@ -40,6 +42,11 @@ INSERT INTO quotations (quotation_no, quotation_date, quotation_value, currency)
   ('Q-MID', '2026-02-11', 2000, 'EUR'),
   ('Q-GBP', '2026-05-05', 3000, 'GBP');
 INSERT INTO purchase_orders (po_number, po_date, currency) VALUES ('PO-1', '2025-01-20', 'USD');
+-- An advance invoiced and paid before any quotation or PO was filed. The
+-- revenue report converts a stage on these dates, so a rate that starts later
+-- would leave it unconverted.
+INSERT INTO payment_stages (po_number, invoice_date, payment_received_date)
+  VALUES ('PO-1', '2025-01-05', '2025-01-12');
 `;
 
 async function withDatabase(fn) {
@@ -83,7 +90,7 @@ const CONVERTED = `
     ) r ON true
    ORDER BY q.quotation_no`;
 
-describe('010 carries the Settings rates over', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+describe('013 carries the Settings rates over', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   test('runs on a database that already holds data', () =>
     withDatabase(async (client) => {
       await client.query(MIGRATION);
@@ -94,8 +101,9 @@ describe('010 carries the Settings rates over', { skip: !ADMIN_URL && 'set TEST_
       assert.deepEqual(rows.map((r) => r.from_currency), ['EUR', 'USD']);
       assert.deepEqual(rows.map((r) => r.rate), [111, 88.25]);
       assert.ok(rows.every((r) => r.to_currency === 'INR' && r.source === 'manual'));
-      // Dated from the earliest record that exists, so nothing predates a rate.
-      assert.ok(rows.every((r) => r.effective_from === '2025-01-20'), 'earliest PO date');
+      // Dated from the earliest date anything is converted on, so nothing
+      // predates a rate — here the 2025-01-05 invoice, not the 2025-01-20 PO.
+      assert.ok(rows.every((r) => r.effective_from === '2025-01-05'), 'earliest invoice date');
       assert.ok(rows.every((r) => /estimates/.test(r.note)), 'says older rates are estimates');
     }));
 
@@ -140,5 +148,36 @@ describe('010 carries the Settings rates over', { skip: !ADMIN_URL && 'set TEST_
       await client.query(MIGRATION);
       const { rows } = await client.query('SELECT count(*)::int AS n FROM exchange_rates');
       assert.equal(rows[0].n, 2);
+    }));
+});
+
+describe('the carried-over rate covers every date a report converts on', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+  test('it starts no later than the earliest invoice or payment', () =>
+    withDatabase(async (client) => {
+      await client.query(MIGRATION);
+      const { rows } = await client.query(
+        `SELECT DISTINCT effective_from::text AS from_date FROM exchange_rates`);
+      // The earliest date in the fixture is the 2025-01-05 invoice, not the
+      // 2025-01-20 PO or the 2025-03-04 quotation.
+      assert.deepEqual(rows.map((r) => r.from_date), ['2025-01-05']);
+    }));
+
+  test('a stage invoiced before any quotation still converts', () =>
+    withDatabase(async (client) => {
+      await client.query(MIGRATION);
+      const { rows } = await client.query(`
+        WITH rates AS (
+          SELECT from_currency AS currency, rate, effective_from
+            FROM exchange_rates WHERE to_currency = 'INR'
+        )
+        SELECT s.invoice_date::text AS invoiced_on, r.rate::float8 AS rate
+          FROM payment_stages s
+          JOIN purchase_orders p ON p.po_number = s.po_number
+          LEFT JOIN LATERAL (
+            SELECT rate FROM rates
+             WHERE currency = p.currency AND effective_from <= s.invoice_date
+             ORDER BY effective_from DESC LIMIT 1
+          ) r ON true`);
+      assert.equal(rows[0].rate, 88.25, 'the stage must not drop out of the INR totals');
     }));
 });

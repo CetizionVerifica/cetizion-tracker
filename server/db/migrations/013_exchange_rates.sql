@@ -1,4 +1,4 @@
--- 010 — dated exchange rates.
+-- 013 — dated exchange rates.
 --
 -- Until now Settings held one fx_rate_<CUR> per currency and every report
 -- converted with that single value, so last year's figures moved whenever
@@ -40,9 +40,15 @@ INSERT INTO exchange_rates (from_currency, to_currency, rate, effective_from, so
 SELECT substr(s.key, 9),
        'INR',
        btrim(s.value)::numeric,
+       -- Every date a report converts on, not just the ones a record is filed
+       -- under: the revenue report converts each payment stage on its own
+       -- invoice or payment date, and a stage invoiced before the earliest
+       -- quotation would find no rate and drop out of the INR totals.
        LEAST(
-         COALESCE((SELECT min(quotation_date) FROM quotations), CURRENT_DATE),
-         COALESCE((SELECT min(po_date)        FROM purchase_orders), CURRENT_DATE),
+         COALESCE((SELECT min(quotation_date)        FROM quotations), CURRENT_DATE),
+         COALESCE((SELECT min(po_date)               FROM purchase_orders), CURRENT_DATE),
+         COALESCE((SELECT min(invoice_date)          FROM payment_stages), CURRENT_DATE),
+         COALESCE((SELECT min(payment_received_date) FROM payment_stages), CURRENT_DATE),
          CURRENT_DATE
        ),
        'manual',

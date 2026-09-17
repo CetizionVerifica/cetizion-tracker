@@ -487,21 +487,28 @@ const PRESETS = {
   '100 on delivery': [100],
 };
 
+// stage_percent is numeric(6,4) and the server accepts a 0.0001 drift, which
+// is 0.01 of a percent. Rounding any coarser than that makes a split the dialog
+// cannot express — 33.33% kept leaves 66.67%, which 0.1 steps can never hit.
+const pct = (n) => Math.round(n * 100) / 100;
+
 /** A preset covers the whole PO; fit it to whatever share is still free. */
 const scale = (percents, allocatable) => {
-  if (Math.abs(allocatable - 100) < 0.01) return percents;
-  const scaled = percents.map((p) => Math.round((p * allocatable) / 100 * 10) / 10);
+  if (Math.abs(allocatable - 100) < 0.005) return percents;
+  const scaled = percents.map((p) => pct((p * allocatable) / 100));
   // Rounding lands on the last stage, so the split still adds up exactly.
-  const drift = Math.round((allocatable - scaled.reduce((a, b) => a + b, 0)) * 10) / 10;
-  scaled[scaled.length - 1] = Math.round((scaled.at(-1) + drift) * 10) / 10;
+  scaled[scaled.length - 1] = pct(scaled.at(-1) + (allocatable - scaled.reduce((a, b) => a + b, 0)));
   return scaled;
 };
 
 export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
   // What is already invoiced or paid stays, so only the rest is up for
   // splitting. 100% of the PO with half of it billed would schedule 150%.
-  const locked = Math.round(Number(lockedPercent || 0) * 1000) / 10;
-  const allocatable = Math.round((100 - locked) * 10) / 10;
+  const locked = pct(Number(lockedPercent || 0) * 100);
+  const allocatable = pct(100 - locked);
+  // Nothing left to split: every stage is invoiced or paid, and those are never
+  // replaced. Offering a form the server must reject wastes the user's time.
+  const nothingToSplit = allocatable < 0.01;
   const [preset, setPreset] = useState('50/50');
   const [stages, setStages] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
   const { busy, error, run } = useAction({ onDone, successMessage: 'Payment stages created' });
@@ -521,8 +528,8 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
     }));
   }
 
-  const total = Math.round(stages.reduce((sum, s) => sum + Number(s.percent || 0), 0) * 10) / 10;
-  const off = Math.abs(total - allocatable) > 0.01;
+  const total = pct(stages.reduce((sum, s) => sum + Number(s.percent || 0), 0));
+  const off = Math.abs(total - allocatable) > 0.005;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -548,6 +555,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
       busy={busy}
       error={error}
       submitLabel="Create stages"
+      submitDisabled={nothingToSplit || off}
       size=""
     >
       <Alert>
@@ -555,7 +563,15 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         Ones triggered <strong>On Delivery</strong> wait until the PO's delivery date is recorded.
       </Alert>
 
-      {locked > 0 && (
+      {nothingToSplit ? (
+        <Alert tone="warning">
+          <span>
+            <strong>Every stage on this PO is already invoiced or paid.</strong> Those are never
+            replaced, so there is nothing left to split. Record a payment or add a stage from the
+            payment schedule instead.
+          </span>
+        </Alert>
+      ) : locked > 0 && (
         <Alert tone="warning">
           <span>
             <strong>{locked}% of this PO is already invoiced or paid.</strong> Those stages are kept,
@@ -613,7 +629,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
                     type="number"
                     min="0"
                     max="100"
-                    step="0.5"
+                    step="0.01"
                     value={stage.percent}
                     onChange={(e) => setStages((s) => s.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)))}
                   />

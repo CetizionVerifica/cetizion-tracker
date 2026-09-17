@@ -44,7 +44,10 @@ dashboardRouter.get('/overview', async (req, res) => {
       SELECT
         COUNT(*)::int                                              AS projects,
         COALESCE(SUM(po_count), 0)::int                            AS purchase_orders,
-        COALESCE(SUM(total_contract_value), 0)                     AS contract_value,
+        -- Labelled in rupees, so INR projects only — a EUR project summed in
+        -- here would be counted as though its value were rupees. v_projects
+        -- exposes currency, and it is null when a project's POs disagree.
+        COALESCE(SUM(total_contract_value) FILTER (WHERE currency = 'INR'), 0) AS contract_value,
         COALESCE(AVG(onboarding_percent) FILTER (WHERE onboarding_total > 0), 0) AS avg_onboarding,
         COUNT(*) FILTER (WHERE payment_status = 'Overdue')::int    AS projects_overdue,
         COUNT(*) FILTER (WHERE follow_up_action LIKE 'Delivery overdue%')::int AS delivery_overdue
@@ -65,7 +68,7 @@ dashboardRouter.get('/overview', async (req, res) => {
            WHERE status IN ('Approved - to reimburse','Partly reimbursed')) AS claims_to_pay_amount`),
     query(`
       SELECT project_stage AS label, COUNT(*)::int AS count,
-             COALESCE(SUM(total_contract_value), 0) AS value
+             COALESCE(SUM(total_contract_value) FILTER (WHERE currency = 'INR'), 0) AS value
       FROM v_projects GROUP BY 1 ORDER BY 1`),
     query(`
       SELECT service_quoted AS label, COUNT(*)::int AS count,

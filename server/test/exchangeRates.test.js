@@ -122,6 +122,9 @@ test('the invoiced share compares the same POs on both sides', async () => {
   // invoices dated after the rate exists. Dividing those by a PO value that
   // leaves it out reports more than 100% invoiced.
   assert.ok(revenue.includes("const invoicedOfPricedPos = sum(converted, 'invoiced_inr');"));
-  assert.ok(revenue.includes('invoiced_rate: ratio(invoicedOfPricedPos, poValue)'));
+  assert.ok(revenue.includes('ratio(invoicedOfPricedPos, poValue)'));
   assert.ok(!revenue.includes('invoiced_rate: ratio(invoiced, poValue)'));
+  // And it is withheld entirely when the two sides cannot cover the same POs,
+  // so the share printed always matches the amounts printed beside it.
+  assert.ok(revenue.includes('pos.length === converted.length ? ratio(invoicedOfPricedPos, poValue) : null'));
 });

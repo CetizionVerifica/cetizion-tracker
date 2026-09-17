@@ -164,7 +164,7 @@ export function crudRouter(name, def) {
   const readFrom = def.view || def.table;
 
   // A save with follow-on work runs in one transaction: whatever an
-  // onSave(client, { before, after }) hook writes, a document attached under
+  // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
   // the record or not at all.
   const write = (fn) => (def.onSave || def.hasDocument || def.autoId ? transaction(fn) : fn({ query }));
@@ -271,8 +271,14 @@ export function crudRouter(name, def) {
       const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
       const cols = Object.keys(values);
       // A resource may accept a field that lives on a related table (a
-      // project's won quotation), so onSave alone is work enough.
-      if (!cols.length && !def.onSave) throw new ApiError(422, 'Nothing to update');
+      // project's won quotation), so a save with no column of its own is still
+      // work — but only if something was actually sent. An empty body is not.
+      //
+      // With no columns to write, onSave gets the unchanged row as BOTH before
+      // and after: a hook comparing the two correctly sees no change, but it
+      // must not assume they are distinct objects.
+      const linksOnly = def.onSave && Object.keys(input).length > 0;
+      if (!cols.length && !linksOnly) throw new ApiError(422, 'Nothing to update');
 
       let before = null;
       if (def.onSave) {
@@ -284,13 +290,21 @@ export function crudRouter(name, def) {
         ));
       }
 
-      const params = cols.map((c) => values[c]);
-      const pred = idPredicate(def, req.params.id, params);
-      const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
-      const { rows } = await client.query(
-        `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
-        params
-      );
+      // Nothing of this resource's own to write — only a related table, such
+      // as the quotation a project registers. `UPDATE ... SET WHERE` is not
+      // valid SQL, so use the row onSave already locked above.
+      let rows;
+      if (cols.length) {
+        const params = cols.map((c) => values[c]);
+        const pred = idPredicate(def, req.params.id, params);
+        const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
+        ({ rows } = await client.query(
+          `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
+          params
+        ));
+      } else {
+        rows = before ? [before] : [];
+      }
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0], input });
       return { id: rows[0].id, extra, replacedDocument };

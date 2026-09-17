@@ -1,4 +1,5 @@
 import { ApiError } from '../middleware/error.js';
+import { normalizeName } from './names.js';
 import { QUOTATION_STATUS } from './statuses.js';
 
 const WON = QUOTATION_STATUS.won;
@@ -20,7 +21,7 @@ export async function linkProjectQuotation(client, { after, input }) {
   if (!quotationNo) return undefined;
 
   const { rows } = await client.query(
-    'SELECT quotation_no, status, project_id FROM quotations WHERE quotation_no = $1 FOR UPDATE',
+    'SELECT quotation_no, status, project_id, client_name FROM quotations WHERE quotation_no = $1 FOR UPDATE',
     [quotationNo]
   );
   if (!rows.length) {
@@ -42,6 +43,27 @@ export async function linkProjectQuotation(client, { after, input }) {
   if (quotation.status !== WON) {
     throw new ApiError(422, 'Please check the highlighted fields', {
       fields: { quotation_no: `Only a quotation marked "${WON}" can be registered as a project` },
+    });
+  }
+
+  // One project, one order. A second quotation on the same project would make
+  // its revenue ambiguous — that is what a second PO is for.
+  const { rows: already } = await client.query(
+    'SELECT quotation_no FROM quotations WHERE project_id = $1 AND quotation_no <> $2',
+    [after.project_id, quotationNo]
+  );
+  if (already.length) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { quotation_no: `This project is already registered against ${already[0].quotation_no}` },
+    });
+  }
+
+  // Names are free text across the app, so they are compared the way the
+  // reports group them: case and spacing ignored, anything else is a
+  // different client and almost certainly the wrong quotation.
+  if (normalizeName(quotation.client_name) !== normalizeName(after.client_name)) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { quotation_no: `That quotation is for ${quotation.client_name}, but this project is for ${after.client_name}` },
     });
   }
 
