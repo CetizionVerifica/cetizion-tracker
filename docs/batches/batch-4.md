@@ -31,6 +31,11 @@ Merge after batch 3.
 
 Server tests (including mailbox rules), browser tests, migration check and web build passing at this batch; no conflicts with `main` or the team's open PRs #54 and #55.
 
+## Review round 1
+
+- zod 4 preparation: updates to deliverables, inboxes and canned responses save only the fields the request sent (`lib/sentFields.js`, with a test). From zod 4, `.partial()` fills in `.default()` values, so saving the whole parsed result would reset untouched fields.
+- Carries the batch 2 review fixes (see `batch-2.md`).
+
 ## Rolling back
 
 Revert the merge. Connected mailboxes can be disconnected first from the Mailboxes page.
