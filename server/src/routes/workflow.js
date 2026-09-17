@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
-import { lockAttachableDocument, purgeDocument } from '../lib/documents.js';
+import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
@@ -332,9 +332,7 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
   });
 
   // Files of the stages that were replaced leave Cloudinary once the change is committed.
-  for (const documentId of removedDocuments) {
-    await purgeDocument(documentId).catch((err) => console.error('[documents]', err));
-  }
+  for (const documentId of removedDocuments) await purgeAfterCommit(documentId);
 
   const { rows } = await query(
     'SELECT * FROM v_payment_stages WHERE id = ANY($1) ORDER BY stage_no',
@@ -364,21 +362,19 @@ stageRouter.post('/:id/invoice', async (req, res) => {
     if (!stage) throw new ApiError(404, 'Payment stage not found');
 
     // No file chosen keeps the invoice document already attached; a new one replaces it.
-    const documentId = body.document_id ?? stage.document_id;
-    if (documentId !== stage.document_id && !(await lockAttachableDocument(client, documentId))) {
-      throw new ApiError(422, 'Please check the highlighted fields', {
-        fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
-      });
-    }
+    const { documentId, replaced } = await claimAttachment(client, {
+      current: stage.document_id,
+      requested: body.document_id,
+    });
     await client.query(
       'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
       [body.invoice_no, body.invoice_date, documentId, stage.id]
     );
-    return { id: stage.id, replaced: documentId !== stage.document_id ? stage.document_id : null };
+    return { id: stage.id, replaced };
   });
 
   // The replaced file leaves Cloudinary only once the new one is committed.
-  if (replaced) await purgeDocument(replaced).catch((err) => console.error('[documents]', err));
+  if (replaced) await purgeAfterCommit(replaced);
 
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [id]);
   res.json({ data: full[0] });

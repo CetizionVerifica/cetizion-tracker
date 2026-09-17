@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { lockAttachableDocument, purgeDocument } from './documents.js';
+import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.js';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
@@ -133,12 +133,14 @@ function idPredicate(def, id, params) {
  * replaced, if any, so it can be removed once the record is committed.
  */
 async function claimDocument(client, def, values, id) {
+  // Keeping the current document means not writing the column at all, so an
+  // update that never mentions it cannot blank it.
   if (values.document_id === null || values.document_id === undefined) {
     delete values.document_id;
     return null;
   }
 
-  let previous = null;
+  let current = null;
   if (id !== undefined) {
     const params = [];
     const { rows } = await client.query(
@@ -146,15 +148,11 @@ async function claimDocument(client, def, values, id) {
       params
     );
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-    previous = rows[0].document_id;
+    current = rows[0].document_id;
   }
 
-  if (values.document_id !== previous && !(await lockAttachableDocument(client, values.document_id))) {
-    throw new ApiError(422, 'Please check the highlighted fields', {
-      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
-    });
-  }
-  return previous;
+  const { replaced } = await claimAttachment(client, { current, requested: values.document_id });
+  return replaced;
 }
 
 export function crudRouter(name, def) {
@@ -265,8 +263,8 @@ export function crudRouter(name, def) {
       }
     }
 
-    const { id, extra, previousDocument } = await write(async (client) => {
-      const previousDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
+    const { id, extra, replacedDocument } = await write(async (client) => {
+      const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
       const cols = Object.keys(values);
       if (!cols.length) throw new ApiError(422, 'Nothing to update');
 
@@ -289,13 +287,11 @@ export function crudRouter(name, def) {
       );
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0] });
-      return { id: rows[0].id, extra, previousDocument };
+      return { id: rows[0].id, extra, replacedDocument };
     });
 
     // The replaced file leaves storage only once the new one is committed.
-    if (previousDocument && values.document_id !== undefined && values.document_id !== previousDocument) {
-      await purgeDocument(previousDocument).catch((err) => console.error('[documents]', err));
-    }
+    if (replacedDocument) await purgeAfterCommit(replacedDocument);
 
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
@@ -324,9 +320,7 @@ export function crudRouter(name, def) {
     const documents = def.hasDocument || def.cascadeDocuments ? await transaction(remove) : await remove({ query });
 
     // Files leave Cloudinary only once the delete is committed.
-    for (const documentId of documents) {
-      await purgeDocument(documentId).catch((err) => console.error('[documents]', err));
-    }
+    for (const documentId of documents) await purgeAfterCommit(documentId);
     res.status(204).end();
   });
 

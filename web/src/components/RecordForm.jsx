@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
+import { useDocumentUploads } from '../lib/hooks.js';
 import { fileSize } from '../lib/format.js';
 import { useToast } from './ui.jsx';
 
@@ -51,7 +52,7 @@ export function RecordForm({
   const [busy, setBusy] = useState(false);
   // Files chosen in document fields, and what each became once uploaded.
   const [picked, setPicked] = useState({});
-  const uploads = useRef(new Map());
+  const uploadDocument = useDocumentUploads();
   // On a new record, the next number in each assigned series, shown as a guide.
   const [previews, setPreviews] = useState({});
 
@@ -85,24 +86,18 @@ export function RecordForm({
     return true;
   };
 
-  // A chosen file is uploaded first and the record saved with its id. Each
-  // upload is remembered, so fixing another field and saving again does not
-  // send the same file twice.
+  // A chosen file is uploaded first and the record saved with its id.
   async function attachDocuments(payload) {
     for (const field of fields) {
       if (field.type !== 'document') continue;
 
       const file = picked[field.name];
       if (file) {
-        if (!uploads.current.has(file)) {
-          try {
-            const { data } = await api.uploadDocument(file, field.owner);
-            uploads.current.set(file, data);
-          } catch (err) {
-            throw new ApiError(err.message, { fields: { [field.name]: err.message } });
-          }
+        try {
+          payload[field.name] = await uploadDocument(file, field.owner);
+        } catch (err) {
+          throw new ApiError(err.message, { fields: { [field.name]: err.message } });
         }
-        payload[field.name] = uploads.current.get(file).id;
       }
 
       if (field.required && !payload[field.name]) {
