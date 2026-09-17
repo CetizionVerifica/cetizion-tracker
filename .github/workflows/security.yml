@@ -60,8 +60,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build the image
         run: docker build --tag cetizion-tracker:scan .
+      # npm's own folder is skipped: the app never runs npm (it is kept only
+      # for manual `npm run db:upgrade`), and its bundled packages trail
+      # upstream fixes.
       - name: Scan the image
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
           aquasec/trivy:latest image --exit-code 1 --ignore-unfixed
-          --severity CRITICAL,HIGH --no-progress cetizion-tracker:scan
+          --severity CRITICAL,HIGH --no-progress
+          --skip-dirs /usr/local/lib/node_modules/npm cetizion-tracker:scan
