@@ -15,6 +15,7 @@ import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { lockAttachableDocument } from '../lib/documents.js';
 import { syncEngagement } from '../lib/deliverables.js';
+import { sentFields } from '../lib/sentFields.js';
 
 export const deliverablesRouter = Router();
 
@@ -47,7 +48,7 @@ const COLUMNS = Object.keys(schema.shape);
 function check(body, partial = false) {
   const parsed = (partial ? schema.partial() : schema).safeParse(body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
-  const v = parsed.data;
+  const v = partial ? sentFields(parsed.data, body) : parsed.data;
   if (v.valid_from && v.valid_until && v.valid_until < v.valid_from) throw new ApiError(422, 'Please check the highlighted fields', { fields: { valid_until: 'Must be after valid from' } });
   if (!partial && !v.company_id && !v.project_id && !v.po_number && !v.client_name) throw new ApiError(422, 'Please check the highlighted fields', { fields: { company_id: 'Choose the client, the project or the PO' } });
   return v;

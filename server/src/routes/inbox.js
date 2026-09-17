@@ -16,6 +16,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { replyToThread } from '../lib/mailbox/sync.js';
 import { fillTemplate } from '../lib/inbox.js';
@@ -63,7 +64,7 @@ inboxRouter.post('/inboxes', async (req, res) => {
 inboxRouter.patch('/inboxes/:id', async (req, res) => {
   const parsed = inboxSchema.partial().omit({ account_id: true }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   const { rows: [i] } = await query(`UPDATE inboxes SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!i) throw new ApiError(404, 'Inbox not found');
@@ -85,7 +86,7 @@ inboxRouter.post('/canned', async (req, res) => {
 inboxRouter.patch('/canned/:id', async (req, res) => {
   const parsed = cannedSchema.partial().safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   const { rows: [c] } = await query(`UPDATE canned_responses SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!c) throw new ApiError(404, 'Not found');
