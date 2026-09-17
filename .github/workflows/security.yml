@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   security-events: write
+  actions: read
 jobs:
   dependencies:
     name: Known vulnerabilities in dependencies
@@ -29,13 +30,16 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
   codeql:
     name: Code scanning (CodeQL)
+    # Code scanning on a private repository needs GitHub Advanced Security.
+    # Once it is on, set the repository variable CODEQL_ENABLED=true.
+    if: vars.CODEQL_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
   secrets:
     name: Secrets in the repository
     runs-on: ubuntu-latest
@@ -43,9 +47,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The gitleaks CLI itself (the GitHub Action needs a paid licence for
+      # organisation repositories). Scans the whole history.
+      - name: Scan the history for secrets
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:latest detect --source /repo --redact --verbose
   container:
     name: Container image scan (Trivy)
     runs-on: ubuntu-latest
@@ -53,10 +60,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build the image
         run: docker build --tag cetizion-tracker:scan .
-      - uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: cetizion-tracker:scan
-          format: table
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
+      - name: Scan the image
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:latest image --exit-code 1 --ignore-unfixed
+          --severity CRITICAL,HIGH --no-progress cetizion-tracker:scan
