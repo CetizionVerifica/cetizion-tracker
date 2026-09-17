@@ -16,7 +16,8 @@
     "seed": "node scripts/db.js seed",
     "seed:demo": "node scripts/db.js demo",
     "reset": "node scripts/db.js reset",
-    "bootstrap": "node scripts/db.js bootstrap"
+    "bootstrap": "node scripts/db.js bootstrap",
+    "auth:check": "node scripts/auth-check.js"
   },
   "dependencies": {
     "cloudinary": "^2.11.0",
