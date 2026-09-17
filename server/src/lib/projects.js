@@ -46,17 +46,9 @@ export async function linkProjectQuotation(client, { after, input }) {
     });
   }
 
-  // One project, one order. A second quotation on the same project would make
-  // its revenue ambiguous — that is what a second PO is for.
-  const { rows: already } = await client.query(
-    'SELECT quotation_no FROM quotations WHERE project_id = $1 AND quotation_no <> $2',
-    [after.project_id, quotationNo]
-  );
-  if (already.length) {
-    throw new ApiError(422, 'Please check the highlighted fields', {
-      fields: { quotation_no: `This project is already registered against ${already[0].quotation_no}` },
-    });
-  }
+  // A project may carry more than one won quotation, the same as Register
+  // allows (#8): each PO names the quotation it fulfils, so revenue stays
+  // attributed per quotation.
 
   // Names are free text across the app, so they are compared the way the
   // reports group them: case and spacing ignored, anything else is a
