@@ -76,10 +76,27 @@ export const api = {
     request(`/${resource}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   action: (path, body) => request(path, { method: 'POST', body: body || {} }),
   raw: (path, opts) => request(path, opts),
+  /** Multipart upload: the browser sets the content type and boundary. */
+  upload: async (path, formData) => {
+    let response;
+    try {
+      response = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', body: formData });
+    } catch {
+      throw new ApiError('Cannot reach the server — is the API running?');
+    }
+    if (response.status === 401) onUnauthorized?.();
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new ApiError(payload?.error?.message || `Upload failed (${response.status})`, { status: response.status, fields: payload?.error?.fields });
+    }
+    return payload;
+  },
   uploadDocument: (file, owner) =>
     request(`/documents?for=${encodeURIComponent(owner)}`, { method: 'POST', file }),
   documentUrl: (id) => `${BASE}/documents/${id}`,
-  exportUrl: (resource) => `${BASE}/export/${resource}.csv`,
+  exportUrl: (resource, params) => `${BASE}/export/${resource}.csv${qs(params)}`,
+  exportXlsxUrl: (resource, params) => `${BASE}/export/${resource}.xlsx${qs(params)}`,
+  importTemplateUrl: () => `${BASE}/import/template.csv`,
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   reportPdfUrl: (params) => `${BASE}/export/sales-report.pdf${qs(params)}`,
   auth: {

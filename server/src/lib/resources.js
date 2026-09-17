@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { ENQUIRY_WON, quoteWonEnquiry } from './enquiries.js';
+import { quoteWonEnquiry } from './enquiries.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
+import { STATUS } from './statuses.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -58,14 +59,9 @@ const bool = () =>
 
 const enumOf = (values) => z.enum(values);
 
-export const STATUS = {
-  enquiry: ['In Progress', 'Declined', ENQUIRY_WON],
-  quotation: ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'],
-  trigger: ['On PO Registration', 'On Delivery', 'Manual'],
-  onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
-  approval: ['Submitted', 'Approved', 'Rejected', 'On Hold'],
-  currency: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'],
-};
+// Defined in statuses.js, which the report modules read without pulling in
+// this registry. Re-exported here because the routes import it from here.
+export { STATUS };
 
 // ---------------------------------------------------------------------
 // Resource registry
@@ -76,6 +72,46 @@ export const STATUS = {
 // ---------------------------------------------------------------------
 
 export const resources = {
+  companies: {
+    table: 'companies',
+    view: 'v_companies',
+    label: 'Company',
+    defaultSort: 'name',
+    search: ['name', 'sector', 'city', 'gstin'],
+    filters: ['sector', 'city'],
+    normalizedFilters: ['sector', 'city'],
+    columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
+    schema: z.object({
+      name: requiredStr(200),
+      sector: str(120),
+      gstin: str(20),
+      website: str(200),
+      address: str(500),
+      city: str(120),
+      notes: str(2000),
+    }),
+  },
+
+  contacts: {
+    table: 'contacts',
+    view: null,
+    label: 'Contact',
+    defaultSort: 'name',
+    search: ['name', 'email', 'phone', 'role'],
+    filters: ['company_id', 'is_billing'],
+    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes'],
+    schema: z.object({
+      company_id: int({ min: 1 }),
+      name: requiredStr(160),
+      email: str(160),
+      phone: str(40),
+      role: str(120),
+      is_billing: bool(),
+      opt_out_reminders: bool(),
+      notes: str(1000),
+    }),
+  },
+
   enquiries: {
     table: 'enquiries',
     view: null,
@@ -83,9 +119,11 @@ export const resources = {
     naturalKey: 'enquiry_no',
     // enquiry_no is assigned on create (CTZ/ENQ/2026/004) and never changed.
     autoId: 'enquiry',
+    // The year in the generated number comes from the enquiry's own date.
+    autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
@@ -116,9 +154,11 @@ export const resources = {
     naturalKey: 'quotation_no',
     // quotation_no is assigned on create (CTZ/QT/2026/064) and never changed.
     autoId: 'quotation',
+    // The year in the generated number comes from the quotation's own date.
+    autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -152,9 +192,11 @@ export const resources = {
     naturalKey: 'project_id',
     // project_id is assigned on create (PRJ-2026-012) and never changed.
     autoId: 'project',
+    // planned_start_date drives the year; falls back to the current business year when blank.
+    autoIdDateField: 'planned_start_date',
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
-    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person'],
+    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id'],
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
@@ -185,7 +227,7 @@ export const resources = {
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
-    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no'],
+    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
+import { useDocumentUploads } from '../lib/hooks.js';
 import { fileSize } from '../lib/format.js';
 import { useToast } from './ui.jsx';
 
@@ -51,7 +52,7 @@ export function RecordForm({
   const [busy, setBusy] = useState(false);
   // Files chosen in document fields, and what each became once uploaded.
   const [picked, setPicked] = useState({});
-  const uploads = useRef(new Map());
+  const uploadDocument = useDocumentUploads();
   // On a new record, the next number in each assigned series, shown as a guide.
   const [previews, setPreviews] = useState({});
 
@@ -85,24 +86,18 @@ export function RecordForm({
     return true;
   };
 
-  // A chosen file is uploaded first and the record saved with its id. Each
-  // upload is remembered, so fixing another field and saving again does not
-  // send the same file twice.
+  // A chosen file is uploaded first and the record saved with its id.
   async function attachDocuments(payload) {
     for (const field of fields) {
       if (field.type !== 'document') continue;
 
       const file = picked[field.name];
       if (file) {
-        if (!uploads.current.has(file)) {
-          try {
-            const { data } = await api.uploadDocument(file, field.owner);
-            uploads.current.set(file, data);
-          } catch (err) {
-            throw new ApiError(err.message, { fields: { [field.name]: err.message } });
-          }
+        try {
+          payload[field.name] = await uploadDocument(file, field.owner);
+        } catch (err) {
+          throw new ApiError(err.message, { fields: { [field.name]: err.message } });
         }
-        payload[field.name] = uploads.current.get(file).id;
       }
 
       if (field.required && !payload[field.name]) {
@@ -121,7 +116,9 @@ export function RecordForm({
 
     const payload = {};
     for (const field of fields) {
-      if (field.auto) continue;
+      // On edit: reference-number fields are immutable — never send them.
+      // On create: include them so the user's explicit value (or blank for auto) reaches the server.
+      if (field.auto && isEdit) continue;
       let value = values[field.name];
       if (field.type === 'percent' && value !== '') value = Number(value) / 100;
       if (field.type === 'boolean') value = value === 'true';
@@ -190,23 +187,50 @@ export function RecordForm({
 
 function FormField({ field, value, error, onChange, record, file, onFile, preview, isEdit }) {
   if (field.auto) {
+    if (isEdit) {
+      // Edit mode: the reference number is immutable — show it as read-only.
+      return (
+        <Field
+          label={field.label}
+          hint="Assigned on create — cannot be changed"
+          error={error}
+        >
+          <Input
+            type="text"
+            className="input mono"
+            value={value ?? ''}
+            disabled
+            readOnly
+          />
+        </Field>
+      );
+    }
+    // Create mode: the field is editable so the user can enter a historical number.
+    // Leaving it blank triggers auto-assignment on the server; the preview shows what
+    // the next auto-number would be, as a guide.
     return (
       <Field
         label={field.label}
-        hint={isEdit ? 'Assigned automatically — it cannot be changed' : 'Assigned automatically when you save'}
+        hint={
+          preview
+            ? `Leave blank to assign ${preview} automatically, or enter a historical number`
+            : 'Leave blank to assign the next number automatically, or enter a historical number'
+        }
         error={error}
       >
         <Input
           type="text"
           className="input mono"
           value={value ?? ''}
-          placeholder={preview ? `${preview} (next number)` : 'Assigned on save'}
-          disabled
-          readOnly
+          placeholder={preview ?? 'Assigned on save'}
+          onChange={(e) => onChange(e.target.value)}
         />
       </Field>
     );
   }
+
+  // A value the page fixes (the company a contact belongs to): sent, never shown.
+  if (field.type === 'hidden') return null;
 
   const common = {
     value: value ?? '',

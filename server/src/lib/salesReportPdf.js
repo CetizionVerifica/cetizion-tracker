@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import pdfmake from 'pdfmake';
-import { amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
+import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
+import { share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
 import {
   clientAnalysis, enquiryAnalysis, headline, managementFixes, quotationStatusAnalysis, revenueAnalysis,
@@ -44,11 +46,8 @@ const TONES = {
 
 const MARGIN_X = 42;
 const W = Math.floor(595.28 - MARGIN_X * 2); // A4 portrait less the side margins
-const WON = 'Won - PO Received';
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-const r2 = (n) => Math.round(n * 100) / 100;
-const share = (part, whole) => (whole > 0 ? part / whole : null);
+const WON = QUOTATION_STATUS.won;
+const MONTHS = MONTH_NAMES;
 
 // ---------------------------------------------------------------------
 // Dates
@@ -90,12 +89,6 @@ function generatedStamp(date, timeZone) {
 
 const dateIn = (date, timeZone) =>
   new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
-
-/** Days in a month, leap years included. */
-function daysInMonth(year, month) {
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][Number(month) - 1];
-}
 
 /** "Sep" when every month is in one year, "Sep ’26" otherwise. */
 function shortMonths(months) {
@@ -252,7 +245,7 @@ function tile(value, label, meta) {
 export function salesReportDocDefinition(data) {
   const {
     period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
-    rates = {}, generatedAt = new Date(), timeZone = 'UTC',
+    rates = {}, generatedAt = new Date(), timeZone = 'UTC', revenuePeriod = { from: null, to: null },
   } = data;
 
   const stamp = generatedStamp(generatedAt, timeZone);
@@ -263,9 +256,8 @@ export function salesReportDocDefinition(data) {
   // The revenue section covers a calendar year, or one month of it.
   const revenueLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
   const revenueScope = month ? revenueLabel : `calendar year ${year}`;
-  const revenueFrom = month ? `${year}-${month}-01` : `${year}-01-01`;
-  const revenueTo = month ? `${year}-${month}-${String(daysInMonth(year, month)).padStart(2, '0')}` : `${year}-12-31`;
-  const samePeriods = period.from === revenueFrom && period.to === revenueTo;
+  // revenuePeriod is the range the revenue figures were fetched for, worked out once by the route.
+  const samePeriods = period.from === revenuePeriod.from && period.to === revenuePeriod.to;
 
   // Sector won value in INR. Converted in SQL at the rate in force on each
   // quotation's own date, the same lookup every other figure here uses.
@@ -462,11 +454,11 @@ export function salesReportDocDefinition(data) {
       withoutValue ? note(`${withoutValue} with no value`) : null
     );
   const STATUS_STYLE = {
-    Submitted: { label: 'Submitted', color: SKY, field: 'submitted' },
-    'Under Negotiation': { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
-    'On Hold': { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
+    [QUOTATION_STATUS.submitted]: { label: 'Submitted', color: SKY, field: 'submitted' },
+    [QUOTATION_STATUS.negotiating]: { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
+    [QUOTATION_STATUS.onHold]: { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
     [WON]: { label: 'Won - PO received', color: GREEN, field: 'won' },
-    Lost: { label: 'Lost', color: RED, field: 'lost' },
+    [QUOTATION_STATUS.lost]: { label: 'Lost', color: RED, field: 'lost' },
   };
   const qt = quotationStatus.total;
   const statusRows = quotationStatus.rows.map((row) => ({ ...row, ...(STATUS_STYLE[row.status] ?? { label: row.status, color: BLUE }) }));

@@ -14,7 +14,7 @@ import pg from 'pg';
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
-const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '010_exchange_rates.sql'), 'utf8');
+const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '013_exchange_rates.sql'), 'utf8');
 
 // The shape 010 arrives at: the tables it reads, and the trigger it attaches.
 const BEFORE = `

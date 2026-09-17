@@ -2,6 +2,8 @@ import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
+import { r2, share } from './reportMath.js';
+import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
 /**
  * Figures only the sales review PDF uses: the enquiry funnel, the service
@@ -9,12 +11,9 @@ import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './ser
  * reports page does not show these.
  */
 
-export const ENQUIRY_STATUS = { open: 'In Progress', declined: 'Declined', quoted: 'Won - Quotation Sent' };
-const WON = 'Won - PO Received';
-const LOST = 'Lost';
-
-const r2 = (n) => Math.round(n * 100) / 100;
-const ratio = (part, whole) => (whole ? part / whole : null);
+export { ENQUIRY_STATUS };
+const WON = QUOTATION_STATUS.won;
+const LOST = QUOTATION_STATUS.lost;
 
 /** Value in INR of some quotations, how many have no value, and what has no rate. */
 function inrTotals(quotations) {
@@ -39,26 +38,18 @@ function wonValue(quotations) {
 }
 
 /**
- * Enquiries by their status on the Enquiries page, and — for the ones marked
- * "Won - Quotation Sent" — the outcome of the quotation linked to them.
+ * Enquiries by their status on the Enquiries page. What became of the
+ * quotations they led to is the quotation section's subject, so the enquiry
+ * figures deliberately do not join quotations or exchange rates.
  */
 export function summariseEnquiries(rows) {
-  const quoted = rows.filter((row) => row.status === ENQUIRY_STATUS.quoted);
-  const won = quoted.filter((row) => row.quotation_status === WON);
-  const lost = quoted.filter((row) => row.quotation_status === LOST).length;
-  const linked = quoted.filter((row) => row.quotation_status !== null && row.quotation_status !== undefined).length;
+  const quoted = rows.filter((row) => row.status === ENQUIRY_STATUS.quoted).length;
   return {
     enquiries: rows.length,
     in_progress: rows.filter((row) => row.status === ENQUIRY_STATUS.open).length,
     declined: rows.filter((row) => row.status === ENQUIRY_STATUS.declined).length,
-    quoted: quoted.length,
-    won: won.length,
-    lost,
-    open_quotes: linked - won.length - lost,
-    not_linked: quoted.length - linked,
-    quote_rate: ratio(quoted.length, rows.length),
-    win_rate: ratio(won.length, won.length + lost),
-    ...wonValue(won),
+    quoted,
+    quote_rate: share(quoted, rows.length),
   };
 }
 
@@ -79,34 +70,76 @@ export function enquirySummary(rows, period = {}) {
   };
 }
 
-export async function enquiryReport({ from, to }) {
-  const { rows } = await query(
-    `WITH ${RATES}
-     SELECT e.enquiry_no,
+// ---------------------------------------------------------------------
+// The rows behind the review sections
+//
+// The enquiry section, the quotation section and the service split all read
+// the same two row sets, so the PDF fetches each once and summarises it
+// three ways rather than running a query per section.
+// ---------------------------------------------------------------------
+
+/** Enquiries in the period. Oldest first: the month rows and the oldest open enquiry read that order. */
+const enquiryRows = ({ from, to }) =>
+  query(
+    `SELECT e.enquiry_no,
             btrim(e.client_name)                   AS client,
             to_char(e.enquiry_date, 'YYYY-MM-DD')  AS enquiry_date,
             to_char(e.enquiry_date, 'YYYY-MM')     AS month,
             e.status,
-            q.status                               AS quotation_status,
-            q.quotation_value,
-            q.currency,
-            r.rate
+            e.service
        FROM enquiries e
-       LEFT JOIN quotations q ON q.quotation_no = e.quotation_no
-       ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
     [from, to]
   );
-  return enquirySummary(rows, { from, to });
+
+/** Quotations in the period with the INR rate for their currency, oldest first. */
+const quotationRows = ({ from, to }) =>
+  query(
+    `WITH ${RATES}
+     SELECT to_char(q.quotation_date, 'YYYY-MM') AS month,
+            q.status,
+            q.quotation_value,
+            q.currency,
+            r.rate,
+            q.service_quoted                      AS service
+       FROM quotations q
+       ${rateOn('r', 'q.currency', 'q.quotation_date')}
+      WHERE ${IN_PERIOD}
+      ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
+    [from, to]
+  );
+
+/** The three sections that share those rows, in two queries instead of five. */
+export async function salesReviewSections(period) {
+  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
+  return {
+    enquiries: enquirySummary(enquiries.rows, period),
+    quotationStatus: quotationStatusSummary(quotations.rows, period),
+    services: serviceRows(quotations.rows, enquiries.rows),
+  };
+}
+
+export async function enquiryReport(period) {
+  return enquirySummary((await enquiryRows(period)).rows, period);
 }
 
 /** Quotations and enquiries per service line, named lines first by won value. */
 export function serviceRows(quotations, enquiries) {
+  // Each quotation is classified three times below (bucketing, bundled,
+  // unmatched) and service texts repeat, so match each distinct text once.
+  // The arrays are shared between rows and must not be modified.
+  const cache = new Map();
+  const linesOf = (text) => {
+    const key = String(text ?? '').trim();
+    if (!cache.has(key)) cache.set(key, serviceLinesFor(key));
+    return cache.get(key);
+  };
+
   const names = [...SERVICE_LINES.map((line) => line.name), OTHER_SERVICE, NO_SERVICE];
   const lines = new Map(names.map((name) => [name, { service: name, enquiries: 0, list: [] }]));
-  for (const e of enquiries) for (const name of serviceLinesFor(e.service)) lines.get(name).enquiries += 1;
-  for (const q of quotations) for (const name of serviceLinesFor(q.service)) lines.get(name).list.push(q);
+  for (const e of enquiries) for (const name of linesOf(e.service)) lines.get(name).enquiries += 1;
+  for (const q of quotations) for (const name of linesOf(q.service)) lines.get(name).list.push(q);
 
   const summarise = (list) => {
     const won = list.filter((q) => q.status === WON);
@@ -116,11 +149,11 @@ export function serviceRows(quotations, enquiries) {
       won: won.length,
       lost,
       pipeline: list.length - won.length - lost,
-      win_rate: ratio(won.length, won.length + lost),
+      win_rate: share(won.length, won.length + lost),
       ...wonValue(won),
     };
   };
-  const unmatched = (q) => serviceLinesFor(q.service).some((name) => name === OTHER_SERVICE || name === NO_SERVICE);
+  const unmatched = (q) => linesOf(q.service).some((name) => name === OTHER_SERVICE || name === NO_SERVICE);
 
   const rows = [...lines.values()]
     .filter((line) => line.enquiries || line.list.length)
@@ -137,30 +170,28 @@ export function serviceRows(quotations, enquiries) {
     summary: {
       enquiries: enquiries.length,
       ...summarise(quotations),
-      bundled: quotations.filter((q) => serviceLinesFor(q.service).length > 1).length,
+      bundled: quotations.filter((q) => linesOf(q.service).length > 1).length,
       unmatched: quotations.filter(unmatched).length,
     },
   };
 }
 
-export async function serviceReport({ from, to }) {
-  const [quotations, enquiries] = await Promise.all([
-    query(
-      `WITH ${RATES}
-       SELECT q.service_quoted AS service, q.status, q.quotation_value, q.currency, r.rate
-         FROM quotations q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE ${IN_PERIOD}`,
-      [from, to]
-    ),
-    query(`SELECT service FROM enquiries WHERE ${inPeriod('enquiry_date')}`, [from, to]),
-  ]);
+export async function serviceReport(period) {
+  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
   return serviceRows(quotations.rows, enquiries.rows);
 }
 
 /** Quotation statuses as they read: still open first, then the outcome. */
-export const QUOTATION_STATUSES = ['Submitted', 'Under Negotiation', 'On Hold', WON, LOST];
-const STATUS_FIELD = { Submitted: 'submitted', 'Under Negotiation': 'negotiating', 'On Hold': 'on_hold', [WON]: 'won', [LOST]: 'lost' };
+export const QUOTATION_STATUSES = [
+  QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold, WON, LOST,
+];
+const STATUS_FIELD = {
+  [QUOTATION_STATUS.submitted]: 'submitted',
+  [QUOTATION_STATUS.negotiating]: 'negotiating',
+  [QUOTATION_STATUS.onHold]: 'on_hold',
+  [WON]: 'won',
+  [LOST]: 'lost',
+};
 
 /** How many quotations are at each status, the win rate, and the value still open. */
 export function summariseQuotationStatuses(quotations) {
@@ -172,7 +203,7 @@ export function summariseQuotationStatuses(quotations) {
     quotations: quotations.length,
     ...counts,
     open: quotations.filter((q) => q.status !== WON && q.status !== LOST).length,
-    win_rate: ratio(counts.won, counts.won + counts.lost),
+    win_rate: share(counts.won, counts.won + counts.lost),
     ...inrTotals(quotations),
     open_value_inr: open.value_inr,
     open_without_value: open.without_value,
@@ -194,22 +225,8 @@ export function quotationStatusSummary(rows, period = {}) {
   };
 }
 
-export async function quotationStatusReport({ from, to }) {
-  const { rows } = await query(
-    `WITH ${RATES}
-     SELECT q.quotation_no,
-            to_char(q.quotation_date, 'YYYY-MM') AS month,
-            q.status,
-            q.quotation_value,
-            q.currency,
-            r.rate
-       FROM quotations q
-       ${rateOn('r', 'q.currency', 'q.quotation_date')}
-      WHERE ${IN_PERIOD}
-      ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
-    [from, to]
-  );
-  return quotationStatusSummary(rows, { from, to });
+export async function quotationStatusReport(period) {
+  return quotationStatusSummary((await quotationRows(period)).rows, period);
 }
 
 /**

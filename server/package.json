@@ -7,7 +7,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/start.js",
-    "dev": "node --watch src/index.js",
+    "dev": "node --watch-path=src src/index.js",
+    "worker": "node src/worker.js",
     "test": "node --test \"test/**/*.test.js\"",
     "db:create": "node scripts/db.js create",
     "migrate": "node scripts/db.js migrate",
@@ -26,8 +27,12 @@
     "express-rate-limit": "^8.6.2",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.10",
     "pdfmake": "^0.3.11",
     "pg": "^8.13.1",
+    "pg-boss": "^12.32.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.24.1"
   },
   "devDependencies": {

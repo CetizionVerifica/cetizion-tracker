@@ -12,7 +12,7 @@
 
 BEGIN;
 
-DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
+DROP VIEW IF EXISTS v_companies, v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
@@ -344,6 +344,7 @@ SELECT
   po.project_id,
   po.quotation_no,
   pr.client_name,
+  pr.company_id,
   po.po_date,
   po.po_value,
   po.currency,
@@ -416,6 +417,7 @@ SELECT
   p.id,
   p.project_id,
   p.client_name,
+  p.company_id,
   p.primary_service,
   p.project_manager,
   p.project_manager_email,
@@ -508,6 +510,8 @@ SELECT
   q.quotation_no,
   q.client_name,
   q.contact_person,
+  q.company_id,
+  q.contact_id,
   q.service_quoted,
   q.sector,
   q.sales_person,
@@ -548,5 +552,39 @@ LEFT JOIN LATERAL (
          COUNT(*) FILTER (WHERE payment_status = 'To Invoice')
   FROM v_purchase_orders v WHERE v.project_id = q.project_id
 ) r(invoiced, received, outstanding, overdue_pos, to_invoice_pos) ON true;
+
+-- ---------------------------------------------------------------------
+-- Companies — what the tracker holds per client
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_companies AS
+SELECT
+  c.id,
+  c.name,
+  c.name_key,
+  c.sector,
+  c.gstin,
+  c.website,
+  c.address,
+  c.city,
+  c.notes,
+  c.created_at,
+  c.updated_at,
+  (SELECT COUNT(*)::int FROM contacts ct WHERE ct.company_id = c.id)                       AS contacts,
+  (SELECT COUNT(*)::int FROM enquiries e WHERE e.company_id = c.id)                        AS enquiries,
+  (SELECT COUNT(*)::int FROM quotations q WHERE q.company_id = c.id)                       AS quotations,
+  (SELECT COUNT(*)::int FROM quotations q WHERE q.company_id = c.id
+     AND q.status = 'Won - PO Received')                                                    AS won_quotations,
+  (SELECT COUNT(*)::int FROM projects p WHERE p.company_id = c.id)                         AS projects,
+  (SELECT COALESCE(SUM(po.po_value), 0) FROM purchase_orders po
+     JOIN projects p ON p.project_id = po.project_id
+    WHERE p.company_id = c.id AND po.currency = 'INR')                                     AS po_value_inr,
+  (SELECT COALESCE(SUM(v.outstanding), 0) FROM v_quotations v WHERE v.company_id = c.id)   AS outstanding,
+  (SELECT MAX(d) FROM (
+     SELECT MAX(quotation_date) AS d FROM quotations q WHERE q.company_id = c.id
+     UNION ALL SELECT MAX(enquiry_date) FROM enquiries e WHERE e.company_id = c.id
+     UNION ALL SELECT MAX(po.po_date) FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE p.company_id = c.id
+   ) x)                                                                                    AS last_activity
+FROM companies c;
 
 COMMIT;

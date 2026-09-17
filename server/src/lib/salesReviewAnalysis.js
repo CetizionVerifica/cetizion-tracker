@@ -1,4 +1,6 @@
 import { amounts, compactInr, decimal, number, percent, plural } from './reportFormat.js';
+import { r2, share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 
 /**
  * The written analysis in the sales review PDF: fixed rules over the report
@@ -16,7 +18,6 @@ const insight = (tag, tone, text) => ({ tag, tone, text });
 const was = (n) => (n === 1 ? 'was' : 'were');
 const is = (n) => (n === 1 ? 'is' : 'are');
 const has = (n) => (n === 1 ? 'has' : 'have');
-const share = (part, whole) => (whole > 0 ? part / whole : null);
 
 /** "A", "A and B", "A, B and C". */
 const joinNames = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
@@ -80,7 +81,7 @@ export function quotationStatusAnalysis(quotes) {
 
   if (t.won + t.lost) {
     const tone = t.win_rate >= 0.6 ? 'good' : t.win_rate < 0.4 ? 'risk' : 'watch';
-    const won = byStatus['Won - PO Received']?.value_inr ?? 0;
+    const won = byStatus[QUOTATION_STATUS.won]?.value_inr ?? 0;
     insights.push(insight(tone === 'good' ? 'HEADLINE' : 'WATCH', tone,
       `${number(t.won)} won and ${number(t.lost)} lost: a ${percent(t.win_rate)} win rate on decided quotations${won ? `, with ${compactInr(won)} won` : ''}.`));
   } else {
@@ -100,7 +101,7 @@ export function quotationStatusAnalysis(quotes) {
     insights.push(insight('PIPELINE', 'action', text));
   }
 
-  const negotiating = byStatus['Under Negotiation'];
+  const negotiating = byStatus[QUOTATION_STATUS.negotiating];
   // Only when most of them carry a value; otherwise the estimate would rest on a few quotations.
   if (t.negotiating >= 3 && t.win_rate !== null && negotiating?.value_inr > 0 && negotiating.without_value * 2 < t.negotiating) {
     insights.push(insight('OPPORTUNITY', 'action',

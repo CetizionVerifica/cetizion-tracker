@@ -93,6 +93,37 @@ export async function lockAttachableDocument(client, id) {
   return rowCount > 0;
 }
 
+/**
+ * Which document a save should end up pointing at, claimed under lock.
+ *
+ * `requested` is what the save asked for: a blank one — absent or null —
+ * never clears the document already attached, it keeps it, so nothing is
+ * claimed and nothing is replaced. Only a different document is locked, and
+ * only then is the one it displaces returned, for the caller to purge once
+ * the save has committed.
+ *
+ * Call it inside the transaction that writes the record, after that record's
+ * row is locked. Everything else — finding the row, its 404, writing the
+ * column and purging afterwards — belongs to the caller.
+ */
+export async function claimAttachment(client, { current, requested }) {
+  const next = requested ?? current;
+  if (next !== current && !(await lockAttachableDocument(client, next))) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
+    });
+  }
+  return { documentId: next, replaced: next !== current ? current : null };
+}
+
+/**
+ * Remove a document nothing points at any more. Only ever called once the
+ * save that released it has committed: a failure here leaves the record
+ * saved and the file for the orphan sweep, never the other way round.
+ */
+export const purgeAfterCommit = (id) =>
+  purgeDocument(id).catch((err) => console.error('[documents]', err));
+
 /** The document row and its bytes, fetched through a signed Cloudinary URL. */
 export async function fetchDocument(id) {
   requireStorage();

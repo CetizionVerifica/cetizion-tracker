@@ -37,10 +37,8 @@ lookupRouter.get('/', async (req, res) => {
              UNION
              SELECT sales_person FROM enquiries WHERE sales_person IS NOT NULL
              ORDER BY 1`),
-      query(`SELECT client_name AS name FROM quotations
-             UNION
-             SELECT client_name FROM enquiries
-             ORDER BY 1`),
+      // One spelling per client: the companies table (#20).
+      query('SELECT id, name, sector FROM companies ORDER BY name'),
       // One suggestion per sector as the reports group them, in its most
       // used spelling, so the list nudges people towards that spelling.
       query(`SELECT mode() WITHIN GROUP (ORDER BY btrim(sector)) AS name
@@ -66,6 +64,7 @@ lookupRouter.get('/', async (req, res) => {
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
       clients: clients.rows.map((r) => r.name),
+      companies: clients.rows,
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
       quotations: quotations.rows,

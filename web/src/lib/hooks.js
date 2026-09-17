@@ -55,11 +55,47 @@ export function useLookups() {
       })
       .catch(() => {});
   }, []);
-  return data || { services: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], sectors: [], settings: {}, quotations: [], won_quotations: [], enums: {}, limits: {} };
+  return data || { services: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], enums: {}, limits: {} };
 }
 
 export function invalidateLookups() {
   lookupCache = null;
+}
+
+/**
+ * Uploads a chosen file once and remembers what it became, so a save that
+ * fails on another field and is tried again does not send the same file to
+ * storage twice. The upload is remembered before it finishes, so two saves
+ * at once share one upload rather than racing; a failed one is forgotten, so
+ * the next attempt really does try again.
+ *
+ * Keyed by the File object itself and the kind of record it belongs to.
+ * Picking the same file from disk again makes a new File, and uploads again,
+ * exactly as it did before.
+ */
+export function useDocumentUploads() {
+  const uploads = useRef(new Map());
+
+  return useCallback(async (file, owner) => {
+    let byOwner = uploads.current.get(file);
+    if (!byOwner) {
+      byOwner = new Map();
+      uploads.current.set(file, byOwner);
+    }
+    if (!byOwner.has(owner)) {
+      byOwner.set(
+        owner,
+        api.uploadDocument(file, owner).then(
+          (response) => response.data,
+          (err) => {
+            byOwner.delete(owner);
+            throw err;
+          }
+        )
+      );
+    }
+    return (await byOwner.get(owner)).id;
+  }, []);
 }
 
 export function useDebounced(value, delay = 250) {

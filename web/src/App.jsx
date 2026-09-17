@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 
 import Overview from './pages/Overview.jsx';
 import Worklist from './pages/Worklist.jsx';
 import Enquiries from './pages/Enquiries.jsx';
+import Companies from './pages/Companies.jsx';
+import CompanyDetail from './pages/CompanyDetail.jsx';
 import Quotations from './pages/Quotations.jsx';
 import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
@@ -16,6 +18,9 @@ import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
 import Settings from './pages/Settings.jsx';
+import BulkImport from './pages/BulkImport.jsx';
+import ImportReview from './pages/ImportReview.jsx';
+import Emails from './pages/Emails.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
@@ -32,6 +37,7 @@ const NAV = [
   {
     label: 'Sales',
     items: [
+      { to: '/companies', icon: '⌂', label: 'Companies' },
       { to: '/enquiries', icon: '◇', label: 'Enquiries' },
       { to: '/quotations', icon: '◆', label: 'Quotations' },
       { to: '/sales-report', icon: '◔', label: 'Sales reports' },
@@ -59,12 +65,28 @@ const NAV = [
   },
   {
     label: 'Admin',
-    items: [{ to: '/settings', icon: '⚙', label: 'Settings' }],
+    items: [
+      { to: '/settings', icon: '⚙', label: 'Settings' },
+      { to: '/import', icon: '⇪', label: 'Bulk import' },
+      { to: '/emails', icon: '✉', label: 'Emails & jobs' },
+    ],
   },
 ];
 
+// The burger in every page header toggles the sidebar. The choice is
+// remembered per browser so a hidden sidebar stays hidden after a reload.
+const SidebarContext = createContext({ hidden: false, toggle: () => {} });
+
+function readHidden() {
+  try { return localStorage.getItem('cetizion.sidebar') === 'hidden'; } catch { return false; }
+}
+
 export default function App() {
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [hidden, setHidden] = useState(readHidden);
+  useEffect(() => {
+    try { localStorage.setItem('cetizion.sidebar', hidden ? 'hidden' : 'shown'); } catch { /* private mode */ }
+  }, [hidden]);
+  const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
   const location = useLocation();
   const { user, signOut } = useAuth();
 
@@ -89,12 +111,13 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      <aside className={`sidebar ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)}>
+    <SidebarContext.Provider value={sidebar}>
+    <div className={`app ${hidden ? 'sidebar-hidden' : ''}`}>
+      <aside className="sidebar">
         <div className="sidebar__brand">
           <div className="sidebar__mark">
             <span className="sidebar__logo">C</span>
-            Cetizion
+            <span className="sidebar__name">Cetizion</span>
           </div>
           <div className="sidebar__tagline">Sales · Projects · Payments · Travel</div>
         </div>
@@ -108,10 +131,11 @@ export default function App() {
                   key={item.to}
                   to={item.to}
                   end={item.end}
+                  title={item.label}
                   className={({ isActive }) => `nav__item ${isActive ? 'is-active' : ''}`}
                 >
                   <span className="nav__icon">{item.icon}</span>
-                  {item.label}
+                  <span className="nav__text">{item.label}</span>
                   {item.badge && counts[item.badge] > 0 && (
                     <span className={`nav__count ${alerts[item.badge] ? 'is-alert' : ''}`}>
                       {counts[item.badge]}
@@ -125,8 +149,8 @@ export default function App() {
 
         <div className="sidebar__foot">
           <span className="sidebar__user" title={user?.username}>{user?.username}</span>
-          <button type="button" className="btn btn--sm sidebar__signout" onClick={signOut}>
-            Sign out
+          <button type="button" className="btn btn--sm sidebar__signout" onClick={signOut} title="Sign out">
+            <span className="nav__text">Sign out</span><span className="sidebar__signout-icon" aria-hidden="true">⏻</span>
           </button>
         </div>
       </aside>
@@ -135,6 +159,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/companies" element={<Companies />} />
+          <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/sales-report" element={<SalesReport />} />
@@ -148,18 +174,23 @@ export default function App() {
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/import" element={<BulkImport />} />
+          <Route path="/import/:id" element={<ImportReview />} />
+          <Route path="/emails" element={<Emails />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
     </div>
+    </SidebarContext.Provider>
   );
 }
 
 /** Shared page chrome so every screen has the same header rhythm. */
-export function PageHeader({ title, subtitle, actions, onMenu }) {
+export function PageHeader({ title, subtitle, actions }) {
+  const { hidden, toggle } = useContext(SidebarContext);
   return (
     <header className="topbar">
-      <button type="button" className="btn btn--ghost btn--sm menu-toggle" onClick={onMenu}>☰</button>
+      <button type="button" className="btn btn--ghost btn--sm menu-toggle" onClick={toggle} title={hidden ? 'Show sidebar' : 'Hide sidebar'} aria-label={hidden ? 'Show sidebar' : 'Hide sidebar'}>☰</button>
       <div className="topbar__title">
         <h1>{title}</h1>
         {subtitle && <div className="topbar__sub">{subtitle}</div>}

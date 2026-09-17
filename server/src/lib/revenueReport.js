@@ -1,5 +1,8 @@
 import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
+import { MONTH_NAMES } from './reportFormat.js';
+import { r2, share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
@@ -14,8 +17,6 @@ import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
  * not set is left out of the INR figures and reported, never guessed.
  */
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 /** "Sep 2026" for "2026-09"; "No date" for a row without one. */
 export const monthLabel = (month) =>
   month ? `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}` : 'No date';
@@ -23,11 +24,10 @@ export const monthLabel = (month) =>
 /** The Purchase orders list's payment statuses, most urgent first. */
 export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'];
 
-const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
-const ratio = (part, whole) => (whole ? part / whole : null);
 
 const rateKey = (d) => `${d.currency}:${d.rate}:${d.effective_from}`;
+const ratio = (part, whole) => (whole > 0 ? part / whole : null);
 
 /** The PO-date rates behind po_value, deduplicated. */
 function rateDetails(rows) {
@@ -154,7 +154,12 @@ export function paymentStatusRows(pos) {
   return rows;
 }
 
-export async function revenueReport({ from, to }) {
+/**
+ * The revenue figures for a period. `years` fills the Sales reports page's
+ * year picker; the PDF has no picker, so it passes includeYears: false and
+ * that query is not run.
+ */
+export async function revenueReport({ from, to }, { includeYears = true } = {}) {
   const [orders, purchaseOrders, years, undated] = await Promise.all([
     query(
       `WITH ${RATES}
@@ -233,15 +238,17 @@ export async function revenueReport({ from, to }) {
       [from, to]
     ),
     // Years with won orders or dated POs, for the year picker.
-    query(
-      `SELECT year FROM (
-         SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
-           FROM quotations WHERE status = 'Won - PO Received' AND quotation_date IS NOT NULL
-         UNION
-         SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
-       ) y
-       ORDER BY year DESC`
-    ),
+    includeYears
+      ? query(
+        `SELECT year FROM (
+           SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
+             FROM quotations WHERE status = '${QUOTATION_STATUS.won}' AND quotation_date IS NOT NULL
+           UNION
+           SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
+         ) y
+         ORDER BY year DESC`
+      )
+      : { rows: [] },
     // A PO without a PO date cannot be placed in a year or month.
     query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number'),
   ]);

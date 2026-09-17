@@ -29,7 +29,7 @@ Nothing in the join knew when the quotation, PO, invoice or payment happened.
 
 ### What was changed
 
-A new `exchange_rates` table (migration `010_exchange_rates.sql`) holding
+A new `exchange_rates` table (migration `013_exchange_rates.sql`) holding
 `from_currency`, `to_currency`, `rate`, `effective_from`, `source`,
 `entered_by`, `note`, unique on currency plus date.
 
@@ -152,7 +152,7 @@ CSV columns.
 
 ## Migration
 
-`010_exchange_rates.sql` copies today's Settings values in as rows effective
+`013_exchange_rates.sql` copies today's Settings values in as rows effective
 from the earliest transaction date, so **no figure moves at the moment of the
 switch**, with a note that rates before that date are estimates. A blank or
 unusable setting stays "not set" rather than becoming a rate.
@@ -185,7 +185,7 @@ to compare against "a record dated today" so it cannot rot.
 
 **Server**
 
-- `db/migrations/010_exchange_rates.sql` — new table, carry-over, settings marked read-only
+- `db/migrations/013_exchange_rates.sql` — new table, carry-over, settings marked read-only
 - `db/schema.sql` — the same table for a database built from scratch
 - `src/lib/salesReport.js` — `RATES` reads `exchange_rates`; new `rateOn()` and `ratesUsedFor()`; sectors convert in SQL
 - `src/lib/revenueReport.js` — per-stage conversion, realised gain/loss, rate details

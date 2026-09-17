@@ -104,8 +104,11 @@ export function ListPage({
         actions={
           <>
             {extraActions}
-            <a className="btn" href={api.exportUrl(resource)} download>
+            <a className="btn" href={api.exportUrl(resource, params)} download title="What the list shows now, with the same search and filters">
               Export CSV
+            </a>
+            <a className="btn" href={api.exportXlsxUrl(resource, params)} download title="What the list shows now, as an Excel workbook">
+              Export Excel
             </a>
             {fields && (
               <button type="button" className="btn btn--primary" onClick={() => setEditing('new')}>

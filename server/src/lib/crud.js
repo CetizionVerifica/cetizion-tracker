@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { lockAttachableDocument, purgeDocument } from './documents.js';
+import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.js';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
@@ -16,7 +16,7 @@ const ident = (name) => `"${String(name).replace(/"/g, '')}"`;
  * search and filter columns. Anything the client asks for that is not in
  * those lists is ignored rather than interpolated.
  */
-function buildWhere(def, reqQuery, params) {
+export function buildWhere(def, reqQuery, params) {
   const clauses = [];
 
   const search = (reqQuery.q || '').trim();
@@ -97,15 +97,32 @@ function validate(def, body, { partial }) {
   return pickWritable(def, parsed.data);
 }
 
-/** Where a resource has a human key (PRJ-2026-001) accept it in the URL too. */
+/**
+ * Where a resource has a human key (PRJ-2026-001) accept it in the URL too.
+ *
+ * A human key can itself be all digits — clients issue PO numbers like
+ * 4530056073 — so digits alone do not mean "internal id". The human key
+ * wins whenever a row carries it; the numeric id is only tried when it
+ * fits Postgres' integer type and no row has that human key.
+ */
+const MAX_INT = 2147483647;
+
 function idPredicate(def, id, params) {
-  if (/^\d+$/.test(id)) {
-    params.push(Number(id));
+  const key = decodeURIComponent(id);
+  const numeric = /^\d+$/.test(key) && Number(key) <= MAX_INT;
+
+  if (!def.naturalKey) {
+    if (!numeric) throw new ApiError(400, 'Invalid id');
+    params.push(Number(key));
     return `id = $${params.length}`;
   }
-  if (!def.naturalKey) throw new ApiError(400, 'Invalid id');
-  params.push(decodeURIComponent(id));
-  return `${ident(def.naturalKey)} = $${params.length}`;
+  params.push(key);
+  const byKey = `${ident(def.naturalKey)} = $${params.length}`;
+  if (!numeric) return byKey;
+
+  params.push(Number(key));
+  return `(${byKey} OR (id = $${params.length} AND NOT EXISTS (
+            SELECT 1 FROM ${ident(def.table)} WHERE ${byKey})))`;
 }
 
 /**
@@ -116,12 +133,14 @@ function idPredicate(def, id, params) {
  * replaced, if any, so it can be removed once the record is committed.
  */
 async function claimDocument(client, def, values, id) {
+  // Keeping the current document means not writing the column at all, so an
+  // update that never mentions it cannot blank it.
   if (values.document_id === null || values.document_id === undefined) {
     delete values.document_id;
     return null;
   }
 
-  let previous = null;
+  let current = null;
   if (id !== undefined) {
     const params = [];
     const { rows } = await client.query(
@@ -129,15 +148,11 @@ async function claimDocument(client, def, values, id) {
       params
     );
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-    previous = rows[0].document_id;
+    current = rows[0].document_id;
   }
 
-  if (values.document_id !== previous && !(await lockAttachableDocument(client, values.document_id))) {
-    throw new ApiError(422, 'Please check the highlighted fields', {
-      fields: { document_id: 'That upload has expired or is already in use — choose the file again' },
-    });
-  }
-  return previous;
+  const { replaced } = await claimAttachment(client, { current, requested: values.document_id });
+  return replaced;
 }
 
 export function crudRouter(name, def) {
@@ -181,8 +196,22 @@ export function crudRouter(name, def) {
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
-      // The reference number (CTZ/ENQ/2026/004) is always the next in its series, never typed.
-      if (def.autoId) values[sequenceColumn(def.autoId)] = await claimNextId(def.autoId, client);
+
+      if (def.autoId) {
+        const col = sequenceColumn(def.autoId);
+        if (values[col] == null) {
+          // Reference field is blank — auto-generate using the record's own date for the year.
+          // This ensures a quotation dated 2025-11-15 gets a CTZ/QT/2025/... number even when
+          // today is 2026.
+          const rawDate = def.autoIdDateField ? values[def.autoIdDateField] : null;
+          const year = (typeof rawDate === 'string' && rawDate.length >= 4)
+            ? rawDate.slice(0, 4)
+            : undefined; // undefined → claimNextId falls back to current business year
+          values[col] = await claimNextId(def.autoId, client, year);
+        }
+        // else: user supplied an explicit reference number — preserve it exactly.
+        // The DB UNIQUE constraint returns HTTP 409 on a duplicate (already handled in error.js).
+      }
       const cols = Object.keys(values);
       if (!cols.length) throw new ApiError(422, 'Nothing to save');
 
@@ -206,11 +235,36 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', async (req, res) => {
     const values = validate(def, req.body, { partial: true });
-    // An assigned reference number stays as it was given.
-    if (def.autoId) delete values[sequenceColumn(def.autoId)];
 
-    const { id, extra, previousDocument } = await write(async (client) => {
-      const previousDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
+    // Reference-number guard: the field is immutable after creation.
+    // Rules:
+    //   - field absent from payload     → nothing to do (normal update proceeds)
+    //   - field present, same as stored → no-op, drop it silently
+    //   - field present, ANY other value (null, blank→null, different string) → 422
+    if (def.autoId) {
+      const col = sequenceColumn(def.autoId);
+      if (Object.prototype.hasOwnProperty.call(values, col)) {
+        // Client sent the reference column — fetch the current stored value.
+        // This runs before the transaction so a plain query() is always correct here.
+        const keyParams = [];
+        const keyPred = idPredicate(def, req.params.id, keyParams);
+        const { rows: existing } = await query(
+          `SELECT ${ident(col)} FROM ${ident(def.table)} WHERE ${keyPred}`,
+          keyParams
+        );
+        const currentValue = existing[0]?.[col] ?? null;
+        if (values[col] !== currentValue) {
+          throw new ApiError(422, 'Please check the highlighted fields', {
+            fields: { [col]: 'This reference number is assigned on create and cannot be changed' },
+          });
+        }
+        // Same value echoed back — harmless no-op, drop it from the payload.
+        delete values[col];
+      }
+    }
+
+    const { id, extra, replacedDocument } = await write(async (client) => {
+      const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
       const cols = Object.keys(values);
       if (!cols.length) throw new ApiError(422, 'Nothing to update');
 
@@ -233,13 +287,11 @@ export function crudRouter(name, def) {
       );
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0] });
-      return { id: rows[0].id, extra, previousDocument };
+      return { id: rows[0].id, extra, replacedDocument };
     });
 
     // The replaced file leaves storage only once the new one is committed.
-    if (previousDocument && values.document_id !== undefined && values.document_id !== previousDocument) {
-      await purgeDocument(previousDocument).catch((err) => console.error('[documents]', err));
-    }
+    if (replacedDocument) await purgeAfterCommit(replacedDocument);
 
     const { rows: full } = await query(
       `SELECT * FROM ${ident(readFrom)} WHERE id = $1`,
@@ -279,9 +331,7 @@ export function crudRouter(name, def) {
     }
 
     // Files leave Cloudinary only once the delete is committed.
-    for (const documentId of documents) {
-      await purgeDocument(documentId).catch((err) => console.error('[documents]', err));
-    }
+    for (const documentId of documents) await purgeAfterCommit(documentId);
     res.status(204).end();
   });
 

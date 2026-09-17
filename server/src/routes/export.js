@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import XLSX from 'xlsx';
 import { query } from '../db.js';
+import { buildWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
@@ -8,7 +10,7 @@ import {
   invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
-import { dataGaps, enquiryReport, exchangeRates, quotationStatusReport, serviceReport } from '../lib/salesReviewData.js';
+import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
 import { businessYear } from '../lib/businessDate.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -43,6 +45,35 @@ const SALES_REPORTS = {
   'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
 };
 
+// Report builders started at once for the PDF. Two of them fan out into
+// several queries each, so at most 5 of the pool's 10 connections are in use.
+const REPORT_CONCURRENCY = 2;
+
+/**
+ * Run tasks a few at a time, results in the order they were given. Several
+ * report builders fan out into queries of their own, so the limit is well
+ * under the database pool size and the rest of the app keeps its connections.
+ */
+async function runWithLimit(tasks, limit) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  let failure = null;
+  const worker = async () => {
+    while (next < tasks.length && !failure) {
+      const index = next;
+      next += 1;
+      try {
+        results[index] = await tasks[index]();
+      } catch (err) {
+        failure ??= err;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  if (failure) throw failure;
+  return results;
+}
+
 /** Days in a month, leap years included (Date.UTC would misread years below 100). */
 function daysInMonth(year, month) {
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -67,19 +98,20 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
     ? { from: `${year}-${month}-01`, to: `${year}-${month}-${String(daysInMonth(Number(year), Number(month))).padStart(2, '0')}` }
     : { from: `${year}-01-01`, to: `${year}-12-31` };
 
-  const [sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates] = await Promise.all([
-    sectorReport(period),
-    customerReport(period),
-    fxReport(period),
-    revenueReport(revenuePeriod),
-    enquiryReport(period),
-    quotationStatusReport(period),
-    serviceReport(period),
-    dataGaps(period),
-    exchangeRates(),
-  ]);
+  const [sectors, customers, fx, revenue, review, gaps, rates] = await runWithLimit([
+    () => sectorReport(period),
+    () => customerReport(period),
+    () => fxReport(period),
+    // The PDF has no year picker, so the query behind it is skipped.
+    () => revenueReport(revenuePeriod, { includeYears: false }),
+    () => salesReviewSections(period),
+    () => dataGaps(period),
+    () => exchangeRates(),
+  ], REPORT_CONCURRENCY);
   const pdf = await salesReportPdf({
-    period, year: Number(year), month, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps, rates,
+    period, year: Number(year), month, revenuePeriod,
+    sectors, customers, fx, revenue, gaps, rates,
+    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });
@@ -105,23 +137,42 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
   sendCsv(res, `cetizion-sales-${name}${span}`, rows);
 });
 
-/**
- * Any list can still leave as a spreadsheet — the point is that the
- * spreadsheet is now an export, not the system of record.
- */
-exportRouter.get('/:resource.csv', async (req, res) => {
+/** A list as rows, with the same search and filters the page applies (#45). */
+async function listRows(req) {
   const def = resources[req.params.resource];
   if (!def) throw new ApiError(404, 'Unknown export');
-
+  const params = [];
+  const where = buildWhere(def, req.query, params);
   const { rows } = await query(
-    `SELECT * FROM "${def.view || def.table}" ORDER BY ${def.defaultSort}`
+    `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
+    params
   );
   // Documents are opened from the app's tables; the spreadsheet leaves them out.
   for (const row of rows) {
     delete row.document_id;
     delete row.document_name;
   }
+  return rows;
+}
 
+/**
+ * Any list can still leave as a spreadsheet — the point is that the
+ * spreadsheet is now an export, not the system of record. What leaves is
+ * what the page shows: the same search and filters apply.
+ */
+exportRouter.get('/:resource.csv', async (req, res) => {
+  const rows = await listRows(req);
   const stamp = new Date().toISOString().slice(0, 10);
   sendCsv(res, `cetizion-${req.params.resource}-${stamp}`, rows);
+});
+
+exportRouter.get('/:resource.xlsx', async (req, res) => {
+  const rows = await listRows(req);
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, req.params.resource.slice(0, 31));
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="cetizion-${req.params.resource}-${stamp}.xlsx"`);
+  res.send(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }));
 });
