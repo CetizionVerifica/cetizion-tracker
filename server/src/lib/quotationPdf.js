@@ -3,24 +3,12 @@
  * GST, totals, validity and terms. Built with pdfmake from the same data as
  * the quotation page; nothing is stored and no outside service is used.
  */
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import pdfmake from 'pdfmake';
-
-const require = createRequire(import.meta.url);
-const ROBOTO = require('pdfmake/fonts/Roboto.js');
-const FONT_DIR = resolve(dirname(ROBOTO.Roboto.normal));
-pdfmake.setFonts(ROBOTO);
-pdfmake.setUrlAccessPolicy(() => false);
-pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
+import pdfmake from './pdf.js';
+import { money as formatMoney } from './reportFormat.js';
 
 const INK = '#0f172a'; const MUTED = '#64748b'; const LINE = '#e2e8f0'; const BRAND = '#0f766e';
 
-const SYMBOL = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SGD: 'S$' };
-export function money(n, currency = 'INR') {
-  if (n === null || n === undefined) return '';
-  return `${SYMBOL[currency] ?? `${currency} `}${new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n))}`;
-}
+const money = (n, currency = 'INR') => formatMoney(n, currency, { decimals: 2 });
 const date = (d) => {
   if (!d) return '';
   const [y, m, day] = String(d).slice(0, 10).split('-');

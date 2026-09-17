@@ -16,7 +16,9 @@ ALTER TABLE quotations
   ADD COLUMN IF NOT EXISTS approval_requested_by text,
   ADD COLUMN IF NOT EXISTS approval_decided_at timestamptz,
   ADD COLUMN IF NOT EXISTS approved_by text,
-  ADD COLUMN IF NOT EXISTS approval_note text;
+  ADD COLUMN IF NOT EXISTS approval_note text,
+  -- the discount an approval was given for; more than this asks again
+  ADD COLUMN IF NOT EXISTS approved_discount_percent numeric(5,2);
 
 INSERT INTO settings (key, value, notes) VALUES
   ('discount_approval_threshold_percent', '10', 'A quotation discounted above this overall % waits for approval before it can be sent.'),
@@ -25,7 +27,7 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Totals plus the discount check. Replaces the version from 013.
 CREATE OR REPLACE FUNCTION quotation_totals(p_quotation int) RETURNS void AS $$
-DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold numeric; st text;
+DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold numeric; st text; approved_at numeric;
 BEGIN
   SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(round(amount * gst_rate / 100, 2)), 0), COALESCE(SUM(round(qty * rate, 2)), 0)
     INTO n, s, t, gross FROM quotation_lines WHERE quotation_id = p_quotation;
@@ -37,15 +39,20 @@ BEGIN
   END IF;
   disc := CASE WHEN gross > 0 THEN round((gross - s) / gross * 100, 2) ELSE 0 END;
   threshold := setting_num('discount_approval_threshold_percent', 10);
-  SELECT approval_status INTO st FROM quotations WHERE id = p_quotation;
+  SELECT approval_status, approved_discount_percent INTO st, approved_at FROM quotations WHERE id = p_quotation;
   UPDATE quotations
      SET subtotal = s, tax_total = t, total = s + t, quotation_value = s + t, discount_percent = disc,
          approval_status = CASE
-           -- an exception someone asked for by hand keeps its own state
+           -- Over the threshold needs a decision, and an approval covers
+           -- only the discount it was given for: raising it asks again.
+           -- This applies to hand-requested exceptions too.
+           WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN 'pending'
+           -- otherwise an exception someone asked for by hand keeps its own state
            WHEN approval_reason IS NOT NULL THEN approval_status
-           WHEN disc > threshold AND st IN ('not_needed', 'rejected') THEN 'pending'
            WHEN disc <= threshold AND st IN ('pending', 'rejected') THEN 'not_needed'
            ELSE approval_status END,
-         approval_requested_at = CASE WHEN disc > threshold AND st IN ('not_needed', 'rejected') AND approval_reason IS NULL THEN now() ELSE approval_requested_at END
+         approval_requested_at = CASE WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN now() ELSE approval_requested_at END
    WHERE id = p_quotation;
 END $$ LANGUAGE plpgsql;

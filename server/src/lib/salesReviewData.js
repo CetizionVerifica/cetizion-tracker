@@ -473,7 +473,7 @@ export async function exchangeRates() {
 /** Missing or inconsistent source data that limits the report. */
 export async function dataGaps({ from, to }) {
   const {
-    rows: [gaps],
+    rows: [],
   } = await query(
     `WITH q AS (SELECT * FROM quotations WHERE ${IN_PERIOD}),
           e AS (SELECT * FROM enquiries WHERE ${inPeriod('enquiry_date')})

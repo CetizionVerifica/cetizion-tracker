@@ -86,14 +86,22 @@ BEGIN
       NEW.probability := st.probability;
     END IF;
   ELSE
-    -- Same stage: a send or an acceptance can still move it forward.
+    -- Same stage: a send or an acceptance made in this write moves it
+    -- forward, and a revision (which clears both) moves it back. Only the
+    -- change counts, so a card moved back by hand stays where it was put.
     SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
-    IF NEW.sent_at IS NOT NULL AND st.name = 'Draft' THEN
-      SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
-    ELSIF NEW.accepted_at IS NOT NULL AND st.name IN ('Draft', 'Sent', 'Negotiation') THEN
+    IF NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL AND st.name IN ('Draft', 'Sent', 'Negotiation') THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Verbal yes, awaiting PO';
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
     END IF;
   END IF;
 
@@ -108,6 +116,7 @@ BEGIN
     IF st.type <> 'lost' THEN
       NEW.lost_reason_id := NULL;
       NEW.lost_notes := NULL;
+      NEW.competitor := NULL;
     END IF;
   END IF;
   RETURN NEW;
@@ -115,11 +124,41 @@ END $$ LANGUAGE plpgsql;
 
 -- Runs after the company link (a_) and before nothing else that matters: c_.
 DROP TRIGGER IF EXISTS c_stage_sync ON quotations;
+
+-- Give every existing quotation its stage, while the trigger is off: it
+-- would stamp today as every quotation's stage change, and as the closing
+-- date of every won and lost one. The dates come from the records instead
+-- (read before this update touches updated_at): the stage from the last
+-- change to the row, a win from its PO date, a loss from the last change
+-- (nothing records when it was lost).
+WITH pick AS (
+  SELECT q.id, q.updated_at, q.quotation_date,
+         (SELECT ps.id FROM pipeline_stages ps
+           WHERE ps.maps_to_status = q.status AND ps.active
+           ORDER BY CASE
+             WHEN q.status = 'Submitted' AND q.sent_at IS NOT NULL AND ps.name = 'Sent' THEN 0
+             WHEN q.status = 'Under Negotiation' AND q.accepted_at IS NOT NULL AND ps.name = 'Verbal yes, awaiting PO' THEN 0
+             ELSE 1 END, ps.sort_order
+           LIMIT 1) AS stage_id,
+         (SELECT min(po.po_date) FROM purchase_orders po
+           WHERE po.quotation_no = q.quotation_no
+              OR (po.quotation_no IS NULL AND q.project_id IS NOT NULL AND po.project_id = q.project_id)) AS po_date
+    FROM quotations q
+   WHERE q.stage_id IS NULL
+)
+UPDATE quotations q
+   SET stage_id = ps.id,
+       probability = ps.probability,
+       stage_changed_at = COALESCE(pick.updated_at, pick.quotation_date::timestamptz),
+       closed_at = CASE ps.type
+                     WHEN 'won' THEN COALESCE(pick.po_date::timestamptz, pick.updated_at, pick.quotation_date::timestamptz)
+                     WHEN 'lost' THEN COALESCE(pick.updated_at, pick.quotation_date::timestamptz)
+                   END
+  FROM pick JOIN pipeline_stages ps ON ps.id = pick.stage_id
+ WHERE q.id = pick.id;
+
 CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
   FOR EACH ROW EXECUTE FUNCTION quotation_stage_sync();
-
--- Give every existing quotation its stage.
-UPDATE quotations SET stage_id = NULL WHERE stage_id IS NULL;
 
 INSERT INTO settings (key, value, notes) VALUES
   ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')

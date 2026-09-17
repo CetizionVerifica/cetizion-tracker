@@ -62,8 +62,10 @@ const reviseSchema = z.object({ note: z.string().trim().max(1000).optional().def
 quotationDocRouter.post('/:key/revise', async (req, res) => {
   const body = reviseSchema.parse(req.body || {});
   const data = await transaction(async (client) => {
-    const q = await loadQuotation(req.params.key, client);
-    await client.query('SELECT 1 FROM quotations WHERE id = $1 FOR UPDATE', [q.id]);
+    // Lock first, then read: two clicks must not both snapshot the same revision.
+    const { id } = await loadQuotation(req.params.key, client);
+    await client.query('SELECT 1 FROM quotations WHERE id = $1 FOR UPDATE', [id]);
+    const q = await loadQuotation(String(id), client);
     if (q.status === 'Won - PO Received') throw new ApiError(422, 'A won quotation is not revised; raise a new quotation for extra scope');
     const { rows: lines } = await client.query('SELECT * FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
     const snapshot = { quotation_no: q.quotation_no, revision: q.revision, quotation_date: q.quotation_date, valid_until: q.valid_until, quotation_value: q.quotation_value, subtotal: q.subtotal, tax_total: q.tax_total, total: q.total, currency: q.currency, terms: q.terms, sent_at: q.sent_at, lines };
@@ -73,10 +75,16 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
     const { rows: [updated] } = await client.query(
       `UPDATE quotations SET revision = revision + 1, quotation_date = $2, valid_until = ($2::date + ($3::int || ' days')::interval)::date,
               sent_at = NULL, accepted_at = NULL, accepted_by_name = NULL,
-              status = CASE WHEN status = 'Lost' THEN 'Submitted' ELSE status END
+              status = CASE WHEN status = 'Lost' THEN 'Submitted' ELSE status END,
+              -- a new version is a new approval round
+              approval_status = 'not_needed', approval_reason = NULL, approval_requested_at = NULL,
+              approval_requested_by = NULL, approval_decided_at = NULL, approved_by = NULL,
+              approval_note = NULL, approved_discount_percent = NULL
         WHERE id = $1 RETURNING revision, valid_until, quotation_date`,
       [q.id, today, Number(days) || 30]
     );
+    // The discount check runs again on the new version.
+    await client.query('SELECT quotation_totals($1)', [q.id]);
     return updated;
   });
   res.json({ data });

@@ -38,7 +38,7 @@ approvalRouter.post('/:key/approval/request', async (req, res) => {
   const q = await load(req.params.key);
   const { rows: [u] } = await query(
     `UPDATE quotations SET approval_status = 'pending', approval_reason = $2, approval_requested_at = now(), approval_requested_by = $3,
-            approval_decided_at = NULL, approved_by = NULL, approval_note = NULL
+            approval_decided_at = NULL, approved_by = NULL, approval_note = NULL, approved_discount_percent = NULL
       WHERE id = $1 RETURNING approval_status, approval_requested_at`, [q.id, parsed.data.reason, req.user?.username || 'admin']);
   const to = await approverEmail();
   let email = null;
@@ -56,7 +56,8 @@ approvalRouter.post('/:key/approval/decide', async (req, res) => {
   const q = await load(req.params.key);
   if (q.approval_status !== 'pending') throw new ApiError(422, 'Nothing is waiting for approval on this quotation');
   const { rows: [u] } = await query(
-    `UPDATE quotations SET approval_status = $2, approval_decided_at = now(), approved_by = $3, approval_note = $4
+    `UPDATE quotations SET approval_status = $2, approval_decided_at = now(), approved_by = $3, approval_note = $4,
+            approved_discount_percent = CASE WHEN $2 = 'approved' THEN discount_percent ELSE NULL END
       WHERE id = $1 RETURNING approval_status, approval_decided_at, approved_by, approval_note`,
     [q.id, parsed.data.decision, req.user?.username || 'admin', parsed.data.note || null]);
   let email = null;

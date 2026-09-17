@@ -1,8 +1,7 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Alert, Badge, useToast } from '../components/ui.jsx';
-import { api } from '../lib/api.js';
-import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 
 /**
@@ -21,10 +20,12 @@ export default function Enquiries() {
   const [params] = useSearchParams();
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
-  const due = useFetch(() => api.list('enquiries', { status: OPEN.join(','), limit: 1000 }), []);
-  const dueRows = (due.data?.data ?? []).filter((e) => e.next_follow_up_at && e.next_follow_up_at <= today());
   const responseHours = Number(lookups.settings?.lead_first_response_hours || 24);
-  const late = (due.data?.data ?? []).filter((e) => e.status === 'New' && (Date.now() - new Date(e.created_at).getTime()) / 36e5 > responseHours);
+  // Worked out from the rows the list already loaded, not a second request.
+  const attention = (rows) => ({
+    dueRows: rows.filter((e) => OPEN.includes(e.status) && e.next_follow_up_at && e.next_follow_up_at <= today()),
+    late: rows.filter((e) => e.status === 'New' && (Date.now() - new Date(e.created_at).getTime()) / 36e5 > responseHours),
+  });
 
   const columns = [
     { key: 'enquiry_no', header: 'Enquiry', className: 'mono', render: (r) => <>{r.enquiry_no}<div className="small muted">{date(r.enquiry_date)}</div></> },
@@ -88,7 +89,7 @@ export default function Enquiries() {
       initialSearch={params.get('q') || undefined}
       dateFilterLabel="Enquiry date"
       onSaved={(saved) => {
-        invalidateLookups(); due.refetch();
+        invalidateLookups();
         if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
       }}
       filters={[
@@ -97,14 +98,14 @@ export default function Enquiries() {
         { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...sectors] },
         { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
       ]}
-      banner={(dueRows.length > 0 || late.length > 0) && (
+      banner={(rows) => { const { dueRows, late } = attention(rows); return (dueRows.length > 0 || late.length > 0) && (
         <Alert tone="warning">
           <span>
             {dueRows.length > 0 && <><strong>{dueRows.length} follow-up{dueRows.length === 1 ? '' : 's'} due:</strong> {dueRows.slice(0, 6).map((e) => `${e.client_name} (${date(e.next_follow_up_at)})`).join(', ')}{dueRows.length > 6 ? ` and ${dueRows.length - 6} more` : ''}. </>}
             {late.length > 0 && <><strong>{late.length} new enquir{late.length === 1 ? 'y has' : 'ies have'} waited over {responseHours} hours</strong> for a first contact: {late.slice(0, 4).map((e) => e.client_name).join(', ')}.</>}
           </span>
         </Alert>
-      )}
+      ); }}
     />
   );
 }

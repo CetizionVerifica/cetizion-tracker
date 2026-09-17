@@ -335,7 +335,7 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
   }
   if (gaps.quoted_enquiries_unlinked) {
     add('Link each quoted enquiry to its quotation',
-      `${plural(gaps.quoted_enquiries_unlinked, 'enquiry', 'enquiries')} marked "Won - Quotation Sent" ${has(gaps.quoted_enquiries_unlinked)} no quotation linked, so ${gaps.quoted_enquiries_unlinked === 1 ? 'its' : 'their'} outcome is unknown.`);
+      `${plural(gaps.quoted_enquiries_unlinked, 'enquiry', 'enquiries')} marked "Converted" ${has(gaps.quoted_enquiries_unlinked)} no quotation linked, so ${gaps.quoted_enquiries_unlinked === 1 ? 'its' : 'their'} outcome is unknown.`);
   }
   if (services.summary.unmatched) {
     add('Use consistent service names',

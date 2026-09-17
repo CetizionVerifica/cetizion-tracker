@@ -35,7 +35,7 @@ const schema = z.object({
   project_manager_email: optStr(160),
   planned_start_date: dateStr,
   planned_delivery_date: dateStr,
-  po_number: z.preprocess(blank, z.string({ required_error: 'PO number is required' }).trim().min(1, 'PO number is required').max(60)),
+  po_number: z.preprocess(blank, z.string({ message: 'PO number is required' }).trim().min(1, 'PO number is required').max(60)),
   po_date: dateStr,
   po_value: z.preprocess(blank, z.coerce.number().min(0).optional()),
   currency: optStr(3),
@@ -104,8 +104,11 @@ registerRouter.post('/:key/register', async (req, res) => {
     const { rows: lines } = await client.query('SELECT description, amount FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
     const lineSum = lines.reduce((n, l) => n + Number(l.amount), 0);
     if (lines.length) {
-      // Scale the lines to the PO value (the PO may carry GST or a negotiated figure).
-      const factor = lineSum > 0 ? Number(poValue) / lineSum : 1;
+      // Lines are before GST. Scale them by the PO against the quotation on
+      // the same basis (both with GST), so a PO for the full quoted total
+      // keeps each line's own value and a negotiated PO scales them down.
+      const quoted = Number(q.total) > 0 ? Number(q.total) : lineSum;
+      const factor = quoted > 0 ? Number(poValue) / quoted : 1;
       for (const l of lines) {
         await client.query('INSERT INTO po_services (po_number, service, service_value) VALUES ($1,$2,$3)', [po.po_number, l.description, Math.round(Number(l.amount) * factor * 100) / 100]);
       }

@@ -154,7 +154,7 @@ function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact =
 }
 
 const rule = (margin = [0, 3, 0, 7]) => ({
-  canvas: [{ type: 'line', x1: 0, y1: 0, x2: W, y2: 0, lineWidth: 0.8, lineColor: INK_200 }],
+  canvas: ['line'],
   margin,
 });
 
@@ -168,7 +168,7 @@ function section(no, title, lead, first = []) {
       ...first,
     ].filter(Boolean),
     unbreakable: true,
-    margin: [0, 16, 0, 0],
+    margin: [],
   };
 }
 
@@ -181,9 +181,9 @@ function subsection(title, lead, content, rowCount) {
 function figure(no, caption, chart, emptyText) {
   if (!chart) return { text: emptyText, style: 'empty' };
   return {
-    stack: [{ svg: chart.svg, width: chart.width }, { text: `Figure ${no} — ${caption}`, style: 'caption' }],
+    stack: ['caption'],
     unbreakable: true,
-    margin: [0, 4, 0, 8],
+    margin: [],
   };
 }
 
@@ -194,9 +194,9 @@ function callout({ tag, tone, text }) {
     table: {
       widths: ['*'],
       body: [[{
-        text: [{ text: `${tag}   `, bold: true, color: c.fg, fontSize: 7.5, characterSpacing: 0.5 }, { text, color: INK_900 }],
+        text: [],
         fillColor: c.bg,
-        margin: [10, 6, 10, 6],
+        margin: [],
         fontSize: 8.5,
         lineHeight: 1.3,
       }]],
@@ -211,7 +211,7 @@ function callout({ tag, tone, text }) {
       paddingBottom: () => 0,
     },
     unbreakable: true,
-    margin: [0, 0, 0, 6],
+    margin: [],
   };
 }
 
@@ -234,7 +234,7 @@ function tile(value, label, meta) {
       { text: label, style: 'tileLabel' },
       meta ? { text: meta, style: 'tileMeta' } : null,
     ].filter(Boolean),
-    margin: [10, 8, 10, 8],
+    margin: [],
   };
 }
 
@@ -327,7 +327,7 @@ export function salesReportDocDefinition(data) {
             { text: `Period: ${periodText}`, style: 'subtitle' },
           ],
           fillColor: NAVY,
-          margin: [18, 16, 18, 16],
+          margin: [],
         }]],
       },
       layout: 'noBorders',
@@ -336,7 +336,7 @@ export function salesReportDocDefinition(data) {
       text: `Prepared ${stamp}  ·  Source: Enquiries page (${plural(et.enquiries, 'enquiry', 'enquiries')}), quotation register ` +
         `(${plural(sectorTotal.quotations, 'quotation')}) and purchase-order register (${plural(p.pos, 'PO')} dated in ${revenueLabel})`,
       style: 'small',
-      margin: [0, 6, 0, 0],
+      margin: [],
     },
     { text: 'AT A GLANCE', style: 'kicker' },
     {
@@ -366,14 +366,14 @@ export function salesReportDocDefinition(data) {
         paddingTop: () => 0,
         paddingBottom: () => 0,
       },
-      margin: [0, 0, 0, 10],
+      margin: [],
     },
     callout(head),
     { text: 'KEY FINDINGS', style: 'kicker' },
     findings.length
       ? {
           table: {
-            widths: [96, '*'],
+            widths: ['*'],
             body: findings.map((f) => [
               { text: f.tag, bold: true, fontSize: 7.5, color: (TONES[f.tone] ?? TONES.note).fg, characterSpacing: 0.4, margin: [0, 1, 0, 0] },
               { text: f.text, fontSize: 8.5, lineHeight: 1.3, color: INK_900 },
@@ -614,7 +614,7 @@ export function salesReportDocDefinition(data) {
         ],
         columnGap: 14,
         unbreakable: true,
-        margin: [0, 4, 0, 0],
+        margin: [],
       }
     : null;
 
@@ -899,7 +899,7 @@ export function salesReportDocDefinition(data) {
   const cashChart = p.pos
     ? stackedColumns({
         categories: ['PO value', 'Invoiced', 'Received', 'Due now'],
-        series: [{ name: 'INR', colors: [NAVY, BLUE, GREEN, RED], values: [p.po_value_inr, p.invoiced_inr, p.received_inr, p.due_now_inr] }],
+        series: ['INR', 'Order intake'],
         width: W,
         height: 170,
         legend: false,
@@ -909,7 +909,7 @@ export function salesReportDocDefinition(data) {
   const intakeMonths = revenue.orders.months;
   const intakeChart = stackedColumns({
     categories: shortMonths(intakeMonths),
-    series: [{ name: 'Order intake', color: NAVY, values: intakeMonths.map((m) => m.order_intake_inr) }],
+    series: ['Order intake'],
     width: W,
     height: 160,
     legend: false,
@@ -930,7 +930,7 @@ export function salesReportDocDefinition(data) {
                   { header: 'Amount (INR)', value: (r) => money(r[1]), align: 'right', width: 70 },
                   { header: '% of PO value', value: (r) => percent(share(r[1], p.po_value_inr)), align: 'right', width: 56 },
                 ],
-                rows: [['PO value', p.po_value_inr], ['Invoiced', p.invoiced_inr], ['Received', p.received_inr], ['Due now', p.due_now_inr]],
+                rows: ['PO value', 'Invoiced', 'Received', 'Due now'],
                 compact: true,
               })],
             },
@@ -970,7 +970,7 @@ export function salesReportDocDefinition(data) {
       {
         stack: [
           reportTable({
-            columns: [{ header: 'Month', value: (r) => r.label, width: 54 }, ...poMoneyColumns],
+            columns: ['Month', 'Payment status'],
             rows: revenue.invoicing.months,
             total: p,
             empty: noPos,
@@ -984,7 +984,7 @@ export function salesReportDocDefinition(data) {
             ],
             alignment: 'right',
             fontSize: 8,
-            margin: [0, 5, 0, 0],
+            margin: [],
           },
         ],
       },
@@ -994,7 +994,7 @@ export function salesReportDocDefinition(data) {
       'Payment status',
       'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
       reportTable({
-        columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
+        columns: ['Payment status'],
         rows: revenue.payment_status.rows,
         total: revenue.payment_status.total,
         empty: noPos,
@@ -1075,7 +1075,7 @@ export function salesReportDocDefinition(data) {
   return {
     pageSize: 'A4',
     pageOrientation: 'portrait',
-    pageMargins: [MARGIN_X, 48, MARGIN_X, 42],
+    pageMargins: [],
     info: {
       title: `Cetizion Sales & Enquiry Performance Review — ${periodText}`,
       author: 'Cetizion Tracker',
@@ -1091,14 +1091,14 @@ export function salesReportDocDefinition(data) {
               { text: 'CETIZION  ·  SALES & ENQUIRY PERFORMANCE REVIEW', style: 'runningHead' },
               { text: periodText, style: 'runningHead', alignment: 'right' },
             ],
-            margin: [MARGIN_X, 22, MARGIN_X, 0],
+            margin: [],
           },
     footer: (currentPage, pageCount) => ({
       columns: [
         { text: `Generated ${stamp}  ·  Internal and confidential`, style: 'footer' },
         { text: `Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
       ],
-      margin: [MARGIN_X, 14, MARGIN_X, 0],
+      margin: [],
     }),
     content: [
       ...cover,
