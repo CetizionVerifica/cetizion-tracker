@@ -26,6 +26,7 @@ import { query } from '../db.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
 import { applyVisibility, sealTokens } from '../lib/mailbox/rules.js';
+import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
 import { disconnect, ensureSubscriptions, pushTestMessages, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
 
@@ -61,6 +62,7 @@ mailboxRouter.get('/', async (req, res) => {
 });
 
 mailboxRouter.get('/connect/microsoft', (req, res) => {
+  if (isStaging()) throw new ApiError(409, 'Connecting real mailboxes is switched off on staging');
   if (!microsoftConfigured() || !config.microsoft.tokenKey) throw new ApiError(503, 'Microsoft 365 is not set up on this server yet. The lead needs to register the app and set MS_CLIENT_ID, MS_CLIENT_SECRET, MS_TENANT_ID, MS_REDIRECT_URI and MAIL_TOKEN_KEY.');
   res.redirect(authUrl(makeState({ u: who(req), shared: req.query.shared === '1' })));
 });

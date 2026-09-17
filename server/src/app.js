@@ -44,6 +44,7 @@ import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
 import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
 import { requestLogger } from './lib/ops/logger.js';
 import { httpMetrics } from './lib/ops/metrics.js';
+import { appEnv, stagingGate } from './lib/ops/environment.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -78,6 +79,8 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   crossOriginEmbedderPolicy: false,
 }));
+// Staging sits behind a shared credential (#35).
+app.use(stagingGate);
 app.use(compression());
 app.use(cors({
   origin: config.corsOrigin.split(',').map((s) => s.trim()),
@@ -104,6 +107,7 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/health', healthHandler, async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
   res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, auth_mode: authConfig.mode });
+  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, environment: appEnv() });
 });
 
 app.use('/api/auth', authRouter);

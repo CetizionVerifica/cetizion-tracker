@@ -14,6 +14,7 @@
  */
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
+import { isStaging } from './ops/environment.js';
 import { query } from '../db.js';
 
 let transport = null;
@@ -36,6 +37,8 @@ export function decideDelivery({ to, mode = config.mail.mode, enabled = true, al
   if (!enabled) return { deliver: false, reason: 'emails_enabled is false' };
   if (optedOut) return { deliver: false, reason: 'contact opted out of automatic email' };
   if (mode === 'log') return { deliver: false, reason: 'EMAIL_MODE=log' };
+  // Staging never emails anyone for real (#35); sandbox to the team still works.
+  if (isStaging() && mode !== 'sandbox') return { deliver: false, reason: 'staging: outbound email is off' };
   if (mode === 'sandbox') {
     const ok = allowlist.some((a) => a.toLowerCase() === String(to).toLowerCase() || (a.startsWith('@') && String(to).toLowerCase().endsWith(a.toLowerCase())));
     return ok ? { deliver: true } : { deliver: false, reason: `EMAIL_MODE=sandbox and ${to} is not on EMAIL_ALLOWLIST` };

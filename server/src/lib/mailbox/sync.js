@@ -13,6 +13,7 @@ import { config } from '../../config.js';
 import { applyVisibility, classify, cleanHtml, domainOf, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
 import { microsoftConfigured, microsoftProvider } from './microsoft.js';
 import { resolveParties } from '../../routes/communications.js';
+import { assertNotStaging } from '../ops/environment.js';
 
 export const FOLDERS = ['inbox', 'sentitems'];
 const key = () => config.microsoft.tokenKey;
@@ -55,6 +56,7 @@ export function providerFor(account) {
     return testProvider(account);
   }
   if (account.provider === 'microsoft') {
+    assertNotStaging('Mailbox sync');
     if (!microsoftConfigured()) throw new Error('Microsoft 365 is not configured on this server (MS_CLIENT_ID, MS_CLIENT_SECRET, MS_TENANT_ID, MS_REDIRECT_URI)');
     return microsoftProvider(account, openTokens(account.tokens_encrypted, key()));
   }

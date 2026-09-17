@@ -650,3 +650,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .portal__item { border: 1px solid var(--ink-200); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .portal__row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .portal .table { width: 100%; }
+
+/* Staging banner (#35) */
+.env-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 10000; height: 22px; line-height: 22px; text-align: center; font: 600 12px/22px system-ui, sans-serif; letter-spacing: .04em; color: #fff; background: repeating-linear-gradient(45deg, #b45309, #b45309 12px, #92400e 12px, #92400e 24px); }
+body.is-staging { padding-top: 22px; }
+body.is-staging .app { min-height: calc(100vh - 22px); }
