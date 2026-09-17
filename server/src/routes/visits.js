@@ -15,6 +15,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { capacity, findConflicts } from '../lib/visits.js';
 import { businessToday } from '../lib/businessDate.js';
@@ -53,7 +54,7 @@ visitsRouter.post('/staff', async (req, res) => {
 visitsRouter.patch('/staff/:id', async (req, res) => {
   const parsed = staffSchema.partial().safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   const { rows: [s] } = await query(`UPDATE staff SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!s) throw new ApiError(404, 'Not found');
@@ -157,7 +158,7 @@ async function checkMilestone(db, v) {
 async function save(req, id) {
   const parsed = (id ? visitSchema.partial() : visitSchema).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const v = normalise(parsed.data);
+  const v = normalise(id ? sentFields(parsed.data, req.body) : parsed.data);
   return transaction(async (db) => {
     let current = null;
     if (id) {

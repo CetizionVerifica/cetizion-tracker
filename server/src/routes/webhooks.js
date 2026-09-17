@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
+import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { deliverOne, EVENT_TYPES, newSecret, releaseHeld, runWebhooks, verify } from '../lib/webhooks.js';
 
@@ -69,7 +70,7 @@ webhooksRouter.post('/', async (req, res) => {
 webhooksRouter.patch('/:id', async (req, res) => {
   const parsed = endpointSchema.partial().safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const set = Object.entries(parsed.data).filter(([, x]) => x !== undefined);
+  const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   const id = Number(req.params.id);
   const { rows: [w] } = await query(`UPDATE webhook_endpoints SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING ${PUBLIC}`, [id, ...set.map(([, x]) => x)]);
