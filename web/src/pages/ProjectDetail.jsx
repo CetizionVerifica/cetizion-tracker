@@ -43,6 +43,10 @@ export default function ProjectDetail() {
   }
 
   const { project: p, purchase_orders: pos, payment_stages: stages, onboarding, travel, quotations } = data.data;
+  // One currency across every PO on the project, or null when they differ.
+  const mixed = p.po_count > 0 && !p.currency;
+  const amount = (v) => (mixed ? '—' : money(v, p.currency || 'INR'));
+
   const close = () => setDialog(null);
   const done = () => { close(); refetch(); };
 
@@ -140,10 +144,14 @@ export default function ProjectDetail() {
         )}
 
         <div className="grid grid--stats">
-          <Stat label="Contract value" value={money(p.total_contract_value)} meta={`${number(p.po_count)} purchase order(s)`} tone="brand" />
-          <Stat label="Invoiced" value={money(p.total_invoiced)} meta={`${money(p.total_received)} received`} />
-          <Stat label="Due now" value={money(p.balance_due_now)} tone={p.balance_due_now > 0 ? 'warn' : 'ok'} meta={p.payment_status} />
-          <Stat label="To bill" value={money(p.balance_to_bill)} tone={p.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
+          {/* Sums across the project's POs, so they only read in one currency.
+              v_projects gives it, or null when the POs disagree — then the
+              amount is withheld rather than shown with the wrong symbol, and
+              the PO table below shows each one properly. */}
+          <Stat label="Contract value" value={amount(p.total_contract_value)} meta={mixed ? 'POs in different currencies' : `${number(p.po_count)} purchase order(s)`} tone="brand" />
+          <Stat label="Invoiced" value={amount(p.total_invoiced)} meta={mixed ? 'see the purchase orders below' : `${amount(p.total_received)} received`} />
+          <Stat label="Due now" value={amount(p.balance_due_now)} tone={p.balance_due_now > 0 ? 'warn' : 'ok'} meta={p.payment_status} />
+          <Stat label="To bill" value={amount(p.balance_to_bill)} tone={p.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
           <Stat label="Travel cost" value={money(p.total_travel_cost)} meta={`${travel.length} trip(s)`} />
           <Stat label="Project stage" value={p.project_stage} meta={p.delivery_variance_days !== null ? `${p.delivery_variance_days > 0 ? '+' : ''}${p.delivery_variance_days} days vs plan` : 'Delivery not recorded'} />
         </div>

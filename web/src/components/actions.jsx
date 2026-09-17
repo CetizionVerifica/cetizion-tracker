@@ -487,9 +487,23 @@ const PRESETS = {
   '100 on delivery': [100],
 };
 
-export function PaymentSplitDialog({ po, onClose, onDone }) {
+/** A preset covers the whole PO; fit it to whatever share is still free. */
+const scale = (percents, allocatable) => {
+  if (Math.abs(allocatable - 100) < 0.01) return percents;
+  const scaled = percents.map((p) => Math.round((p * allocatable) / 100 * 10) / 10);
+  // Rounding lands on the last stage, so the split still adds up exactly.
+  const drift = Math.round((allocatable - scaled.reduce((a, b) => a + b, 0)) * 10) / 10;
+  scaled[scaled.length - 1] = Math.round((scaled.at(-1) + drift) * 10) / 10;
+  return scaled;
+};
+
+export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
+  // What is already invoiced or paid stays, so only the rest is up for
+  // splitting. 100% of the PO with half of it billed would schedule 150%.
+  const locked = Math.round(Number(lockedPercent || 0) * 1000) / 10;
+  const allocatable = Math.round((100 - locked) * 10) / 10;
   const [preset, setPreset] = useState('50/50');
-  const [stages, setStages] = useState(() => buildStages(PRESETS['50/50']));
+  const [stages, setStages] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
   const { busy, error, run } = useAction({ onDone, successMessage: 'Payment stages created' });
 
   function buildStages(percents) {
@@ -507,7 +521,8 @@ export function PaymentSplitDialog({ po, onClose, onDone }) {
     }));
   }
 
-  const total = stages.reduce((sum, s) => sum + Number(s.percent || 0), 0);
+  const total = Math.round(stages.reduce((sum, s) => sum + Number(s.percent || 0), 0) * 10) / 10;
+  const off = Math.abs(total - allocatable) > 0.01;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -540,6 +555,15 @@ export function PaymentSplitDialog({ po, onClose, onDone }) {
         Ones triggered <strong>On Delivery</strong> wait until the PO's delivery date is recorded.
       </Alert>
 
+      {locked > 0 && (
+        <Alert tone="warning">
+          <span>
+            <strong>{locked}% of this PO is already invoiced or paid.</strong> Those stages are kept,
+            so the ones below must add up to the remaining <strong>{allocatable}%</strong>.
+          </span>
+        </Alert>
+      )}
+
       <Field label="Start from a common split">
         <Select
           value={preset}
@@ -547,7 +571,7 @@ export function PaymentSplitDialog({ po, onClose, onDone }) {
           options={Object.keys(PRESETS)}
           onChange={(e) => {
             setPreset(e.target.value);
-            setStages(buildStages(PRESETS[e.target.value]));
+            setStages(buildStages(scale(PRESETS[e.target.value], allocatable)));
           }}
         />
       </Field>
@@ -601,8 +625,8 @@ export function PaymentSplitDialog({ po, onClose, onDone }) {
           <tfoot>
             <tr>
               <td colSpan={2}>Total</td>
-              <td className="num" style={{ color: Math.abs(total - 100) > 0.01 ? 'var(--danger-fg)' : undefined }}>
-                {total}%
+              <td className="num" style={{ color: off ? 'var(--danger-fg)' : undefined }}>
+                {total}%{locked > 0 && <span className="small muted"> of {allocatable}%</span>}
               </td>
               <td className="num">{money((Number(po.po_value) * total) / 100, po.currency)}</td>
             </tr>
@@ -623,7 +647,11 @@ export function PaymentSplitDialog({ po, onClose, onDone }) {
             Remove last
           </button>
         )}
-        {Math.abs(total - 100) > 0.01 && <span className="small" style={{ color: 'var(--danger-fg)' }}>Stages must total 100%</span>}
+        {off && (
+          <span className="small" style={{ color: 'var(--danger-fg)' }}>
+            Stages must total {allocatable}%{locked > 0 ? ` — the other ${locked}% is already invoiced or paid` : ''}
+          </span>
+        )}
       </div>
     </ActionModal>
   );

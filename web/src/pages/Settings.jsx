@@ -50,7 +50,10 @@ function ExchangeRates() {
   // Newest first per currency, so the rate in force today is the one on top.
   const latest = new Map();
   for (const row of rows) if (!latest.has(row.from_currency)) latest.set(row.from_currency, row.id);
-  const missing = currencies.filter((c) => !latest.has(c));
+  // Only currencies something is actually recorded in: warning about a rate
+  // nothing needs trains people to ignore the warning.
+  const inUse = lookups.currencies_in_use ?? currencies;
+  const missing = inUse.filter((c) => c !== 'INR' && !latest.has(c));
 
   async function remove(row) {
     if (!window.confirm(`Delete the ${row.from_currency} rate effective ${row.effective_from}? Figures dated on or after it will fall back to the previous rate.`)) return;
@@ -136,7 +139,9 @@ function ExchangeRates() {
 }
 
 function RateHistoryChart({ rows, currencies }) {
-  const [currency, setCurrency] = useState(currencies[0] || 'EUR');
+  // Start on a currency that has rates, not just the first in the enum, or the
+  // chart opens on "No EUR rates yet" beside a table full of USD.
+  const [currency, setCurrency] = useState(() => rows[0]?.from_currency || currencies[0] || 'EUR');
   const points = rows
     .filter((row) => row.from_currency === currency)
     .sort((a, b) => a.effective_from.localeCompare(b.effective_from));

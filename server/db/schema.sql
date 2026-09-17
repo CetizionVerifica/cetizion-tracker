@@ -13,7 +13,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 DROP TABLE IF EXISTS email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
-  travel_vendors, services, settings, exchange_rates, documents CASCADE;
+  travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -56,6 +56,18 @@ CREATE TABLE exchange_rates (
 -- The lookup every report makes: newest row on or before a given date.
 CREATE INDEX exchange_rates_lookup_idx
   ON exchange_rates (from_currency, to_currency, effective_from DESC);
+
+-- How far each reference series has got. A counter only ever goes up, so a
+-- number that has been issued is never reissued once its record is deleted.
+-- Empty on a fresh database; claimNextId also takes in the highest reference
+-- already present, so a seeded or imported database numbers on from there.
+CREATE TABLE sequence_counters (
+  kind       text NOT NULL,
+  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$'),
+  last_n     int  NOT NULL DEFAULT 0 CHECK (last_n >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, year)
+);
 
 CREATE TABLE services (
   id       serial PRIMARY KEY,
@@ -410,7 +422,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
-      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates']
+      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
+      'sequence_counters']
   LOOP
     EXECUTE format(
       'CREATE TRIGGER %I_set_updated_at BEFORE UPDATE ON %I

@@ -107,9 +107,21 @@ test('due now counts only invoices that have been raised', async () => {
 test('a PO whose own date has no rate keeps the stage figures that do', async () => {
   const { readFileSync } = await import('node:fs');
   const revenue = readFileSync('src/lib/revenueReport.js', 'utf8');
-  // Only PO value depends on the PO-date rate; everything else is per stage.
+  // Only PO value depends on the PO-date rate; the rest convert per stage.
   assert.ok(revenue.includes("const poValue = sum(converted, 'po_value_inr');"));
-  for (const field of ['invoiced_inr', 'received_inr', 'due_now_inr', 'to_bill_inr', 'received_invoiced_inr']) {
-    assert.ok(!revenue.includes(`sum(converted, '${field}')`), `${field} must not be gated on the PO-date rate`);
+  // What the report publishes must cover every PO, not only priced ones.
+  for (const field of ['invoiced_inr', 'received_inr', 'due_now_inr', 'to_bill_inr', 'fx_gain_loss_inr']) {
+    assert.ok(revenue.includes(`sum(pos, '${field}')`), `${field} must not be gated on the PO-date rate`);
   }
+});
+
+test('the invoiced share compares the same POs on both sides', async () => {
+  const { readFileSync } = await import('node:fs');
+  const revenue = readFileSync('src/lib/revenueReport.js', 'utf8');
+  // A PO with no rate on its own date has no PO value but can still have
+  // invoices dated after the rate exists. Dividing those by a PO value that
+  // leaves it out reports more than 100% invoiced.
+  assert.ok(revenue.includes("const invoicedOfPricedPos = sum(converted, 'invoiced_inr');"));
+  assert.ok(revenue.includes('invoiced_rate: ratio(invoicedOfPricedPos, poValue)'));
+  assert.ok(!revenue.includes('invoiced_rate: ratio(invoiced, poValue)'));
 });

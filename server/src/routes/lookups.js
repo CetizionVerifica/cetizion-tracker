@@ -23,7 +23,8 @@ function sectorOptions(used) {
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
-  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations] =
+  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
+         currenciesInUse] =
     await Promise.all([
       query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
@@ -52,6 +53,16 @@ lookupRouter.get('/', async (req, res) => {
       // For linking an enquiry to an existing quotation, and a PO to its won one.
       query(`SELECT quotation_no, client_name, status, project_id
                FROM quotations ORDER BY quotation_date DESC NULLS LAST, quotation_no DESC`),
+      // Currencies actually recorded against something, so Settings can ask
+      // for the rates that are really needed instead of every currency the
+      // dropdown offers.
+      query(`SELECT DISTINCT currency FROM (
+               SELECT currency FROM quotations
+               UNION ALL
+               SELECT currency FROM purchase_orders
+             ) c
+              WHERE currency IS NOT NULL AND currency <> 'INR'
+              ORDER BY 1`),
     ]);
 
   res.json({
@@ -69,7 +80,12 @@ lookupRouter.get('/', async (req, res) => {
       settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
       quotations: quotations.rows,
       won_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && q.project_id),
+      // Won, but not registered as a project yet — what the Projects form can
+      // still claim. won_quotations is the opposite set: already registered,
+      // for linking a PO to its project's order.
+      unregistered_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && !q.project_id),
       enums: STATUS,
+      currencies_in_use: currenciesInUse.rows.map((r) => r.currency),
       limits: { document_max_bytes: config.documentMaxBytes },
     },
   });

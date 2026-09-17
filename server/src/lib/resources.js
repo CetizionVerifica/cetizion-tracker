@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { quoteWonEnquiry } from './enquiries.js';
+import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { STATUS } from './statuses.js';
 
@@ -214,7 +215,12 @@ export const resources = {
       // The column is NOT NULL; a blank form field means not started.
       percent_complete: num({ min: 0, max: 1 }).transform((v) => v ?? 0),
       remarks: str(1000),
+      // Not a column on projects: the link lives on quotations.project_id and
+      // is written by linkProjectQuotation. Declared here so it survives
+      // validation and reaches onSave.
+      quotation_no: str(60),
     }),
+    onSave: linkProjectQuotation,
   },
 
   'purchase-orders': {

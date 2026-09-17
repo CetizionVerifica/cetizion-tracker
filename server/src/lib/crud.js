@@ -94,7 +94,11 @@ function validate(def, body, { partial }) {
       ),
     });
   }
-  return pickWritable(def, parsed.data);
+  // values: only the resource's own columns, for the INSERT/UPDATE.
+  // input:  everything the schema accepted, including fields that belong to a
+  //         related table — a project's won quotation lives on quotations, so
+  //         onSave needs it even though projects has no such column.
+  return { values: pickWritable(def, parsed.data), input: parsed.data };
 }
 
 /**
@@ -192,7 +196,7 @@ export function crudRouter(name, def) {
   });
 
   router.post('/', async (req, res) => {
-    const values = validate(def, req.body, { partial: false });
+    const { values, input } = validate(def, req.body, { partial: false });
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
@@ -221,7 +225,7 @@ export function crudRouter(name, def) {
          RETURNING *`,
         cols.map((c) => values[c])
       );
-      const extra = await def.onSave?.(client, { before: null, after: rows[0] });
+      const extra = await def.onSave?.(client, { before: null, after: rows[0], input });
       return { id: rows[0].id, extra };
     });
 
@@ -234,7 +238,7 @@ export function crudRouter(name, def) {
   });
 
   router.patch('/:id', async (req, res) => {
-    const values = validate(def, req.body, { partial: true });
+    const { values, input } = validate(def, req.body, { partial: true });
 
     // Reference-number guard: the field is immutable after creation.
     // Rules:
@@ -266,7 +270,9 @@ export function crudRouter(name, def) {
     const { id, extra, replacedDocument } = await write(async (client) => {
       const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
       const cols = Object.keys(values);
-      if (!cols.length) throw new ApiError(422, 'Nothing to update');
+      // A resource may accept a field that lives on a related table (a
+      // project's won quotation), so onSave alone is work enough.
+      if (!cols.length && !def.onSave) throw new ApiError(422, 'Nothing to update');
 
       let before = null;
       if (def.onSave) {
@@ -286,7 +292,7 @@ export function crudRouter(name, def) {
         params
       );
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-      const extra = await def.onSave?.(client, { before, after: rows[0] });
+      const extra = await def.onSave?.(client, { before, after: rows[0], input });
       return { id: rows[0].id, extra, replacedDocument };
     });
 

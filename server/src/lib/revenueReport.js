@@ -22,7 +22,7 @@ export const monthLabel = (month) =>
   month ? `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}` : 'No date';
 
 /** The Purchase orders list's payment statuses, most urgent first. */
-export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'];
+export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'];
 
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
 
@@ -112,6 +112,11 @@ export function summarisePurchaseOrders(pos) {
   const poValue = sum(converted, 'po_value_inr');
   const invoiced = sum(pos, 'invoiced_inr');
   const received = sum(pos, 'received_inr');
+  // % invoiced divides one by the other, so both sides must cover the same POs.
+  // PO value is only known where the PO's own date has a rate; a PO missing
+  // that rate can still have invoices dated after it, and counting those
+  // against a PO value of zero pushes the share past 100%.
+  const invoicedOfPricedPos = sum(converted, 'invoiced_inr');
   // A stage billed or paid on a date no rate covers is left out of the INR
   // figures the same way a PO with no rate is, so it is named rather than lost.
   const stagesUnconverted = pos.reduce((n, row) => n + (row.stages_unconverted ?? 0), 0);
@@ -130,7 +135,7 @@ export function summarisePurchaseOrders(pos) {
     // no invoice is real and stays in Received, but counting it here would
     // push the rate above 100%.
     collection_rate: ratio(sum(pos, 'received_invoiced_inr'), invoiced),
-    invoiced_rate: ratio(invoiced, poValue),
+    invoiced_rate: ratio(invoicedOfPricedPos, poValue),
     pos_unconverted: pos.length - converted.length,
     stages_unconverted: stagesUnconverted,
     missing_rates: [...new Set(
@@ -172,7 +177,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
               ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
          FROM quotations q
          ${rateOn('qr', 'q.currency', 'q.quotation_date')}
-        WHERE q.status = 'Won - PO Received' AND ${IN_PERIOD}
+        WHERE q.status = '${QUOTATION_STATUS.won}' AND ${IN_PERIOD}
         ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
       [from, to]
     ),

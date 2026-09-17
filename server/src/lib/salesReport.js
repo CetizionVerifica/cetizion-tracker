@@ -255,7 +255,7 @@ export async function fxReport({ from, to }) {
             string_agg(q.quotation_no, ', ' ORDER BY q.quotation_date, q.quotation_no) AS quotation_nos
        FROM quotations q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
-      WHERE q.status = 'Won - PO Received' AND q.currency <> 'INR' AND ${IN_PERIOD}
+      WHERE q.status = '${QUOTATION_STATUS.won}' AND q.currency <> 'INR' AND ${IN_PERIOD}
       GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate, r.effective_from
       ORDER BY currency, amount DESC, customer`,
     [from, to]

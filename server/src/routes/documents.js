@@ -65,7 +65,14 @@ documentRouter.post('/', receiveFile, async (req, res) => {
   });
   res.status(201).json({ data: document });
 
-  purgeOrphanedDocuments().catch((err) => console.error('[documents] orphan sweep failed', err));
+  // The sweep collects per-document failures rather than throwing, so a
+  // catch alone would never fire: report what it could not remove. The
+  // scheduled documents.purge job records the same result in job_runs.
+  purgeOrphanedDocuments()
+    .then(({ failed }) => {
+      if (failed.length) console.error('[documents] orphan sweep could not remove', failed);
+    })
+    .catch((err) => console.error('[documents] orphan sweep failed', err));
 });
 
 /**

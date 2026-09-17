@@ -43,7 +43,11 @@ export default function PurchaseOrders() {
       name: 'quotation_no',
       label: 'Won quotation',
       type: 'select',
-      options: lookups.won_quotations.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
+      // The server only accepts a won quotation of this PO's own project, so
+      // the list narrows as soon as the project is chosen.
+      options: (values) => lookups.won_quotations
+        .filter((q) => !values.project_id || q.project_id === values.project_id)
+        .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
       hint: 'The order this PO fulfils, on the same project. Left blank, it is linked when the project has one won quotation',
     },
     { name: 'po_date', label: 'PO date', type: 'date', hint: 'Registering the date makes advance stages invoiceable' },
@@ -76,7 +80,7 @@ export default function PurchaseOrders() {
       dateFilterLabel="PO date"
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
-        { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
       ]}
       banner={
         lookups.projects.length === 0 ? (

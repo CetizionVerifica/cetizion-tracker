@@ -294,9 +294,6 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
   const body = parse(splitSchema, req.body || {});
 
   const total = body.stages.reduce((sum, s) => sum + s.stage_percent, 0);
-  if (Math.abs(total - 1) > 0.0001) {
-    throw new ApiError(422, `Stages must add up to 100% — they currently total ${(total * 100).toFixed(1)}%`);
-  }
 
   const { createdIds, removedDocuments } = await transaction(async (client) => {
     const exists = await client.query('SELECT 1 FROM purchase_orders WHERE po_number = $1', [po]);
@@ -311,6 +308,27 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
         [po]
       );
       removedDocuments = removed.map((row) => row.document_id).filter(Boolean);
+    }
+
+    // A stage that has been invoiced or paid is never deleted, so what is left
+    // still accounts for part of the PO. Checking only the incoming stages let
+    // a 50/50 split land beside a paid 50% stage and schedule 150% of the PO.
+    const { rows: [kept] } = await client.query(
+      `SELECT COALESCE(SUM(stage_percent), 0)::float8 AS percent,
+              COALESCE(SUM(stage_percent) FILTER (
+                WHERE invoice_no IS NOT NULL OR amount_received > 0), 0)::float8 AS billed
+         FROM payment_stages WHERE po_number = $1`,
+      [po]
+    );
+    const remaining = 1 - kept.percent;
+    if (Math.abs(total - remaining) > 0.0001) {
+      const pc = (n) => `${(n * 100).toFixed(1)}%`;
+      const why = kept.billed > 0
+        ? `${pc(kept.billed)} of this PO is already invoiced or paid`
+        : `stages already on this PO account for ${pc(kept.percent)}`;
+      throw new ApiError(422, kept.percent > 0
+        ? `${why[0].toUpperCase()}${why.slice(1)}, so the new stages must add up to ${pc(remaining)} — they total ${pc(total)}.`
+        : `Stages must add up to 100% — they currently total ${pc(total)}.`);
     }
 
     const start = await client.query(

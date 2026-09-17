@@ -793,7 +793,7 @@ export function salesReportDocDefinition(data) {
     ),
     subsection(
       'Payment status',
-      'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
+      'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
       reportTable({
         columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
         rows: revenue.payment_status.rows,

@@ -224,7 +224,18 @@ export default function PurchaseOrderDetail() {
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}
-      {dialog?.type === 'split' && <PaymentSplitDialog po={po} onClose={close} onDone={done} />}
+      {dialog?.type === 'split' && (
+        <PaymentSplitDialog
+          po={po}
+          // Invoiced or paid stages are never replaced, so only what is left
+          // can be re-split. The dialog needs to know before the user types.
+          lockedPercent={stages
+            .filter((s) => s.invoice_no || Number(s.amount_received) > 0)
+            .reduce((sum, s) => sum + Number(s.stage_percent || 0), 0)}
+          onClose={close}
+          onDone={done}
+        />
+      )}
 
       {dialog?.type === 'edit' && (
         <RecordForm

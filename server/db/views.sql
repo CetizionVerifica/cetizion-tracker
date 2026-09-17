@@ -368,14 +368,18 @@ SELECT
   st.stages_to_invoice,
   tr.total_travel_cost,
   CASE
+    -- A PO with no stages owes nothing only because nothing has been
+    -- scheduled: saying "Up to date" hides work that needs setting up.
+    WHEN st.stage_count = 0                           THEN 'No stages'
     WHEN st.overdue_stages > 0                        THEN 'Overdue'
     WHEN st.stages_to_invoice > 0                     THEN 'To Invoice'
-    WHEN st.stage_count > 0
-     AND st.paid_stages = st.stage_count              THEN 'Fully Paid'
+    WHEN st.paid_stages = st.stage_count              THEN 'Fully Paid'
     WHEN st.balance_due_now <= 0                      THEN 'Up to date'
     ELSE 'Pending'
   END                                                 AS payment_status,
   CASE
+    WHEN st.stage_count = 0
+      THEN 'Set the payment stages for this PO'
     WHEN st.overdue_stages > 0
       THEN 'FOLLOW UP STRICTLY - ' || st.overdue_stages || ' stage(s) overdue'
     WHEN st.stages_to_invoice > 0
@@ -432,6 +436,7 @@ SELECT
   po.total_received,
   po.balance_due_now,
   po.balance_to_bill,
+  po.currency,
   po.total_travel_cost,
   po.actual_initiation_date,
   po.actual_delivery_date,
@@ -476,6 +481,10 @@ CROSS JOIN LATERAL (
          COALESCE(SUM(balance_due_now), 0),
          COALESCE(SUM(balance_to_bill), 0),
          COALESCE(SUM(total_travel_cost), 0),
+         -- The one currency every PO on this project uses, or NULL when they
+         -- differ: summing across currencies would be meaningless, and
+         -- labelling the sum INR would be wrong.
+         CASE WHEN COUNT(DISTINCT currency) = 1 THEN MIN(currency) END,
          COUNT(*) FILTER (WHERE payment_status = 'Fully Paid'),
          MIN(actual_initiation_date),
          -- delivered only once every PO on the project has a delivery date
@@ -484,7 +493,7 @@ CROSS JOIN LATERAL (
               THEN MAX(actual_delivery_date) END
   FROM v_purchase_orders v WHERE v.project_id = p.project_id
 ) po(po_count, total_contract_value, total_invoiced, total_received,
-     balance_due_now, balance_to_bill, total_travel_cost, fully_paid_pos,
+     balance_due_now, balance_to_bill, total_travel_cost, currency, fully_paid_pos,
      actual_initiation_date, actual_delivery_date)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE status = 'Done'),

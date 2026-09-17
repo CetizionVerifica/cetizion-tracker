@@ -74,7 +74,8 @@ test('payment status lists every status and adds up to the total', () => {
   const pos = [po('2026-09', { payment_status: 'Overdue' }), po('2026-09', { payment_status: 'Fully Paid' }), po('2026-09', { payment_status: 'Fully Paid' })];
   const rows = paymentStatusRows(pos);
   assert.deepEqual(rows.map((r) => r.status), PAYMENT_STATUSES);
-  assert.deepEqual(rows.map((r) => r.pos), [1, 0, 0, 0, 2]);
+  // Overdue, To Invoice, No stages, Pending, Up to date, Fully Paid.
+  assert.deepEqual(rows.map((r) => r.pos), [1, 0, 0, 0, 0, 2]);
   assert.equal(rows.reduce((n, r) => n + r.po_value_inr, 0), summarisePurchaseOrders(pos).po_value_inr);
 
   const withUnknown = paymentStatusRows([...pos, po('2026-09', { payment_status: 'Something new' })]);
