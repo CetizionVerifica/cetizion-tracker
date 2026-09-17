@@ -4,9 +4,11 @@
  * Internal fields (notes, owners, margins, costs, probabilities, tasks) are
  * simply never selected.
  */
-import pdfmake from 'pdfmake';
+import pdfmake from './pdf.js';
 import { query } from '../db.js';
-import { money } from './quotationPdf.js';
+import { money as formatMoney } from './reportFormat.js';
+
+const money = (n, currency = 'INR') => formatMoney(n, currency, { decimals: 2 });
 
 export const SECTIONS = ['projects', 'documents', 'invoices', 'certificates', 'contact'];
 
