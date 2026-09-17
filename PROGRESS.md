@@ -8,7 +8,7 @@ is waiting on a decision. Updated with every pull request. Last update:
 
 The tracker holds the company's quotations, projects, purchase orders, payment
 stages, invoices and travel spend. The team has logged 47 improvement items on
-GitHub. Seven were already fixed by the team, and twenty-five more are now done in five batches. Five are being handled by PavithraCJ and shivam-balyan.
+GitHub. Seven were already fixed by the team, and all thirty planned items are now built, in six batches. What remains needs the lead: server access, accounts with outside services, and three decisions. Five are being handled by PavithraCJ and shivam-balyan.
 Three need a decision from the lead. The remaining 30 are planned in six
 batches below, and Sami is working through them in order.
 
@@ -211,6 +211,36 @@ by client and quarter and a GST sales file in the GSTR-1 format. It works
 today with export files from Zoho Books or Tally; a live connection needs the
 lead to choose the system and share access.
 
+### Batch 6: running it safely (done, checkpoint 6)
+
+**Ask Claude about the tracker (#50).** People can connect Claude to the
+tracker with a personal token and ask about the pipeline, a client's
+history, overdue invoices or their own numbers, from live data. A sales
+person's token sees only their own records. It can add notes and tasks, but
+never delete, change a status or touch money.
+
+**Knowing when something breaks (#38).** Errors are reported with the
+change that caused them and without any client data. Failed jobs, missing
+backups, sign-in attacks, an expiring certificate or a full disk raise an
+alert. A detailed health page and usage metrics are available to staff.
+
+**Security (#34).** Repeated wrong passwords lock the address out and raise an
+alert; weak passwords are refused in production; the browser is told to use
+secure connections only. **The database is currently reachable from the
+internet**; the step-by-step fix is written for the lead, along with how to
+change every password and key.
+
+**Backups (#33).** Scripts take an independent backup, and every week restore
+the newest one into a throwaway database and check it, raising an alert if
+it fails. A drill passed locally. The runbook covers restoring everything or
+just a few lost records.
+
+**Staging (#35).** A safe copy of the tracker for trying things, filled weekly
+with production data in which every client and contact name, email and phone
+is replaced by a fake one. It cannot send email or reach any outside system,
+is password-protected, and says STAGING on every page. The lead creates it in
+Dokploy with the written steps.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -268,3 +298,6 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   tagged; nothing pushed.
 - 2026-09-17: Batch 5 finished (profitability, visit scheduling, webhooks,
   client portal, accounting). Checkpoint 5 tagged; nothing pushed.
+- 2026-09-18: Batch 6 finished (Claude access, monitoring, security,
+  backups, staging). Checkpoint 6 tagged; nothing pushed. Next: full testing,
+  then the move to Next.js (#17).
