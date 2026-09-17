@@ -21,7 +21,7 @@ const requiredStr = (max = 255) =>
   z.preprocess(
     blankToNull,
     z
-      .string({ required_error: 'Required', invalid_type_error: 'Required' })
+      .string({ error: 'Required' })
       .trim()
       .min(1, 'Required')
       .max(max, `Keep this under ${max} characters`)
@@ -44,7 +44,7 @@ const num = ({ min, max } = {}) =>
     const n = typeof cleaned === 'string' ? Number(cleaned.replace(/,/g, '')) : cleaned;
     return Number.isNaN(n) ? cleaned : n;
   }, (() => {
-    let s = z.number({ invalid_type_error: 'Enter a number' });
+    let s = z.number({ error: 'Enter a number' });
     if (min !== undefined) s = s.min(min, `Must be at least ${min}`);
     if (max !== undefined) s = s.max(max, `Must be at most ${max}`);
     return s.nullable().optional();

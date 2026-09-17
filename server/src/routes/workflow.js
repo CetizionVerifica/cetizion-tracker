@@ -39,10 +39,10 @@ const toNumber = (v) => {
 };
 
 const dateStr = z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').nullable().optional());
-const money = z.preprocess(toNumber, z.number({ invalid_type_error: 'Enter an amount' }).min(0).nullable().optional());
+const money = z.preprocess(toNumber, z.number({ error: 'Enter an amount' }).min(0).nullable().optional());
 const requiredMoney = z.preprocess(
   toNumber,
-  z.number({ required_error: 'Enter an amount', invalid_type_error: 'Enter an amount' }).min(0)
+  z.number({ error: 'Enter an amount' }).min(0)
 );
 
 // ---------------------------------------------------------------------
