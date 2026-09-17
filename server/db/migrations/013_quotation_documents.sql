@@ -87,6 +87,17 @@ CREATE TRIGGER quotation_lines_set_updated_at BEFORE UPDATE ON quotation_lines
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- A new quotation takes its validity and terms from Settings when none were typed.
+-- A numeric setting, or the default. views.sql defines the same function;
+-- it is here too because triggers call it, and a database built from this
+-- file alone (as some tests do) must be able to insert rows.
+CREATE OR REPLACE FUNCTION setting_num(p_key text, p_default numeric)
+RETURNS numeric AS $$
+  SELECT COALESCE(
+    (SELECT NULLIF(regexp_replace(value, '[^0-9.\-]', '', 'g'), '')::numeric
+       FROM settings WHERE key = p_key),
+    p_default);
+$$ LANGUAGE sql STABLE;
+
 CREATE OR REPLACE FUNCTION quotation_defaults() RETURNS trigger AS $$
 BEGIN
   IF NEW.valid_until IS NULL AND NEW.quotation_date IS NOT NULL THEN
