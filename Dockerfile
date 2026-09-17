@@ -4,7 +4,7 @@
 # there is one origin, one container and one lock.
 
 # ----------------------------------------------------------- front end ---
-FROM node:22-bookworm-slim AS web
+FROM node:26-bookworm-slim AS web
 WORKDIR /build
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -12,14 +12,14 @@ COPY web/ ./
 RUN npm run build
 
 # ------------------------------------------------- server dependencies ---
-FROM node:22-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 WORKDIR /build
 COPY server/package.json server/package-lock.json ./
 # Production only: vite and supertest have no business in the running image.
 RUN npm ci --omit=dev
 
 # -------------------------------------------------------------- runtime ---
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 # tini as PID 1 so Swarm's SIGTERM reaches node during a rolling update.
 # Also: security updates for the base system, and a current npm (the bundled
