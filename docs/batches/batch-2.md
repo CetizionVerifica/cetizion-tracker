@@ -31,6 +31,30 @@ Merge after batch 1.
 
 Server tests, browser tests, migration check and web build passing at this batch; no conflicts with `main` or the team's open PRs #54 and #55.
 
+## Review round 1 (fixes for the review on #58)
+
+| # | Finding | What changed |
+| --- | --- | --- |
+| 1 | A discount raised after approval was never re-checked; a hand-requested exception switched the check off | The approved discount is stored (`approved_discount_percent`). Going over the threshold and above that level asks again, exceptions included. |
+| 2 | The stage backfill stamped today as every quotation's stage change and close date | The backfill runs with the stage trigger off and takes its dates from the records: last change for the stage and for losses, the PO date for wins. |
+| 3 | Old enquiry statuses worked on save but returned nothing in list filters | A resource can declare `filterAliases`; enquiries map In Progress, Declined and Won - Quotation Sent the same way on reads. |
+| 4 | PO service lines came out 18% high | Lines (before GST) are scaled by the PO value against the quotation total on the same GST basis. |
+| 5 | A card moved back by hand snapped forward on the next write | The trigger reacts only to a send or acceptance made in that write. |
+| 6 | `/revise` read before it locked | It locks first, then reads. |
+| 7 | A rejected quotation could not be sent after revising | A revision starts a new approval round and re-runs the discount check. |
+| 8 | A revised quotation stayed under Sent | Clearing the send or acceptance moves the card back (Sent to Draft, Verbal yes to Negotiation). |
+| 9 | The competitor could not be cleared and survived a reopen | A blank value clears it, and reopening clears it with the lost reason. |
+| 10 | The split dialog dropped a template's names, triggers, credit days and milestones | It keeps them, and the stages endpoint accepts them (and On Milestone), as `/register` does. |
+| 11 | The review PDF named the removed enquiry statuses | It names the current ones. |
+| 12-14 | Cleanups | Unused `with_reason` removed; the Enquiries banner uses the rows already loaded; one pdfmake setup (`lib/pdf.js`); the quotation PDF uses the shared `money()` with two decimals. |
+
+Also:
+- `setting_num()` is defined next to the triggers that call it (schema.sql and migration 013), so a database built from schema.sql alone can insert quotations. main's reference-counter tests need this.
+- zod 4 preparation: `register.js` uses `{ message }`.
+- New tests: `server/test/pipelineRules.test.js` (discount approval, stage trigger, backfill, old-status filters).
+
+Checked: 77 server tests, web build, migration check. A rehearsal merge with main and #71 (renumbered as the review asks) passed all tests; the real merge and renumbering follow once #71 is merged.
+
 ## Rolling back
 
 Revert the merge. Migrations only add tables and columns.
