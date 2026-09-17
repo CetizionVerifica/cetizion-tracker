@@ -33,6 +33,12 @@ Merge after batch 4.
 
 Server tests (including portal isolation, webhooks and accounting), browser tests, migration check and web build passing at this batch; no conflicts with `main` or the team's open PRs #54 and #55.
 
+## Review round 1
+
+- zod 4 preparation: updates to visits, staff and webhook endpoints save only the fields the request sent (`lib/sentFields.js`).
+- The portal statement PDF takes `money()` from `reportFormat.js` and its fonts from the shared `lib/pdf.js`, instead of relying on the quotation PDF module.
+- Carries the batch 2 review fixes (see `batch-2.md`).
+
 ## Rolling back
 
 Revert the merge. Switch off any portal companies and webhook endpoints first.
