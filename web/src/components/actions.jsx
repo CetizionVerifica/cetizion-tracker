@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
-import { invalidateLookups, useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
@@ -61,23 +61,18 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
   const [invoiceNo, setInvoiceNo] = useState(stage.invoice_no || '');
   const [invoiceDate, setInvoiceDate] = useState(stage.invoice_date || today());
   const [document, setDocument] = useState(null);
-  // What each chosen file became once uploaded, so a retry after a failed save
-  // does not send the same file to storage again.
-  const uploads = useRef(new Map());
+  const uploadDocument = useDocumentUploads();
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Invoice recorded' });
 
   const submit = async (e) => {
     e.preventDefault();
     const ok = await run(async () => {
-      if (document && !uploads.current.has(document)) {
-        const { data } = await api.uploadDocument(document, 'payment-stages');
-        uploads.current.set(document, data);
-      }
+      const documentId = document ? await uploadDocument(document, 'payment-stages') : null;
       return api.action(`/payment-stages/${stage.id}/invoice`, {
         invoice_no: invoiceNo,
         invoice_date: invoiceDate,
         // No file chosen keeps the document already attached.
-        document_id: document ? uploads.current.get(document).id : null,
+        document_id: documentId,
       });
     });
     if (ok) onClose();
