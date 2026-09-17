@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { config } from '../config.js';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
@@ -102,7 +103,10 @@ settingsRouter.get('/', async (req, res) => {
   res.json({ data: rows });
 });
 
-settingsRouter.patch('/:key', async (req, res) => {
+// Changing a setting changes what the whole tracker computes — an FX rate
+// re-values every historical deal in every report — so it is an admin act.
+// Reading them stays open: the lists and rates drive forms sales users need.
+settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
   const value = req.body?.value;
   // Rates moved to Settings -> Exchange rates, where each one carries the date
   // it took effect. The old single-value settings are kept for reference only:

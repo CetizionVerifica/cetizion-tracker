@@ -413,6 +413,8 @@ export const resources = {
   },
 
   services: {
+    // A Settings list: admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'services',
     view: null,
     label: 'Service',
@@ -428,6 +430,8 @@ export const resources = {
   },
 
   'travel-vendors': {
+    // A Settings list: admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'travel_vendors',
     view: null,
     label: 'Travel vendor',
@@ -439,6 +443,8 @@ export const resources = {
   },
 
   'expense-categories': {
+    // A Settings list: admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'expense_categories',
     view: null,
     label: 'Expense category',

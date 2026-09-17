@@ -1,4 +1,4 @@
-import { pool } from '../db.js';
+import { pool, withTransaction } from '../db.js';
 import { hashPassword } from './passwords.js';
 
 /**
@@ -112,4 +112,156 @@ export async function createUser(
     [cleanName, cleanEmail, passwordHash, role, active]
   );
   return rows[0];
+}
+
+/**
+ * Serialises every change to "how many active admins exist": the first-admin
+ * bootstrap, and every edit below that could take the last one away.
+ *
+ * Any fixed number, and deliberately the same one for all of them — two
+ * operations that each leave an admin behind can still leave none between
+ * them if they run at once. It only has to differ from the migration
+ * runner's (72_910_001).
+ */
+export const ADMIN_INVARIANT_LOCK_KEY = 72_910_018;
+
+/** An edit that would leave the tracker with nobody able to administer it. */
+export class LastAdminError extends Error {}
+
+/** Somebody already holds that address. */
+export class DuplicateEmailError extends Error {}
+
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * Every user, newest account last, without their hashes. Attribution-only
+ * rows come back exactly as they are — no invented address, no pretending
+ * they could sign in.
+ */
+export async function listUsers(db = pool) {
+  const { rows } = await db.query(
+    `SELECT id, name, email, role, active, last_login_at, created_at, updated_at
+       FROM users ORDER BY active DESC, lower(name), id`
+  );
+  return rows;
+}
+
+/**
+ * Make the change, then refuse to keep it if the tracker is left with
+ * nobody who can administer it.
+ *
+ * Checking first and writing after is the version that does not work: two
+ * admins deactivating each other at the same moment both see a colleague
+ * still standing, and both are right until they commit. Writing first and
+ * asking afterwards — inside the transaction, under the lock — asks the
+ * question about the state that will actually exist.
+ */
+async function refuseIfNoAdminLeft(client) {
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS admins FROM users WHERE role = 'admin' AND active`
+  );
+  if (rows[0].admins === 0) {
+    throw new LastAdminError(
+      'That would leave the tracker with no active admin, and nobody could then ' +
+        'restore one. Give somebody else the admin role first.'
+    );
+  }
+}
+
+/** Run `fn` where it may change who can administer, and hold the invariant. */
+function guardingAdmins(db, fn) {
+  return withTransaction(db, async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_INVARIANT_LOCK_KEY]);
+    const result = await fn(client);
+    await refuseIfNoAdminLeft(client);
+    return result;
+  });
+}
+
+const FIELDS = { name: 'name', email: 'email', role: 'role', active: 'active' };
+
+/**
+ * Change a user's name, email, role or active flag — and nothing else.
+ *
+ * A password is never part of this. Renaming somebody is an everyday edit;
+ * giving them a new password is a different act with different consequences,
+ * and the two sharing a form is how one gets done by accident. See
+ * setUserPassword.
+ *
+ * @throws {LastAdminError} the change would leave nobody administering.
+ * @throws {DuplicateEmailError} somebody else holds that address.
+ */
+export async function updateUser(id, changes, db = pool) {
+  const sets = [];
+  const values = [];
+
+  if (changes.name !== undefined) {
+    const cleanName = normalizeName(changes.name);
+    if (cleanName === '') throw new Error('A user needs a name.');
+    values.push(cleanName);
+    sets.push(`${FIELDS.name} = $${values.length}`);
+  }
+  if (changes.email !== undefined) {
+    values.push(normalizeEmail(changes.email));
+    sets.push(`${FIELDS.email} = $${values.length}`);
+  }
+  if (changes.role !== undefined) {
+    if (!ROLES.includes(changes.role)) throw new Error(`Role must be one of: ${ROLES.join(', ')}.`);
+    values.push(changes.role);
+    sets.push(`${FIELDS.role} = $${values.length}`);
+  }
+  if (changes.active !== undefined) {
+    values.push(Boolean(changes.active));
+    sets.push(`${FIELDS.active} = $${values.length}`);
+  }
+  if (sets.length === 0) throw new Error('Nothing to change.');
+
+  values.push(id);
+  try {
+    return await guardingAdmins(db, async (client) => {
+      const { rows } = await client.query(
+        `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length}
+         RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
+        values
+      );
+      if (!rows.length) return null;
+      return rows[0];
+    });
+  } catch (err) {
+    if (err?.code === UNIQUE_VIOLATION) throw new DuplicateEmailError('Somebody already uses that email address.');
+    throw err;
+  }
+}
+
+/**
+ * Give a user a new password. Deliberately its own function and its own
+ * request: it does not touch the role, the name, or whether the account is
+ * switched on. Setting a password on a switched-off account leaves it
+ * switched off — a password is not permission to sign in.
+ *
+ * The plain password is hashed here and is neither stored, returned nor
+ * logged.
+ */
+export async function setUserPassword(id, password, db = pool) {
+  const hash = await hashPassword(password);
+
+  const { rows } = await db.query(
+    `UPDATE users SET password_hash = $1 WHERE id = $2
+     RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
+    [hash, id]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * The admin-facing create. Wraps createUser with the same invariant lock,
+ * so a new admin arriving cannot interleave with the last one leaving.
+ */
+export async function createUserAsAdmin(input, db = pool) {
+  try {
+    return await guardingAdmins(db, (client) => createUser(input, client));
+  } catch (err) {
+    if (err?.code === UNIQUE_VIOLATION) throw new DuplicateEmailError('Somebody already uses that email address.');
+    throw err;
+  }
 }

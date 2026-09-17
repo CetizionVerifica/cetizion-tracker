@@ -33,3 +33,28 @@ export async function transaction(fn) {
     client.release();
   }
 }
+
+/**
+ * Run `fn` in a transaction on one connection, whether `db` is this pool or
+ * a single client somebody handed in.
+ *
+ * `transaction()` above always takes a fresh connection from the pool.
+ * This one is for code that must also work against a caller's client — a
+ * test's, or a step that is already holding one — because `BEGIN` on a pool
+ * is no promise that the next statement lands on the same connection.
+ */
+export async function withTransaction(db, fn) {
+  const isPool = typeof db.connect === 'function' && typeof db.idleCount === 'number';
+  const client = isPool ? await db.connect() : db;
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    if (isPool) client.release();
+  }
+}

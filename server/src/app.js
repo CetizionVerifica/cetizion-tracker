@@ -18,6 +18,7 @@ import { lookupRouter, settingsRouter } from './routes/lookups.js';
 import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
+import { userRouter } from './routes/users.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import {
@@ -64,6 +65,8 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/import', importRouter);
 app.use('/api/documents', documentRouter);
+// Admin only, at its own router.
+app.use('/api/users', userRouter);
 
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.

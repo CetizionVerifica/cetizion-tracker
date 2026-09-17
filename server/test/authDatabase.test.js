@@ -308,14 +308,29 @@ describe('database mode', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     await clean();
     await makeAdmin();
 
-    for (const body of [
-      { username: 'shared-admin', password: 'the-shared-password-in-env' },
-      { email: 'shared-admin', password: 'the-shared-password-in-env' },
-    ]) {
-      const res = await login(body);
-      assert.equal(res.status, 401, JSON.stringify(body));
-      assert.equal(cookieOf(res), undefined);
-    }
+    // Offered as an email, it is simply a sign-in that fails.
+    const asEmail = await login({ email: 'shared-admin', password: 'the-shared-password-in-env' });
+    assert.equal(asEmail.status, 401);
+    assert.equal(cookieOf(asEmail), undefined);
+
+    // Offered in the old `username` field, it is not even a credential: the
+    // Phase 1B-A alias is gone, so the request is missing its email.
+    const asUsername = await login({ username: 'shared-admin', password: 'the-shared-password-in-env' });
+    assert.equal(asUsername.status, 422, 'username is no longer a name for the email field');
+    assert.ok(asUsername.body.error.fields.email);
+    assert.equal(cookieOf(asUsername), undefined);
+  });
+
+  test('a database sign-in asks for an email, and says so when one is missing', async () => {
+    await clean();
+    const alice = await makeAdmin();
+
+    const res = await login({ email: alice.email, password: PASSWORD });
+    assert.equal(res.status, 200, 'email is the field');
+
+    const noEmail = await login({ username: alice.email, password: PASSWORD });
+    assert.equal(noEmail.status, 422);
+    assert.equal(cookieOf(noEmail), undefined, 'and no session is handed out');
   });
 
   test('a cookie signed for shared mode is refused here, secret or no secret', async () => {
@@ -399,10 +414,22 @@ describe('database mode', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
 
     const me = await request(app).get('/api/auth/me').set('Cookie', cookie);
 
-    assert.deepEqual(Object.keys(me.body.data).sort(), ['email', 'expires_at', 'id', 'name', 'role', 'username']);
+    // No compatibility `username` any more: database users have a real name
+    // and a real email, and the front end now reads those.
+    assert.deepEqual(Object.keys(me.body.data).sort(), ['email', 'expires_at', 'id', 'name', 'role']);
     assert.equal(me.body.data.id, alice.id);
     assert.equal(me.body.data.role, 'admin');
   });
+  test('the public auth config reports database mode and nothing else', async () => {
+    const res = await request(app).get('/api/auth/config');
+
+    assert.equal(res.status, 200, 'readable without signing in');
+    assert.deepEqual(res.body.data, { mode: 'database' });
+    const text = JSON.stringify(res.body);
+    assert.ok(!text.includes('shared-admin'), text);
+    assert.ok(!/secret|password|AUTH_/i.test(text), text);
+  });
+
   // ------------------------------------------------------ a broken database
   // Last, because it breaks the schema this suite runs on.
 

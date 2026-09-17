@@ -1,6 +1,6 @@
-import { pool } from '../db.js';
+import { pool, withTransaction } from '../db.js';
 import { passwordProblem } from '../lib/passwords.js';
-import { createUser, findActiveAdmin, findUserByEmail, normalizeEmail } from '../lib/users.js';
+import { ADMIN_INVARIANT_LOCK_KEY, createUser, findActiveAdmin, findUserByEmail, normalizeEmail } from '../lib/users.js';
 
 /**
  * The FIRST admin in the users table, and only ever the first.
@@ -59,17 +59,11 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const UNIQUE_VIOLATION = '23505';
 
-/**
- * Serialises bootstrapping across every process on this database. Any fixed
- * number; it only has to differ from the migration runner's (72_910_001).
- *
- * Reading "is there an admin?" and then inserting one is two steps, and two
- * containers starting together would otherwise both read "no" and both
- * write — and because their configured addresses can differ, no unique
- * index would catch the second. The lock is taken for the transaction and
- * released when it ends, so a crash cannot leave it held.
- */
-const BOOTSTRAP_LOCK_KEY = 72_910_018;
+// Serialises every change to "how many active admins exist" — this, and
+// the Users API's last-admin guard. Reading "is there an admin?" and then
+// writing one is two steps, and two containers starting together would
+// otherwise both read "no" and both write; because their configured
+// addresses can differ, no unique index would catch the second.
 
 /**
  * A configuration that cannot be used — the only fatal kind of problem
@@ -125,27 +119,6 @@ export function readBootstrapConfig(env = process.env) {
 }
 
 /**
- * Run `fn` in a transaction on one connection, whether `db` is the pool or
- * a single client. A pool cannot be used directly: `BEGIN` on a pool gives
- * no promise that the next statement lands on the same connection.
- */
-async function inTransaction(db, fn) {
-  const isPool = typeof db.connect === 'function' && typeof db.idleCount === 'number';
-  const client = isPool ? await db.connect() : db;
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    if (isPool) client.release();
-  }
-}
-
-/**
  * Create the first admin, if one is configured and the tracker has none.
  *
  * @returns {{status: 'skipped'|'exists'|'created'|'conflict', reason?: string, id?: number}}
@@ -166,9 +139,9 @@ export async function bootstrapAdmin({
     return { status: 'skipped' };
   }
 
-  return inTransaction(db, async (client) => {
+  return withTransaction(db, async (client) => {
     // Everything below reads and then writes; hold the lock across both.
-    await client.query('SELECT pg_advisory_xact_lock($1)', [BOOTSTRAP_LOCK_KEY]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_INVARIANT_LOCK_KEY]);
 
     const [admin, holder] = await Promise.all([
       findActiveAdmin(client),

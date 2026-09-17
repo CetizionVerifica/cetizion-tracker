@@ -18,23 +18,15 @@ const sharedCredentials = z.object({
 });
 
 /**
- * Database mode signs in with an email address.
- *
- * `username` is accepted as a second name for the same field, on purpose
- * and only for now: the sign-in form still posts `username`, and Phase
- * 1B-A is not allowed to change it. Without the alias the database mode
- * could not be exercised through the real app at all before the form is
- * rewritten, which is precisely the thing worth testing first. Phase 1B-B
- * replaces the form and this alias goes with it.
+ * Database mode signs in with an email address. Phase 1B-A accepted
+ * `username` as a second name for this field so the old form could reach
+ * it; the form now posts `email`, and the alias is gone — one field, one
+ * name, no guessing which the caller meant.
  */
-const databaseCredentials = z
-  .object({
-    email: z.string().trim().optional(),
-    username: z.string().trim().optional(),
-    password: z.string().min(1, 'Enter the password'),
-  })
-  .transform((body) => ({ email: body.email || body.username || '', password: body.password }))
-  .refine((body) => body.email !== '', { message: 'Enter the email address', path: ['email'] });
+const databaseCredentials = z.object({
+  email: z.string().trim().min(1, 'Enter the email address'),
+  password: z.string().min(1, 'Enter the password'),
+});
 
 // Only failed attempts count, so an open tab refreshing its session all day
 // never locks the one person who is allowed in. Keyed on the caller's
@@ -83,9 +75,6 @@ const databaseBody = (user, expiresAt) => ({
   name: user.name,
   email: user.email,
   role: user.role,
-  // The sidebar has read `username` since the first release and Phase 1B-A
-  // does not touch the front end; it goes when that screen is rewritten.
-  username: user.name,
   expires_at: new Date(expiresAt).toISOString(),
 });
 
@@ -142,6 +131,19 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   const token = signSession(payload, authConfig.sessionSecret);
   res.cookie(authConfig.cookieName, token, { ...cookieOptions(), maxAge: authConfig.sessionTtlMs });
   res.json({ data: body });
+});
+
+/**
+ * Which field the sign-in form should ask for. Public on purpose — it is
+ * read before anybody is signed in, and it is the one thing the form
+ * cannot work out for itself.
+ *
+ * The mode and nothing else. Not AUTH_USERNAME, not the bootstrap address,
+ * not the password policy: an unauthenticated caller learns only which
+ * question they will be asked, which they would learn from the form anyway.
+ */
+authRouter.get('/config', (req, res) => {
+  res.json({ data: { mode: authConfig.mode } });
 });
 
 authRouter.post('/logout', (req, res) => {
