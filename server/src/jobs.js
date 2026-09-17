@@ -4,6 +4,7 @@
  * same however it was started. Every run is recorded in job_runs.
  */
 import { query } from './db.js';
+import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
 
 export const JOBS = {
@@ -16,6 +17,22 @@ export const JOBS = {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',
     cron: '30 8 * * 1-5',
     run: (opts) => runFinanceDigest(opts),
+  },
+  // A purge that could not reach Cloudinary leaves the row marked and tries
+  // again here. Without a schedule the only retry was the next upload, so on
+  // a quiet system the file and its row stayed for good.
+  'documents.purge': {
+    description: 'Finish interrupted document removals and clear uploads whose form was never saved',
+    cron: '0 3 * * *',           // overnight, when nobody is uploading
+    run: async () => {
+      const result = await purgeOrphanedDocuments();
+      // Nothing removed and everything refused: the run is a failure, or a
+      // permanently stuck document is retried nightly and never surfaces.
+      if (result.found > 0 && result.purged === 0) {
+        throw new Error(`every document refused: ${JSON.stringify(result.failed).slice(0, 500)}`);
+      }
+      return result;
+    },
   },
 };
 

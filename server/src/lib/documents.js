@@ -189,5 +189,17 @@ export async function purgeOrphanedDocuments() {
       WHERE d.purging_at IS NOT NULL
          OR (d.created_at < now() - interval '1 day' AND ${UNATTACHED})`
   );
-  for (const { id } of rows) await purgeDocument(id);
+  // One document Cloudinary still refuses must not stop the rest, and the
+  // scheduled run records this result, so the failures are counted not thrown.
+  let purged = 0;
+  const failed = [];
+  for (const { id } of rows) {
+    try {
+      await purgeDocument(id);
+      purged += 1;
+    } catch (err) {
+      failed.push({ id, error: err.message });
+    }
+  }
+  return { found: rows.length, purged, failed };
 }

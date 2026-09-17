@@ -94,6 +94,7 @@ export default function PurchaseOrderDetail() {
           <Stat label="PO value" value={money(po.po_value, po.currency)} meta={`${number(po.service_count)} service line(s)`} tone="brand" />
           <Stat label="Invoiced" value={money(po.total_invoiced, po.currency)} meta={`${money(po.total_received, po.currency)} received`} />
           <Stat label="Due now" value={money(po.balance_due_now, po.currency)} tone={po.balance_due_now > 0 ? 'warn' : 'ok'} meta={po.payment_status} />
+          <Stat label="To bill" value={money(po.balance_to_bill, po.currency)} tone={po.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
           <Stat label="Overdue stages" value={number(po.overdue_stages)} tone={po.overdue_stages > 0 ? 'danger' : 'ok'} meta={`${po.stages_to_invoice} to invoice`} />
           <Stat label="Travel cost" value={money(po.total_travel_cost)} meta={`${travel.length} trip(s)`} />
         </div>
@@ -223,7 +224,18 @@ export default function PurchaseOrderDetail() {
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}
-      {dialog?.type === 'split' && <PaymentSplitDialog po={po} onClose={close} onDone={done} />}
+      {dialog?.type === 'split' && (
+        <PaymentSplitDialog
+          po={po}
+          // Invoiced or paid stages are never replaced, so only what is left
+          // can be re-split. The dialog needs to know before the user types.
+          lockedPercent={stages
+            .filter((s) => s.invoice_no || Number(s.amount_received) > 0)
+            .reduce((sum, s) => sum + Number(s.stage_percent || 0), 0)}
+          onClose={close}
+          onDone={done}
+        />
+      )}
 
       {dialog?.type === 'edit' && (
         <RecordForm

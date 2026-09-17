@@ -29,16 +29,38 @@ export const IN_PERIOD = inPeriod('quotation_date');
 
 const UP_TO_END = `COALESCE($2::date IS NULL OR quotation_date <= $2::date, false)`;
 
-// INR per unit of each currency: 1 for INR, the fx_rate_<CUR> setting for the
-// rest. A blank or unusable setting gives a null rate, never a guessed one.
+// Every dated rate, plus INR at 1 from the beginning of time. A currency with
+// no row at all never appears, which gives a null rate through the lookup
+// below — never a guessed one.
 export const RATES = `rates AS (
-  SELECT 'INR'::text AS currency, 1::numeric AS rate
+  SELECT 'INR'::text AS currency, 1::numeric AS rate, '0001-01-01'::date AS effective_from
   UNION ALL
-  SELECT substr(key, 9),
-         CASE WHEN btrim(value) ~ '^[0-9]+(\\.[0-9]+)?$' THEN NULLIF(btrim(value)::numeric, 0) END
-    FROM settings
-   WHERE key LIKE 'fx\\_rate\\_%'
+  SELECT from_currency, rate, effective_from
+    FROM exchange_rates
+   WHERE to_currency = 'INR'
 )`;
+
+/**
+ * The rate in force on a record's own date: the newest row dated on or before
+ * it. A quotation joins on its quotation date, a PO on its PO date, an invoice
+ * on its invoice date and a payment on its payment date, so every figure is
+ * converted at the rate that applied when it happened.
+ *
+ * A record with no date has nothing to look up, so it falls back to today's
+ * rate — the same value it converted at before rates were dated. Undated
+ * records are already reported as a data gap in their own right.
+ *
+ * Used as a LEFT JOIN LATERAL: a currency with no rate covering that date
+ * yields rate NULL, and the amount is reported unconverted exactly as a
+ * missing rate is today.
+ */
+export const rateOn = (alias, currency, date) => `LEFT JOIN LATERAL (
+  SELECT rate, effective_from FROM rates
+     WHERE currency = ${currency}
+       AND effective_from <= COALESCE(${date}, CURRENT_DATE)
+     ORDER BY effective_from DESC
+     LIMIT 1
+  ) ${alias} ON true`;
 
 /** Won value per currency as [{ currency, amount }] — never summed across currencies. */
 const amountsFor = (table, key, outerKey) => `
@@ -47,6 +69,16 @@ const amountsFor = (table, key, outerKey) => `
                     ORDER BY a.currency <> 'INR', a.currency)
       FROM ${table} a
      WHERE a.${key} IS NOT DISTINCT FROM ${outerKey}
+  ), '[]'::json)`;
+
+/** The rates a row's INR value was built from, as [{ currency, rate, effective_from }]. */
+const ratesUsedFor = (table, key, outerKey) => `
+  COALESCE((
+    SELECT json_agg(json_build_object('currency', u.currency, 'rate', u.rate,
+                                      'effective_from', u.effective_from)
+                    ORDER BY u.currency, u.effective_from)
+      FROM ${table} u
+     WHERE u.${key} IS NOT DISTINCT FROM ${outerKey}
   ), '[]'::json)`;
 
 const byCurrency = (a, b) => (a === 'INR' ? -1 : b === 'INR' ? 1 : a.localeCompare(b));
@@ -93,14 +125,16 @@ function sumAmounts(lists) {
  */
 export async function sectorReport({ from, to }) {
   const { rows } = await query(
-    `WITH q AS (
+    `WITH ${RATES},
+     q AS (
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
               NULLIF(btrim(sector), '')         AS sector,
               ${nameKey('client_name')}          AS client_key,
               status = '${QUOTATION_STATUS.won}'       AS is_won,
               status = '${QUOTATION_STATUS.lost}'                    AS is_lost,
               quotation_value,
-              currency
+              currency,
+              quotation_date
          FROM quotations
         WHERE ${IN_PERIOD}
      ),
@@ -136,6 +170,26 @@ export async function sectorReport({ from, to }) {
          FROM q
         WHERE is_won AND quotation_value IS NOT NULL
         GROUP BY 1, 2
+     ),
+     converted AS (
+       SELECT q.sector_key, SUM(q.quotation_value * r.rate) FILTER (WHERE is_won) AS won_value_inr
+         FROM q
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
+        GROUP BY q.sector_key
+     ),
+     unconverted AS (
+       SELECT q.sector_key, q.currency, SUM(q.quotation_value) AS amount
+         FROM q
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
+        WHERE is_won AND q.quotation_value IS NOT NULL AND r.rate IS NULL
+        GROUP BY 1, 2
+     ),
+     rates_used AS (
+       SELECT q.sector_key, q.currency, r.rate, r.effective_from
+         FROM q
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
+        WHERE is_won AND q.currency <> 'INR' AND r.rate IS NOT NULL
+        GROUP BY 1, 2, 3, 4
      )
      SELECT COALESCE(s.sector, 'Not set')                              AS sector,
             s.sector_key IS NULL                                       AS not_set,
@@ -146,10 +200,14 @@ export async function sectorReport({ from, to }) {
             COALESCE(qu.customers, 0)::int                             AS customers,
             COALESCE(qu.pos_without_value, 0)::int                     AS pos_without_value,
             COALESCE(qu.fx_deals, 0)::int                              AS fx_deals,
-            ${amountsFor('by_currency', 'sector_key', 's.sector_key')} AS amounts
+            ROUND(COALESCE(co.won_value_inr, 0), 2)                    AS won_value_inr,
+            ${amountsFor('by_currency', 'sector_key', 's.sector_key')}  AS amounts,
+            ${amountsFor('unconverted', 'sector_key', 's.sector_key')}  AS unconverted,
+            ${ratesUsedFor('rates_used', 'sector_key', 's.sector_key')}  AS rate_details
        FROM sectors s
        LEFT JOIN quoted qu   ON qu.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN enquired en ON en.sector_key IS NOT DISTINCT FROM s.sector_key
+       LEFT JOIN converted co ON co.sector_key IS NOT DISTINCT FROM s.sector_key
       ORDER BY s.sector_key IS NULL, pos DESC, pipeline DESC, enquiries DESC, sector`,
     [from, to]
   );
@@ -170,6 +228,8 @@ export async function sectorReport({ from, to }) {
       sectors: rows.filter((row) => !row.not_set && row.pos > 0).length,
       pos_without_sector: rows.find((row) => row.not_set)?.pos ?? 0,
       amounts: sumAmounts(rows.map((row) => row.amounts)),
+      won_value_inr: Math.round(total('won_value_inr') * 100) / 100,
+      unconverted: sumAmounts(rows.map((row) => row.unconverted)),
     },
   };
 }
@@ -190,12 +250,13 @@ export async function fxReport({ from, to }) {
             COUNT(*) FILTER (WHERE q.quotation_value IS NULL)::int                  AS deals_without_value,
             COALESCE(SUM(q.quotation_value), 0)                                     AS amount,
             r.rate,
+            r.effective_from                                                        AS rate_effective_from,
             ROUND(COALESCE(SUM(q.quotation_value), 0) * r.rate, 2)                  AS amount_inr,
             string_agg(q.quotation_no, ', ' ORDER BY q.quotation_date, q.quotation_no) AS quotation_nos
        FROM quotations q
-       LEFT JOIN rates r ON r.currency = q.currency
+       ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE q.status = '${QUOTATION_STATUS.won}' AND q.currency <> 'INR' AND ${IN_PERIOD}
-      GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate
+      GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate, r.effective_from
       ORDER BY currency, amount DESC, customer`,
     [from, to]
   );
@@ -234,6 +295,7 @@ export async function customerReport({ from, to }) {
               status = '${QUOTATION_STATUS.lost}'              AS is_lost,
               quotation_value,
               currency,
+              quotation_date,
               ${IN_PERIOD}                 AS in_period,
               ${UP_TO_END}                 AS up_to_end
          FROM quotations
@@ -262,15 +324,22 @@ export async function customerReport({ from, to }) {
               COUNT(*) FILTER (WHERE in_period AND is_won AND quotation_value IS NULL)    AS pos_without_value,
               SUM(q.quotation_value * r.rate) FILTER (WHERE in_period AND is_won)         AS won_value_inr
          FROM q
-         LEFT JOIN rates r ON r.currency = q.currency
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
         GROUP BY q.client_key
      ),
      unconverted AS (
        SELECT q.client_key, q.currency, SUM(q.quotation_value) AS amount
          FROM q
-         LEFT JOIN rates r ON r.currency = q.currency
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
         WHERE in_period AND is_won AND q.quotation_value IS NOT NULL AND r.rate IS NULL
         GROUP BY 1, 2
+     ),
+     rates_used AS (
+       SELECT q.client_key, q.currency, r.rate, r.effective_from
+         FROM q
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
+        WHERE in_period AND is_won AND q.currency <> 'INR' AND r.rate IS NOT NULL
+        GROUP BY 1, 2, 3, 4
      )
      SELECT c.client,
             COALESCE(en.enquiries, 0)::int                                  AS enquiries,
@@ -280,7 +349,8 @@ export async function customerReport({ from, to }) {
             GREATEST(COALESCE(qu.pos_to_date, 0) - 1, 0)::int               AS repeat_orders,
             COALESCE(qu.pos_without_value, 0)::int                          AS pos_without_value,
             ROUND(COALESCE(qu.won_value_inr, 0), 2)                         AS won_value_inr,
-            ${amountsFor('unconverted', 'client_key', 'c.client_key')}      AS unconverted
+            ${amountsFor('unconverted', 'client_key', 'c.client_key')}      AS unconverted,
+            ${ratesUsedFor('rates_used', 'client_key', 'c.client_key')}      AS rate_details
        FROM clients c
        LEFT JOIN quoted qu   ON qu.client_key = c.client_key
        LEFT JOIN enquired en ON en.client_key = c.client_key

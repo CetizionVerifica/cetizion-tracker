@@ -24,18 +24,6 @@ const joinNames = (names) => (names.length <= 1 ? names.join('') : `${names.slic
 
 export const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
 
-/** Amounts in several currencies as INR at the given rates; what has no rate stays apart. */
-export function inrValue(list, rates) {
-  let inr = 0;
-  const unconverted = [];
-  for (const a of list) {
-    const rate = rates[a.currency];
-    if (rate) inr += a.amount * rate;
-    else unconverted.push(a);
-  }
-  return { won_value_inr: r2(inr), unconverted };
-}
-
 // ------------------------------------------------------------ 1. volume
 export function enquiryAnalysis(enquiries, today) {
   const t = enquiries.total;
@@ -103,7 +91,7 @@ export function quotationStatusAnalysis(quotes) {
   if (t.open) {
     let text = `${plural(t.open, 'quotation')} ${is(t.open)} still open`;
     if (t.open_without_value === t.open) {
-      text += `, but ${t.open === 1 ? 'it has' : 'none has'} a value entered, so the pipeline cannot be valued.`;
+      text += `, but ${t.open === 1 ? 'it has no' : 'none has a'} value entered, so the pipeline cannot be valued.`;
     } else {
       text += `, worth ${compactInr(t.open_value_inr)}${t.open_unconverted.length ? ` plus ${amounts(t.open_unconverted)}` : ''}`;
       text += t.open_without_value
@@ -363,7 +351,7 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
       `${plural(undatedPos.length, 'purchase order')} ${has(undatedPos.length)} no PO date, so ${undatedPos.length === 1 ? 'it is' : 'they are'} left out of the revenue figures: ${undatedPos.join(', ')}.`);
   }
   if (missingRates.length) {
-    add('Set the exchange rates', `No rate is set in Settings for ${missingRates.join(', ')}, so those amounts are left out of every INR figure and shown separately.`);
+    add('Set the exchange rates', `No rate covers the dates of the ${missingRates.join(', ')} amounts in this report, so they are left out of every INR figure and shown separately. Add each one under Settings -> Exchange rates, dated from when it applied.`);
   }
   if (gaps.undated_quotations || gaps.undated_enquiries) {
     const parts = [

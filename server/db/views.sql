@@ -61,6 +61,8 @@ SELECT
   d.days_overdue,
   d.invoiced_amount,
   d.due_now_amount,
+  d.to_bill_amount,
+  d.received_on_invoiced,
   CASE s.stage_status
     WHEN 'To Invoice'     THEN 'FINANCE: raise ' || ps.stage_name || ' invoice'
     WHEN 'Overdue'        THEN 'FOLLOW UP STRICTLY - ' || ps.stage_name
@@ -108,9 +110,18 @@ CROSS JOIN LATERAL (
   SELECT CASE WHEN s.stage_status = 'Overdue'
               THEN CURRENT_DATE - b.invoice_due_date ELSE 0 END,
          CASE WHEN ps.invoice_no IS NOT NULL THEN b.amount ELSE 0 END,
-         CASE WHEN b.due_to_invoice
-              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END
-) d(days_overdue, invoiced_amount, due_now_amount);
+         -- Due now is what is owed on an invoice that has been raised, so the
+         -- figure reads exactly as it is defined: invoiced - received.
+         CASE WHEN ps.invoice_no IS NOT NULL
+              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END,
+         -- Still to be billed: the trigger has happened but no invoice exists.
+         -- Money to chase, but not money anyone has been asked for yet.
+         CASE WHEN b.due_to_invoice AND ps.invoice_no IS NULL
+              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END,
+         -- Only collections against an invoice, so received / invoiced is a
+         -- real collection rate and cannot exceed 100%.
+         CASE WHEN ps.invoice_no IS NOT NULL THEN ps.amount_received ELSE 0 END
+) d(days_overdue, invoiced_amount, due_now_amount, to_bill_amount, received_on_invoiced);
 
 -- ---------------------------------------------------------------------
 -- Travel vendor invoices
@@ -351,18 +362,24 @@ SELECT
   st.total_invoiced,
   st.total_received,
   st.balance_due_now,
+  st.balance_to_bill,
+  st.total_received_invoiced,
   st.overdue_stages,
   st.stages_to_invoice,
   tr.total_travel_cost,
   CASE
+    -- A PO with no stages owes nothing only because nothing has been
+    -- scheduled: saying "Up to date" hides work that needs setting up.
+    WHEN st.stage_count = 0                           THEN 'No stages'
     WHEN st.overdue_stages > 0                        THEN 'Overdue'
     WHEN st.stages_to_invoice > 0                     THEN 'To Invoice'
-    WHEN st.stage_count > 0
-     AND st.paid_stages = st.stage_count              THEN 'Fully Paid'
+    WHEN st.paid_stages = st.stage_count              THEN 'Fully Paid'
     WHEN st.balance_due_now <= 0                      THEN 'Up to date'
     ELSE 'Pending'
   END                                                 AS payment_status,
   CASE
+    WHEN st.stage_count = 0
+      THEN 'Set the payment stages for this PO'
     WHEN st.overdue_stages > 0
       THEN 'FOLLOW UP STRICTLY - ' || st.overdue_stages || ' stage(s) overdue'
     WHEN st.stages_to_invoice > 0
@@ -381,12 +398,15 @@ CROSS JOIN LATERAL (
          COALESCE(SUM(invoiced_amount), 0),
          COALESCE(SUM(amount_received), 0),
          COALESCE(SUM(due_now_amount), 0),
+         COALESCE(SUM(to_bill_amount), 0),
+         COALESCE(SUM(received_on_invoiced), 0),
          COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
          COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
          COUNT(*) FILTER (WHERE stage_status = 'Paid')
   FROM v_payment_stages ps WHERE ps.po_number = po.po_number
 ) st(stage_count, stages_percent_total, total_invoiced, total_received,
-     balance_due_now, overdue_stages, stages_to_invoice, paid_stages)
+     balance_due_now, balance_to_bill, total_received_invoiced,
+     overdue_stages, stages_to_invoice, paid_stages)
 CROSS JOIN LATERAL (
   SELECT COALESCE(SUM(total_travel_cost), 0)
   FROM v_travel_logs tl WHERE tl.po_number = po.po_number
@@ -415,6 +435,8 @@ SELECT
   po.total_invoiced,
   po.total_received,
   po.balance_due_now,
+  po.balance_to_bill,
+  po.currency,
   po.total_travel_cost,
   po.actual_initiation_date,
   po.actual_delivery_date,
@@ -436,6 +458,9 @@ SELECT
     WHEN st.stages_to_invoice > 0              THEN 'Invoicing pending'
     WHEN po.po_count > 0
      AND po.fully_paid_pos = po.po_count       THEN 'Fully Paid'
+    -- POs exist but none has a payment schedule: nothing is owed only because
+    -- nothing has been scheduled, the same as on the PO itself.
+    WHEN po.po_count > 0 AND st.stage_count = 0 THEN 'No stages'
     WHEN po.balance_due_now <= 0               THEN 'Up to date'
     ELSE 'Pending'
   END                                                       AS payment_status,
@@ -457,7 +482,12 @@ CROSS JOIN LATERAL (
          COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),
          COALESCE(SUM(balance_due_now), 0),
+         COALESCE(SUM(balance_to_bill), 0),
          COALESCE(SUM(total_travel_cost), 0),
+         -- The one currency every PO on this project uses, or NULL when they
+         -- differ: summing across currencies would be meaningless, and
+         -- labelling the sum INR would be wrong.
+         CASE WHEN COUNT(DISTINCT currency) = 1 THEN MIN(currency) END,
          COUNT(*) FILTER (WHERE payment_status = 'Fully Paid'),
          MIN(actual_initiation_date),
          -- delivered only once every PO on the project has a delivery date
@@ -466,7 +496,7 @@ CROSS JOIN LATERAL (
               THEN MAX(actual_delivery_date) END
   FROM v_purchase_orders v WHERE v.project_id = p.project_id
 ) po(po_count, total_contract_value, total_invoiced, total_received,
-     balance_due_now, total_travel_cost, fully_paid_pos,
+     balance_due_now, balance_to_bill, total_travel_cost, currency, fully_paid_pos,
      actual_initiation_date, actual_delivery_date)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE status = 'Done'),
@@ -477,9 +507,10 @@ CROSS JOIN LATERAL (
 ) ob(onboarding_done, onboarding_total, onboarding_percent)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
-         COUNT(*) FILTER (WHERE stage_status = 'To Invoice')
+         COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
+         COUNT(*)
   FROM v_payment_stages ps WHERE ps.project_id = p.project_id
-) st(overdue_stages, stages_to_invoice);
+) st(overdue_stages, stages_to_invoice, stage_count);
 
 -- ---------------------------------------------------------------------
 -- Quotations — the four "reflected" columns sales sees without
@@ -529,7 +560,7 @@ LEFT JOIN documents doc ON doc.id = q.document_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),
-         COALESCE(SUM(balance_due_now), 0),
+         COALESCE(SUM(balance_due_now), 0) + COALESCE(SUM(balance_to_bill), 0),
          COUNT(*) FILTER (WHERE payment_status = 'Overdue'),
          COUNT(*) FILTER (WHERE payment_status = 'To Invoice')
   FROM v_purchase_orders v WHERE v.project_id = q.project_id

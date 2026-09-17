@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
@@ -40,6 +40,18 @@ export function ListPage({
   // Arriving from a dashboard tile pre-selects the matching filter, so the
   // dropdown shows why the list is short.
   const [filterValues, setFilterValues] = useState(() => initialFilters || {});
+
+  // Those props come from the URL, and this screen stays mounted when the URL
+  // changes under it — a second tile, or another ?q= link. Without this the
+  // address bar would say one thing and the table show another. Compared by
+  // value, so a filter the user picked by hand is left alone.
+  const initialFiltersKey = JSON.stringify(initialFilters || {});
+  useEffect(() => {
+    setFilterValues(JSON.parse(initialFiltersKey));
+  }, [initialFiltersKey]);
+  useEffect(() => {
+    setSearch(initialSearch || '');
+  }, [initialSearch]);
   const [editing, setEditing] = useState(null); // record | 'new' | null
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(false);

@@ -13,7 +13,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 DROP TABLE IF EXISTS email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
-  travel_vendors, services, settings, documents CASCADE;
+  travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -26,13 +26,48 @@ CREATE TABLE settings (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- INR for 1 unit of each currency, for the sales report. Blank until set.
+-- Retired: rates now live in exchange_rates below, with the date each one
+-- took effect. These rows are read-only and kept only for reference.
 INSERT INTO settings (key, value, notes) VALUES
-  ('fx_rate_EUR', '', 'INR for 1 EUR. Used to show FX deals in INR on the sales report.'),
-  ('fx_rate_USD', '', 'INR for 1 USD. Used to show FX deals in INR on the sales report.'),
-  ('fx_rate_GBP', '', 'INR for 1 GBP. Used to show FX deals in INR on the sales report.'),
-  ('fx_rate_AED', '', 'INR for 1 AED. Used to show FX deals in INR on the sales report.'),
-  ('fx_rate_SGD', '', 'INR for 1 SGD. Used to show FX deals in INR on the sales report.');
+  ('fx_rate_EUR', '', 'Replaced by Settings -> Exchange rates. Read-only; kept only for reference.'),
+  ('fx_rate_USD', '', 'Replaced by Settings -> Exchange rates. Read-only; kept only for reference.'),
+  ('fx_rate_GBP', '', 'Replaced by Settings -> Exchange rates. Read-only; kept only for reference.'),
+  ('fx_rate_AED', '', 'Replaced by Settings -> Exchange rates. Read-only; kept only for reference.'),
+  ('fx_rate_SGD', '', 'Replaced by Settings -> Exchange rates. Read-only; kept only for reference.');
+
+-- Dated exchange rates. Every report converts with the rate in force on the
+-- record's own date, so last year's figures do not move when a rate changes.
+-- The fx_rate_* settings above are read-only and kept only for reference.
+CREATE TABLE exchange_rates (
+  id             serial PRIMARY KEY,
+  from_currency  text NOT NULL,
+  to_currency    text NOT NULL DEFAULT 'INR' CHECK (to_currency = 'INR'),
+  rate           numeric(18,6) NOT NULL CHECK (rate > 0),
+  effective_from date NOT NULL,
+  source         text NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','feed')),
+  entered_by     text,
+  note           text,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  -- One rate per currency per day. A correction replaces that day's row.
+  UNIQUE (from_currency, to_currency, effective_from)
+);
+
+-- The lookup every report makes: newest row on or before a given date.
+CREATE INDEX exchange_rates_lookup_idx
+  ON exchange_rates (from_currency, to_currency, effective_from DESC);
+
+-- How far each reference series has got. A counter only ever goes up, so a
+-- number that has been issued is never reissued once its record is deleted.
+-- Empty on a fresh database; claimNextId also takes in the highest reference
+-- already present, so a seeded or imported database numbers on from there.
+CREATE TABLE sequence_counters (
+  kind       text NOT NULL,
+  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$'),
+  last_n     int  NOT NULL DEFAULT 0 CHECK (last_n >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, year)
+);
 
 CREATE TABLE services (
   id       serial PRIMARY KEY,
@@ -387,7 +422,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
-      'travel_vendor_invoices','employee_expense_claims','settings']
+      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
+      'sequence_counters']
   LOOP
     EXECUTE format(
       'CREATE TRIGGER %I_set_updated_at BEFORE UPDATE ON %I

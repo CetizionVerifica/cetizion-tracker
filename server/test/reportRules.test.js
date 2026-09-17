@@ -13,6 +13,8 @@ import { reportPeriod } from '../src/lib/salesReport.js';
 const po = (month, extra = {}) => ({
   month, currency: 'INR', rate: 1, payment_status: 'Pending',
   po_value_inr: 1000, invoiced_inr: 500, received_inr: 200, due_now_inr: 300,
+  // Everything received here is against an invoice, and nothing is left to bill.
+  received_invoiced_inr: 200, to_bill_inr: 0,
   ...extra,
 });
 /** A won quotation row. */
@@ -44,7 +46,7 @@ test('undated rows get their own row instead of emptying the month list', () => 
 });
 
 test('collection rate is received ÷ invoiced, and invoiced % is invoiced ÷ PO value', () => {
-  const s = summarisePurchaseOrders([po('2026-09'), po('2026-09', { po_value_inr: 3000, invoiced_inr: 1500, received_inr: 1500, due_now_inr: 0 })]);
+  const s = summarisePurchaseOrders([po('2026-09'), po('2026-09', { po_value_inr: 3000, invoiced_inr: 1500, received_inr: 1500, received_invoiced_inr: 1500, due_now_inr: 0 })]);
   assert.equal(s.po_value_inr, 4000);
   assert.equal(s.invoiced_inr, 2000);
   assert.equal(s.received_inr, 1700);
@@ -72,7 +74,8 @@ test('payment status lists every status and adds up to the total', () => {
   const pos = [po('2026-09', { payment_status: 'Overdue' }), po('2026-09', { payment_status: 'Fully Paid' }), po('2026-09', { payment_status: 'Fully Paid' })];
   const rows = paymentStatusRows(pos);
   assert.deepEqual(rows.map((r) => r.status), PAYMENT_STATUSES);
-  assert.deepEqual(rows.map((r) => r.pos), [1, 0, 0, 0, 2]);
+  // Overdue, To Invoice, No stages, Pending, Up to date, Fully Paid.
+  assert.deepEqual(rows.map((r) => r.pos), [1, 0, 0, 0, 0, 2]);
   assert.equal(rows.reduce((n, r) => n + r.po_value_inr, 0), summarisePurchaseOrders(pos).po_value_inr);
 
   const withUnknown = paymentStatusRows([...pos, po('2026-09', { payment_status: 'Something new' })]);

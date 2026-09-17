@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { quoteWonEnquiry } from './enquiries.js';
+import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { STATUS } from './statuses.js';
 
@@ -214,7 +215,12 @@ export const resources = {
       // The column is NOT NULL; a blank form field means not started.
       percent_complete: num({ min: 0, max: 1 }).transform((v) => v ?? 0),
       remarks: str(1000),
+      // Not a column on projects: the link lives on quotations.project_id and
+      // is written by linkProjectQuotation. Declared here so it survives
+      // validation and reaches onSave.
+      quotation_no: str(60),
     }),
+    onSave: linkProjectQuotation,
   },
 
   'purchase-orders': {
@@ -441,6 +447,32 @@ export const resources = {
     filters: ['active'],
     columns: ['name', 'active'],
     schema: z.object({ name: requiredStr(160), active: bool() }),
+  },
+
+  // INR for one unit of a currency, from a given date. Reports convert every
+  // figure at the rate in force on that record's own date, so entering a new
+  // rate never changes what an older quotation, PO or invoice was worth.
+  'exchange-rates': {
+    table: 'exchange_rates',
+    view: null,
+    label: 'Exchange rate',
+    defaultSort: 'from_currency, effective_from DESC',
+    search: ['from_currency', 'note'],
+    filters: ['from_currency', 'source'],
+    dateFilter: 'effective_from',
+    columns: ['from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    schema: z.object({
+      from_currency: enumOf(STATUS.currency.filter((c) => c !== 'INR')),
+      // INR is the only target: every report figure is an INR figure.
+      to_currency: z.literal('INR').default('INR'),
+      // numeric(18,6) holds 12 digits before the point; anything larger is a
+      // typo, and letting it through turns a bad rate into a 500.
+      rate: num({ min: 0.000001, max: 1000000 }).refine((v) => v !== null && v !== undefined, 'Required'),
+      effective_from: date().refine((v) => v !== null && v !== undefined, 'Required'),
+      source: enumOf(['manual', 'feed']).default('manual'),
+      entered_by: str(120),
+      note: str(300),
+    }),
   },
 };
 

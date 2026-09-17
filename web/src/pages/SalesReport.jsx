@@ -23,11 +23,16 @@ function Amounts({ list }) {
   return list.map((a) => money(a.amount, a.currency)).join(' · ');
 }
 
+/** Which rate, and the date it took effect, behind a converted figure. */
+const rateTitle = (details = []) => (details.length
+  ? ['Converted at:', ...details.map((d) => `${d.currency}: ₹${d.rate} from ${d.effective_from}`)].join('\n')
+  : undefined);
+
 /** INR value, flagging anything left out of it so the total is never quietly short. */
-function InrValue({ value, unconverted, withoutValue }) {
+function InrValue({ value, unconverted, withoutValue, rateDetails }) {
   return (
     <>
-      {money(value, 'INR')}
+      <span title={rateTitle(rateDetails)}>{money(value, 'INR')}</span>
       {unconverted?.length > 0 && (
         <div className="small" style={{ color: 'var(--warn-fg)' }}>
           + <Amounts list={unconverted} /> (rate not set)
@@ -54,7 +59,7 @@ const CLIENT_COLUMNS = [
     key: 'won_value_inr',
     header: 'Won value (INR)',
     align: 'right',
-    render: (row) => <InrValue value={row.won_value_inr} unconverted={row.unconverted} withoutValue={row.pos_without_value} />,
+    render: (row) => <InrValue value={row.won_value_inr} unconverted={row.unconverted} withoutValue={row.pos_without_value} rateDetails={row.rate_details} />,
   },
   { key: 'repeat_orders', header: 'Repeat orders', align: 'right' },
 ];
@@ -66,7 +71,7 @@ function ClientTotals({ label, s }) {
       <td className="num">{number(s.enquiries)}</td>
       <td className="num">{number(s.pos)}</td>
       <td className="num">{percent(s.win_rate)}</td>
-      <td className="num"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} /></td>
+      <td className="num"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} rateDetails={s.rate_details} /></td>
       <td className="num">{number(s.repeat_orders)}</td>
     </>
   );
@@ -159,9 +164,9 @@ export default function SalesReport() {
           <>
             {fx.summary.missing_rates.length > 0 && (
               <Alert tone="warning">
-                No exchange rate is set for <strong>{fx.summary.missing_rates.join(', ')}</strong>, so those deals are
+                No exchange rate covers the date of some <strong>{fx.summary.missing_rates.join(', ')}</strong> deals, so those are
                 left out of the INR values and shown next to them instead.{' '}
-                <Link to="/settings">Set the rate in Settings</Link> (INR for 1 unit).
+                <Link to="/settings">Add the rate in Settings</Link> (INR for 1 unit, from the date it applied).
               </Alert>
             )}
 
@@ -237,7 +242,7 @@ export default function SalesReport() {
 
             <Card
               title="FX deals"
-              hint="Won POs billed in a currency other than INR · INR value = won value × the rate set in Settings"
+              hint="Won POs billed in a currency other than INR · INR value = won value × the rate in force on the quotation date"
               flush
               actions={<CsvButton report="fx" params={params} disabled={!fx.rows.length} />}
             >
@@ -264,16 +269,25 @@ export default function SalesReport() {
                   },
                   {
                     key: 'rate',
-                    header: 'Rate',
+                    header: 'Rate used',
                     align: 'right',
                     render: (row) =>
-                      row.rate === null ? <Link to="/settings">Not set</Link> : `₹${row.rate} / ${row.currency}`,
+                      row.rate === null
+                        ? <Link to="/settings">Not set</Link>
+                        : (
+                          <>
+                            ₹{row.rate} / {row.currency}
+                            <div className="small muted">from {row.rate_effective_from}</div>
+                          </>
+                        ),
                   },
                   {
                     key: 'amount_inr',
                     header: 'Won value (INR)',
                     align: 'right',
-                    render: (row) => (row.amount_inr === null ? <span className="muted">Rate not set</span> : money(row.amount_inr, 'INR')),
+                    render: (row) => (row.amount_inr === null
+                      ? <span className="muted">Rate not set</span>
+                      : <span title={rateTitle([{ currency: row.currency, rate: row.rate, effective_from: row.rate_effective_from }])}>{money(row.amount_inr, 'INR')}</span>),
                   },
                 ]}
                 rows={fx.rows}
@@ -297,7 +311,7 @@ export default function SalesReport() {
 
             <Card
               title="Repeat clients"
-              hint="2 or more won POs up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the Settings rate · Repeat orders = won POs after the first"
+              hint="2 or more won POs up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the rate in force on each quotation date · Repeat orders = won POs after the first"
               flush
               actions={<CsvButton report="customers" params={params} disabled={!customers.rows.length} />}
             >
@@ -329,7 +343,7 @@ export default function SalesReport() {
                   { key: 'clients', header: 'Clients', align: 'right' },
                   ...CLIENT_COLUMNS.slice(1).map((col) =>
                     col.key === 'won_value_inr'
-                      ? { ...col, render: (row) => <InrValue value={row.won_value_inr} unconverted={row.unconverted} withoutValue={row.pos_without_value} /> }
+                      ? { ...col, render: (row) => <InrValue value={row.won_value_inr} unconverted={row.unconverted} withoutValue={row.pos_without_value} rateDetails={row.rate_details} /> }
                       : col
                   ),
                 ]}

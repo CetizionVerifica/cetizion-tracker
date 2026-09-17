@@ -167,7 +167,7 @@ export function RecordForm({
           {fields.map((field) => (
             <div key={field.name} className={field.span === 'all' ? 'span-all' : field.span === 2 ? 'span-2' : ''}>
               <FormField
-                field={field}
+                field={resolveOptions(field, values)}
                 value={values[field.name]}
                 error={errors[field.name]}
                 onChange={(v) => set(field.name, v)}
@@ -183,6 +183,18 @@ export function RecordForm({
       </form>
     </Modal>
   );
+}
+
+/**
+ * A field may declare `options` as a function of the values entered so far,
+ * for a choice that depends on another answer — the won quotations of the
+ * project just picked, say. Offering options the server would reject is worse
+ * than offering none, so they are narrowed here rather than in every page.
+ */
+function resolveOptions(field, values) {
+  return typeof field.options === 'function'
+    ? { ...field, options: field.options(values) }
+    : field;
 }
 
 function FormField({ field, value, error, onChange, record, file, onFile, preview, isEdit }) {

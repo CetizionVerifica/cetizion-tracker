@@ -30,6 +30,7 @@ export default function PurchaseOrders() {
     { key: 'total_invoiced', header: 'Invoiced', align: 'right', render: (r) => money(r.total_invoiced, r.currency) },
     { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received, r.currency) },
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
+    { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? money(r.balance_to_bill, r.currency) : <span className="muted">—</span>) },
     { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
     { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
     { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
@@ -42,7 +43,11 @@ export default function PurchaseOrders() {
       name: 'quotation_no',
       label: 'Won quotation',
       type: 'select',
-      options: lookups.won_quotations.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
+      // The server only accepts a won quotation of this PO's own project, so
+      // the list narrows as soon as the project is chosen.
+      options: (values) => lookups.won_quotations
+        .filter((q) => !values.project_id || q.project_id === values.project_id)
+        .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
       hint: 'The order this PO fulfils, on the same project. Left blank, it is linked when the project has one won quotation',
     },
     { name: 'po_date', label: 'PO date', type: 'date', hint: 'Registering the date makes advance stages invoiceable' },
@@ -75,7 +80,7 @@ export default function PurchaseOrders() {
       dateFilterLabel="PO date"
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
-        { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
       ]}
       banner={
         lookups.projects.length === 0 ? (

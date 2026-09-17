@@ -94,7 +94,11 @@ function validate(def, body, { partial }) {
       ),
     });
   }
-  return pickWritable(def, parsed.data);
+  // values: only the resource's own columns, for the INSERT/UPDATE.
+  // input:  everything the schema accepted, including fields that belong to a
+  //         related table — a project's won quotation lives on quotations, so
+  //         onSave needs it even though projects has no such column.
+  return { values: pickWritable(def, parsed.data), input: parsed.data };
 }
 
 /**
@@ -160,7 +164,7 @@ export function crudRouter(name, def) {
   const readFrom = def.view || def.table;
 
   // A save with follow-on work runs in one transaction: whatever an
-  // onSave(client, { before, after }) hook writes, a document attached under
+  // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
   // the record or not at all.
   const write = (fn) => (def.onSave || def.hasDocument || def.autoId ? transaction(fn) : fn({ query }));
@@ -192,7 +196,7 @@ export function crudRouter(name, def) {
   });
 
   router.post('/', async (req, res) => {
-    const values = validate(def, req.body, { partial: false });
+    const { values, input } = validate(def, req.body, { partial: false });
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
@@ -221,7 +225,7 @@ export function crudRouter(name, def) {
          RETURNING *`,
         cols.map((c) => values[c])
       );
-      const extra = await def.onSave?.(client, { before: null, after: rows[0] });
+      const extra = await def.onSave?.(client, { before: null, after: rows[0], input });
       return { id: rows[0].id, extra };
     });
 
@@ -234,7 +238,7 @@ export function crudRouter(name, def) {
   });
 
   router.patch('/:id', async (req, res) => {
-    const values = validate(def, req.body, { partial: true });
+    const { values, input } = validate(def, req.body, { partial: true });
 
     // Reference-number guard: the field is immutable after creation.
     // Rules:
@@ -266,7 +270,15 @@ export function crudRouter(name, def) {
     const { id, extra, replacedDocument } = await write(async (client) => {
       const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
       const cols = Object.keys(values);
-      if (!cols.length) throw new ApiError(422, 'Nothing to update');
+      // A resource may accept a field that lives on a related table (a
+      // project's won quotation), so a save with no column of its own is still
+      // work — but only if something was actually sent. An empty body is not.
+      //
+      // With no columns to write, onSave gets the unchanged row as BOTH before
+      // and after: a hook comparing the two correctly sees no change, but it
+      // must not assume they are distinct objects.
+      const linksOnly = def.onSave && Object.keys(input).length > 0;
+      if (!cols.length && !linksOnly) throw new ApiError(422, 'Nothing to update');
 
       let before = null;
       if (def.onSave) {
@@ -278,15 +290,23 @@ export function crudRouter(name, def) {
         ));
       }
 
-      const params = cols.map((c) => values[c]);
-      const pred = idPredicate(def, req.params.id, params);
-      const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
-      const { rows } = await client.query(
-        `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
-        params
-      );
+      // Nothing of this resource's own to write — only a related table, such
+      // as the quotation a project registers. `UPDATE ... SET WHERE` is not
+      // valid SQL, so use the row onSave already locked above.
+      let rows;
+      if (cols.length) {
+        const params = cols.map((c) => values[c]);
+        const pred = idPredicate(def, req.params.id, params);
+        const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
+        ({ rows } = await client.query(
+          `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
+          params
+        ));
+      } else {
+        rows = before ? [before] : [];
+      }
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-      const extra = await def.onSave?.(client, { before, after: rows[0] });
+      const extra = await def.onSave?.(client, { before, after: rows[0], input });
       return { id: rows[0].id, extra, replacedDocument };
     });
 
@@ -317,7 +337,18 @@ export function crudRouter(name, def) {
       await client.query(`DELETE FROM ${ident(def.table)} WHERE id = $1`, [target.id]);
       return [def.hasDocument ? target.document_id : null, ...cascaded].filter(Boolean);
     };
-    const documents = def.hasDocument || def.cascadeDocuments ? await transaction(remove) : await remove({ query });
+    let documents = [];
+    if (def.hasDocument || def.cascadeDocuments) {
+      documents = await transaction(remove);
+    } else {
+      const params = [];
+      const pred = idPredicate(def, req.params.id, params);
+      const { rows } = await query(
+        `DELETE FROM ${ident(def.table)} WHERE ${pred} RETURNING id`,
+        params
+      );
+      if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    }
 
     // Files leave Cloudinary only once the delete is committed.
     for (const documentId of documents) await purgeAfterCommit(documentId);

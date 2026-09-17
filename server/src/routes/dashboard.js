@@ -24,20 +24,30 @@ dashboardRouter.get('/overview', async (req, res) => {
                  AND project_id IS NULL)::int                      AS won_without_project
       FROM v_quotations`),
     query(`
+      -- Every amount here is labelled in rupees on the Overview, so only INR
+      -- stages are summed — the same rule the quotation figures above use.
+      -- Adding a dollar stage to a rupee one would make the tile meaningless.
+      -- Counts still cover every currency: a USD invoice is just as overdue.
       SELECT
-        COALESCE(SUM(invoiced_amount), 0)                          AS invoiced,
-        COALESCE(SUM(amount_received), 0)                          AS received,
-        COALESCE(SUM(due_now_amount), 0)                           AS outstanding,
+        COALESCE(SUM(invoiced_amount) FILTER (WHERE currency = 'INR'), 0)   AS invoiced,
+        COALESCE(SUM(amount_received) FILTER (WHERE currency = 'INR'), 0)   AS received,
+        -- due_now is now strictly what is owed on invoices raised, so the
+        -- money still to be billed has to be added back or this tile silently
+        -- drops it. v_quotations.outstanding is defined the same way.
+        COALESCE(SUM(due_now_amount + to_bill_amount) FILTER (WHERE currency = 'INR'), 0) AS outstanding,
         COUNT(*) FILTER (WHERE stage_status = 'To Invoice')::int    AS to_invoice,
         COUNT(*) FILTER (WHERE stage_status = 'Overdue')::int       AS overdue,
-        COALESCE(SUM(due_now_amount) FILTER (WHERE stage_status = 'Overdue'), 0) AS overdue_amount,
-        COALESCE(SUM(stage_amount) FILTER (WHERE stage_status = 'To Invoice'), 0) AS to_invoice_amount
+        COALESCE(SUM(due_now_amount) FILTER (WHERE stage_status = 'Overdue' AND currency = 'INR'), 0) AS overdue_amount,
+        COALESCE(SUM(stage_amount) FILTER (WHERE stage_status = 'To Invoice' AND currency = 'INR'), 0) AS to_invoice_amount
       FROM v_payment_stages`),
     query(`
       SELECT
         COUNT(*)::int                                              AS projects,
         COALESCE(SUM(po_count), 0)::int                            AS purchase_orders,
-        COALESCE(SUM(total_contract_value), 0)                     AS contract_value,
+        -- Labelled in rupees, so INR projects only — a EUR project summed in
+        -- here would be counted as though its value were rupees. v_projects
+        -- exposes currency, and it is null when a project's POs disagree.
+        COALESCE(SUM(total_contract_value) FILTER (WHERE currency = 'INR'), 0) AS contract_value,
         COALESCE(AVG(onboarding_percent) FILTER (WHERE onboarding_total > 0), 0) AS avg_onboarding,
         COUNT(*) FILTER (WHERE payment_status = 'Overdue')::int    AS projects_overdue,
         COUNT(*) FILTER (WHERE follow_up_action LIKE 'Delivery overdue%')::int AS delivery_overdue
@@ -58,7 +68,7 @@ dashboardRouter.get('/overview', async (req, res) => {
            WHERE status IN ('Approved - to reimburse','Partly reimbursed')) AS claims_to_pay_amount`),
     query(`
       SELECT project_stage AS label, COUNT(*)::int AS count,
-             COALESCE(SUM(total_contract_value), 0) AS value
+             COALESCE(SUM(total_contract_value) FILTER (WHERE currency = 'INR'), 0) AS value
       FROM v_projects GROUP BY 1 ORDER BY 1`),
     query(`
       SELECT service_quoted AS label, COUNT(*)::int AS count,

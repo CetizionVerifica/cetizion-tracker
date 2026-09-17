@@ -29,8 +29,50 @@ export const sequenceColumn = (kind) => SEQUENCES[kind].column;
  * business year (existing behaviour for all normal creates).
  */
 export async function claimNextId(kind, client, year) {
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [SEQUENCES[kind].column]);
-  return nextId(kind, client, year);
+  const spec = SEQUENCES[kind];
+  const { prefix, width, resolvedYear } = seriesFor(kind, year);
+
+  // The counter only ever goes up, so a reference that has been issued is
+  // never handed out again, even once its record is deleted.
+  //
+  // GREATEST also takes in any reference typed in by hand: the form lets
+  // someone enter a historical number, and that must not be reissued either.
+  const { rows: [counter] } = await client.query(
+    `INSERT INTO sequence_counters (kind, year, last_n)
+     VALUES ($1, $2, GREATEST(1, $3::int + 1))
+     ON CONFLICT (kind, year) DO UPDATE
+        SET last_n = GREATEST(sequence_counters.last_n, EXCLUDED.last_n - 1) + 1
+      RETURNING last_n`,
+    [kind, resolvedYear, await highestExisting(spec, prefix, client)]
+  );
+  return `${prefix}${String(counter.last_n).padStart(width, '0')}`;
+}
+
+/** The prefix, number width and year a series uses for a given year. */
+function seriesFor(kind, year) {
+  const spec = SEQUENCES[kind];
+  // Use the explicitly requested year, or fall back to the business's current
+  // year. On 1 January before 05:30 IST the server's UTC clock still says last
+  // year, so businessToday() is always used rather than new Date().
+  const resolvedYear = year ?? businessToday().slice(0, 4);
+  return {
+    resolvedYear,
+    prefix: spec.pattern.replace('{year}', resolvedYear).replace(/\{n:\d+\}$/, ''),
+    width: Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3),
+  };
+}
+
+/** The highest number the series has actually reached in its table. */
+async function highestExisting(spec, prefix, client) {
+  const { rows } = await client.query(
+    `SELECT ${spec.column} AS value FROM ${spec.table} WHERE ${spec.column} LIKE $1`,
+    [`${prefix}%`]
+  );
+  return rows.reduce((max, r) => {
+    const tail = String(r.value).slice(prefix.length);
+    const n = /^\d+$/.test(tail) ? Number(tail) : 0;
+    return Math.max(max, n);
+  }, 0);
 }
 
 /**
@@ -42,23 +84,15 @@ export async function claimNextId(kind, client, year) {
  */
 export async function nextId(kind, client = { query }, year) {
   const spec = SEQUENCES[kind];
-  // Use the explicitly requested year, or fall back to the business's current year.
-  // On 1 January before 05:30 IST the server's UTC clock still says last year,
-  // so businessToday() is always used rather than new Date().getFullYear().
-  const resolvedYear = year ?? businessToday().slice(0, 4);
-  const prefix = spec.pattern.replace('{year}', resolvedYear).replace(/\{n:\d+\}$/, '');
-  const width = Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3);
+  const { prefix, width, resolvedYear } = seriesFor(kind, year);
 
-  const { rows } = await client.query(
-    `SELECT ${spec.column} AS value FROM ${spec.table} WHERE ${spec.column} LIKE $1`,
-    [`${prefix}%`]
+  // A preview for the form ("leave blank to assign CTZ/QT/2026/064"), so it
+  // reads the counter without moving it. Whichever is higher wins, the same
+  // way claimNextId decides, so the preview matches what a save would take.
+  const { rows: [counter] } = await client.query(
+    'SELECT last_n FROM sequence_counters WHERE kind = $1 AND year = $2',
+    [kind, resolvedYear]
   );
-
-  const highest = rows.reduce((max, r) => {
-    const tail = String(r.value).slice(prefix.length);
-    const n = /^\d+$/.test(tail) ? Number(tail) : 0;
-    return Math.max(max, n);
-  }, 0);
-
+  const highest = Math.max(counter?.last_n ?? 0, await highestExisting(spec, prefix, client));
   return `${prefix}${String(highest + 1).padStart(width, '0')}`;
 }
