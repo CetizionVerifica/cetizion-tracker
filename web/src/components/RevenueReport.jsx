@@ -6,7 +6,12 @@ import { useFetch } from '../lib/hooks.js';
 import { money, number, percent, today } from '../lib/format.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const inr = (value) => (value === null || value === undefined ? <span className="muted">—</span> : money(value, 'INR'));
+const rateTitle = (details = []) => details.length
+  ? details.map((item) => `${item.currency}: ₹${item.rate} from ${item.effective_from}`).join('\n')
+  : undefined;
+const inr = (value, details) => (value === null || value === undefined
+  ? <span className="muted">—</span>
+  : <span title={rateTitle(details)}>{money(value, 'INR')}</span>);
 const warn = { color: 'var(--warn-fg)' };
 
 const lastDay = (year, month) => String(new Date(Date.UTC(year, Number(month), 0)).getUTCDate()).padStart(2, '0');
@@ -19,7 +24,7 @@ function CsvButton({ report, params, disabled }) {
 function Intake({ row }) {
   return (
     <>
-      {inr(row.order_intake_inr)}
+      {inr(row.order_intake_inr, row.rate_details)}
       {row.order_unconverted.length > 0 && (
         <div className="small" style={warn}>
           + {row.order_unconverted.map((a) => money(a.amount, a.currency)).join(' · ')} (rate not set)
@@ -30,11 +35,30 @@ function Intake({ row }) {
   );
 }
 
+/**
+ * What the currency itself gained or lost between billing and collection:
+ * the amount received times the difference between the rate on the payment
+ * date and the rate on the invoice date. Always zero on INR POs.
+ */
+function GainLoss({ row }) {
+  const value = row.fx_gain_loss_inr;
+  if (!value) return <span className="muted">—</span>;
+  const tone = value > 0 ? { color: 'var(--ok-fg)' } : warn;
+  return (
+    <span style={tone} title="Received × (rate on the payment date − rate on the invoice date)">
+      {value > 0 ? '+' : '−'}{money(Math.abs(value), 'INR')}
+    </span>
+  );
+}
+
 function PoCount({ row }) {
   return (
     <>
       {number(row.pos)}
       {row.pos_unconverted > 0 && <div className="small" style={warn}>{row.pos_unconverted} rate not set</div>}
+      {row.stages_unconverted > 0 && (
+        <div className="small" style={warn}>{row.stages_unconverted} stage{row.stages_unconverted === 1 ? '' : 's'} with no rate on their date</div>
+      )}
     </>
   );
 }
@@ -43,15 +67,17 @@ const ORDER_COLUMNS = [
   { key: 'label', header: 'Month', className: 'strong' },
   { key: 'orders_won', header: 'Orders won', align: 'right' },
   { key: 'order_intake_inr', header: 'Order intake (INR)', align: 'right', render: (row) => <Intake row={row} /> },
-  { key: 'average_deal_inr', header: 'Average deal (INR)', align: 'right', render: (row) => inr(row.average_deal_inr) },
+  { key: 'average_deal_inr', header: 'Average deal (INR)', align: 'right', render: (row) => inr(row.average_deal_inr, row.rate_details) },
 ];
 
 const PO_MONEY_COLUMNS = [
   { key: 'pos', header: 'POs', align: 'right', render: (row) => <PoCount row={row} /> },
-  { key: 'po_value_inr', header: 'PO value (INR)', align: 'right', render: (row) => inr(row.po_value_inr) },
-  { key: 'invoiced_inr', header: 'Invoiced (INR)', align: 'right', render: (row) => inr(row.invoiced_inr) },
-  { key: 'received_inr', header: 'Received (INR)', align: 'right', render: (row) => inr(row.received_inr) },
-  { key: 'due_now_inr', header: 'Due now (INR)', align: 'right', render: (row) => inr(row.due_now_inr) },
+  { key: 'po_value_inr', header: 'PO value (INR)', align: 'right', render: (row) => inr(row.po_value_inr, row.rate_details) },
+  { key: 'invoiced_inr', header: 'Invoiced (INR)', align: 'right', render: (row) => inr(row.invoiced_inr, row.invoice_rate_details) },
+  { key: 'received_inr', header: 'Received (INR)', align: 'right', render: (row) => inr(row.received_inr, row.payment_rate_details) },
+  { key: 'due_now_inr', header: 'Due now (INR)', align: 'right', render: (row) => inr(row.due_now_inr, row.invoice_rate_details) },
+  { key: 'to_bill_inr', header: 'To bill (INR)', align: 'right', render: (row) => inr(row.to_bill_inr, row.invoice_rate_details) },
+  { key: 'fx_gain_loss_inr', header: 'FX gain / loss', align: 'right', render: (row) => <GainLoss row={row} /> },
 ];
 
 const INVOICING_COLUMNS = [{ key: 'label', header: 'Month', className: 'strong' }, ...PO_MONEY_COLUMNS];
@@ -136,8 +162,8 @@ export function RevenueReport({ onChange }) {
         <>
           {missingRates.length > 0 && (
             <Alert tone="warning">
-              No exchange rate is set for <strong>{missingRates.join(', ')}</strong>, so those amounts are left out of the INR
-              figures. <Link to="/settings">Set the rate in Settings</Link>.
+              No exchange rate covers the dates of some <strong>{missingRates.join(', ')}</strong> amounts, so those are left out of the
+              INR figures. <Link to="/settings">Add the rate in Settings</Link>, dated from when it applied.
             </Alert>
           )}
           {report.undated_pos.length > 0 && (
@@ -158,7 +184,7 @@ export function RevenueReport({ onChange }) {
 
           <Card
             title={`Order intake by month · ${periodLabel}`}
-            hint="Quotations marked Won - PO Received, by quotation date · Average deal = order intake ÷ orders with a value · Click a month to show only that month"
+            hint="Quotations marked Won - PO Received, by quotation date · converted at the rate in force on the quotation date · Average deal = order intake ÷ orders with a value · Click a month to show only that month"
             flush
             actions={<CsvButton report="orders" params={period} disabled={!report.orders.total.orders_won} />}
           >
@@ -172,7 +198,7 @@ export function RevenueReport({ onChange }) {
 
           <Card
             title={`Invoicing & collections by month · ${periodLabel}`}
-            hint="Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received"
+            hint="Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received, on invoices actually raised · To bill = due to be invoiced but not yet billed · each stage converted at the rate on its own invoice or payment date · FX gain / loss = what the currency moved between the two"
             flush
             actions={<CsvButton report="invoicing" params={period} disabled={!report.invoicing.total.pos} />}
           >

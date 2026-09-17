@@ -79,7 +79,16 @@ Two of the six planned sales reports, built on the existing `quotations` table
 - **Invoicing & collections** and **Payment status** list every purchase order by its
   **PO date**, with PO value, Invoiced, Received, Due now and payment status exactly as on
   the Purchase orders page, so their totals match that list (FX POs converted to INR).
-  **Due now** = Invoiced − Received. **Collection rate** = Received ÷ Invoiced.
+  **Due now** = Invoiced − Received, counting only invoices that have actually
+  been raised. Work that is due to be invoiced but has no invoice yet is
+  reported separately as **To bill**, so Due now never overstates what anyone
+  has been asked to pay. **Collection rate** = received against invoices ÷
+  Invoiced, so it cannot exceed 100%.
+
+  Each amount is converted at the rate in force on its own date — the invoice
+  date for Invoiced and Due now, the payment date for Received — so in INR
+  those figures differ by the currency movement between billing and
+  collection, reported in its own right as **FX gain / loss**.
   **Invoiced % of PO** = Invoiced ÷ PO value.
 - **PDF enquiry volume:** counts come only from the Enquiries page, by enquiry date: In Progress,
   Declined, and Won - Quotation Sent ("quotation sent").

@@ -345,6 +345,28 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .toolbar .select { width: auto; min-width: 130px; }
 
+.rate-chart {
+  border-bottom: 1px solid var(--ink-200);
+  background: var(--white);
+}
+.rate-chart__head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px 8px;
+}
+.rate-chart__head strong { font-size: 13px; font-weight: 650; }
+.rate-chart__head .small { display: block; margin-top: 2px; }
+.rate-chart__head .select { width: auto; min-width: 92px; }
+.rate-chart__svg {
+  display: block; width: 100%; height: auto;
+  padding: 2px 18px 10px;
+}
+.rate-chart .chart-label {
+  fill: var(--ink-500);
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 /* ---------------------------------------------------------------- modal */
 
 .overlay {

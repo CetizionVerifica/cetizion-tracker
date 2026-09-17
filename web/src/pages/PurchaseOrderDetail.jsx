@@ -94,6 +94,7 @@ export default function PurchaseOrderDetail() {
           <Stat label="PO value" value={money(po.po_value, po.currency)} meta={`${number(po.service_count)} service line(s)`} tone="brand" />
           <Stat label="Invoiced" value={money(po.total_invoiced, po.currency)} meta={`${money(po.total_received, po.currency)} received`} />
           <Stat label="Due now" value={money(po.balance_due_now, po.currency)} tone={po.balance_due_now > 0 ? 'warn' : 'ok'} meta={po.payment_status} />
+          <Stat label="To bill" value={money(po.balance_to_bill, po.currency)} tone={po.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
           <Stat label="Overdue stages" value={number(po.overdue_stages)} tone={po.overdue_stages > 0 ? 'danger' : 'ok'} meta={`${po.stages_to_invoice} to invoice`} />
           <Stat label="Travel cost" value={money(po.total_travel_cost)} meta={`${travel.length} trip(s)`} />
         </div>

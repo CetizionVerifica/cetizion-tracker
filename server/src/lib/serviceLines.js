@@ -7,7 +7,7 @@
 
 export const SERVICE_LINES = [
   { name: 'EcoVadis', pattern: /eco\s*vadis/i },
-  { name: 'ISO certification & management systems', pattern: /\biso\b|\bsa\s*8000\b/i },
+  { name: 'ISO certification & management systems', pattern: /\biso(?![a-z])|\bsa\s*8000\b/i },
   {
     name: 'ASI / Copper Mark / LME',
     pattern: /\basi\b|copper\s*mark|\blme\b|chain\s+of\s+custody|\bcoc\b|\bjdd\b|responsible\s+sourcing/i,

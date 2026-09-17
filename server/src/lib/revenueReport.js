@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
@@ -26,6 +26,28 @@ export const PAYMENT_STATUSES = ['Overdue', 'To Invoice', 'Pending', 'Up to date
 const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, field) => r2(list.reduce((total, row) => total + row[field], 0));
 const ratio = (part, whole) => (whole ? part / whole : null);
+
+const rateKey = (d) => `${d.currency}:${d.rate}:${d.effective_from}`;
+
+/** The PO-date rates behind po_value, deduplicated. */
+function rateDetails(rows) {
+  return [...new Map(rows
+    .filter((row) => row.currency !== 'INR' && row.rate !== null)
+    .map((row) => [`${row.currency}:${row.rate}:${row.rate_effective_from}`, {
+      currency: row.currency, rate: row.rate, effective_from: row.rate_effective_from,
+    }]))
+    .values()];
+}
+
+/**
+ * The stage rates behind invoiced, received and due now. These are not the
+ * PO's rate: a stage converts on its own invoice or payment date, so the
+ * figure and the rate named beside it have to come from the same place.
+ */
+function stageRateDetails(rows, field) {
+  return [...new Map(rows.flatMap((row) => row[field] ?? []).map((d) => [rateKey(d), d])).values()]
+    .sort((a, b) => a.currency.localeCompare(b.currency) || a.effective_from.localeCompare(b.effective_from));
+}
 
 function monthsBetween(first, last) {
   const months = [];
@@ -76,26 +98,47 @@ export function summariseOrders(orders) {
     average_deal_inr: valued.length ? r2(intake / valued.length) : null,
     orders_without_value: orders.filter((row) => row.quotation_value === null).length,
     order_unconverted: [...unconverted].map(([currency, amount]) => ({ currency, amount })),
+    rate_details: rateDetails(orders),
   };
 }
 
 /** Purchase orders: their money in INR, and how much of it is billed and collected. */
 export function summarisePurchaseOrders(pos) {
+  // Only PO value is converted at the PO's own date, so only it drops out when
+  // that rate is missing. Invoiced, received, due now and to bill are converted
+  // per stage on their own dates: a PO whose PO date has no rate can still have
+  // perfectly convertible stages, and stages_unconverted reports the rest.
   const converted = pos.filter((row) => row.rate !== null);
   const poValue = sum(converted, 'po_value_inr');
-  const invoiced = sum(converted, 'invoiced_inr');
-  const received = sum(converted, 'received_inr');
+  const invoiced = sum(pos, 'invoiced_inr');
+  const received = sum(pos, 'received_inr');
+  // A stage billed or paid on a date no rate covers is left out of the INR
+  // figures the same way a PO with no rate is, so it is named rather than lost.
+  const stagesUnconverted = pos.reduce((n, row) => n + (row.stages_unconverted ?? 0), 0);
   return {
     pos: pos.length,
     po_value_inr: poValue,
     invoiced_inr: invoiced,
     received_inr: received,
-    due_now_inr: sum(converted, 'due_now_inr'),
-    // Received ÷ invoiced, and invoiced ÷ PO value; nothing to divide by means no rate.
-    collection_rate: ratio(received, invoiced),
+    due_now_inr: sum(pos, 'due_now_inr'),
+    // Billed but not yet collected is "due now"; this is what has not been
+    // billed at all. Kept apart so neither figure overstates the other.
+    to_bill_inr: sum(pos, 'to_bill_inr'),
+    // The currency's own movement between invoicing and collection.
+    fx_gain_loss_inr: sum(pos, 'fx_gain_loss_inr'),
+    // Collections against invoices ÷ invoiced. Money received on a stage with
+    // no invoice is real and stays in Received, but counting it here would
+    // push the rate above 100%.
+    collection_rate: ratio(sum(pos, 'received_invoiced_inr'), invoiced),
     invoiced_rate: ratio(invoiced, poValue),
     pos_unconverted: pos.length - converted.length,
-    missing_rates: [...new Set(pos.filter((row) => row.rate === null).map((row) => row.currency))].sort(),
+    stages_unconverted: stagesUnconverted,
+    missing_rates: [...new Set(
+      pos.filter((row) => row.rate === null || (row.stages_unconverted ?? 0) > 0).map((row) => row.currency)
+    )].sort(),
+    rate_details: rateDetails(pos),
+    invoice_rate_details: stageRateDetails(pos, 'invoice_rate_details'),
+    payment_rate_details: stageRateDetails(pos, 'payment_rate_details'),
   };
 }
 
@@ -120,9 +163,10 @@ export async function revenueReport({ from, to }) {
               q.currency,
               q.quotation_value,
               qr.rate,
+              qr.effective_from AS rate_effective_from,
               ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
          FROM quotations q
-         LEFT JOIN rates qr ON qr.currency = q.currency
+         ${rateOn('qr', 'q.currency', 'q.quotation_date')}
         WHERE q.status = 'Won - PO Received' AND ${IN_PERIOD}
         ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
       [from, to]
@@ -133,13 +177,57 @@ export async function revenueReport({ from, to }) {
               to_char(p.po_date, 'YYYY-MM')          AS month,
               p.currency,
               r.rate,
+              r.effective_from AS rate_effective_from,
               p.payment_status,
               ROUND(p.po_value * r.rate, 2)          AS po_value_inr,
-              ROUND(p.total_invoiced * r.rate, 2)    AS invoiced_inr,
-              ROUND(p.total_received * r.rate, 2)    AS received_inr,
-              ROUND(p.balance_due_now * r.rate, 2)   AS due_now_inr
+              st.invoiced_inr,
+              st.received_inr,
+              st.due_now_inr,
+              st.to_bill_inr,
+              st.received_invoiced_inr,
+              st.fx_gain_loss_inr,
+              st.stages_unconverted,
+              st.invoice_rate_details,
+              st.payment_rate_details
          FROM v_purchase_orders p
-         LEFT JOIN rates r ON r.currency = p.currency
+         ${rateOn('r', 'p.currency', 'p.po_date')}
+         -- Each stage converts on its own date: the invoice date for what was
+         -- billed, the payment date for what came in. Summing first and
+         -- converting once would price an invoice at the PO's rate.
+         CROSS JOIN LATERAL (
+           SELECT ROUND(COALESCE(SUM(s.invoiced_amount  * ir.rate), 0), 2) AS invoiced_inr,
+                  ROUND(COALESCE(SUM(s.amount_received  * pr.rate), 0), 2) AS received_inr,
+                  ROUND(COALESCE(SUM(s.due_now_amount   * ir.rate), 0), 2) AS due_now_inr,
+                  -- Not yet invoiced, so there is no invoice date to convert
+                  -- on: rateOn falls back to the PO's date for these.
+                  ROUND(COALESCE(SUM(s.to_bill_amount   * ir.rate), 0), 2) AS to_bill_inr,
+                  -- At the INVOICE rate, like invoiced_inr: converting this at
+                  -- the payment rate would make currency movement look like
+                  -- collection and push the rate past 100%. LEAST also caps an
+                  -- overpaid stage at what was billed.
+                  ROUND(COALESCE(SUM(LEAST(s.received_on_invoiced, s.invoiced_amount) * ir.rate), 0), 2)
+                    AS received_invoiced_inr,
+                  -- What the currency itself gained or lost between billing and
+                  -- collection. Zero in INR, where both rates are 1.
+                  ROUND(COALESCE(SUM(s.amount_received * (pr.rate - ir.rate))
+                                 FILTER (WHERE s.payment_received_date IS NOT NULL), 0), 2) AS fx_gain_loss_inr,
+                  COUNT(*) FILTER (WHERE (s.invoiced_amount > 0 AND ir.rate IS NULL)
+                                      OR (s.amount_received > 0 AND pr.rate IS NULL))::int AS stages_unconverted,
+                  -- Named beside the figures they built, so a tooltip cannot
+                  -- claim a rate the amount was not converted at.
+                  COALESCE(json_agg(DISTINCT jsonb_build_object(
+                             'currency', s.currency, 'rate', ir.rate, 'effective_from', ir.effective_from))
+                           FILTER (WHERE s.currency <> 'INR' AND ir.rate IS NOT NULL), '[]'::json) AS invoice_rate_details,
+                  COALESCE(json_agg(DISTINCT jsonb_build_object(
+                             'currency', s.currency, 'rate', pr.rate, 'effective_from', pr.effective_from))
+                           FILTER (WHERE s.currency <> 'INR' AND pr.rate IS NOT NULL
+                                     AND s.payment_received_date IS NOT NULL), '[]'::json) AS payment_rate_details
+             FROM v_payment_stages s
+             -- A stage with no invoice date yet falls back to the PO's date.
+             ${rateOn('ir', 's.currency', 'COALESCE(s.invoice_date, p.po_date)')}
+             ${rateOn('pr', 's.currency', 'COALESCE(s.payment_received_date, s.invoice_date, p.po_date)')}
+            WHERE s.po_number = p.po_number
+         ) st
         WHERE ${inPeriod('p.po_date')}
         ORDER BY p.po_date NULLS LAST, p.po_number`,
       [from, to]
@@ -161,16 +249,22 @@ export async function revenueReport({ from, to }) {
   const period = { from, to };
   const poTotal = summarisePurchaseOrders(purchaseOrders.rows);
   // Exchange rates behind the INR figures, so the PDF can say which it used.
+  // Every non-INR currency in play, including ones with no rate: the report's
+  // rate strip prints "USD: not set" from this, so dropping them would hide
+  // the gap rather than report it. A real rate always wins over a null one.
   const rates = new Map();
   for (const row of [...orders.rows, ...purchaseOrders.rows]) {
-    if (row.currency !== 'INR' && !rates.has(row.currency)) rates.set(row.currency, row.rate);
+    if (row.currency === 'INR') continue;
+    if (!rates.has(row.currency) || (rates.get(row.currency).rate === null && row.rate !== null)) {
+      rates.set(row.currency, { rate: row.rate, effective_from: row.rate_effective_from });
+    }
   }
   return {
     orders: { months: monthRows(orders.rows, period, summariseOrders), total: summariseOrders(orders.rows) },
     invoicing: { months: monthRows(purchaseOrders.rows, period, summarisePurchaseOrders), total: poTotal },
     payment_status: { rows: paymentStatusRows(purchaseOrders.rows), total: poTotal },
     years: years.rows.map((row) => row.year),
-    rates: [...rates].map(([currency, rate]) => ({ currency, rate })),
+    rates: [...rates].map(([currency, rate]) => ({ currency, ...rate })),
     // With a date range those POs are left out of every PO figure above, so
     // name them; without one they are already counted in a "No date" row.
     undated_pos: from || to ? undated.rows.map((row) => row.po_number) : [],
@@ -187,7 +281,10 @@ const moneyColumns = (row) => ({
   'Invoiced (INR)': row.invoiced_inr,
   'Received (INR)': row.received_inr,
   'Due now (INR)': row.due_now_inr,
+  'To bill (INR)': row.to_bill_inr,
+  'FX gain / loss (INR)': row.fx_gain_loss_inr,
   'POs left out (rate not set)': row.pos_unconverted,
+  'Stages left out (no rate on their date)': row.stages_unconverted,
 });
 
 export function ordersCsvRows({ orders }) {

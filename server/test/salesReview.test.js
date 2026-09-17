@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { NO_SERVICE, OTHER_SERVICE, serviceLinesFor } from '../src/lib/serviceLines.js';
 import { enquirySummary, quotationStatusSummary, serviceRows, summariseEnquiries } from '../src/lib/salesReviewData.js';
 import { donut, horizontalBars, niceScale, stackedColumns, wrapLabel } from '../src/lib/pdfCharts.js';
-import { clientAnalysis, inrValue, quotationStatusAnalysis, sectorAnalysis } from '../src/lib/salesReviewAnalysis.js';
+import { clientAnalysis, quotationStatusAnalysis, sectorAnalysis } from '../src/lib/salesReviewAnalysis.js';
 
 test('quotation statuses: counts, win rate and the value still open', () => {
   const q = (status, value, extra = {}) => ({ status, month: '2026-09', quotation_value: value, currency: 'INR', rate: 1, ...extra });
@@ -34,6 +34,9 @@ import { compactInr, plural } from '../src/lib/reportFormat.js';
 test('free-text services map to service lines, bundles to each line', () => {
   assert.deepEqual(serviceLinesFor('Ecovadis & Other Services'), ['EcoVadis']);
   assert.deepEqual(serviceLinesFor('EcoVadis, ISO 37001'), ['EcoVadis', 'ISO certification & management systems']);
+  assert.deepEqual(serviceLinesFor('ISO9001'), ['ISO certification & management systems']);
+  assert.deepEqual(serviceLinesFor('ISO14001 certification'), ['ISO certification & management systems']);
+  assert.deepEqual(serviceLinesFor('isolation study'), [OTHER_SERVICE]);
   assert.deepEqual(serviceLinesFor('Copper mark Assurance'), ['ASI / Copper Mark / LME']);
   assert.deepEqual(serviceLinesFor('Reasonable Assurance for SR Report'), ['Sustainability reporting & assurance']);
   assert.deepEqual(serviceLinesFor('GHG Verification & SR Assurance Limited Level'), ['Sustainability reporting & assurance', 'Climate & environment (GHG / LCA / CBAM)']);
@@ -97,12 +100,6 @@ test('compact rupees read in lakh and crore', () => {
 });
 
 test('concentration is flagged only when it is real', () => {
-  const rates = { INR: 1, EUR: 100 };
-  assert.deepEqual(inrValue([{ currency: 'INR', amount: 10 }, { currency: 'EUR', amount: 2 }, { currency: 'USD', amount: 3 }], rates), {
-    won_value_inr: 210,
-    unconverted: [{ currency: 'USD', amount: 3 }],
-  });
-
   const sector = (name, pos, lost, value) => ({ sector: name, not_set: false, pos, lost, pipeline: 0, win_rate: pos / (pos + lost), won_value_inr: value });
   const rows = [sector('Pharma', 6, 1, 800), sector('Metals', 3, 3, 200)];
   const a = sectorAnalysis({ summary: { pos: 9, pos_without_sector: 0 } }, rows);

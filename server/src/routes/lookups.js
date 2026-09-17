@@ -89,18 +89,17 @@ settingsRouter.get('/', async (req, res) => {
 
 settingsRouter.patch('/:key', async (req, res) => {
   const value = req.body?.value;
-  const isRate = req.params.key.startsWith('fx_rate_');
-  // A blank rate is how the report knows a currency is not set, so a rate
-  // can be cleared; every other setting needs a value.
-  if (typeof value !== 'string' || (value.trim() === '' && !isRate)) {
+  // Rates moved to Settings -> Exchange rates, where each one carries the date
+  // it took effect. The old single-value settings are kept for reference only:
+  // editing one here would change nothing and mislead about which rate applied.
+  if (req.params.key.startsWith('fx_rate_')) {
     return res.status(422).json({
-      error: { message: 'Enter a value', fields: { value: 'Required' } },
+      error: { message: 'Exchange rates are now set under Settings → Exchange rates, with the date each rate took effect.' },
     });
   }
-  // A rate the report cannot multiply by would silently drop deals from the INR totals.
-  if (isRate && value.trim() !== '' && !(/^\d+(\.\d+)?$/.test(value.trim()) && Number(value) > 0)) {
+  if (typeof value !== 'string' || value.trim() === '') {
     return res.status(422).json({
-      error: { message: 'Enter the INR value of 1 unit, e.g. 90.25', fields: { value: 'Enter a number above 0' } },
+      error: { message: 'Enter a value', fields: { value: 'Required' } },
     });
   }
   const { rows } = await query(

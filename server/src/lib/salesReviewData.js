@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
 
@@ -93,7 +93,7 @@ export async function enquiryReport({ from, to }) {
             r.rate
        FROM enquiries e
        LEFT JOIN quotations q ON q.quotation_no = e.quotation_no
-       LEFT JOIN rates r      ON r.currency = q.currency
+       ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
     [from, to]
@@ -149,7 +149,7 @@ export async function serviceReport({ from, to }) {
       `WITH ${RATES}
        SELECT q.service_quoted AS service, q.status, q.quotation_value, q.currency, r.rate
          FROM quotations q
-         LEFT JOIN rates r ON r.currency = q.currency
+         ${rateOn('r', 'q.currency', 'q.quotation_date')}
         WHERE ${IN_PERIOD}`,
       [from, to]
     ),
@@ -204,7 +204,7 @@ export async function quotationStatusReport({ from, to }) {
             q.currency,
             r.rate
        FROM quotations q
-       LEFT JOIN rates r ON r.currency = q.currency
+       ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${IN_PERIOD}
       ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
     [from, to]
@@ -212,10 +212,20 @@ export async function quotationStatusReport({ from, to }) {
   return quotationStatusSummary(rows, { from, to });
 }
 
-/** INR for one unit of each currency, null where Settings has no rate. */
+/**
+ * The latest rate on record for each currency, for the report's rate strip.
+ * Figures are not converted with this — each one uses the rate in force on its
+ * own date — so it is shown as "latest", with the date it took effect.
+ */
 export async function exchangeRates() {
-  const { rows } = await query(`WITH ${RATES} SELECT currency, rate FROM rates`);
-  return Object.fromEntries(rows.map((row) => [row.currency, row.rate]));
+  const { rows } = await query(
+    `SELECT DISTINCT ON (from_currency)
+            from_currency AS currency, rate, effective_from
+       FROM exchange_rates
+      WHERE to_currency = 'INR'
+      ORDER BY from_currency, effective_from DESC`
+  );
+  return Object.fromEntries(rows.map((row) => [row.currency, { rate: row.rate, effective_from: row.effective_from }]));
 }
 
 /** Missing or inconsistent source data that limits the report. */

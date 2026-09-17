@@ -400,6 +400,30 @@ export const resources = {
     columns: ['name', 'active'],
     schema: z.object({ name: requiredStr(160), active: bool() }),
   },
+
+  // INR for one unit of a currency, from a given date. Reports convert every
+  // figure at the rate in force on that record's own date, so entering a new
+  // rate never changes what an older quotation, PO or invoice was worth.
+  'exchange-rates': {
+    table: 'exchange_rates',
+    view: null,
+    label: 'Exchange rate',
+    defaultSort: 'from_currency, effective_from DESC',
+    search: ['from_currency', 'note'],
+    filters: ['from_currency', 'source'],
+    dateFilter: 'effective_from',
+    columns: ['from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    schema: z.object({
+      from_currency: enumOf(STATUS.currency.filter((c) => c !== 'INR')),
+      // INR is the only target: every report figure is an INR figure.
+      to_currency: z.literal('INR').default('INR'),
+      rate: num({ min: 0.000001 }).refine((v) => v !== null && v !== undefined, 'Required'),
+      effective_from: date().refine((v) => v !== null && v !== undefined, 'Required'),
+      source: enumOf(['manual', 'feed']).default('manual'),
+      entered_by: str(120),
+      note: str(300),
+    }),
+  },
 };
 
 // The standard project lifecycle from the workbook's Onboarding sheet,

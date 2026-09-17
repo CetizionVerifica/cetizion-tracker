@@ -113,6 +113,7 @@ export default function Worklist() {
                 },
                 { key: 'stage_amount', header: 'Stage value', align: 'right', render: (r) => money(r.stage_amount, r.currency) },
                 { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
+                { key: 'to_bill_amount', header: 'To bill', align: 'right', render: (r) => (r.to_bill_amount > 0 ? money(r.to_bill_amount, r.currency) : <span className="muted">—</span>) },
                 { key: 'invoice_due_date', header: 'Due date', render: (r) => date(r.invoice_due_date) },
                 { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
                 { key: 'follow_up_action', header: 'What to do', className: 'wrap small', render: (r) => r.follow_up_action },

@@ -265,7 +265,18 @@ export function crudRouter(name, def) {
       await client.query(`DELETE FROM ${ident(def.table)} WHERE id = $1`, [target.id]);
       return [def.hasDocument ? target.document_id : null, ...cascaded].filter(Boolean);
     };
-    const documents = def.hasDocument || def.cascadeDocuments ? await transaction(remove) : await remove({ query });
+    let documents = [];
+    if (def.hasDocument || def.cascadeDocuments) {
+      documents = await transaction(remove);
+    } else {
+      const params = [];
+      const pred = idPredicate(def, req.params.id, params);
+      const { rows } = await query(
+        `DELETE FROM ${ident(def.table)} WHERE ${pred} RETURNING id`,
+        params
+      );
+      if (!rows.length) throw new ApiError(404, `${def.label} not found`);
+    }
 
     // Files leave Cloudinary only once the delete is committed.
     for (const documentId of documents) {

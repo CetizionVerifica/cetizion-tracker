@@ -61,6 +61,8 @@ SELECT
   d.days_overdue,
   d.invoiced_amount,
   d.due_now_amount,
+  d.to_bill_amount,
+  d.received_on_invoiced,
   CASE s.stage_status
     WHEN 'To Invoice'     THEN 'FINANCE: raise ' || ps.stage_name || ' invoice'
     WHEN 'Overdue'        THEN 'FOLLOW UP STRICTLY - ' || ps.stage_name
@@ -108,9 +110,18 @@ CROSS JOIN LATERAL (
   SELECT CASE WHEN s.stage_status = 'Overdue'
               THEN CURRENT_DATE - b.invoice_due_date ELSE 0 END,
          CASE WHEN ps.invoice_no IS NOT NULL THEN b.amount ELSE 0 END,
-         CASE WHEN b.due_to_invoice
-              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END
-) d(days_overdue, invoiced_amount, due_now_amount);
+         -- Due now is what is owed on an invoice that has been raised, so the
+         -- figure reads exactly as it is defined: invoiced - received.
+         CASE WHEN ps.invoice_no IS NOT NULL
+              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END,
+         -- Still to be billed: the trigger has happened but no invoice exists.
+         -- Money to chase, but not money anyone has been asked for yet.
+         CASE WHEN b.due_to_invoice AND ps.invoice_no IS NULL
+              THEN GREATEST(b.amount - ps.amount_received, 0) ELSE 0 END,
+         -- Only collections against an invoice, so received / invoiced is a
+         -- real collection rate and cannot exceed 100%.
+         CASE WHEN ps.invoice_no IS NOT NULL THEN ps.amount_received ELSE 0 END
+) d(days_overdue, invoiced_amount, due_now_amount, to_bill_amount, received_on_invoiced);
 
 -- ---------------------------------------------------------------------
 -- Travel vendor invoices
@@ -350,6 +361,8 @@ SELECT
   st.total_invoiced,
   st.total_received,
   st.balance_due_now,
+  st.balance_to_bill,
+  st.total_received_invoiced,
   st.overdue_stages,
   st.stages_to_invoice,
   tr.total_travel_cost,
@@ -380,12 +393,15 @@ CROSS JOIN LATERAL (
          COALESCE(SUM(invoiced_amount), 0),
          COALESCE(SUM(amount_received), 0),
          COALESCE(SUM(due_now_amount), 0),
+         COALESCE(SUM(to_bill_amount), 0),
+         COALESCE(SUM(received_on_invoiced), 0),
          COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
          COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
          COUNT(*) FILTER (WHERE stage_status = 'Paid')
   FROM v_payment_stages ps WHERE ps.po_number = po.po_number
 ) st(stage_count, stages_percent_total, total_invoiced, total_received,
-     balance_due_now, overdue_stages, stages_to_invoice, paid_stages)
+     balance_due_now, balance_to_bill, total_received_invoiced,
+     overdue_stages, stages_to_invoice, paid_stages)
 CROSS JOIN LATERAL (
   SELECT COALESCE(SUM(total_travel_cost), 0)
   FROM v_travel_logs tl WHERE tl.po_number = po.po_number
@@ -413,6 +429,7 @@ SELECT
   po.total_invoiced,
   po.total_received,
   po.balance_due_now,
+  po.balance_to_bill,
   po.total_travel_cost,
   po.actual_initiation_date,
   po.actual_delivery_date,
@@ -455,6 +472,7 @@ CROSS JOIN LATERAL (
          COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),
          COALESCE(SUM(balance_due_now), 0),
+         COALESCE(SUM(balance_to_bill), 0),
          COALESCE(SUM(total_travel_cost), 0),
          COUNT(*) FILTER (WHERE payment_status = 'Fully Paid'),
          MIN(actual_initiation_date),
@@ -464,7 +482,7 @@ CROSS JOIN LATERAL (
               THEN MAX(actual_delivery_date) END
   FROM v_purchase_orders v WHERE v.project_id = p.project_id
 ) po(po_count, total_contract_value, total_invoiced, total_received,
-     balance_due_now, total_travel_cost, fully_paid_pos,
+     balance_due_now, balance_to_bill, total_travel_cost, fully_paid_pos,
      actual_initiation_date, actual_delivery_date)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE status = 'Done'),
@@ -525,7 +543,7 @@ LEFT JOIN documents doc ON doc.id = q.document_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),
-         COALESCE(SUM(balance_due_now), 0),
+         COALESCE(SUM(balance_due_now), 0) + COALESCE(SUM(balance_to_bill), 0),
          COUNT(*) FILTER (WHERE payment_status = 'Overdue'),
          COUNT(*) FILTER (WHERE payment_status = 'To Invoice')
   FROM v_purchase_orders v WHERE v.project_id = q.project_id

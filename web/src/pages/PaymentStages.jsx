@@ -42,6 +42,7 @@ export default function PaymentStages() {
     { key: 'invoice_due_date', header: 'Due', render: (r) => date(r.invoice_due_date) },
     { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
     { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
+    { key: 'to_bill_amount', header: 'To bill', align: 'right', render: (r) => (r.to_bill_amount > 0 ? money(r.to_bill_amount, r.currency) : <span className="muted">—</span>) },
     { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
     { key: 'follow_up_action', header: 'Follow-up', className: 'wrap small' },
     {

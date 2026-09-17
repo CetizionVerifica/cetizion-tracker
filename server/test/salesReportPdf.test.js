@@ -28,8 +28,8 @@ const ORDERS = [
 ];
 const POS = [
   // 50/50 split: stage 1 invoiced ₹50,000 and ₹30,000 received.
-  { po_number: 'PO-1', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'Pending', po_value_inr: 100000, invoiced_inr: 50000, received_inr: 30000, due_now_inr: 20000 },
-  { po_number: 'PO-2', month: '2026-08', currency: 'INR', rate: 1, payment_status: 'Fully Paid', po_value_inr: 40000, invoiced_inr: 40000, received_inr: 40000, due_now_inr: 0 },
+  { po_number: 'PO-1', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'Pending', po_value_inr: 100000, invoiced_inr: 50000, received_inr: 30000, received_invoiced_inr: 30000, due_now_inr: 20000, to_bill_inr: 0 },
+  { po_number: 'PO-2', month: '2026-08', currency: 'INR', rate: 1, payment_status: 'Fully Paid', po_value_inr: 40000, invoiced_inr: 40000, received_inr: 40000, received_invoiced_inr: 40000, due_now_inr: 0, to_bill_inr: 0 },
 ];
 
 const ENQUIRIES = [
@@ -70,13 +70,15 @@ function fixture(overrides = {}) {
     month: null,
     generatedAt: new Date('2026-09-14T10:30:00Z'),
     timeZone: 'Asia/Kolkata',
-    rates: { INR: 1, EUR: 110.43 },
+    // The latest rate on record per currency, for the report's rate strip;
+    // every figure below is already converted at its own date's rate.
+    rates: { EUR: { rate: 110.43, effective_from: '2026-01-01' } },
     sectors: {
       rows: [
-        { sector: 'Pharmaceutical', not_set: false, enquiries: 1, pos: 1, lost: 1, pipeline: 2, customers: 1, pos_without_value: 0, fx_deals: 0, amounts: [{ currency: 'INR', amount: 100000 }], win_rate: 0.5 },
-        { sector: 'Not set', not_set: true, enquiries: 0, pos: 1, lost: 0, pipeline: 0, customers: 1, pos_without_value: 0, fx_deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], win_rate: 1 },
+        { sector: 'Pharmaceutical', not_set: false, enquiries: 1, pos: 1, lost: 1, pipeline: 2, customers: 1, pos_without_value: 0, fx_deals: 0, amounts: [{ currency: 'INR', amount: 100000 }], unconverted: [], won_value_inr: 100000, win_rate: 0.5 },
+        { sector: 'Not set', not_set: true, enquiries: 0, pos: 1, lost: 0, pipeline: 0, customers: 1, pos_without_value: 0, fx_deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1181601, win_rate: 1 },
       ],
-      summary: { enquiries: 1, pos: 2, lost: 1, pipeline: 2, fx_deals: 1, win_rate: 2 / 3, sectors: 1, pos_without_sector: 1, amounts: [{ currency: 'INR', amount: 100000 }, { currency: 'EUR', amount: 10700 }] },
+      summary: { enquiries: 1, pos: 2, lost: 1, pipeline: 2, fx_deals: 1, win_rate: 2 / 3, sectors: 1, pos_without_sector: 1, amounts: [{ currency: 'INR', amount: 100000 }, { currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1281601 },
     },
     fx: {
       rows: [{ customer: 'Midal Cables', sector: 'Not set', not_set: true, currency: 'EUR', deals: 1, deals_without_value: 0, amount: 10700, rate: 110.43, amount_inr: 1181601, quotation_nos: 'CTZ/QT/2026/045' }],
@@ -208,7 +210,7 @@ test('the analysis names the priority and the data gaps', () => {
   assert.ok(text.includes('4 gaps in the source data limit this report'));
 
   const billing = fixture({
-    revenue: revenueFrom(ORDERS, [{ po_number: 'PO-9', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'To Invoice', po_value_inr: 500000, invoiced_inr: 100000, received_inr: 100000, due_now_inr: 0 }]),
+    revenue: revenueFrom(ORDERS, [{ po_number: 'PO-9', month: '2026-09', currency: 'INR', rate: 1, payment_status: 'To Invoice', po_value_inr: 500000, invoiced_inr: 100000, received_inr: 100000, received_invoiced_inr: 100000, due_now_inr: 0, to_bill_inr: 400000 }]),
   });
   const billingText = textOf(salesReportDocDefinition(billing));
   assert.ok(billingText.includes('Billing is the bigger gap, not collections: only 20% of PO value has been invoiced, and 1 PO has a stage due to be billed now.'));
@@ -229,11 +231,16 @@ test('every chart is drawn, in the report font', () => {
 
 test('problems in the data are called out, not hidden', () => {
   const noRate = fixture({
-    revenue: revenueFrom(ORDERS, [...POS, { po_number: 'PO-3', month: '2026-09', currency: 'USD', rate: null, payment_status: 'Overdue', po_value_inr: null, invoiced_inr: null, received_inr: null, due_now_inr: null }]),
+    quotationStatus: quotationStatusSummary([
+      { quotation_no: 'Q-USD', month: '2026-09', status: 'Submitted', quotation_value: 1000, currency: 'USD', rate: null },
+    ], { from: '2026-04-01', to: '2026-09-14' }),
+    revenue: revenueFrom(ORDERS, POS),
   });
   const missing = textOf(salesReportDocDefinition(noRate));
-  assert.ok(missing.includes('No rate is set in Settings for USD'));
-  assert.ok(missing.includes('1 rate not set'));
+  assert.ok(missing.includes('No rate covers the dates of the USD amounts in this report'));
+  assert.ok(missing.includes('Settings -> Exchange rates'));
+  assert.ok(missing.includes('USD: not set'));
+  assert.ok(missing.includes('+ $1,000 (no rate)'));
 
   const undated = fixture();
   undated.revenue = { ...undated.revenue, undated_pos: ['PO-9'] };

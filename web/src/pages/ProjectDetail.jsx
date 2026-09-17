@@ -98,6 +98,7 @@ export default function ProjectDetail() {
           <Stat label="Contract value" value={money(p.total_contract_value)} meta={`${number(p.po_count)} purchase order(s)`} tone="brand" />
           <Stat label="Invoiced" value={money(p.total_invoiced)} meta={`${money(p.total_received)} received`} />
           <Stat label="Due now" value={money(p.balance_due_now)} tone={p.balance_due_now > 0 ? 'warn' : 'ok'} meta={p.payment_status} />
+          <Stat label="To bill" value={money(p.balance_to_bill)} tone={p.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
           <Stat label="Travel cost" value={money(p.total_travel_cost)} meta={`${travel.length} trip(s)`} />
           <Stat label="Project stage" value={p.project_stage} meta={p.delivery_variance_days !== null ? `${p.delivery_variance_days > 0 ? '+' : ''}${p.delivery_variance_days} days vs plan` : 'Delivery not recorded'} />
         </div>
@@ -147,6 +148,7 @@ export default function ProjectDetail() {
                 { key: 'stage_count', header: 'Stages', align: 'right' },
                 { key: 'total_invoiced', header: 'Invoiced', align: 'right', render: (r) => money(r.total_invoiced, r.currency) },
                 { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
+                { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? money(r.balance_to_bill, r.currency) : <span className="muted">—</span>) },
                 { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
                 { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
               ]}

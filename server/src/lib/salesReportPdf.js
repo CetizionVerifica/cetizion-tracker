@@ -4,7 +4,7 @@ import pdfmake from 'pdfmake';
 import { amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
 import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
 import {
-  clientAnalysis, enquiryAnalysis, headline, inrValue, managementFixes, quotationStatusAnalysis, revenueAnalysis,
+  clientAnalysis, enquiryAnalysis, headline, managementFixes, quotationStatusAnalysis, revenueAnalysis,
   sectorAnalysis, serviceAnalysis,
 } from './salesReviewAnalysis.js';
 
@@ -252,7 +252,7 @@ function tile(value, label, meta) {
 export function salesReportDocDefinition(data) {
   const {
     period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
-    rates = { INR: 1 }, generatedAt = new Date(), timeZone = 'UTC',
+    rates = {}, generatedAt = new Date(), timeZone = 'UTC',
   } = data;
 
   const stamp = generatedStamp(generatedAt, timeZone);
@@ -267,17 +267,19 @@ export function salesReportDocDefinition(data) {
   const revenueTo = month ? `${year}-${month}-${String(daysInMonth(year, month)).padStart(2, '0')}` : `${year}-12-31`;
   const samePeriods = period.from === revenueFrom && period.to === revenueTo;
 
-  // Sector won value in INR, at the same Settings rates as everything else.
-  const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: row.pos + row.lost + row.pipeline, ...inrValue(row.amounts, rates) }));
+  // Sector won value in INR. Converted in SQL at the rate in force on each
+  // quotation's own date, the same lookup every other figure here uses.
+  const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: row.pos + row.lost + row.pipeline }));
   const sectorTotal = {
     ...sectors.summary,
     quotations: sectors.summary.pos + sectors.summary.lost + sectors.summary.pipeline,
-    ...inrValue(sectors.summary.amounts, rates),
   };
 
   // Exchange rates the figures used, and any currency left unconverted.
+  const quotationUnconverted = quotationStatus.total.unconverted ?? [];
   const used = new Set([
     ...sectors.summary.amounts.map((a) => a.currency),
+    ...quotationUnconverted.map((a) => a.currency),
     ...(revenue.rates ?? []).map((r) => r.currency),
   ]);
   used.delete('INR');
@@ -285,13 +287,18 @@ export function salesReportDocDefinition(data) {
     ...fx.summary.missing_rates,
     ...sectorTotal.unconverted.map((a) => a.currency),
     ...customers.summary.total.unconverted.map((a) => a.currency),
+    ...quotationUnconverted.map((a) => a.currency),
     ...revenue.orders.total.order_unconverted.map((a) => a.currency),
     ...revenue.invoicing.total.missing_rates,
   ])].sort();
+  // Each figure is converted at the rate in force on its own date; this line
+  // names the latest rate on record, so a stale one is visible at a glance.
+  const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 });
   const ratesText = used.size
-    ? [...used].sort().map((currency) =>
-        rates[currency] ? `1 ${currency} = ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 }).format(rates[currency])}` : `${currency}: not set`
-      ).join('   ·   ')
+    ? [...used].sort().map((currency) => {
+        const r = rates[currency];
+        return r ? `1 ${currency} = ₹${inr.format(r.rate)} from ${r.effective_from}` : `${currency}: not set`;
+      }).join('   ·   ')
     : 'Not needed — every amount in this report is in INR';
 
   // ------------------------------------------------------------ analysis
@@ -680,13 +687,22 @@ export function salesReportDocDefinition(data) {
   ];
 
   // ------------------------------------------------ 6. revenue
-  const poCount = (r) => lines(number(r.pos), r.pos_unconverted > 0 ? note(`${r.pos_unconverted} rate not set`, 'warnNote') : null);
+  const poCount = (r) => lines(
+    number(r.pos),
+    r.pos_unconverted > 0 ? note(`${r.pos_unconverted} rate not set`, 'warnNote') : null,
+    r.stages_unconverted > 0 ? note(`${plural(r.stages_unconverted, 'stage')} with no rate on their date`, 'warnNote') : null,
+  );
+  const gainLoss = (r) => (r.fx_gain_loss_inr ? `${r.fx_gain_loss_inr > 0 ? '+' : '-'}${money(Math.abs(r.fx_gain_loss_inr))}` : '-');
   const poMoneyColumns = [
     { header: 'POs', value: poCount, total: poCount, align: 'right', width: 34 },
     { header: 'PO value (INR)', value: (r) => money(r.po_value_inr), total: (s) => money(s.po_value_inr), align: 'right' },
     { header: 'Invoiced (INR)', value: (r) => money(r.invoiced_inr), total: (s) => money(s.invoiced_inr), align: 'right' },
     { header: 'Received (INR)', value: (r) => money(r.received_inr), total: (s) => money(s.received_inr), align: 'right' },
     { header: 'Due now (INR)', value: (r) => money(r.due_now_inr), total: (s) => money(s.due_now_inr), align: 'right' },
+    { header: 'To bill (INR)', value: (r) => money(r.to_bill_inr), total: (s) => money(s.to_bill_inr), align: 'right' },
+    // What the currency moved between invoicing and collection. Always blank
+    // on INR-only months, where both rates are 1.
+    { header: 'FX gain / loss', value: gainLoss, total: gainLoss, align: 'right' },
   ];
   const noPos = `No purchase orders dated in ${revenueLabel}.`;
   const cashChart = p.pos
@@ -759,7 +775,7 @@ export function salesReportDocDefinition(data) {
     }),
     subsection(
       'Invoicing & collections by month',
-      'Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received',
+      'Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received · To bill = due to be invoiced, not yet billed',
       {
         stack: [
           reportTable({
@@ -858,7 +874,7 @@ export function salesReportDocDefinition(data) {
         'Service lines are matched from the service text by keywords. A quotation naming several services counts in each of its lines; the Total row counts it once. "Other services" is text that matches no line.',
         'Clients and sectors are grouped by spelling: capital letters and extra spaces are ignored, any other difference is a separate name.',
         'Repeat client = 2 or more won POs up to the end of the period; every other client is a single enquiry client. Repeat orders = won POs after a client\'s first.',
-        'Order intake = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received. Collection rate = received ÷ invoiced.',
+        'Order intake = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received on invoices that have been raised; work that is due to be billed but has no invoice yet is shown separately as To bill. Collection rate = received against invoices ÷ invoiced. Every amount is converted at the rate in force on its own date, so the INR Due now differs from invoiced − received by the realised FX movement, reported as FX gain / loss.',
         'The written analysis is produced from these figures by fixed rules, so the same data always reads the same way: a rate of 60% or more reads as strong and under 40% as weak; one sector with half of won value, or two clients with 35%, is flagged as concentration; under 50% of PO value invoiced, or under 70% of invoices collected, is named as the priority. No AI or outside service is used.',
       ],
       style: 'body',

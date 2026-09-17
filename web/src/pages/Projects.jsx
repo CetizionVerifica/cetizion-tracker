@@ -16,6 +16,7 @@ export default function Projects() {
     { key: 'total_contract_value', header: 'Contract', align: 'right', render: (r) => money(r.total_contract_value) },
     { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received) },
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now) },
+    { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? money(r.balance_to_bill) : <span className="muted">—</span>) },
     { key: 'onboarding_percent', header: 'Onboarding', width: 130, render: (r) => (r.onboarding_total ? <Progress value={r.onboarding_percent} /> : <span className="muted">—</span>) },
     { key: 'project_stage', header: 'Stage', render: (r) => <Badge>{r.project_stage}</Badge> },
     { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },

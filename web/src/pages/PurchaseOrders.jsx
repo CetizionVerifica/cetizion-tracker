@@ -30,6 +30,7 @@ export default function PurchaseOrders() {
     { key: 'total_invoiced', header: 'Invoiced', align: 'right', render: (r) => money(r.total_invoiced, r.currency) },
     { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received, r.currency) },
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
+    { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? money(r.balance_to_bill, r.currency) : <span className="muted">—</span>) },
     { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
     { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
     { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
