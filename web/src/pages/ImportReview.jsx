@@ -27,6 +27,8 @@ const STEPS = [
 ];
 
 const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Replace with sheet' }];
+// Only for a quotation matched by client and service alone: it may be a different deal.
+const NEW_CHOICE = { value: 'create', label: 'Import as new' };
 
 /**
  * How the batch was planned, in words rather than the model id the server
@@ -271,11 +273,17 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     { key: 'assumptions', header: 'Assumed', className: 'wrap small muted', render: (it) => it.assumptions.length ? it.assumptions.join(' · ') : '' },
     {
       key: 'action', header: 'Action',
-      render: (it) => it.existing_ref
-        ? (committed
-          ? <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'replaced' : 'kept original'}</Badge>
-          : <Select value={it.action} placeholder={null} options={DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />)
-        : <Badge tone="success">new</Badge>,
+      render: (it) => {
+        if (!it.existing_ref) return <Badge tone="success">new</Badge>;
+        if (committed) {
+          if (it.action === 'create') return <Badge tone="success">imported as new</Badge>;
+          return <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'replaced' : 'kept original'}</Badge>;
+        }
+        // A project follows its quotation's choice.
+        if (it.action === 'create' && it.step !== 'quotation') return <Badge tone="success">new, with its quotation</Badge>;
+        const uncertain = it.step === 'quotation' && dupFlag(it)?.certain === false;
+        return <Select value={it.action} placeholder={null} options={uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />;
+      },
     },
     committed
       ? { key: 'committed_ref', header: 'Written as', className: 'mono small' }
@@ -363,7 +371,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
             (and the proposal date, when the sheet has one). This is how Lost, Under Negotiation and On Hold deals are
             matched, because they have no PO number; a quotation number in the sheet makes the match exact. The match
             may be wrong: a client can have two proposals for the same service. Check each one before keeping the
-            original, or it will not be imported.
+            original: if it is a different deal, choose "Import as new" and it is added with the next quotation number.
           </Alert>
         </div>
       )}

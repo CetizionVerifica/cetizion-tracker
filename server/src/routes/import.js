@@ -175,7 +175,9 @@ importRouter.patch('/items/:id', async (req, res) => {
   if (typeof body.included === 'boolean') { vals.push(body.included); sets.push(`included = $${vals.length}`); }
   if (body.action && ['create', 'update', 'skip'].includes(body.action)) {
     if (body.action !== 'create' && !rows[0].existing_ref) throw new ApiError(422, 'Only a duplicate can be kept or replaced');
-    if (body.action === 'create' && rows[0].existing_ref) throw new ApiError(422, 'This record already exists on the site: keep the original or replace it');
+    // An exact match (PO or quotation number) cannot be created again; a
+    // quotation matched only by client and service may be a different deal.
+    if (body.action === 'create' && rows[0].existing_ref && !uncertainMatch(rows[0])) throw new ApiError(422, 'This record already exists on the site: keep the original or replace it');
     vals.push(body.action); sets.push(`action = $${vals.length}`);
   }
   if (body.payload && typeof body.payload === 'object') {
@@ -194,6 +196,14 @@ importRouter.patch('/items/:id', async (req, res) => {
   if (!sets.length) throw new ApiError(422, 'Nothing to update');
   vals.push(id);
   await query(`UPDATE import_items SET ${sets.join(', ')}, updated_at = now(), error = NULL WHERE id = $${vals.length}`, vals);
+  // Importing an uncertain quotation as new makes its project new too, and
+  // switching back to keep/replace takes the project with it.
+  if (body.action && rows[0].step === 'quotation' && uncertainMatch(rows[0])) {
+    await query(
+      `UPDATE import_items SET action = $1, updated_at = now() WHERE batch_id = $2 AND step = 'project' AND existing_ref IS NOT NULL AND seq = ANY($3::int[])`,
+      [body.action, rows[0].batch_id, await descendantSeqs(rows[0].batch_id, rows[0].seq)]
+    );
+  }
   // Keep/replace on a PO carries to its service line, stages, invoice and receipt.
   if (body.action && body.action !== 'create' && rows[0].step === 'purchase_order') {
     await query(
@@ -203,6 +213,8 @@ importRouter.patch('/items/:id', async (req, res) => {
   }
   res.json({ data: await loadBatch(rows[0].batch_id) });
 });
+
+const uncertainMatch = (item) => item.step === 'quotation' && (item.flags || []).some((f) => f.code === 'duplicate' && f.certain === false);
 
 async function descendantSeqs(batchId, seq) {
   const { rows } = await query(`SELECT seq, (payload->>'__parent_seq')::int AS parent_seq FROM import_items WHERE batch_id = $1`, [batchId]);
@@ -224,7 +236,7 @@ importRouter.post('/batches/:id/duplicates', async (req, res) => {
   if (!['skip', 'update'].includes(action)) throw new ApiError(422, 'action must be skip (keep original) or update (replace with sheet)');
   const steps = req.body?.step === 'money' ? ['invoice', 'receipt'] : req.body?.step === 'purchase_order' ? ['purchase_order', 'service'] : req.body?.step ? [req.body.step] : null;
   await query(
-    `UPDATE import_items SET action = $1, updated_at = now() WHERE batch_id = $2 AND existing_ref IS NOT NULL ${steps ? 'AND step = ANY($3::text[])' : ''}`,
+    `UPDATE import_items SET action = $1, updated_at = now() WHERE batch_id = $2 AND existing_ref IS NOT NULL AND action <> 'create' ${steps ? 'AND step = ANY($3::text[])' : ''}`,
     steps ? [action, id, steps] : [action, id]
   );
   res.json({ data: await loadBatch(id) });

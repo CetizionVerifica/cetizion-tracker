@@ -302,6 +302,12 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   backups, staging). Checkpoint 6 tagged; nothing pushed. Next: full testing,
   then the move to Next.js (#17). (Update: #17 is being done by another
   team member, so it is not on our list.)
+- 2026-09-17: Bulk import (#45) now fully offers "create, update or skip":
+  a deal matched only by client name and service (typically Lost or Under
+  Negotiation, which have no PO number) is marked as not certain, with a
+  warning, and can be imported as new. Exact matches by PO or quotation
+  number still cannot be created twice, and re-importing a file changes
+  nothing.
 - 2026-09-17: Full testing pass with the real sales sheet imported and a
   messy 500-row sheet through Bulk import. Fixed: rows with a negative amount
   or an over-long value now show as errors in the review instead of making
