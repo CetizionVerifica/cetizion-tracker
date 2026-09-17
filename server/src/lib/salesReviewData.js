@@ -39,26 +39,18 @@ function wonValue(quotations) {
 }
 
 /**
- * Enquiries by their status on the Enquiries page, and — for the ones marked
- * "Won - Quotation Sent" — the outcome of the quotation linked to them.
+ * Enquiries by their status on the Enquiries page. What became of the
+ * quotations they led to is the quotation section's subject, so the enquiry
+ * figures deliberately do not join quotations or exchange rates.
  */
 export function summariseEnquiries(rows) {
-  const quoted = rows.filter((row) => row.status === ENQUIRY_STATUS.quoted);
-  const won = quoted.filter((row) => row.quotation_status === WON);
-  const lost = quoted.filter((row) => row.quotation_status === LOST).length;
-  const linked = quoted.filter((row) => row.quotation_status !== null && row.quotation_status !== undefined).length;
+  const quoted = rows.filter((row) => row.status === ENQUIRY_STATUS.quoted).length;
   return {
     enquiries: rows.length,
     in_progress: rows.filter((row) => row.status === ENQUIRY_STATUS.open).length,
     declined: rows.filter((row) => row.status === ENQUIRY_STATUS.declined).length,
-    quoted: quoted.length,
-    won: won.length,
-    lost,
-    open_quotes: linked - won.length - lost,
-    not_linked: quoted.length - linked,
-    quote_rate: ratio(quoted.length, rows.length),
-    win_rate: ratio(won.length, won.length + lost),
-    ...wonValue(won),
+    quoted,
+    quote_rate: ratio(quoted, rows.length),
   };
 }
 
@@ -81,19 +73,13 @@ export function enquirySummary(rows, period = {}) {
 
 export async function enquiryReport({ from, to }) {
   const { rows } = await query(
-    `WITH ${RATES}
-     SELECT e.enquiry_no,
+    // Oldest first: the month rows and the oldest open enquiry both read this order.
+    `SELECT e.enquiry_no,
             btrim(e.client_name)                   AS client,
             to_char(e.enquiry_date, 'YYYY-MM-DD')  AS enquiry_date,
             to_char(e.enquiry_date, 'YYYY-MM')     AS month,
-            e.status,
-            q.status                               AS quotation_status,
-            q.quotation_value,
-            q.currency,
-            r.rate
+            e.status
        FROM enquiries e
-       LEFT JOIN quotations q ON q.quotation_no = e.quotation_no
-       LEFT JOIN rates r      ON r.currency = q.currency
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
     [from, to]
