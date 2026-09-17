@@ -1,6 +1,8 @@
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { nameKey } from './names.js';
+import { share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 
 /**
  * Sales reports, read straight from the quotations table.
@@ -84,9 +86,6 @@ function sumAmounts(lists) {
   return [...totals.keys()].sort(byCurrency).map((currency) => ({ currency, amount: totals.get(currency) }));
 }
 
-/** Won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out. */
-const winRate = (won, lost) => (won + lost ? won / (won + lost) : null);
-
 /**
  * The sales funnel per sector. Enquiries are counted by enquiry date, the
  * rest by quotation date. Every quotation is exactly one of won, lost or
@@ -98,8 +97,8 @@ export async function sectorReport({ from, to }) {
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
               NULLIF(btrim(sector), '')         AS sector,
               ${nameKey('client_name')}          AS client_key,
-              status = 'Won - PO Received'       AS is_won,
-              status = 'Lost'                    AS is_lost,
+              status = '${QUOTATION_STATUS.won}'       AS is_won,
+              status = '${QUOTATION_STATUS.lost}'                    AS is_lost,
               quotation_value,
               currency
          FROM quotations
@@ -155,7 +154,8 @@ export async function sectorReport({ from, to }) {
     [from, to]
   );
 
-  for (const row of rows) row.win_rate = winRate(row.pos, row.lost);
+  // Won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out.
+  for (const row of rows) row.win_rate = share(row.pos, row.pos + row.lost);
   const total = (field) => rows.reduce((sum, row) => sum + row[field], 0);
 
   return {
@@ -166,7 +166,7 @@ export async function sectorReport({ from, to }) {
       lost: total('lost'),
       pipeline: total('pipeline'),
       fx_deals: total('fx_deals'),
-      win_rate: winRate(total('pos'), total('lost')),
+      win_rate: share(total('pos'), total('pos') + total('lost')),
       sectors: rows.filter((row) => !row.not_set && row.pos > 0).length,
       pos_without_sector: rows.find((row) => row.not_set)?.pos ?? 0,
       amounts: sumAmounts(rows.map((row) => row.amounts)),
@@ -194,7 +194,7 @@ export async function fxReport({ from, to }) {
             string_agg(q.quotation_no, ', ' ORDER BY q.quotation_date, q.quotation_no) AS quotation_nos
        FROM quotations q
        LEFT JOIN rates r ON r.currency = q.currency
-      WHERE q.status = 'Won - PO Received' AND q.currency <> 'INR' AND ${IN_PERIOD}
+      WHERE q.status = '${QUOTATION_STATUS.won}' AND q.currency <> 'INR' AND ${IN_PERIOD}
       GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate
       ORDER BY currency, amount DESC, customer`,
     [from, to]
@@ -230,8 +230,8 @@ export async function customerReport({ from, to }) {
      q AS (
        SELECT ${nameKey('client_name')}   AS client_key,
               btrim(client_name)           AS client_name,
-              status = 'Won - PO Received' AS is_won,
-              status = 'Lost'              AS is_lost,
+              status = '${QUOTATION_STATUS.won}' AS is_won,
+              status = '${QUOTATION_STATUS.lost}'              AS is_lost,
               quotation_value,
               currency,
               ${IN_PERIOD}                 AS in_period,
@@ -290,7 +290,7 @@ export async function customerReport({ from, to }) {
 
   for (const row of rows) {
     row.client_type = row.pos_to_date >= 2 ? CLIENT_TYPES.repeat : CLIENT_TYPES.single;
-    row.win_rate = winRate(row.pos, row.lost);
+    row.win_rate = share(row.pos, row.pos + row.lost);
   }
 
   const summarise = (list) => {
@@ -300,7 +300,7 @@ export async function customerReport({ from, to }) {
       enquiries: total('enquiries'),
       pos: total('pos'),
       lost: total('lost'),
-      win_rate: winRate(total('pos'), total('lost')),
+      win_rate: share(total('pos'), total('pos') + total('lost')),
       won_value_inr: Math.round(total('won_value_inr') * 100) / 100,
       repeat_orders: total('repeat_orders'),
       pos_without_value: total('pos_without_value'),

@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { ENQUIRY_WON, quoteWonEnquiry } from './enquiries.js';
+import { quoteWonEnquiry } from './enquiries.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
+import { STATUS } from './statuses.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -58,14 +59,9 @@ const bool = () =>
 
 const enumOf = (values) => z.enum(values);
 
-export const STATUS = {
-  enquiry: ['In Progress', 'Declined', ENQUIRY_WON],
-  quotation: ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'],
-  trigger: ['On PO Registration', 'On Delivery', 'Manual'],
-  onboarding: ['Not Started', 'In Progress', 'Done', 'N/A'],
-  approval: ['Submitted', 'Approved', 'Rejected', 'On Hold'],
-  currency: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'],
-};
+// Defined in statuses.js, which the report modules read without pulling in
+// this registry. Re-exported here because the routes import it from here.
+export { STATUS };
 
 // ---------------------------------------------------------------------
 // Resource registry

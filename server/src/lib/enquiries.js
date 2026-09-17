@@ -1,7 +1,8 @@
 import { businessToday } from './businessDate.js';
 import { claimNextId } from './sequences.js';
+import { ENQUIRY_STATUS } from './statuses.js';
 
-export const ENQUIRY_WON = 'Won - Quotation Sent';
+export const ENQUIRY_WON = ENQUIRY_STATUS.quoted;
 
 /**
  * An enquiry marked won becomes a quotation, with everything the enquiry

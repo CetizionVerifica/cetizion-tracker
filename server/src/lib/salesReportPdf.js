@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import pdfmake from 'pdfmake';
-import { amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
+import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
+import { share } from './reportMath.js';
+import { QUOTATION_STATUS } from './statuses.js';
 import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
 import {
   clientAnalysis, enquiryAnalysis, headline, inrValue, managementFixes, quotationStatusAnalysis, revenueAnalysis,
@@ -44,10 +46,8 @@ const TONES = {
 
 const MARGIN_X = 42;
 const W = Math.floor(595.28 - MARGIN_X * 2); // A4 portrait less the side margins
-const WON = 'Won - PO Received';
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-const share = (part, whole) => (whole > 0 ? part / whole : null);
+const WON = QUOTATION_STATUS.won;
+const MONTHS = MONTH_NAMES;
 
 // ---------------------------------------------------------------------
 // Dates
@@ -448,11 +448,11 @@ export function salesReportDocDefinition(data) {
       withoutValue ? note(`${withoutValue} with no value`) : null
     );
   const STATUS_STYLE = {
-    Submitted: { label: 'Submitted', color: SKY, field: 'submitted' },
-    'Under Negotiation': { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
-    'On Hold': { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
+    [QUOTATION_STATUS.submitted]: { label: 'Submitted', color: SKY, field: 'submitted' },
+    [QUOTATION_STATUS.negotiating]: { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
+    [QUOTATION_STATUS.onHold]: { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
     [WON]: { label: 'Won - PO received', color: GREEN, field: 'won' },
-    Lost: { label: 'Lost', color: RED, field: 'lost' },
+    [QUOTATION_STATUS.lost]: { label: 'Lost', color: RED, field: 'lost' },
   };
   const qt = quotationStatus.total;
   const statusRows = quotationStatus.rows.map((row) => ({ ...row, ...(STATUS_STYLE[row.status] ?? { label: row.status, color: BLUE }) }));

@@ -2,6 +2,8 @@ import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
+import { r2, share } from './reportMath.js';
+import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
 /**
  * Figures only the sales review PDF uses: the enquiry funnel, the service
@@ -9,12 +11,9 @@ import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './ser
  * reports page does not show these.
  */
 
-export const ENQUIRY_STATUS = { open: 'In Progress', declined: 'Declined', quoted: 'Won - Quotation Sent' };
-const WON = 'Won - PO Received';
-const LOST = 'Lost';
-
-const r2 = (n) => Math.round(n * 100) / 100;
-const ratio = (part, whole) => (whole ? part / whole : null);
+export { ENQUIRY_STATUS };
+const WON = QUOTATION_STATUS.won;
+const LOST = QUOTATION_STATUS.lost;
 
 /** Value in INR of some quotations, how many have no value, and what has no rate. */
 function inrTotals(quotations) {
@@ -50,7 +49,7 @@ export function summariseEnquiries(rows) {
     in_progress: rows.filter((row) => row.status === ENQUIRY_STATUS.open).length,
     declined: rows.filter((row) => row.status === ENQUIRY_STATUS.declined).length,
     quoted,
-    quote_rate: ratio(quoted, rows.length),
+    quote_rate: share(quoted, rows.length),
   };
 }
 
@@ -150,7 +149,7 @@ export function serviceRows(quotations, enquiries) {
       won: won.length,
       lost,
       pipeline: list.length - won.length - lost,
-      win_rate: ratio(won.length, won.length + lost),
+      win_rate: share(won.length, won.length + lost),
       ...wonValue(won),
     };
   };
@@ -183,8 +182,16 @@ export async function serviceReport(period) {
 }
 
 /** Quotation statuses as they read: still open first, then the outcome. */
-export const QUOTATION_STATUSES = ['Submitted', 'Under Negotiation', 'On Hold', WON, LOST];
-const STATUS_FIELD = { Submitted: 'submitted', 'Under Negotiation': 'negotiating', 'On Hold': 'on_hold', [WON]: 'won', [LOST]: 'lost' };
+export const QUOTATION_STATUSES = [
+  QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold, WON, LOST,
+];
+const STATUS_FIELD = {
+  [QUOTATION_STATUS.submitted]: 'submitted',
+  [QUOTATION_STATUS.negotiating]: 'negotiating',
+  [QUOTATION_STATUS.onHold]: 'on_hold',
+  [WON]: 'won',
+  [LOST]: 'lost',
+};
 
 /** How many quotations are at each status, the win rate, and the value still open. */
 export function summariseQuotationStatuses(quotations) {
@@ -196,7 +203,7 @@ export function summariseQuotationStatuses(quotations) {
     quotations: quotations.length,
     ...counts,
     open: quotations.filter((q) => q.status !== WON && q.status !== LOST).length,
-    win_rate: ratio(counts.won, counts.won + counts.lost),
+    win_rate: share(counts.won, counts.won + counts.lost),
     ...inrTotals(quotations),
     open_value_inr: open.value_inr,
     open_without_value: open.without_value,

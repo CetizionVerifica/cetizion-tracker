@@ -6,6 +6,9 @@
 
 const SYMBOL = { INR: '₹', EUR: '€', USD: '$', GBP: '£', AED: 'AED ', SGD: 'S$' };
 
+/** Short month names, as every server-side report prints them. */
+export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 const missing = (value) => value === null || value === undefined || value === '' || Number.isNaN(Number(value));
 
 /** Indian grouping for rupees, western grouping for everything else. */
