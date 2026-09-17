@@ -262,6 +262,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
             <Badge tone="warning">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Badge>
             <div className="small" style={{ marginTop: 2 }}>on site as <span className="mono">{it.existing_ref}</span></div>
             <div className="small muted">matched by {f.match}</div>
+            {f.certain === false && <div className="small" style={{ color: 'var(--warn-fg)' }}>Not certain: confirm it is the same deal</div>}
           </div>
         );
       },
@@ -330,6 +331,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     ],
   }[stepKey];
 
+  const possible = items.filter((it) => it.existing_ref && dupFlag(it)?.certain === false).length;
   return (
     <Card
       flush
@@ -354,6 +356,17 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
         </div>
       }
     >
+      {possible > 0 && (
+        <div style={{ padding: '10px 14px 0' }}>
+          <Alert tone="warning">
+            {possible} possible duplicate{possible === 1 ? ' was' : 's were'} matched only by client name and service
+            (and the proposal date, when the sheet has one). This is how Lost, Under Negotiation and On Hold deals are
+            matched, because they have no PO number; a quotation number in the sheet makes the match exact. The match
+            may be wrong: a client can have two proposals for the same service. Check each one before keeping the
+            original, or it will not be imported.
+          </Alert>
+        </div>
+      )}
       <DataTable
         rows={rows}
         columns={[...base, ...middle, ...tail]}
