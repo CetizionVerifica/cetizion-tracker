@@ -15,7 +15,8 @@
     "db:upgrade": "node scripts/db.js upgrade",
     "seed": "node scripts/db.js seed",
     "seed:demo": "node scripts/db.js demo",
-    "reset": "node scripts/db.js reset"
+    "reset": "node scripts/db.js reset",
+    "bootstrap": "node scripts/db.js bootstrap"
   },
   "dependencies": {
     "cloudinary": "^2.11.0",
