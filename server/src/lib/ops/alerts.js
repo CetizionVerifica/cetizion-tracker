@@ -63,6 +63,8 @@ export async function runOpsWatch() {
     const maxHours = Number(set.backup_max_age_hours || 8);
     const maxDays = Number(set.backup_verify_max_age_days || 8);
     out.last_backup = last.backup; out.last_verify = last.verify;
+    const { rows: failed } = await query(`SELECT kind, error, finished_at FROM backup_runs WHERE NOT ok AND finished_at > now() - interval '1 day' ORDER BY finished_at DESC LIMIT 3`);
+    for (const f of failed) await raiseAlert(`backup_${f.kind}_failed`, f.kind === 'verify' ? 'The backup restore check failed' : 'A database backup failed', `${f.error || 'no detail'} (${f.finished_at})`);
     if (!last.backup || Date.now() - new Date(last.backup) > maxHours * 3600e3) await raiseAlert('backup', 'No successful database backup recorded recently', `Last: ${last.backup || 'never'}; expected every ${maxHours} hours`);
     if (!last.verify || Date.now() - new Date(last.verify) > maxDays * 864e5) await raiseAlert('backup_verify', 'The backup restore check has not passed recently', `Last passed: ${last.verify || 'never'}`, { level: 'warning' });
   }

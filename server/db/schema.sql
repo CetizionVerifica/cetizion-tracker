@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -2188,6 +2188,28 @@ CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DES
 INSERT INTO settings (key, value, notes) VALUES
   ('signin_lockout_failures', '10', 'Failed sign-ins from one address, within the lockout window, before it is refused and an alert is raised.'),
   ('signin_lockout_minutes', '15', 'The lockout window, in minutes.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Backup records (#33)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_runs (
+  id           bigserial PRIMARY KEY,
+  kind         text NOT NULL CHECK (kind IN ('backup','verify','drill')),
+  ok           boolean NOT NULL,
+  started_at   timestamptz,
+  finished_at  timestamptz NOT NULL DEFAULT now(),
+  size_bytes   bigint,
+  location     text,
+  detail       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error        text
+);
+
+CREATE INDEX IF NOT EXISTS backup_runs_kind_idx ON backup_runs (kind, finished_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('backup_max_age_hours', '8', 'Alert when no successful backup has been recorded for this many hours.'),
+  ('backup_verify_max_age_days', '8', 'Alert when the restore check has not passed for this many days.')
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;
