@@ -47,7 +47,11 @@ function fatal(message) {
 
 function resolvePassword() {
   const provided = process.env.AUTH_PASSWORD || '';
-  if (provided) return provided;
+  if (provided) {
+    // A weak shared password in production is refused outright (#34).
+    if (isProduction && (provided.length < 14 || provided === DEV_PASSWORD)) fatal('AUTH_PASSWORD must be at least 14 characters and not the development password.');
+    return provided;
+  }
   if (isProduction) fatal('AUTH_PASSWORD is not set.');
   console.warn(`[auth] AUTH_PASSWORD is not set — using the development password "${DEV_PASSWORD}".`);
   return DEV_PASSWORD;

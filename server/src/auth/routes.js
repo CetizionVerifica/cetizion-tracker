@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import { query } from '../db.js';
+import { raiseAlert } from '../lib/ops/alerts.js';
+import { failedSignIns } from '../lib/ops/metrics.js';
 import { z } from 'zod';
 
 import { ApiError } from '../middleware/error.js';
@@ -54,6 +57,28 @@ const cookieOptions = () => ({
 
 const parse = (schema, body) => {
   const parsed = schema.safeParse(body ?? {});
+const asUser = (username, expiresAt) => ({
+  username,
+  expires_at: new Date(expiresAt).toISOString(),
+});
+
+export const authRouter = Router();
+
+const setting = async (key, fallback) => Number((await query('SELECT value FROM settings WHERE key = $1', [key]).catch(() => ({ rows: [] }))).rows[0]?.value) || fallback;
+
+/** Failures from this address inside the window (#34). */
+async function recentFailures(ip) {
+  const minutes = await setting('signin_lockout_minutes', 15);
+  const { rows: [r] } = await query(
+    `SELECT COUNT(*)::int AS n FROM auth_events WHERE ip = $1 AND NOT ok AND created_at > now() - make_interval(mins => $2)
+        AND created_at > COALESCE((SELECT MAX(created_at) FROM auth_events WHERE ip = $1 AND ok), '-infinity')`, [ip, minutes]).catch(() => ({ rows: [{ n: 0 }] }));
+  return { n: r.n, minutes };
+}
+const record = (username, ip, ok, reason) =>
+  query('INSERT INTO auth_events (username, ip, ok, reason) VALUES ($1,$2,$3,$4)', [String(username || '').slice(0, 120), ip, ok, reason]).catch(() => {});
+
+authRouter.post('/login', loginLimiter, async (req, res) => {
+  const parsed = credentials.safeParse(req.body ?? {});
   if (!parsed.success) {
     throw new ApiError(422, 'Please check the highlighted fields', {
       fields: Object.fromEntries(
@@ -83,14 +108,31 @@ export const authRouter = Router();
 function sharedLogin(body) {
   const { username, password } = parse(sharedCredentials, body);
 
+<<<<<<< HEAD
+=======
+  const { username, password } = parsed.data;
+  const limit = await setting('signin_lockout_failures', 10);
+  const before = await recentFailures(req.ip);
+  if (before.n >= limit) {
+    await record(username, req.ip, false, 'locked');
+    throw new ApiError(429, `Too many failed sign-ins from this address. Try again in ${before.minutes} minutes.`);
+  }
+>>>>>>> 60c40da (feat: sign-in lockout with alerts, stricter headers and the security runbook (#34))
   // Both comparisons run before the branch: `&&` would short-circuit and time
   // the username check separately from the password one.
   const usernameOk = constantTimeEqual(username, authConfig.username);
   const passwordOk = constantTimeEqual(password, authConfig.password);
   if (!(usernameOk && passwordOk)) {
+    await record(username, req.ip, false, 'bad credentials');
+    failedSignIns.inc();
+    // Raised once, when this address reaches the limit.
+    if (before.n + 1 === limit) {
+      raiseAlert('signin', `${limit} failed sign-ins from ${req.ip}`, `Last username tried: ${String(username).slice(0, 60)}. The address is locked for ${before.minutes} minutes.`).catch(() => {});
+    }
     throw new ApiError(401, 'That username and password do not match');
   }
 
+  await record(username, req.ip, true, null);
   const expiresAt = Date.now() + authConfig.sessionTtlMs;
   return { payload: sharedPayload(username, expiresAt), body: sharedBody(username, expiresAt), expiresAt };
 }

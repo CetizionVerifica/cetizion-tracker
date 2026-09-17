@@ -70,7 +70,14 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.use(helmet());
+// Security headers (#34): HSTS where cookies are secure, no framing by other
+// sites, no full referrer to other origins.
+app.use(helmet({
+  hsts: authConfig.secureCookie ? { maxAge: 31536000, includeSubDomains: true } : false,
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(compression());
 app.use(cors({
   origin: config.corsOrigin.split(',').map((s) => s.trim()),
