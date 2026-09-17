@@ -21,7 +21,7 @@ request. WORKFLOW.md has the rules; PROGRESS.md is the plain-language summary.
 
 | Issue | Title | Decision needed |
 | --- | --- | --- |
-| #17 | Migrate the web app to Next.js 16, shadcn/ui, Tailwind 4 | Whether to rewrite now. Every UI issue below is built in the current app until decided. |
+| #17 | Migrate the web app to Next.js 16, shadcn/ui, Tailwind 4 | Being done by another team member; not ours. Our UI work stays in the current app. |
 | #51 | Mobile app for field staff | Scope and priority |
 | #52 | Timesheets and utilisation | The issue itself says: decide first whether time is billed |
 
@@ -159,4 +159,5 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 - 2026-09-17: Batch 4 done and tagged `checkpoint/batch-4`. #29 and #30 are built and tested against a stand-in mailbox; they go live when the lead registers the Microsoft app. Also fixed: the orphan-file sweep would have removed timeline attachments after a day.
 - 2026-09-17: Batch 5 done and tagged `checkpoint/batch-5`. Also fixed: the background worker could not start (pg-boss 12 import), found while testing webhooks.
 - 2026-09-17: Paused mid Batch 6 at the end of the session. #50 and #38 done and committed; #35, #33, #34 next, then checkpoint 6. README already links docs/backups.md, docs/security.md and docs/staging.md, which those issues add.
-- 2026-09-18: Batch 6 done and tagged `checkpoint/batch-6`. Every planned issue is now built. Next: a full testing pass, then #17 (Next.js).
+- 2026-09-18: Batch 6 done and tagged `checkpoint/batch-6`. Every planned issue is now built. Next: a full testing pass. #17 (Next.js) is being done by another team member.
+- 2026-09-17: Final testing pass clean (116 server tests, 4 browser tests, 463 pages, live checks with Cloudinary). #17 dropped from our list: another team member is doing it.

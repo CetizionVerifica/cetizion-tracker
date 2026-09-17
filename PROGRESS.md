@@ -300,7 +300,8 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   client portal, accounting). Checkpoint 5 tagged; nothing pushed.
 - 2026-09-18: Batch 6 finished (Claude access, monitoring, security,
   backups, staging). Checkpoint 6 tagged; nothing pushed. Next: full testing,
-  then the move to Next.js (#17).
+  then the move to Next.js (#17). (Update: #17 is being done by another
+  team member, so it is not on our list.)
 - 2026-09-17: Full testing pass with the real sales sheet imported and a
   messy 500-row sheet through Bulk import. Fixed: rows with a negative amount
   or an over-long value now show as errors in the review instead of making
