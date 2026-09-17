@@ -17,6 +17,7 @@ process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
 
 // Imported after the environment is set, because the auth config reads it once.
 const { default: app } = await import('../src/app.js');
+const { databasePayload, signSession } = await import('../src/auth/session.js');
 
 const signIn = () =>
   request(app).post('/api/auth/login').send({ username: USERNAME, password: PASSWORD });
@@ -37,6 +38,18 @@ describe('the gate', () => {
       .set('Cookie', 'cetizion_session=not.arealtoken');
 
     assert.equal(response.status, 401);
+  });
+
+  test('turns away a database-mode cookie, correctly signed or not', async () => {
+    // Signed with this API's own secret; only the shape is a database one.
+    // Shared mode must not accept it, or a cutover could be walked back
+    // while the sessions it issued quietly went on working.
+    const token = signSession(databasePayload(1, Date.now() + 3_600_000), process.env.SESSION_SECRET);
+
+    for (const path of ['/api/auth/me', '/api/projects']) {
+      const response = await request(app).get(path).set('Cookie', [`cetizion_session=${token}`]);
+      assert.equal(response.status, 401, path);
+    }
   });
 
   test('leaves the health check open for the platform to poll', async () => {

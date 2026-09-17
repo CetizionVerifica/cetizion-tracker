@@ -40,6 +40,37 @@ export async function findActiveAdmin(db = pool) {
   return rows[0] ?? null;
 }
 
+/**
+ * The row a signed cookie names. Read on every authenticated request in
+ * database mode, so it is the one query standing between a demoted or
+ * switched-off account and the powers it had when it signed in.
+ */
+export async function findUserById(id, db = pool) {
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+
+  const { rows } = await db.query(`SELECT ${COLUMNS} FROM users WHERE id = $1`, [id]);
+  return rows[0] ?? null;
+}
+
+/**
+ * The same row with the hash taken out — the only shape that may leave this
+ * module for a response body or a request context.
+ */
+export function withoutSecrets(row) {
+  if (!row) return null;
+  const { password_hash: _hash, ...rest } = row;
+  return rest;
+}
+
+/**
+ * Stamp a successful sign-in. Only ever called once a password has actually
+ * been verified: a failed attempt leaves no trace here, or the column would
+ * record guesses rather than sign-ins.
+ */
+export async function recordLogin(id, db = pool) {
+  await db.query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]);
+}
+
 /** @returns the row whose email matches, ignoring case, or null. */
 export async function findUserByEmail(email, db = pool) {
   const normalized = normalizeEmail(email);
