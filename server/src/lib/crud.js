@@ -16,7 +16,7 @@ const ident = (name) => `"${String(name).replace(/"/g, '')}"`;
  * search and filter columns. Anything the client asks for that is not in
  * those lists is ignored rather than interpolated.
  */
-function buildWhere(def, reqQuery, params) {
+export function buildWhere(def, reqQuery, params) {
   const clauses = [];
 
   const search = (reqQuery.q || '').trim();
@@ -97,15 +97,32 @@ function validate(def, body, { partial }) {
   return pickWritable(def, parsed.data);
 }
 
-/** Where a resource has a human key (PRJ-2026-001) accept it in the URL too. */
+/**
+ * Where a resource has a human key (PRJ-2026-001) accept it in the URL too.
+ *
+ * A human key can itself be all digits — clients issue PO numbers like
+ * 4530056073 — so digits alone do not mean "internal id". The human key
+ * wins whenever a row carries it; the numeric id is only tried when it
+ * fits Postgres' integer type and no row has that human key.
+ */
+const MAX_INT = 2147483647;
+
 function idPredicate(def, id, params) {
-  if (/^\d+$/.test(id)) {
-    params.push(Number(id));
+  const key = decodeURIComponent(id);
+  const numeric = /^\d+$/.test(key) && Number(key) <= MAX_INT;
+
+  if (!def.naturalKey) {
+    if (!numeric) throw new ApiError(400, 'Invalid id');
+    params.push(Number(key));
     return `id = $${params.length}`;
   }
-  if (!def.naturalKey) throw new ApiError(400, 'Invalid id');
-  params.push(decodeURIComponent(id));
-  return `${ident(def.naturalKey)} = $${params.length}`;
+  params.push(key);
+  const byKey = `${ident(def.naturalKey)} = $${params.length}`;
+  if (!numeric) return byKey;
+
+  params.push(Number(key));
+  return `(${byKey} OR (id = $${params.length} AND NOT EXISTS (
+            SELECT 1 FROM ${ident(def.table)} WHERE ${byKey})))`;
 }
 
 /**

@@ -234,6 +234,9 @@ function FormField({ field, value, error, onChange, record, file, onFile, previe
     );
   }
 
+  // A value the page fixes (the company a contact belongs to): sent, never shown.
+  if (field.type === 'hidden') return null;
+
   const common = {
     value: value ?? '',
     error,

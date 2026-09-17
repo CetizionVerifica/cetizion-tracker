@@ -22,9 +22,14 @@ RUN npm ci --omit=dev
 FROM node:22-bookworm-slim
 
 # tini as PID 1 so Swarm's SIGTERM reaches node during a rolling update.
+# Also: security updates for the base system, and a current npm (the bundled
+# one carries known advisories; npm stays for `npm run db:upgrade`).
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends tini \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g npm@latest \
+ && npm cache clean --force
 
 ENV NODE_ENV=production
 ENV PORT=4000

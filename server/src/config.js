@@ -47,4 +47,18 @@ export const config = {
   },
   // Cloudinary's Free plan refuses files over 10 MB.
   documentMaxBytes: Math.round((Number(process.env.DOCUMENT_MAX_MB) || 10) * 1024 * 1024),
+  // Outgoing email (#21). Mode defaults to log, so nothing leaves a server
+  // until someone deliberately sets live (or sandbox with an allowlist).
+  mail: {
+    mode: ['log', 'sandbox', 'live'].includes(process.env.EMAIL_MODE) ? process.env.EMAIL_MODE : 'log',
+    host: process.env.SMTP_HOST || '',
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.EMAIL_FROM || '',
+    replyTo: process.env.EMAIL_REPLY_TO || '',
+    bcc: process.env.EMAIL_BCC || '',
+    allowlist: (process.env.EMAIL_ALLOWLIST || '').split(',').map((s) => s.trim()).filter(Boolean),
+  },
 };

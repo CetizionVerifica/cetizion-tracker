@@ -10,9 +10,9 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, enquiries, quotations, expense_categories,
+  purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
   travel_vendors, services, settings, documents CASCADE;
 
 -- ---------------------------------------------------------------------
@@ -70,6 +70,43 @@ CREATE TABLE documents (
 );
 
 -- ---------------------------------------------------------------------
+-- Companies and contacts — a client exists once, keyed on its normalised
+-- name; records keep client_name and link to it by trigger (below).
+-- ---------------------------------------------------------------------
+
+CREATE TABLE companies (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL,
+  name_key    text NOT NULL UNIQUE,
+  sector      text,
+  gstin       text,
+  website     text,
+  address     text,
+  city        text,
+  notes       text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE contacts (
+  id                 serial PRIMARY KEY,
+  company_id         int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name               text NOT NULL,
+  email              text,
+  phone              text,
+  role               text,
+  is_billing         boolean NOT NULL DEFAULT false,
+  opt_out_reminders  boolean NOT NULL DEFAULT false,
+  notes              text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX contacts_company_id_idx ON contacts (company_id);
+CREATE UNIQUE INDEX contacts_company_name_key
+  ON contacts (company_id, lower(regexp_replace(btrim(name), '\s+', ' ', 'g')));
+
+-- ---------------------------------------------------------------------
 -- Projects  (Project Tracker)
 --   Created when a quotation is won. project_id is the human key used
 --   everywhere, exactly as in the workbook (PRJ-2026-001).
@@ -79,6 +116,7 @@ CREATE TABLE projects (
   id                    serial PRIMARY KEY,
   project_id            text NOT NULL UNIQUE,
   client_name           text NOT NULL,
+  company_id            int REFERENCES companies(id) ON DELETE SET NULL,
   primary_service       text,
   project_manager       text,
   project_manager_email text,
@@ -92,6 +130,8 @@ CREATE TABLE projects (
   updated_at            timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE INDEX projects_company_id_idx ON projects (company_id);
+
 -- ---------------------------------------------------------------------
 -- Quotations  (Sales Tracker)
 -- ---------------------------------------------------------------------
@@ -100,7 +140,9 @@ CREATE TABLE quotations (
   id                 serial PRIMARY KEY,
   quotation_no       text NOT NULL UNIQUE,
   client_name        text NOT NULL,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
   contact_person     text,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   service_quoted     text,
   sector             text,
   sales_person       text,
@@ -121,6 +163,7 @@ CREATE TABLE quotations (
 );
 
 CREATE INDEX ON quotations (project_id);
+CREATE INDEX quotations_company_id_idx ON quotations (company_id);
 CREATE INDEX ON quotations (status);
 
 -- ---------------------------------------------------------------------
@@ -133,8 +176,10 @@ CREATE TABLE enquiries (
   enquiry_no         text NOT NULL UNIQUE,
   enquiry_date       date,
   client_name        text NOT NULL,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
   sector             text,
   contact_person     text,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   sales_person       text,
   sales_person_email text,
   service            text,
@@ -146,6 +191,7 @@ CREATE TABLE enquiries (
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -339,7 +385,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['projects','quotations','enquiries','purchase_orders',
+  FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
       'travel_vendor_invoices','employee_expense_claims','settings']
   LOOP
@@ -348,5 +394,198 @@ BEGIN
          FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------- companies
+-- The grouping key the reports already use for free-text names.
+CREATE OR REPLACE FUNCTION name_key(p_name text) RETURNS text AS $$
+  SELECT NULLIF(lower(regexp_replace(btrim(p_name), '\s+', ' ', 'g')), '');
+$$ LANGUAGE sql IMMUTABLE;
+
+-- The company for a typed name: found by key, or created with that spelling.
+CREATE OR REPLACE FUNCTION company_for(p_name text) RETURNS int AS $$
+DECLARE k text; cid int;
+BEGIN
+  k := name_key(p_name);
+  IF k IS NULL THEN RETURN NULL; END IF;
+  SELECT id INTO cid FROM companies WHERE name_key = k;
+  IF cid IS NULL THEN
+    INSERT INTO companies (name, name_key) VALUES (regexp_replace(btrim(p_name), '\s+', ' ', 'g'), k)
+      ON CONFLICT (name_key) DO UPDATE SET name = companies.name
+      RETURNING id INTO cid;
+  END IF;
+  RETURN cid;
+END $$ LANGUAGE plpgsql;
+
+-- The contact of that name at a company: found or created.
+CREATE OR REPLACE FUNCTION contact_for(p_company int, p_name text) RETURNS int AS $$
+DECLARE k text; cid int;
+BEGIN
+  k := name_key(p_name);
+  IF p_company IS NULL OR k IS NULL THEN RETURN NULL; END IF;
+  SELECT id INTO cid FROM contacts WHERE company_id = p_company
+    AND lower(regexp_replace(btrim(name), '\s+', ' ', 'g')) = k;
+  IF cid IS NULL THEN
+    INSERT INTO contacts (company_id, name) VALUES (p_company, regexp_replace(btrim(p_name), '\s+', ' ', 'g'))
+      ON CONFLICT (company_id, lower(regexp_replace(btrim(name), '\s+', ' ', 'g'))) DO UPDATE SET name = contacts.name
+      RETURNING id INTO cid;
+  END IF;
+  RETURN cid;
+END $$ LANGUAGE plpgsql;
+
+-- companies.name_key always follows companies.name.
+CREATE OR REPLACE FUNCTION companies_set_key() RETURNS trigger AS $$
+BEGIN
+  NEW.name := regexp_replace(btrim(NEW.name), '\s+', ' ', 'g');
+  NEW.name_key := name_key(NEW.name);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- A renamed company renames the client on every record that points at it.
+CREATE OR REPLACE FUNCTION companies_rename_records() RETURNS trigger AS $$
+BEGIN
+  IF NEW.name IS DISTINCT FROM OLD.name THEN
+    UPDATE quotations SET client_name = NEW.name WHERE company_id = NEW.id;
+    UPDATE enquiries  SET client_name = NEW.name WHERE company_id = NEW.id;
+    UPDATE projects   SET client_name = NEW.name WHERE company_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- Records link to their company from client_name, and (where the record has
+-- one) to their contact from contact_person. A company with no sector yet
+-- takes the record's sector.
+CREATE OR REPLACE FUNCTION link_company() RETURNS trigger AS $$
+DECLARE rec jsonb; changed boolean;
+BEGIN
+  rec := to_jsonb(NEW);
+  IF TG_OP = 'INSERT' THEN
+    changed := true;
+  ELSE
+    changed := NEW.company_id IS NULL OR NEW.client_name IS DISTINCT FROM OLD.client_name;
+  END IF;
+  IF changed THEN
+    NEW.company_id := company_for(NEW.client_name);
+  END IF;
+  IF NEW.company_id IS NOT NULL AND rec ? 'sector' AND name_key(rec->>'sector') IS NOT NULL THEN
+    UPDATE companies SET sector = rec->>'sector' WHERE id = NEW.company_id AND name_key(sector) IS NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION link_contact() RETURNS trigger AS $$
+DECLARE changed boolean;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    changed := true;
+  ELSE
+    changed := NEW.contact_id IS NULL
+      OR NEW.contact_person IS DISTINCT FROM OLD.contact_person
+      OR NEW.company_id IS DISTINCT FROM OLD.company_id;
+  END IF;
+  IF changed THEN
+    NEW.contact_id := contact_for(NEW.company_id, NEW.contact_person);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER companies_set_key BEFORE INSERT OR UPDATE ON companies
+  FOR EACH ROW EXECUTE FUNCTION companies_set_key();
+CREATE TRIGGER companies_rename_records AFTER UPDATE ON companies
+  FOR EACH ROW EXECUTE FUNCTION companies_rename_records();
+
+-- Trigger names sort a before b, so the company is linked before the contact.
+CREATE TRIGGER a_link_company BEFORE INSERT OR UPDATE ON quotations FOR EACH ROW EXECUTE FUNCTION link_company();
+CREATE TRIGGER b_link_contact BEFORE INSERT OR UPDATE ON quotations FOR EACH ROW EXECUTE FUNCTION link_contact();
+CREATE TRIGGER a_link_company BEFORE INSERT OR UPDATE ON enquiries FOR EACH ROW EXECUTE FUNCTION link_company();
+CREATE TRIGGER b_link_contact BEFORE INSERT OR UPDATE ON enquiries FOR EACH ROW EXECUTE FUNCTION link_contact();
+CREATE TRIGGER a_link_company BEFORE INSERT OR UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION link_company();
+
+-- ---------------------------------------------------------------- email and jobs
+-- Every email composed, and every scheduled job run (see migrations/012_email_log.sql).
+CREATE TABLE IF NOT EXISTS email_log (
+  id                   serial PRIMARY KEY,
+  to_email             text NOT NULL,
+  cc                   text,
+  subject              text NOT NULL,
+  template             text NOT NULL,
+  entity               text,
+  entity_id            text,
+  status               text NOT NULL DEFAULT 'queued'
+                         CHECK (status IN ('queued','sent','failed','suppressed')),
+  mode                 text,
+  reason               text,
+  provider_message_id  text,
+  error                text,
+  body_text            text,
+  body_html            text,
+  sent_by              text,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  sent_at              timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS email_log_entity_idx ON email_log (entity, entity_id);
+CREATE INDEX IF NOT EXISTS email_log_created_idx ON email_log (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+  id           serial PRIMARY KEY,
+  name         text NOT NULL,
+  started_by   text NOT NULL DEFAULT 'schedule',
+  started_at   timestamptz NOT NULL DEFAULT now(),
+  finished_at  timestamptz,
+  status       text NOT NULL DEFAULT 'running'
+                 CHECK (status IN ('running','done','failed')),
+  result       jsonb,
+  error        text
+);
+
+CREATE INDEX IF NOT EXISTS job_runs_name_idx ON job_runs (name, started_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('emails_enabled', 'true', 'Kill switch for every automatic email. Set to false to stop reminders and digests without changing the server.'),
+  ('reminder_interval_days', '7', 'Days between payment reminders to the same client for the same overdue stage.'),
+  ('reminder_grace_days', '3', 'Days after the due date before the first reminder goes out.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------- bulk import
+-- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).
+CREATE TABLE IF NOT EXISTS import_batches (
+  id            serial PRIMARY KEY,
+  filename      text NOT NULL,
+  sheet_name    text,
+  status        text NOT NULL DEFAULT 'draft'
+                  CHECK (status IN ('draft','committed','failed')),
+  uploaded_by   text,
+  row_count     int NOT NULL DEFAULT 0,
+  mapping       jsonb,                 -- column -> field mapping used
+  rules         jsonb,                 -- the assumption rules applied
+  summary       jsonb,                 -- counts per step, skipped reasons
+  ai_model      text,
+  error         text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  committed_at  timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS import_items (
+  id              serial PRIMARY KEY,
+  batch_id        int NOT NULL REFERENCES import_batches(id) ON DELETE CASCADE,
+  step            text NOT NULL
+                    CHECK (step IN ('quotation','project','purchase_order',
+                                    'service','stage','invoice','receipt')),
+  seq             int NOT NULL,        -- order within the batch
+  source_row      int,                 -- S.No / row number in the sheet
+  parent_item_id  int REFERENCES import_items(id) ON DELETE CASCADE,
+  action          text NOT NULL DEFAULT 'create'
+                    CHECK (action IN ('create','update','skip')),
+  included        boolean NOT NULL DEFAULT true,
+  payload         jsonb NOT NULL,      -- the record as it will be written
+  flags           jsonb NOT NULL DEFAULT '[]'::jsonb,   -- [{level, code, message}]
+  assumptions     jsonb NOT NULL DEFAULT '[]'::jsonb,   -- ["PO date assumed ..."]
+  existing_ref    text,                -- matching live record, if any
+  committed_ref   text,                -- id / key written on commit
+  error           text,
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS import_items_batch_idx ON import_items (batch_id, step, seq);
 
 COMMIT;

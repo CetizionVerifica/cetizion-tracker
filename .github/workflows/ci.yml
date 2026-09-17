@@ -98,6 +98,53 @@ jobs:
         working-directory: web
         run: npm run build
 
+  e2e:
+    name: Browser tests (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/cetizion_tracker
+      AUTH_USERNAME: admin
+      AUTH_PASSWORD: e2e-password
+      SESSION_SECRET: e2e-session-secret-at-least-32-characters-long
+      E2E_USERNAME: admin
+      E2E_PASSWORD: e2e-password
+      EMAIL_MODE: log
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci --prefix server && npm ci --prefix web
+      - name: Browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Database with seed data
+        working-directory: server
+        run: npm run reset && npm run seed:demo
+      - name: Test
+        working-directory: web
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/playwright-report
+          retention-days: 7
   image:
     name: Docker image builds
     runs-on: ubuntu-latest

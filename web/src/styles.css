@@ -158,18 +158,20 @@ a:hover { text-decoration: underline; }
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--ink-200);
 }
-.topbar__title { flex: 1; min-width: 0; }
+.topbar { flex-wrap: wrap; row-gap: 8px; }
+.topbar__title { flex: 1 1 240px; min-width: 0; }
 .topbar__sub { font-size: 12.5px; color: var(--ink-500); margin-top: 2px; }
-.topbar__actions { display: flex; gap: 8px; align-items: center; }
+.topbar__actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .page { padding: 24px 28px 56px; max-width: 1600px; width: 100%; }
 
 /* --------------------------------------------------------------- layout */
 
 .grid { display: grid; gap: 16px; }
-.grid--stats { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-.grid--2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
-.grid--3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+/* min(..., 100%) so a column is never wider than the page on a narrow window. */
+.grid--stats { grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); }
+.grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
+.grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row--between { justify-content: space-between; }
@@ -185,12 +187,19 @@ a:hover { text-decoration: underline; }
   overflow: hidden;
 }
 .card__head {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 14px 18px;
   border-bottom: 1px solid var(--ink-200);
 }
+/* Title + hint keep at least 260px; the actions drop below them rather than squeeze them. */
+.card__lead { flex: 1 1 260px; min-width: 0; }
+.card__head > .card__actions, .card__head > .toolbar { flex: 0 1 auto; }
 .card__title { font-size: 14px; font-weight: 650; }
 .card__hint { font-size: 12px; color: var(--ink-500); margin-top: 2px; }
+/* Filters and buttons in a card header: never wider than the card, controls sized to content. */
+.card__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+.card__actions .select, .card__actions .input { width: auto; min-width: 130px; }
+.card__actions label { white-space: nowrap; }
 .card__body { padding: 18px; }
 .card__body--flush { padding: 0; }
 
@@ -247,6 +256,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .table tbody tr:hover td { background: var(--brand-50); }
 .table tbody tr.is-clickable { cursor: pointer; }
+.import-nav .btn { white-space: normal; max-width: 100%; text-align: center; }
+/* Bulk import: a row that already exists on the site */
+.table tbody tr.tr--dup td { background: var(--warn-bg); }
+.table tbody tr.tr--dup:hover td { background: #fef3c7; }
+.table tbody tr.tr--dup td:first-child { box-shadow: inset 3px 0 0 var(--warn-fg); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table .mono { font-family: var(--mono); font-size: 12px; }
 .table .strong { font-weight: 600; }
@@ -396,13 +410,14 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .progress { height: 6px; border-radius: 999px; background: var(--ink-200); overflow: hidden; min-width: 60px; }
 .progress__bar { height: 100%; border-radius: 999px; background: var(--brand-600); transition: width .3s ease; }
 
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--ink-200); overflow-x: auto; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--ink-200); }
 .tab {
   padding: 9px 14px; border: none; background: none;
   font-family: inherit; font-size: 13px; font-weight: 600; color: var(--ink-500);
-  cursor: pointer; white-space: nowrap;
+  cursor: pointer; white-space: nowrap; max-width: 100%;
   border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
+@media (max-width: 600px) { .tab { white-space: normal; text-align: left; } }
 .tab:hover { color: var(--ink-700); }
 .tab.is-active { color: var(--brand-700); border-bottom-color: var(--brand-700); }
 .tab__count {
@@ -483,10 +498,24 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .nowrap { white-space: nowrap; }
 .num { font-variant-numeric: tabular-nums; }
 
+/* The burger is always available: it is the only thing that hides the sidebar. */
+.menu-toggle { display: inline-flex; }
+.app.sidebar-hidden .sidebar { display: none; }
+.sidebar__signout-icon { display: none; }
+
+/* Narrow windows: the sidebar shrinks to an icon rail instead of vanishing. */
 @media (max-width: 900px) {
-  .sidebar { position: fixed; left: -100%; transition: left .2s ease; z-index: 90; }
-  .sidebar.is-open { left: 0; box-shadow: var(--shadow-lg); }
+  .app { --sidebar-w: 64px; }
+  .sidebar { padding-left: 8px; padding-right: 8px; }
+  .sidebar__name, .sidebar__tagline, .nav__label, .nav__text, .sidebar__user { display: none; }
+  .sidebar__brand { padding-left: 4px; padding-right: 4px; }
+  .sidebar__mark { justify-content: center; }
+  .nav__group { margin-bottom: 10px; }
+  .nav__item { justify-content: center; padding-left: 0; padding-right: 0; position: relative; }
+  .nav__icon { width: auto; font-size: 17px; }
+  .nav__count { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; padding: 0 4px; }
+  .sidebar__foot { justify-content: center; }
+  .sidebar__signout { padding: 4px 8px; }
+  .sidebar__signout-icon { display: inline; }
   .page, .topbar { padding-left: 16px; padding-right: 16px; }
-  .menu-toggle { display: inline-flex !important; }
 }
-.menu-toggle { display: none; }

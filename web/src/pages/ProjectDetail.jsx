@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import {
   Card, Stat, Badge, DataTable, KeyValues, Progress, Tabs,
-  ErrorState, Empty, useToast, Alert,
+  ErrorState, Empty, useToast, Alert, ConfirmDialog,
 } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -74,6 +74,51 @@ export default function ProjectDetail() {
       toast(err.message, 'danger');
     }
   }
+
+  async function deleteStep(step) {
+    setBusy(true);
+    try {
+      await api.remove('onboarding', step.id);
+      toast('Step removed', 'success');
+      done();
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Swap step numbers with the neighbour so the order is a stored fact,
+  // not a display trick. Two small updates, then one refetch.
+  async function moveStep(step, direction) {
+    const index = onboarding.findIndex((s) => s.id === step.id);
+    const other = onboarding[index + direction];
+    if (!other) return;
+    try {
+      await api.update('onboarding', step.id, { step_no: other.step_no });
+      await api.update('onboarding', other.id, { step_no: step.step_no });
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
+  const stageOptions = Array.from(
+    new Set(['Onboarding', 'Execution', 'Delivery', 'Closure', ...onboarding.map((s) => s.stage).filter(Boolean)])
+  );
+  const nextStepNo = onboarding.reduce((max, s) => Math.max(max, Number(s.step_no) || 0), 0) + 1;
+  const stepFields = [
+    { name: 'project_id', label: 'Project', required: true, disabled: true },
+    { name: 'step_no', label: 'Step number', type: 'number', min: 1, required: true },
+    { name: 'stage', label: 'Stage', type: 'combo', options: stageOptions },
+    { name: 'status', label: 'Status', type: 'select', options: lookups.enums?.onboarding || ['Not Started', 'In Progress', 'Done', 'N/A'] },
+    { name: 'step', label: 'Step', required: true, type: 'textarea', rows: 2, span: 'all' },
+    { name: 'owner', label: 'Owner' },
+    { name: 'owner_email', label: 'Owner email', type: 'email' },
+    { name: 'target_date', label: 'Target date', type: 'date' },
+    { name: 'completed_date', label: 'Completed on', type: 'date' },
+    { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
+  ];
 
   return (
     <>
@@ -195,11 +240,16 @@ export default function ProjectDetail() {
             title="Onboarding & lifecycle"
             hint="Tick each step as it completes — the project's onboarding % follows"
             actions={
-              onboarding.length === 0 && (
-                <button type="button" className="btn btn--primary btn--sm" onClick={applyTemplate} disabled={busy}>
-                  Add standard checklist
+              <>
+                {onboarding.length === 0 && (
+                  <button type="button" className="btn btn--sm" onClick={applyTemplate} disabled={busy}>
+                    Add standard checklist
+                  </button>
+                )}
+                <button type="button" className="btn btn--primary btn--sm" onClick={() => setDialog({ type: 'newStep' })}>
+                  + Add step
                 </button>
-              )
+              </>
             }
           >
             <DataTable
@@ -213,20 +263,32 @@ export default function ProjectDetail() {
                 { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
                 {
                   key: 'act', header: '', align: 'right',
-                  render: (r) => (
-                    <div className="table__actions">
-                      <button type="button" className="btn btn--sm" onClick={() => toggleStep(r)}>
-                        {r.status === 'Done' ? 'Reopen' : 'Mark done'}
-                      </button>
-                    </div>
-                  ),
+                  render: (r) => {
+                    const i = onboarding.findIndex((s) => s.id === r.id);
+                    return (
+                      <div className="table__actions">
+                        <button type="button" className="btn btn--sm btn--ghost" title="Move up" aria-label="Move up" onClick={() => moveStep(r, -1)} disabled={i <= 0}>▲</button>
+                        <button type="button" className="btn btn--sm btn--ghost" title="Move down" aria-label="Move down" onClick={() => moveStep(r, 1)} disabled={i >= onboarding.length - 1}>▼</button>
+                        <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ type: 'editStep', row: r })}>Edit</button>
+                        <button type="button" className="btn btn--sm" onClick={() => toggleStep(r)}>
+                          {r.status === 'Done' ? 'Reopen' : 'Mark done'}
+                        </button>
+                        <button type="button" className="btn btn--sm btn--ghost" title="Delete step" aria-label="Delete step" onClick={() => setDialog({ type: 'deleteStep', row: r })}>✕</button>
+                      </div>
+                    );
+                  },
                 },
               ]}
               empty={
                 <Empty
                   title="No onboarding steps"
-                  text="Add the 11 standard lifecycle steps used across Cetizion projects."
-                  action={<button type="button" className="btn btn--primary" onClick={applyTemplate} disabled={busy}>Add standard checklist</button>}
+                  text="Start from the 11 standard lifecycle steps, or add your own one at a time."
+                  action={
+                    <div className="table__actions">
+                      <button type="button" className="btn btn--primary" onClick={applyTemplate} disabled={busy}>Add standard checklist</button>
+                      <button type="button" className="btn" onClick={() => setDialog({ type: 'newStep' })}>+ Add step</button>
+                    </div>
+                  }
                 />
               }
             />
@@ -268,6 +330,48 @@ export default function ProjectDetail() {
           </Card>
         )}
       </div>
+
+      {dialog?.type === 'newStep' && (
+        <RecordForm
+          title="Add onboarding step"
+          subtitle={`For ${p.project_id} — ${p.client_name}`}
+          resource="onboarding"
+          record={{
+            project_id: p.project_id,
+            step_no: nextStepNo,
+            stage: 'Onboarding',
+            status: 'Not Started',
+            owner: p.project_manager,
+            owner_email: p.project_manager_email,
+          }}
+          onClose={close}
+          onSaved={refetch}
+          fields={stepFields}
+        />
+      )}
+
+      {dialog?.type === 'editStep' && (
+        <RecordForm
+          title="Edit onboarding step"
+          subtitle={`Step ${dialog.row.step_no} of ${p.project_id}`}
+          resource="onboarding"
+          record={dialog.row}
+          onClose={close}
+          onSaved={refetch}
+          fields={stepFields}
+        />
+      )}
+
+      {dialog?.type === 'deleteStep' && (
+        <ConfirmDialog
+          title="Delete this step?"
+          message={`"${dialog.row.step}" will be removed from ${p.project_id}. The onboarding % will recalculate.`}
+          confirmLabel="Delete step"
+          busy={busy}
+          onConfirm={() => deleteStep(dialog.row)}
+          onClose={close}
+        />
+      )}
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}

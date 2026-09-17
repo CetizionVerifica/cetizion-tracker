@@ -1,0 +1,71 @@
+# Supply-chain and code scanning (#37). Runs on every pull request, every
+# push to main, and once a week so a vulnerability published after the last
+# change is still noticed.
+name: Security
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+jobs:
+  dependencies:
+    name: Known vulnerabilities in dependencies
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [server, web]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Audit ${{ matrix.dir }}
+        working-directory: ${{ matrix.dir }}
+        # High and critical fail the check; moderate and below are reported only.
+        run: npm audit --omit=dev --audit-level=high
+  codeql:
+    name: Code scanning (CodeQL)
+    # Code scanning on a private repository needs GitHub Advanced Security.
+    # Once it is on, set the repository variable CODEQL_ENABLED=true.
+    if: vars.CODEQL_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v4
+  secrets:
+    name: Secrets in the repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The gitleaks CLI itself (the GitHub Action needs a paid licence for
+      # organisation repositories). Scans the whole history.
+      - name: Scan the history for secrets
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:latest detect --source /repo --redact --verbose
+  container:
+    name: Container image scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build --tag cetizion-tracker:scan .
+      # npm's own folder is skipped: the app never runs npm (it is kept only
+      # for manual `npm run db:upgrade`), and its bundled packages trail
+      # upstream fixes.
+      - name: Scan the image
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:latest image --exit-code 1 --ignore-unfixed
+          --severity CRITICAL,HIGH --no-progress
+          --skip-dirs /usr/local/lib/node_modules/npm cetizion-tracker:scan
