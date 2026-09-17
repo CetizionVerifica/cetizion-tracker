@@ -59,18 +59,20 @@ test('service totals count each quotation once', () => {
   assert.deepEqual(report.summary.won_unconverted, [{ currency: 'USD', amount: 100 }]);
 });
 
-test('enquiries split by status, and quoted ones by their quotation', () => {
+// The outcome of the quotations these enquiries led to belongs to the
+// quotation section, so the enquiry figures are only about status here.
+test('enquiries split by status', () => {
   const rows = [
-    { status: 'Won - Quotation Sent', quotation_status: 'Won - PO Received', quotation_value: 200, currency: 'INR', rate: 1 },
-    { status: 'Won - Quotation Sent', quotation_status: 'Under Negotiation', quotation_value: 50, currency: 'INR', rate: 1 },
-    { status: 'Won - Quotation Sent', quotation_status: null, quotation_value: null, currency: null, rate: null },
-    { status: 'Declined', quotation_status: null },
-    { status: 'In Progress', quotation_status: null },
+    { status: 'Won - Quotation Sent' },
+    { status: 'Won - Quotation Sent' },
+    { status: 'Won - Quotation Sent' },
+    { status: 'Declined' },
+    { status: 'In Progress' },
   ];
   const s = summariseEnquiries(rows);
   assert.deepEqual(
-    [s.enquiries, s.quoted, s.declined, s.in_progress, s.won, s.lost, s.open_quotes, s.not_linked, s.won_value_inr, s.quote_rate, s.win_rate],
-    [5, 3, 1, 1, 1, 0, 1, 1, 200, 0.6, 1]
+    [s.enquiries, s.quoted, s.declined, s.in_progress, s.quote_rate],
+    [5, 3, 1, 1, 0.6]
   );
   assert.equal(enquirySummary([], {}).busiest, null);
 });

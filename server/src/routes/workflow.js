@@ -5,6 +5,7 @@ import { lockAttachableDocument, purgeDocument } from '../lib/documents.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
+import { normalizeName } from '../lib/names.js';
 
 export const projectRouter = Router();
 export const poRouter = Router();
@@ -115,10 +116,24 @@ projectRouter.post('/:projectId/onboarding/apply-template', async (req, res) => 
 
 // ---------------------------------------------------------------------
 // Quotation → project.  The workbook's step 1→2 handoff, in one action.
+//
+// Two modes are supported:
+//
+//   New project (project_id absent / null / blank):
+//     Assigns the next project number, inserts a new project, links the
+//     quotation, and optionally applies the onboarding template.
+//
+//   Existing project (project_id is a non-empty string):
+//     Validates the project exists and belongs to the same client as the
+//     quotation, then links the quotation to it.  No new project is
+//     created, no project-number sequence is consumed, no onboarding
+//     rows are added, and no existing project data is modified.
 // ---------------------------------------------------------------------
 
-// No project_id: a registered project always gets the next number in the series.
 const convertSchema = z.object({
+  // Present → link to existing project.  Absent/blank → create new project.
+  project_id: z.preprocess(blank, z.string().trim().max(40).nullable().optional()),
+  // Fields for the "create new project" path only:
   project_manager: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
   project_manager_email: z.preprocess(blank, z.string().trim().max(160).nullable().optional()),
   planned_start_date: dateStr,
@@ -143,7 +158,54 @@ quotationRouter.post('/:id/convert', async (req, res) => {
       throw new ApiError(422, `This quotation is already registered as project ${quotation.project_id}`);
     }
 
-    const projectId = await claimNextId('project', client);
+    // ------------------------------------------------------------------
+    // Path A — link to an existing project
+    // ------------------------------------------------------------------
+    if (body.project_id) {
+      // Confirm the project exists.  FOR SHARE prevents concurrent deletion.
+      const { rows: prows } = await client.query(
+        'SELECT project_id, client_name FROM projects WHERE project_id = $1 FOR SHARE',
+        [body.project_id]
+      );
+      if (!prows.length) {
+        throw new ApiError(422, `Project ${body.project_id} not found`);
+      }
+      const existingProject = prows[0];
+
+      // Cross-client safety: use the application's canonical normalizeName() which collapses
+      // repeated interior spaces in addition to trimming and lowercasing, so "Hindalco  Ltd"
+      // and "Hindalco Ltd" are treated as the same client (consistent with sales-report grouping).
+      if (normalizeName(existingProject.client_name) !== normalizeName(quotation.client_name)) {
+        throw new ApiError(
+          422,
+          `Project ${body.project_id} belongs to a different client ` +
+          `(${existingProject.client_name}) — cannot link a quotation for ${quotation.client_name}`
+        );
+      }
+
+      // Link the quotation only.  Nothing else is changed.
+      // claimNextId is NOT called.  No row is inserted into projects.
+      // No onboarding rows are created.  Existing project data is untouched.
+      await client.query(
+        `UPDATE quotations
+            SET project_id = $1, po_received = true, status = 'Won - PO Received'
+          WHERE id = $2`,
+        [existingProject.project_id, quotation.id]
+      );
+
+      return { project: existingProject, onboarding_steps_added: 0 };
+    }
+
+    // ------------------------------------------------------------------
+    // Path B — create a brand-new project (original behaviour, unchanged)
+    // ------------------------------------------------------------------
+    // The project ID year comes from planned_start_date so historical projects
+    // land in the correct series (e.g. PRJ-2025-... for a 2025 project imported today).
+    // Falls back to the current business year when no start date is supplied.
+    const projectYear = body.planned_start_date
+      ? String(body.planned_start_date).slice(0, 4)
+      : undefined;
+    const projectId = await claimNextId('project', client, projectYear);
     const { rows: [project] } = await client.query(
       `INSERT INTO projects (project_id, client_name, primary_service, project_manager,
                              project_manager_email, sales_person, planned_start_date,

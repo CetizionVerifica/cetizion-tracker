@@ -47,7 +47,6 @@ const W = Math.floor(595.28 - MARGIN_X * 2); // A4 portrait less the side margin
 const WON = 'Won - PO Received';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const r2 = (n) => Math.round(n * 100) / 100;
 const share = (part, whole) => (whole > 0 ? part / whole : null);
 
 // ---------------------------------------------------------------------
@@ -90,12 +89,6 @@ function generatedStamp(date, timeZone) {
 
 const dateIn = (date, timeZone) =>
   new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
-
-/** Days in a month, leap years included. */
-function daysInMonth(year, month) {
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][Number(month) - 1];
-}
 
 /** "Sep" when every month is in one year, "Sep ’26" otherwise. */
 function shortMonths(months) {
@@ -251,7 +244,8 @@ function tile(value, label, meta) {
 
 export function salesReportDocDefinition(data) {
   const {
-    period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
+    period = {}, year, month = null, revenuePeriod = { from: null, to: null },
+    sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
     rates = { INR: 1 }, generatedAt = new Date(), timeZone = 'UTC',
   } = data;
 
@@ -263,9 +257,8 @@ export function salesReportDocDefinition(data) {
   // The revenue section covers a calendar year, or one month of it.
   const revenueLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
   const revenueScope = month ? revenueLabel : `calendar year ${year}`;
-  const revenueFrom = month ? `${year}-${month}-01` : `${year}-01-01`;
-  const revenueTo = month ? `${year}-${month}-${String(daysInMonth(year, month)).padStart(2, '0')}` : `${year}-12-31`;
-  const samePeriods = period.from === revenueFrom && period.to === revenueTo;
+  // revenuePeriod is the range the revenue figures were fetched for, worked out once by the route.
+  const samePeriods = period.from === revenuePeriod.from && period.to === revenuePeriod.to;
 
   // Sector won value in INR, at the same Settings rates as everything else.
   const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: row.pos + row.lost + row.pipeline, ...inrValue(row.amounts, rates) }));

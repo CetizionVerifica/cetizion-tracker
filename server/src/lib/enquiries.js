@@ -19,8 +19,14 @@ export async function quoteWonEnquiry(client, { before, after }) {
   // the link on purpose, so an unrelated edit must not create another.
   if (before?.status === ENQUIRY_WON) return undefined;
 
+  // The quotation date inherits the enquiry's date (e.g. for historical enquiries),
+  // falling back to today in the business time zone when blank.
+  const quotationDate = after.enquiry_date || businessToday();
+  const year = String(quotationDate).slice(0, 4);
+
   // Two quotations created at the same moment must not be handed the same number.
-  const quotationNo = await claimNextId('quotation', client);
+  // The quotation number year is strictly derived from the quotation's own date.
+  const quotationNo = await claimNextId('quotation', client, year);
 
   await client.query(
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
@@ -30,8 +36,7 @@ export async function quoteWonEnquiry(client, { before, after }) {
     [
       quotationNo, after.client_name, after.contact_person, after.service,
       after.sector, after.sales_person, after.sales_person_email,
-      // Dated where the business is, not by the database server's clock.
-      businessToday(),
+      quotationDate,
       `From enquiry ${after.enquiry_no}`,
     ]
   );

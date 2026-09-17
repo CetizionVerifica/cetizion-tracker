@@ -94,7 +94,8 @@ dashboardRouter.get('/worklist', async (req, res) => {
   const [stages, vendors, claims, deliveries, gaps] = await Promise.all([
     query(`
       SELECT id, po_number, project_id, client_name, stage_no, stage_name,
-             stage_amount, currency, invoice_no, invoice_due_date, stage_status,
+             stage_amount, currency, invoice_no, invoice_date, document_id, document_name,
+             terms_days, invoice_due_date, stage_status,
              days_overdue, follow_up_action, due_now_amount
       FROM v_payment_stages
       WHERE stage_status IN ('To Invoice','Overdue','Partially Paid')

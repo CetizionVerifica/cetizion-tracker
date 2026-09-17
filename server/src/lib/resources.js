@@ -83,6 +83,8 @@ export const resources = {
     naturalKey: 'enquiry_no',
     // enquiry_no is assigned on create (CTZ/ENQ/2026/004) and never changed.
     autoId: 'enquiry',
+    // The year in the generated number comes from the enquiry's own date.
+    autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
     filters: ['status', 'sales_person', 'client_name', 'sector'],
@@ -116,6 +118,8 @@ export const resources = {
     naturalKey: 'quotation_no',
     // quotation_no is assigned on create (CTZ/QT/2026/064) and never changed.
     autoId: 'quotation',
+    // The year in the generated number comes from the quotation's own date.
+    autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
     filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status'],
@@ -152,6 +156,8 @@ export const resources = {
     naturalKey: 'project_id',
     // project_id is assigned on create (PRJ-2026-012) and never changed.
     autoId: 'project',
+    // planned_start_date drives the year; falls back to the current business year when blank.
+    autoIdDateField: 'planned_start_date',
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
     filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person'],
