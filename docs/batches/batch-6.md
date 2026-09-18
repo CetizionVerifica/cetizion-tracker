@@ -19,7 +19,7 @@ Merge after batch 5.
 
 ## Deploying it
 
-- **Migrations** 032 to 035, applied on start.
+- **Migrations** 035 to 038, applied on start.
 - **New packages:** @modelcontextprotocol/sdk, pino, pino-http, prom-client (morgan removed).
 - **Environment (optional):** `SENTRY_DSN`, `RELEASE`, `ALERT_EMAIL`, `METRICS_TOKEN`, `LOG_FORMAT`, `LOG_LEVEL`; staging only: `APP_ENV=staging`, `STAGING_BASIC_AUTH`.
 - New job: `ops.watch` every 15 minutes.
