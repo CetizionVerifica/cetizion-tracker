@@ -1,4 +1,4 @@
--- 025 — connected mailboxes: client email synced onto records (#29).
+-- 028 — connected mailboxes: client email synced onto records (#29).
 --
 -- A person connects their Microsoft 365 mailbox (or a shared one). The
 -- worker pulls new mail with Graph delta queries, keeps only threads with
