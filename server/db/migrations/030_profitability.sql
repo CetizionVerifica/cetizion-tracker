@@ -1,4 +1,4 @@
--- 027 — project profitability: delivery cost against PO value (#39).
+-- 030 — project profitability: delivery cost against PO value (#39).
 --
 -- Costs that have nowhere to live today (subcontractors, external
 -- auditors, certification-body and lab fees) get their own table; travel
