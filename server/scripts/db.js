@@ -8,6 +8,7 @@
  *   npm run seed        load db/seed.sql  (the real workbook data)
  *   npm run seed:demo   load db/demo.sql  (the workbook's worked example)
  *   npm run reset       create + migrate + seed, in that order
+ *   npm run bootstrap   create the first admin from BOOTSTRAP_ADMIN_*  (idempotent)
  *
  * In production db:upgrade needs no one to run it: the container does it
  * before the API starts (src/start.js).
@@ -83,6 +84,28 @@ const commands = {
     await createDatabase();
     await commands.migrate();
     await commands.seed();
+  },
+  // The same step src/start.js runs after its migrations, by hand: for a
+  // database that was upgraded outside a deploy, or to add the first admin
+  // to one that already exists. Safe to repeat.
+  bootstrap: async () => {
+    const [{ bootstrapAdmin }, { pool }] = await Promise.all([
+      import('../src/auth/bootstrap.js'),
+      import('../src/db.js'),
+    ]);
+    try {
+      const { status } = await bootstrapAdmin({
+        log: (line) => console.log(`• ${line}`),
+        warn: (line) => console.warn(`! ${line}`),
+      });
+      console.log(
+        status === 'created' ? '✓ first admin created'
+          : status === 'conflict' ? '! nothing was changed — see the warning above'
+          : '✓ nothing to do'
+      );
+    } finally {
+      await pool.end();
+    }
   },
 };
 

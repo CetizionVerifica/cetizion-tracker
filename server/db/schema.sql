@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
   travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
@@ -623,5 +623,45 @@ CREATE TABLE IF NOT EXISTS import_items (
 );
 
 CREATE INDEX IF NOT EXISTS import_items_batch_idx ON import_items (batch_id, step, seq);
+
+-- ---------------------------------------------------------------- people
+-- The accounts records will belong to (see migrations/015_users.sql).
+-- `active` tells the two kinds of row apart: someone who signs in has an
+-- email and a password hash, an attribution-only name from the old data
+-- has neither. Nothing signs in against this table yet — the API still
+-- authenticates with AUTH_USERNAME / AUTH_PASSWORD.
+CREATE TABLE IF NOT EXISTS users (
+  id             serial PRIMARY KEY,
+  name           text NOT NULL,
+  -- Null for an attribution-only row. Never a made-up address: a person
+  -- who cannot sign in has no email here, and the partial index below
+  -- lets any number of rows be in that state.
+  email          text,
+  password_hash  text,
+  role           text NOT NULL DEFAULT 'sales'
+                   CHECK (role IN ('admin','sales')),
+  active         boolean NOT NULL DEFAULT true,
+  last_login_at  timestamptz,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT users_name_not_blank  CHECK (btrim(name) <> ''),
+  -- '' would satisfy "email IS NOT NULL" while being no address at all.
+  CONSTRAINT users_email_not_blank CHECK (email IS NULL OR btrim(email) <> ''),
+  CONSTRAINT users_password_hash_not_blank CHECK (password_hash IS NULL OR btrim(password_hash) <> ''),
+  -- The invariant the application depends on: anyone who can sign in has
+  -- something to sign in with. Enforced here rather than only in code, so
+  -- a later importer, admin screen or hand-written UPDATE cannot skip it.
+  CONSTRAINT users_active_needs_login CHECK (
+    active = false OR (email IS NOT NULL AND password_hash IS NOT NULL)
+  )
+);
+
+-- One account per address, however it was typed: A@Example.com and
+-- a@example.com are the same person. Partial, so the attribution-only rows
+-- (email IS NULL) are not compared with each other at all.
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE email IS NOT NULL;
+
+CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;
