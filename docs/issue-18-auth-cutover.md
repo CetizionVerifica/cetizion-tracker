@@ -73,8 +73,87 @@ It deliberately prints counts rather than addresses — a terminal or a CI log
 is a worse place to keep them than Settings → Users. To confirm *which*
 accounts exist, look there.
 
-**6. Take a database backup**, per the project's normal deployment process.
-The cutover itself writes nothing, but this is the moment you would want one.
+**5b. Read the user list yourself.** `auth:check` counts; only a person can
+say whether the counts are the right ones. Open **Settings → Users** and go
+down it:
+
+- [ ] at least one **active admin** — the check enforces this
+- [ ] preferably **two** active admins, so losing one person is not an
+      incident. The tracker refuses to deactivate or demote the last one,
+      which protects you from a mistake but not from a colleague on leave.
+- [ ] every **active** user has a **real email address** they can receive
+      mail at — it is the thing they will type to sign in
+- [ ] every **active** user has credentials: `auth:check` reports whether a
+      hash is present, and the list shows whether an address is
+- [ ] **no test or leftover accounts** are active — anything created while
+      trying this out is a live account the moment you switch
+- [ ] the **inactive** rows are inactive on purpose. Historical
+      attribution-only names belong here and should stay switched off; they
+      have no email and no password and cannot sign in.
+- [ ] **roles are right.** Admin is not a seniority, it is who can manage
+      users, run jobs, send test mail, merge companies, change the settings
+      and exchange rates every report depends on, and delete companies,
+      contacts, purchase orders and payment stages. Everybody else is
+      sales. The full list is in
+      [issue-18-authorization.md](./issue-18-authorization.md).
+
+**6. Take a database backup.** The cutover itself writes nothing — it reads
+the users table you have just filled — so this is insurance, not a
+requirement of the change. Take it anyway: it is the cheapest moment to have
+one, and the migration that added `session_version` ran on this database.
+
+This repository does not own the production database credentials or the
+backup schedule — those sit with the platform work (#32/#33) and with
+whoever holds server access. Until that lands, here is a procedure that
+works anywhere Postgres does. **Every value in angle brackets is yours to
+supply**; nothing below is a real host, user or database.
+
+```bash
+# Supply these yourself. Do not paste a password on the command line —
+# read it from your password manager into the environment instead, so it
+# does not reach your shell history.
+export PGHOST='<host>'
+export PGPORT='<port>'
+export PGUSER='<user>'
+export PGDATABASE='<database>'
+read -rs PGPASSWORD && export PGPASSWORD      # typed, not echoed
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="<backup-directory>/cetizion-${PGDATABASE}-${STAMP}.dump"
+
+# Custom format (-Fc): compressed, and restorable table by table.
+pg_dump --format=custom --no-owner --no-privileges --file="$OUT"
+```
+
+Then verify it, because an unverified backup is a belief rather than a
+backup:
+
+```bash
+# 1. pg_dump reported success
+echo "pg_dump exit: $?"          # must be 0
+
+# 2. the file is there and is not empty
+test -s "$OUT" && echo "OK: $(wc -c < "$OUT") bytes" || echo "FAILED: empty or missing"
+
+# 3. the archive is readable and contains the tables you expect
+pg_restore --list "$OUT" | grep -E 'TABLE (DATA )?(public )?(users|quotations|projects)' 
+```
+
+`pg_restore --list` reads the archive without restoring anything, so it is
+safe to run against the file you just took. If it errors, the dump is
+corrupt and you do not have a backup.
+
+Keep the file off the database host, and treat it as it deserves: it
+contains every client record and every password hash in the tracker.
+
+```bash
+unset PGPASSWORD
+```
+
+> **Restoring is not part of this runbook.** A restore replaces live data
+> and is not a step in a cutover — the rollback below is one environment
+> variable and needs no database change at all. If you ever do need this
+> dump, restore it to a *new* database first and look at it there.
 
 **7. Rehearse it somewhere that is not production.** Against a staging or
 local database holding a copy of the accounts:
@@ -100,6 +179,29 @@ AUTH_MODE=database
 
 Leave `AUTH_USERNAME` and `AUTH_PASSWORD` exactly where they are. They do
 nothing in database mode, and they are the rollback.
+
+**Remove the bootstrap variables** — before the cutover, or as part of it:
+
+```
+BOOTSTRAP_ADMIN_NAME
+BOOTSTRAP_ADMIN_EMAIL
+BOOTSTRAP_ADMIN_PASSWORD
+```
+
+They exist to create or recover the *first* admin, and that account now
+exists and has been signed into. They are not how anybody authenticates and
+never were: bootstrapping writes a row and is not consulted at sign-in.
+
+What is left behind if you keep them is a working admin password sitting in
+the production environment, held by whoever can read the deployment
+configuration, rotated by nobody, and matching a live account once the mode
+is database. Leaving them set also does not create a second admin later —
+the seat is filled and bootstrapping will not touch it — so they buy nothing
+and cost that.
+
+Keep them somewhere you keep secrets, not in the environment. If you ever
+need to recreate a first admin — a restored-from-scratch database, every
+admin locked out — set them again for that one start and remove them after.
 
 Restart / redeploy.
 
@@ -203,7 +305,22 @@ Shared sign-in is still in the code and still selectable. A later phase
 removes it, along with `AUTH_USERNAME`, `AUTH_PASSWORD` and the shared
 session shape. Until then this document's rollback works.
 
-One known limitation while you are here: **resetting somebody's password does
-not end the sessions they already have**, because sessions carry no password
-version. To cut somebody off immediately, deactivate them — that takes
-effect on their very next request.
+---
+
+## Cutting somebody off
+
+Both of these take effect on that person's **very next request**, not when
+their cookie expires:
+
+- **Reset their password** (Settings → Users → set password). Every session
+  they already hold ends, and they come back with the new password.
+- **Deactivate them.** Every session ends, and they cannot sign in at all.
+  Reactivating them later does **not** revive the old sessions — the
+  sessions revoked then stay revoked, and they sign in afresh.
+
+Both work by raising a counter on the user's row that every signed cookie
+carries a copy of; a cookie is only honoured while the two still agree. The
+counter only ever goes up.
+
+A change of *role* is immediate too, by a different route: the role is never
+in the cookie, it is read from the database on every request.

@@ -170,6 +170,26 @@ export function crudRouter(name, def) {
   // dropdowns everybody works in. Resources without the flag are unchanged.
   const mayWrite = def.adminOnlyWrites ? [requireAdmin] : [];
 
+  // And a resource may declare the narrower thing: anybody may add to it and
+  // correct it, but only an admin may destroy a row.
+  //
+  // That split exists because creating and deleting are not the same risk on
+  // shared and financial data. A sales user enters purchase orders and their
+  // payment stages as ordinary work, and companies and contacts appear on
+  // their own — the link trigger creates one the moment a quotation names a
+  // client nobody has typed before. Requiring an admin for any of that would
+  // stop the job. Deleting is the other direction: a company or contact is
+  // referenced by every record that ever named it, and a PO, its services and
+  // its stages are what the invoicing and Due-now figures are computed from.
+  // Those rows are not the deleter's alone to remove.
+  //
+  // Until Phase 2 gives records an owner, "whose record is this?" has no
+  // answer, so the conservative one is used for deletes on shared and
+  // financial data and the permissive one everywhere else. adminOnlyWrites
+  // implies this — a resource only an admin may write is one only an admin
+  // may delete.
+  const mayDelete = def.adminOnlyWrites || def.adminOnlyDeletes ? [requireAdmin] : [];
+
   // A save with follow-on work runs in one transaction: whatever an
   // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
@@ -327,7 +347,7 @@ export function crudRouter(name, def) {
     res.json({ data: { ...full[0], ...extra } });
   });
 
-  router.delete('/:id', ...mayWrite, async (req, res) => {
+  router.delete('/:id', ...mayDelete, async (req, res) => {
     const remove = async (client) => {
       const params = [];
       const pred = idPredicate(def, req.params.id, params);

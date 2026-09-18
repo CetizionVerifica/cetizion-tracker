@@ -54,8 +54,25 @@ export async function currentUser(req) {
   }
 
   const row = await findUserById(subject.uid);
-  // Deleted since signing in, switched off since signing in: both are gone.
+  // Four ways to be gone, and deliberately one answer for all of them:
+  //
+  //   deleted since signing in        no row
+  //   switched off since signing in   !row.active
+  //   password reset since signing in row.session_version moved on
+  //   deactivated and reactivated     row.session_version moved on, and
+  //                                   stayed there — reactivating never
+  //                                   lowers it, so the old cookie is
+  //                                   dead for good
+  //
+  // requireAuth turns every one of them into the same "your session has
+  // ended" 401. Telling them apart would answer, to whoever still holds a
+  // revoked cookie, whether the account exists and what was done to it.
+  //
+  // The active check stands on its own rather than leaning on the counter:
+  // an account switched off by something that did not raise the counter is
+  // still switched off.
   if (!row || !row.active) return null;
+  if (row.session_version !== subject.sv) return null;
 
   return {
     mode: 'database',

@@ -123,6 +123,14 @@ function parseHash(encoded) {
 }
 
 /**
+ * Could this stored value be checked at all? The same question parseHash
+ * answers, exposed so the sign-in path can tell "no usable hash" from
+ * "wrong password" *before* deciding how much work to do — and then
+ * deliberately do the same amount either way. See verifyPasswordOrDummy.
+ */
+const isUsableHash = (encoded) => parseHash(encoded) !== null;
+
+/**
  * Does this password produce that stored hash?
  *
  * False for every kind of no — wrong password, malformed value, unknown
@@ -159,19 +167,32 @@ export function dummyPasswordHash() {
 
 /**
  * For the sign-in path: check a password against a stored hash, and when
- * there is no stored hash — no such email, or an account that cannot sign
- * in — spend the same work against the dummy before answering false.
+ * there is no hash worth checking — no such email, an account that cannot
+ * sign in, a stored value that cannot be parsed — spend the same work
+ * against the dummy before answering false.
  *
  * Without this, "no such user" would come back sooner than "wrong
  * password", and the difference is enough to enumerate who has an account.
  *
- * Not used yet: sign-in still checks AUTH_USERNAME / AUTH_PASSWORD. It is
- * here so the cutover has nothing left to invent.
+ * The test is `isUsableHash`, not "is it a non-empty string". That
+ * distinction is the whole fix: a row holding a truncated hash, one written
+ * by an older format, a bad base64 body or the right shape at the wrong
+ * cost all *look* like stored credentials, and every one of them would have
+ * come back from parseHash as null and returned false without doing any
+ * scrypt at all. An account whose hash was damaged would then answer
+ * measurably faster than a healthy one — a different question than "does
+ * this account exist", and just as much of an answer as it.
+ *
+ * Which sign-in mode is in force does not change any of this: in database
+ * mode this is the check, and in shared mode nothing reaches it. Both cost
+ * the same when they are wrong.
+ *
+ * verifyPassword is what does the work in both branches; it never calls
+ * back into here, so there is no path that loops.
  */
 export async function verifyPasswordOrDummy(password, encoded) {
-  if (typeof encoded === 'string' && encoded !== '') {
-    return verifyPassword(password, encoded);
-  }
+  if (isUsableHash(encoded)) return verifyPassword(password, encoded);
+
   await verifyPassword(password, await dummyPasswordHash());
   return false;
 }
