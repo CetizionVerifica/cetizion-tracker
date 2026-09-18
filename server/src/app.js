@@ -20,6 +20,7 @@ import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
+import { activityRouter } from './routes/activity.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import {
@@ -72,6 +73,10 @@ app.use('/api/import', importRouter);
 app.use('/api/documents', documentRouter);
 // Admin only, at its own router.
 app.use('/api/users', userRouter);
+// Admin only, and read only: what was done and by whom (#18 Phase 1.5).
+// Not in the resource registry below on purpose — an audit trail with a
+// generated create/update/delete router is not an audit trail.
+app.use('/api/activity', activityRouter);
 
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.

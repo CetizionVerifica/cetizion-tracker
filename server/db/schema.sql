@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS activity_log, users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
   travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
@@ -675,5 +675,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ------------------------------------------------------------- activity
+-- What was done, by whom (see migrations/017_activity_log.sql).
+-- Append-only: nothing in the application updates or deletes a row here,
+-- and the only route over it reads. actor_user_id is null for the shared
+-- admin, for a background job, and for an account deleted since — so the
+-- record of an act survives the account that made it.
+CREATE TABLE IF NOT EXISTS activity_log (
+  id             bigserial PRIMARY KEY,
+  actor_user_id  integer REFERENCES users(id) ON DELETE SET NULL,
+  -- Which authority the request came through, not what the actor may do:
+  -- a role changes, this does not.
+  actor_type     text NOT NULL
+                   CHECK (actor_type IN ('user','shared_admin','system')),
+  -- A stable machine key, dotted: 'user.deactivated', 'company.merged'.
+  action         text NOT NULL,
+  entity_type    text NOT NULL,
+  -- text, because some things acted on are named rather than numbered
+  -- (a job is 'reminders.payment'), as in email_log.entity_id.
+  entity_id      text,
+  -- Context only. Never passwords, hashes, cookies, tokens or secrets.
+  metadata       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT activity_log_action_not_blank      CHECK (btrim(action) <> ''),
+  CONSTRAINT activity_log_entity_type_not_blank CHECK (btrim(entity_type) <> ''),
+  CONSTRAINT activity_log_entity_id_not_blank   CHECK (entity_id IS NULL OR btrim(entity_id) <> ''),
+  -- A shared admin and a job have no account; a deleted one leaves
+  -- actor_type 'user' with a null id, which is allowed.
+  CONSTRAINT activity_log_actor_id_needs_user   CHECK (actor_user_id IS NULL OR actor_type = 'user'),
+  CONSTRAINT activity_log_metadata_is_object    CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+-- The unfiltered listing pages on id DESC, which the primary key already
+-- serves. These three back the three supported filters, each carrying the
+-- paging column so one index answers both.
+CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_id, id DESC);
+CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
+CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
 
 COMMIT;

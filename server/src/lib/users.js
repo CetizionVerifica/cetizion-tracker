@@ -12,6 +12,13 @@ import { hashPassword } from './passwords.js';
  * Every statement is parameterised. Email is matched the way the unique
  * index groups it — lower(email) — so a lookup can never disagree with what
  * the database would allow to be inserted.
+ *
+ * The three write functions below take an optional `audit(client, …)` hook
+ * and call it on the client of the transaction they are already running in
+ * (#18 Phase 1.5). That is how an activity row commits with the change it
+ * describes: if the hook throws, the change rolls back with it, and an
+ * account is never quietly created, edited or reset with nothing recording
+ * that it was. Callers that do not audit pass nothing and are unaffected.
  */
 
 export const ROLES = ['admin', 'sales'];
@@ -219,7 +226,7 @@ const FIELDS = { name: 'name', email: 'email', role: 'role', active: 'active' };
  * @throws {LastAdminError} the change would leave nobody administering.
  * @throws {DuplicateEmailError} somebody else holds that address.
  */
-export async function updateUser(id, changes, db = pool) {
+export async function updateUser(id, changes, db = pool, audit = null) {
   const sets = [];
   const values = [];
 
@@ -262,12 +269,27 @@ export async function updateUser(id, changes, db = pool) {
   values.push(id);
   try {
     return await guardingAdmins(db, async (client) => {
+      // Read first when somebody is recording the change, because the row
+      // as it was is the half an audit entry cannot reconstruct afterwards
+      // — "active went false" and "active was already false" look identical
+      // once the UPDATE has run. Inside the transaction and under the
+      // advisory lock guardingAdmins already holds, so no other edit to
+      // this table can slip between the two statements.
+      const before = audit
+        ? (await client.query(
+            `SELECT id, name, email, role, active FROM users WHERE id = $1`, [id]
+          )).rows[0] ?? null
+        : null;
+
       const { rows } = await client.query(
         `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length}
          RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
         values
       );
       if (!rows.length) return null;
+      // On the same client, so the change and the record of it commit
+      // together or neither does. A failure here rolls the edit back.
+      if (audit) await audit(client, { before, after: rows[0] });
       return rows[0];
     });
   } catch (err) {
@@ -284,31 +306,47 @@ export async function updateUser(id, changes, db = pool) {
  * The plain password is hashed here and is neither stored, returned nor
  * logged.
  */
-export async function setUserPassword(id, password, db = pool) {
+export async function setUserPassword(id, password, db = pool, audit = null) {
   const hash = await hashPassword(password);
 
   // One statement, so the new password and the end of every session signed
   // under the old one commit together. Two statements would leave a window
   // where the password had changed and the old cookies still worked, which
   // is the exact window a reset after a leak exists to close.
-  const { rows } = await db.query(
-    `UPDATE users
-        SET password_hash = $1,
-            session_version = session_version + 1
-      WHERE id = $2
-     RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
-    [hash, id]
-  );
-  return rows[0] ?? null;
+  const reset = async (client) => {
+    const { rows } = await client.query(
+      `UPDATE users
+          SET password_hash = $1,
+              session_version = session_version + 1
+        WHERE id = $2
+       RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
+      [hash, id]
+    );
+    if (!rows.length) return null;
+    if (audit) await audit(client, rows[0]);
+    return rows[0];
+  };
+
+  // A transaction only when there is a second statement to keep it company.
+  // Resetting somebody's password because it leaked is exactly the act that
+  // must not end up unrecorded, so the audit row commits with it or the
+  // reset does not happen.
+  return audit ? withTransaction(db, reset) : reset(db);
 }
 
 /**
  * The admin-facing create. Wraps createUser with the same invariant lock,
  * so a new admin arriving cannot interleave with the last one leaving.
  */
-export async function createUserAsAdmin(input, db = pool) {
+export async function createUserAsAdmin(input, db = pool, audit = null) {
   try {
-    return await guardingAdmins(db, (client) => createUser(input, client));
+    return await guardingAdmins(db, async (client) => {
+      const created = await createUser(input, client);
+      // Same client, same transaction: an account that cannot be recorded
+      // as having been created is not created.
+      if (audit) await audit(client, created);
+      return created;
+    });
   } catch (err) {
     throw asDomainError(err);
   }
