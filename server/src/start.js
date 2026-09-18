@@ -1,6 +1,7 @@
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { config } from './config.js';
 import { runMigrations } from './migrations.js';
+import { bootstrapFailureLines } from './startupErrors.js';
 
 /**
  * The production entry point. The database is brought up to date first,
@@ -29,14 +30,17 @@ try {
 // returns; the tracker is no worse off than before, and refusing to serve
 // over it would take working sign-in down to protect a facility nobody is
 // using yet.
+//
+// A failure here is still fatal, but what it is told to fix depends on what
+// actually broke — see bootstrapFailureLines. A database that would not
+// answer is not a reason to send anyone looking at variables.
 try {
   await bootstrapAdmin({
     log: (line) => console.log(`[bootstrap] ${line}`),
     warn: (line) => console.warn(`[bootstrap] ${line}`),
   });
 } catch (err) {
-  console.error(`[bootstrap] ${err.message}`);
-  console.error('[bootstrap] The API was not started. Fix the BOOTSTRAP_ADMIN_* variables and deploy again.');
+  for (const line of bootstrapFailureLines(err)) console.error(line);
   process.exit(1);
 }
 

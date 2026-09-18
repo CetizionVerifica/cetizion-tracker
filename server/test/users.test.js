@@ -78,7 +78,7 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
   const login = (email, extra = {}) => ({
     name: 'A Person',
     email,
-    password_hash: 'scrypt$v1$16384$8$1$c2FsdHNhbHQ$a2V5a2V5',
+    password_hash: 'scrypt$v1$16384$8$5$c2FsdHNhbHQ$a2V5a2V5',
     role: 'sales',
     active: true,
     ...extra,
@@ -136,7 +136,7 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
 
     await insert(
       ['name', 'email', 'password_hash'],
-      ['A Person', 'defaulted@example.com', 'scrypt$v1$16384$8$1$c2FsdA$a2V5']
+      ['A Person', 'defaulted@example.com', 'scrypt$v1$16384$8$5$c2FsdA$a2V5']
     );
 
     assert.equal(await scalar('SELECT role FROM users'), 'sales');
@@ -164,7 +164,7 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
     await clean();
 
     await assert.rejects(
-      insert(['name', 'password_hash', 'active'], ['A Person', 'scrypt$v1$16384$8$1$c2FsdA$a2V5', true]),
+      insert(['name', 'password_hash', 'active'], ['A Person', 'scrypt$v1$16384$8$5$c2FsdA$a2V5', true]),
       (err) => err.code === '23514' && /users_active_needs_login/.test(err.constraint ?? '')
     );
   });

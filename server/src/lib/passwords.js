@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
  *
  * A stored hash carries everything needed to check it again:
  *
- *   scrypt$v1$16384$8$1$<salt>$<derived key>
+ *   scrypt$v1$16384$8$5$<salt>$<derived key>
  *   \____/ \_/ \___/ | |  \__/  \__________/
  *   algo   ver   N   r p  salt   derived key      (both base64url)
  *
@@ -24,8 +24,13 @@ const scryptAsync = promisify(scrypt);
 const ALGORITHM = 'scrypt';
 const VERSION = 'v1';
 
-/** v1: 128 * N * r = 16 MiB per hash, ~50-100 ms on a small container. */
-const V1 = { N: 16384, r: 8, p: 1, keyLength: 32, saltBytes: 16 };
+/**
+ * v1: 128 * N * r = 16 MiB per hash, and p = 5 independent passes over that
+ * block — ~150-300 ms on a small container. p multiplies the CPU work an
+ * attacker has to repeat per guess without raising what one hash costs in
+ * memory, so the 16 MiB figure (and MAX_MEMORY below) is unchanged by it.
+ */
+const V1 = { N: 16384, r: 8, p: 5, keyLength: 32, saltBytes: 16 };
 
 /**
  * What each version is allowed to be. A stored hash names its version and

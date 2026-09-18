@@ -625,7 +625,7 @@ CREATE TABLE IF NOT EXISTS import_items (
 CREATE INDEX IF NOT EXISTS import_items_batch_idx ON import_items (batch_id, step, seq);
 
 -- ---------------------------------------------------------------- people
--- The accounts records will belong to (see migrations/013_users.sql).
+-- The accounts records will belong to (see migrations/015_users.sql).
 -- `active` tells the two kinds of row apart: someone who signs in has an
 -- email and a password hash, an attribution-only name from the old data
 -- has neither. Nothing signs in against this table yet — the API still
