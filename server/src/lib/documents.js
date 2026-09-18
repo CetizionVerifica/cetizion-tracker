@@ -2,6 +2,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { config } from '../config.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { documentClause } from '../auth/ownership.js';
 
 /**
  * The documents behind quotations and purchase orders.
@@ -125,6 +126,23 @@ export const purgeAfterCommit = (id) =>
   purgeDocument(id).catch((err) => console.error('[documents]', err));
 
 /** The document row and its bytes, fetched through a signed Cloudinary URL. */
+/**
+ * Refuse a document this request may not read (#18 Phase 2C).
+ *
+ * 404, not 403: the same answer as an id that does not exist, so nobody
+ * learns which ids are real by asking for them one at a time.
+ */
+export async function assertDocumentReadable(scope, id) {
+  const params = [id];
+  const clause = documentClause(scope, params, { alias: 'd' });
+  if (!clause) return;
+  const { rowCount } = await query(
+    `SELECT 1 FROM documents d WHERE d.id = $1 AND ${clause}`,
+    params
+  );
+  if (!rowCount) throw new ApiError(404, 'Document not found');
+}
+
 export async function fetchDocument(id) {
   requireStorage();
   const { rows } = await query('SELECT * FROM documents WHERE id = $1', [id]);

@@ -30,15 +30,21 @@ export async function quoteWonEnquiry(client, { before, after }) {
   const quotationNo = await claimNextId('quotation', client, year);
 
   await client.query(
+    // owner_user_id comes from the enquiry, not from whoever happened to save
+    // it and not from the free-text sales_person beside it (#18 Phase 2C).
+    // The quotation is the same piece of work one step on, so responsibility
+    // carries across; an unowned enquiry makes an unowned quotation, which is
+    // the honest answer rather than a guess.
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
                              sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9)`,
+                             status, remarks, owner_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10)`,
     [
       quotationNo, after.client_name, after.contact_person, after.service,
       after.sector, after.sales_person, after.sales_person_email,
       quotationDate,
       `From enquiry ${after.enquiry_no}`,
+      after.owner_user_id ?? null,
     ]
   );
   await client.query('UPDATE enquiries SET quotation_no = $1 WHERE id = $2', [quotationNo, after.id]);

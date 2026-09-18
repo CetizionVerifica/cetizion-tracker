@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { config } from '../config.js';
 import { requireAdmin } from '../auth/middleware.js';
+import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
@@ -24,46 +25,84 @@ function sectorOptions(used) {
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
+  // Dropdowns are a read of the sales tables wearing a different hat. A
+  // project id, a quotation number and a client name are exactly the
+  // identifiers Phase 2C restricts, so the lists built from scoped tables
+  // carry the same predicate; the master lists below (services, vendors,
+  // expense categories, travel, companies, settings) are not derived from
+  // anybody's records and are unchanged.
+  const scope = scopeOf(req);
+
+  /**
+   * A builder bound to ONE statement's parameter list. Several of the
+   * queries below restrict two tables at once (the salesperson and sector
+   * lists union quotations with enquiries), and each restriction has to take
+   * the next placeholder in that statement — two builders with separate
+   * arrays would both emit $1 and the statement would not run.
+   */
+  const statement = () => {
+    const params = [];
+    const clause = (build, alias) => build(scope, params, { alias });
+    return {
+      params,
+      owner: (alias) => clause(ownerClause, alias),
+      po: (alias) => clause(purchaseOrderClause, alias),
+    };
+  };
+  const only = (c) => (c ? `WHERE ${c}` : '');
+  const also = (c) => (c ? `AND ${c}` : '');
+
+  const pj = statement(); const pjWhere = only(pj.owner('p'));
+  const poS = statement(); const poWhere = only(poS.po('po'));
+  const qt = statement(); const qtWhere = only(qt.owner('q'));
+  const ppl = statement(); const pplQ = also(ppl.owner('q')); const pplE = also(ppl.owner('e'));
+  const sec = statement(); const secQ = only(sec.owner('q')); const secE = only(sec.owner('e'));
+  const cur = statement(); const curQ = only(cur.owner('q')); const curPo = only(cur.po('po'));
+
   const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
          currenciesInUse] =
     await Promise.all([
       query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
-      query('SELECT project_id, client_name FROM projects ORDER BY project_id DESC'),
-      query(`SELECT po_number, project_id, client_name, po_value, currency
-               FROM v_purchase_orders ORDER BY po_number DESC`),
+      query(`SELECT p.project_id, p.client_name FROM projects p ${pjWhere}
+              ORDER BY p.project_id DESC`, pj.params),
+      query(`SELECT po.po_number, po.project_id, po.client_name, po.po_value, po.currency
+               FROM v_purchase_orders po ${poWhere} ORDER BY po.po_number DESC`, poS.params),
       query('SELECT travel_id, employee_name, destination FROM travel_logs ORDER BY travel_id DESC'),
       // Enquiries come first in the pipeline, so their names are offered too.
-      query(`SELECT sales_person AS name FROM quotations WHERE sales_person IS NOT NULL
+      query(`SELECT q.sales_person AS name FROM quotations q
+              WHERE q.sales_person IS NOT NULL ${pplQ}
              UNION
-             SELECT sales_person FROM enquiries WHERE sales_person IS NOT NULL
-             ORDER BY 1`),
+             SELECT e.sales_person FROM enquiries e
+              WHERE e.sales_person IS NOT NULL ${pplE}
+             ORDER BY 1`, ppl.params),
       // One spelling per client: the companies table (#20).
       query('SELECT id, name, sector FROM companies ORDER BY name'),
       // One suggestion per sector as the reports group them, in its most
       // used spelling, so the list nudges people towards that spelling.
       query(`SELECT mode() WITHIN GROUP (ORDER BY btrim(sector)) AS name
-               FROM (SELECT sector FROM quotations
+               FROM (SELECT q.sector FROM quotations q ${secQ}
                      UNION ALL
-                     SELECT sector FROM enquiries) s
+                     SELECT e.sector FROM enquiries e ${secE}) s
               WHERE btrim(sector) <> ''
               GROUP BY ${nameKey('sector')}
-              ORDER BY 1`),
+              ORDER BY 1`, sec.params),
       query('SELECT key, value, notes FROM settings ORDER BY key'),
       // For linking an enquiry to an existing quotation, and a PO to its won one.
-      query(`SELECT quotation_no, client_name, status, project_id
-               FROM quotations ORDER BY quotation_date DESC NULLS LAST, quotation_no DESC`),
+      query(`SELECT q.quotation_no, q.client_name, q.status, q.project_id
+               FROM quotations q ${qtWhere}
+              ORDER BY q.quotation_date DESC NULLS LAST, q.quotation_no DESC`, qt.params),
       // Currencies actually recorded against something, so Settings can ask
       // for the rates that are really needed instead of every currency the
       // dropdown offers.
       query(`SELECT DISTINCT currency FROM (
-               SELECT currency FROM quotations
+               SELECT q.currency FROM quotations q ${curQ}
                UNION ALL
-               SELECT currency FROM purchase_orders
+               SELECT po.currency FROM purchase_orders po ${curPo}
              ) c
               WHERE currency IS NOT NULL AND currency <> 'INR'
-              ORDER BY 1`),
+              ORDER BY 1`, cur.params),
     ]);
 
   res.json({

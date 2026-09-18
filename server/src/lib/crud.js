@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { requireAdmin } from '../auth/middleware.js';
+import {
+  OWNER_COLUMN, ownerForNewRecord, parentClause, resourceClause, scopeOf,
+} from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
@@ -17,8 +20,10 @@ const ident = (name) => `"${String(name).replace(/"/g, '')}"`;
  * search and filter columns. Anything the client asks for that is not in
  * those lists is ignored rather than interpolated.
  */
-export function buildWhere(def, reqQuery, params) {
-  const clauses = [];
+export function buildWhere(def, reqQuery, params, extra = []) {
+  // Clauses the caller has already built and parameterised — the ownership
+  // predicate. First in the list so a scoped read reads as scoped.
+  const clauses = [...extra];
 
   const search = (reqQuery.q || '').trim();
   if (search && def.search?.length) {
@@ -77,6 +82,55 @@ function buildOrder(def, sortParam) {
 }
 
 /** Reject unknown keys early so typos surface instead of silently vanishing. */
+/**
+ * The by-id predicate, narrowed to what this request may reach.
+ *
+ * Every path that addresses one row goes through here — detail, patch, its
+ * reference-number guard, its FOR UPDATE read, and both delete paths — so a
+ * sales user asking for somebody else's record gets the same "not found"
+ * from all of them, and the UPDATE and DELETE carry the restriction
+ * themselves rather than trusting a SELECT that happened earlier.
+ *
+ * That last part is the point: checking ownership in one statement and
+ * writing in the next is a window, however small, in which the row can
+ * change hands. There is no window if the write cannot match the row.
+ */
+function scopedIdPredicate(def, rawId, params, scope, relation) {
+  const pred = idPredicate(def, rawId, params);
+  // Qualified with the relation the statement actually reads or writes: a
+  // detail read comes from the view, an UPDATE goes to the table, and a
+  // parent-derived predicate names columns on whichever one it is.
+  const mine = resourceClause(def, scope, params, { alias: relation });
+  return mine ? `${pred} AND ${mine}` : pred;
+}
+
+/**
+ * Refuse a new row whose parent this request cannot reach.
+ *
+ * Only for the resources that take their ownership from above — a purchase
+ * order, a payment stage, a PO service line. Without this a sales user could
+ * add a stage to somebody else's purchase order, or a purchase order to a
+ * project that is not theirs, and the row would be invisible to them the
+ * moment it existed. 404, like every other ownership refusal, so the attempt
+ * does not confirm the parent exists.
+ */
+async function assertParentReachable(client, def, values, scope) {
+  if (!def.ownerScopedBy || scope.unrestricted) return;
+  const params = [];
+  let where;
+  if (def.ownerScopedBy === 'purchase_order') {
+    params.push(values.quotation_no ?? null, values.project_id ?? null);
+    where = parentClause(scope, params, { kind: 'purchase_order', alias: 'parent' });
+    where = `SELECT 1 FROM (SELECT $1::text AS quotation_no, $2::text AS project_id) parent WHERE ${where}`;
+  } else {
+    params.push(values.po_number ?? null);
+    where = parentClause(scope, params, { kind: 'via_po', alias: 'parent' });
+    where = `SELECT 1 FROM (SELECT $1::text AS po_number) parent WHERE ${where}`;
+  }
+  const { rowCount } = await client.query(where, params);
+  if (!rowCount) throw new ApiError(404, `${def.label} not found`);
+}
+
 function pickWritable(def, body) {
   const out = {};
   for (const col of def.columns) {
@@ -198,7 +252,11 @@ export function crudRouter(name, def) {
 
   router.get('/', async (req, res) => {
     const params = [];
-    const where = buildWhere(def, req.query, params);
+    // Built before the rest of the WHERE so it lands in the same statement:
+    // the count has to be the count of what this user may see, or a sales
+    // user's pagination would advertise how many records they cannot open.
+    const scoped = resourceClause(def, scopeOf(req), params, { alias: readFrom });
+    const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
     const order = buildOrder(def, req.query.sort);
     const limit = Math.min(Number(req.query.limit) || 500, MAX_LIMIT);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -216,8 +274,10 @@ export function crudRouter(name, def) {
 
   router.get('/:id', async (req, res) => {
     const params = [];
-    const pred = idPredicate(def, req.params.id, params);
+    const pred = scopedIdPredicate(def, req.params.id, params, scopeOf(req), readFrom);
     const { rows } = await query(`SELECT * FROM ${ident(readFrom)} WHERE ${pred}`, params);
+    // 404 rather than 403, deliberately: a sales user asking after a record
+    // that is not theirs learns nothing about whether it exists.
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
     res.json({ data: rows[0] });
   });
@@ -225,7 +285,20 @@ export function crudRouter(name, def) {
   router.post('/', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: false });
 
+    // A sales user owns what they enter. Taken from the session, never from
+    // the body — owner_user_id is in no resource's writable columns, so a
+    // client cannot propose one, and this is the only thing that writes it.
+    // An admin or the shared login creates an unowned record: guessing which
+    // salesperson they meant is the mistake Phase 2B refused to make.
+    if (def.ownerScoped) {
+      const owner = ownerForNewRecord(req.user);
+      if (owner !== null) values[OWNER_COLUMN] = owner;
+    }
+
     const { id, extra } = await write(async (client) => {
+      // A row that inherits its ownership may only be filed under a parent
+      // this request can reach.
+      await assertParentReachable(client, def, values, scopeOf(req));
       if (def.hasDocument) await claimDocument(client, def, values);
 
       if (def.autoId) {
@@ -252,7 +325,7 @@ export function crudRouter(name, def) {
          RETURNING *`,
         cols.map((c) => values[c])
       );
-      const extra = await def.onSave?.(client, { before: null, after: rows[0], input });
+      const extra = await def.onSave?.(client, { before: null, after: rows[0], input, scope: scopeOf(req) });
       return { id: rows[0].id, extra };
     });
 
@@ -278,7 +351,7 @@ export function crudRouter(name, def) {
         // Client sent the reference column — fetch the current stored value.
         // This runs before the transaction so a plain query() is always correct here.
         const keyParams = [];
-        const keyPred = idPredicate(def, req.params.id, keyParams);
+        const keyPred = scopedIdPredicate(def, req.params.id, keyParams, scopeOf(req), def.table);
         const { rows: existing } = await query(
           `SELECT ${ident(col)} FROM ${ident(def.table)} WHERE ${keyPred}`,
           keyParams
@@ -310,7 +383,7 @@ export function crudRouter(name, def) {
       let before = null;
       if (def.onSave) {
         const keyParams = [];
-        const keyPred = idPredicate(def, req.params.id, keyParams);
+        const keyPred = scopedIdPredicate(def, req.params.id, keyParams, scopeOf(req), def.table);
         ({ rows: [before] } = await client.query(
           `SELECT * FROM ${ident(def.table)} WHERE ${keyPred} FOR UPDATE`,
           keyParams
@@ -323,7 +396,7 @@ export function crudRouter(name, def) {
       let rows;
       if (cols.length) {
         const params = cols.map((c) => values[c]);
-        const pred = idPredicate(def, req.params.id, params);
+        const pred = scopedIdPredicate(def, req.params.id, params, scopeOf(req), def.table);
         const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
         ({ rows } = await client.query(
           `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`,
@@ -333,7 +406,7 @@ export function crudRouter(name, def) {
         rows = before ? [before] : [];
       }
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
-      const extra = await def.onSave?.(client, { before, after: rows[0], input });
+      const extra = await def.onSave?.(client, { before, after: rows[0], input, scope: scopeOf(req) });
       return { id: rows[0].id, extra, replacedDocument };
     });
 
@@ -350,7 +423,7 @@ export function crudRouter(name, def) {
   router.delete('/:id', ...mayDelete, async (req, res) => {
     const remove = async (client) => {
       const params = [];
-      const pred = idPredicate(def, req.params.id, params);
+      const pred = scopedIdPredicate(def, req.params.id, params, scopeOf(req), def.table);
       const { rows: [target] } = await client.query(
         `SELECT * FROM ${ident(def.table)} WHERE ${pred} FOR UPDATE`,
         params
@@ -369,7 +442,7 @@ export function crudRouter(name, def) {
       documents = await transaction(remove);
     } else {
       const params = [];
-      const pred = idPredicate(def, req.params.id, params);
+      const pred = scopedIdPredicate(def, req.params.id, params, scopeOf(req), def.table);
       const { rows } = await query(
         `DELETE FROM ${ident(def.table)} WHERE ${pred} RETURNING id`,
         params

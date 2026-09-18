@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2, share as ratio } from './reportMath.js';
@@ -166,7 +167,14 @@ export function paymentStatusRows(pos) {
  * year picker; the PDF has no picker, so it passes includeYears: false and
  * that query is not run.
  */
-export async function revenueReport({ from, to }, { includeYears = true } = {}) {
+/**
+ * `scope` narrows which records the figures are built from (#18 Phase 2C).
+ * Only the set of rows changes: Due now still counts raised invoices, and
+ * every amount still converts at the rate in force on the record's own date.
+ */
+export async function revenueReport({ from, to }, { includeYears = true, scope = UNRESTRICTED } = {}) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const [orders, purchaseOrders, years, undated] = await Promise.all([
     query(
       `WITH ${RATES}
@@ -177,11 +185,11 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
               qr.rate,
               qr.effective_from AS rate_effective_from,
               ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
-         FROM quotations q
+         FROM ${src.quotations} q
          ${rateOn('qr', 'q.currency', 'q.quotation_date')}
         WHERE q.status = '${QUOTATION_STATUS.won}' AND ${IN_PERIOD}
         ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
-      [from, to]
+      params
     ),
     query(
       `WITH ${RATES}
@@ -201,7 +209,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
               st.stages_unconverted,
               st.invoice_rate_details,
               st.payment_rate_details
-         FROM v_purchase_orders p
+         FROM ${src.vPurchaseOrders} p
          ${rateOn('r', 'p.currency', 'p.po_date')}
          -- Each stage converts on its own date: the invoice date for what was
          -- billed, the payment date for what came in. Summing first and
@@ -234,7 +242,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
                              'currency', s.currency, 'rate', pr.rate, 'effective_from', pr.effective_from))
                            FILTER (WHERE s.currency <> 'INR' AND pr.rate IS NOT NULL
                                      AND s.payment_received_date IS NOT NULL), '[]'::json) AS payment_rate_details
-             FROM v_payment_stages s
+             FROM ${src.vPaymentStages} s
              -- A stage with no invoice date yet falls back to the PO's date.
              ${rateOn('ir', 's.currency', 'COALESCE(s.invoice_date, p.po_date)')}
              ${rateOn('pr', 's.currency', 'COALESCE(s.payment_received_date, s.invoice_date, p.po_date)')}
@@ -242,22 +250,37 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
          ) st
         WHERE ${inPeriod('p.po_date')}
         ORDER BY p.po_date NULLS LAST, p.po_number`,
-      [from, to]
+      params
     ),
     // Years with won orders or dated POs, for the year picker.
     includeYears
-      ? query(
-        `SELECT year FROM (
-           SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
-             FROM quotations WHERE status = '${QUOTATION_STATUS.won}' AND quotation_date IS NOT NULL
-           UNION
-           SELECT EXTRACT(YEAR FROM po_date)::int FROM purchase_orders WHERE po_date IS NOT NULL
-         ) y
-         ORDER BY year DESC`
-      )
+      // Its own parameter list: this one carries no period, so it cannot
+      // reuse the numbering of the two queries above.
+      ? (() => {
+        const yearParams = [];
+        const years = scopedSources(scope, yearParams);
+        return query(
+          `SELECT year FROM (
+             SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
+               FROM ${years.quotations} yq WHERE status = '${QUOTATION_STATUS.won}' AND quotation_date IS NOT NULL
+             UNION
+             SELECT EXTRACT(YEAR FROM po_date)::int FROM ${years.purchaseOrders} ypo WHERE po_date IS NOT NULL
+           ) y
+           ORDER BY year DESC`,
+          yearParams
+        );
+      })()
       : { rows: [] },
     // A PO without a PO date cannot be placed in a year or month.
-    query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number'),
+    (() => {
+      // Its own parameter list: this one carries no period.
+      const undatedParams = [];
+      const undated = scopedSources(scope, undatedParams);
+      return query(
+        `SELECT po_number FROM ${undated.purchaseOrders} upo WHERE po_date IS NULL ORDER BY po_number`,
+        undatedParams
+      );
+    })(),
   ]);
 
   const period = { from, to };

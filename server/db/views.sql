@@ -422,6 +422,10 @@ SELECT
   p.project_id,
   p.client_name,
   p.company_id,
+  -- The salesperson responsible (#18 Phase 2C). Exposed here because the
+  -- generic CRUD router reads this view, and row-level scoping has to be a
+  -- predicate in SQL rather than a filter applied after LIMIT.
+  p.owner_user_id,
   p.primary_service,
   p.project_manager,
   p.project_manager_email,
@@ -524,6 +528,10 @@ SELECT
   q.client_name,
   q.contact_person,
   q.company_id,
+  -- The salesperson responsible (#18 Phase 2C). Exposed here because the
+  -- generic CRUD router reads this view, and row-level scoping has to be a
+  -- predicate in SQL rather than a filter applied after LIMIT.
+  q.owner_user_id,
   q.contact_id,
   q.service_quoted,
   q.sector,

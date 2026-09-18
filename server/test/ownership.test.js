@@ -32,7 +32,16 @@ const OWNED = ['enquiries', 'quotations', 'projects'];
 // The state migration 018 meets: this schema with Phase 2A undone. Dropping
 // the column takes its index and its foreign key with it, which is exactly
 // what the parent branch's schema looks like.
-const UNDO_PHASE_2A = OWNED.map((t) => `ALTER TABLE ${t} DROP COLUMN owner_user_id;`).join('\n');
+//
+// The views go first. Phase 2C added owner_user_id to v_quotations and
+// v_projects — the generic CRUD router reads those, and scoping has to be a
+// predicate in SQL — so the column can no longer be dropped while they
+// reference it. They are rebuilt after the migration, which is the order the
+// real runner uses anyway: migrations, then views.
+const UNDO_PHASE_2A = [
+  'DROP VIEW IF EXISTS v_quotations, v_projects CASCADE;',
+  ...OWNED.map((t) => `ALTER TABLE ${t} DROP COLUMN owner_user_id;`),
+].join('\n');
 
 // Records of the kind that already exist: named salesperson as free text,
 // and no user account behind it, because there were none when they were typed.
@@ -68,6 +77,8 @@ async function upgraded(fn) {
     await db.query(UNDO_PHASE_2A);
     await db.query(LEGACY_ROWS);
     await db.query(MIGRATION);
+    // Views rebuilt on top, as the migration runner does after any migration.
+    await db.query(VIEWS);
     return fn(db);
   });
 }
@@ -83,12 +94,17 @@ const newUser = (db, over = '') =>
 describe('migration 018 — record ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   test('adds a nullable owner_user_id to all three sales tables', () =>
     upgraded(async (db) => {
+      // Base tables only: Phase 2C also surfaces the column on v_quotations
+      // and v_projects, which is asserted separately below.
       const cols = await rowsOf(
         db,
-        `SELECT table_name, data_type, is_nullable, column_default
-           FROM information_schema.columns
-          WHERE column_name = 'owner_user_id' AND table_schema = 'public'
-          ORDER BY table_name`
+        `SELECT c.table_name, c.data_type, c.is_nullable, c.column_default
+           FROM information_schema.columns c
+           JOIN information_schema.tables t
+             ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+          WHERE c.column_name = 'owner_user_id' AND c.table_schema = 'public'
+            AND t.table_type = 'BASE TABLE'
+          ORDER BY c.table_name`
       );
 
       assert.deepEqual(cols.map((c) => c.table_name), ['enquiries', 'projects', 'quotations']);
@@ -97,6 +113,17 @@ describe('migration 018 — record ownership', { skip: !ADMIN_URL && 'set TEST_D
         assert.equal(c.is_nullable, 'YES', c.table_name);
         assert.equal(c.column_default, null, `${c.table_name} gets no default`);
       }
+
+      // The two views the generic CRUD router reads must carry it too, or
+      // Phase 2C could not scope quotations and projects in SQL at all.
+      const views = await rowsOf(
+        db,
+        `SELECT table_name FROM information_schema.columns
+          WHERE column_name = 'owner_user_id' AND table_schema = 'public'
+            AND table_name IN ('v_quotations', 'v_projects')
+          ORDER BY table_name`
+      );
+      assert.deepEqual(views.map((v) => v.table_name), ['v_projects', 'v_quotations']);
     }));
 
   test('leaves every existing record untouched, and unowned', () =>
@@ -285,8 +312,11 @@ describe('ownership changes no API behaviour', { skip: !ADMIN_URL && 'set TEST_D
   test('a record can still be created with no owner at all', async () => {
     await setUp();
 
+    // An admin's record is unowned, and that is still a valid record: the
+    // column is nullable and nothing requires it. A *sales* user's record is
+    // owned by them as of Phase 2C — covered in rowScoping.test.js.
     for (const t of OWNED) {
-      const res = await create(t, sales.cookie);
+      const res = await create(t, admin.cookie);
       assert.equal(res.status, 201, `${t}: ${JSON.stringify(res.body)}`);
       const [row] = (await db.query(`SELECT owner_user_id FROM ${t}`)).rows;
       assert.equal(row.owner_user_id, null, `${t} needs no owner`);
@@ -342,7 +372,7 @@ describe('ownership changes no API behaviour', { skip: !ADMIN_URL && 'set TEST_D
     assert.equal(sorted.status, 200, 'an unknown sort falls back to the default');
   });
 
-  test('a sales user still sees every record — scoping is Phase 2C', async () => {
+  test('a sales user sees only their own records — enforced from Phase 2C', async () => {
     await setUp();
     const owned = await create('enquiries', admin.cookie);
     await db.query('UPDATE enquiries SET owner_user_id = $1 WHERE id = $2', [admin.user.id, owned.body.data.id]);
@@ -351,10 +381,13 @@ describe('ownership changes no API behaviour', { skip: !ADMIN_URL && 'set TEST_D
     const res = await request(app).get('/api/enquiries').set('Cookie', sales.cookie);
 
     assert.equal(res.status, 200);
-    assert.equal(res.body.data.length, 2, 'Phase 2A must not hide anything from anybody');
+    // Phase 2A added the column and changed nothing; Phase 2C is what makes
+    // this one row rather than two. Kept here as the before/after boundary.
+    assert.equal(res.body.data.length, 1, 'only the record this sales user owns');
+    assert.equal(res.body.data[0].client_name, 'Sam Co');
   });
 
-  test('a won enquiry still becomes a quotation, and propagates no owner', async () => {
+  test('a won enquiry still becomes a quotation, and carries its owner across', async () => {
     await setUp();
     const enquiry = await create('enquiries', admin.cookie);
     await db.query('UPDATE enquiries SET owner_user_id = $1 WHERE id = $2', [admin.user.id, enquiry.body.data.id]);
@@ -366,9 +399,9 @@ describe('ownership changes no API behaviour', { skip: !ADMIN_URL && 'set TEST_D
     const [quotation] = (await db.query('SELECT sales_person, owner_user_id FROM quotations')).rows;
     assert.ok(quotation, 'the conversion still creates the quotation');
     assert.equal(quotation.sales_person, 'Ramesh', 'and still copies the free-text salesperson');
-    assert.equal(
-      quotation.owner_user_id, null,
-      'ownership is deliberately not propagated: Phase 2A adds no assignment rules'
-    );
+    // Phase 2A propagated nothing; Phase 2C carries responsibility down the
+    // pipeline, from the enquiry's own owner_user_id rather than from the
+    // free-text name beside it. Covered in full in rowScoping.test.js.
+    assert.equal(quotation.owner_user_id, admin.user.id, 'the enquiry owner becomes the quotation owner');
   });
 });

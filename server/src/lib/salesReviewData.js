@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
@@ -79,23 +80,28 @@ export function enquirySummary(rows, period = {}) {
 // ---------------------------------------------------------------------
 
 /** Enquiries in the period. Oldest first: the month rows and the oldest open enquiry read that order. */
-const enquiryRows = ({ from, to }) =>
-  query(
+const enquiryRows = ({ from, to }, scope = UNRESTRICTED) => {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
+  return query(
     `SELECT e.enquiry_no,
             btrim(e.client_name)                   AS client,
             to_char(e.enquiry_date, 'YYYY-MM-DD')  AS enquiry_date,
             to_char(e.enquiry_date, 'YYYY-MM')     AS month,
             e.status,
             e.service
-       FROM enquiries e
+       FROM ${src.enquiries} e
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
-    [from, to]
+    params
   );
+};
 
 /** Quotations in the period with the INR rate for their currency, oldest first. */
-const quotationRows = ({ from, to }) =>
-  query(
+const quotationRows = ({ from, to }, scope = UNRESTRICTED) => {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
+  return query(
     `WITH ${RATES}
      SELECT to_char(q.quotation_date, 'YYYY-MM') AS month,
             q.status,
@@ -103,16 +109,19 @@ const quotationRows = ({ from, to }) =>
             q.currency,
             r.rate,
             q.service_quoted                      AS service
-       FROM quotations q
+       FROM ${src.quotations} q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${IN_PERIOD}
       ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
-    [from, to]
+    params
   );
+};
 
 /** The three sections that share those rows, in two queries instead of five. */
-export async function salesReviewSections(period) {
-  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
+export async function salesReviewSections(period, scope = UNRESTRICTED) {
+  const [quotations, enquiries] = await Promise.all([
+    quotationRows(period, scope), enquiryRows(period, scope),
+  ]);
   return {
     enquiries: enquirySummary(enquiries.rows, period),
     quotationStatus: quotationStatusSummary(quotations.rows, period),
@@ -120,8 +129,8 @@ export async function salesReviewSections(period) {
   };
 }
 
-export async function enquiryReport(period) {
-  return enquirySummary((await enquiryRows(period)).rows, period);
+export async function enquiryReport(period, scope = UNRESTRICTED) {
+  return enquirySummary((await enquiryRows(period, scope)).rows, period);
 }
 
 /** Quotations and enquiries per service line, named lines first by won value. */
@@ -176,8 +185,10 @@ export function serviceRows(quotations, enquiries) {
   };
 }
 
-export async function serviceReport(period) {
-  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
+export async function serviceReport(period, scope = UNRESTRICTED) {
+  const [quotations, enquiries] = await Promise.all([
+    quotationRows(period, scope), enquiryRows(period, scope),
+  ]);
   return serviceRows(quotations.rows, enquiries.rows);
 }
 
@@ -225,8 +236,8 @@ export function quotationStatusSummary(rows, period = {}) {
   };
 }
 
-export async function quotationStatusReport(period) {
-  return quotationStatusSummary((await quotationRows(period)).rows, period);
+export async function quotationStatusReport(period, scope = UNRESTRICTED) {
+  return quotationStatusSummary((await quotationRows(period, scope)).rows, period);
 }
 
 /**
@@ -246,18 +257,20 @@ export async function exchangeRates() {
 }
 
 /** Missing or inconsistent source data that limits the report. */
-export async function dataGaps({ from, to }) {
+export async function dataGaps({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const {
     rows: [gaps],
   } = await query(
-    `WITH q AS (SELECT * FROM quotations WHERE ${IN_PERIOD}),
-          e AS (SELECT * FROM enquiries WHERE ${inPeriod('enquiry_date')})
+    `WITH q AS (SELECT * FROM ${src.quotations} gq WHERE ${IN_PERIOD}),
+          e AS (SELECT * FROM ${src.enquiries} ge WHERE ${inPeriod('enquiry_date')})
      SELECT (SELECT COUNT(*) FROM q)::int                                              AS quotations,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL)::int                AS quotations_without_value,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL AND status = '${WON}')::int AS won_without_value,
             (SELECT COUNT(*) FROM q
               WHERE status = '${WON}'
-                AND NOT EXISTS (SELECT 1 FROM purchase_orders p
+                AND NOT EXISTS (SELECT 1 FROM ${src.purchaseOrders} p
                                  WHERE p.quotation_no = q.quotation_no
                                     OR (q.project_id IS NOT NULL AND p.project_id = q.project_id)))::int AS won_without_po,
             (SELECT COUNT(*) FROM q WHERE NULLIF(btrim(sector), '') IS NULL)::int       AS quotations_without_sector,
@@ -268,10 +281,10 @@ export async function dataGaps({ from, to }) {
               WHERE status = '${ENQUIRY_STATUS.quoted}' AND quotation_no IS NULL)::int AS quoted_enquiries_unlinked,
             -- Rows with no date only fall outside a period when one is chosen.
             (CASE WHEN $1::date IS NULL AND $2::date IS NULL THEN 0
-                  ELSE (SELECT COUNT(*) FROM quotations WHERE quotation_date IS NULL) END)::int AS undated_quotations,
+                  ELSE (SELECT COUNT(*) FROM ${src.quotations} uq WHERE quotation_date IS NULL) END)::int AS undated_quotations,
             (CASE WHEN $1::date IS NULL AND $2::date IS NULL THEN 0
-                  ELSE (SELECT COUNT(*) FROM enquiries WHERE enquiry_date IS NULL) END)::int   AS undated_enquiries`,
-    [from, to]
+                  ELSE (SELECT COUNT(*) FROM ${src.enquiries} ue WHERE enquiry_date IS NULL) END)::int   AS undated_enquiries`,
+    params
   );
   return gaps;
 }

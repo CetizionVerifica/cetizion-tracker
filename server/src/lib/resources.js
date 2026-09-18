@@ -123,6 +123,10 @@ export const resources = {
 
   enquiries: {
     table: 'enquiries',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     view: null,
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
@@ -157,6 +161,10 @@ export const resources = {
 
   quotations: {
     table: 'quotations',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     view: 'v_quotations',
     label: 'Quotation',
     hasDocument: true,
@@ -196,6 +204,10 @@ export const resources = {
 
   projects: {
     table: 'projects',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     view: 'v_projects',
     label: 'Project',
     naturalKey: 'project_id',
@@ -232,6 +244,11 @@ export const resources = {
   },
 
   'purchase-orders': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'purchase_order',
     // A financial record. The PO value is what every billing figure — Due
     // now, To bill, project profitability — is computed against, and
     // deleting one takes its services and payment stages with it. Entering
@@ -272,6 +289,11 @@ export const resources = {
   },
 
   'po-services': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'via_po',
     // The lines a PO's value is made of, so deleting one silently changes
     // what the project is worth. Admin-only to delete, like the PO itself.
     adminOnlyDeletes: true,
@@ -291,6 +313,11 @@ export const resources = {
   },
 
   'payment-stages': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'via_po',
     // The invoicing schedule: what has been raised, what is due and what has
     // been paid. A deleted stage is an invoice the tracker stops accounting
     // for. Sales users raise and record against stages as usual; only an

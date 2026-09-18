@@ -1,0 +1,318 @@
+/**
+ * Who may see which sales record (#18 Phase 2C).
+ *
+ * One rule, stated once, and every query that can reach an enquiry, a
+ * quotation or a project asks this module rather than deciding for itself:
+ *
+ *   admin, or the legacy shared login   every row
+ *   a database sales user               rows they own
+ *   nobody                              rows owned by nobody
+ *
+ * The last line is the one worth saying out loud. An unowned record is not
+ * public — it is a record whose owner could not be determined (Phase 2B
+ * leaves those null on purpose), and the safe reading of "we do not know
+ * whose this is" is "not yours". Admins see them; that is how they get
+ * assigned.
+ *
+ * Why this is a module and not an `if` in each route: there are about
+ * twenty places that can return one of these rows — lists, details,
+ * exports, lookups, the dashboard, company and project composites,
+ * documents, four report builders — and a scoping rule that is written
+ * twenty times is a rule with twenty chances to be written wrong. Worse,
+ * the failure is silent: a missed predicate does not break a test that
+ * nobody wrote, it just quietly serves somebody else's pipeline.
+ *
+ * Every predicate here is parameterised. No id is ever interpolated.
+ */
+import { ApiError } from '../middleware/error.js';
+
+/** The column carrying ownership, on all three scoped tables. */
+export const OWNER_COLUMN = 'owner_user_id';
+
+/** The tables this applies to. Nothing else is scoped by ownership. */
+export const OWNER_SCOPED_TABLES = ['enquiries', 'quotations', 'projects'];
+
+/**
+ * Does this request see everything?
+ *
+ * Shared mode counts. It is the legacy single administrator and there is no
+ * users row behind it, so there is no owner id to compare against — and
+ * inventing one would be inventing a person. The transition depends on the
+ * shared admin keeping full access until the cutover is done.
+ */
+export function isUnrestricted(user) {
+  return user?.mode === 'shared' || user?.role === 'admin';
+}
+
+/**
+ * The scope for one request.
+ *
+ * @returns {{ unrestricted: boolean, ownerId: number|null }}
+ * @throws {ApiError} 401 when there is no user — every scoped route is
+ *   behind requireAuth, so that is a wiring mistake, and the safe way for
+ *   one to surface is a refused request rather than an unscoped query.
+ */
+export function ownershipScope(user) {
+  if (!user) throw new ApiError(401, 'Your session has ended — sign in again');
+  if (isUnrestricted(user)) return { unrestricted: true, ownerId: null };
+
+  // A database sales user. No id means the session is not what it claims
+  // to be; refusing beats falling through to "see everything".
+  if (user.mode !== 'database' || !Number.isSafeInteger(user.id) || user.id <= 0) {
+    throw new ApiError(403, 'You do not have access to this');
+  }
+  return { unrestricted: false, ownerId: user.id };
+}
+
+/**
+ * The scope for work that belongs to no one in particular — a scheduled job,
+ * a migration, a report built outside a request. Global by design: the
+ * payment reminders go to every client with an overdue invoice, not to one
+ * salesperson's. Library functions default to this, and every route passes a
+ * real scope instead.
+ */
+export const UNRESTRICTED = Object.freeze({ unrestricted: true, ownerId: null });
+
+/** The scope for a request, straight from Express. */
+export const scopeOf = (req) => ownershipScope(req.user);
+
+/**
+ * A SQL predicate restricting a scoped table to what this request may see,
+ * or '' when it may see everything.
+ *
+ * Pushes its value onto `params` so the caller's numbering stays correct.
+ *
+ *   const params = [];
+ *   const mine = ownerClause(scope, params, { alias: 'q' });
+ *   `SELECT … FROM v_quotations q ${mine ? `WHERE ${mine}` : ''}`
+ *
+ * `owner_user_id = $n` excludes unowned rows on its own: NULL = anything is
+ * never true. That is the intended reading, not an accident of SQL, and it
+ * is why there is no special case for null here.
+ */
+export function ownerClause(scope, params, { alias = '', column = OWNER_COLUMN } = {}) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  const qualified = alias ? `${alias}.${column}` : `"${column}"`;
+  return `${qualified} = $${params.length}`;
+}
+
+/**
+ * The same restriction for a table that has no owner of its own but hangs
+ * off one that does — a purchase order under its quotation, a payment stage
+ * under its purchase order, a document under whichever row references it.
+ *
+ * Expressed as EXISTS rather than a join so it can be dropped into an
+ * existing query without changing its shape, its grouping or its row count.
+ *
+ * @param link  SQL joining the parent to the outer row, e.g.
+ *              `q.quotation_no = po.quotation_no`.
+ */
+export function derivedClause(scope, params, { table, alias = 'parent', link }) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  return `EXISTS (SELECT 1 FROM ${table} ${alias}
+                   WHERE ${link} AND ${alias}.${OWNER_COLUMN} = $${params.length})`;
+}
+
+/**
+ * A purchase order has no owner of its own. It belongs to whoever owns the
+ * quotation it fulfils, or the project it sits under — either is enough,
+ * because both are the same piece of work seen from a different table.
+ *
+ * The same parameter is referenced twice on purpose; one value, two places.
+ */
+export function purchaseOrderClause(scope, params, { alias = 'po' } = {}) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  const n = params.length;
+  return `(EXISTS (SELECT 1 FROM quotations pq
+                    WHERE pq.quotation_no = ${alias}.quotation_no AND pq.${OWNER_COLUMN} = $${n})
+       OR EXISTS (SELECT 1 FROM projects pp
+                    WHERE pp.project_id = ${alias}.project_id AND pp.${OWNER_COLUMN} = $${n}))`;
+}
+
+/**
+ * Whether this request may read a document.
+ *
+ * A document has no owner and no uploader — the table records the file and
+ * nothing about who put it there. Visibility is therefore derived from
+ * whatever points at it: a quotation, a purchase order, or a payment stage.
+ * You may read the file if you may read the record it belongs to.
+ *
+ * A document nothing references is **not** readable by a sales user. "No
+ * parent" means ownership is unknown, and the rule for unknown ownership is
+ * admin-only — the same answer an unassigned record gets. Treating it as
+ * public would make the transient window between upload and save a way to
+ * read anybody's file by guessing a serial id.
+ *
+ * Nothing needs that window. The upload endpoint returns the document's own
+ * metadata, and the form puts the returned id straight into the record it
+ * then saves; the only GET the app makes is for a document already attached
+ * to a record it has loaded. So this costs no working flow, and it closes
+ * the gap without a schema change.
+ */
+export function documentClause(scope, params, { alias = 'd' } = {}) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  const n = params.length;
+  return `(
+       EXISTS (SELECT 1 FROM quotations dq
+                WHERE dq.document_id = ${alias}.id AND dq.${OWNER_COLUMN} = $${n})
+    OR EXISTS (SELECT 1 FROM purchase_orders dpo
+                WHERE dpo.document_id = ${alias}.id
+                  AND (EXISTS (SELECT 1 FROM quotations pq
+                                WHERE pq.quotation_no = dpo.quotation_no AND pq.${OWNER_COLUMN} = $${n})
+                    OR EXISTS (SELECT 1 FROM projects pp
+                                WHERE pp.project_id = dpo.project_id AND pp.${OWNER_COLUMN} = $${n})))
+    OR EXISTS (SELECT 1 FROM payment_stages dps
+                JOIN purchase_orders spo ON spo.po_number = dps.po_number
+               WHERE dps.document_id = ${alias}.id
+                 AND (EXISTS (SELECT 1 FROM quotations pq2
+                               WHERE pq2.quotation_no = spo.quotation_no AND pq2.${OWNER_COLUMN} = $${n})
+                   OR EXISTS (SELECT 1 FROM projects pp2
+                               WHERE pp2.project_id = spo.project_id AND pp2.${OWNER_COLUMN} = $${n})))
+  )`;
+}
+
+/**
+ * Rows that carry no owner of their own and take it from the record above
+ * them — a purchase order under its quotation or project, a payment stage
+ * or a PO service line under its purchase order.
+ *
+ * `purchase_order` reads the alias's own quotation_no and project_id, both
+ * of which exist on purchase_orders and on v_purchase_orders, so the same
+ * clause serves a read from the view and a write to the table. `via_po`
+ * reads po_number, which payment_stages, po_services and both of their
+ * views all carry.
+ */
+export function parentClause(scope, params, { kind, alias }) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  const n = params.length;
+  const poOwned = (po) => `(EXISTS (SELECT 1 FROM quotations pq
+                                     WHERE pq.quotation_no = ${po}.quotation_no AND pq.${OWNER_COLUMN} = $${n})
+                         OR EXISTS (SELECT 1 FROM projects pp
+                                     WHERE pp.project_id = ${po}.project_id AND pp.${OWNER_COLUMN} = $${n}))`;
+  if (kind === 'purchase_order') return poOwned(alias);
+  if (kind === 'via_po') {
+    return `EXISTS (SELECT 1 FROM purchase_orders ppo
+                     WHERE ppo.po_number = ${alias}.po_number AND ${poOwned('ppo')})`;
+  }
+  throw new Error(`Unknown ownership parent: ${kind}`);
+}
+
+/**
+ * The predicate for one resource, whichever way it carries ownership.
+ * '' when the resource is not ownership-scoped, or the caller is an admin.
+ */
+export function resourceClause(def, scope, params, { alias = '' } = {}) {
+  if (def.ownerScoped) return ownerClause(scope, params, { alias });
+  if (def.ownerScopedBy) {
+    // A parent-derived clause has to name columns on the relation the
+    // statement reads or writes, so the caller says which that is.
+    if (!alias) throw new Error('A parent-derived scope needs the relation it applies to.');
+    return parentClause(scope, params, { kind: def.ownerScopedBy, alias: `"${alias}"` });
+  }
+  return '';
+}
+
+/**
+ * The scoped tables and views, each as a drop-in replacement for its own
+ * name in a FROM clause.
+ *
+ *   const params = [];
+ *   const src = scopedSources(scope, params);
+ *   `SELECT count(*) FROM ${src.quotations} q WHERE …`
+ *
+ * For an admin every entry is just the view's name and the query is exactly
+ * the one that ran before. For a sales user it becomes a parenthesised
+ * SELECT over the same view with the ownership predicate inside, which
+ * substitutes cleanly wherever the bare name appeared: same columns, same
+ * shape, fewer rows.
+ *
+ * That substitution is the point. The dashboard and the report builders are
+ * long multi-CTE queries whose arithmetic is the business's own — "Due now"
+ * counts raised invoices, revenue converts at the rate in force on the
+ * record's date. Rewriting those queries to add a predicate risks changing
+ * what they compute; replacing the table they read from cannot, because
+ * every figure is still derived the same way from a narrower set of rows.
+ *
+ * One parameter for the whole call, referenced by every entry.
+ */
+export function scopedSources(scope, params) {
+  const plain = {
+    enquiries: 'enquiries',
+    quotations: 'quotations',
+    projects: 'projects',
+    vQuotations: 'v_quotations',
+    vProjects: 'v_projects',
+    vPurchaseOrders: 'v_purchase_orders',
+    vPaymentStages: 'v_payment_stages',
+    purchaseOrders: 'purchase_orders',
+  };
+  if (scope.unrestricted) return plain;
+
+  params.push(scope.ownerId);
+  const n = params.length;
+  const owned = (name) => `(SELECT * FROM ${name} WHERE ${OWNER_COLUMN} = $${n})`;
+  // A purchase order or a payment stage has no owner; both belong to the
+  // quotation or project above them.
+  const viaParent = (name, alias) => `(SELECT * FROM ${name} ${alias}
+     WHERE EXISTS (SELECT 1 FROM quotations pq
+                    WHERE pq.quotation_no = ${alias}.quotation_no AND pq.${OWNER_COLUMN} = $${n})
+        OR EXISTS (SELECT 1 FROM projects pp
+                    WHERE pp.project_id = ${alias}.project_id AND pp.${OWNER_COLUMN} = $${n}))`;
+
+  // A payment stage carries its project but not its quotation, so it reaches
+  // the quotation through the purchase order it belongs to.
+  const stages = `(SELECT * FROM v_payment_stages sps
+     WHERE EXISTS (SELECT 1 FROM projects sp
+                    WHERE sp.project_id = sps.project_id AND sp.${OWNER_COLUMN} = $${n})
+        OR EXISTS (SELECT 1 FROM purchase_orders spo2
+                    JOIN quotations sq2 ON sq2.quotation_no = spo2.quotation_no
+                   WHERE spo2.po_number = sps.po_number AND sq2.${OWNER_COLUMN} = $${n}))`;
+
+  return {
+    enquiries: owned('enquiries'),
+    quotations: owned('quotations'),
+    projects: owned('projects'),
+    vQuotations: owned('v_quotations'),
+    vProjects: owned('v_projects'),
+    vPurchaseOrders: viaParent('v_purchase_orders', 'spo'),
+    vPaymentStages: stages,
+    purchaseOrders: viaParent('purchase_orders', 'bpo'),
+  };
+}
+
+/** Fold a clause into a list of others, skipping the empty admin case. */
+export function andClause(clauses, clause) {
+  if (clause) clauses.push(clause);
+  return clauses;
+}
+
+/**
+ * `WHERE …` for a scoped read, or '' when unrestricted and there is nothing
+ * else to say.
+ */
+export function whereFrom(clauses) {
+  return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+/**
+ * The owner a newly created record should carry.
+ *
+ * A sales user owns what they enter — that is the only assignment rule this
+ * phase is confident about, and it needs no screen. An admin, or the shared
+ * login, creates a record with no owner: guessing which salesperson an
+ * admin meant is the same mistake Phase 2B refused to make in bulk, and an
+ * unowned record is visibly unassigned rather than wrongly assigned.
+ *
+ * Never taken from the request body. `owner_user_id` is not in any
+ * resource's writable columns, so a client cannot propose one at all; this
+ * is the only thing that writes it on create.
+ */
+export function ownerForNewRecord(user) {
+  const scope = ownershipScope(user);
+  return scope.unrestricted ? null : scope.ownerId;
+}

@@ -293,10 +293,18 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     let seq = 0;
     const unique = (prefix) => `${prefix}-${process.pid}-${++seq}`;
 
-    /** A project for the purchase orders to belong to. */
+    /**
+     * A project for the purchase orders to belong to.
+     *
+     * Created by the sales user, so it is theirs. These tests are about who
+     * may DELETE financial rows, not about who may see them, and from Phase
+     * 2C a purchase order takes its access from the project above it — a
+     * project belonging to nobody would make every row here unreachable and
+     * turn a delete test into an ownership test.
+     */
     const makeProject = async () => {
       const id = unique('PRJ');
-      const res = await as(admin.cookie)('post', '/api/projects')
+      const res = await as(sales.cookie)('post', '/api/projects')
         .send({ project_id: id, client_name: `Holder ${id}` });
       assert.equal(res.status, 201, `project: ${JSON.stringify(res.body)}`);
       return id;

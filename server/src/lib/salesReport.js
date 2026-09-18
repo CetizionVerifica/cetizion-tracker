@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { ApiError } from '../middleware/error.js';
 import { nameKey } from './names.js';
 import { share } from './reportMath.js';
@@ -123,7 +124,15 @@ function sumAmounts(lists) {
  * rest by quotation date. Every quotation is exactly one of won, lost or
  * pipeline (Submitted, Under Negotiation, On Hold).
  */
-export async function sectorReport({ from, to }) {
+/**
+ * `scope` narrows which records the figures are built from (#18 Phase 2C).
+ * The arithmetic is untouched — only the set of rows feeding it changes, by
+ * swapping each table for the same table filtered by ownership. An admin
+ * gets the bare table name and therefore the query that always ran.
+ */
+export async function sectorReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES},
      q AS (
@@ -135,13 +144,13 @@ export async function sectorReport({ from, to }) {
               quotation_value,
               currency,
               quotation_date
-         FROM quotations
+         FROM ${src.quotations} sq
         WHERE ${IN_PERIOD}
      ),
      e AS (
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
               NULLIF(btrim(sector), '')         AS sector
-         FROM enquiries
+         FROM ${src.enquiries} se
         WHERE ${inPeriod('enquiry_date')}
      ),
      sectors AS (
@@ -209,7 +218,7 @@ export async function sectorReport({ from, to }) {
        LEFT JOIN enquired en ON en.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN converted co ON co.sector_key IS NOT DISTINCT FROM s.sector_key
       ORDER BY s.sector_key IS NULL, pos DESC, pipeline DESC, enquiries DESC, sector`,
-    [from, to]
+    params
   );
 
   // Won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out.
@@ -238,7 +247,9 @@ export async function sectorReport({ from, to }) {
  * Won POs billed in a currency other than INR, per client, sector and
  * currency, with the INR value at the rate set in Settings.
  */
-export async function fxReport({ from, to }) {
+export async function fxReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES}
      SELECT mode() WITHIN GROUP (ORDER BY btrim(q.client_name))                    AS customer,
@@ -253,12 +264,12 @@ export async function fxReport({ from, to }) {
             r.effective_from                                                        AS rate_effective_from,
             ROUND(COALESCE(SUM(q.quotation_value), 0) * r.rate, 2)                  AS amount_inr,
             string_agg(q.quotation_no, ', ' ORDER BY q.quotation_date, q.quotation_no) AS quotation_nos
-       FROM quotations q
+       FROM ${src.quotations} q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE q.status = '${QUOTATION_STATUS.won}' AND q.currency <> 'INR' AND ${IN_PERIOD}
       GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate, r.effective_from
       ORDER BY currency, amount DESC, customer`,
-    [from, to]
+    params
   );
 
   const converted = rows.filter((row) => row.rate !== null);
@@ -285,7 +296,9 @@ export const CLIENT_TYPES = { repeat: 'Repeat client', single: 'Single enquiry c
  * end of the period, so an order placed before the period still counts;
  * every other client is a single enquiry client.
  */
-export async function customerReport({ from, to }) {
+export async function customerReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES},
      q AS (
@@ -298,12 +311,12 @@ export async function customerReport({ from, to }) {
               quotation_date,
               ${IN_PERIOD}                 AS in_period,
               ${UP_TO_END}                 AS up_to_end
-         FROM quotations
+         FROM ${src.quotations} cq
      ),
      e AS (
        SELECT ${nameKey('client_name')} AS client_key,
               btrim(client_name)         AS client_name
-         FROM enquiries
+         FROM ${src.enquiries} ce
         WHERE ${inPeriod('enquiry_date')}
      ),
      clients AS (
@@ -355,7 +368,7 @@ export async function customerReport({ from, to }) {
        LEFT JOIN quoted qu   ON qu.client_key = c.client_key
        LEFT JOIN enquired en ON en.client_key = c.client_key
       ORDER BY pos_to_date DESC, won_value_inr DESC, enquiries DESC, client`,
-    [from, to]
+    params
   );
 
   for (const row of rows) {

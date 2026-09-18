@@ -14,6 +14,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { similarName } from '../lib/names.js';
 
 export const companyRouter = Router();
@@ -38,12 +39,33 @@ companyRouter.get('/:id/full', async (req, res) => {
   if (!Number.isInteger(id)) throw new ApiError(404, 'Company not found');
   const { rows: [company] } = await query('SELECT * FROM v_companies WHERE id = $1', [id]);
   if (!company) throw new ApiError(404, 'Company not found');
+  // The company itself stays readable to anyone signed in — a client's name
+  // and sector are not one salesperson's secret. What hangs off it is: the
+  // lists below are the same rows the direct endpoints serve, so they carry
+  // the same restriction (#18 Phase 2C). Scoping /api/quotations while this
+  // response handed the same rows over would be scoping nothing.
+  const scope = scopeOf(req);
+  // A fresh params array per statement, each starting with the company id.
+  const mine = (build, alias) => {
+    const params = [id];
+    const clause = build(scope, params, { alias });
+    return { and: clause ? `AND ${clause}` : '', params };
+  };
+  const e = mine(ownerClause, 'e');
+  const q = mine(ownerClause, 'q');
+  const pr = mine(ownerClause, 'p');
+  const po = mine(purchaseOrderClause, 'po');
+
   const [contacts, enquiries, quotations, projects, pos] = await Promise.all([
     query('SELECT * FROM contacts WHERE company_id = $1 ORDER BY is_billing DESC, name', [id]),
-    query('SELECT * FROM enquiries WHERE company_id = $1 ORDER BY enquiry_date DESC NULLS LAST, id DESC', [id]),
-    query('SELECT * FROM v_quotations WHERE company_id = $1 ORDER BY quotation_date DESC NULLS LAST, id DESC', [id]),
-    query('SELECT * FROM v_projects WHERE company_id = $1 ORDER BY project_id DESC', [id]),
-    query('SELECT * FROM v_purchase_orders WHERE company_id = $1 ORDER BY po_date DESC NULLS LAST, id DESC', [id]),
+    query(`SELECT e.* FROM enquiries e WHERE e.company_id = $1 ${e.and}
+            ORDER BY e.enquiry_date DESC NULLS LAST, e.id DESC`, e.params),
+    query(`SELECT q.* FROM v_quotations q WHERE q.company_id = $1 ${q.and}
+            ORDER BY q.quotation_date DESC NULLS LAST, q.id DESC`, q.params),
+    query(`SELECT p.* FROM v_projects p WHERE p.company_id = $1 ${pr.and}
+            ORDER BY p.project_id DESC`, pr.params),
+    query(`SELECT po.* FROM v_purchase_orders po WHERE po.company_id = $1 ${po.and}
+            ORDER BY po.po_date DESC NULLS LAST, po.id DESC`, po.params),
   ]);
   res.json({ data: { ...company, contacts: contacts.rows, enquiries: enquiries.rows, quotations: quotations.rows, projects: projects.rows, purchase_orders: pos.rows } });
 });
