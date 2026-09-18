@@ -1,4 +1,4 @@
--- 019 — collections (#27): every receipt as its own row, a chasing log,
+-- 022 — collections (#27): every receipt as its own row, a chasing log,
 -- disputes on hold, promises to pay, and escalating reminder levels.
 --
 -- Safe on a live database; running it a second time changes nothing.

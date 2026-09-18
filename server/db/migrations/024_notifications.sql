@@ -1,4 +1,4 @@
--- 021 — a notification centre and a daily digest (#44).
+-- 024 — a notification centre and a daily digest (#44).
 --
 -- One row per thing a person should know: a task due, a follow-up, an
 -- approval waiting, an invoice gone overdue, a renewal opened, a quotation

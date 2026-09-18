@@ -14,7 +14,7 @@ Merge after batch 2.
 
 ## Deploying it
 
-- **Migrations** 018 to 021, applied on start.
+- **Migrations** 021 to 024, applied on start.
 - No new environment variables or packages.
 - New scheduled jobs (worker): `renewals.daily`, `notifications.daily`; `reminders.payment` now follows the 3/14/30-day levels.
 
