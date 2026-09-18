@@ -502,24 +502,36 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
       assert.equal((await request(app).get(path).set('Cookie', sales.cookie)).status, 200, `GET ${path}`);
     }
 
-    // Writing does not. An FX rate re-values every historical deal in every
-    // report; a renamed service re-labels every record that used it.
+    // Writing does not. A reminder interval changes what the tracker sends
+    // on its own; a renamed service re-labels every record that used it.
     const writes = [
+      request(app).patch('/api/settings/reminder_interval_days').set('Cookie', sales.cookie).send({ value: '14' }),
       request(app).patch('/api/settings/fx_rate_EUR').set('Cookie', sales.cookie).send({ value: '95' }),
       request(app).post('/api/services').set('Cookie', sales.cookie).send({ name: 'Sneaky service' }),
       request(app).post('/api/travel-vendors').set('Cookie', sales.cookie).send({ name: 'Sneaky vendor' }),
       request(app).post('/api/expense-categories').set('Cookie', sales.cookie).send({ name: 'Sneaky category' }),
     ];
+    // 403 for the fx_rate one too: who you are is settled before what the
+    // setting is, so a sales user is never told which keys are read-only.
     for (const write of writes) assert.equal((await write).status, 403);
 
     // And the admin may do all of it.
     assert.equal(
-      (await request(app).patch('/api/settings/fx_rate_EUR').set('Cookie', admin.cookie).send({ value: '95' })).status,
+      (await request(app).patch('/api/settings/reminder_interval_days').set('Cookie', admin.cookie).send({ value: '14' })).status,
       200
     );
     assert.equal(
       (await request(app).post('/api/services').set('Cookie', admin.cookie).send({ name: 'A real service' })).status,
       201
+    );
+
+    // The fx_rate_* keys are the exception, and not an authorisation one:
+    // main moved rates to dated exchange rates (#79) and left these behind
+    // read-only, so even an admin is refused. Asserted here so this suite
+    // notices if that rule is ever quietly dropped.
+    assert.equal(
+      (await request(app).patch('/api/settings/fx_rate_EUR').set('Cookie', admin.cookie).send({ value: '95' })).status,
+      422
     );
   });
 
