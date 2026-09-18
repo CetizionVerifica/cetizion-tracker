@@ -100,9 +100,25 @@ export const api = {
   reportCsvUrl: (report, params) => `${BASE}/export/sales-report/${report}.csv${qs(params)}`,
   reportPdfUrl: (params) => `${BASE}/export/sales-report.pdf${qs(params)}`,
   auth: {
+    /** Which field the sign-in form should ask for. No session needed. */
+    config: () => request('/auth/config'),
     me: () => request('/auth/me'),
-    login: (username, password) =>
-      request('/auth/login', { method: 'POST', body: { username, password } }),
+    /**
+     * Shared mode signs in with a username, database mode with an email.
+     * The field is named for what it is, so the server never has to guess
+     * which one the caller meant.
+     */
+    login: (identifier, password, mode) =>
+      request('/auth/login', {
+        method: 'POST',
+        body: mode === 'database' ? { email: identifier, password } : { username: identifier, password },
+      }),
     logout: () => request('/auth/logout', { method: 'POST' }),
+  },
+  users: {
+    list: () => request('/users'),
+    create: (body) => request('/users', { method: 'POST', body }),
+    update: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
+    setPassword: (id, password) => request(`/users/${id}/password`, { method: 'POST', body: { password } }),
   },
 };

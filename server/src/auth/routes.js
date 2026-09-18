@@ -3,21 +3,40 @@ import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 
 import { ApiError } from '../middleware/error.js';
+import { verifyPasswordOrDummy } from '../lib/passwords.js';
+import { findUserByEmail, recordLogin } from '../lib/users.js';
 import { authConfig } from './config.js';
-import { readSession } from './middleware.js';
-import { constantTimeEqual, signSession } from './session.js';
+import { currentUser } from './middleware.js';
+import { constantTimeEqual, databasePayload, sharedPayload, signSession } from './session.js';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 10;
 
-const credentials = z.object({
+const sharedCredentials = z.object({
   username: z.string().trim().min(1, 'Enter the username'),
   password: z.string().min(1, 'Enter the password'),
 });
 
+/**
+ * Database mode signs in with an email address. Phase 1B-A accepted
+ * `username` as a second name for this field so the old form could reach
+ * it; the form now posts `email`, and the alias is gone — one field, one
+ * name, no guessing which the caller meant.
+ */
+const databaseCredentials = z.object({
+  email: z.string().trim().min(1, 'Enter the email address'),
+  password: z.string().min(1, 'Enter the password'),
+});
+
 // Only failed attempts count, so an open tab refreshing its session all day
-// never locks the one person who is allowed in.
-const loginLimiter = rateLimit({
+// never locks the one person who is allowed in. Keyed on the caller's
+// address, which is what it has always been: moving from a username to an
+// email changed the field being guessed, not who is guessing, so the limit
+// follows the attacker either way and cannot be shaken off by switching
+// the address being tried.
+// Exported so a test can clear it between cases; the app itself only ever
+// mounts it. Nothing here weakens the limit at run time.
+export const loginLimiter = rateLimit({
   windowMs: LOGIN_WINDOW_MS,
   limit: MAX_LOGIN_ATTEMPTS,
   standardHeaders: true,
@@ -33,15 +52,8 @@ const cookieOptions = () => ({
   path: '/',
 });
 
-const asUser = (username, expiresAt) => ({
-  username,
-  expires_at: new Date(expiresAt).toISOString(),
-});
-
-export const authRouter = Router();
-
-authRouter.post('/login', loginLimiter, (req, res) => {
-  const parsed = credentials.safeParse(req.body ?? {});
+const parse = (schema, body) => {
+  const parsed = schema.safeParse(body ?? {});
   if (!parsed.success) {
     throw new ApiError(422, 'Please check the highlighted fields', {
       fields: Object.fromEntries(
@@ -49,8 +61,28 @@ authRouter.post('/login', loginLimiter, (req, res) => {
       ),
     });
   }
+  return parsed.data;
+};
 
-  const { username, password } = parsed.data;
+/** What the browser is told about whoever just signed in. Never a hash. */
+const sharedBody = (username, expiresAt) => ({
+  username,
+  expires_at: new Date(expiresAt).toISOString(),
+});
+
+const databaseBody = (user, expiresAt) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  expires_at: new Date(expiresAt).toISOString(),
+});
+
+export const authRouter = Router();
+
+function sharedLogin(body) {
+  const { username, password } = parse(sharedCredentials, body);
+
   // Both comparisons run before the branch: `&&` would short-circuit and time
   // the username check separately from the password one.
   const usernameOk = constantTimeEqual(username, authConfig.username);
@@ -60,10 +92,58 @@ authRouter.post('/login', loginLimiter, (req, res) => {
   }
 
   const expiresAt = Date.now() + authConfig.sessionTtlMs;
-  const token = signSession({ sub: username, exp: expiresAt }, authConfig.sessionSecret);
+  return { payload: sharedPayload(username, expiresAt), body: sharedBody(username, expiresAt), expiresAt };
+}
 
+/**
+ * Sign in against the users table.
+ *
+ * Every way of failing takes the same path and the same time. An address
+ * nobody holds, an account switched off, one with no password set and a
+ * password simply typed wrong all end at verifyPasswordOrDummy, which does
+ * a real scrypt either way, and all four come back as the same sentence.
+ * Anything else — an early return, a kinder message for an account that
+ * exists — would answer the question "does this person work here?" to
+ * whoever asked.
+ */
+async function databaseLogin(body) {
+  const { email, password } = parse(databaseCredentials, body);
+
+  const user = await findUserByEmail(email);
+  // Only an account that may actually sign in offers a hash to check
+  // against; for every other case the dummy is checked instead.
+  const hash = user && user.active ? user.password_hash : null;
+
+  if (!(await verifyPasswordOrDummy(password, hash))) {
+    throw new ApiError(401, 'That email address and password do not match');
+  }
+
+  await recordLogin(user.id);
+
+  const expiresAt = Date.now() + authConfig.sessionTtlMs;
+  return { payload: databasePayload(user.id, expiresAt), body: databaseBody(user, expiresAt), expiresAt };
+}
+
+authRouter.post('/login', loginLimiter, async (req, res) => {
+  const { payload, body, expiresAt } =
+    authConfig.mode === 'database' ? await databaseLogin(req.body) : sharedLogin(req.body);
+
+  const token = signSession(payload, authConfig.sessionSecret);
   res.cookie(authConfig.cookieName, token, { ...cookieOptions(), maxAge: authConfig.sessionTtlMs });
-  res.json({ data: asUser(username, expiresAt) });
+  res.json({ data: body });
+});
+
+/**
+ * Which field the sign-in form should ask for. Public on purpose — it is
+ * read before anybody is signed in, and it is the one thing the form
+ * cannot work out for itself.
+ *
+ * The mode and nothing else. Not AUTH_USERNAME, not the bootstrap address,
+ * not the password policy: an unauthenticated caller learns only which
+ * question they will be asked, which they would learn from the form anyway.
+ */
+authRouter.get('/config', (req, res) => {
+  res.json({ data: { mode: authConfig.mode } });
 });
 
 authRouter.post('/logout', (req, res) => {
@@ -71,8 +151,18 @@ authRouter.post('/logout', (req, res) => {
   res.status(204).end();
 });
 
-authRouter.get('/me', (req, res) => {
-  const session = readSession(req);
-  if (!session) throw new ApiError(401, 'Not signed in');
-  res.json({ data: asUser(session.sub, session.exp) });
+/**
+ * Who is signed in now — read fresh, so this reports the role somebody has
+ * rather than the one they had when they signed in.
+ */
+authRouter.get('/me', async (req, res) => {
+  const user = await currentUser(req);
+  if (!user) throw new ApiError(401, 'Not signed in');
+
+  res.json({
+    data:
+      user.mode === 'database'
+        ? databaseBody(user, user.expiresAt)
+        : sharedBody(user.username, user.expiresAt),
+  });
 });

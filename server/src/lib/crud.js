@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
@@ -163,6 +164,12 @@ export function crudRouter(name, def) {
   const router = Router();
   const readFrom = def.view || def.table;
 
+  // A resource may declare that only an admin changes it — the reference
+  // lists behind the forms, where one edit re-labels every record that used
+  // the old value. Reading is left open, because the same lists fill the
+  // dropdowns everybody works in. Resources without the flag are unchanged.
+  const mayWrite = def.adminOnlyWrites ? [requireAdmin] : [];
+
   // A save with follow-on work runs in one transaction: whatever an
   // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
@@ -195,7 +202,7 @@ export function crudRouter(name, def) {
     res.json({ data: rows[0] });
   });
 
-  router.post('/', async (req, res) => {
+  router.post('/', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: false });
 
     const { id, extra } = await write(async (client) => {
@@ -237,7 +244,7 @@ export function crudRouter(name, def) {
     res.status(201).json({ data: { ...full[0], ...extra } });
   });
 
-  router.patch('/:id', async (req, res) => {
+  router.patch('/:id', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: true });
 
     // Reference-number guard: the field is immutable after creation.
@@ -320,7 +327,7 @@ export function crudRouter(name, def) {
     res.json({ data: { ...full[0], ...extra } });
   });
 
-  router.delete('/:id', async (req, res) => {
+  router.delete('/:id', ...mayWrite, async (req, res) => {
     const remove = async (client) => {
       const params = [];
       const pred = idPredicate(def, req.params.id, params);

@@ -11,6 +11,7 @@ import { resources } from './lib/resources.js';
 import { crudRouter } from './lib/crud.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { authRouter } from './auth/routes.js';
+import { authConfig } from './auth/config.js';
 import { requireAuth } from './auth/middleware.js';
 import { mountWebApp } from './web.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -18,6 +19,7 @@ import { lookupRouter, settingsRouter } from './routes/lookups.js';
 import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
+import { userRouter } from './routes/users.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import {
@@ -48,9 +50,13 @@ const STARTED_AT = new Date().toISOString();
 
 // Public: the platform needs somewhere to point a health check, and this
 // says nothing beyond "the database answered" and when the API started.
+// auth_mode is here so a cutover can be confirmed with one request rather
+// than a browser. It gives nothing away: /api/auth/config already tells any
+// unauthenticated caller the same thing, because the sign-in form has to
+// know which field to draw.
 app.get('/api/health', async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
-  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT });
+  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, auth_mode: authConfig.mode });
 });
 
 app.use('/api/auth', authRouter);
@@ -64,6 +70,8 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/import', importRouter);
 app.use('/api/documents', documentRouter);
+// Admin only, at its own router.
+app.use('/api/users', userRouter);
 
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.

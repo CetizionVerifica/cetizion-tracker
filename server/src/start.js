@@ -1,13 +1,17 @@
 import { bootstrapAdmin } from './auth/bootstrap.js';
+import { assertAuthReady } from './auth/readiness.js';
 import { config } from './config.js';
 import { runMigrations } from './migrations.js';
 import { bootstrapFailureLines } from './startupErrors.js';
 
 /**
- * The production entry point. The database is brought up to date first,
- * then the first admin is created if one is configured, then the API
- * starts. A migration that fails stops the start, so the app never serves
- * requests against a schema its code does not match.
+ * The production entry point, in the order the steps depend on each other:
+ *
+ *   migrations  ->  bootstrap  ->  auth readiness  ->  the API
+ *
+ * A migration that fails stops the start, so the app never serves requests
+ * against a schema its code does not match. The readiness check stops it
+ * for the other reason: AUTH_MODE=database with nobody able to sign in.
  *
  * `npm run dev` starts index.js directly and leaves the database alone.
  */
@@ -41,6 +45,17 @@ try {
   });
 } catch (err) {
   for (const line of bootstrapFailureLines(err)) console.error(line);
+  process.exit(1);
+}
+
+// Last gate before the API listens. Does nothing in shared mode; in
+// database mode it refuses to serve a tracker nobody could sign in to —
+// including the case where bootstrapAdmin warned instead of creating one.
+try {
+  await assertAuthReady({ log: (line) => console.log(`[auth] ${line}`) });
+} catch (err) {
+  console.error(`[auth] ${err.message}`);
+  console.error('[auth] The API was not started. Create an active admin, or set AUTH_MODE=shared.');
   process.exit(1);
 }
 

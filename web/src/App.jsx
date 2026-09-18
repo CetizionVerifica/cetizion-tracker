@@ -88,7 +88,7 @@ export default function App() {
   }, [hidden]);
   const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
   const location = useLocation();
-  const { user, signOut } = useAuth();
+  const { displayName, signOut } = useAuth();
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
@@ -148,7 +148,7 @@ export default function App() {
         </nav>
 
         <div className="sidebar__foot">
-          <span className="sidebar__user" title={user?.username}>{user?.username}</span>
+          <span className="sidebar__user" title={displayName}>{displayName}</span>
           <button type="button" className="btn btn--sm sidebar__signout" onClick={signOut} title="Sign out">
             <span className="nav__text">Sign out</span><span className="sidebar__signout-icon" aria-hidden="true">⏻</span>
           </button>

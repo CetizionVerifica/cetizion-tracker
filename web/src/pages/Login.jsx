@@ -3,8 +3,20 @@ import { useState } from 'react';
 import { useAuth } from '../lib/auth.jsx';
 import { Alert, Field, Input } from '../components/ui.jsx';
 
+/**
+ * The sign-in form asks for whatever the API signs people in with: a
+ * username while the tracker is on the shared password, an email once it
+ * is on the users table. The server tells us which — see /auth/config —
+ * so the deployment's choice is not copied into the build.
+ */
+const FIELD = {
+  shared: { label: 'Username', type: 'text', autoComplete: 'username', name: 'username' },
+  database: { label: 'Email', type: 'email', autoComplete: 'email', name: 'email' },
+};
+
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, mode } = useAuth();
+  const field = FIELD[mode] ?? FIELD.shared;
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -39,10 +51,12 @@ export default function Login() {
 
         {error && <Alert tone="danger">{error}</Alert>}
 
-        <Field label="Username">
+        <Field label={field.label}>
           <Input
-            name="username"
-            autoComplete="username"
+            key={field.name}
+            name={field.name}
+            type={field.type}
+            autoComplete={field.autoComplete}
             autoFocus
             required
             value={form.username}

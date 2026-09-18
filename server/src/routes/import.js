@@ -16,7 +16,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { authConfig } from '../auth/config.js';
+import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
 import { buildPlan, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
@@ -27,10 +27,10 @@ export const importRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-function requireAdmin(req, res, next) {
-  if (req.user?.username !== authConfig.username) return next(new ApiError(403, 'Only the admin account can run imports'));
-  next();
-}
+// Whoever may run an import is whoever administers the tracker, and that
+// is a different person in each sign-in mode: the one shared account, or a
+// users row whose role is admin. requireAdmin answers it for both, so this
+// gate keeps meaning the same thing after the cutover.
 importRouter.use(requireAdmin);
 
 /** What the plan needs to know about the live data, in one round trip. */
