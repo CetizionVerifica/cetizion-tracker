@@ -156,6 +156,12 @@ CREATE TABLE projects (
   project_manager       text,
   project_manager_email text,
   sales_person          text,
+  -- The salesperson responsible for this record (#18 Phase 2A). Null
+  -- everywhere until Phase 2B decides the backfill; `sales_person` above
+  -- stays the free-text name the reports group by. See
+  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- the users table below, which is created later in this file.
+  owner_user_id         int,
   planned_start_date    date,
   planned_delivery_date date,
   percent_complete      numeric(5,4) NOT NULL DEFAULT 0
@@ -166,6 +172,9 @@ CREATE TABLE projects (
 );
 
 CREATE INDEX projects_company_id_idx ON projects (company_id);
+-- Phase 2C filters these lists by owner, and the foreign key needs it
+-- now: without it, deleting a user sequentially scans this table.
+CREATE INDEX projects_owner_user_id_idx ON projects (owner_user_id);
 
 -- ---------------------------------------------------------------------
 -- Quotations  (Sales Tracker)
@@ -182,6 +191,12 @@ CREATE TABLE quotations (
   sector             text,
   sales_person       text,
   sales_person_email text,
+  -- The salesperson responsible for this record (#18 Phase 2A). Null
+  -- everywhere until Phase 2B decides the backfill; `sales_person` above
+  -- stays the free-text name the reports group by. See
+  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- the users table below, which is created later in this file.
+  owner_user_id      int,
   quotation_date     date,
   quotation_value    numeric(16,2),
   currency           text NOT NULL DEFAULT 'INR',
@@ -199,6 +214,9 @@ CREATE TABLE quotations (
 
 CREATE INDEX ON quotations (project_id);
 CREATE INDEX quotations_company_id_idx ON quotations (company_id);
+-- Phase 2C filters these lists by owner, and the foreign key needs it
+-- now: without it, deleting a user sequentially scans this table.
+CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
 CREATE INDEX ON quotations (status);
 
 -- ---------------------------------------------------------------------
@@ -217,6 +235,12 @@ CREATE TABLE enquiries (
   contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   sales_person       text,
   sales_person_email text,
+  -- The salesperson responsible for this record (#18 Phase 2A). Null
+  -- everywhere until Phase 2B decides the backfill; `sales_person` above
+  -- stays the free-text name the reports group by. See
+  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- the users table below, which is created later in this file.
+  owner_user_id      int,
   service            text,
   status             text NOT NULL DEFAULT 'In Progress'
                        CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
@@ -227,6 +251,9 @@ CREATE TABLE enquiries (
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
+-- Phase 2C filters these lists by owner, and the foreign key needs it
+-- now: without it, deleting a user sequentially scans this table.
+CREATE INDEX enquiries_owner_user_id_idx ON enquiries (owner_user_id);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -675,6 +702,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ----------------------------------------------------------- ownership
+-- enquiries.owner_user_id, quotations.owner_user_id and
+-- projects.owner_user_id, declared with their tables above and pointed at
+-- users here because users is created further down this file than they are
+-- (see migrations/018_record_ownership.sql).
+--
+-- ON DELETE SET NULL: deleting a leaver's account must not delete the
+-- company's sales history, and must not be refused forever because they
+-- once owned a quotation. The record stays and forgets the pointer.
+--
+-- No constraint ties ownership to users.active — somebody who has left
+-- still owned what they owned. Whether an inactive user may be given
+-- something new is an application rule, not a database one.
+ALTER TABLE enquiries  ADD CONSTRAINT enquiries_owner_user_id_fkey
+  FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE quotations ADD CONSTRAINT quotations_owner_user_id_fkey
+  FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE projects   ADD CONSTRAINT projects_owner_user_id_fkey
+  FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
 
 -- ------------------------------------------------------------- activity
 -- What was done, by whom (see migrations/017_activity_log.sql).
