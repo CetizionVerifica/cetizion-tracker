@@ -62,7 +62,7 @@ describe('AUTH_MODE', () => {
 
 describe('sessionSubject', () => {
   const shared = sharedPayload('admin', Date.now() + 1000);
-  const database = databasePayload(7, Date.now() + 1000);
+  const database = databasePayload(7, 1, Date.now() + 1000);
 
   test('reads a shared cookie only in shared mode', () => {
     assert.deepEqual(sessionSubject(shared, 'shared'), { kind: 'shared', username: 'admin' });
@@ -70,27 +70,43 @@ describe('sessionSubject', () => {
   });
 
   test('reads a database cookie only in database mode', () => {
-    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7 });
+    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7, sv: 1 });
     assert.equal(sessionSubject(database, 'shared'), null, 'a database cookie is not a way into shared mode');
   });
 
   test('the database payload carries an id and nothing that can go stale', () => {
-    assert.deepEqual(Object.keys(database).sort(), ['exp', 'uid', 'v']);
+    assert.deepEqual(Object.keys(database).sort(), ['exp', 'sv', 'uid', 'v']);
     assert.equal(database.v, DATABASE_SESSION_VERSION);
     assert.ok(!('role' in database), 'the role is never signed into the cookie');
     assert.ok(!('active' in database), 'nor whether the account is switched on');
+    // sv is not an exception: it is not trusted as a fact, it is a number
+    // the row has to agree with. The row is what decides.
+    assert.equal(database.sv, 1, 'the counter it was signed at');
+  });
+
+  test('a database payload with no usable session version is refused', () => {
+    // A v2 cookie from before revocation existed carries no sv. There is no
+    // honest default for it — assuming 1 would keep alive exactly the
+    // cookies the counter exists to end — so it is refused.
+    for (const sv of [undefined, null, 0, -1, 1.5, '1', {}, Number.MAX_SAFE_INTEGER + 2]) {
+      assert.equal(
+        sessionSubject({ v: DATABASE_SESSION_VERSION, uid: 7, sv, exp: 1 }, 'database'),
+        null,
+        JSON.stringify(sv)
+      );
+    }
   });
 
   test('a version this build does not know is refused', () => {
     for (const v of [1, 3, 99, '2', null]) {
-      assert.equal(sessionSubject({ v, uid: 7, exp: 1 }, 'database'), null, `v=${JSON.stringify(v)}`);
+      assert.equal(sessionSubject({ v, uid: 7, sv: 1, exp: 1 }, 'database'), null, `v=${JSON.stringify(v)}`);
     }
   });
 
   test('a database payload with no usable id is refused', () => {
     for (const uid of [undefined, null, 0, -1, 1.5, '7', {}, Number.MAX_SAFE_INTEGER + 2]) {
       assert.equal(
-        sessionSubject({ v: DATABASE_SESSION_VERSION, uid, exp: 1 }, 'database'),
+        sessionSubject({ v: DATABASE_SESSION_VERSION, uid, sv: 1, exp: 1 }, 'database'),
         null,
         JSON.stringify(uid)
       );

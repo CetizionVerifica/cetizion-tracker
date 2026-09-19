@@ -16,12 +16,23 @@ import { pool } from '../db.js';
  * Nothing it returns can carry a secret. Counts, and the verdict. Not a
  * hash, not an address, not a password — this runs in terminals and CI
  * logs, and an operator who needs to see *which* account is which has
- * Settings -> Users, where being signed in is the price of looking.
+ * Settings -> Users, where being signed in is the price of looking. The
+ * cutover runbook asks for that eyeball pass; this command cannot do it,
+ * because the things worth checking there are exactly the ones not safe to
+ * print here.
  */
 
-/** @typedef {{key: string, label: string, ok: boolean, detail: string}} Check */
+/**
+ * @typedef {{key: string, label: string, ok: boolean, detail: string,
+ *            advisory?: boolean}} Check
+ *
+ * `advisory` marks a check that is worth saying out loud but must not stop
+ * a cutover: a recommendation, not a requirement. Those report WARN and
+ * leave the verdict alone. Everything without the flag gates readiness.
+ */
 
 const check = (key, label, ok, detail) => ({ key, label, ok, detail });
+const advice = (key, label, ok, detail) => ({ key, label, ok, detail, advisory: true });
 
 /**
  * Run every readiness check.
@@ -52,7 +63,15 @@ export async function authReadinessReport({ db = pool } = {}) {
       `SELECT id, email, password_hash IS NOT NULL AS has_password, role, active FROM users`
     );
     users = rows;
-    checks.push(check('table', 'Users table', true, `${rows.length} row${rows.length === 1 ? '' : 's'}`));
+    const live = rows.filter((u) => u.active).length;
+    checks.push(
+      check(
+        'table',
+        'Users table',
+        true,
+        `${rows.length} row${rows.length === 1 ? '' : 's'} — ${live} active, ${rows.length - live} inactive`
+      )
+    );
   } catch (err) {
     checks.push(check('table', 'Users table', false, firstLine(err)));
     return { ready: false, checks, activeAdmins };
@@ -69,6 +88,22 @@ export async function authReadinessReport({ db = pool } = {}) {
       admins.length > 0
         ? String(admins.length)
         : 'none — database mode would start with nobody able to sign in'
+    )
+  );
+
+  // 3b. One admin is enough to start; two is what you want to run on. The
+  //     tracker refuses to let the last active admin be deactivated or
+  //     demoted, which protects against a mistake but not against a person
+  //     being on leave, ill, or gone. Advisory: it is a recommendation, and
+  //     a cutover with one admin is allowed.
+  checks.push(
+    advice(
+      'second-admin',
+      'A second active admin',
+      admins.length >= 2,
+      admins.length >= 2
+        ? `${admins.length} — losing one is not an incident`
+        : 'only one — nobody could restore access if they were unavailable'
     )
   );
 
@@ -119,7 +154,8 @@ export async function authReadinessReport({ db = pool } = {}) {
     )
   );
 
-  return { ready: checks.every((c) => c.ok), checks, activeAdmins };
+  // Advisory checks are said out loud and do not decide anything.
+  return { ready: checks.every((c) => c.advisory || c.ok), checks, activeAdmins };
 }
 
 /** Errors from pg carry stacks and sometimes the statement; take the sentence. */
@@ -134,11 +170,17 @@ export function formatReadinessReport({ ready, checks }) {
   const lines = [
     'Database authentication readiness',
     '',
-    ...checks.map((c) => `  ${c.label.padEnd(width)}   ${c.ok ? 'PASS' : 'FAIL'}   ${c.detail}`),
+    ...checks.map((c) => {
+      const verdict = c.ok ? 'PASS' : c.advisory ? 'WARN' : 'FAIL';
+      return `  ${c.label.padEnd(width)}   ${verdict}   ${c.detail}`;
+    }),
     '',
     ready
       ? 'READY FOR AUTH_MODE=database'
       : 'NOT READY FOR AUTH_MODE=database — fix the FAIL lines above, then run this again.',
+    ...(checks.some((c) => c.advisory && !c.ok)
+      ? ['A WARN does not stop a cutover. It is worth reading before you do one.']
+      : []),
   ];
   return lines.join('\n');
 }

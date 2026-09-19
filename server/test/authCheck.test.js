@@ -67,8 +67,57 @@ describe('the readiness check', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
 
     assert.equal(result.ready, true, JSON.stringify(result.checks, null, 2));
     assert.equal(result.activeAdmins, 1);
-    for (const c of result.checks) assert.equal(c.ok, true, `${c.key}: ${c.detail}`);
+    // Every check that gates the verdict passes. The second-admin line is
+    // advisory and warns here, which is the point of it being advisory.
+    for (const c of result.checks.filter((c) => !c.advisory)) {
+      assert.equal(c.ok, true, `${c.key}: ${c.detail}`);
+    }
     assert.match(formatReadinessReport(result), /READY FOR AUTH_MODE=database/);
+  });
+
+  test('one admin is ready, and still told that a second is wanted', async () => {
+    await clean();
+    await createUser({ name: 'Alice', email: 'alice@example.com', password: PASSWORD, role: 'admin' }, db);
+
+    const result = await report();
+    const second = result.checks.find((c) => c.key === 'second-admin');
+
+    assert.ok(second, 'the check is there');
+    assert.equal(second.advisory, true, 'advisory, so it cannot block a cutover');
+    assert.equal(second.ok, false, 'and with one admin it has something to say');
+    assert.equal(result.ready, true, 'a recommendation is not a requirement');
+
+    const text = formatReadinessReport(result);
+    assert.match(text, /WARN/, 'shown as a warning, not a failure');
+    assert.match(text, /READY FOR AUTH_MODE=database/);
+    assert.match(text, /A WARN does not stop a cutover/);
+  });
+
+  test('a second admin settles it', async () => {
+    await clean();
+    await createUser({ name: 'Alice', email: 'alice@example.com', password: PASSWORD, role: 'admin' }, db);
+    await createUser({ name: 'Bob', email: 'bob@example.com', password: PASSWORD, role: 'admin' }, db);
+
+    const result = await report();
+
+    assert.equal(result.checks.find((c) => c.key === 'second-admin').ok, true);
+    assert.equal(result.ready, true);
+    assert.doesNotMatch(formatReadinessReport(result), /WARN/);
+  });
+
+  test('the table line counts active and inactive, and names nobody', async () => {
+    await clean();
+    await createUser({ name: 'Alice', email: 'alice@example.com', password: PASSWORD, role: 'admin' }, db);
+    await createUser({ name: 'Ramesh', active: false }, db);
+
+    const result = await report();
+    const table = result.checks.find((c) => c.key === 'table');
+
+    assert.match(table.detail, /2 rows/);
+    assert.match(table.detail, /1 active/);
+    assert.match(table.detail, /1 inactive/);
+    // Counts only. The whole report still carries no address.
+    assert.doesNotMatch(formatReadinessReport(result), /alice@example\.com|Ramesh/);
   });
 
   test('sales users alongside an admin are fine', async () => {

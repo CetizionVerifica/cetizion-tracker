@@ -9,6 +9,4 @@ dist/
 *.log
 .DS_Store
 .mcp.json
-
-# Local analysis notes, not part of the repo
-ISSUE-18-ANALYSIS.md
+Issue-18-ANALYSIS.md

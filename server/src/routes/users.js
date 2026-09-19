@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { MIN_PASSWORD_LENGTH, passwordProblem } from '../lib/passwords.js';
 import {
-  DuplicateEmailError, LastAdminError, ROLES,
+  ActiveNeedsLoginError, DuplicateEmailError, LastAdminError, ROLES,
   createUserAsAdmin, listUsers, setUserPassword, updateUser,
 } from '../lib/users.js';
 import { ApiError } from '../middleware/error.js';
@@ -78,9 +78,26 @@ const parse = (schema, body) => {
   return parsed.data;
 };
 
+/**
+ * `users.id` is a serial, so a 4-byte signed integer. Anything outside that
+ * range is not a user that could exist, and handing it to Postgres anyway
+ * is how `PATCH /api/users/99999999999` became a 500 carrying a database
+ * range error instead of a plain "not found".
+ *
+ * Every rejection here is the same 404 the database gives for an id nobody
+ * holds — too big, zero, negative, not a number, or simply gone. A caller
+ * learns whether the user exists, which they were going to learn anyway,
+ * and nothing about the column behind it.
+ */
+const MAX_USER_ID = 2_147_483_647;
+
 const userId = (raw) => {
   if (!/^\d+$/.test(raw)) throw new ApiError(404, 'User not found');
-  return Number(raw);
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1 || id > MAX_USER_ID) {
+    throw new ApiError(404, 'User not found');
+  }
+  return id;
 };
 
 /** Turn the data layer's refusals into the answers the API gives. */
@@ -88,6 +105,15 @@ function asApiError(err) {
   if (err instanceof LastAdminError) return new ApiError(409, err.message);
   if (err instanceof DuplicateEmailError) {
     return new ApiError(422, 'Please check the highlighted fields', { fields: { email: err.message } });
+  }
+  // Switching on an attribution-only row. The table refuses it through
+  // users_active_needs_login; what reaches the client is the same shape as
+  // any other rejected field, and never the constraint's name — that is an
+  // implementation detail of ours, and nothing a caller can act on.
+  if (err instanceof ActiveNeedsLoginError) {
+    return new ApiError(422, 'Please check the highlighted fields', {
+      fields: { email: err.message, password: err.message },
+    });
   }
   return err;
 }
@@ -106,8 +132,11 @@ userRouter.post('/', async (req, res) => {
     throw asApiError(err);
   }
 
-  // createUser returns the row whole; the hash is not ours to pass on.
-  const { password_hash: _hash, ...user } = created;
+  // createUser returns the row whole. The hash is not ours to pass on, and
+  // neither is session_version: it is bookkeeping between the cookie and
+  // the row, it is not something an admin screen acts on, and every other
+  // response here is shaped without it.
+  const { password_hash: _hash, session_version: _sv, ...user } = created;
   res.status(201).json({ data: user });
 });
 
@@ -134,10 +163,11 @@ userRouter.patch('/:id', async (req, res) => {
  * the `active` flag's job, and doing it as a side effect of a password
  * reset is how people get let back in by accident.
  *
- * Known limitation: sessions already signed carry no password version, so
- * this does not end them. Whoever is signed in stays signed in until the
- * cookie expires or the account is switched off. Deactivate to cut somebody
- * off now — that takes effect on their next request.
+ * It does end every session that account already has. The reset raises the
+ * row's session_version in the same statement that writes the hash, and a
+ * cookie is only honoured while it still matches — so somebody whose
+ * password was changed because it had leaked is out on their next request,
+ * not twelve hours later. They come back with the new password.
  */
 userRouter.post('/:id/password', async (req, res) => {
   const id = userId(req.params.id);

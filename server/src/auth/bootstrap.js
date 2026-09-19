@@ -28,27 +28,27 @@ import { ADMIN_INVARIANT_LOCK_KEY, createUser, findActiveAdmin, findUserByEmail,
  * holding the configured address is never reactivated, never promoted and
  * never given a new password. Those are deliberate acts for a person. It
  * says so loudly and lets the API start: a stale variable pointing at an
- * account that already exists is a problem with a facility nobody is using
- * yet, and taking the tracker down over it would cost real availability to
- * protect nothing. A configuration that cannot be read at all is different
- * — see readBootstrapConfig — because that is a broken deployment.
+ * account that already exists is a problem the operator can see and fix,
+ * and taking the tracker down over it would cost real availability. A
+ * configuration that cannot be read at all is different — see
+ * readBootstrapConfig — because that is a broken deployment.
  *
- * None of this is a way in. Signing in still checks AUTH_USERNAME /
- * AUTH_PASSWORD and does not read this table at all.
+ * None of this is a way in. Bootstrapping fills a row; it never signs
+ * anybody in, and it is not consulted when somebody does.
  *
- * ---------------------------------------------------------------------
- * PHASE 1B NOTE — the guard that is deliberately NOT here yet.
+ * What the row is FOR depends on AUTH_MODE, and both modes are live:
  *
- * Because a conflict above is only a warning, a deployment can reach the
- * end of Phase 1A with no active admin at all. That is harmless while
- * AUTH_USERNAME / AUTH_PASSWORD is the real lock, and fatal the moment it
- * is not.
+ *   shared    (the default) sign-in checks AUTH_USERNAME / AUTH_PASSWORD.
+ *             The account created here cannot yet be used to sign in — it
+ *             is being put in place for the cutover.
+ *   database  sign-in checks this table, and the account created here is a
+ *             real one that can sign in.
  *
- * So before the shared credentials are removed, Phase 1B must refuse to
- * make the database the sole authentication: at least one active admin has
- * to exist, or there is no way back into the tracker. findActiveAdmin() is
- * the check; the cutover is where it becomes fatal, not here.
- * ---------------------------------------------------------------------
+ * A conflict above is only a warning, so a deployment can reach the end of
+ * this with no active admin at all. In shared mode that costs nothing. In
+ * database mode it would be fatal, and it is caught there rather than
+ * here: assertAuthReady refuses to start the API when the database is the
+ * only lock and nobody holds a key. See auth/readiness.js.
  */
 
 const VARS = ['BOOTSTRAP_ADMIN_NAME', 'BOOTSTRAP_ADMIN_EMAIL', 'BOOTSTRAP_ADMIN_PASSWORD'];
@@ -173,8 +173,9 @@ export async function bootstrapAdmin({
         }.\n` +
           `  Nothing was created, ${holder.active ? 'promoted' : 'reactivated'} or given a password — ` +
           'bootstrapping never does that to an account that already exists.\n' +
-          '  This tracker therefore has no database admin. Sign-in is unaffected: it still uses ' +
-          'AUTH_USERNAME / AUTH_PASSWORD.\n' +
+          '  This tracker therefore has no database admin. In the default shared mode sign-in ' +
+          'is unaffected — it uses AUTH_USERNAME / AUTH_PASSWORD — but AUTH_MODE=database will ' +
+          'refuse to start until an active admin exists.\n' +
           `  To fix it, ${
             holder.active ? "change that account's role" : 'activate that account'
           } deliberately, or point BOOTSTRAP_ADMIN_EMAIL at an address nobody holds.`
@@ -200,7 +201,8 @@ export async function bootstrapAdmin({
 
     log(
       `created the first admin ${created.email}. ` +
-        'Signing in still uses AUTH_USERNAME / AUTH_PASSWORD — this account cannot be used yet.'
+        'Whether it can sign in depends on AUTH_MODE: in database mode it is a real account, ' +
+        'and in the default shared mode sign-in still uses AUTH_USERNAME / AUTH_PASSWORD.'
     );
     return { status: 'created', id: created.id };
   });

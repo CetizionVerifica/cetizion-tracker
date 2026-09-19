@@ -7,11 +7,13 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
  *
  * Two shapes travel in that cookie, one per sign-in mode:
  *
- *   shared    { sub: 'admin', exp }        — unchanged since the first
- *                                            release, so deploying database
- *                                            support signs nobody out
- *   database  { v: 2, uid: 123, exp }      — an id, and nothing else that
- *                                            matters
+ *   shared    { sub: 'admin', exp }           — unchanged since the first
+ *                                               release, so deploying
+ *                                               database support signs
+ *                                               nobody out
+ *   database  { v: 2, uid: 123, sv: 1, exp } — an id, the revocation
+ *                                               counter it was signed at,
+ *                                               and nothing else
  *
  * What a database session deliberately does NOT carry is the role, the
  * name or whether the account is still active. A cookie is a snapshot,
@@ -19,6 +21,17 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
  * account switched off this morning, must not keep its powers until the
  * snapshot expires. Only the id is worth signing, because only the id
  * cannot go stale — everything else is read back per request.
+ *
+ * `sv` is not an exception to that. It is not a fact about the user that
+ * anything trusts; it is a number the row must still agree with, and the
+ * row is what is believed. Signing it is what gives the database a way to
+ * say "not that cookie" about a session it never stored — a password reset
+ * or a deactivation raises the row's counter, and every cookie already
+ * issued stops matching. See middleware.currentUser.
+ *
+ * A v2 cookie from before `sv` existed carries no counter and is refused
+ * rather than assumed to be version 1. Fail closed: the whole point of the
+ * counter is that a cookie cannot vouch for itself.
  */
 
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -68,9 +81,10 @@ export const DATABASE_SESSION_VERSION = 2;
 
 export const sharedPayload = (username, expiresAt) => ({ sub: username, exp: expiresAt });
 
-export const databasePayload = (userId, expiresAt) => ({
+export const databasePayload = (userId, sessionVersion, expiresAt) => ({
   v: DATABASE_SESSION_VERSION,
   uid: userId,
+  sv: sessionVersion,
   exp: expiresAt,
 });
 
@@ -85,15 +99,23 @@ export const databasePayload = (userId, expiresAt) => ({
  * other mode's sessions quietly working — one lock opened by two keys,
  * only one of which anybody is watching.
  *
- * @returns {{kind: 'shared', username: string} | {kind: 'database', uid: number} | null}
+ * @returns {{kind: 'shared', username: string}
+ *          | {kind: 'database', uid: number, sv: number}
+ *          | null}
  */
 export function sessionSubject(payload, mode) {
   if (!payload || typeof payload !== 'object') return null;
 
   if (mode === 'database') {
-    return payload.v === DATABASE_SESSION_VERSION && Number.isSafeInteger(payload.uid) && payload.uid > 0
-      ? { kind: 'database', uid: payload.uid }
-      : null;
+    const ok =
+      payload.v === DATABASE_SESSION_VERSION &&
+      Number.isSafeInteger(payload.uid) && payload.uid > 0 &&
+      // Required, not defaulted. A cookie with no counter is one signed
+      // before revocation existed, and there is no honest value to assume
+      // for it — assuming 1 would let exactly the cookies this feature
+      // exists to end carry on working.
+      Number.isSafeInteger(payload.sv) && payload.sv > 0;
+    return ok ? { kind: 'database', uid: payload.uid, sv: payload.sv } : null;
   }
 
   // Shared: the original shape, which carries no version at all. Anything

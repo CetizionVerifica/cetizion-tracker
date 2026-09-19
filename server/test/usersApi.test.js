@@ -141,6 +141,31 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
 
   // --------------------------------------------------------------- list
 
+  test('no response carries the hash or the session counter', async () => {
+    await clean();
+    const admin = await asAdmin();
+
+    const created = await post(admin.cookie, {
+      name: 'Nina', email: 'nina@example.com', password: PASSWORD, role: 'sales',
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+
+    const responses = {
+      create: created.body.data,
+      patch: (await patch(admin.cookie, created.body.data.id, { name: 'Nina B' })).body.data,
+      password: (await setPassword(admin.cookie, created.body.data.id, { password: 'another-long-password' })).body.data,
+      list: (await get(admin.cookie)).body.data[0],
+    };
+
+    for (const [label, row] of Object.entries(responses)) {
+      assert.ok(row, label);
+      assert.ok(!('password_hash' in row), `${label} carries no hash`);
+      // Bookkeeping between the cookie and the row, not the admin screen's
+      // business — and every response should agree about that.
+      assert.ok(!('session_version' in row), `${label} carries no session counter`);
+    }
+  });
+
   test('the list gives an admin what they need and never a hash', async () => {
     await clean();
     const admin = await asAdmin();
@@ -297,6 +322,106 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     assert.equal((await patch(admin.cookie, admin.user.id, {})).status, 422);
   });
 
+  test('an id outside the column\'s range is not found, not a 500', async () => {
+    await clean();
+    const admin = await asAdmin();
+
+    // users.id is a serial — a 4-byte signed integer. Handing Postgres
+    // anything outside that turned into a 500 carrying a range error;
+    // it is simply an id nobody holds.
+    const impossible = [
+      '99999999999',            // the one from the review
+      '2147483648',             // one past int4
+      '9007199254740993',       // past a safe JS integer too
+      '0',                      // no serial ever starts here
+      '-1',                     // not even the right shape
+      'abc',
+      '1.5',
+      '1e3',
+      ' 1',
+      '',
+    ];
+
+    for (const id of impossible) {
+      for (const [label, send] of [
+        ['patch', () => patch(admin.cookie, id, { name: 'Nobody' })],
+        ['password', () => setPassword(admin.cookie, id, { password: 'a-good-long-test-password' })],
+      ]) {
+        const res = await send();
+        assert.equal(res.status, 404, `${label} ${JSON.stringify(id)} -> ${res.status}`);
+        // Nothing about the column, the constraint or the driver.
+        const body = JSON.stringify(res.body);
+        assert.doesNotMatch(body, /integer|out of range|int4|syntax|stack|pg_/i, body);
+      }
+    }
+  });
+
+  test('a valid id that simply is not there answers the same way', async () => {
+    await clean();
+    const admin = await asAdmin();
+
+    // The point of the test above: a well-formed id nobody holds and a
+    // malformed one are indistinguishable from outside.
+    const missing = 2_147_483_647;
+    assert.equal((await patch(admin.cookie, missing, { name: 'Nobody' })).status, 404);
+    assert.equal(
+      (await setPassword(admin.cookie, missing, { password: 'a-good-long-test-password' })).status,
+      404
+    );
+  });
+
+  test('switching on an account with nothing to sign in with is a field error', async () => {
+    await clean();
+    const admin = await asAdmin();
+
+    // Three ways to be unable to sign in, all refused by the table's
+    // users_active_needs_login. What comes back is a 422 naming the fields,
+    // never the constraint.
+    const cases = [
+      ['neither', { name: 'Ramesh' }],
+      ['no password', { name: 'Priya', email: 'priya@example.com' }],
+      ['no email', { name: 'Arun', passwordHash: true }],
+    ];
+
+    for (const [label, spec] of cases) {
+      const row = await createUser(
+        {
+          name: spec.name,
+          email: spec.email ?? null,
+          password: spec.passwordHash ? PASSWORD : null,
+          active: false,
+        },
+        db
+      );
+
+      const res = await patch(admin.cookie, row.id, { active: true });
+      assert.equal(res.status, 422, `${label}: ${JSON.stringify(res.body)}`);
+      assert.match(res.body.error.message, /check the highlighted fields/i, label);
+      assert.match(
+        JSON.stringify(res.body.error.fields),
+        /email address and a password/i,
+        `${label} says what is missing`
+      );
+      // The constraint name is ours, not the caller's.
+      assert.doesNotMatch(JSON.stringify(res.body), /users_active_needs_login|23514|constraint/i, label);
+
+      // And it really did not activate.
+      assert.equal((await rowOf(row.id)).active, false, `${label} stayed off`);
+    }
+  });
+
+  test('an inactive attribution-only user is still perfectly supported', async () => {
+    await clean();
+    await asAdmin();
+    const ramesh = await createUser({ name: 'Ramesh', active: false }, db);
+
+    // The refusal above is about *activating* one, not about having one.
+    const row = await rowOf(ramesh.id);
+    assert.equal(row.active, false);
+    assert.equal(row.email, null);
+    assert.equal(row.password_hash, null);
+  });
+
   test('editing an attribution-only user does not corrupt it', async () => {
     await clean();
     const admin = await asAdmin();
@@ -412,25 +537,112 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     assert.equal(attempt.status, 401, 'having a password is not permission');
   });
 
-  test('a reset leaves an existing session alone — the documented limitation', async () => {
+  // ------------------------------------------- revoking a session (1C)
+
+  const me = (cookie) => request(app).get('/api/auth/me').set('Cookie', cookie);
+
+  test('a reset ends the sessions that account already had', async () => {
     await clean();
     const admin = await asAdmin();
     const sales = await asSales();
 
+    assert.equal((await me(sales.cookie)).status, 200, 'signed in to begin with');
+
     await setPassword(admin.cookie, sales.user.id, { password: 'the-replacement-password' });
 
-    // Sessions carry no password version, so there is nothing to compare
-    // against. Deactivation is the way to cut somebody off now.
+    // The cookie was signed at the old session_version; the reset raised it
+    // in the same statement that wrote the hash, so it no longer matches.
+    assert.equal((await me(sales.cookie)).status, 401, 'the old cookie is done');
+
+    // The old password is done with it.
+    resetLimiter();
     assert.equal(
-      (await request(app).get('/api/auth/me').set('Cookie', sales.cookie)).status, 200,
-      'still signed in, as documented'
+      (await request(app).post('/api/auth/login').send({ email: sales.user.email, password: PASSWORD })).status,
+      401,
+      'the old password no longer signs in'
     );
 
+    // The new one works, and what it hands back is current.
+    resetLimiter();
+    const fresh = await request(app).post('/api/auth/login')
+      .send({ email: sales.user.email, password: 'the-replacement-password' });
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    assert.equal((await me(fresh.headers['set-cookie'])).status, 200, 'the new session works');
+  });
+
+  test('a reset ends every session that account had, not just the newest', async () => {
+    await clean();
+    const admin = await asAdmin();
+    const sales = await asSales();
+
+    // A second sign-in from another browser. Both cookies carry the same
+    // counter, because the counter belongs to the user and not to a device.
+    resetLimiter();
+    const second = await signIn(sales.user.email);
+    assert.equal((await me(second)).status, 200);
+
+    await setPassword(admin.cookie, sales.user.id, { password: 'the-replacement-password' });
+
+    for (const [label, cookie] of [['first', sales.cookie], ['second', second]]) {
+      assert.equal((await me(cookie)).status, 401, `the ${label} session ended too`);
+    }
+  });
+
+  test('deactivating ends every session, and reactivating does not bring them back', async () => {
+    await clean();
+    const admin = await asAdmin();
+    const sales = await asSales();
+
+    resetLimiter();
+    const second = await signIn(sales.user.email);
+    assert.equal((await me(sales.cookie)).status, 200);
+    assert.equal((await me(second)).status, 200);
+
     await patch(admin.cookie, sales.user.id, { active: false });
-    assert.equal(
-      (await request(app).get('/api/auth/me').set('Cookie', sales.cookie)).status, 401,
-      'and deactivation is the answer when that matters'
-    );
+    assert.equal((await me(sales.cookie)).status, 401, 'switched off, so out');
+    assert.equal((await me(second)).status, 401, 'both sessions, not just one');
+
+    // The part that matters. Reactivating restores the account, never the
+    // sessions that were revoked: the counter only ever goes up, so the
+    // cookie somebody kept from before they were switched off stays dead.
+    await patch(admin.cookie, sales.user.id, { active: true });
+    assert.equal((await me(sales.cookie)).status, 401, 'the same old cookie is STILL refused');
+    assert.equal((await me(second)).status, 401, 'and so is the other one');
+
+    // They sign in again and get a session at the current counter.
+    resetLimiter();
+    const again = await request(app).post('/api/auth/login')
+      .send({ email: sales.user.email, password: PASSWORD });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal((await me(again.headers['set-cookie'])).status, 200);
+  });
+
+  test('the counter moves on the way off and stays put on the way back', async () => {
+    await clean();
+    const admin = await asAdmin();
+    const sales = await asSales();
+
+    const version = async () => (await rowOf(sales.user.id)).session_version;
+    const start = await version();
+
+    // An edit that is not a deactivation leaves it alone — a rename must
+    // not sign anybody out.
+    await patch(admin.cookie, sales.user.id, { name: 'Samuel' });
+    assert.equal(await version(), start, 'a rename revokes nothing');
+    assert.equal((await me(sales.cookie)).status, 200, 'and they are still signed in');
+
+    await patch(admin.cookie, sales.user.id, { active: false });
+    assert.equal(await version(), start + 1, 'switching off raises it once');
+
+    // Already off, and told so again: nothing to revoke, so nothing moves.
+    await patch(admin.cookie, sales.user.id, { active: false });
+    assert.equal(await version(), start + 1, 'no repeat bump while already off');
+
+    await patch(admin.cookie, sales.user.id, { active: true });
+    assert.equal(await version(), start + 1, 'reactivating never lowers it');
+
+    await setPassword(admin.cookie, sales.user.id, { password: 'another-long-password' });
+    assert.equal(await version(), start + 2, 'a reset raises it too');
   });
 
   // --------------------------------------------------- the last admin

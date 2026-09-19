@@ -74,6 +74,11 @@ export { STATUS };
 
 export const resources = {
   companies: {
+    // Shared master data: every quotation, enquiry and project that ever
+    // named this client points at it, and the link trigger creates one on
+    // its own the first time somebody types a new name. Anybody may add and
+    // correct; only an admin may delete.
+    adminOnlyDeletes: true,
     table: 'companies',
     view: 'v_companies',
     label: 'Company',
@@ -94,6 +99,9 @@ export const resources = {
   },
 
   contacts: {
+    // Shared master data, for the same reasons as companies above, and
+    // created the same way — by the trigger, from a name on a record.
+    adminOnlyDeletes: true,
     table: 'contacts',
     view: null,
     label: 'Contact',
@@ -224,6 +232,11 @@ export const resources = {
   },
 
   'purchase-orders': {
+    // A financial record. The PO value is what every billing figure — Due
+    // now, To bill, project profitability — is computed against, and
+    // deleting one takes its services and payment stages with it. Entering
+    // and correcting POs is ordinary sales work; removing one is not.
+    adminOnlyDeletes: true,
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
@@ -259,6 +272,9 @@ export const resources = {
   },
 
   'po-services': {
+    // The lines a PO's value is made of, so deleting one silently changes
+    // what the project is worth. Admin-only to delete, like the PO itself.
+    adminOnlyDeletes: true,
     table: 'po_services',
     view: null,
     label: 'PO service line',
@@ -275,6 +291,11 @@ export const resources = {
   },
 
   'payment-stages': {
+    // The invoicing schedule: what has been raised, what is due and what has
+    // been paid. A deleted stage is an invoice the tracker stops accounting
+    // for. Sales users raise and record against stages as usual; only an
+    // admin removes one.
+    adminOnlyDeletes: true,
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
@@ -459,6 +480,12 @@ export const resources = {
   // figure at the rate in force on that record's own date, so entering a new
   // rate never changes what an older quotation, PO or invoice was worth.
   'exchange-rates': {
+    // A Settings list like the three above, and the one with the most reach:
+    // a rate is what every report converts at, so one row decides what every
+    // historical deal in every currency is reported to be worth. Admins
+    // curate it; everybody reads it, because the same rows drive the figures
+    // sales users work from.
+    adminOnlyWrites: true,
     table: 'exchange_rates',
     view: null,
     label: 'Exchange rate',
