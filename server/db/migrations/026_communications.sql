@@ -1,4 +1,4 @@
--- 025 — one-click contact with every touch logged (#31, phase 1).
+-- 026 — one-click contact with every touch logged (#31, phase 1).
 --
 -- communications is the single log of calls, WhatsApp chats, meetings and
 -- SMS made from the tracker (email stays in email_log and, later, #29).
