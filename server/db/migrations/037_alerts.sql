@@ -1,4 +1,4 @@
--- 036 — where operational alerts go (#38).
+-- 037 — where operational alerts go (#38).
 --
 -- Failed jobs and backups, bursts of failed sign-ins, an expiring
 -- certificate or a full disk are raised in the notification centre, sent
