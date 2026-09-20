@@ -67,6 +67,10 @@ test('import a sales sheet, review the duplicates, commit', async ({ page }) => 
   await page.locator('input[type=file]').setInputFiles(join(here, 'fixtures', 'sales-sheet.xlsx'));
   await page.getByRole('button', { name: 'Upload and analyse' }).click();
   await expect(page.getByRole('heading', { name: /Import #\d+/ })).toBeVisible({ timeout: 90_000 });
+  // How the batch was planned, in words. Never the model id: it means
+  // nothing to whoever is importing, and it changes whenever the importer
+  // is retuned. The id itself stays on the batch row for the record.
+  await expect(page.getByText(/rows on sheet .* · (AI-assisted|rules only)/)).toBeVisible();
   // The sheet holds clients the seed data already has: duplicates show in yellow.
   await expect(page.locator('tr.tr--dup').first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Quotations/ })).toBeVisible();
