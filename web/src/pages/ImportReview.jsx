@@ -28,6 +28,18 @@ const STEPS = [
 
 const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Replace with sheet' }];
 
+/**
+ * How the batch was planned, in words rather than the model id the server
+ * stored. Which model read the sheet is an internal detail — it means
+ * nothing to whoever is importing, and it changes whenever the importer is
+ * retuned. The id stays on the batch row for the record.
+ *
+ * Without a key the server writes "no AI key: rules only"; anything else is
+ * a model that was actually used.
+ */
+const plannedWith = (aiModel) =>
+  aiModel && !aiModel.startsWith('no AI key') ? 'AI-assisted' : 'rules only';
+
 const FIELDS = {
   quotation: [
     { name: 'quotation_no', label: 'Quotation number' },
@@ -156,7 +168,7 @@ export default function ImportReview() {
     <>
       <PageHeader
         title={`Import #${batch.id} · ${batch.filename}`}
-        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${batch.ai_model}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
+        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${plannedWith(batch.ai_model)}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
         actions={<Link className="btn" to="/import">All imports</Link>}
       />
       <div className="page stack">
