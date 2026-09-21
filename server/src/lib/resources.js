@@ -21,34 +21,55 @@ const requiredStr = (max = 255) =>
   z.preprocess(
     blankToNull,
     z
-      .string({ required_error: 'Required', invalid_type_error: 'Required' })
+      .string({ error: 'Required' })
       .trim()
       .min(1, 'Required')
       .max(max, `Keep this under ${max} characters`)
   );
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const date = () =>
   z.preprocess(
     blankToNull,
     z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+      .regex(DATE_PATTERN, 'Use YYYY-MM-DD')
       .nullable()
       .optional()
   );
 
+const toNumber = (v) => {
+  const cleaned = blankToNull(v);
+  if (cleaned === null || cleaned === undefined) return cleaned;
+  const n = typeof cleaned === 'string' ? Number(cleaned.replace(/,/g, '')) : cleaned;
+  return Number.isNaN(n) ? cleaned : n;
+};
+
+const bounded = (schema, { min, max }) => {
+  let s = schema;
+  if (min !== undefined) s = s.min(min, `Must be at least ${min}`);
+  if (max !== undefined) s = s.max(max, `Must be at most ${max}`);
+  return s;
+};
+
 const num = ({ min, max } = {}) =>
-  z.preprocess((v) => {
-    const cleaned = blankToNull(v);
-    if (cleaned === null || cleaned === undefined) return cleaned;
-    const n = typeof cleaned === 'string' ? Number(cleaned.replace(/,/g, '')) : cleaned;
-    return Number.isNaN(n) ? cleaned : n;
-  }, (() => {
-    let s = z.number({ invalid_type_error: 'Enter a number' });
-    if (min !== undefined) s = s.min(min, `Must be at least ${min}`);
-    if (max !== undefined) s = s.max(max, `Must be at most ${max}`);
-    return s.nullable().optional();
-  })());
+  z.preprocess(toNumber, bounded(z.number({ error: 'Enter a number' }), { min, max }).nullable().optional());
+
+/**
+ * A number or a date the caller must actually supply.
+ *
+ * These are not `num()`/`date()` with a "is it there?" refinement on top,
+ * which is what they were until zod 4: a refinement wrapped around an
+ * optional field never runs when the key is absent, so the check quietly
+ * stopped happening and an exchange rate could be saved with no rate and
+ * no date at all. Being required has to belong to the field's own type.
+ */
+const requiredNum = ({ min, max } = {}) =>
+  z.preprocess(toNumber, bounded(z.number({ error: 'Required' }), { min, max }));
+
+const requiredDate = () =>
+  z.preprocess(blankToNull, z.string({ error: 'Required' }).regex(DATE_PATTERN, 'Use YYYY-MM-DD'));
 
 const int = (opts) => num(opts).transform((v) => (v === null || v === undefined ? v : Math.round(v)));
 
@@ -500,8 +521,8 @@ export const resources = {
       to_currency: z.literal('INR').default('INR'),
       // numeric(18,6) holds 12 digits before the point; anything larger is a
       // typo, and letting it through turns a bad rate into a 500.
-      rate: num({ min: 0.000001, max: 1000000 }).refine((v) => v !== null && v !== undefined, 'Required'),
-      effective_from: date().refine((v) => v !== null && v !== undefined, 'Required'),
+      rate: requiredNum({ min: 0.000001, max: 1000000 }),
+      effective_from: requiredDate(),
       source: enumOf(['manual', 'feed']).default('manual'),
       entered_by: str(120),
       note: str(300),

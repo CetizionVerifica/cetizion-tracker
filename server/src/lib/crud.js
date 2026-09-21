@@ -99,7 +99,12 @@ function validate(def, body, { partial }) {
   // input:  everything the schema accepted, including fields that belong to a
   //         related table — a project's won quotation lives on quotations, so
   //         onSave needs it even though projects has no such column.
-  return { values: pickWritable(def, parsed.data), input: parsed.data };
+  const values = pickWritable(def, parsed.data);
+  if (!partial) return { values, input: parsed.data };
+  // An update writes only what it was sent. zod 4 applies .default() inside
+  // .partial() too, so without this an edit to a PO's remarks resets its value to 0.
+  const sent = Object.fromEntries(Object.entries(values).filter(([col]) => Object.hasOwn(body, col)));
+  return { values: sent, input: parsed.data };
 }
 
 /**
