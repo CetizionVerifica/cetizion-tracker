@@ -1518,7 +1518,7 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   token_expires_at   timestamptz,
   scopes             text,
   status             text NOT NULL DEFAULT 'active' CHECK (status IN ('active','needs_reconnect','disconnected')),
-  visibility         text NOT NULL DEFAULT 'share_everything' CHECK (visibility IN ('metadata','subject','share_everything')),
+  visibility         text NOT NULL DEFAULT 'metadata' CHECK (visibility IN ('metadata','subject','share_everything')),
   import_days        int NOT NULL DEFAULT 30 CHECK (import_days BETWEEN 0 AND 365),
   exclude_internal   boolean NOT NULL DEFAULT true,
   auto_create_contacts boolean NOT NULL DEFAULT true,

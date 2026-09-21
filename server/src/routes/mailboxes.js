@@ -20,6 +20,7 @@
  */
 import crypto from 'node:crypto';
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { config } from '../config.js';
@@ -202,21 +203,43 @@ mailThreadRouter.post('/threads/:id/reply', async (req, res) => {
 
 // ------------------------------------------------------------ webhook (public)
 
+// This sits outside the login because Graph has no session, so a stranger
+// can post to it too. The clientState check below is what makes a forged
+// notification harmless, but the work still has to be bounded: a real burst
+// is a handful of notifications a minute per mailbox, so this ceiling is far
+// above genuine traffic and still a ceiling.
+mailWebhookRouter.use(rateLimit({
+  windowMs: 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false,
+  message: { error: { message: 'Too many notifications. Please slow down.' } },
+}));
+
 mailWebhookRouter.post('/notifications', async (req, res) => {
   // Graph checks the endpoint by sending a token to echo back.
   if (req.query.validationToken) return res.type('text/plain').send(String(req.query.validationToken));
   const items = Array.isArray(req.body?.value) ? req.body.value : [];
   res.status(202).end();
-  const accounts = new Set();
-  for (const n of items.slice(0, 100)) {
-    const { rows: [f] } = await query('SELECT account_id, subscription_client_state FROM mail_folders WHERE subscription_id = $1', [String(n.subscriptionId || '')]);
-    if (!f || !f.subscription_client_state || n.clientState !== f.subscription_client_state) continue;
-    if (n.lifecycleEvent === 'reauthorizationRequired' || n.lifecycleEvent === 'subscriptionRemoved') {
-      await query('UPDATE mail_folders SET subscription_expires_at = now() WHERE subscription_id = $1', [n.subscriptionId]);
-      const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [f.account_id]);
-      if (a) ensureSubscriptions(a).catch(() => {});
+  try {
+    // One lookup for the whole batch rather than one per item, so the number
+    // of queries an unauthenticated caller can provoke does not grow with
+    // the size of the body they send.
+    const ids = [...new Set(items.slice(0, 100).map((n) => String(n.subscriptionId || '')).filter(Boolean))];
+    if (!ids.length) return;
+    const { rows } = await query('SELECT subscription_id, account_id, subscription_client_state FROM mail_folders WHERE subscription_id = ANY($1)', [ids]);
+    const bySubscription = new Map(rows.map((f) => [f.subscription_id, f]));
+    const accounts = new Set();
+    for (const n of items.slice(0, 100)) {
+      const f = bySubscription.get(String(n.subscriptionId || ''));
+      if (!f || !f.subscription_client_state || n.clientState !== f.subscription_client_state) continue;
+      if (n.lifecycleEvent === 'reauthorizationRequired' || n.lifecycleEvent === 'subscriptionRemoved') {
+        await query('UPDATE mail_folders SET subscription_expires_at = now() WHERE subscription_id = $1', [n.subscriptionId]);
+        const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [f.account_id]);
+        if (a) ensureSubscriptions(a).catch(() => {});
+      }
+      accounts.add(f.account_id);
     }
-    accounts.add(f.account_id);
+    for (const id of accounts) syncAccount(id).catch(() => {});
+  } catch {
+    // The response has already gone; a failure here must not take the
+    // process down. The next delta sync picks the messages up anyway.
   }
-  for (const id of accounts) syncAccount(id).catch(() => {});
 });

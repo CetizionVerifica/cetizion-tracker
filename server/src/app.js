@@ -48,6 +48,20 @@ const app = express();
 // caller forge their own address.
 app.set('trust proxy', config.trustProxy);
 
+// The other half of that setting: if a proxy IS in front of us and this says
+// there is not, req.ip is the proxy's address for every visitor. Rate limits
+// then share one bucket for the whole internet and the IP recorded against a
+// client's acceptance is Traefik's, not theirs. It only shows in production
+// and it shows as something else, so say it once and say it plainly.
+let proxyWarned = false;
+app.use((req, _res, next) => {
+  if (!proxyWarned && !config.trustProxy && req.headers['x-forwarded-for']) {
+    proxyWarned = true;
+    console.warn('[config] Requests carry X-Forwarded-For but TRUST_PROXY=0, so every caller looks like the proxy: rate limits are one shared bucket and recorded IP addresses are wrong. Set TRUST_PROXY to the number of proxies in front of this API (1 behind Dokploy or Traefik).');
+  }
+  next();
+});
+
 app.use(helmet());
 app.use(compression());
 app.use(cors({

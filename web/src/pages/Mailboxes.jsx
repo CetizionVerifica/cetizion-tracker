@@ -10,9 +10,9 @@ import { useFetch } from '../lib/hooks.js';
  * sync now, disconnect, and keep newsletters out.
  */
 const VIS = [
-  { value: 'share_everything', label: 'Everything (subject and body)' },
+  { value: 'metadata', label: 'Who and when only (default)' },
   { value: 'subject', label: 'Subject only' },
-  { value: 'metadata', label: 'Who and when only' },
+  { value: 'share_everything', label: 'Everything (subject and body)' },
 ];
 
 export default function Mailboxes() {

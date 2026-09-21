@@ -17,6 +17,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
+import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
 import { sendMail } from '../lib/mail.js';
 import { notify } from '../lib/notify.js';
@@ -31,12 +32,18 @@ const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const CLOSED = ['Won - PO Received', 'Lost', 'Dropped'];
 
-async function baseUrl(req) {
+async function baseUrl() {
   const { rows: [r] } = await query(`SELECT value FROM settings WHERE key = 'public_app_url'`);
   const set = (r?.value || '').trim().replace(/\/+$/, '');
   if (set) return set;
-  const origin = req.get('origin');
-  return origin || `${req.protocol}://${req.get('host')}`;
+  // Never the request's own headers. The link carries the acceptance token,
+  // and Origin and Host are the caller's to choose: a signed-in user could
+  // send Origin: https://evil.example and the client's email would point
+  // the token at their domain. CORS_ORIGIN is the server's own setting, so
+  // it is a safe second choice; if neither is set, refuse to build a link.
+  const configured = config.corsOrigin.split(',').map((s) => s.trim()).filter(Boolean)[0];
+  if (configured) return configured.replace(/\/+$/, '');
+  throw new ApiError(422, 'Set the public address of the tracker in Settings before sending an acceptance link');
 }
 
 const linkSchema = z.object({
@@ -68,7 +75,7 @@ acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
     await db.query('UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1', [q.id]);
     return a;
   });
-  const url = `${await baseUrl(req)}/accept/${token}`;
+  const url = `${await baseUrl()}/accept/${token}`;
   let email = null;
   if (body.email) {
     const text = `Dear ${q.contact?.name || q.client_name},\n\n${body.message || `Please find our quotation ${q.quotation_no} for ${q.service_quoted || 'the services discussed'}.`}\n\nYou can review it and accept it, or ask for changes, here:\n${url}\n${q.valid_until ? `\nThis quotation is valid until ${q.valid_until}.\n` : ''}\nRegards,\n${q.sales_person || 'Cetizion Verifica'}`;
@@ -76,7 +83,7 @@ acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
     email = await sendMail({
       to, subject: `Quotation ${q.quotation_no}${q.revision ? ` (rev ${q.revision})` : ''} from Cetizion Verifica: review and accept`,
       text, html: `<p>${esc(text).replace(/\n/g, '<br>').replace(esc(url), `<a href="${esc(url)}">Review and accept the quotation</a>`)}</p>`,
-      template: 'quotation_acceptance', entity: 'quotation', entityId: q.quotation_no, sentBy: who,
+      template: 'quotation_acceptance', entity: 'quotation', entityId: q.quotation_no, sentBy: who, secrets: [token],
       attachments: [{ filename: `${q.quotation_no.replace(/\//g, '-')}.pdf`, content: pdf, contentType: 'application/pdf' }],
     });
   }
