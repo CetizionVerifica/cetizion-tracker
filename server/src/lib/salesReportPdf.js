@@ -244,20 +244,18 @@ function tile(value, label, meta) {
 
 export function salesReportDocDefinition(data) {
   const {
-    period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, contracts, gaps,
-    rates = {}, generatedAt = new Date(), timeZone = 'UTC', revenuePeriod = { from: null, to: null },
+    period = {}, sectors, customers, fx, revenue, enquiries, quotationStatus, services, contracts, gaps,
+    rates = {}, generatedAt = new Date(), timeZone = 'UTC',
   } = data;
 
   const stamp = generatedStamp(generatedAt, timeZone);
   const today = dateIn(generatedAt, timeZone);
   const periodText = periodLabel(period);
-  // For use inside a sentence: "Sections 1–5 cover all dates."
-  const periodPhrase = period.from || period.to ? periodText : 'all dates';
-  // The revenue section covers a calendar year, or one month of it.
-  const revenueLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
-  const revenueScope = month ? revenueLabel : `calendar year ${year}`;
-  // revenuePeriod is the range the revenue figures were fetched for, worked out once by the route.
-  const samePeriods = period.from === revenuePeriod.from && period.to === revenuePeriod.to;
+  // Every section, revenue included, covers the same period now — there is
+  // no separate year/month picker for revenue any more, and no second phrase
+  // for it either, so the report never reads "All time" in one place and
+  // "all dates" in another for the same thing.
+  const revenueLabel = periodText;
 
   // Sector won value in INR. Converted in SQL at the rate in force on each
   // quotation's own date, the same lookup every other figure here uses.
@@ -326,7 +324,7 @@ export function salesReportDocDefinition(data) {
           stack: [
             { text: 'CETIZION VERIFICA PRIVATE LIMITED', style: 'brandTag' },
             { text: 'Sales & Enquiry Performance Review', style: 'title' },
-            { text: `Sales period: ${periodText}     |     Revenue: ${month ? revenueLabel : `Calendar year ${year}`}`, style: 'subtitle' },
+            { text: `Period: ${periodText}`, style: 'subtitle' },
           ],
           fillColor: NAVY,
           margin: [18, 16, 18, 16],
@@ -371,13 +369,6 @@ export function salesReportDocDefinition(data) {
       margin: [0, 0, 0, 10],
     },
     callout(head),
-    samePeriods
-      ? null
-      : callout({
-          tag: 'PLEASE NOTE',
-          tone: 'note',
-          text: `Sections 1–5 cover ${periodPhrase}. Section 6 covers ${revenueScope}, the year and month chosen in the Revenue section of the Sales reports page.`,
-        }),
     { text: 'KEY FINDINGS', style: 'kicker' },
     findings.length
       ? {
@@ -1065,7 +1056,7 @@ export function salesReportDocDefinition(data) {
       singleRows.length),
     subsection('D.  Notes and definitions', null, {
       ul: [
-        `Sections 1–5 cover ${periodPhrase}: enquiries by enquiry date, quotations by quotation date. Section 6 covers ${revenueScope}.`,
+        `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
         'Enquiries are the rows on the Enquiries page, counted by their status there: In Progress, Declined, or Won - Quotation Sent ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
         `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
@@ -1088,7 +1079,7 @@ export function salesReportDocDefinition(data) {
     info: {
       title: `Cetizion Sales & Enquiry Performance Review — ${periodText}`,
       author: 'Cetizion Tracker',
-      subject: `Sales ${periodText}; revenue ${revenueLabel}`,
+      subject: `Period: ${periodText}`,
       creator: 'Cetizion Tracker',
     },
     defaultStyle: { font: 'Roboto', fontSize: 8, color: INK_900, lineHeight: 1.15 },
@@ -1098,7 +1089,7 @@ export function salesReportDocDefinition(data) {
         : {
             columns: [
               { text: 'CETIZION  ·  SALES & ENQUIRY PERFORMANCE REVIEW', style: 'runningHead' },
-              { text: `Sales ${periodText}  ·  Revenue ${revenueLabel}`, style: 'runningHead', alignment: 'right' },
+              { text: periodText, style: 'runningHead', alignment: 'right' },
             ],
             margin: [MARGIN_X, 22, MARGIN_X, 0],
           },
