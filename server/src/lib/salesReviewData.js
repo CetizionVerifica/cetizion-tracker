@@ -79,7 +79,7 @@ export function enquirySummary(rows, period = {}) {
  * spaces ignored — see names.js), so "Aluminium" and "aluminium " count as
  * one row here too, not two.
  */
-function countBy(rows, field) {
+export function countBy(rows, field) {
   const counts = new Map();
   for (const row of rows) {
     const raw = String(row[field] ?? '').trim();
@@ -406,6 +406,10 @@ export function quotationPipeline(rows) {
   const tatDays = detail.filter((row) => row.tat_days != null).map((row) => row.tat_days);
   const contracted = detail.filter((row) => row.contract_date).length;
   const lost = detail.filter((row) => row.status === LOST).length;
+  // Marked won, but no PO is on record: a data gap, not a pending quotation
+  // (it has already been decided) — kept apart so it neither inflates
+  // "pending" nor gets mistaken for an ordinary open quotation.
+  const wonWithoutPo = detail.filter((row) => row.status === WON && !row.contract_date).length;
   const { value_inr, without_value } = inrTotals(rows);
   // A quotation needs both a value and a known rate to convert to INR; each
   // is excluded from the average for a different reason, so counted apart.
@@ -416,7 +420,8 @@ export function quotationPipeline(rows) {
     total: rows.length,
     contracted,
     lost,
-    pending: rows.length - contracted - lost,
+    won_without_po: wonWithoutPo,
+    pending: rows.length - contracted - lost - wonWithoutPo,
     conversion_rate: rows.length ? share(contracted, rows.length) : null,
     average_ticket_inr: convertedCount ? r2(value_inr / convertedCount) : null,
     average_ticket_count: convertedCount,

@@ -595,6 +595,11 @@ export function salesReportDocDefinition(data) {
       qPipeline.average_ticket_inr != null ? lines(compactInr(qPipeline.average_ticket_inr), note(ticketDetail)) : '—',
     ],
     ['TAT — quotation to contract (average)', qPipeline.tat_count ? `${decimal(qPipeline.average_tat_days)} days` : '— (none reached a contract yet)'],
+    // Status says won, but no PO is on record — a data gap, so named on its
+    // own rather than folded into "pending" (a decided deal is not pending).
+    ...(qPipeline.won_without_po
+      ? [['Won, but no PO registered yet', { text: `${plural(qPipeline.won_without_po, 'quotation')} — register its purchase order`, alignment: 'left' }]]
+      : []),
   ];
   const conversionSection = qt.quotations
     ? {
