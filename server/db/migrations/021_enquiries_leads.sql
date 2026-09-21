@@ -35,6 +35,12 @@ ALTER TABLE enquiries
 
 CREATE INDEX IF NOT EXISTS enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 
+-- The status vocabulary changes here, and a deploy runs both containers at
+-- once: the new one migrates while the old one is still serving requests in
+-- the old words. A CHECK that accepts only the new vocabulary would fail
+-- every enquiry the old container writes until the swap completes, so this
+-- one accepts both. The old names are dropped in a later migration, once no
+-- running code writes them.
 ALTER TABLE enquiries DROP CONSTRAINT IF EXISTS enquiries_status_check;
 UPDATE enquiries SET status = CASE status
   WHEN 'In Progress' THEN 'Contacted'
@@ -43,8 +49,13 @@ UPDATE enquiries SET status = CASE status
   ELSE status END
  WHERE status IN ('In Progress', 'Declined', 'Won - Quotation Sent');
 ALTER TABLE enquiries ALTER COLUMN status SET DEFAULT 'New';
+-- NOT VALID: the rows were just rewritten by the UPDATE above, so there is
+-- nothing to scan, and validating would take an exclusive lock over the
+-- whole table for the length of the scan.
 ALTER TABLE enquiries ADD CONSTRAINT enquiries_status_check
-  CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified'));
+  CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified',
+                    'In Progress','Declined','Won - Quotation Sent')) NOT VALID;
+ALTER TABLE enquiries VALIDATE CONSTRAINT enquiries_status_check;
 
 -- Stamps: the first response, the conversion, and a default follow-up date.
 CREATE OR REPLACE FUNCTION enquiry_stamps() RETURNS trigger AS $$

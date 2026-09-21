@@ -447,7 +447,11 @@ CREATE TABLE enquiries (
   sales_person_email text,
   service            text,
   status             text NOT NULL DEFAULT 'New'
-                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
+                       -- The words from before #24 are still accepted while a deploy
+                       -- runs both containers: the old one writes them until the swap
+                       -- completes. A later migration drops them.
+                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified',
+                                        'In Progress','Declined','Won - Quotation Sent')),
   quotation_no       text REFERENCES quotations(quotation_no)
                        ON UPDATE CASCADE ON DELETE SET NULL,
   -- A lead (#24)
