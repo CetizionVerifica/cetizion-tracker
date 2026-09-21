@@ -24,7 +24,9 @@ const cookieOf = (res, name) => (res.headers['set-cookie'] || []).find((c) => c.
 async function seedFixtures(client) {
   await client.query(`
     INSERT INTO companies (id, name, portal_enabled) VALUES (1001, 'Alpha Industries', true), (1002, 'Beta Metals', true);
-    INSERT INTO contacts (id, company_id, name, email) VALUES (2001, 1001, 'Asha Alpha', 'asha@alpha.example'), (2002, 1002, 'Bina Beta', 'bina@beta.example');
+    -- portal_access is off by default, so the grant is explicit here too:
+    -- an admin allows a named contact, which is what #47 asks for.
+    INSERT INTO contacts (id, company_id, name, email, portal_access) VALUES (2001, 1001, 'Asha Alpha', 'asha@alpha.example', true), (2002, 1002, 'Bina Beta', 'bina@beta.example', true);
     INSERT INTO documents (id, storage_key, file_name, content_type, size_bytes) VALUES (3001, 'k/a', 'alpha-po.pdf', 'application/pdf', 10), (3002, 'k/b', 'beta-po.pdf', 'application/pdf', 10);
     INSERT INTO projects (project_id, client_name) VALUES ('PRJ-A', 'Alpha Industries'), ('PRJ-B', 'Beta Metals');
     INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, document_id) VALUES ('PO-A', 'PRJ-A', '2026-08-01', 100000, 3001), ('PO-B', 'PRJ-B', '2026-08-01', 200000, 3002);

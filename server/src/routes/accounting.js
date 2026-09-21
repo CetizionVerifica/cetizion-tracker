@@ -200,16 +200,32 @@ async function tdsRows(from, to) {
 async function salesRows(from, to) {
   const { rows } = await query(
     `SELECT s.id, s.invoice_no, s.invoice_date, s.stage_amount, s.currency, c.name AS client, c.gstin, q.place_of_supply_state, q.id AS quotation_id,
-            (SELECT round(SUM(amount * gst_rate) / NULLIF(SUM(amount), 0), 2) FROM quotation_lines WHERE quotation_id = q.id) AS rate
+            (SELECT json_agg(m) FROM (SELECT COALESCE(gst_rate, 0) AS rate, SUM(amount) AS amount FROM quotation_lines
+                                         WHERE quotation_id = q.id AND amount > 0 GROUP BY COALESCE(gst_rate, 0)) m) AS rate_mix
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects pr ON pr.project_id = po.project_id
        LEFT JOIN companies c ON c.id = pr.company_id LEFT JOIN quotations q ON q.quotation_no = po.quotation_no
       WHERE s.invoice_no IS NOT NULL AND s.invoice_date BETWEEN $1 AND $2 ORDER BY s.invoice_date, s.invoice_no`, [from, to]);
   const defaultRate = Number(await setting('gst_rate_default', '18'));
   return rows.map((r) => {
     const g = checkGstin(r.gstin);
-    const rate = Number(r.rate ?? defaultRate);
     const taxable = Number(r.stage_amount);
-    return { ...r, gstin_valid: g.valid, state_code: g.valid ? g.state_code : (r.place_of_supply_state || '').match(/^\d{2}/)?.[0] || null, rate, taxable, invoice_value: Math.round(taxable * (100 + rate)) / 100 };
+    // One line per GST rate on the quotation, not one line at the average of
+    // them. An invoice for 100,000 at 18% and 10,000 at 5% is two lines; a
+    // single line at 16.82% is a rate that does not exist and the GST
+    // offline tool rejects it. The stage is split in the proportions the
+    // quotation used, with the rounding paisa on the last line.
+    const mix = (r.rate_mix || []).map((m) => ({ rate: Number(m.rate), amount: Number(m.amount) })).filter((m) => m.amount > 0).sort((x, y) => y.amount - x.amount);
+    const base = mix.reduce((n, m) => n + m.amount, 0);
+    const parts = mix.length && base > 0
+      ? mix.map((m) => ({ rate: m.rate, taxable: Math.round(taxable * (m.amount / base) * 100) / 100 }))
+      : [{ rate: defaultRate, taxable }];
+    const gap = Math.round((taxable - parts.reduce((n, p) => n + p.taxable, 0)) * 100) / 100;
+    parts[parts.length - 1].taxable = Math.round((parts[parts.length - 1].taxable + gap) * 100) / 100;
+    const invoiceValue = Math.round(parts.reduce((n, p) => n + p.taxable * (100 + p.rate) / 100, 0) * 100) / 100;
+    return {
+      ...r, gstin_valid: g.valid, state_code: g.valid ? g.state_code : (r.place_of_supply_state || '').match(/^\d{2}/)?.[0] || null,
+      parts, rate: parts.length === 1 ? parts[0].rate : null, taxable, invoice_value: invoiceValue,
+    };
   });
 }
 
@@ -263,7 +279,9 @@ accountingRouter.get('/reports/gstr1-b2b.csv', async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="gstr1-b2b-${from}-to-${to}.csv"`);
   // The column order of the GST offline tool's B2B sheet.
   res.send(`﻿${csv([['GSTIN/UIN of Recipient', 'Receiver Name', 'Invoice Number', 'Invoice date', 'Invoice Value', 'Place Of Supply', 'Reverse Charge', 'Applicable % of Tax Rate', 'Invoice Type', 'E-Commerce GSTIN', 'Rate', 'Taxable Value', 'Cess Amount'],
-    ...rows.map((r) => [r.gstin.toUpperCase(), r.client, r.invoice_no, gstDate(r.invoice_date), r.invoice_value.toFixed(2), `${r.state_code}-${STATES[r.state_code] || STATES[Number(r.state_code)] || ''}`, 'N', '', 'Regular B2B', '', r.rate, r.taxable.toFixed(2), '0'])])}`);
+    // A mixed-rate invoice is several lines sharing one invoice number and
+    // one invoice value, which is what the B2B sheet expects.
+    ...rows.flatMap((r) => r.parts.map((p) => [r.gstin.toUpperCase(), r.client, r.invoice_no, gstDate(r.invoice_date), r.invoice_value.toFixed(2), `${r.state_code}-${STATES[r.state_code] || STATES[Number(r.state_code)] || ''}`, 'N', '', 'Regular B2B', '', p.rate, p.taxable.toFixed(2), '0']))])}`);
 });
 
 accountingRouter.get('/log', async (req, res) => {

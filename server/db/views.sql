@@ -655,8 +655,6 @@ SELECT
    ) x)                                                                                    AS last_activity
 FROM companies c;
 
-COMMIT;
-
 -- ---------------------------------------------------------------------
 -- Project profitability (#39): revenue against delivery cost, in INR.
 -- Paid cost is money gone; committed is billed or claimed but not yet
@@ -755,3 +753,12 @@ SELECT
   t.revenue_gaps::int AS revenue_gaps, t.cost_gaps::int AS cost_gaps,
   (t.revenue > 0 AND round(100 * (t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed)) / t.revenue, 1) < setting_num('margin_alert_percent', 20)) AS low_margin
 FROM projects p JOIN totals t ON t.project_id = p.project_id;
+
+-- The COMMIT belongs at the end of the file, not in the middle of it.
+-- rebuildViews runs this as one multi-statement query: with the commit
+-- where it used to be, v_project_profitability was created outside the
+-- transaction, so every redeploy had a window in which the view did not
+-- exist - the profitability page and the cost-alert job answering
+-- "relation does not exist" - and a failure in it left the earlier views
+-- committed with the file itself unrecorded.
+COMMIT;

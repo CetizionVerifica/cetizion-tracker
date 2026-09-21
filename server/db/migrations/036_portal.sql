@@ -10,7 +10,12 @@
 
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS portal_enabled boolean NOT NULL DEFAULT false;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS portal_sections text[] NOT NULL DEFAULT '{projects,documents,invoices,certificates,contact}';
-ALTER TABLE contacts ADD COLUMN IF NOT EXISTS portal_access boolean NOT NULL DEFAULT true;
+-- Off until somebody says otherwise. The company switch is off too, but
+-- the moment an admin turns a company on, every contact row on it would
+-- otherwise be eligible for a login link -- stale rows and shared
+-- addresses the quotation trigger created included. #47 asks for the
+-- grant to be deliberate.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS portal_access boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS portal_links (
   id          serial PRIMARY KEY,

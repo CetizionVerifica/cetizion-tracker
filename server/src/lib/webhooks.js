@@ -7,6 +7,8 @@
  * reject a timestamp older than five minutes.
  */
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { query } from '../db.js';
 import { config } from '../config.js';
 
@@ -77,12 +79,68 @@ function payloadFor(delivery, event, endpoint) {
   return JSON.stringify({ id: delivery.idempotency_key, event: event.event, occurred_at: event.occurred_at, entity: event.entity, entity_id: event.entity_id, data });
 }
 
-function allowedUrl(url) {
-  try {
-    const u = new URL(url);
-    if (u.protocol === 'https:') return true;
-    return config.nodeEnv !== 'production' && u.protocol === 'http:';
-  } catch { return false; }
+/**
+ * Addresses a webhook may never be sent to: this machine, the private
+ * network it sits on, the link-local range the cloud platforms put their
+ * metadata on, and the ranges reserved for documentation and multicast.
+ * Anything that is not an address at all is refused as well.
+ */
+export function isPrivateAddress(ip) {
+  const version = net.isIP(ip);
+  if (version === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;          // this host, private, loopback
+    if (a === 169 && b === 254) return true;                    // link local, incl. cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;           // private
+    if (a === 192 && b === 168) return true;                    // private
+    if (a === 100 && b >= 64 && b <= 127) return true;          // carrier NAT
+    if (a === 192 && (b === 0 || b === 2)) return true;         // protocol assignments, documentation
+    if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
+    if (a === 203 && b === 0) return true;                      // documentation
+    if (a >= 224) return true;                                  // multicast and reserved
+    return false;
+  }
+  if (version !== 6) return true;
+  const s = ip.toLowerCase().split('%')[0];
+  if (s === '::1' || s === '::') return true;
+  const mapped = /^(?:::ffff:)(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (mapped) return isPrivateAddress(mapped[1]);
+  if (/^f[cd]/.test(s)) return true;                            // unique local
+  if (/^fe[89ab]/.test(s)) return true;                         // link local
+  if (/^ff/.test(s)) return true;                               // multicast
+  return false;
+}
+
+/**
+ * Where a delivery is allowed to go. Returns null when it may proceed, or
+ * the reason to record against the delivery.
+ *
+ * The scheme check on its own was not enough: loopback, the private ranges
+ * and a bare container hostname were all accepted, and the response status
+ * and first 2 KB of the body come back through the deliveries API — so an
+ * endpoint was a readable probe of everything the container can reach.
+ * The host is resolved and the ADDRESS is judged, not the name, because a
+ * name anyone can register may point wherever they like.
+ */
+export async function checkDestination(url, { resolve = (host) => dns.lookup(host, { all: true, verbatim: true }), requireResolvable = true } = {}) {
+  let u;
+  try { u = new URL(url); } catch { return 'The endpoint URL is not a valid address'; }
+  const httpAllowed = config.nodeEnv !== 'production' && u.protocol === 'http:';
+  if (u.protocol !== 'https:' && !httpAllowed) return 'The endpoint URL must use https';
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) return isPrivateAddress(host) ? `${host} is a private address` : null;
+  if (!host.includes('.') || /\.(local|internal|localdomain|home|lan)$/i.test(host)) {
+    return `${host} is not a public host name`;                 // container and service names
+  }
+  let addresses;
+  // A name that does not resolve is refused at delivery but allowed when an
+  // endpoint is saved: a receiver can be configured before it exists, and
+  // the delivery checks again anyway.
+  try { addresses = await resolve(host); } catch { return requireResolvable ? `${host} does not resolve` : null; }
+  if (!addresses.length) return requireResolvable ? `${host} does not resolve` : null;
+  const blocked = addresses.find((a) => isPrivateAddress(a.address));
+  if (blocked) return `${host} resolves to ${blocked.address}, which is on a private network`;
+  return null;
 }
 
 export async function deliverOne(deliveryId, { fetchImpl = fetch } = {}) {
@@ -97,7 +155,8 @@ export async function deliverOne(deliveryId, { fetchImpl = fetch } = {}) {
   const body = payloadFor(d, d.ev, d.ep);
   const t = Math.floor(Date.now() / 1000);
   let code = null; let text = null; let error = null;
-  if (!allowedUrl(d.ep.url)) error = 'The endpoint URL must use https';
+  const refused = await checkDestination(d.ep.url);
+  if (refused) error = refused;
   else {
     try {
       const r = await fetchImpl(d.ep.url, {

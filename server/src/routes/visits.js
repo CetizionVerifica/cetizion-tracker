@@ -25,6 +25,14 @@ export const visitsRouter = Router();
 const who = (req) => req.user?.username || 'admin';
 const fields = (parsed) => new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
 const blank = (v) => (typeof v === 'string' && v.trim() === '' ? null : v);
+// Number('abc') is NaN and NaN is falsy, so a PATCH to a path that is not a
+// number used to fall through to the insert branch and CREATE a visit --
+// firing a visit.scheduled webhook for a record nobody asked for.
+const recordId = (raw) => {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) throw new ApiError(404, 'Not found');
+  return n;
+};
 const opt = (s) => z.preprocess(blank, s.nullable().optional());
 const stamp = z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/));
 
@@ -56,7 +64,7 @@ visitsRouter.patch('/staff/:id', async (req, res) => {
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
-  const { rows: [s] } = await query(`UPDATE staff SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
+  const { rows: [s] } = await query(`UPDATE staff SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [recordId(req.params.id), ...set.map(([, x]) => x)]);
   if (!s) throw new ApiError(404, 'Not found');
   res.json({ data: s });
 });
@@ -64,7 +72,7 @@ visitsRouter.post('/staff/:id/leave', async (req, res) => {
   const parsed = z.object({ starts_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), ends_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), reason: opt(z.string().max(200)) }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   if (parsed.data.ends_on < parsed.data.starts_on) throw new ApiError(422, 'Please check the highlighted fields', { fields: { ends_on: 'Must be on or after the start' } });
-  const { rows: [l] } = await query('INSERT INTO staff_leave (staff_id, starts_on, ends_on, reason) VALUES ($1,$2,$3,$4) RETURNING *', [Number(req.params.id), parsed.data.starts_on, parsed.data.ends_on, parsed.data.reason ?? null]);
+  const { rows: [l] } = await query('INSERT INTO staff_leave (staff_id, starts_on, ends_on, reason) VALUES ($1,$2,$3,$4) RETURNING *', [recordId(req.params.id), parsed.data.starts_on, parsed.data.ends_on, parsed.data.reason ?? null]);
   // Visits this leave now clashes with.
   const { rows: clashes } = await query(
     `SELECT v.id, v.title, v.starts_at FROM visits v JOIN visit_assignees va ON va.visit_id = v.id
@@ -73,7 +81,7 @@ visitsRouter.post('/staff/:id/leave', async (req, res) => {
   res.status(201).json({ data: l, clashes });
 });
 visitsRouter.delete('/leave/:id', async (req, res) => {
-  await query('DELETE FROM staff_leave WHERE id = $1', [Number(req.params.id)]);
+  await query('DELETE FROM staff_leave WHERE id = $1', [recordId(req.params.id)]);
   res.status(204).end();
 });
 
@@ -112,7 +120,7 @@ visitsRouter.get('/', async (req, res) => {
 });
 
 visitsRouter.get('/:id', async (req, res) => {
-  const { rows: [v] } = await query(`${LIST} WHERE v.id = $1`, [Number(req.params.id)]);
+  const { rows: [v] } = await query(`${LIST} WHERE v.id = $1`, [recordId(req.params.id)]);
   if (!v) throw new ApiError(404, 'Visit not found');
   res.json({ data: v });
 });
@@ -208,19 +216,19 @@ visitsRouter.post('/', async (req, res) => {
 });
 
 visitsRouter.patch('/:id', async (req, res) => {
-  const id = await save(req, Number(req.params.id));
+  const id = await save(req, recordId(req.params.id));
   const { rows: [v] } = await query(`${LIST} WHERE v.id = $1`, [id]);
   res.json({ data: v });
 });
 
 visitsRouter.delete('/:id', async (req, res) => {
-  const { rowCount } = await query(`DELETE FROM visits WHERE id = $1 AND status IN ('planned','cancelled')`, [Number(req.params.id)]);
+  const { rowCount } = await query(`DELETE FROM visits WHERE id = $1 AND status IN ('planned','cancelled')`, [recordId(req.params.id)]);
   if (!rowCount) throw new ApiError(422, 'Only planned or cancelled visits can be deleted; cancel a confirmed one instead');
   res.status(204).end();
 });
 
 visitsRouter.post('/:id/trip', async (req, res) => {
-  const { rows: [v] } = await query(`${LIST} WHERE v.id = $1`, [Number(req.params.id)]);
+  const { rows: [v] } = await query(`${LIST} WHERE v.id = $1`, [recordId(req.params.id)]);
   if (!v) throw new ApiError(404, 'Visit not found');
   if (v.travel_id) throw new ApiError(409, `Trip ${v.travel_id} already exists for this visit`);
   const person = v.assignees.find((a) => a.staff_id === Number(req.body?.staff_id)) || v.assignees.find((a) => a.role === 'lead') || v.assignees[0];

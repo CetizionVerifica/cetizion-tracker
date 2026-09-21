@@ -40,6 +40,16 @@ export async function notify({ username = null, kind, title, body = null, entity
 
 const enc = (s) => encodeURIComponent(String(s));
 
+/** Whole days from a date to another, both read as plain dates. */
+const daysApart = (from, to) => Math.round((Date.parse(`${String(to).slice(0, 10)}T00:00:00Z`) - Date.parse(`${String(from).slice(0, 10)}T00:00:00Z`)) / 864e5);
+
+// When an overdue task is announced to a webhook receiver: the day it goes
+// overdue and a few milestones after. Emitting on every daily run gave each
+// day its own event and its own idempotency key, so a task a fortnight old
+// had already fired a receiving workflow fourteen times. invoice.overdue
+// below has always worked this way.
+export const TASK_OVERDUE_DAYS = [1, 7, 14, 30];
+
 export async function collectNotifications({ today = businessToday(), db = { query } } = {}) {
   const raised = [];
   const add = async (n) => { const r = await notify(n, db); if (r) raised.push(r); return r; };
@@ -48,7 +58,10 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: tasks } = await db.query(`SELECT * FROM tasks WHERE status <> 'done' AND due_at <= $1 ORDER BY due_at`, [today]);
   for (const t of tasks) {
     const overdue = t.due_at < today;
-    if (overdue) await emit('task.overdue', { entity: t.entity, entityId: t.entity_id, data: { task_id: t.id, title: t.title, due_at: t.due_at, assignee: t.assignee } }, db);
+    const daysOverdue = overdue ? daysApart(t.due_at, today) : 0;
+    if (TASK_OVERDUE_DAYS.includes(daysOverdue)) {
+      await emit('task.overdue', { entity: t.entity, entityId: t.entity_id, data: { task_id: t.id, title: t.title, due_at: t.due_at, days_overdue: daysOverdue, assignee: t.assignee } }, db);
+    }
     await add({ username: t.assignee || null, kind: overdue ? 'task_overdue' : 'task_due', title: `${overdue ? 'Overdue' : 'Due today'}: ${t.title}`, body: `${t.entity.replace('_', ' ')} ${t.entity_id}${t.assignee ? ` · ${t.assignee}` : ''}`, entity: t.entity, entityId: t.entity_id, link: '/tasks', dedupeKey: `task:${t.id}:${day}` });
   }
 

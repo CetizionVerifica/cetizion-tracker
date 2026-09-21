@@ -283,7 +283,7 @@ CREATE TABLE contacts (
   whatsapp_opt_in_at timestamptz,
   whatsapp_opt_in_source text,
   last_contacted_at  timestamptz,
-  portal_access      boolean NOT NULL DEFAULT true,
+  portal_access      boolean NOT NULL DEFAULT false,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );

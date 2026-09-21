@@ -39,6 +39,43 @@ Server tests (including portal isolation, webhooks and accounting), browser test
 - The portal statement PDF takes `money()` from `reportFormat.js` and its fonts from the shared `lib/pdf.js`, instead of relying on the quotation PDF module.
 - Carries the batch 2 review fixes (see `batch-2.md`).
 
+## Review round 2 (#61)
+
+**`TRUST_PROXY=1` is required when this deploys**, for the same reason as
+batch 4: the portal's rate limits — link requests, failed logins, messages —
+are one bucket for every client behind Traefik otherwise, and the audit trail
+records the proxy's address instead of the contact's.
+
+- **Foreign-currency projects no longer report a loss they have not made.**
+  The view and the route both read the retired `fx_rate_%` settings, which
+  migration 013 made unsettable, so revenue converted to NULL against real
+  costs. Both now read `exchange_rates` at the rate in force on the PO's own
+  date, the way the sales report does.
+- **`v_project_profitability` is created inside the transaction.** The
+  `COMMIT` was above it, so `rebuildViews` left a window on every redeploy
+  where the view did not exist and the profitability page and cost-alert job
+  answered "relation does not exist".
+- **A webhook can no longer be pointed inside the network.** The destination
+  is resolved and the *address* is judged — loopback, the private ranges,
+  link-local (so cloud metadata), carrier NAT, multicast, and bare container
+  names like `traefik` or `postgres.internal` are all refused, at the moment
+  the URL is saved and again at delivery. It mattered because the response
+  code and the first 2 KB of the body come back through the deliveries API,
+  which made an endpoint a readable probe rather than a blind one.
+- **Portal access is off by default.** `contacts.portal_access` defaulted to
+  `true`, so turning a company on would have made every contact row on it —
+  stale ones and shared addresses the quotation trigger created included —
+  eligible for a login link at once.
+- **`PATCH /api/visits/<not-a-number>` answers 404 instead of creating a
+  visit.** `Number()` gave `NaN`, `NaN` is falsy, and the save fell into the
+  insert branch and fired a `visit.scheduled` webhook for it.
+- **`task.overdue` is announced on the day it goes overdue and at 7, 14 and
+  30 days**, not every morning for ever. A 60-day-old task had been firing a
+  receiving workflow 60 times, each with its own idempotency key.
+- **GSTR-1 B2B reports each rate on its own line.** A mixed-rate invoice was
+  reported at the weighted average of its rates — 16.82% for a 100,000 at 18%
+  plus 10,000 at 5% — which is not a rate the GST offline tool accepts.
+
 ## Rolling back
 
 Revert the merge. Switch off any portal companies and webhook endpoints first.

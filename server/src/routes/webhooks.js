@@ -20,7 +20,7 @@ import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
-import { deliverOne, EVENT_TYPES, newSecret, releaseHeld, runWebhooks, verify } from '../lib/webhooks.js';
+import { checkDestination, deliverOne, EVENT_TYPES, newSecret, releaseHeld, runWebhooks, verify } from '../lib/webhooks.js';
 
 export const webhooksRouter = Router();
 export const incomingHooksRouter = Router();
@@ -59,6 +59,9 @@ webhooksRouter.post('/', async (req, res) => {
   const parsed = endpointSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const v = parsed.data;
+  // Say no at the point the address is typed, not silently at delivery.
+  const refused = await checkDestination(v.url, { requireResolvable: false });
+  if (refused) throw new ApiError(422, 'Please check the highlighted fields', { fields: { url: refused } });
   const secret = newSecret();
   const { rows: [w] } = await query(
     `INSERT INTO webhook_endpoints (name, url, events, secret, min_value, sector, include_personal_data, active, when_inactive, created_by)
@@ -72,6 +75,10 @@ webhooksRouter.patch('/:id', async (req, res) => {
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
+  if (parsed.data.url !== undefined) {
+    const refused = await checkDestination(parsed.data.url, { requireResolvable: false });
+    if (refused) throw new ApiError(422, 'Please check the highlighted fields', { fields: { url: refused } });
+  }
   const id = Number(req.params.id);
   const { rows: [w] } = await query(`UPDATE webhook_endpoints SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING ${PUBLIC}`, [id, ...set.map(([, x]) => x)]);
   if (!w) throw new ApiError(404, 'Endpoint not found');
