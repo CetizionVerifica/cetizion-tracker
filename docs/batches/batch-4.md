@@ -14,7 +14,7 @@ Merge after batch 3.
 
 ## Deploying it
 
-- **Migrations** 027 to 031, applied on start.
+- **Migrations** 028 to 032, applied on start.
 - **Environment, only to switch mail on (#29, #30):** `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_REDIRECT_URI`, `MS_APP_ONLY`, `MAIL_WEBHOOK_URL`, and `MAIL_TOKEN_KEY` (32 random bytes, base64; it encrypts the stored mailbox tokens). The Entra app registration takes about 15 minutes; the steps are in `server/.env.example`. Without these, everything else works and mailboxes can be tried with the built-in test mailbox.
 - **Public routes added:** `/accept/<token>` (client acceptance) and the Microsoft mail webhook. Both are token-checked.
 - New job: `mail.sync` every 5 minutes (quiet when there is nothing to do); `deliverables.daily`.

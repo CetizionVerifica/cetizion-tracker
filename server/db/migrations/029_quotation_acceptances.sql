@@ -1,4 +1,4 @@
--- 028 — client acceptance of quotations through a link (#53, option A).
+-- 029 — client acceptance of quotations through a link (#53, option A).
 --
 -- A single-use link per quotation revision. The client opens it without
 -- signing in, sees that one quotation, and accepts (typed name and a tick)

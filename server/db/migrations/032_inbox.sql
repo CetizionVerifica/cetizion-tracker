@@ -1,4 +1,4 @@
--- 031 — a shared sales inbox (#30), on top of connected mailboxes (#29).
+-- 032 — a shared sales inbox (#30), on top of connected mailboxes (#29).
 --
 -- Each email thread in a shared mailbox becomes a conversation with an
 -- owner, a status and a first-response deadline, and can be turned into an
