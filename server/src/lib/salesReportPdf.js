@@ -1,6 +1,4 @@
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import pdfmake from 'pdfmake';
+import pdfmake from './pdf.js';
 import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
 import { share } from './reportMath.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
@@ -18,15 +16,6 @@ import {
 
 export { money };
 
-const require = createRequire(import.meta.url);
-const ROBOTO = require('pdfmake/fonts/Roboto.js');
-const FONT_DIR = resolve(dirname(ROBOTO.Roboto.normal));
-
-pdfmake.setFonts(ROBOTO);
-// The report is built only from our own data: it may read the bundled fonts
-// and nothing else, and it never fetches a URL.
-pdfmake.setUrlAccessPolicy(() => false);
-pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
 const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
 const INK_900 = '#0f172a';
 const INK_700 = '#334155';
@@ -153,7 +142,7 @@ function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact =
 }
 
 const rule = (margin = [0, 3, 0, 7]) => ({
-  canvas: ['line'],
+  canvas: [{ type: 'line', x1: 0, y1: 0, x2: W, y2: 0, lineWidth: 0.8, lineColor: INK_200 }],
   margin,
 });
 
@@ -167,7 +156,7 @@ function section(no, title, lead, first = []) {
       ...first,
     ].filter(Boolean),
     unbreakable: true,
-    margin: [],
+    margin: [0, 16, 0, 0],
   };
 }
 
@@ -180,9 +169,9 @@ function subsection(title, lead, content, rowCount) {
 function figure(no, caption, chart, emptyText) {
   if (!chart) return { text: emptyText, style: 'empty' };
   return {
-    stack: ['caption'],
+    stack: [{ svg: chart.svg, width: chart.width }, { text: `Figure ${no} — ${caption}`, style: 'caption' }],
     unbreakable: true,
-    margin: [],
+    margin: [0, 4, 0, 8],
   };
 }
 
@@ -193,9 +182,9 @@ function callout({ tag, tone, text }) {
     table: {
       widths: ['*'],
       body: [[{
-        text: [],
+        text: [{ text: `${tag}   `, bold: true, color: c.fg, fontSize: 7.5, characterSpacing: 0.5 }, { text, color: INK_900 }],
         fillColor: c.bg,
-        margin: [],
+        margin: [10, 6, 10, 6],
         fontSize: 8.5,
         lineHeight: 1.3,
       }]],
@@ -210,7 +199,7 @@ function callout({ tag, tone, text }) {
       paddingBottom: () => 0,
     },
     unbreakable: true,
-    margin: [],
+    margin: [0, 0, 0, 6],
   };
 }
 
@@ -233,7 +222,7 @@ function tile(value, label, meta) {
       { text: label, style: 'tileLabel' },
       meta ? { text: meta, style: 'tileMeta' } : null,
     ].filter(Boolean),
-    margin: [],
+    margin: [10, 8, 10, 8],
   };
 }
 
@@ -326,7 +315,7 @@ export function salesReportDocDefinition(data) {
             { text: `Period: ${periodText}`, style: 'subtitle' },
           ],
           fillColor: NAVY,
-          margin: [],
+          margin: [18, 16, 18, 16],
         }]],
       },
       layout: 'noBorders',
@@ -335,7 +324,7 @@ export function salesReportDocDefinition(data) {
       text: `Prepared ${stamp}  ·  Source: Enquiries page (${plural(et.enquiries, 'enquiry', 'enquiries')}), quotation register ` +
         `(${plural(sectorTotal.quotations, 'quotation')}) and purchase-order register (${plural(p.pos, 'PO')} dated in ${revenueLabel})`,
       style: 'small',
-      margin: [],
+      margin: [0, 6, 0, 0],
     },
     { text: 'AT A GLANCE', style: 'kicker' },
     {
@@ -365,14 +354,14 @@ export function salesReportDocDefinition(data) {
         paddingTop: () => 0,
         paddingBottom: () => 0,
       },
-      margin: [],
+      margin: [0, 0, 0, 10],
     },
     callout(head),
     { text: 'KEY FINDINGS', style: 'kicker' },
     findings.length
       ? {
           table: {
-            widths: ['*'],
+            widths: [96, '*'],
             body: findings.map((f) => [
               { text: f.tag, bold: true, fontSize: 7.5, color: (TONES[f.tone] ?? TONES.note).fg, characterSpacing: 0.4, margin: [0, 1, 0, 0] },
               { text: f.text, fontSize: 8.5, lineHeight: 1.3, color: INK_900 },
@@ -429,8 +418,9 @@ export function salesReportDocDefinition(data) {
     ['Reached a contract (PO)', number(pipeline.contracted)],
     ['Quoted, no contract yet', number(Math.max(et.quoted - pipeline.contracted, 0))],
     ['In progress (not yet quoted)', number(et.in_progress)],
-    ['Declined', number(et.declined)],
+    ['Unqualified', number(et.declined)],
     ['TAT — enquiry to contract (average)', pipeline.tat_count ? `${decimal(pipeline.average_tat_days)} days` : '— (none reached a contract yet)'],
+
     ...(gaps.undated_enquiries ? [['Enquiries with no date (not counted)', number(gaps.undated_enquiries)]] : []),
   ];
   const mixColumn = (title, rows) => ({
@@ -613,7 +603,7 @@ export function salesReportDocDefinition(data) {
         ],
         columnGap: 14,
         unbreakable: true,
-        margin: [],
+        margin: [0, 4, 0, 0],
       }
     : null;
 
@@ -714,6 +704,7 @@ export function salesReportDocDefinition(data) {
       )
     : null;
   const contractSection = [contractIntro, contractMixRow, contractDetailSection].filter(Boolean);
+
   // ------------------------------------------------ 3. sector-wise
   const sectorBars = sectorRows
     .filter((row) => row.pos > 0)
@@ -897,7 +888,7 @@ export function salesReportDocDefinition(data) {
   const cashChart = p.pos
     ? stackedColumns({
         categories: ['PO value', 'Invoiced', 'Received', 'Due now'],
-        series: ['INR', 'Order intake'],
+        series: [{ name: 'INR', colors: [NAVY, BLUE, GREEN, RED], values: [p.po_value_inr, p.invoiced_inr, p.received_inr, p.due_now_inr] }],
         width: W,
         height: 170,
         legend: false,
@@ -907,7 +898,7 @@ export function salesReportDocDefinition(data) {
   const intakeMonths = revenue.orders.months;
   const intakeChart = stackedColumns({
     categories: shortMonths(intakeMonths),
-    series: ['Order intake'],
+    series: [{ name: 'Order intake', color: NAVY, values: intakeMonths.map((m) => m.order_intake_inr) }],
     width: W,
     height: 160,
     legend: false,
@@ -928,7 +919,7 @@ export function salesReportDocDefinition(data) {
                   { header: 'Amount (INR)', value: (r) => money(r[1]), align: 'right', width: 70 },
                   { header: '% of PO value', value: (r) => percent(share(r[1], p.po_value_inr)), align: 'right', width: 56 },
                 ],
-                rows: ['PO value', 'Invoiced', 'Received', 'Due now'],
+                rows: [['PO value', p.po_value_inr], ['Invoiced', p.invoiced_inr], ['Received', p.received_inr], ['Due now', p.due_now_inr]],
                 compact: true,
               })],
             },
@@ -968,7 +959,7 @@ export function salesReportDocDefinition(data) {
       {
         stack: [
           reportTable({
-            columns: ['Month', 'Payment status'],
+            columns: [{ header: 'Month', value: (r) => r.label, width: 54 }, ...poMoneyColumns],
             rows: revenue.invoicing.months,
             total: p,
             empty: noPos,
@@ -982,7 +973,7 @@ export function salesReportDocDefinition(data) {
             ],
             alignment: 'right',
             fontSize: 8,
-            margin: [],
+            margin: [0, 5, 0, 0],
           },
         ],
       },
@@ -992,7 +983,7 @@ export function salesReportDocDefinition(data) {
       'Payment status',
       'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
       reportTable({
-        columns: ['Payment status'],
+        columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
         rows: revenue.payment_status.rows,
         total: revenue.payment_status.total,
         empty: noPos,
@@ -1055,7 +1046,7 @@ export function salesReportDocDefinition(data) {
     subsection('D.  Notes and definitions', null, {
       ul: [
         `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
-        'Enquiries are the rows on the Enquiries page, counted by their status there: In Progress, Declined, or Won - Quotation Sent ("quotation sent").',
+        'Enquiries are the rows on the Enquiries page, counted by their status there: open (New, Contacted, Qualified or Nurture), Unqualified, or Converted ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
         `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
         'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',
@@ -1073,7 +1064,7 @@ export function salesReportDocDefinition(data) {
   return {
     pageSize: 'A4',
     pageOrientation: 'portrait',
-    pageMargins: [],
+    pageMargins: [MARGIN_X, 48, MARGIN_X, 42],
     info: {
       title: `Cetizion Sales & Enquiry Performance Review — ${periodText}`,
       author: 'Cetizion Tracker',
@@ -1089,14 +1080,14 @@ export function salesReportDocDefinition(data) {
               { text: 'CETIZION  ·  SALES & ENQUIRY PERFORMANCE REVIEW', style: 'runningHead' },
               { text: periodText, style: 'runningHead', alignment: 'right' },
             ],
-            margin: [],
+            margin: [MARGIN_X, 22, MARGIN_X, 0],
           },
     footer: (currentPage, pageCount) => ({
       columns: [
         { text: `Generated ${stamp}  ·  Internal and confidential`, style: 'footer' },
         { text: `Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
       ],
-      margin: [],
+      margin: [MARGIN_X, 14, MARGIN_X, 0],
     }),
     content: [
       ...cover,

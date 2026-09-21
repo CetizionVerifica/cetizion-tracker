@@ -1,4 +1,4 @@
--- 022 — discount and exception approvals on quotations (#46).
+-- 023 — discount and exception approvals on quotations (#46).
 --
 -- A quotation whose overall discount passes the threshold in Settings
 -- waits for approval before it can be sent; an exception (special terms)

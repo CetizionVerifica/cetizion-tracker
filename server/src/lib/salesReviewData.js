@@ -434,6 +434,7 @@ export function quotationPipeline(rows) {
     detail,
   };
 }
+
 /** Quotations (month YYYY-MM, oldest first) per status, per month and in total. */
 export function quotationStatusSummary(rows, period = {}) {
   // Every status is listed, even at zero; one the Quotations page gains later still counts.
@@ -472,7 +473,7 @@ export async function exchangeRates() {
 /** Missing or inconsistent source data that limits the report. */
 export async function dataGaps({ from, to }) {
   const {
-    rows: [],
+    rows: [gaps],
   } = await query(
     `WITH q AS (SELECT * FROM quotations WHERE ${IN_PERIOD}),
           e AS (SELECT * FROM enquiries WHERE ${inPeriod('enquiry_date')})

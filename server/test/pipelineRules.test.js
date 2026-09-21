@@ -14,7 +14,7 @@ import { resources } from '../src/lib/resources.js';
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const schema = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8');
 const views = readFileSync(new URL('../db/views.sql', import.meta.url), 'utf8');
-const pipelineMigration = readFileSync(new URL('../db/migrations/019_pipeline.sql', import.meta.url), 'utf8');
+const pipelineMigration = readFileSync(new URL('../db/migrations/020_pipeline.sql', import.meta.url), 'utf8');
 
 test('old enquiry statuses still filter the list', () => {
   const params = [];

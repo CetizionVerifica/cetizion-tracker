@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { quoteWonEnquiry } from './enquiries.js';
 import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
-import { STATUS } from './statuses.js';
+import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -82,8 +82,8 @@ const bool = () =>
 const enumOf = (values) => z.enum(values);
 
 // Defined in statuses.js, which the report modules read without pulling in
-// this registry. Re-exported here because the routes import it from here.
-export { STATUS };
+// this registry. Re-exported here because the routes import them from here.
+export { LEGACY_ENQUIRY_STATUS, STATUS };
 
 // ---------------------------------------------------------------------
 // Resource registry
@@ -104,10 +104,10 @@ export const resources = {
     view: 'v_companies',
     label: 'Company',
     defaultSort: 'name',
-    search: ['name', 'sector', 'city', 'gstin', 'from_currency', 'note'],
-    filters: ['sector', 'city', 'from_currency', 'source'],
-    normalizedFilters: ['sector', 'city', 'sales_person', 'client_name'],
-    columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name', 'sector', 'city', 'gstin'],
+    filters: ['sector', 'city'],
+    normalizedFilters: ['sector', 'city'],
+    columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
     schema: z.object({
       name: requiredStr(200),
       sector: str(120),
@@ -127,9 +127,9 @@ export const resources = {
     view: null,
     label: 'Contact',
     defaultSort: 'name',
-    search: ['name', 'email', 'phone', 'role', 'from_currency', 'note'],
-    filters: ['company_id', 'is_billing', 'from_currency', 'source'],
-    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name', 'email', 'phone', 'role'],
+    filters: ['company_id', 'is_billing'],
+    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes'],
     schema: z.object({
       company_id: int({ min: 1 }),
       name: requiredStr(160),
@@ -144,7 +144,7 @@ export const resources = {
 
   enquiries: {
     table: 'enquiries',
-
+    filterAliases: { status: LEGACY_ENQUIRY_STATUS },
     view: null,
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
@@ -153,16 +153,18 @@ export const resources = {
     // The year in the generated number comes from the enquiry's own date.
     autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
-    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no', 'from_currency', 'note'],
-    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id', 'from_currency'],
+    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
-      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector', 'country',
-      'contact_person', 'sales_person', 'sales_person_email', 'service',
-      'status', 'quotation_no',
+      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector',
+      'country', 'contact_person', 'sales_person', 'sales_person_email', 'service',
+      'status', 'quotation_no', 'source_id', 'estimated_value', 'currency',
+      'expected_decision_date', 'next_follow_up_at', 'unqualified_reason_id', 'unqualified_notes', 'services_interested',
+      'notes',
     ],
     schema: z.object({
       enquiry_no: str(60),
@@ -175,7 +177,7 @@ export const resources = {
       sales_person: str(120),
       sales_person_email: str(160),
       service: str(300),
-      status: enumOf(STATUS.enquiry).default('New'),
+      status: z.preprocess((v) => LEGACY_ENQUIRY_STATUS[v] ?? v, enumOf(STATUS.enquiry)).default('New'),
       quotation_no: str(60),
       source_id: int({ min: 1 }),
       estimated_value: num({ min: 0 }),
@@ -201,8 +203,8 @@ export const resources = {
     // The year in the generated number comes from the quotation's own date.
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
-    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person', 'from_currency', 'note'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'from_currency', 'source'],
+    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -252,8 +254,8 @@ export const resources = {
     // planned_start_date drives the year; falls back to the current business year when blank.
     autoIdDateField: 'planned_start_date',
     defaultSort: 'project_id DESC',
-    search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person', 'from_currency', 'note'],
-    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id', 'from_currency', 'source'],
+    search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
+    filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id'],
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
@@ -293,8 +295,8 @@ export const resources = {
     cascadeDocuments: { sql: 'SELECT document_id FROM payment_stages WHERE po_number = $1 FOR UPDATE', key: 'po_number' },
     naturalKey: 'po_number',
     defaultSort: 'po_date DESC NULLS LAST, id DESC',
-    search: ['po_number', 'project_id', 'client_name', 'quotation_no', 'from_currency', 'note'],
-    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id', 'from_currency', 'source'],
+    search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
+    filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
@@ -327,9 +329,9 @@ export const resources = {
     view: null,
     label: 'PO service line',
     defaultSort: 'id',
-    search: ['po_number', 'service', 'from_currency', 'note'],
-    filters: ['po_number', 'from_currency', 'source'],
-    columns: ['po_number', 'service', 'service_value', 'remarks', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['po_number', 'service'],
+    filters: ['po_number'],
+    columns: ['po_number', 'service', 'service_value', 'remarks'],
     schema: z.object({
       po_number: requiredStr(60),
       service: requiredStr(300),
@@ -350,12 +352,12 @@ export const resources = {
     // The invoice document: replaced on edit, deleted from Cloudinary with the stage.
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
-    search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id', 'from_currency', 'note'],
-    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'from_currency', 'source'],
+    search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
+    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name'],
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
-      'reminder_sent_on', 'remarks', 'document_id',
+      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -370,7 +372,9 @@ export const resources = {
       reminder_sent_on: date(),
       document_id: int({ min: 1 }),
       remarks: str(1000),
-
+      credit_days: int({ min: 0, max: 365 }),
+      milestone_name: str(160),
+      milestone_reached_on: date(),
     }),
   },
 
@@ -379,8 +383,8 @@ export const resources = {
     view: null,
     label: 'Onboarding step',
     defaultSort: 'project_id, step_no',
-    search: ['project_id', 'step', 'owner', 'from_currency', 'note'],
-    filters: ['project_id', 'status', 'stage', 'owner', 'from_currency', 'source'],
+    search: ['project_id', 'step', 'owner'],
+    filters: ['project_id', 'status', 'stage', 'owner'],
     columns: [
       'project_id', 'step_no', 'stage', 'step', 'owner', 'owner_email',
       'target_date', 'status', 'completed_date', 'remarks',
@@ -405,8 +409,8 @@ export const resources = {
     label: 'Trip',
     naturalKey: 'travel_id',
     defaultSort: 'travel_start_date DESC NULLS LAST, id DESC',
-    search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name', 'from_currency', 'note'],
-    filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name', 'from_currency', 'source'],
+    search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name'],
+    filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name'],
     columns: [
       'travel_id', 'po_number', 'service_delivered', 'employee_name',
       'employee_email', 'purpose', 'destination', 'travel_start_date',
@@ -435,8 +439,8 @@ export const resources = {
     label: 'Vendor invoice',
     naturalKey: 'vendor_invoice_id',
     defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
-    search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name', 'from_currency', 'note'],
-    filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id', 'from_currency', 'source'],
+    search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
+    filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id'],
     columns: [
       'vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'invoice_date',
       'invoice_amount', 'payment_terms_days', 'amount_paid', 'payment_date', 'remarks',
@@ -460,8 +464,8 @@ export const resources = {
     label: 'Expense claim',
     naturalKey: 'claim_id',
     defaultSort: 'submission_date DESC NULLS LAST, id DESC',
-    search: ['claim_id', 'travel_id', 'employee_name', 'expense_category', 'from_currency', 'note'],
-    filters: ['travel_id', 'approval_status', 'status', 'employee_name', 'claim_month', 'project_id', 'from_currency', 'source'],
+    search: ['claim_id', 'travel_id', 'employee_name', 'expense_category'],
+    filters: ['travel_id', 'approval_status', 'status', 'employee_name', 'claim_month', 'project_id'],
     columns: [
       'claim_id', 'travel_id', 'expense_category', 'claim_month',
       'amount_claimed', 'submission_date', 'approval_status', 'approved_by',
@@ -487,9 +491,9 @@ export const resources = {
     view: null,
     label: 'Pipeline stage',
     defaultSort: 'sort_order, id',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['type', 'active', 'from_currency', 'source'],
-    columns: ['name', 'probability', 'type', 'maps_to_status', 'sort_order', 'color', 'rotting_days', 'active', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name'],
+    filters: ['type', 'active'],
+    columns: ['name', 'probability', 'type', 'maps_to_status', 'sort_order', 'color', 'rotting_days', 'active'],
     schema: z.object({
       name: requiredStr(80),
       probability: int({ min: 0, max: 100 }),
@@ -502,15 +506,73 @@ export const resources = {
     }),
   },
 
+  'payment-terms-templates': {
+    table: 'payment_terms_templates',
+    view: null,
+    label: 'Payment terms template',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'is_default', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), is_default: bool(), sort_order: int().default(0) }),
+  },
+
+  'payment-terms-template-lines': {
+    table: 'payment_terms_template_lines',
+    view: null,
+    label: 'Payment terms line',
+    defaultSort: 'template_id, sort_order, id',
+    search: ['stage_name'],
+    filters: ['template_id'],
+    columns: ['template_id', 'sort_order', 'stage_name', 'percent', 'trigger_event', 'credit_days', 'milestone_name'],
+    schema: z.object({
+      template_id: int({ min: 1 }),
+      sort_order: int().default(0),
+      stage_name: requiredStr(120),
+      percent: num({ min: 0.01, max: 100 }),
+      trigger_event: enumOf(STATUS.trigger).default('On PO Registration'),
+      credit_days: int({ min: 0, max: 365 }),
+      milestone_name: str(160),
+    }),
+  },
+
+  'onboarding-templates': {
+    table: 'onboarding_templates',
+    view: null,
+    label: 'Onboarding template',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'is_default', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), is_default: bool(), sort_order: int().default(0) }),
+  },
+
+  'onboarding-template-lines': {
+    table: 'onboarding_template_lines',
+    view: null,
+    label: 'Onboarding template step',
+    defaultSort: 'template_id, step_no',
+    search: ['step'],
+    filters: ['template_id'],
+    columns: ['template_id', 'step_no', 'stage', 'step', 'owner_role', 'days_after_start'],
+    schema: z.object({
+      template_id: int({ min: 1 }),
+      step_no: int({ min: 1 }),
+      stage: str(60),
+      step: requiredStr(400),
+      owner_role: str(60),
+      days_after_start: int({ min: 0, max: 730 }),
+    }),
+  },
 
   'lead-sources': {
     table: 'lead_sources',
     view: null,
     label: 'Lead source',
     defaultSort: 'sort_order, name',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'sort_order', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
     schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
@@ -519,9 +581,9 @@ export const resources = {
     view: null,
     label: 'Lost reason',
     defaultSort: 'sort_order, name',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'sort_order', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
     schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
@@ -532,9 +594,9 @@ export const resources = {
     view: null,
     label: 'Service',
     defaultSort: 'sort_order, name',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note', 'onboarding_template_id', 'payment_terms_template_id'],
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
@@ -548,7 +610,8 @@ export const resources = {
       description: str(2000),
       renewal_interval_months: int({ min: 1, max: 120 }),
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
-
+      onboarding_template_id: int({ min: 1 }),
+      payment_terms_template_id: int({ min: 1 }),
     }),
   },
 
@@ -557,9 +620,9 @@ export const resources = {
     view: null,
     label: 'Quotation line',
     defaultSort: 'sort_order, id',
-    search: ['description', 'from_currency', 'note'],
-    filters: ['quotation_id', 'service_id', 'from_currency', 'source'],
-    columns: ['quotation_id', 'service_id', 'description', 'qty', 'unit', 'rate', 'discount_percent', 'gst_rate', 'sort_order', 'from_currency', 'to_currency', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['description'],
+    filters: ['quotation_id', 'service_id'],
+    columns: ['quotation_id', 'service_id', 'description', 'qty', 'unit', 'rate', 'discount_percent', 'gst_rate', 'sort_order'],
     schema: z.object({
       quotation_id: int({ min: 1 }),
       service_id: int({ min: 1 }),
@@ -580,9 +643,9 @@ export const resources = {
     view: null,
     label: 'Travel vendor',
     defaultSort: 'name',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active'],
     schema: z.object({ name: requiredStr(160), active: bool() }),
   },
 
@@ -593,9 +656,9 @@ export const resources = {
     view: null,
     label: 'Expense category',
     defaultSort: 'name',
-    search: ['name', 'from_currency', 'note'],
-    filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active'],
     schema: z.object({ name: requiredStr(160), active: bool() }),
   },
 

@@ -66,6 +66,7 @@ export default function Quotations() {
   ];
 
   const fields = quotationFields(lookups);
+
   return (
     <>
       <ListPage

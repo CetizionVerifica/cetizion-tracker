@@ -105,16 +105,16 @@ status constants (#64, #70), dated exchange rates and reference counters (#79),
 the import review label (#82), zod 4 and dotenv 18 (#84), React 19 and Vite 8
 (#67). Zod 4 needed no changes here: the preparation done on 17 September holds.
 
-**Migration numbers.** main holds 013 to 016, and #83 is expected to take 017,
-so ours start at 018 as the lead asked:
+**Migration numbers.** main held 013 to 016 when the lead asked for 018; #86 has since
+merged and taken 017 and 018, so ours start at 019:
 
 | Batch | Migrations |
 | --- | --- |
-| 2 | 018 to 022 |
-| 3 | 023 to 026 |
-| 4 | 027 to 031 |
-| 5 | 032 to 036 |
-| 6 | 037 to 040 |
+| 2 | 019 to 023 |
+| 3 | 024 to 027 |
+| 4 | 028 to 032 |
+| 5 | 033 to 037 |
+| 6 | 038 to 041 |
 
 **The 14 findings from the round 1 review are all fixed**, and each was checked
 against the source again after the rebase, not just against this plan.
@@ -127,11 +127,8 @@ and collecting flows were exercised end to end against the local database.
 **Two collisions for the lead to sequence**, neither of which blocks these
 branches:
 
-- **#86** (sales report and country fields) claims migrations 017 **and** 018,
-  and 018 is batch 2's first. Whoever merges second renumbers.
-- **#83** adds `server/src/routes/activity.js`, which batch 3 also adds for the
-  timeline (#22). Two different features in one file name: that one needs a
-  decision, not a renumber.
+- **#86** (sales report and country fields) merged on 21 September, taking 017
+  and 018, so these branches were rebased onto it and renumbered once more.
 
 **Not in these branches:** the follow-up reminder workflows asked for
 separately on 20 September are held back on a local branch until these are

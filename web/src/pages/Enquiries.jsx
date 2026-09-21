@@ -45,11 +45,12 @@ export default function Enquiries() {
 
   const fields = (record) => [
     { name: 'enquiry_no', label: 'Enquiry number', auto: 'enquiry' },
-    { name: 'enquiry_date', label: 'Enquiry date', type: 'date' },
-    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
+    { name: 'enquiry_date', label: 'Enquiry date', type: 'date', default: today() },
+    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'One spelling per client; a new name creates a company' },
     { name: 'source', label: 'Enquiry source', hint: 'How the enquiry reached us, such as referral, website, email or event' },
-    { name: 'sector', label: 'Sector', type: 'combo', options: sectors, hint: 'Pick from the list, or type a new sector' },
+    { name: 'sector', label: 'Sector', type: 'combo', options: sectors },
     { name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
+
     { name: 'contact_person', label: 'Contact person' },
     { name: 'source_id', label: 'Source', type: 'select', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })), hint: 'Where this enquiry came from' },
     { name: 'service', label: 'Service asked for', type: 'combo', options: lookups.services },

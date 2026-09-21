@@ -1,4 +1,4 @@
--- 021 — PO received to project in one step (#26): payment-schedule
+-- 022 — PO received to project in one step (#26): payment-schedule
 -- templates, onboarding templates per service, credit days and milestone
 -- triggers on payment stages.
 --
