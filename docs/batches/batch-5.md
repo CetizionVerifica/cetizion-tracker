@@ -14,7 +14,7 @@ Merge after batch 4.
 
 ## Deploying it
 
-- **Migrations** 031 to 035, applied on start. `staff` is seeded from existing people for scheduling.
+- **Migrations** 032 to 036, applied on start. `staff` is seeded from existing people for scheduling.
 - **Environment (optional):** `INCOMING_WEBHOOK_SECRET` (for the website enquiry form); for a live Zoho link `ZOHO_DC`, `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_ORGANIZATION_ID`; for Tally `TALLY_URL`. Without them the file-based accounting works.
 - **Public routes added:** `/portal` and `/api/portal/*` (own signed cookie, rate-limited), `/api/hooks/enquiries` (signature required).
 - Webhook URLs must be https in production.
