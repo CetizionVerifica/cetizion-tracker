@@ -423,11 +423,16 @@ stageRouter.post('/:id/payment', async (req, res) => {
        VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
       [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
     );
-  } else if (body.mode === 'set') {
-    // Bringing the total down: keep the figure honest with an adjusting row.
-    await query(`INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by) VALUES ($1, 0, COALESCE($2::date, CURRENT_DATE), 'other', $3, $4)`,
-      [stage.id, body.payment_received_date ?? null, `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]);
-    await query('UPDATE payment_stages SET amount_received = $2 WHERE id = $1', [stage.id, body.amount_received]);
+  } else if (body.mode === 'set' && delta !== 0) {
+    // Bringing the total down is a negative row in the ledger, not a figure
+    // written over the top of it: the stage total is computed from the rows,
+    // so anything written by hand is undone by the next receipt.
+    await query(
+      `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
+       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
+      [stage.id, delta, body.payment_received_date ?? null,
+        `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
+    );
   }
   const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);

@@ -39,11 +39,20 @@ export function planReminders(stages, { today, intervalDays = 7, levelDays = [3,
     if (s.promise_to_pay_date && s.promise_to_pay_date >= today) { skipped.push({ id: s.id, reason: `promised to pay by ${s.promise_to_pay_date}` }); continue; }
     // The level this stage has earned by now.
     const earned = levelDays.filter((d) => overdue >= d).length;
+    // However many levels it has earned, a client hears from us once per
+    // interval. Without this, an invoice already past every threshold walks
+    // up the levels one run at a time — three emails on three consecutive
+    // mornings, which is what the first run after deploy would have done to
+    // every debt over 30 days old.
+    const sinceLast = s.reminder_sent_on ? daysBetween(s.reminder_sent_on, today) : null;
+    const intervalElapsed = sinceLast === null || sinceLast >= intervalDays;
     let level = null;
-    if (earned > current) level = current + 1;
-    else if (earned >= levelDays.length && s.reminder_sent_on && daysBetween(s.reminder_sent_on, today) >= intervalDays) level = current + 1;
+    if (earned > current && intervalElapsed) level = Math.min(current + 1, levelDays.length);
+    else if (earned >= levelDays.length && intervalElapsed) level = current + 1;
     if (level === null) {
-      const reason = earned === 0 ? `within the ${levelDays[0]}-day grace period` : s.reminder_sent_on ? `reminded ${daysBetween(s.reminder_sent_on, today)} days ago at level ${current}` : 'nothing due yet';
+      const reason = earned === 0 ? `within the ${levelDays[0]}-day grace period`
+        : sinceLast !== null ? `reminded ${sinceLast} days ago at level ${current}`
+        : 'nothing due yet';
       skipped.push({ id: s.id, reason }); continue;
     }
     if (!s.contact_email) { skipped.push({ id: s.id, reason: `${s.client_name}: no billing contact with an email` }); continue; }

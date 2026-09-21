@@ -600,9 +600,16 @@ CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, servic
 CREATE TABLE payments (
   id           serial PRIMARY KEY,
   stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
-  amount       numeric(16,2) NOT NULL CHECK (amount >= 0),
+  -- A receipt is positive. An adjustment — someone correcting a total that
+  -- was typed too high — is a negative row, so the ledger still adds up to
+  -- the figure on the stage. Writing the figure by hand instead left the
+  -- correction to be undone by the next receipt.
+  amount       numeric(16,2) NOT NULL,
   tds_amount   numeric(16,2) NOT NULL DEFAULT 0 CHECK (tds_amount >= 0),
-  received_on  date NOT NULL,
+  -- Nullable on purpose. The route before this one accepted an amount
+  -- with no date, and those receipts are carried over as they are: a
+  -- missing date stays missing rather than becoming the day of the deploy.
+  received_on  date,
   mode         text NOT NULL DEFAULT 'bank_transfer'
                  CHECK (mode IN ('bank_transfer','cheque','upi','cash','other')),
   reference    text,
@@ -640,7 +647,7 @@ BEGIN
     SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
     IF cur.amount_received > 0 THEN
       INSERT INTO payments (stage_id, amount, received_on, mode, notes)
-      VALUES (NEW.stage_id, cur.amount_received, COALESCE(cur.payment_received_date, CURRENT_DATE), 'other', 'Opening balance from the stage');
+      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other', 'Opening balance from the stage');
     END IF;
   END IF;
   RETURN NEW;
