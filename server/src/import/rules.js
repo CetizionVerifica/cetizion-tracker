@@ -25,6 +25,7 @@
  *   invoice        PO number + stage (an invoice already on that stage)
  *   receipt        PO number + stage (money already recorded on that stage)
  */
+import { z } from 'zod';
 import { parseMoney } from './parse.js';
 import { sameService, similarName } from '../lib/names.js';
 
@@ -44,6 +45,30 @@ export const DEFAULT_RULES = {
   apply_onboarding_template: true,
   overwrite_existing: false,
 };
+
+/**
+ * Overrides a request may send. Every key is optional and an unknown key is
+ * refused, so a typo fails loudly instead of silently using the default.
+ * The prefix is built into a RegExp, so it is letters, digits and hyphens only.
+ */
+const days = z.number().int().min(0).max(365);
+export const rulesSchema = z.object({
+  exclude_iso: z.boolean(),
+  won_requires_po: z.boolean(),
+  include_pending: z.boolean(),
+  include_lost: z.boolean(),
+  po_date_offset_days: days,
+  invoice_date_offset_days: days,
+  delivery_offset_months: z.number().int().min(0).max(60),
+  delivery_only_if_past: z.boolean(),
+  default_split: z.tuple([z.number().int().min(1).max(99), z.number().int().min(1).max(99)])
+    .refine(([a, b]) => a + b === 100, 'default_split must add up to 100'),
+  default_terms_days: days,
+  default_currency: z.string().regex(/^[A-Z]{3}$/, 'default_currency must be a three-letter code such as INR'),
+  invoice_prefix: z.string().regex(/^[A-Za-z0-9-]{1,20}$/, 'invoice_prefix may use letters, digits and hyphens only'),
+  apply_onboarding_template: z.boolean(),
+  overwrite_existing: z.boolean(),
+}).partial().strict();
 
 const ISO = /\bISO\b/i;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');

@@ -19,13 +19,22 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
+import { buildPlan, extractRow, summarise, DEFAULT_RULES, rulesSchema } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
 import { businessYear } from '../lib/businessDate.js';
 
 export const importRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+
+/** Rule overrides from a request, checked before any of them reaches the planner. */
+function checkRules(input) {
+  const parsed = rulesSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  const where = issue.path.length ? `${issue.path.join('.')}: ` : '';
+  throw new ApiError(422, `Import rules are not valid: ${where}${issue.message}`);
+}
 
 // Whoever may run an import is whoever administers the tracker, and that
 // is a different person in each sign-in mode: the one shared account, or a
@@ -102,6 +111,7 @@ importRouter.post('/batches', upload.single('file'), async (req, res) => {
   if (!req.file) throw new ApiError(422, 'Choose a file to upload');
   let rules = {};
   if (req.body.rules) { try { rules = JSON.parse(req.body.rules); } catch { throw new ApiError(422, 'rules must be JSON'); } }
+  rules = checkRules(rules);
   const { rows } = await query(
     `INSERT INTO import_batches (filename, uploaded_by, rules) VALUES ($1, $2, $3) RETURNING *`,
     [req.file.originalname, req.user.username, JSON.stringify({ ...DEFAULT_RULES, ...rules })]
@@ -153,7 +163,7 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const buffer = fileCache.get(id);
   if (!buffer) throw new ApiError(410, 'The uploaded file is no longer held in memory; upload it again');
-  const rules = { ...(rows[0].rules || {}), ...(req.body?.rules || {}) };
+  const rules = { ...(rows[0].rules || {}), ...checkRules(req.body?.rules || {}) };
   await planBatch({ batchId: id, buffer, sheet: req.body?.sheet || rows[0].sheet_name, rules });
   res.json({ data: await loadBatch(id) });
 });

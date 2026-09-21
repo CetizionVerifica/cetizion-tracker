@@ -64,8 +64,11 @@ export async function runPaymentReminders({ db = { query }, today = businessToda
   for (const r of plan.reminders) {
     const email = paymentReminder({ company: r.company, contactName: r.contactName, stages: r.stages, financeEmail });
     const log = await sendMail({ ...email, to: r.to, cc: financeEmail, template: 'payment_reminder', entity: 'company', entityId: r.companyId, sentBy: startedBy }, db);
-    // The stage remembers the chase whether the mail left the server or was only logged.
-    await db.query('UPDATE payment_stages SET reminder_sent_on = $1 WHERE id = ANY($2::int[])', [today, r.stages.map((s) => s.id)]);
+    // Only a mail that left the server counts as a chase. A logged, suppressed or
+    // failed one leaves the stage due, so it goes out the first day delivery works.
+    if (log.status === 'sent') {
+      await db.query('UPDATE payment_stages SET reminder_sent_on = $1 WHERE id = ANY($2::int[])', [today, r.stages.map((s) => s.id)]);
+    }
     sent.push({ company: r.company, to: r.to, stages: r.stages.map((s) => s.invoice_no), status: log.status, email_id: log.id });
   }
   return { today, sent, skipped: plan.skipped, interval_days: intervalDays, grace_days: graceDays };

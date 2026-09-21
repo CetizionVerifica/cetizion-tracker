@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planReminders } from '../src/lib/reminders.js';
+import { planReminders, runPaymentReminders } from '../src/lib/reminders.js';
 import { decideDelivery } from '../src/lib/mail.js';
 import { financeDigest, paymentReminder } from '../src/lib/emailTemplates.js';
 
@@ -61,4 +61,22 @@ test('the finance digest counts what is waiting', () => {
   const email = financeDigest({ today, toInvoice: [stage({ stage_status: 'To Invoice' })], overdue: [stage()], remindersSent: 1 });
   assert.match(email.subject, /1 to invoice, 1 overdue/);
   assert.match(email.text, /Reminders sent to clients today: 1/);
+});
+
+test('a reminder that was only logged does not mark the stage as chased', async () => {
+  // Email is switched off, so sendMail logs the reminder as suppressed.
+  const writes = [];
+  const db = {
+    async query(sql, params = []) {
+      if (/key = 'emails_enabled'/.test(sql)) return { rows: [{ value: 'false' }] };
+      if (/FROM settings/.test(sql)) return { rows: [] };
+      if (/FROM v_payment_stages/.test(sql)) return { rows: [stage()] };
+      if (/INSERT INTO email_log/.test(sql)) return { rows: [{ id: 1, status: params[6] }] };
+      if (/UPDATE payment_stages/.test(sql)) writes.push(params);
+      return { rows: [] };
+    },
+  };
+  const result = await runPaymentReminders({ db, today });
+  assert.equal(result.sent[0].status, 'suppressed');
+  assert.deepEqual(writes, []);
 });
