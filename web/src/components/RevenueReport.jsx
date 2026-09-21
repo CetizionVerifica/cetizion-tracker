@@ -1,11 +1,9 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, Badge, Card, DataTable, ErrorState } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, number, percent, today } from '../lib/format.js';
+import { money, number, percent, periodLabel } from '../lib/format.js';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const rateTitle = (details = []) => details.length
   ? details.map((item) => `${item.currency}: ₹${item.rate} from ${item.effective_from}`).join('\n')
   : undefined;
@@ -13,8 +11,6 @@ const inr = (value, details) => (value === null || value === undefined
   ? <span className="muted">—</span>
   : <span title={rateTitle(details)}>{money(value, 'INR')}</span>);
 const warn = { color: 'var(--warn-fg)' };
-
-const lastDay = (year, month) => String(new Date(Date.UTC(year, Number(month), 0)).getUTCDate()).padStart(2, '0');
 
 function CsvButton({ report, params, disabled }) {
   if (disabled) return <button type="button" className="btn btn--sm" disabled>Download CSV</button>;
@@ -91,34 +87,20 @@ const totalRow = (columns, total) =>
   ));
 
 /**
- * Revenue for a calendar year, or one month of it: order intake from won
+ * Revenue for the period chosen above the page: order intake from won
  * quotations, and invoicing, collections and payment status from purchase
- * orders — matching the Purchase orders list.
+ * orders — matching the Purchase orders list. Uses the same period as every
+ * other section on the page, and the same period the PDF download covers.
  */
-export function RevenueReport({ onChange }) {
-  const thisYear = Number(today().slice(0, 4));
-  const [year, setYear] = useState(thisYear);
-  const [month, setMonth] = useState(''); // '01'–'12', or '' for the whole year
-
-  const period = month
-    ? { from: `${year}-${month}-01`, to: `${year}-${month}-${lastDay(year, month)}` }
-    : { from: `${year}-01-01`, to: `${year}-12-31` };
-  const qs = new URLSearchParams(period).toString();
+export function RevenueReport({ period }) {
+  const qs = new URLSearchParams(Object.fromEntries(Object.entries(period).filter(([, v]) => v))).toString();
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/dashboard/revenue-report?${qs}`), [qs]);
 
-  // The page's PDF download uses the same year and month as this section.
-  useEffect(() => {
-    onChange?.({ year, month });
-  }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const report = data?.data;
-  const years = [...new Set([thisYear, ...(report?.years || [])])].sort((a, b) => b - a);
-  const periodLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
+  const label = periodLabel(period);
   const missingRates = report
     ? [...new Set([...report.orders.total.order_unconverted.map((a) => a.currency), ...report.invoicing.total.missing_rates])].sort()
     : [];
-  // Clicking a month row narrows every table to that month.
-  const pickMonth = (row) => row.month && setMonth(row.month.slice(5, 7));
   const poListUrl = (status) => `/purchase-orders?${new URLSearchParams({ payment_status: status, ...period })}`;
 
   const statusColumns = [
@@ -132,29 +114,6 @@ export function RevenueReport({ onChange }) {
 
   return (
     <>
-      <Card flush>
-        <div className="toolbar" style={{ borderBottom: 0 }}>
-          <strong>Revenue</strong>
-          <span className="small muted">Order intake from won quotations · invoicing, collections and payment status from purchase orders</span>
-          <div className="spacer" />
-          <select className="select" aria-label="Year" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-            {years.map((y) => <option key={y} value={y}>Year: {y}</option>)}
-          </select>
-          <select className="select" aria-label="Month" value={month} onChange={(e) => setMonth(e.target.value)}>
-            <option value="">Month: all</option>
-            {MONTHS.map((name, i) => {
-              const value = String(i + 1).padStart(2, '0');
-              return <option key={value} value={value}>{name} {year}</option>;
-            })}
-          </select>
-          {month && (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setMonth('')}>
-              Clear
-            </button>
-          )}
-        </div>
-      </Card>
-
       {error && <ErrorState message={error} onRetry={refetch} />}
       {loading && !report && <div className="skeleton" style={{ height: 92 }} />}
 
@@ -183,21 +142,20 @@ export function RevenueReport({ onChange }) {
           )}
 
           <Card
-            title={`Order intake by month · ${periodLabel}`}
-            hint="Quotations marked Won - PO Received, by quotation date · converted at the rate in force on the quotation date · Average deal = order intake ÷ orders with a value · Click a month to show only that month"
+            title={`Order intake by month · ${label}`}
+            hint="Quotations marked Won - PO Received, by quotation date · converted at the rate in force on the quotation date · Average deal = order intake ÷ orders with a value"
             flush
             actions={<CsvButton report="orders" params={period} disabled={!report.orders.total.orders_won} />}
           >
             <DataTable
               columns={ORDER_COLUMNS}
               rows={report.orders.months.map((m) => ({ ...m, id: m.month ?? 'undated' }))}
-              onRowClick={month ? undefined : pickMonth}
               footer={totalRow(ORDER_COLUMNS, report.orders.total)}
             />
           </Card>
 
           <Card
-            title={`Invoicing & collections by month · ${periodLabel}`}
+            title={`Invoicing & collections by month · ${label}`}
             hint="Every purchase order by its PO date, as on the Purchase orders page · Due now = invoiced − received, on invoices actually raised · To bill = due to be invoiced but not yet billed · each stage converted at the rate on its own invoice or payment date · FX gain / loss = what the currency moved between the two"
             flush
             actions={<CsvButton report="invoicing" params={period} disabled={!report.invoicing.total.pos} />}
@@ -205,7 +163,6 @@ export function RevenueReport({ onChange }) {
             <DataTable
               columns={INVOICING_COLUMNS}
               rows={report.invoicing.months.map((m) => ({ ...m, id: m.month ?? 'undated' }))}
-              onRowClick={month ? undefined : pickMonth}
               footer={totalRow(INVOICING_COLUMNS, report.invoicing.total)}
             />
             {/* The two rates once, for the whole period, under this table's Total. */}
@@ -226,7 +183,7 @@ export function RevenueReport({ onChange }) {
           </Card>
 
           <Card
-            title={`Payment status · ${periodLabel}`}
+            title={`Payment status · ${label}`}
             hint="Purchase orders dated in the period, by their status on the Purchase orders page · Pending = invoiced, not yet overdue · Click a status to open those POs"
             flush
             actions={<CsvButton report="payment-status" params={period} disabled={!report.payment_status.total.pos} />}

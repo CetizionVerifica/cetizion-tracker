@@ -79,17 +79,12 @@ function ClientTotals({ label, s }) {
 
 export default function SalesReport() {
   const [period, setPeriod] = useState({ from: '', to: '' });
-  const [revenueQuery, setRevenueQuery] = useState({});
 
   const params = Object.fromEntries(Object.entries(period).filter(([, value]) => value));
   const backwards = Boolean(period.from && period.to && period.from > period.to);
-  // The PDF is the whole page: this period, the revenue section's year and
-  // filters, and the viewer's time zone for the "generated" stamp.
-  const pdfParams = {
-    ...params,
-    ...Object.fromEntries(Object.entries(revenueQuery).filter(([, value]) => value)),
-    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  };
+  // The PDF is the whole page, including revenue, for this same period, plus
+  // the viewer's time zone for the "generated" stamp.
+  const pdfParams = { ...params, tz: Intl.DateTimeFormat().resolvedOptions().timeZone };
   // Lists opened from a figure show the same period that figure counts.
   const quotationsUrl = (filters) => `/quotations?${new URLSearchParams({ ...filters, ...params })}`;
 
@@ -374,8 +369,8 @@ export default function SalesReport() {
           </>
         )}
 
-        {/* Mounted regardless of the sales data, so its year and filters survive a bad period or a failed load. */}
-        <RevenueReport onChange={setRevenueQuery} />
+        {/* Mounted regardless of the sales data above, so a failed load there does not also hide revenue. */}
+        {!backwards && <RevenueReport period={params} />}
       </div>
     </>
   );
