@@ -6,7 +6,7 @@
  *       project_id?             join an existing project instead of creating one
  *       project_manager?, project_manager_email?, planned_start_date?, planned_delivery_date?
  *       po_number, po_date?, po_value?, currency?, payment_terms_days?, document_id?
- *       payment_terms_template_id?   the schedule; blank = the default template
+ *       payment_terms_template_id?   the schedule; blank = the default template, 0 = no stages
  *       onboarding_template_id?      the checklist; blank = the service's, else the default; 0 = none
  *     }
  *
@@ -125,7 +125,12 @@ registerRouter.post('/:key/register', async (req, res) => {
 
     // ---- payment stages from the template
     let template = null;
-    if (b.payment_terms_template_id) {
+    // 0 is the caller saying "no stages now", which is not the same as not
+    // saying anything: blank still falls through to the default template.
+    const noSchedule = Number(b.payment_terms_template_id) === 0;
+    if (noSchedule) {
+      template = null;
+    } else if (b.payment_terms_template_id) {
       ({ rows: [template] } = await client.query('SELECT * FROM payment_terms_templates WHERE id = $1 AND active', [b.payment_terms_template_id]));
       if (!template) throw new ApiError(422, 'Please check the highlighted fields', { fields: { payment_terms_template_id: 'No such template' } });
     } else {

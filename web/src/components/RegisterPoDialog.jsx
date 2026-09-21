@@ -15,7 +15,11 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
   const lookups = useLookups();
   const templates = lookups.payment_terms_templates || [];
   const checklists = lookups.onboarding_templates || [];
-  const sameClient = lookups.projects.filter((p) => p.client_name === quotation.client_name);
+  // Capitals and extra spaces are not a different client: "Hindalco  Ltd"
+  // has to find "Hindalco Ltd", or registering a PO quietly opens a second
+  // project for the same client, which is issue #8 all over again.
+  const normClient = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const sameClient = lookups.projects.filter((p) => normClient(p.client_name) === normClient(quotation.client_name));
   const [v, setV] = useState({
     project_id: quotation.project_id || '',
     project_manager: '', project_manager_email: '', planned_start_date: '', planned_delivery_date: '',
@@ -33,7 +37,13 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
   async function submit(e) {
     e.preventDefault(); setBusy(true); setError(null); setErrors({});
     try {
-      const payload = { ...v, onboarding_template_id: v.onboarding_template_id === 'none' ? 0 : v.onboarding_template_id };
+      const payload = {
+        ...v,
+        onboarding_template_id: v.onboarding_template_id === 'none' ? 0 : v.onboarding_template_id,
+        // "No stages now" has to say so. Sent blank, the server falls back to
+        // the default template and the user gets a schedule they declined.
+        payment_terms_template_id: v.payment_terms_template_id === 'none' ? 0 : v.payment_terms_template_id,
+      };
       if (file) {
         const { data } = await api.uploadDocument(file, 'purchase-orders');
         payload.document_id = data.id;
@@ -72,7 +82,7 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
           <div className="span-all" style={{ fontWeight: 650, marginTop: 6 }}>Payment schedule</div>
           <div className="span-all">
             <Field label="Template" error={errors.payment_terms_template_id} hint={template ? `${template.lines.map((l) => `${Number(l.percent)}% ${l.trigger_event.replace('On ', 'on ')}`).join(' · ')}` : 'Manage templates under Admin › Templates'}>
-              <Select value={v.payment_terms_template_id} placeholder="No stages now" options={templates.map((t) => ({ value: String(t.id), label: `${t.name}${t.is_default ? ' (default)' : ''}` }))} onChange={(e) => set('payment_terms_template_id', e.target.value)} />
+              <Select value={v.payment_terms_template_id} placeholder={null} options={[{ value: 'none', label: 'No stages now' }, ...templates.map((t) => ({ value: String(t.id), label: `${t.name}${t.is_default ? ' (default)' : ''}` }))]} onChange={(e) => set('payment_terms_template_id', e.target.value)} />
             </Field>
           </div>
 
