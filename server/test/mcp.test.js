@@ -112,6 +112,46 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     assert.ok(!JSON.stringify(list.body).includes(asha.token), 'the token value is never listed');
   });
 
+  test('a database error is not handed to the client verbatim', async () => {
+    // 31 February passes the YYYY-MM-DD check and fails in Postgres. The
+    // raw text names the column and the value, and it is written to the
+    // token log, which every signed-in person can read.
+    const t = await token({ name: 'Clumsy', role: 'admin' });
+    const bad = await call(t.token, 'create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'A task with an impossible date', due_on: '2026-02-31' });
+    assert.equal(bad.error, true);
+    assert.doesNotMatch(bad.text, /out of range|due_on|column|relation|syntax/i, `raw database text reached the client: ${bad.text}`);
+    assert.match(bad.text, /could not do that/);
+
+    // The detail is not lost: it is in the log, where it belongs.
+    const { rows } = await pool.query(`SELECT error FROM api_token_log WHERE tool = 'create_task' AND NOT ok ORDER BY id DESC LIMIT 1`);
+    assert.match(rows[0].error, /date|range/i, 'the reason is recorded for whoever has to fix it');
+
+    // And what the tracker does mean to say still reaches the client: a
+    // record this token may not see is named as not found, not masked.
+    const sales = await token({ name: 'Asha reads', role: 'sales', person: 'asha' });
+    const notMine = await call(sales.token, 'create_task', { entity: 'quotation', id: 'QT-RAVI', title: 'A task on a deal that is not theirs' });
+    assert.equal(notMine.error, true);
+    assert.match(notMine.text, /was not found/);
+  });
+
+  test('the rate limit is one budget per token, not one for everybody', async () => {
+    // Behind a proxy every MCP client arrives from the same address, so an
+    // address bucket is shared by all of them: one busy client starves the
+    // rest. #50 asks for it to be per token.
+    const a = await token({ name: 'Client A', role: 'admin' });
+    const b = await token({ name: 'Client B', role: 'admin' });
+    const remaining = async (tok) => {
+      const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${tok}`).set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 500, method: 'tools/list' });
+      return Number(res.headers['ratelimit-remaining']);
+    };
+    const first = await remaining(a.token);
+    const second = await remaining(a.token);
+    assert.equal(second, first - 1, 'the same token spends its own budget');
+    const other = await remaining(b.token);
+    assert.equal(other, first, 'a different token starts from its own, not from what the first one left');
+  });
+
   test('revoking a token stops it at once, and nothing destructive exists', async () => {
     const t = await token({ name: 'Short lived', role: 'admin' });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });

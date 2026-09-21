@@ -55,6 +55,14 @@ delete that account's recent failures from `auth_events`.
   enforced; the address-wide one is five times the limit and applies only
   when the address is genuinely the caller's (`TRUST_PROXY > 0`, or no proxy
   at all). A correct sign-in clears the count it belongs to.
+- **Staff accounts are scrubbed on staging too.** The scrub replaced every
+  client and contact detail but never touched `users`, so staging kept
+  production's password hashes and the team's real addresses. Each account
+  becomes an inactive attribution-only row — name kept, address and hash
+  gone, `session_version` moved on so a copied cookie is dead — and staging
+  is signed in to with the admin the bootstrap creates. Inactive as well as
+  blank, because `users_active_needs_login` says an account that can sign in
+  has something to sign in with.
 - **The MCP rate limit is per token, not per address**, as #50 asks. Behind
   a proxy every client arrives from the same address, so one budget was
   shared by all of them and one busy client starved the rest. The token is

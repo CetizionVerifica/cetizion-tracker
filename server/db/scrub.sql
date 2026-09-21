@@ -113,11 +113,13 @@ UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, now());
 -- Staff accounts (#35). Production's password hashes and the team's real
 -- addresses must not travel to staging: a hash is a credential, and an
 -- address is a person. Names are kept so attribution still reads sensibly.
--- Every account becomes an attribution-only row -- no address, no password,
--- nobody can sign in as it -- and session_version moves on, so a cookie
--- copied from production is dead as well. Sign in on staging with the admin
--- the bootstrap creates from BOOTSTRAP_ADMIN_EMAIL.
-UPDATE users SET email = NULL, password_hash = NULL, session_version = session_version + 1, last_login_at = NULL;
+-- Every account becomes an inactive attribution-only row -- no address, no
+-- password, nobody can sign in as it -- and session_version moves on, so a
+-- cookie copied from production is dead as well. active goes to false in
+-- the same statement because users_active_needs_login says an account that
+-- can sign in has something to sign in with. Sign in on staging with the
+-- admin the bootstrap creates from BOOTSTRAP_ADMIN_EMAIL.
+UPDATE users SET email = NULL, password_hash = NULL, active = false, session_version = session_version + 1, last_login_at = NULL;
 UPDATE settings SET value = 'false' WHERE key = 'emails_enabled';
 UPDATE settings SET value = 'none' WHERE key = 'accounting_provider';
 UPDATE settings SET value = '' WHERE key IN ('digest_email', 'alert_email', 'finance_email', 'discount_approver_email', 'public_app_url');

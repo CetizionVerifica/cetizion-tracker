@@ -16,6 +16,7 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const NAME = `staging_scrub_test_${process.pid}`;
 let client;
+let staffBefore;
 
 describe('staging scrub', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }, () => {
   before(async () => {
@@ -28,6 +29,12 @@ describe('staging scrub', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }
     client = new pg.Client({ connectionString: url.toString() });
     await client.connect();
     for (const f of ['schema.sql', 'views.sql', 'seed.sql', 'demo.sql']) await client.query(readFileSync(join(DB_DIR, f), 'utf8'));
+    // A staff account as production would hold one, so the scrub below has
+    // something real to strip. Nothing else in the demo data creates users.
+    ({ rows: [staffBefore] } = await client.query(
+      `INSERT INTO users (name, email, password_hash, role, session_version, last_login_at)
+       VALUES ('Ganga Sharma', 'gangaacsharma@cetizionverifica.com', '$2b$12$realhashfromproduction', 'admin', 3, now())
+       RETURNING id, session_version`));
     await client.query(`
       INSERT INTO companies (name, gstin) VALUES ('Zephyrine Bottling Works', '27AAPFU0939F1ZV');
       INSERT INTO contacts (company_id, name, email, phone) SELECT id, 'Hemavathi Krishnaswamy', 'hema.k@zephyrine.example', '+91 98450 12345' FROM companies WHERE name = 'Zephyrine Bottling Works';
@@ -82,6 +89,25 @@ describe('staging scrub', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }
     // The views still build and answer on the scrubbed data.
     await client.query(readFileSync(join(DB_DIR, 'views.sql'), 'utf8'));
     await client.query('SELECT count(*) FROM v_quotations');
+  });
+
+  test('staff accounts keep their names and lose their credentials', async () => {
+    // A hash is a credential: given one, the password can be attacked
+    // offline at leisure. An address is a person. #35 asks for both to be
+    // reset, and the scrub was not touching the table at all. The scrub ran
+    // in the first test; this reads what it left.
+    const before = staffBefore;
+    const { rows: [after] } = await client.query('SELECT name, email, password_hash, active, session_version, last_login_at FROM users WHERE id = $1', [before.id]);
+    assert.equal(after.email, null, 'the address is gone');
+    assert.equal(after.password_hash, null, 'and so is the hash');
+    assert.equal(after.last_login_at, null);
+    assert.equal(after.active, false, 'an account that cannot sign in is not left marked active');
+    assert.equal(after.name, 'Ganga Sharma', 'the name stays, so attribution on old records still reads');
+    assert.ok(after.session_version > before.session_version, 'a cookie copied from production is dead too');
+
+    // Nothing on staging can be signed in to with a production password.
+    const { rows } = await client.query('SELECT COUNT(*)::int AS n FROM users WHERE password_hash IS NOT NULL OR email IS NOT NULL');
+    assert.equal(rows[0].n, 0);
   });
 
   test('refuses a database named like production', async () => {
