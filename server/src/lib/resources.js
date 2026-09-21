@@ -523,7 +523,7 @@ export const resources = {
       client_name: requiredStr(160),
       service_name: requiredStr(300),
       valid_until: date(),
-      next_due_on: date(),
+      next_due_on: requiredDate(),
       status: enumOf(['active', 'renewal_open', 'renewed', 'lapsed', 'cancelled']).default('active'),
       owner: str(120),
       notes: str(2000),
@@ -539,8 +539,8 @@ export const resources = {
     filters: ['stage_id', 'mode'],
     columns: ['stage_id', 'amount', 'tds_amount', 'received_on', 'mode', 'reference', 'notes', 'recorded_by'],
     schema: z.object({
-      stage_id: int({ min: 1 }),
-      amount: num({ min: 0 }),
+      stage_id: requiredInt({ min: 1 }),
+      amount: requiredNum({ min: 0 }),
       tds_amount: num({ min: 0 }).default(0),
       received_on: date(),
       mode: enumOf(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).default('bank_transfer'),
@@ -601,7 +601,7 @@ export const resources = {
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
       entity_id: requiredStr(120),
-      document_id: int({ min: 1 }),
+      document_id: requiredInt({ min: 1 }),
       label: str(200),
       uploaded_by: str(120),
     }),
