@@ -780,9 +780,8 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','quotation_lines','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
-      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
+      'travel_vendor_invoices','employee_expense_claims','settings','engagements','exchange_rates',
       'sequence_counters']
-      'travel_vendor_invoices','employee_expense_claims','settings','engagements']
   LOOP
     EXECUTE format(
       'CREATE TRIGGER %I_set_updated_at BEFORE UPDATE ON %I
@@ -1290,6 +1289,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ---------------------------------------------------------------------
 -- Notifications (#44)
 -- ---------------------------------------------------------------------
