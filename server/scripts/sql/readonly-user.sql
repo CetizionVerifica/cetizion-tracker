@@ -19,3 +19,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO tracker_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO tracker_readonly;
 -- Secrets stay out of reach even for readers.
 REVOKE SELECT ON connected_accounts, api_tokens, webhook_endpoints, portal_links, portal_sessions FROM tracker_readonly;
+-- users holds the password hashes and the team's addresses. A hash is a
+-- credential: given one, a password can be attacked offline at leisure.
+-- docs/security.md says this account cannot read them, so it must not.
+REVOKE SELECT ON users FROM tracker_readonly;

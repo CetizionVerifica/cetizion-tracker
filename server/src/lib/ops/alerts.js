@@ -12,10 +12,14 @@ import { notify } from '../notify.js';
 import { reportError } from './errors.js';
 import { alertsRaised } from './metrics.js';
 
-export async function raiseAlert(kind, subject, detail = '', { level = 'error' } = {}) {
-  const hour = new Date().toISOString().slice(0, 13);
-  const n = await notify({ kind: 'alert', title: `Alert: ${subject}`, body: String(detail).slice(0, 500), link: '/emails', dedupeKey: `alert:${kind}:${subject}:${hour}` }).catch(() => null);
-  if (!n) return false; // already raised this hour
+export async function raiseAlert(kind, subject, detail = '', { level = 'error', every = 'hour' } = {}) {
+  // How often the same condition may be raised again. Hourly for something
+  // that can change within the hour; daily for one that cannot be fixed in
+  // minutes -- a missing backup schedule raised hourly is 24 emails a day
+  // saying the same thing, which teaches people to ignore alerts.
+  const window = new Date().toISOString().slice(0, every === 'day' ? 10 : 13);
+  const n = await notify({ kind: 'alert', title: `Alert: ${subject}`, body: String(detail).slice(0, 500), link: '/emails', dedupeKey: `alert:${kind}:${subject}:${window}` }).catch(() => null);
+  if (!n) return false; // already raised in this window
   alertsRaised.inc({ kind });
   const { rows: [s] } = await query(`SELECT value FROM settings WHERE key = 'alert_email'`).catch(() => ({ rows: [] }));
   const to = (s?.value || process.env.ALERT_EMAIL || '').trim();
@@ -49,7 +53,7 @@ export async function runOpsWatch() {
     try {
       const host = new URL(set.public_app_url).hostname;
       out.certificate_days_left = await certificateDaysLeft(host);
-      if (out.certificate_days_left < 14) await raiseAlert('certificate', `TLS certificate for ${host} expires in ${out.certificate_days_left} days`);
+      if (out.certificate_days_left < 14) await raiseAlert('certificate', `TLS certificate for ${host} expires in ${out.certificate_days_left} days`, '', { every: 'day' });
     } catch (err) { out.certificate = `not checked: ${err.message}`; }
   }
   try {
@@ -65,8 +69,8 @@ export async function runOpsWatch() {
     out.last_backup = last.backup; out.last_verify = last.verify;
     const { rows: failed } = await query(`SELECT kind, error, finished_at FROM backup_runs WHERE NOT ok AND finished_at > now() - interval '1 day' ORDER BY finished_at DESC LIMIT 3`);
     for (const f of failed) await raiseAlert(`backup_${f.kind}_failed`, f.kind === 'verify' ? 'The backup restore check failed' : 'A database backup failed', `${f.error || 'no detail'} (${f.finished_at})`);
-    if (!last.backup || Date.now() - new Date(last.backup) > maxHours * 3600e3) await raiseAlert('backup', 'No successful database backup recorded recently', `Last: ${last.backup || 'never'}; expected every ${maxHours} hours`);
-    if (!last.verify || Date.now() - new Date(last.verify) > maxDays * 864e5) await raiseAlert('backup_verify', 'The backup restore check has not passed recently', `Last passed: ${last.verify || 'never'}`, { level: 'warning' });
+    if (!last.backup || Date.now() - new Date(last.backup) > maxHours * 3600e3) await raiseAlert('backup', 'No successful database backup recorded recently', `Last: ${last.backup || 'never'}; expected every ${maxHours} hours`, { every: 'day' });
+    if (!last.verify || Date.now() - new Date(last.verify) > maxDays * 864e5) await raiseAlert('backup_verify', 'The backup restore check has not passed recently', `Last passed: ${last.verify || 'never'}`, { level: 'warning', every: 'day' });
   }
   const { rows: stuck } = await query(`SELECT name, started_at FROM job_runs WHERE status = 'running' AND started_at < now() - interval '1 hour'`);
   for (const j of stuck) await raiseAlert('job_stuck', `Job ${j.name} has been running for over an hour`, `Started ${j.started_at}`);

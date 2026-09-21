@@ -10,7 +10,7 @@ export class ApiError extends Error {
 
 // Postgres constraint violations are user mistakes far more often than
 // bugs, so translate the common ones into something a person can act on.
-function fromPgError(err) {
+export function fromPgError(err) {
   switch (err.code) {
     case '23505': {
       const match = /Key \((.+?)\)=\((.+?)\)/.exec(err.detail || '');

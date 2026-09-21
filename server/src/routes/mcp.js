@@ -18,7 +18,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { rateLimit } from 'express-rate-limit';
 import { query } from '../db.js';
-import { ApiError } from '../middleware/error.js';
+import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
 
 export const mcpRouter = Router();
@@ -52,7 +52,12 @@ function buildServer(token) {
         return result;
       } catch (err) {
         await query('INSERT INTO api_token_log (token_id, tool, arguments, ok, error) VALUES ($1,$2,$3,false,$4)', [token.id, name, JSON.stringify(args), String(err.message).slice(0, 500)]);
-        return { isError: true, content: [{ type: 'text', text: `The tracker could not do that: ${err.message}` }] };
+        // What the caller is told is either something they can act on or
+        // nothing at all. A raw Postgres error names columns, constraints
+        // and values, and the token log is readable by every signed-in
+        // person, so the full text would sit there for all of them.
+        const known = err instanceof ApiError ? err.message : fromPgError(err)?.message;
+        return { isError: true, content: [{ type: 'text', text: known ? `The tracker could not do that: ${known}` : 'The tracker could not do that. An administrator can see why in the token log.' }] };
       }
     });
   };

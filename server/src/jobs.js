@@ -56,7 +56,10 @@ export const JOBS = {
   'ops.watch': {
     description: 'Check the TLS certificate, disk space, backups and stuck jobs; alert when something is wrong',
     cron: '*/15 * * * *',
-    quiet: () => false,
+    // Every run is recorded, including the quiet ones. This is the
+    // watchdog: "it last ran fifteen minutes ago and found nothing" is the
+    // answer the deep health check exists to give, and with quiet: () =>
+    // false it recorded nothing and reported itself as never run.
     run: () => runOpsWatch(),
   },
   'accounting.sync': {

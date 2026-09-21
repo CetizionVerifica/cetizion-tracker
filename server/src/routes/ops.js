@@ -9,7 +9,7 @@ import { readdirSync } from 'node:fs';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { query } from '../db.js';
-import { readSession } from '../auth/middleware.js';
+import { currentUser } from '../auth/middleware.js';
 import { constantTimeEqual } from '../auth/session.js';
 import { ApiError } from '../middleware/error.js';
 import { MIGRATIONS_DIR } from '../migrations.js';
@@ -66,10 +66,20 @@ export async function deepHealth() {
   };
 }
 
-/** The deep check answers only to a signed-in person; the plain one stays public. */
+/**
+ * The deep check answers only to an admin; the plain one stays public.
+ *
+ * currentUser, not readSession: a cookie is signed for twelve hours, and
+ * readSession asks only whether the signature and the expiry are good. An
+ * account deactivated, deleted or demoted an hour ago still holds a valid
+ * cookie, and this check names the migrations applied, where the backups go
+ * and which jobs are failing. #38 scopes it to admins.
+ */
 export async function healthHandler(req, res, next) {
   if (!req.query.deep) return next();
-  if (!readSession(req)) throw new ApiError(401, 'Sign in to see the detailed health check');
+  const user = await currentUser(req);
+  if (!user) throw new ApiError(401, 'Sign in to see the detailed health check');
+  if (user.role !== 'admin') throw new ApiError(403, 'The detailed health check is for administrators');
   const r = await deepHealth();
   res.status(r.status === 'ok' ? 200 : 503).json(r);
 }
@@ -77,7 +87,10 @@ export async function healthHandler(req, res, next) {
 metricsRouter.get('/', async (req, res) => {
   const token = process.env.METRICS_TOKEN || '';
   const bearer = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  const allowed = (token && bearer && constantTimeEqual(bearer, token)) || readSession(req);
+  // Either the scrape token, or an admin whose account still exists and is
+  // still an admin — the same reason as the deep health check above.
+  const byToken = Boolean(token && bearer && constantTimeEqual(bearer, token));
+  const allowed = byToken || (await currentUser(req))?.role === 'admin';
   if (!allowed) return res.status(401).set('WWW-Authenticate', 'Bearer').send('Unauthorized');
   res.set('Content-Type', registry.contentType);
   res.send(await registry.metrics());

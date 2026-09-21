@@ -39,4 +39,25 @@ Merge after batch 5.
 
 ## Rolling back
 
-Revert the merge. Tokens can be revoked in Settings; the lockout clears after 15 minutes or on restart.
+Revert the merge. Tokens can be revoked in Settings. The lockout clears
+fifteen minutes after the last failed attempt, or as soon as the right
+password is typed — **not** on restart: the failures are rows in
+`auth_events`, so a redeploy does not clear them. To lift one by hand,
+delete that account's recent failures from `auth_events`.
+
+## Review round 2 (#62)
+
+- **The sign-in lockout is keyed on the account, not only the address.** It
+  counted failures per IP, and behind Traefik with `TRUST_PROXY=0` every
+  request carries the proxy's address — so ten bad guesses from anywhere on
+  the internet locked out the whole company for fifteen minutes, people
+  typing the correct password included. The per-account count is what is
+  enforced; the address-wide one is five times the limit and applies only
+  when the address is genuinely the caller's (`TRUST_PROXY > 0`, or no proxy
+  at all). A correct sign-in clears the count it belongs to.
+- **`/metrics` and `/api/health?deep=1` re-read the account.** Both used
+  `readSession`, which checks the signature and the expiry and nothing else,
+  so a deactivated, deleted or demoted user kept reading them for up to
+  twelve hours. Both now use `currentUser`, and the deep check — which names
+  the migrations applied, the backup location and failing jobs — is
+  restricted to admins, as #38 asks.

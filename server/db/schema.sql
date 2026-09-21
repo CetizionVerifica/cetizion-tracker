@@ -2182,7 +2182,7 @@ CREATE TABLE IF NOT EXISTS auth_events (
 CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DESC);
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('signin_lockout_failures', '10', 'Failed sign-ins from one address, within the lockout window, before it is refused and an alert is raised.'),
+  ('signin_lockout_failures', '10', 'Failed sign-ins for one account from one address, within the lockout window, before it is refused and an alert is raised.'),
   ('signin_lockout_minutes', '15', 'The lockout window, in minutes.')
 ON CONFLICT (key) DO NOTHING;
 

@@ -86,8 +86,10 @@ ad-hoc questions), create a read-only user:
 psql "$DATABASE_URL" -v ro_password="'<a long password>'" -f server/scripts/sql/readonly-user.sql
 ```
 
-It can read every table except the ones holding secrets, and its queries
-time out after a minute.
+It can read every table except the ones holding secrets — mailbox tokens,
+API tokens, webhook secrets, portal links and sessions, and `users`, which
+holds the password hashes and the team's addresses — and its queries time
+out after a minute.
 
 ## 5. Access review (every quarter)
 
