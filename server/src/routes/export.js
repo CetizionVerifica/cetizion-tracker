@@ -111,7 +111,7 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
   const pdf = await salesReportPdf({
     period, year: Number(year), month, revenuePeriod,
     sectors, customers, fx, revenue, gaps, rates,
-    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services,
+    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services, contracts: review.contracts,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });

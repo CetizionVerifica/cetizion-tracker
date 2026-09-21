@@ -127,6 +127,7 @@ export default function CompanyDetail() {
             <DataTable rows={c.enquiries} onRowClick={(r) => navigate(`/enquiries?q=${encodeURIComponent(r.enquiry_no)}`)} columns={[
               { key: 'enquiry_no', header: 'Enquiry', className: 'mono' },
               { key: 'enquiry_date', header: 'Date', render: (r) => date(r.enquiry_date) },
+              { key: 'sector', header: 'Sector' },
               { key: 'service', header: 'Service', className: 'wrap' },
               { key: 'sales_person', header: 'Sales person' },
               { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },

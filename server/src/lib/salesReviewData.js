@@ -3,6 +3,8 @@ import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
 import { r2, share } from './reportMath.js';
+import { normalizeName } from './names.js';
+import { daysBetween } from './salesReviewAnalysis.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
 /**
@@ -67,6 +69,63 @@ export function enquirySummary(rows, period = {}) {
     oldest_open: oldestOpen
       ? { enquiry_no: oldestOpen.enquiry_no, client: oldestOpen.client, enquiry_date: oldestOpen.enquiry_date }
       : null,
+    pipeline: enquiryPipeline(rows),
+  };
+}
+
+/**
+ * How many rows carry each value of a text field, most first, blanks last.
+ * Grouped the same way every other name in this report is (case and stray
+ * spaces ignored — see names.js), so "Aluminium" and "aluminium " count as
+ * one row here too, not two.
+ */
+export function countBy(rows, field) {
+  const counts = new Map();
+  for (const row of rows) {
+    const raw = String(row[field] ?? '').trim();
+    const key = raw ? normalizeName(raw) : '';
+    const existing = counts.get(key);
+    if (existing) existing.count += 1;
+    else counts.set(key, { label: raw || 'Not set', count: 1 });
+  }
+  return [...counts.values()]
+    .sort((a, b) => (a.label === 'Not set') - (b.label === 'Not set') || b.count - a.count || a.label.localeCompare(b.label));
+}
+
+/**
+ * Where enquiries in the period end up, and how long the ones that got there
+ * took: a contract is a PO on the enquiry's linked quotation (enquiryRows
+ * fetches contract_date, the earliest such PO's date, for this). TAT is the
+ * whole enquiry-to-contract span, not just a first reply.
+ */
+export function enquiryPipeline(rows) {
+  const detail = rows.map((row) => ({
+    enquiry_no: row.enquiry_no,
+    client: row.client,
+    enquiry_date: row.enquiry_date,
+    source: row.source,
+    service: row.service,
+    sector: row.sector,
+    country: row.country,
+    status: row.status,
+    contract_date: row.contract_date,
+    tat_days: row.contract_date && row.enquiry_date ? daysBetween(row.enquiry_date, row.contract_date) : null,
+  }));
+  const tatDays = detail.filter((row) => row.tat_days != null).map((row) => row.tat_days);
+  const declined = detail.filter((row) => row.status === ENQUIRY_STATUS.declined).length;
+  const contracted = detail.filter((row) => row.contract_date).length;
+
+  return {
+    total: rows.length,
+    contracted,
+    declined,
+    pending: rows.length - contracted - declined,
+    average_tat_days: tatDays.length ? r2(tatDays.reduce((sum, d) => sum + d, 0) / tatDays.length) : null,
+    tat_count: tatDays.length,
+    by_source: countBy(rows, 'source'),
+    by_sector: countBy(rows, 'sector'),
+    by_country: countBy(rows, 'country'),
+    detail,
   };
 }
 
@@ -78,7 +137,13 @@ export function enquirySummary(rows, period = {}) {
 // three ways rather than running a query per section.
 // ---------------------------------------------------------------------
 
-/** Enquiries in the period. Oldest first: the month rows and the oldest open enquiry read that order. */
+/**
+ * Enquiries in the period. Oldest first: the month rows and the oldest open
+ * enquiry read that order. contract_date is the earliest PO date on the
+ * enquiry's linked quotation — a quotation's PO is matched by quotation_no,
+ * or by project_id when the PO was raised against the project instead, the
+ * same rule the revenue figures use.
+ */
 const enquiryRows = ({ from, to }) =>
   query(
     `SELECT e.enquiry_no,
@@ -86,23 +151,55 @@ const enquiryRows = ({ from, to }) =>
             to_char(e.enquiry_date, 'YYYY-MM-DD')  AS enquiry_date,
             to_char(e.enquiry_date, 'YYYY-MM')     AS month,
             e.status,
-            e.service
+            e.service,
+            e.source,
+            e.sector,
+            e.country,
+            to_char(
+              (SELECT MIN(po.po_date)
+                 FROM purchase_orders po
+                WHERE po.quotation_no = e.quotation_no
+                   OR (po.quotation_no IS NULL AND EXISTS (
+                        SELECT 1 FROM quotations q
+                         WHERE q.quotation_no = e.quotation_no
+                           AND q.project_id IS NOT NULL
+                           AND po.project_id = q.project_id
+                      ))),
+              'YYYY-MM-DD'
+            ) AS contract_date
        FROM enquiries e
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
     [from, to]
   );
 
-/** Quotations in the period with the INR rate for their currency, oldest first. */
+/**
+ * Quotations in the period with the INR rate for their currency, oldest
+ * first. contract_date is the earliest PO date matched to this quotation —
+ * by quotation_no, or by project_id when the PO was raised against the
+ * project instead — the same rule enquiryRows and the revenue figures use.
+ */
 const quotationRows = ({ from, to }) =>
   query(
     `WITH ${RATES}
-     SELECT to_char(q.quotation_date, 'YYYY-MM') AS month,
+     SELECT q.quotation_no,
+            btrim(q.client_name)                  AS client,
+            to_char(q.quotation_date, 'YYYY-MM-DD') AS quotation_date,
+            to_char(q.quotation_date, 'YYYY-MM')  AS month,
             q.status,
             q.quotation_value,
             q.currency,
             r.rate,
-            q.service_quoted                      AS service
+            q.service_quoted                      AS service,
+            q.sector,
+            q.country,
+            to_char(
+              (SELECT MIN(po.po_date)
+                 FROM purchase_orders po
+                WHERE po.quotation_no = q.quotation_no
+                   OR (po.quotation_no IS NULL AND q.project_id IS NOT NULL AND po.project_id = q.project_id)),
+              'YYYY-MM-DD'
+            ) AS contract_date
        FROM quotations q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${IN_PERIOD}
@@ -110,13 +207,87 @@ const quotationRows = ({ from, to }) =>
     [from, to]
   );
 
-/** The three sections that share those rows, in two queries instead of five. */
+/**
+ * Purchase orders (contracts) received in the period, by their own PO date —
+ * not the date of the quotation they fulfil. service/sector/country come
+ * from the linked quotation, since a PO carries none of its own: its own
+ * quotation_no when the PO names one, otherwise the first quotation on its
+ * project (the same fallback contract_date above uses), so each PO resolves
+ * to at most one quotation and is never counted twice.
+ */
+const purchaseOrderRows = ({ from, to }) =>
+  query(
+    `WITH ${RATES},
+     po_quote AS (
+       SELECT po.id AS po_id,
+              COALESCE(
+                po.quotation_no,
+                (SELECT q.quotation_no FROM quotations q
+                  WHERE q.project_id = po.project_id
+                  ORDER BY q.quotation_no LIMIT 1)
+              ) AS quotation_no
+         FROM purchase_orders po
+     )
+     SELECT po.po_number,
+            to_char(po.po_date, 'YYYY-MM-DD') AS po_date,
+            to_char(po.po_date, 'YYYY-MM')    AS month,
+            po.po_value,
+            po.currency,
+            r.rate,
+            btrim(q.client_name)              AS client,
+            q.service_quoted                  AS service,
+            q.sector,
+            q.country
+       FROM purchase_orders po
+       JOIN po_quote pq ON pq.po_id = po.id
+       LEFT JOIN quotations q ON q.quotation_no = pq.quotation_no
+       ${rateOn('r', 'po.currency', 'po.po_date')}
+      WHERE ${inPeriod('po.po_date')}
+      ORDER BY po.po_date NULLS LAST, po.po_number`,
+    [from, to]
+  );
+
+/** How many contracts (POs) came in, their value, and how they split by service, sector and country. */
+export function contractPipeline(rows) {
+  const { value_inr, without_value, unconverted } = inrTotals(
+    rows.map((row) => ({ quotation_value: row.po_value, currency: row.currency, rate: row.rate }))
+  );
+  const detail = rows.map((row) => ({
+    po_number: row.po_number,
+    po_date: row.po_date,
+    client: row.client,
+    service: row.service,
+    sector: row.sector,
+    country: row.country,
+    po_value: row.po_value,
+    currency: row.currency,
+  }));
+  return {
+    total: rows.length,
+    value_inr,
+    without_value,
+    unconverted,
+    by_service: countBy(rows, 'service'),
+    by_sector: countBy(rows, 'sector'),
+    by_country: countBy(rows, 'country'),
+    detail,
+  };
+}
+
+export async function contractReport(period) {
+  return contractPipeline((await purchaseOrderRows(period)).rows);
+}
+
+/** The sections that share those rows, in three queries instead of six. */
 export async function salesReviewSections(period) {
-  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
+  const [quotations, enquiries, purchaseOrders] = await Promise.all([
+    quotationRows(period), enquiryRows(period), purchaseOrderRows(period),
+  ]);
   return {
     enquiries: enquirySummary(enquiries.rows, period),
     quotationStatus: quotationStatusSummary(quotations.rows, period),
     services: serviceRows(quotations.rows, enquiries.rows),
+    contracts: contractPipeline(purchaseOrders.rows),
   };
 }
 
@@ -211,6 +382,58 @@ export function summariseQuotationStatuses(quotations) {
   };
 }
 
+/**
+ * Where quotations in the period end up, and how long the ones that got
+ * there took: a contract is a PO matched to the quotation (quotationRows
+ * fetches contract_date for this — see there). TAT is quotation date to
+ * contract date. Conversion ratio and average ticket size are both simple
+ * calculations over the same rows, not stored anywhere.
+ */
+export function quotationPipeline(rows) {
+  const detail = rows.map((row) => ({
+    quotation_no: row.quotation_no,
+    client: row.client,
+    quotation_date: row.quotation_date,
+    service: row.service,
+    sector: row.sector,
+    country: row.country,
+    quotation_value: row.quotation_value,
+    currency: row.currency,
+    status: row.status,
+    contract_date: row.contract_date,
+    tat_days: row.contract_date && row.quotation_date ? daysBetween(row.quotation_date, row.contract_date) : null,
+  }));
+  const tatDays = detail.filter((row) => row.tat_days != null).map((row) => row.tat_days);
+  const contracted = detail.filter((row) => row.contract_date).length;
+  const lost = detail.filter((row) => row.status === LOST).length;
+  // Marked won, but no PO is on record: a data gap, not a pending quotation
+  // (it has already been decided) — kept apart so it neither inflates
+  // "pending" nor gets mistaken for an ordinary open quotation.
+  const wonWithoutPo = detail.filter((row) => row.status === WON && !row.contract_date).length;
+  const { value_inr, without_value } = inrTotals(rows);
+  // A quotation needs both a value and a known rate to convert to INR; each
+  // is excluded from the average for a different reason, so counted apart.
+  const withoutRate = rows.filter((row) => row.quotation_value != null && row.rate == null).length;
+  const convertedCount = rows.length - without_value - withoutRate;
+
+  return {
+    total: rows.length,
+    contracted,
+    lost,
+    won_without_po: wonWithoutPo,
+    pending: rows.length - contracted - lost - wonWithoutPo,
+    conversion_rate: rows.length ? share(contracted, rows.length) : null,
+    average_ticket_inr: convertedCount ? r2(value_inr / convertedCount) : null,
+    average_ticket_count: convertedCount,
+    quotations_without_value: without_value,
+    quotations_without_rate: withoutRate,
+    average_tat_days: tatDays.length ? r2(tatDays.reduce((sum, d) => sum + d, 0) / tatDays.length) : null,
+    tat_count: tatDays.length,
+    by_country: countBy(rows, 'country'),
+    detail,
+  };
+}
+
 /** Quotations (month YYYY-MM, oldest first) per status, per month and in total. */
 export function quotationStatusSummary(rows, period = {}) {
   // Every status is listed, even at zero; one the Quotations page gains later still counts.
@@ -222,6 +445,7 @@ export function quotationStatusSummary(rows, period = {}) {
     }),
     months: monthRows(rows, period, summariseQuotationStatuses),
     total: summariseQuotationStatuses(rows),
+    pipeline: quotationPipeline(rows),
   };
 }
 
