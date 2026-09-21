@@ -63,6 +63,19 @@ Also fixed here:
 - **The Graph webhook has its own rate limit** (300 a minute, far above real
   traffic) and now does one database lookup per delivery instead of one per
   notification in it.
+- **Stored email HTML goes through a parser** (`sanitize-html`, a new
+  dependency) instead of a list of regular expressions, which let
+  `<img src=x/onerror=...>` and an entity-encoded `javascript:` href
+  through. Neither was exploitable — `EmailThread.jsx` renders into an
+  `<iframe sandbox="">` — but that one attribute was the whole defence.
+- **A first-response deadline treats Sunday as Sunday in IST.** It read the
+  day in UTC, so 20:00 UTC on a Saturday — Sunday morning here — stayed on
+  a Sunday, and 19:30 UTC on a Sunday, which is Monday here, was pushed a
+  day it did not need.
+
+Still open from that review and deliberately not done: disconnecting a
+mailbox does not revoke the refresh token at Microsoft. It needs a real
+tenant to verify rather than a test, so it is worth its own issue.
 
 ## Rolling back
 

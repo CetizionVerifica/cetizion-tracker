@@ -5,6 +5,7 @@
  * Registered as a mailbox hook, so it runs inside the transaction that
  * stores each message.
  */
+import { businessWeekday } from './businessDate.js';
 import { messageHooks } from './mailbox/sync.js';
 import { notify } from './notify.js';
 
@@ -18,10 +19,18 @@ export function pickAssignee({ rule, companyOwner, members = [], last = null }) 
   return { assignee: next, last: next };
 }
 
-/** Add working hours, skipping Sundays: a deadline that lands on one moves to Monday, same time. */
-export function dueAfter(fromIso, hours) {
+/**
+ * Add working hours, skipping Sundays: a deadline that lands on one moves
+ * to Monday, the same time of day.
+ *
+ * Sunday where the business is, not where the container's clock is. IST is
+ * five and a half hours ahead, so 20:00 UTC Saturday is already Sunday
+ * morning in Mumbai and was not being moved, while 19:30 UTC Sunday is
+ * Monday here and was being pushed a day it did not need.
+ */
+export function dueAfter(fromIso, hours, timeZone = undefined) {
   const d = new Date(new Date(fromIso).getTime() + hours * 3600 * 1000);
-  if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+  if (businessWeekday(d, timeZone) === 0) d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString();
 }
 

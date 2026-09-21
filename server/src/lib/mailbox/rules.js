@@ -3,6 +3,7 @@
  * provider so they can be tested on their own.
  */
 import crypto from 'node:crypto';
+import sanitizeHtml from 'sanitize-html';
 
 export const addr = (s) => String(s || '').trim().toLowerCase();
 export const domainOf = (email) => addr(email).split('@')[1] || '';
@@ -61,13 +62,51 @@ export function snippet(html, max = 240) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/** Remove what a stored email must never run: scripts, handlers, remote frames. */
+/**
+ * Remove what a stored email must never run: scripts, handlers, remote
+ * frames, forms.
+ *
+ * A parser rather than a list of regular expressions. The regexes this
+ * replaced let `<img src=x/onerror=...>` through -- they required
+ * whitespace before the handler -- and an entity-encoded `javascript:`
+ * href with it. Neither was exploitable, because EmailThread.jsx renders
+ * this into an <iframe sandbox="">; that one attribute was the entire
+ * defence, which is not where a defence should live.
+ *
+ * The allow-list is what an email legitimately is: text, lists, tables,
+ * links, images. Everything else, and every attribute not named here, is
+ * dropped rather than escaped, because a stored email is read, not edited.
+ */
+const SANITIZE = {
+  allowedTags: [
+    'p', 'div', 'span', 'br', 'hr', 'b', 'strong', 'i', 'em', 'u', 's', 'sub', 'sup', 'small',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'code',
+    'ul', 'ol', 'li', 'dl', 'dt', 'dd',
+    'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col',
+    'a', 'img', 'figure', 'figcaption',
+  ],
+  allowedAttributes: {
+    a: ['href', 'title', 'name', 'target', 'rel'],
+    img: ['src', 'alt', 'title', 'width', 'height'],
+    td: ['colspan', 'rowspan', 'align'],
+    th: ['colspan', 'rowspan', 'align', 'scope'],
+    col: ['span', 'width'],
+    table: ['border', 'cellpadding', 'cellspacing', 'width'],
+  },
+  // http, https and mailto only: no javascript:, no data: smuggled into a
+  // link, no tel: that a click could dial.
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemesByTag: { img: ['http', 'https', 'cid', 'data'] },
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+  // A link opened from a stored email opens away from the tracker, and
+  // cannot reach back through window.opener.
+  transformTags: { a: sanitizeHtml.simpleTransform('a', { target: '_blank', rel: 'noopener noreferrer' }) },
+};
+
 export function cleanHtml(html) {
-  return String(html || '')
-    .replace(/<(script|style|iframe|object|embed|form)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<(script|iframe|object|embed|link|meta|base)[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"');
+  if (!html) return '';
+  return sanitizeHtml(String(html), SANITIZE);
 }
 
 /** Record numbers mentioned in a subject, most specific first. */

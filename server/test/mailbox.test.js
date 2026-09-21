@@ -72,6 +72,33 @@ test('a first-response deadline that lands on a Sunday moves to Monday', () => {
   assert.equal(dueAfter('2026-09-19T10:00:00Z', 24), '2026-09-21T10:00:00.000Z');
 });
 
+test('Sunday is judged where the business is, not on the container clock', () => {
+  // 20:00 UTC on Saturday is 01:30 on Sunday morning in Mumbai. Read as
+  // UTC it is still Saturday, so this deadline used to stay on a Sunday.
+  assert.equal(dueAfter('2026-09-19T16:00:00Z', 4), '2026-09-20T20:00:00.000Z');
+  // And the other way: 19:30 UTC on Sunday is Monday here, so there is
+  // nothing to move. It used to be pushed to Tuesday morning IST.
+  assert.equal(dueAfter('2026-09-20T19:30:00Z', 0), '2026-09-20T19:30:00.000Z');
+});
+
+test('a stored email cannot carry anything that runs', () => {
+  // The two the review found: the handler needed no whitespace in front of
+  // it, and the scheme was entity-encoded.
+  // It survives only as part of the src value, which is a relative URL
+  // and not a handler: what matters is that no attribute called on* is left.
+  assert.doesNotMatch(cleanHtml('<img src=x/onerror=alert(1)>'), /\son\w+\s*=/i);
+  assert.doesNotMatch(cleanHtml('<a href="&#106;avascript:alert(1)">x</a>'), /href/i);
+  for (const bad of ['<script>x()</script>', '<iframe src="//evil.example"></iframe>', '<form action="//evil.example"><input name="p"></form>', '<div onclick="x()">t</div>', '<object data="x"></object>', '<base href="//evil.example">', '<a href="javascript:alert(1)">x</a>']) {
+    const out = cleanHtml(bad);
+    assert.doesNotMatch(out, /<(script|iframe|form|input|object|base)|javascript:|\son\w+=/i, `${bad} survived as ${out}`);
+  }
+  // And what an email actually is survives intact.
+  assert.match(cleanHtml('<table><tr><td><b>Total</b></td></tr></table>'), /<table><tr><td><b>Total<\/b><\/td><\/tr><\/table>/);
+  const link = cleanHtml('<a href="https://client.example/quote">Quotation</a>');
+  assert.match(link, /href="https:\/\/client\.example\/quote"/);
+  assert.match(link, /rel="noopener noreferrer"/, 'a link opens away from the tracker and cannot reach back');
+});
+
 test('canned responses fill their variables and blank the unknown ones', () => {
   assert.equal(fillTemplate('Dear {{contact_name}}, from {{ my_name }}{{nope}}', { contact_name: 'Asha', my_name: 'Sami' }), 'Dear Asha, from Sami');
 });
