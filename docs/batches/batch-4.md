@@ -73,9 +73,17 @@ Also fixed here:
   a Sunday, and 19:30 UTC on a Sunday, which is Monday here, was pushed a
   day it did not need.
 
-Still open from that review and deliberately not done: disconnecting a
-mailbox does not revoke the refresh token at Microsoft. It needs a real
-tenant to verify rather than a test, so it is worth its own issue.
+**Disconnecting a mailbox, and what it cannot do.** The review asked for the
+refresh token to be revoked upstream. Microsoft has no endpoint an
+application can call to revoke its own grant: the two that exist are
+`revokeSignInSessions`, which signs the person out of every application they
+use, and deleting the tenant-wide permission grant, which would disconnect
+every other mailbox with it. Neither is what "disconnect this one mailbox"
+means. So disconnecting deletes the subscriptions at Microsoft — which is
+what stops the mail — destroys our copy of the tokens, records what happened
+upstream instead of swallowing it, and tells the owner where to withdraw the
+permission (`myaccount.microsoft.com` → Apps). A subscription with nowhere
+to deliver expires by itself within three days.
 
 ## Rolling back
 

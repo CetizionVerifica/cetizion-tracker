@@ -67,7 +67,9 @@ export default function Mailboxes() {
                 key: 'act', header: '', align: 'right', render: (r) => r.status !== 'disconnected' && (
                   <div className="table__actions">
                     <button type="button" className="btn btn--sm" disabled={busy === r.id} onClick={() => run(r.id, () => api.action(`/mailboxes/${r.id}/sync`), (x) => `${x.data.stored} new emails`)}>Sync now</button>
-                    <button type="button" className="btn btn--sm btn--ghost" disabled={busy === r.id} onClick={() => { if (window.confirm(`Disconnect ${r.email}? Stored email bodies are removed; who and when stays on the records.`)) run(r.id, () => api.action(`/mailboxes/${r.id}/disconnect`, { remove_bodies: true }), () => 'Disconnected'); }}>Disconnect</button>
+                    <button type="button" className="btn btn--sm btn--ghost" disabled={busy === r.id} onClick={() => { if (window.confirm(`Disconnect ${r.email}? Stored email bodies are removed; who and when stays on the records.
+
+The tracker deletes its subscriptions and destroys its copy of the sign-in tokens. Microsoft has no way for us to cancel the permission itself — to withdraw it, the mailbox's owner removes Cetizion Tracker at myaccount.microsoft.com → Apps.`)) run(r.id, () => api.action(`/mailboxes/${r.id}/disconnect`, { remove_bodies: true }), (x) => `Disconnected — ${x.data.upstream}`); }}>Disconnect</button>
                   </div>
                 ),
               },

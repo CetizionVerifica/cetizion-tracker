@@ -266,16 +266,42 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
   return { sent: true, synced: r.stored };
 }
 
+/** Where a person withdraws the tracker's access to their mailbox. */
+export const CONSENT_URL = 'https://myaccount.microsoft.com/appconsent';
+
+/**
+ * Disconnect a mailbox: stop the mail coming, destroy our copy of the
+ * tokens, and optionally drop the stored bodies.
+ *
+ * What this cannot do, and the review was right to ask: revoke the refresh
+ * token at Microsoft. The identity platform has no revocation endpoint an
+ * application can call for its own grant -- the two things that exist are
+ * revokeSignInSessions, which signs the person out of every application
+ * they use, and deleting the tenant-wide permission grant, which would
+ * disconnect every other mailbox with it. Neither is what "disconnect this
+ * one mailbox" means.
+ *
+ * So: the subscriptions are deleted, which is what stops Microsoft sending
+ * us this mailbox, our copy of the tokens is destroyed, and the result says
+ * where the owner withdraws consent. The outcome of the upstream call is
+ * recorded rather than swallowed, because a subscription still live at
+ * Microsoft is something an admin should be able to see.
+ */
 export async function disconnect(id, { removeBodies = true } = {}) {
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [id]);
   if (!account) return null;
+  let upstream = 'subscriptions removed at the provider';
   try {
     const provider = providerFor(account);
     const { rows } = await query('SELECT subscription_id FROM mail_folders WHERE account_id = $1 AND subscription_id IS NOT NULL', [id]);
     for (const r of rows) await provider.unsubscribe(r.subscription_id);
-  } catch { /* the tokens may already be gone; dropping them below is what matters */ }
-  await query(`UPDATE connected_accounts SET status = 'disconnected', tokens_encrypted = NULL, token_expires_at = NULL WHERE id = $1`, [id]);
+  } catch (err) {
+    // Not fatal: the tokens go either way, and a subscription with nowhere
+    // to deliver expires by itself within three days.
+    upstream = `subscriptions may still be live at the provider: ${String(err.message || err).slice(0, 200)}`;
+  }
+  await query(`UPDATE connected_accounts SET status = 'disconnected', tokens_encrypted = NULL, token_expires_at = NULL, last_error = $2 WHERE id = $1`, [id, upstream]);
   await query('DELETE FROM mail_folders WHERE account_id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
-  return { id, status: 'disconnected', bodies_removed: removeBodies };
+  return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };
 }
