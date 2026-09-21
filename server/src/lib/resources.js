@@ -131,20 +131,23 @@ export const resources = {
     // The year in the generated number comes from the enquiry's own date.
     autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
-    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector', 'company_id'],
+    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
-      'enquiry_no', 'enquiry_date', 'client_name', 'sector', 'contact_person',
-      'sales_person', 'sales_person_email', 'service', 'status', 'quotation_no',
+      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector', 'country',
+      'contact_person', 'sales_person', 'sales_person_email', 'service',
+      'status', 'quotation_no',
     ],
     schema: z.object({
       enquiry_no: str(60),
       enquiry_date: date(),
       client_name: requiredStr(160),
+      source: str(120),
       sector: str(120),
+      country: str(120),
       contact_person: str(120),
       sales_person: str(120),
       sales_person_email: str(160),
@@ -166,12 +169,12 @@ export const resources = {
     // The year in the generated number comes from the quotation's own date.
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
-    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status', 'company_id'],
+    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
-      'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector',
+      'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
     ],
@@ -181,6 +184,7 @@ export const resources = {
       contact_person: str(120),
       service_quoted: str(300),
       sector: str(120),
+      country: str(120),
       sales_person: str(120),
       sales_person_email: str(160),
       quotation_date: date(),
