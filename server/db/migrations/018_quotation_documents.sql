@@ -1,4 +1,4 @@
--- 013 — quotations as real documents (#23): a service catalogue, line items
+-- 018 — quotations as real documents (#23): a service catalogue, line items
 -- with GST, validity, revisions, and totals kept in step with the lines.
 --
 -- Safe on a live database; running it a second time changes nothing.

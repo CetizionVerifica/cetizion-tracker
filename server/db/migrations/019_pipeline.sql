@@ -1,4 +1,4 @@
--- 014 — the quotation pipeline (#25): stages with a probability, lost
+-- 019 — the quotation pipeline (#25): stages with a probability, lost
 -- reasons, expected close dates and a next step, kept in step with the
 -- quotation status both ways.
 --

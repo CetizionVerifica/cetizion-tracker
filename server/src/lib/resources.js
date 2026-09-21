@@ -144,6 +144,7 @@ export const resources = {
 
   enquiries: {
     table: 'enquiries',
+
     view: null,
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
@@ -369,6 +370,7 @@ export const resources = {
       reminder_sent_on: date(),
       document_id: int({ min: 1 }),
       remarks: str(1000),
+
     }),
   },
 
@@ -500,6 +502,7 @@ export const resources = {
     }),
   },
 
+
   'lead-sources': {
     table: 'lead_sources',
     view: null,
@@ -531,7 +534,7 @@ export const resources = {
     defaultSort: 'sort_order, name',
     search: ['name', 'from_currency', 'note'],
     filters: ['active', 'from_currency', 'source'],
-    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'from_currency', 'to_currency', 'rate', 'effective_from', 'source', 'entered_by', 'note', 'onboarding_template_id', 'payment_terms_template_id'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
@@ -545,6 +548,7 @@ export const resources = {
       description: str(2000),
       renewal_interval_months: int({ min: 1, max: 120 }),
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
+
     }),
   },
 

@@ -27,7 +27,6 @@ pdfmake.setFonts(ROBOTO);
 // and nothing else, and it never fetches a URL.
 pdfmake.setUrlAccessPolicy(() => false);
 pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
-
 const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
 const INK_900 = '#0f172a';
 const INK_700 = '#334155';
@@ -715,7 +714,6 @@ export function salesReportDocDefinition(data) {
       )
     : null;
   const contractSection = [contractIntro, contractMixRow, contractDetailSection].filter(Boolean);
-
   // ------------------------------------------------ 3. sector-wise
   const sectorBars = sectorRows
     .filter((row) => row.pos > 0)

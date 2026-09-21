@@ -24,7 +24,7 @@ function sectorOptions(used) {
  * box — one request, cached by the client for the session.
  */
 lookupRouter.get('/', async (req, res) => {
-  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
+  const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
          currenciesInUse, stages, lostReasons, leadSources, ptt, pttLines, obt] =
     await Promise.all([
       query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),

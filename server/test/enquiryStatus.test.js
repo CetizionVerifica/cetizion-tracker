@@ -4,7 +4,7 @@ import { resources } from '../src/lib/resources.js';
 
 const schema = resources.enquiries.schema;
 
-test('the enquiry statuses from before #24 are still accepted, renamed as migration 015 did', () => {
+test('the enquiry statuses from before #24 are still accepted, renamed as migration 018 did', () => {
   assert.equal(schema.partial().parse({ status: 'In Progress' }).status, 'Contacted');
   assert.equal(schema.partial().parse({ status: 'Declined' }).status, 'Unqualified');
   assert.equal(schema.partial().parse({ status: 'Won - Quotation Sent' }).status, 'Converted');

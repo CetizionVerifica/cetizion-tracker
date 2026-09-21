@@ -434,7 +434,6 @@ export function quotationPipeline(rows) {
     detail,
   };
 }
-
 /** Quotations (month YYYY-MM, oldest first) per status, per month and in total. */
 export function quotationStatusSummary(rows, period = {}) {
   // Every status is listed, even at zero; one the Quotations page gains later still counts.

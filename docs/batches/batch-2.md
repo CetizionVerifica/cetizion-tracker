@@ -15,7 +15,7 @@ Merge after batch 1.
 
 ## Deploying it
 
-- **Migrations** 013 to 017, applied on start. Existing quotations are placed in pipeline stages from their status.
+- **Migrations** 018 to 022, applied on start. Existing quotations are placed in pipeline stages from their status.
 - No new environment variables or packages.
 - Admin → Settings: set the discount threshold and the approver's email.
 
@@ -49,7 +49,7 @@ Server tests, browser tests, migration check and web build passing at this batch
 | 12-14 | Cleanups | Unused `with_reason` removed; the Enquiries banner uses the rows already loaded; one pdfmake setup (`lib/pdf.js`); the quotation PDF uses the shared `money()` with two decimals. |
 
 Also:
-- `setting_num()` is defined next to the triggers that call it (schema.sql and migration 013), so a database built from schema.sql alone can insert quotations. main's reference-counter tests need this.
+- `setting_num()` is defined next to the triggers that call it (schema.sql and migration 018), so a database built from schema.sql alone can insert quotations. main's reference-counter tests need this.
 - zod 4 preparation: `register.js` uses `{ message }`.
 - New tests: `server/test/pipelineRules.test.js` (discount approval, stage trigger, backfill, old-status filters).
 

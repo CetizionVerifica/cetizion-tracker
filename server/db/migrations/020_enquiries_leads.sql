@@ -1,4 +1,4 @@
--- 015 — enquiries as leads (#24): qualification statuses, sources,
+-- 020 — enquiries as leads (#24): qualification statuses, sources,
 -- follow-ups, an estimate, and a reason when one is dropped.
 --
 -- Statuses: New -> Contacted -> Qualified -> Converted, or Unqualified
