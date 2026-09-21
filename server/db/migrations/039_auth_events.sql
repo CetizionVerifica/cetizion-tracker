@@ -1,4 +1,4 @@
--- 038 — sign-in protection (#34).
+-- 039 — sign-in protection (#34).
 --
 -- Every staff sign-in attempt is recorded. An address with too many
 -- failures in a short window is refused for a while, even with the right

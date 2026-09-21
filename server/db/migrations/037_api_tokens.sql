@@ -1,4 +1,4 @@
--- 036 — API tokens and the MCP server (#50).
+-- 037 — API tokens and the MCP server (#50).
 --
 -- A token lets Claude (or another MCP client) read the tracker and make a
 -- few guarded notes on it. Only a hash is stored. A sales token sees only

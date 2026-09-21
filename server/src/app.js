@@ -98,16 +98,14 @@ const STARTED_AT = new Date().toISOString();
 
 // Public: the platform needs somewhere to point a health check, and this
 // says nothing beyond "the database answered" and when the API started.
+// ?deep=1 is for signed-in people only (#38); the plain answer stays public.
 // auth_mode is here so a cutover can be confirmed with one request rather
 // than a browser. It gives nothing away: /api/auth/config already tells any
 // unauthenticated caller the same thing, because the sign-in form has to
 // know which field to draw.
-app.get('/api/health', async (req, res) => {
-// ?deep=1 is for signed-in people only (#38); the plain answer stays public.
 app.get('/api/health', healthHandler, async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
-  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, auth_mode: authConfig.mode });
-  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, environment: appEnv() });
+  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, environment: appEnv(), auth_mode: authConfig.mode });
 });
 
 app.use('/api/auth', authRouter);

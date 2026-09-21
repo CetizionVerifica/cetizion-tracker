@@ -1,4 +1,4 @@
--- 039 — backup records and the restore check (#33).
+-- 040 — backup records and the restore check (#33).
 --
 -- The backup and verify scripts (scripts/backup) write a row here after
 -- each run, so the deep health check and the ops.watch job (#38) know
