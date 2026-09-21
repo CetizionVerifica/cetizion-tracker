@@ -72,6 +72,12 @@ records the proxy's address instead of the contact's.
 - **`task.overdue` is announced on the day it goes overdue and at 7, 14 and
   30 days**, not every morning for ever. A 60-day-old task had been firing a
   receiving workflow 60 times, each with its own idempotency key.
+- **A payment read from the books is refused if its currency is not the
+  invoice stage's.** It took the amount and wrote it, so a receipt of 10,000
+  dollars would have been recorded as 10,000 rupees. Converting it here
+  would be worse — at which rate, on which day? — so it stops and says to
+  record the receipt by hand. The integration is off by default, which is
+  why this was never live.
 - **GSTR-1 B2B reports each rate on its own line.** A mixed-rate invoice was
   reported at the weighted average of its rates — 16.82% for a 100,000 at 18%
   plus 10,000 at 5% — which is not a rate the GST offline tool accepts.

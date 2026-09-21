@@ -206,6 +206,16 @@ export async function acceptBooks(itemId, by) {
     const b = i.books;
     const applied = [];
     if (i.kind === 'payment' && i.status === 'missing_in_tracker' && i.stage_id && b) {
+      // The books entry carries its own currency and the stage carries the
+      // PO's. Taking the number without reading the currency writes 10,000
+      // rupees for a payment of 10,000 dollars. Converting it here would be
+      // worse -- at which rate, on which day? -- so this stops and says so.
+      const { rows: [s] } = await db.query('SELECT currency FROM v_payment_stages WHERE id = $1', [i.stage_id]);
+      const stageCurrency = String(s?.currency || 'INR').toUpperCase();
+      const booksCurrency = String(b.currency || stageCurrency).toUpperCase();
+      if (booksCurrency !== stageCurrency) {
+        throw Object.assign(new Error(`The books entry is in ${booksCurrency} and the invoice stage is in ${stageCurrency}. Record this receipt by hand, with the amount actually received.`), { status: 422 });
+      }
       const { rows: [p] } = await db.query(
         `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
          VALUES ($1,$2,$3,$4,'bank_transfer',$5,'From the books',$6) RETURNING id`,
