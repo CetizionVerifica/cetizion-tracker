@@ -101,16 +101,23 @@ registerRouter.post('/:key/register', async (req, res) => {
     );
 
     // ---- service lines: the quotation's lines, else its subject at the PO value
-    const { rows: lines } = await client.query('SELECT description, amount FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
-    const lineSum = lines.reduce((n, l) => n + Number(l.amount), 0);
+    const { rows: lines } = await client.query('SELECT description, amount, gst_rate FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
     if (lines.length) {
-      // Lines are before GST. Scale them by the PO against the quotation on
-      // the same basis (both with GST), so a PO for the full quoted total
-      // keeps each line's own value and a negotiated PO scales them down.
-      const quoted = Number(q.total) > 0 ? Number(q.total) : lineSum;
-      const factor = quoted > 0 ? Number(poValue) / quoted : 1;
-      for (const l of lines) {
-        await client.query('INSERT INTO po_services (po_number, service, service_value) VALUES ($1,$2,$3)', [po.po_number, l.description, Math.round(Number(l.amount) * factor * 100) / 100]);
+      // A PO value includes GST; a quotation line does not. Comparing the two
+      // directly left every set of service lines short by exactly the tax, so
+      // each line is grossed up by its own rate first and then scaled by what
+      // the PO is worth against the quotation. A PO for the full quoted total
+      // keeps each line's own value, and a negotiated PO scales them down.
+      const gross = lines.map((l) => Number(l.amount) * (1 + Number(l.gst_rate || 0) / 100));
+      const grossSum = gross.reduce((n, v) => n + v, 0);
+      const factor = grossSum > 0 ? Number(poValue) / grossSum : 1;
+      const values = gross.map((v) => Math.round(v * factor * 100) / 100);
+      // Rounding leaves a paisa or two; it belongs on the last line, so the
+      // service lines add up to the PO exactly, as the form promises.
+      const residual = Math.round((Number(poValue) - values.reduce((n, v) => n + v, 0)) * 100) / 100;
+      values[values.length - 1] = Math.round((values[values.length - 1] + residual) * 100) / 100;
+      for (const [i, l] of lines.entries()) {
+        await client.query('INSERT INTO po_services (po_number, service, service_value) VALUES ($1,$2,$3)', [po.po_number, l.description, values[i]]);
       }
     } else {
       await client.query('INSERT INTO po_services (po_number, service, service_value) VALUES ($1,$2,$3)', [po.po_number, q.service_quoted || 'Services as quoted', poValue]);
