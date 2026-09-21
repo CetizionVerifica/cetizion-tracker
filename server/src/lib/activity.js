@@ -35,6 +35,8 @@ export const ACTIONS = {
   OWNERSHIP_ASSIGNED: 'ownership.assigned',
   OWNERSHIP_REASSIGNED: 'ownership.reassigned',
   OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
+  TARGET_CREATED: 'target.created',
+  TARGET_UPDATED: 'target.updated',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */

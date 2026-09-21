@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS ownership_history, activity_log, users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS sales_targets, ownership_history, activity_log, users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
   travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
@@ -162,6 +162,9 @@ CREATE TABLE projects (
   -- migrations/018_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id         int,
+  originating_user_id          int,
+  originating_user_snapshot_id int,
+  originating_user_name        text,
   planned_start_date    date,
   planned_delivery_date date,
   percent_complete      numeric(5,4) NOT NULL DEFAULT 0
@@ -175,6 +178,7 @@ CREATE INDEX projects_company_id_idx ON projects (company_id);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX projects_owner_user_id_idx ON projects (owner_user_id);
+CREATE INDEX projects_originating_user_id_idx ON projects (originating_user_id);
 
 -- ---------------------------------------------------------------------
 -- Quotations  (Sales Tracker)
@@ -197,6 +201,9 @@ CREATE TABLE quotations (
   -- migrations/018_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id      int,
+  originating_user_id          int,
+  originating_user_snapshot_id int,
+  originating_user_name        text,
   quotation_date     date,
   quotation_value    numeric(16,2),
   currency           text NOT NULL DEFAULT 'INR',
@@ -217,6 +224,7 @@ CREATE INDEX quotations_company_id_idx ON quotations (company_id);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
+CREATE INDEX quotations_originating_user_id_idx ON quotations (originating_user_id);
 CREATE INDEX ON quotations (status);
 
 -- ---------------------------------------------------------------------
@@ -241,6 +249,9 @@ CREATE TABLE enquiries (
   -- migrations/018_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id      int,
+  originating_user_id          int,
+  originating_user_snapshot_id int,
+  originating_user_name        text,
   service            text,
   status             text NOT NULL DEFAULT 'In Progress'
                        CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
@@ -254,6 +265,7 @@ CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX enquiries_owner_user_id_idx ON enquiries (owner_user_id);
+CREATE INDEX enquiries_originating_user_id_idx ON enquiries (originating_user_id);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -723,6 +735,13 @@ ALTER TABLE quotations ADD CONSTRAINT quotations_owner_user_id_fkey
 ALTER TABLE projects   ADD CONSTRAINT projects_owner_user_id_fkey
   FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
 
+ALTER TABLE enquiries  ADD CONSTRAINT enquiries_originating_user_id_fkey
+  FOREIGN KEY (originating_user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE quotations ADD CONSTRAINT quotations_originating_user_id_fkey
+  FOREIGN KEY (originating_user_id) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE projects   ADD CONSTRAINT projects_originating_user_id_fkey
+  FOREIGN KEY (originating_user_id) REFERENCES users(id) ON DELETE SET NULL;
+
 -- ------------------------------------------------------------- activity
 -- What was done, by whom (see migrations/017_activity_log.sql).
 -- Append-only: nothing in the application updates or deletes a row here,
@@ -800,5 +819,50 @@ CREATE INDEX IF NOT EXISTS ownership_history_new_owner_idx
   ON ownership_history (new_owner_user_id, id DESC);
 CREATE INDEX IF NOT EXISTS ownership_history_prev_owner_idx
   ON ownership_history (previous_owner_user_id, id DESC);
+
+-- -------------------------------------------------------- sales_targets
+-- Annual sales targets by salesperson and calendar year (#18 Phase 4).
+CREATE TABLE IF NOT EXISTS sales_targets (
+  id                          serial PRIMARY KEY,
+  salesperson_user_id         integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  calendar_year               integer NOT NULL CHECK (calendar_year BETWEEN 2000 AND 2100),
+  metric                      text NOT NULL CHECK (btrim(metric) <> ''),
+  target_value                numeric(16,2) NOT NULL CHECK (target_value >= 0),
+  unit                        text NOT NULL CHECK (unit IN ('count', 'currency', 'percentage')),
+  currency                    text CONSTRAINT sales_targets_currency_not_blank
+                                CHECK (currency IS NULL OR btrim(currency) <> ''),
+  created_by_user_id          integer REFERENCES users(id) ON DELETE SET NULL,
+  updated_by_user_id          integer REFERENCES users(id) ON DELETE SET NULL,
+  actor_type                  text NOT NULL DEFAULT 'user'
+                                CHECK (actor_type IN ('user', 'shared_admin', 'system')),
+  created_at                  timestamptz NOT NULL DEFAULT now(),
+  updated_at                  timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT sales_targets_unit_currency_check CHECK (
+    (unit = 'currency' AND currency IS NOT NULL) OR
+    (unit IN ('count', 'percentage') AND currency IS NULL)
+  ),
+  CONSTRAINT sales_targets_count_integer_check CHECK (
+    unit <> 'count' OR (target_value = round(target_value))
+  ),
+  CONSTRAINT sales_targets_percentage_check CHECK (
+    unit <> 'percentage' OR (target_value >= 0 AND target_value <= 100)
+  ),
+  CONSTRAINT sales_targets_actor_needs_user CHECK (
+    created_by_user_id IS NULL OR actor_type = 'user'
+  )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sales_targets_unique_idx
+  ON sales_targets (salesperson_user_id, calendar_year, metric, COALESCE(currency, ''));
+
+CREATE INDEX IF NOT EXISTS sales_targets_lookup_idx
+  ON sales_targets (salesperson_user_id, calendar_year);
+
+CREATE INDEX IF NOT EXISTS sales_targets_year_idx
+  ON sales_targets (calendar_year);
+
+CREATE TRIGGER sales_targets_set_updated_at BEFORE UPDATE ON sales_targets
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

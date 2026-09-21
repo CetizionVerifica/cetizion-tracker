@@ -251,15 +251,22 @@ quotationRouter.post('/:id/convert', async (req, res) => {
       // winning it is responsible for delivering it, and an admin registering
       // somebody else's win must not become its owner. An unowned quotation
       // produces an unowned project, which is the honest answer.
+      //
+      // Originating salesperson (#18 Phase 4): preserved only when the quotation
+      // has a verified originating salesperson.
       `INSERT INTO projects (project_id, client_name, primary_service, project_manager,
                              project_manager_email, sales_person, planned_start_date,
-                             planned_delivery_date, remarks, owner_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+                             planned_delivery_date, remarks, owner_user_id,
+                             originating_user_id, originating_user_snapshot_id, originating_user_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         projectId, quotation.client_name, quotation.service_quoted,
         body.project_manager, body.project_manager_email, quotation.sales_person,
         body.planned_start_date ?? null, body.planned_delivery_date ?? null,
         `Won from quotation ${quotation.quotation_no}`, quotation.owner_user_id,
+        quotation.originating_user_id ?? null,
+        quotation.originating_user_id ? (quotation.originating_user_snapshot_id ?? quotation.originating_user_id) : null,
+        quotation.originating_user_id ? (quotation.originating_user_name ?? null) : null,
       ]
     );
 

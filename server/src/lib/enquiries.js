@@ -35,16 +35,23 @@ export async function quoteWonEnquiry(client, { before, after }) {
     // The quotation is the same piece of work one step on, so responsibility
     // carries across; an unowned enquiry makes an unowned quotation, which is
     // the honest answer rather than a guess.
+    //
+    // Originating salesperson (#18 Phase 4): preserved only when the enquiry
+    // has a verified originating salesperson.
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
                              sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks, owner_user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10)`,
+                             status, remarks, owner_user_id,
+                             originating_user_id, originating_user_snapshot_id, originating_user_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10,$11,$12,$13)`,
     [
       quotationNo, after.client_name, after.contact_person, after.service,
       after.sector, after.sales_person, after.sales_person_email,
       quotationDate,
       `From enquiry ${after.enquiry_no}`,
       after.owner_user_id ?? null,
+      after.originating_user_id ?? null,
+      after.originating_user_id ? (after.originating_user_snapshot_id ?? after.originating_user_id) : null,
+      after.originating_user_id ? (after.originating_user_name ?? null) : null,
     ]
   );
   await client.query('UPDATE enquiries SET quotation_no = $1 WHERE id = $2', [quotationNo, after.id]);

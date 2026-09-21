@@ -292,7 +292,12 @@ export function crudRouter(name, def) {
     // salesperson they meant is the mistake Phase 2B refused to make.
     if (def.ownerScoped) {
       const owner = ownerForNewRecord(req.user);
-      if (owner !== null) values[OWNER_COLUMN] = owner;
+      if (owner !== null) {
+        values[OWNER_COLUMN] = owner;
+        values.originating_user_id = req.user.id;
+        values.originating_user_snapshot_id = req.user.id;
+        values.originating_user_name = req.user.name ?? null;
+      }
     }
 
     const { id, extra } = await write(async (client) => {

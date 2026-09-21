@@ -28,6 +28,7 @@ import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
 } from './routes/workflow.js';
+import { kpiRouter } from './routes/kpis.js';
 
 const app = express();
 
@@ -95,6 +96,9 @@ app.use('/api/travel-logs', travelRouter);
 // Administrative ownership assignment and handover history (#18 Phase 3).
 // Mounted ahead of generic CRUD so :id/owner and :id/ownership-history match first.
 app.use('/api', ownershipRouter);
+
+// Sales KPI Backend Engine & Annual Targets (#18 Phase 4).
+app.use('/api/kpis', kpiRouter);
 
 for (const [name, def] of Object.entries(resources)) {
   app.use(`/api/${name}`, crudRouter(name, def));
