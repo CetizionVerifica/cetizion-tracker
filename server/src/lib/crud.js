@@ -166,7 +166,7 @@ function validate(def, body, { partial }) {
  */
 const MAX_INT = 2147483647;
 
-function idPredicate(def, id, params) {
+export function idPredicate(def, id, params) {
   const key = decodeURIComponent(id);
   const numeric = /^\d+$/.test(key) && Number(key) <= MAX_INT;
 

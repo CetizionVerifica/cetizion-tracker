@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS activity_log, users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS ownership_history, activity_log, users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
   travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
@@ -760,5 +760,45 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_id, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
+
+-- -------------------------------------------------------- ownership_history
+-- Ownership assignment, reassignment and handover history (#18 Phase 3).
+CREATE TABLE IF NOT EXISTS ownership_history (
+  id                          bigserial PRIMARY KEY,
+  entity_type                 text NOT NULL
+                                CHECK (entity_type IN ('enquiries', 'quotations', 'projects')),
+  entity_id                   integer NOT NULL,
+  previous_owner_user_id      integer,
+  previous_owner_snapshot_id  integer,
+  previous_owner_name         text,
+  new_owner_user_id           integer,
+  new_owner_snapshot_id       integer,
+  new_owner_name              text,
+  changed_by_user_id          integer,
+  changed_by_snapshot_id      integer,
+  changed_by_name             text,
+  actor_type                  text NOT NULL
+                                CHECK (actor_type IN ('user', 'shared_admin', 'system')),
+  reason                      text NOT NULL,
+  created_at                  timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT ownership_history_prev_owner_fkey
+    FOREIGN KEY (previous_owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT ownership_history_new_owner_fkey
+    FOREIGN KEY (new_owner_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT ownership_history_changed_by_fkey
+    FOREIGN KEY (changed_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+
+  CONSTRAINT ownership_history_reason_not_blank      CHECK (btrim(reason) <> ''),
+  CONSTRAINT ownership_history_entity_type_not_blank CHECK (btrim(entity_type) <> ''),
+  CONSTRAINT ownership_history_actor_id_needs_user   CHECK (changed_by_user_id IS NULL OR actor_type = 'user')
+);
+
+CREATE INDEX IF NOT EXISTS ownership_history_entity_idx
+  ON ownership_history (entity_type, entity_id, id DESC);
+CREATE INDEX IF NOT EXISTS ownership_history_new_owner_idx
+  ON ownership_history (new_owner_user_id, id DESC);
+CREATE INDEX IF NOT EXISTS ownership_history_prev_owner_idx
+  ON ownership_history (previous_owner_user_id, id DESC);
 
 COMMIT;

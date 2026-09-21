@@ -21,6 +21,7 @@ import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
 import { activityRouter } from './routes/activity.js';
+import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import {
@@ -90,6 +91,10 @@ app.use('/api/payment-stages', stageRouter);
 app.use('/api/vendor-invoices', vendorInvoiceRouter);
 app.use('/api/expense-claims', claimRouter);
 app.use('/api/travel-logs', travelRouter);
+
+// Administrative ownership assignment and handover history (#18 Phase 3).
+// Mounted ahead of generic CRUD so :id/owner and :id/ownership-history match first.
+app.use('/api', ownershipRouter);
 
 for (const [name, def] of Object.entries(resources)) {
   app.use(`/api/${name}`, crudRouter(name, def));

@@ -32,6 +32,9 @@ export const ACTIONS = {
   COMPANY_MERGED: 'company.merged',
   JOB_RUN: 'job.run',
   EMAIL_TEST_SENT: 'email.test_sent',
+  OWNERSHIP_ASSIGNED: 'ownership.assigned',
+  OWNERSHIP_REASSIGNED: 'ownership.reassigned',
+  OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */
