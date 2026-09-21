@@ -112,7 +112,22 @@ function buildServer(token) {
   return server;
 }
 
-mcpRouter.use(rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false }));
+// Per token, as #50 asks, not per address. Behind a proxy every MCP client
+// arrives from the same address, so an IP bucket is one budget shared by
+// all of them and one busy client starves the rest. The token is hashed
+// into the key so the plaintext is never held in the limiter's store; a
+// caller with no token at all falls back to the address, which is the right
+// bucket for traffic that has not identified itself.
+mcpRouter.use(rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const bearer = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    return bearer ? `token:${hash(bearer)}` : `ip:${req.ip}`;
+  },
+}));
 
 mcpRouter.post('/', async (req, res) => {
   const token = await authenticate(req);

@@ -55,6 +55,10 @@ delete that account's recent failures from `auth_events`.
   enforced; the address-wide one is five times the limit and applies only
   when the address is genuinely the caller's (`TRUST_PROXY > 0`, or no proxy
   at all). A correct sign-in clears the count it belongs to.
+- **The MCP rate limit is per token, not per address**, as #50 asks. Behind
+  a proxy every client arrives from the same address, so one budget was
+  shared by all of them and one busy client starved the rest. The token is
+  hashed into the key, so the limiter never holds the plaintext.
 - **`/metrics` and `/api/health?deep=1` re-read the account.** Both used
   `readSession`, which checks the signature and the expiry and nothing else,
   so a deactivated, deleted or demoted user kept reading them for up to
