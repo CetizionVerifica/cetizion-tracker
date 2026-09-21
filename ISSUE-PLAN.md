@@ -93,6 +93,51 @@ The lead's own order puts #33, #34 and #35 first. They are last here only
 because they need server access we do not have; the moment the lead gives it,
 they jump to the front.
 
+## Review round 2: rebased onto main (21 September)
+
+The lead asked on #58 for a rebase rather than a merge, one batch at a time:
+rebase onto `main`, get it green, he merges it, then the next one rebases onto
+`main`. That is what these branches now are.
+
+**What main had moved on to** (29 commits since 17 September): the users table,
+database sign-in and auth hardening (#71, #80, #81), shared report helpers and
+status constants (#64, #70), dated exchange rates and reference counters (#79),
+the import review label (#82), zod 4 and dotenv 18 (#84), React 19 and Vite 8
+(#67). Zod 4 needed no changes here: the preparation done on 17 September holds.
+
+**Migration numbers.** main holds 013 to 016, and #83 is expected to take 017,
+so ours start at 018 as the lead asked:
+
+| Batch | Migrations |
+| --- | --- |
+| 2 | 018 to 022 |
+| 3 | 023 to 026 |
+| 4 | 027 to 031 |
+| 5 | 032 to 036 |
+| 6 | 037 to 040 |
+
+**The 14 findings from the round 1 review are all fixed**, and each was checked
+against the source again after the rebase, not just against this plan.
+
+**Checks, per batch, on the new dependencies:** server tests 377 / 378 / 389 /
+409 / 425, web build, and the migration check against `origin/main`, all green.
+Browser tests 4/4. Every screen loads with no console errors, and the selling
+and collecting flows were exercised end to end against the local database.
+
+**Two collisions for the lead to sequence**, neither of which blocks these
+branches:
+
+- **#86** (sales report and country fields) claims migrations 017 **and** 018,
+  and 018 is batch 2's first. Whoever merges second renumbers.
+- **#83** adds `server/src/routes/activity.js`, which batch 3 also adds for the
+  timeline (#22). Two different features in one file name: that one needs a
+  decision, not a renumber.
+
+**Not in these branches:** the follow-up reminder workflows asked for
+separately on 20 September are held back on a local branch until these are
+merged, and the country and turnaround fields built on 20 September were
+removed once #86 turned out to cover them.
+
 ## Checkpoints
 
 All work sits on the local branch `work/all-issues`, one commit per issue,
