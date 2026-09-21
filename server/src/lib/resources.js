@@ -72,6 +72,7 @@ const requiredDate = () =>
   z.preprocess(blankToNull, z.string({ error: 'Required' }).regex(DATE_PATTERN, 'Use YYYY-MM-DD'));
 
 const int = (opts) => num(opts).transform((v) => (v === null || v === undefined ? v : Math.round(v)));
+const requiredInt = (opts) => requiredNum(opts).transform((v) => Math.round(v));
 
 const bool = () =>
   z.preprocess(
@@ -391,7 +392,7 @@ export const resources = {
     ],
     schema: z.object({
       project_id: requiredStr(40),
-      step_no: int({ min: 1 }),
+      step_no: requiredInt({ min: 1 }),
       stage: str(60),
       step: requiredStr(400),
       owner: str(120),
@@ -496,7 +497,7 @@ export const resources = {
     columns: ['name', 'probability', 'type', 'maps_to_status', 'sort_order', 'color', 'rotting_days', 'active'],
     schema: z.object({
       name: requiredStr(80),
-      probability: int({ min: 0, max: 100 }),
+      probability: requiredInt({ min: 0, max: 100 }),
       type: enumOf(['open', 'paused', 'won', 'lost']).default('open'),
       maps_to_status: enumOf(STATUS.quotation).default('Submitted'),
       sort_order: int().default(0),
@@ -526,10 +527,10 @@ export const resources = {
     filters: ['template_id'],
     columns: ['template_id', 'sort_order', 'stage_name', 'percent', 'trigger_event', 'credit_days', 'milestone_name'],
     schema: z.object({
-      template_id: int({ min: 1 }),
+      template_id: requiredInt({ min: 1 }),
       sort_order: int().default(0),
       stage_name: requiredStr(120),
-      percent: num({ min: 0.01, max: 100 }),
+      percent: requiredNum({ min: 0.01, max: 100 }),
       trigger_event: enumOf(STATUS.trigger).default('On PO Registration'),
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
@@ -556,8 +557,8 @@ export const resources = {
     filters: ['template_id'],
     columns: ['template_id', 'step_no', 'stage', 'step', 'owner_role', 'days_after_start'],
     schema: z.object({
-      template_id: int({ min: 1 }),
-      step_no: int({ min: 1 }),
+      template_id: requiredInt({ min: 1 }),
+      step_no: requiredInt({ min: 1 }),
       stage: str(60),
       step: requiredStr(400),
       owner_role: str(60),
@@ -624,7 +625,7 @@ export const resources = {
     filters: ['quotation_id', 'service_id'],
     columns: ['quotation_id', 'service_id', 'description', 'qty', 'unit', 'rate', 'discount_percent', 'gst_rate', 'sort_order'],
     schema: z.object({
-      quotation_id: int({ min: 1 }),
+      quotation_id: requiredInt({ min: 1 }),
       service_id: int({ min: 1 }),
       description: requiredStr(500),
       qty: num({ min: 0.01 }).default(1),

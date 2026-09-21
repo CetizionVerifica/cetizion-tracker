@@ -77,3 +77,24 @@ describe('amounts', () => {
     assert.equal(fields.amount_reimbursed, 'Enter an amount');
   });
 });
+
+describe('columns the database will not accept as empty', () => {
+  // Each of these is NOT NULL with no default. Declared optional, a missing
+  // value slipped past validation, reached Postgres and came back as a 500
+  // with no field named — so the form had nothing to show the person.
+  const cases = [
+    ['a pipeline stage without a probability', '/api/pipeline-stages', { name: 'Negotiating', type: 'open' }, 'probability'],
+    ['a quotation line with no quotation', '/api/quotation-lines', { description: 'Audit', qty: 1, rate: 100 }, 'quotation_id'],
+    ['a payment-terms line with no template', '/api/payment-terms-template-lines', { stage_no: 1, stage_name: 'Advance', percent: 50 }, 'template_id'],
+    ['a payment-terms line with no percentage', '/api/payment-terms-template-lines', { template_id: 1, stage_no: 1, stage_name: 'Advance' }, 'percent'],
+    ['a checklist line with no step number', '/api/onboarding-template-lines', { template_id: 1, step: 'Kick-off' }, 'step_no'],
+  ];
+
+  for (const [name, path, body, field] of cases) {
+    test(`${name} is a field error, not a 500`, async () => {
+      const fields = await fieldsFrom(path, body);
+
+      assert.equal(fields[field], 'Required');
+    });
+  }
+});
