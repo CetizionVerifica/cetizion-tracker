@@ -664,21 +664,31 @@ COMMIT;
 -- gaps and left out of the sums, never taken as zero silently.
 -- ---------------------------------------------------------------------
 CREATE VIEW v_project_profitability AS
+-- The rate in force on the PO's own date, from the exchange_rates table
+-- the sales reports read. The fx_rate_% settings this used to read were
+-- retired by migration 013 and can no longer hold a value: every foreign
+-- PO converted to NULL, so the project showed real costs against no
+-- revenue and reported a loss it had not made.
 WITH fx AS (
-  SELECT 'INR'::text AS currency, 1::numeric AS rate
+  SELECT 'INR'::text AS currency, 1::numeric AS rate, '0001-01-01'::date AS effective_from
   UNION ALL
-  SELECT substr(key, 9),
-         CASE WHEN btrim(value) ~ '^[0-9]+(\.[0-9]+)?$' THEN NULLIF(btrim(value)::numeric, 0) END
-    FROM settings WHERE key LIKE 'fx\_rate\_%' AND key <> 'fx_rate_INR'
+  SELECT from_currency, rate, effective_from FROM exchange_rates WHERE to_currency = 'INR'
 ),
 po AS (
   SELECT v.project_id,
-         SUM(v.po_value * fx.rate)       AS revenue,
-         SUM(v.total_invoiced * fx.rate) AS invoiced,
-         SUM(v.total_received * fx.rate) AS received,
-         COUNT(*) FILTER (WHERE fx.rate IS NULL) AS revenue_gaps,
+         SUM(v.po_value * r.rate)        AS revenue,
+         SUM(v.total_invoiced * r.rate)  AS invoiced,
+         SUM(v.total_received * r.rate)  AS received,
+         COUNT(*) FILTER (WHERE r.rate IS NULL) AS revenue_gaps,
          MIN(v.po_date)                  AS first_po_date
-    FROM v_purchase_orders v LEFT JOIN fx ON fx.currency = v.currency
+    FROM v_purchase_orders v
+    LEFT JOIN LATERAL (
+      SELECT fx.rate FROM fx
+       WHERE fx.currency = v.currency
+         AND fx.effective_from <= COALESCE(v.po_date, CURRENT_DATE)
+       ORDER BY fx.effective_from DESC
+       LIMIT 1
+    ) r ON true
    GROUP BY v.project_id
 ),
 trips AS (

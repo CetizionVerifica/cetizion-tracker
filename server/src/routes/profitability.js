@@ -58,8 +58,11 @@ profitabilityRouter.get('/projects/:id', async (req, res) => {
             WHERE po.project_id = $1 ORDER BY c.submission_date NULLS LAST`, [id]),
     query(`SELECT pc.*, d.file_name FROM project_costs pc LEFT JOIN documents d ON d.id = pc.document_id WHERE pc.project_id = $1 ORDER BY pc.incurred_on NULLS LAST, pc.id`, [id]),
   ]);
-  const { rows: fx } = await query(`SELECT substr(key, 9) AS currency, value FROM settings WHERE key LIKE 'fx\_rate\_%'`);
-  const rates = Object.fromEntries(fx.filter((r) => Number(r.value) > 0).map((r) => [r.currency, Number(r.value)]));
+  // The rates live in exchange_rates since #79; the fx_rate_% settings were
+  // retired and refuse a value, so reading them labelled every foreign cost
+  // "no exchange rate" while the rate was sitting on the Settings screen.
+  const { rows: fx } = await query('SELECT DISTINCT ON (from_currency) from_currency AS currency, rate FROM exchange_rates WHERE to_currency = $1 ORDER BY from_currency, effective_from DESC', ['INR']);
+  const rates = Object.fromEntries(fx.filter((r) => Number(r.rate) > 0).map((r) => [r.currency, Number(r.rate)]));
   const lines = [
     ...vendors.rows.map((r) => ({ kind: 'travel_vendor', ...r, gap: r.amount == null ? 'No invoice amount' : null, committed: r.amount == null ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
     ...claims.rows.map((r) => ({ kind: 'expense_claim', ...r, gap: null, committed: r.approval_status === 'Rejected' ? 0 : Math.max(Number(r.amount) - Number(r.amount_paid), 0) })),
