@@ -42,39 +42,19 @@ import { api } from './lib/api.js';
 import { useAuth } from './lib/auth.jsx';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button.tsx';
+import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
-  BadgeCheck,
-  Bell,
   Building2,
-  CalendarDays,
-  ChartNoAxesColumn,
-  CheckSquare,
   ClipboardList,
-  Columns3,
   FileText,
   FolderKanban,
+  Home,
   Inbox as InboxIcon,
   IndianRupee,
-  LayoutDashboard,
-  LayoutTemplate,
   LogOut,
-  Mail,
-  MailOpen,
-  MapPinned,
-  MessageSquare,
   PanelLeft,
-  Percent,
-  PiggyBank,
   Plane,
-  ReceiptText,
-  RefreshCw,
-  Scale,
-  Settings as SettingsIcon,
-  Target,
-  TrendingUp,
-  Upload,
-  Wallet,
-  Webhook,
+  Search,
 } from 'lucide-react';
 
 // A fresh review (tab, filters, messages) for each batch.
@@ -83,68 +63,86 @@ function ImportReviewPage() {
   return <ImportReview key={id} />;
 }
 
-const NAV = [
-  {
-    label: 'Overview',
-    items: [
-      { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
-      { to: '/notifications', icon: Bell, label: 'Notifications', badge: 'notifications' },
-      { to: '/worklist', icon: Target, label: 'Action list', badge: 'worklist' },
-      { to: '/tasks', icon: CheckSquare, label: 'Tasks' },
-    ],
-  },
-  {
-    label: 'Sales',
-    items: [
-      { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
-      { to: '/companies', icon: Building2, label: 'Companies' },
-      { to: '/enquiries', icon: MessageSquare, label: 'Enquiries' },
-      { to: '/quotations', icon: FileText, label: 'Quotations' },
-      { to: '/pipeline', icon: Columns3, label: 'Pipeline' },
-      { to: '/renewals', icon: RefreshCw, label: 'Renewals' },
-      { to: '/sales-report', icon: ChartNoAxesColumn, label: 'Sales reports' },
-    ],
-  },
-  {
-    label: 'Delivery',
-    items: [
-      { to: '/projects', icon: FolderKanban, label: 'Projects' },
-      { to: '/purchase-orders', icon: ClipboardList, label: 'Purchase orders' },
-      { to: '/schedule', icon: CalendarDays, label: 'Schedule' },
-      { to: '/deliverables', icon: BadgeCheck, label: 'Certificates' },
-    ],
-  },
-  {
-    label: 'Finance',
-    items: [
-      { to: '/payment-stages', icon: IndianRupee, label: 'Payment schedule', badge: 'stages' },
-      { to: '/collections', icon: PiggyBank, label: 'Collections' },
-      { to: '/cashflow', icon: TrendingUp, label: 'Cash-flow forecast' },
-      { to: '/profitability', icon: Percent, label: 'Profitability' , adminOnly: true },
-      { to: '/accounting', icon: Scale, label: 'Accounting' , adminOnly: true },
-    ],
-  },
-  {
-    label: 'Travel & expenses',
-    items: [
-      { to: '/travel', icon: Plane, label: 'Trips' },
-      { to: '/vendor-invoices', icon: ReceiptText, label: 'Vendor invoices', badge: 'vendors' },
-      { to: '/expense-claims', icon: Wallet, label: 'Expense claims', badge: 'claims' },
-      { to: '/travel-dashboard', icon: MapPinned, label: 'Travel spend' },
-    ],
-  },
-  {
-    label: 'Admin',
-    items: [
-      { to: '/settings', icon: SettingsIcon, label: 'Settings' },
-      { to: '/import', icon: Upload, label: 'Bulk import' },
-      { to: '/emails', icon: Mail, label: 'Emails & jobs' },
-      { to: '/mailboxes', icon: MailOpen, label: 'Mailboxes', adminOnly: true },
-      { to: '/webhooks', icon: Webhook, label: 'Webhooks', adminOnly: true },
-      { to: '/templates', icon: LayoutTemplate, label: 'Templates', adminOnly: true },
-    ],
-  },
+/**
+ * Two links, three saved views and six record types.
+ *
+ * This used to list thirty screens in six groups, and the design's finding
+ * was that a list that long is not navigation — it is a filing cabinet you
+ * read every time. Everything that left is a word away in ⌘K, which is
+ * also the only place that answers "how do I do X", because it holds the
+ * verbs rather than the screens.
+ */
+const NAV_TOP = [
+  { to: '/', icon: Home, label: 'Today', end: true },
+  { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
 ];
+
+/**
+ * The views worth a permanent place, each with the count that makes it
+ * worth looking at. The square is a second signal beside the colour, and
+ * the count carries the colour of what it means.
+ */
+const NAV_PINNED = [
+  { to: '/collections', label: 'Overdue money', badge: 'overdue', tone: 'late' },
+  { to: '/payment-stages', label: 'To invoice', badge: 'toInvoice', tone: 'waiting' },
+  { to: '/quotations', label: 'Open deals', badge: 'openDeals', tone: 'info' },
+];
+
+const NAV_RECORDS = [
+  { to: '/quotations', icon: FileText, label: 'Deals' },
+  { to: '/companies', icon: Building2, label: 'Companies' },
+  { to: '/projects', icon: FolderKanban, label: 'Projects' },
+  { to: '/purchase-orders', icon: ClipboardList, label: 'Orders' },
+  { to: '/payment-stages', icon: IndianRupee, label: 'Payment stages' },
+  { to: '/travel', icon: Plane, label: 'Trips' },
+];
+
+const TONES = {
+  late: { dot: 'bg-late', count: 'text-late' },
+  waiting: { dot: 'bg-waiting', count: 'text-waiting' },
+  info: { dot: 'bg-info', count: 'text-muted-foreground' },
+};
+
+function SideHeading({ children }) {
+  return (
+    <div className="px-2.5 pt-5 pb-2 text-[10.5px] font-semibold tracking-[0.1em] text-muted-foreground uppercase">
+      {children}
+    </div>
+  );
+}
+
+function SideLink({ item, counts, alerts }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      className={({ isActive }) => cn(
+        'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
+        'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        isActive && 'bg-primary/12 font-semibold text-primary'
+      )}
+    >
+      {/* Decorative — the label is what names the page. */}
+      <item.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {item.badge && counts[item.badge] > 0 && (
+        <span className={cn(
+          'num rounded-full px-1.5 py-px text-[11px] font-semibold',
+          alerts[item.badge] ? 'bg-late/15 text-late' : 'bg-secondary text-secondary-text'
+        )}>
+          {counts[item.badge]}
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
+/** Two letters for the avatar, from however many names somebody has. */
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '—';
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+}
 
 // The burger in every page header toggles the sidebar. The choice is
 // remembered per browser so a hidden sidebar stays hidden after a reload.
@@ -162,6 +160,7 @@ export default function App() {
   const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
   const location = useLocation();
   const { displayName, signOut, isAdmin } = useAuth();
+  const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
@@ -169,28 +168,21 @@ export default function App() {
   const w = data?.data;
   const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
+  const { data: oData } = useFetch(() => api.raw('/dashboard/overview'), []);
+  const overview = oData?.data;
+  // A pinned view is only worth its place if it says how much is behind it.
   const counts = {
-    worklist: w
-      ? w.payment_stages.length + w.vendor_invoices.length + w.expense_claims.length +
-        w.late_deliveries.length + w.won_without_project.length
-      : null,
-    notifications: nData?.data?.unread ?? null,
     inbox: iData?.data?.open ?? null,
-    stages: w?.payment_stages.length ?? null,
-    vendors: w?.vendor_invoices.length ?? null,
-    claims: w?.expense_claims.length ?? null,
+    notifications: nData?.data?.unread ?? null,
+    overdue: w?.payment_stages.filter((s) => s.stage_status === 'Overdue').length ?? null,
+    toInvoice: w?.payment_stages.filter((s) => s.stage_status === 'To Invoice').length ?? null,
+    openDeals: overview?.sales?.open ?? null,
   };
-  const alerts = {
-    worklist: w ? w.payment_stages.some((s) => s.stage_status === 'Overdue') : false,
-    stages: w ? w.payment_stages.some((s) => s.stage_status === 'Overdue') : false,
-    vendors: w ? w.vendor_invoices.some((v) => v.payment_status === 'Overdue') : false,
-    claims: false,
-    notifications: false,
-    inbox: (iData?.data?.overdue ?? 0) > 0,
-  };
+  const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0 };
 
   return (
     <SidebarContext.Provider value={sidebar}>
+    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} />
     <div className="flex min-h-screen bg-background text-foreground">
       <aside
         className={cn(
@@ -198,57 +190,64 @@ export default function App() {
           hidden && '-translate-x-full'
         )}
       >
-        <div className="flex flex-col gap-1 border-b border-sidebar-border px-4 py-4">
-          <div className="flex items-center gap-2.5">
-            <span className="grid size-7 place-items-center rounded-[6px] bg-primary font-semibold text-primary-foreground">C</span>
-            <span className="text-[15px] font-semibold text-foreground">Cetizion</span>
-          </div>
-          <div className="text-[11.5px] text-muted-foreground">Sales · Projects · Payments · Travel</div>
+        <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+          <span className="grid size-6 shrink-0 place-items-center rounded-[6px] bg-primary text-[12px] font-bold text-primary-foreground">C</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">Cetizion Verifica</span>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2 py-3">
-          {NAV.map((group) => (
-            <div className="mb-4" key={group.label}>
-              <div className="px-2 pb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                {group.label}
-              </div>
-              {group.items.filter((item) => isAdmin || !item.adminOnly).map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) => cn(
-                    'flex h-control items-center gap-2.5 rounded-[6px] px-2 text-[13px] text-sidebar-foreground transition-colors duration-150',
-                    'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                    isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                  )}
-                >
-                  {/* The icon is decorative — the label is what names the page. */}
-                  <item.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {item.badge && counts[item.badge] > 0 && (
-                    <span
-                      className={cn(
-                        'num rounded-[6px] px-1.5 py-0.5 text-[11px] font-medium',
-                        alerts[item.badge]
-                          ? 'bg-late/15 text-late'
-                          : 'bg-secondary text-secondary-foreground'
-                      )}
-                    >
-                      {counts[item.badge]}
-                    </span>
-                  )}
-                </NavLink>
-              ))}
-            </div>
+        {/* The way to find anything, said once and kept in view. */}
+        <div className="px-3 pb-4">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="flex h-control w-full items-center gap-2 rounded-[6px] border border-border bg-card px-2.5 text-left transition-colors duration-150 hover:border-muted-foreground"
+          >
+            <Search className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
+            <span className="flex-1 truncate text-[12.5px] text-muted-foreground">Search or do anything</span>
+            <kbd className="num rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10.5px] text-secondary-text">⌘K</kbd>
+          </button>
+        </div>
+
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2">
+          {NAV_TOP.map((item) => (
+            <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
+          ))}
+
+          <SideHeading>Pinned</SideHeading>
+          {NAV_PINNED.map((item) => (
+            <NavLink
+              key={item.label}
+              to={item.to}
+              className={({ isActive }) => cn(
+                'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
+                'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                isActive && 'bg-sidebar-accent text-sidebar-accent-foreground'
+              )}
+            >
+              {/* A square as well as a colour: the state is never hue alone. */}
+              <span className="grid w-4 shrink-0 place-items-center" aria-hidden="true">
+                <span className={cn('size-[7px] rounded-[2px]', TONES[item.tone].dot)} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {counts[item.badge] > 0 && (
+                <span className={cn('num text-[11px] font-semibold', TONES[item.tone].count)}>{counts[item.badge]}</span>
+              )}
+            </NavLink>
+          ))}
+
+          <SideHeading>Records</SideHeading>
+          {NAV_RECORDS.map((item) => (
+            <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
         </nav>
 
-        <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-3 py-3">
-          <span className="min-w-0 truncate text-[12.5px] text-muted-foreground" title={displayName}>{displayName}</span>
-          <Button variant="ghost" size="sm" onClick={signOut} className="h-control gap-1.5 px-2 text-[12.5px]">
+        <div className="flex items-center gap-2 border-t border-sidebar-border px-3 py-3">
+          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold text-primary">
+            {initials(displayName)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-secondary-text" title={displayName}>{displayName}</span>
+          <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="size-7 shrink-0">
             <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
-            Sign out
           </Button>
         </div>
       </aside>

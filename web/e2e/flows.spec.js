@@ -26,9 +26,45 @@ async function signIn(page) {
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 }
 
+/**
+ * Everything the sidebar no longer lists is reached this way, so the
+ * palette is now on the critical path rather than a convenience.
+ */
+async function palette(page, type) {
+  await page.keyboard.press('Meta+k');
+  await expect(page.getByPlaceholder('Search or do anything')).toBeVisible();
+  await page.keyboard.type(type);
+}
+
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  await expect(page.locator('nav').getByRole('link', { name: /Quotations/ })).toBeVisible();
+  // Six record types, not thirty screens.
+  await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
+});
+
+test('the palette finds a record by half its client name', async ({ page }) => {
+  await signIn(page);
+  await palette(page, 'hind');
+  // The search is server-side and debounced, so wait for the group rather
+  // than the keystroke.
+  await expect(page.getByText(/Deals matching/)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('option', { name: /CTZ\/QT\// }).first().click();
+  await expect(page).toHaveURL(/\/quotations\/CTZ%2FQT%2F/);
+});
+
+test('the palette offers the verb, not the screen that owns it', async ({ page }) => {
+  await signIn(page);
+  await palette(page, 'raise an invoice');
+  await page.getByRole('option', { name: /Raise an invoice/ }).click();
+  // Choosing the verb asks which record, then turns into its form — all
+  // without leaving the page underneath.
+  await expect(page.getByPlaceholder('Which stage?')).toBeVisible();
+  await page.getByRole('option').first().click();
+  await expect(page.getByLabel(/Invoice number/)).toBeVisible();
+  await page.getByRole('button', { name: /Raise an invoice/ }).click();
+  await expect(page.getByText('Invoice number is needed.')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -43,7 +79,7 @@ test('a wrong password is refused', async ({ page }) => {
 test('quote a new client, then find the client once under Companies', async ({ page }) => {
   await signIn(page);
   const client = `E2E Client ${stamp}`;
-  await page.locator('nav').getByRole('link', { name: /Quotations/ }).click();
+  await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
   await page.getByRole('button', { name: '+ Quotation' }).click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
@@ -64,7 +100,10 @@ test('quote a new client, then find the client once under Companies', async ({ p
 
 test('import a sales sheet, review the duplicates, commit', async ({ page }) => {
   await signIn(page);
-  await page.locator('nav').getByRole('link', { name: /Bulk import/ }).click();
+  // Bulk import left the sidebar with the other twenty-odd screens; the
+  // palette is how it is reached now.
+  await palette(page, 'bulk import');
+  await page.getByRole('option', { name: 'Bulk import' }).click();
   await page.locator('input[type=file]').setInputFiles(join(here, 'fixtures', 'sales-sheet.xlsx'));
   await page.getByRole('button', { name: 'Upload and analyse' }).click();
   await expect(page.getByRole('heading', { name: /Import #\d+/ })).toBeVisible({ timeout: 90_000 });
