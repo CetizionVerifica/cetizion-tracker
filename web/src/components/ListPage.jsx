@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
+import { SavedViews } from './SavedViews.jsx';
 import { api } from '../lib/api.js';
 import { useDebounced, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -154,6 +155,16 @@ export function ListPage({
         {typeof banner === 'function' ? banner(rows) : banner}
 
         <Card flush>
+          <SavedViews
+            resource={resource}
+            filters={filterValues}
+            search={debouncedSearch}
+            onApply={(saved) => {
+              const { q, ...rest } = saved || {};
+              setSearch(q || '');
+              setFilterValues(rest);
+            }}
+          />
           <div className="toolbar">
             <div className="search">
               <span className="search__icon">⌕</span>
