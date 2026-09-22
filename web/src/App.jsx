@@ -316,7 +316,14 @@ export function PageHeader({ title, subtitle, actions }) {
         <h1 className="truncate text-2xl font-semibold text-foreground">{title}</h1>
         {subtitle && <div className="measure mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>}
       </div>
-      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+      {/* A filter in the header sizes to itself. The kit's fields are `w-full`
+          because they are built for forms; left that way each one claims the
+          whole actions column and the row becomes a stack. */}
+      {actions && (
+        <div className="page-actions flex shrink-0 flex-wrap items-center gap-2 [&_input]:w-auto [&_select]:w-auto">
+          {actions}
+        </div>
+      )}
     </header>
   );
 }
