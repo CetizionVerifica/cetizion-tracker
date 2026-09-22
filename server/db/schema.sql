@@ -2142,6 +2142,10 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   token_hash    text NOT NULL UNIQUE,
   token_prefix  text NOT NULL,
   role          text NOT NULL DEFAULT 'sales' CHECK (role IN ('admin','sales')),
+  -- role says whose records the token sees; this says whether it may
+  -- change any of them. Off unless asked for: a token requested without
+  -- saying otherwise is a reading token (#50).
+  can_write     boolean NOT NULL DEFAULT false,
   person        text,
   created_by    text,
   created_at    timestamptz NOT NULL DEFAULT now(),

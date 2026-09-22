@@ -15,17 +15,18 @@ export function ApiTokens() {
   const [shown, setShown] = useState(null);
   async function create() {
     try {
-      const r = await api.action('/api-tokens', { name: form.name, role: form.role, person: form.role === 'sales' ? form.person : undefined });
+      const r = await api.action('/api-tokens', { name: form.name, role: form.role, can_write: form.can_write, person: form.role === 'sales' ? form.person : undefined });
       setShown(r.data); setForm(null); refetch();
     } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
   }
   const endpoint = `${window.location.origin}/api/mcp`;
   return (
-    <Card flush title="Assistant access (MCP)" hint="Tokens that let Claude answer questions from live tracker data. They can read, and add notes, tasks, logged calls and next steps; nothing else."
-      actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setForm({ name: '', role: 'sales', person: '' })}>+ Token</button>}>
+    <Card flush title="Assistant access (MCP)" hint="Tokens that let Claude answer questions from live tracker data. A token reads only unless it is given writing, and writing means notes, tasks, logged calls and next steps; nothing else."
+      actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setForm({ name: '', role: 'sales', person: '', can_write: false })}>+ Token</button>}>
       <DataTable rows={data?.data ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No tokens yet.</div>} columns={[
         { key: 'name', header: 'Token', className: 'strong', render: (r) => <>{r.name}<div className="small muted mono">{r.token_prefix}…</div></> },
         { key: 'role', header: 'Sees', render: (r) => (r.role === 'admin' ? 'Everything' : `${r.person}'s records`) },
+        { key: 'can_write', header: 'May', render: (r) => (r.can_write ? 'Read and write' : 'Read only') },
         { key: 'last_used_at', header: 'Last used', className: 'small', render: (r) => (r.last_used_at ? new Date(r.last_used_at).toLocaleString() : 'never') },
         { key: 'calls', header: 'Calls', align: 'right' },
         { key: 'state', header: '', render: (r) => (r.revoked_at ? <Badge tone="danger">revoked</Badge> : <Badge tone="success">active</Badge>) },
@@ -36,6 +37,7 @@ export function ApiTokens() {
           <div className="form-grid">
             <Field label="Name" required hint="Whose and where, e.g. Priya's laptop"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
             <Field label="Sees"><Select value={form.role} placeholder={null} options={[{ value: 'sales', label: "One sales person's records" }, { value: 'admin', label: 'Everything (admin)' }]} onChange={(e) => setForm({ ...form, role: e.target.value })} /></Field>
+            <Field label="May"><Select value={form.can_write ? 'write' : 'read'} placeholder={null} options={[{ value: 'read', label: 'Read only' }, { value: 'write', label: 'Read, and add notes and tasks' }]} onChange={(e) => setForm({ ...form, can_write: e.target.value === 'write' })} /></Field>
             {form.role === 'sales' && <Field label="Sales person" required><Input list="token-people" value={form.person} onChange={(e) => setForm({ ...form, person: e.target.value })} /><datalist id="token-people">{lookups.sales_people.map((p) => <option key={p} value={p} />)}</datalist></Field>}
           </div>
         </Modal>

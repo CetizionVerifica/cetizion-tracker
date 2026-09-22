@@ -40,11 +40,15 @@ async function authenticate(req) {
 function buildServer(token) {
   const scope = { role: token.role, person: token.person };
   const server = new McpServer({ name: 'cetizion-tracker', version: '1.0.0' }, {
-    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`}`,
+    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`} ${token.can_write ? 'It may add notes and tasks.' : 'It may read only: nothing it does changes a record.'}`,
   });
   const json = (v) => ({ content: [{ type: 'text', text: JSON.stringify(v, null, 1) }] });
   const notFound = (what) => ({ isError: true, content: [{ type: 'text', text: `${what} was not found, or this token may not see it.` }] });
   const tool = (name, description, shape, fn, { write = false } = {}) => {
+    // A token that may not write does not list the write tools either. An
+    // MCP client reads the list and plans from it, so offering a tool it
+    // will be refused is worse than not offering it.
+    if (write && !token.can_write) return;
     server.registerTool(name, { description, inputSchema: shape, annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
@@ -150,7 +154,7 @@ mcpRouter.delete('/', (req, res) => res.status(405).set('Allow', 'POST').end());
 
 apiTokenRouter.get('/', async (req, res) => {
   const { rows } = await query(
-    `SELECT t.id, t.name, t.token_prefix, t.role, t.person, t.created_by, t.created_at, t.last_used_at, t.revoked_at,
+    `SELECT t.id, t.name, t.token_prefix, t.role, t.can_write, t.person, t.created_by, t.created_at, t.last_used_at, t.revoked_at,
             (SELECT COUNT(*)::int FROM api_token_log l WHERE l.token_id = t.id) AS calls
        FROM api_tokens t ORDER BY t.revoked_at IS NOT NULL, t.created_at DESC`);
   const { rows: log } = await query(
@@ -159,15 +163,15 @@ apiTokenRouter.get('/', async (req, res) => {
 });
 
 apiTokenRouter.post('/', async (req, res) => {
-  const parsed = z.object({ name: z.string().trim().min(1).max(120), role: z.enum(['admin', 'sales']), person: z.string().trim().max(120).optional() }).safeParse(req.body || {});
+  const parsed = z.object({ name: z.string().trim().min(1).max(120), role: z.enum(['admin', 'sales']), person: z.string().trim().max(120).optional(), can_write: z.boolean().optional().default(false) }).safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
   const v = parsed.data;
   if (v.role === 'sales' && !v.person) throw new ApiError(422, 'Please check the highlighted fields', { fields: { person: 'Whose records may this token see?' } });
   const token = `ctz_${crypto.randomBytes(32).toString('base64url')}`;
   const { rows: [t] } = await query(
-    `INSERT INTO api_tokens (name, token_hash, token_prefix, role, person, created_by) VALUES ($1,$2,$3,$4,$5,$6)
-     RETURNING id, name, token_prefix, role, person, created_at`,
-    [v.name, hash(token), token.slice(0, 10), v.role, v.role === 'sales' ? v.person : null, req.user?.username || 'admin']);
+    `INSERT INTO api_tokens (name, token_hash, token_prefix, role, can_write, person, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id, name, token_prefix, role, can_write, person, created_at`,
+    [v.name, hash(token), token.slice(0, 10), v.role, v.can_write, v.role === 'sales' ? v.person : null, req.user?.username || 'admin']);
   res.status(201).json({ data: { ...t, token } });
 });
 

@@ -101,7 +101,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
   });
 
   test('writes are marked as made through MCP and logged', async () => {
-    const asha = await token({ name: 'Asha writes', role: 'sales', person: 'Asha' });
+    const asha = await token({ name: 'Asha writes', role: 'sales', person: 'Asha', can_write: true });
     const note = await call(asha.token, 'add_note', { entity: 'quotation', id: 'QT-ASHA', text: 'Client asked for a call on Friday' });
     assert.equal(note.error, false, note.text);
     assert.equal((await call(asha.token, 'update_next_step', { quotation_no: 'QT-ASHA', next_step: 'Call on Friday' })).error, false);
@@ -112,11 +112,40 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     assert.ok(!JSON.stringify(list.body).includes(asha.token), 'the token value is never listed');
   });
 
+  test('a token reads unless it was given writing, and does not pretend otherwise', async () => {
+    // role says whose records a token sees; it never said whether the token
+    // may change them, so a token issued to answer questions could write
+    // notes and tasks on everything it could see (#50).
+    const reader = await token({ name: 'Reads only', role: 'admin' });
+    assert.equal(reader.can_write, false, 'a token asked for without saying otherwise is a reading token');
+
+    const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${reader.token}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 300, method: 'tools/list' });
+    const names = tools.body.result.tools.map((t) => t.name);
+    for (const w of ['create_task', 'add_note', 'log_touch', 'update_next_step']) {
+      assert.ok(!names.includes(w), `${w} is offered to a token that may not write`);
+    }
+    assert.ok(names.includes('list_pipeline'), 'and it can still do its job');
+    assert.match(tools.body.result.tools.length ? JSON.stringify(tools.body) : '', /list_pipeline/);
+
+    // Not merely hidden: asked for by name, it is refused.
+    const tried = await call(reader.token, 'add_note', { entity: 'quotation', id: 'QT-ASHA', text: 'Trying to write' });
+    assert.ok(tried.error || tried.status !== 200, 'a hidden tool is still refused when called directly');
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM notes WHERE body = 'Trying to write'`);
+    assert.equal(rows[0].n, 0, 'and nothing was written');
+
+    // A token given writing still writes.
+    const writer = await token({ name: 'May write', role: 'admin', can_write: true });
+    assert.equal(writer.can_write, true);
+    const wrote = await call(writer.token, 'add_note', { entity: 'quotation', id: 'QT-ASHA', text: 'A note from a writing token' });
+    assert.equal(wrote.error, false, wrote.text);
+  });
+
   test('a database error is not handed to the client verbatim', async () => {
     // 31 February passes the YYYY-MM-DD check and fails in Postgres. The
     // raw text names the column and the value, and it is written to the
     // token log, which every signed-in person can read.
-    const t = await token({ name: 'Clumsy', role: 'admin' });
+    const t = await token({ name: 'Clumsy', role: 'admin', can_write: true });
     const bad = await call(t.token, 'create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'A task with an impossible date', due_on: '2026-02-31' });
     assert.equal(bad.error, true);
     assert.doesNotMatch(bad.text, /out of range|due_on|column|relation|syntax/i, `raw database text reached the client: ${bad.text}`);
@@ -128,7 +157,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
 
     // And what the tracker does mean to say still reaches the client: a
     // record this token may not see is named as not found, not masked.
-    const sales = await token({ name: 'Asha reads', role: 'sales', person: 'asha' });
+    const sales = await token({ name: 'Asha reads', role: 'sales', person: 'asha', can_write: true });
     const notMine = await call(sales.token, 'create_task', { entity: 'quotation', id: 'QT-RAVI', title: 'A task on a deal that is not theirs' });
     assert.equal(notMine.error, true);
     assert.match(notMine.text, /was not found/);
@@ -153,7 +182,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
   });
 
   test('revoking a token stops it at once, and nothing destructive exists', async () => {
-    const t = await token({ name: 'Short lived', role: 'admin' });
+    const t = await token({ name: 'Short lived', role: 'admin', can_write: true });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });
     const names = tools.body.result.tools.map((x) => x.name);
     assert.ok(names.length >= 13);

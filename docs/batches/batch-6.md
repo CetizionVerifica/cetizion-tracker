@@ -63,6 +63,12 @@ delete that account's recent failures from `auth_events`.
   is signed in to with the admin the bootstrap creates. Inactive as well as
   blank, because `users_active_needs_login` says an account that can sign in
   has something to sign in with.
+- **A token can be read-only.** `role` said whose records a token sees and
+  never whether it could change them, so both roles reached `create_task`,
+  `add_note`, `log_touch` and `update_next_step` — a token issued to let an
+  assistant answer questions could write on everything it could see. Writing
+  is a separate choice now (`can_write`, migration 043), off unless asked
+  for, and a reading token is not even offered the write tools.
 - **The MCP rate limit is per token, not per address**, as #50 asks. Behind
   a proxy every client arrives from the same address, so one budget was
   shared by all of them and one busy client starved the rest. The token is
