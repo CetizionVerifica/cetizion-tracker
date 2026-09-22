@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
+import { FolderKanban } from 'lucide-react';
+import { RecordPage, RecordStat } from '../components/record.jsx';
 import {
   Card, Stat, Badge, DataTable, KeyValues, Progress, Tabs,
   ErrorState, Empty, useToast, Alert, ConfirmDialog,
@@ -14,6 +16,8 @@ import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
+
+const MENU_ITEM = 'rounded-[6px] px-2.5 py-1.5 text-left text-[13px] text-secondary-text hover:bg-accent hover:text-foreground';
 
 export default function ProjectDetail() {
   const { projectId } = useParams();
@@ -130,35 +134,67 @@ export default function ProjectDetail() {
 
   return (
     <>
-      <PageHeader
+      <RecordPage
+        parent="Projects"
+        parentTo="/projects"
         title={`${p.project_id} · ${p.client_name}`}
-        subtitle={[p.primary_service, p.project_manager && `PM ${p.project_manager}`].filter(Boolean).join(' · ')}
-        actions={
+        mark={<FolderKanban className="size-5" strokeWidth={1.75} aria-hidden="true" />}
+        facts={[
+          p.primary_service,
+          p.project_manager && `PM ${p.project_manager}`,
+          p.sales_person && `Sold by ${p.sales_person}`,
+          p.planned_delivery_date && `Due ${date(p.planned_delivery_date)}`,
+        ]}
+        action={
+          /* The project manager's one button is the delivery date, because
+             it is the only fact on this page that nothing else can tell us
+             — everything else follows from a PO, a stage or a trip. */
+          p.actual_delivery_date
+            ? <button type="button" className="btn" onClick={() => setDialog({ type: 'edit' })}>Edit project</button>
+            : <button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'edit' })}>Record delivery</button>
+        }
+        menu={
           <>
-            <Link className="btn" to="/projects">All projects</Link>
-            <button type="button" className="btn" onClick={() => setDialog({ type: 'edit' })}>Edit project</button>
-            <button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'newPo' })}>+ Purchase order</button>
+            <button type="button" className={MENU_ITEM} onClick={() => setDialog({ type: 'newPo' })}>Add a purchase order</button>
+            <button type="button" className={MENU_ITEM} onClick={() => setDialog({ type: 'edit' })}>Edit the project</button>
           </>
         }
-      />
-
-      <div className="page stack">
+        stats={
+          <>
+            {/* Sums across the project's POs, so they only read in one
+                currency. v_projects gives it, or null when the POs disagree
+                — then the amount is withheld rather than shown with the
+                wrong symbol, and the PO table below shows each properly. */}
+            <RecordStat
+              label="Money on this project"
+              value={amount(p.total_contract_value)}
+              detail={mixed ? 'POs in different currencies' : `${amount(p.total_invoiced)} invoiced · ${amount(p.total_received)} received`}
+            />
+            <RecordStat
+              label="Due now"
+              value={amount(p.balance_due_now)}
+              tone={p.balance_due_now > 0 ? 'late' : 'settled'}
+              detail={p.balance_to_bill > 0 ? `${amount(p.balance_to_bill)} still to bill` : p.payment_status}
+            />
+            <RecordStat
+              label="Trips"
+              value={number(travel.length)}
+              detail={travel.length ? `${money(p.total_travel_cost)} spent` : 'Nobody has travelled yet'}
+            />
+            <RecordStat
+              label="Delivery"
+              value={p.actual_delivery_date ? date(p.actual_delivery_date) : p.project_stage}
+              tone={p.delivery_variance_days > 0 ? 'late' : p.actual_delivery_date ? 'settled' : undefined}
+              detail={p.delivery_variance_days !== null
+                ? `${p.delivery_variance_days > 0 ? '+' : ''}${p.delivery_variance_days} days against plan`
+                : p.planned_delivery_date ? `Planned ${date(p.planned_delivery_date)}` : 'No date planned'}
+            />
+          </>
+        }
+      >
         {p.follow_up_action && (
           <Alert tone={p.payment_status === 'Overdue' ? 'danger' : 'warning'}>{p.follow_up_action}</Alert>
         )}
-
-        <div className="auto-grid--stats">
-          {/* Sums across the project's POs, so they only read in one currency.
-              v_projects gives it, or null when the POs disagree — then the
-              amount is withheld rather than shown with the wrong symbol, and
-              the PO table below shows each one properly. */}
-          <Stat label="Contract value" value={amount(p.total_contract_value)} meta={mixed ? 'POs in different currencies' : `${number(p.po_count)} purchase order(s)`} tone="brand" />
-          <Stat label="Invoiced" value={amount(p.total_invoiced)} meta={mixed ? 'see the purchase orders below' : `${amount(p.total_received)} received`} />
-          <Stat label="Due now" value={amount(p.balance_due_now)} tone={p.balance_due_now > 0 ? 'warn' : 'ok'} meta={p.payment_status} />
-          <Stat label="To bill" value={amount(p.balance_to_bill)} tone={p.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
-          <Stat label="Travel cost" value={money(p.total_travel_cost)} meta={`${travel.length} trip(s)`} />
-          <Stat label="Project stage" value={p.project_stage} meta={p.delivery_variance_days !== null ? `${p.delivery_variance_days > 0 ? '+' : ''}${p.delivery_variance_days} days vs plan` : 'Delivery not recorded'} />
-        </div>
 
         <Card title="Project details">
           <KeyValues
@@ -347,7 +383,7 @@ export default function ProjectDetail() {
         <ProjectProfit projectId={projectId} />
         <DeliverablesTable params={{ project_id: projectId }} preset={{ project_id: projectId }} compact title="Deliverables" hint="Issue the certificate or report this project produced. An expiry date schedules the renewal." />
         <Timeline entity="project" id={projectId} />
-      </div>
+      </RecordPage>
 
       {dialog?.type === 'newStep' && (
         <RecordForm

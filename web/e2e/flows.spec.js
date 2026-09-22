@@ -96,8 +96,12 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await expect(page.locator('table tbody tr')).toHaveCount(1);
   await page.locator('table tbody tr td').nth(1).click();
   await expect(page.getByRole('heading', { name: client })).toBeVisible();
-  // Tabs are a tablist now, not plain buttons: the role is the assertion.
-  await expect(page.getByRole('tab', { name: /Contacts \(1\)/ })).toBeVisible();
+  // The company record is one page now, not eight tabs: the people are in
+  // the rail and the deal is in the list it shares with orders.
+  await expect(page.getByText('People')).toBeVisible();
+  await expect(page.getByText('Test Contact').first()).toBeVisible();
+  await expect(page.getByText('Deals and orders')).toBeVisible();
+  await expect(page.getByText('EcoVadis').first()).toBeVisible();
 });
 
 test('import a sales sheet, review the duplicates, commit', async ({ page }) => {

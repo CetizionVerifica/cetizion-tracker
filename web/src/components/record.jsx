@@ -195,7 +195,9 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
         </div>
       )}
 
-      <div className="grid items-start gap-6 px-8 pt-6 pb-8 xl:grid-cols-[minmax(0,1fr)_340px]">
+      {/* The rail is 340px when there is one. Without it the sections take
+          the width, rather than leaving a column of nothing beside them. */}
+      <div className={cn('grid items-start gap-6 px-8 pt-6 pb-8', rail && 'xl:grid-cols-[minmax(0,1fr)_340px]')}>
         <div className="flex min-w-0 flex-col gap-4">{children}</div>
         {rail && <aside className="flex flex-col gap-4">{rail}</aside>}
       </div>
