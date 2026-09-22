@@ -454,6 +454,124 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       }
     });
   });
+  // ------------------------------------------------ batch 2's new surfaces
+
+  describe('the catalogues batch 2 adds', () => {
+    /**
+     * Seven Settings lists arrived with #58. They are the same kind of thing
+     * as services and exchange rates: everybody reads them, one person
+     * curates them. A pipeline stage's status mapping rewrites quotation
+     * statuses through a trigger, a payment-terms template is the invoicing
+     * schedule every new PO is built from, and deleting a lost reason blanks
+     * it on every record that used it.
+     */
+    const LISTS = [
+      'pipeline-stages', 'payment-terms-templates', 'payment-terms-template-lines',
+      'onboarding-templates', 'onboarding-template-lines', 'lead-sources', 'lost-reasons',
+    ];
+
+    for (const list of LISTS) {
+      test(`a sales user reads ${list} but cannot write it`, async () => {
+        const read = await as(sales.cookie)('get', `/api/${list}`);
+        assert.equal(read.status, 200, `${list} read -> ${read.status}`);
+
+        for (const [verb, path] of [['post', ''], ['patch', '/1'], ['delete', '/1']]) {
+          const res = await as(sales.cookie)(verb, `/api/${list}${path}`).send({ name: 'Nope' });
+          assert.equal(res.status, 403, `${verb} ${list} -> ${res.status}`);
+        }
+      });
+    }
+
+    test('an admin is not stopped by the gate', async () => {
+      for (const list of LISTS) {
+        const res = await as(admin.cookie)('post', `/api/${list}`).send({ name: 'Anything' });
+        assert.notEqual(res.status, 403, `${list} -> admin got 403`);
+      }
+    });
+  });
+
+  describe('discount approvals', () => {
+    /**
+     * #46 exists because a discount needs somebody else's yes. Asking is the
+     * salesperson's own request and stays open; deciding is the whole point
+     * and does not. The review of #58 found a sales user could raise a 40%
+     * discount and approve it, two clicks apart on the same screen.
+     */
+    test('a sales user cannot decide an approval', async () => {
+      const res = await as(sales.cookie)('post', '/api/quotations/any/approval/decide')
+        .send({ decision: 'approved' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('asking for one stays open to them', async () => {
+      const res = await as(sales.cookie)('post', '/api/quotations/no-such-quotation/approval/request')
+        .send({ reason: 'Client asked for a discount' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('an admin reaches the decision handler', async () => {
+      const res = await as(admin.cookie)('post', '/api/quotations/no-such-quotation/approval/decide')
+        .send({ decision: 'approved' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('an unauthenticated caller is turned away first', async () => {
+      const res = await as(null)('post', '/api/quotations/any/approval/decide').send({ decision: 'approved' });
+      assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
+
+  // ------------------------------------------------ batch 3's new surfaces
+
+  describe('money received, and the operational routes batch 3 adds', () => {
+    /**
+     * `payments` is the ledger payment_stages.amount_received is computed
+     * from, by trigger. Recording a receipt is ordinary sales work and goes
+     * through POST /payment-stages/:id/payment; editing or deleting a row of
+     * the ledger by hand moves Due now, Collections and the forecast with
+     * nothing to show for it.
+     *
+     * The three routes below each do the same work as something already
+     * gated: two are halves of daily jobs, and a hold stops the chasing job
+     * on a debt.
+     */
+    test('a sales user reads payments but cannot write them', async () => {
+      const read = await as(sales.cookie)('get', '/api/payments');
+      assert.equal(read.status, 200, `read -> ${read.status}`);
+
+      for (const [verb, path] of [['post', ''], ['patch', '/1'], ['delete', '/1']]) {
+        const res = await as(sales.cookie)(verb, `/api/payments${path}`).send({ amount: 1000 });
+        assert.equal(res.status, 403, `${verb} -> ${res.status}`);
+      }
+    });
+
+    test('an admin is not stopped by that gate', async () => {
+      const res = await as(admin.cookie)('post', '/api/payments').send({ amount: 1000 });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    for (const [label, path] of [
+      ['run the notification sweep', '/api/notifications/sweep'],
+      ['discover renewals', '/api/renewals/discover'],
+      ['put a debt on hold', '/api/collections/stages/1/hold'],
+    ]) {
+      test(`a sales user cannot ${label}`, async () => {
+        const res = await as(sales.cookie)('post', path).send({ on_hold: true });
+        assert.equal(res.status, 403, `${path} -> ${res.status}`);
+      });
+
+      test(`an admin reaches ${label}`, async () => {
+        const res = await as(admin.cookie)('post', path).send({ on_hold: true });
+        assert.notEqual(res.status, 403, `${path} -> ${res.status}`);
+      });
+    }
+
+    test('logging a chase stays open — that is the work itself', async () => {
+      const res = await as(sales.cookie)('post', '/api/collections/log').send({ stage_id: 1, channel: 'call', summary: 'Chased' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+  });
+
   // ------------------------------------------------ batch 4's new surfaces
 
   describe('mailboxes and the shared inbox', () => {

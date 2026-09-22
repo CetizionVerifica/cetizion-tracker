@@ -8,6 +8,7 @@
  *   POST /api/notifications/sweep                 run the collector now
  */
 import { Router } from 'express';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { collectNotifications } from '../lib/notify.js';
@@ -56,7 +57,9 @@ notificationsRouter.post('/read-all', async (req, res) => {
   res.json({ data: { marked: rowCount } });
 });
 
-notificationsRouter.post('/sweep', async (req, res) => {
+// The same work as the notifications.daily job, which POST /api/jobs/:name/run
+// gates for the same reason: running it by hand is an operational act.
+notificationsRouter.post('/sweep', requireAdmin, async (req, res) => {
   res.json({ data: await collectNotifications() });
 });
 
