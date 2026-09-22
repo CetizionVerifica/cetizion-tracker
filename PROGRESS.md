@@ -8,7 +8,7 @@ is waiting on a decision. Updated with every pull request. Last update:
 
 The tracker holds the company's quotations, projects, purchase orders, payment
 stages, invoices and travel spend. The team has logged 47 improvement items on
-GitHub. Seven were already fixed by the team, and fifteen more are now done in three batches. Five are being handled by PavithraCJ and shivam-balyan.
+GitHub. Seven were already fixed by the team, and twenty more are now done in four batches. Five are being handled by PavithraCJ and shivam-balyan.
 Three need a decision from the lead. The remaining 30 are planned in six
 batches below, and Sami is working through them in order.
 
@@ -138,6 +138,45 @@ expense claims.
 for tasks due, follow-ups, approvals, newly overdue invoices, renewals and
 quotations about to expire. A digest email goes out every morning.
 
+### Batch 4: talking to clients (done, checkpoint 4)
+
+**One-click contact (#31).** Every client record has Email, Call and
+WhatsApp buttons for its contacts. Afterwards a short form logs what
+happened and the next step, which becomes a task. Each touch updates when
+the client was last contacted, and the Action list shows open deals and
+overdue invoices nobody has touched for a week. Contacts can be marked do
+not contact.
+
+**Client acceptance (#53).** A quotation can be sent as a private link.
+The client reviews it on their phone or computer and accepts with their
+name, or asks for changes. We keep exactly what they accepted. Acceptance
+moves the deal to "awaiting PO" and tells the owner; a change request
+sends it back to negotiation with the comment. Old links stop working when
+the quotation is revised or expires.
+
+**Certificates register (#43).** Every certificate, scorecard and report
+we issue is recorded with its number, dates, scope and file, on the client
+and the project. The expiry date schedules the renewal, and the owner is
+reminded 120, 90 and 30 days before. Replacing a certificate keeps the old
+one on file.
+
+**Email on the records (#29).** People can connect their Microsoft 365
+mailbox. Client emails then appear on the company and the deal they belong
+to, new contacts are added from them, and replies can be sent from the
+tracker in the same Outlook thread. Each person chooses whether the team
+sees full emails, subjects only, or only who and when. Internal mail is
+never copied.
+
+**Shared sales inbox (#30).** Mail to a shared address such as
+sales@ becomes a list of conversations, each with an owner and a reply
+deadline. Replies go from the shared address, with ready-made answers. New
+business turns into an enquiry in one click.
+
+#29 and #30 are finished and tested with a stand-in mailbox. To switch them
+on, the lead registers the tracker as an app in Microsoft 365 (about 15
+minutes; steps are in the environment example file) and connects the
+mailboxes.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -187,3 +226,6 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   one-step PO registration with templates, approvals). Checkpoint 2 tagged.
 - 2026-09-17: Batch 3 finished (timeline and tasks, collections, renewals,
   cash-flow forecast, notifications). Checkpoint 3 tagged; nothing pushed.
+- 2026-09-17: Batch 4 finished (one-click contact, client acceptance links,
+  certificates register, Microsoft 365 email, shared inbox). Checkpoint 4
+  tagged; nothing pushed.

@@ -34,6 +34,7 @@
     "pdfmake": "^0.3.11",
     "pg": "^8.13.1",
     "pg-boss": "^12.33.1",
+    "sanitize-html": "^2.17.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"
   },

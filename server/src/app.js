@@ -31,6 +31,11 @@ import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
 import { notificationsRouter } from './routes/notifications.js';
+import { communicationsRouter } from './routes/communications.js';
+import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js';
+import { deliverablesRouter } from './routes/deliverables.js';
+import { mailboxRouter, mailThreadRouter, mailWebhookRouter } from './routes/mailboxes.js';
+import { inboxRouter } from './routes/inbox.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -42,6 +47,20 @@ const app = express();
 // the proxy. Left off by default: trusting a proxy that is not there lets a
 // caller forge their own address.
 app.set('trust proxy', config.trustProxy);
+
+// The other half of that setting: if a proxy IS in front of us and this says
+// there is not, req.ip is the proxy's address for every visitor. Rate limits
+// then share one bucket for the whole internet and the IP recorded against a
+// client's acceptance is Traefik's, not theirs. It only shows in production
+// and it shows as something else, so say it once and say it plainly.
+let proxyWarned = false;
+app.use((req, _res, next) => {
+  if (!proxyWarned && !config.trustProxy && req.headers['x-forwarded-for']) {
+    proxyWarned = true;
+    console.warn('[config] Requests carry X-Forwarded-For but TRUST_PROXY=0, so every caller looks like the proxy: rate limits are one shared bucket and recorded IP addresses are wrong. Set TRUST_PROXY to the number of proxies in front of this API (1 behind Dokploy or Traefik).');
+  }
+  next();
+});
 
 app.use(helmet());
 app.use(compression());
@@ -70,6 +89,12 @@ app.get('/api/health', async (req, res) => {
 
 app.use('/api/auth', authRouter);
 
+// Public by design: a client opens their own quotation with a single-use
+// token (#53). The router rate-limits itself and shows nothing else.
+app.use('/api/public/accept', publicAcceptanceRouter);
+// Microsoft Graph posts mail notifications here; each is checked against its subscription's secret.
+app.use('/api/mail', mailWebhookRouter);
+
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
 
@@ -92,12 +117,18 @@ app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/communications', communicationsRouter);
+app.use('/api/deliverables', deliverablesRouter);
+app.use('/api/mailboxes', mailboxRouter);
+app.use('/api/mail', mailThreadRouter);
+app.use('/api/inbox', inboxRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
 app.use('/api/purchase-orders', poRouter);
 app.use('/api/quotations', registerRouter);
 app.use('/api/quotations', approvalRouter);
+app.use('/api/quotations', acceptanceRouter);
 app.use('/api/quotations', quotationDocRouter);
 app.use('/api/quotations', quotationRouter);
 app.use('/api/payment-stages', stageRouter);

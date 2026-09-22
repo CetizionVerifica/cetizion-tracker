@@ -6,6 +6,7 @@ import { RecordForm } from '../components/RecordForm.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
+import { AcceptanceLinks } from '../components/AcceptanceLinks.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -164,6 +165,7 @@ export default function QuotationDetail() {
             ]} />
           </Card>
         )}
+        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !q.accepted_at} onChanged={refetch} />
         <Timeline entity="quotation" id={q.quotation_no} />
       </div>
 

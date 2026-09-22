@@ -44,6 +44,12 @@ export function decideDelivery({ to, mode = config.mail.mode, enabled = true, al
   return { deliver: true };
 }
 
+/** A copy of a body with every secret in it replaced, for the email log. */
+export function redact(body, secrets = []) {
+  if (body === null || body === undefined) return body;
+  return secrets.filter(Boolean).reduce((s, secret) => s.split(String(secret)).join('[redacted]'), String(body));
+}
+
 async function emailsEnabled(db) {
   const { rows } = await db.query(`SELECT value FROM settings WHERE key = 'emails_enabled'`);
   return !rows.length || rows[0].value.trim().toLowerCase() !== 'false';
@@ -53,13 +59,19 @@ async function emailsEnabled(db) {
  * Compose, log and (when allowed) send one email. Returns the email_log row.
  * Never throws for a delivery failure: the row records it, the caller goes on.
  */
-export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [] }, db = { query }) {
+export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [], secrets = [] }, db = { query }) {
   const enabled = await emailsEnabled(db);
   const decision = decideDelivery({ to, enabled, optedOut });
+  // The client gets the real message; the log keeps a copy with any secret
+  // in it masked. An acceptance link is a bearer token and the log is
+  // readable inside the tracker: stored in clear, anyone who can list
+  // emails could accept a quotation as the client (#53).
+  const storedText = redact(text, secrets);
+  const storedHtml = redact(html, secrets);
   const { rows: [row] } = await db.query(
     `INSERT INTO email_log (to_email, cc, subject, template, entity, entity_id, status, mode, reason, body_text, body_html, sent_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [to, cc, subject, template, entity, entityId === null ? null : String(entityId), decision.deliver ? 'queued' : 'suppressed', config.mail.mode, decision.reason || null, text, html, sentBy]
+    [to, cc, subject, template, entity, entityId === null ? null : String(entityId), decision.deliver ? 'queued' : 'suppressed', config.mail.mode, decision.reason || null, storedText, storedHtml, sentBy]
   );
   if (!decision.deliver) return row;
 

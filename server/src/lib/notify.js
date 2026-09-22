@@ -77,7 +77,23 @@ export async function collectNotifications({ today = businessToday(), db = { que
     await add({ kind: 'expiring', title: `${q.quotation_no} expires on ${q.valid_until}`, body: `${q.client_name}: chase, extend or revise`, entity: 'quotation', entityId: q.quotation_no, link: `/quotations/${enc(q.quotation_no)}`, dedupeKey: `expiring:${q.quotation_no}:${q.valid_until}` });
   }
 
-  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length } };
+  const { rows: [{ value: unseenDays }] } = await db.query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'acceptance_unviewed_days'), '3') AS value`);
+  const { rows: unseen } = await db.query(
+    `SELECT a.id, a.sent_to, a.created_at, q.quotation_no, q.client_name FROM quotation_acceptances a JOIN quotations q ON q.id = a.quotation_id
+      WHERE a.status = 'sent' AND a.expires_at > now() AND a.created_at < $1::date - $2::int`, [today, Number(unseenDays) || 3]);
+  for (const a of unseen) {
+    await add({ kind: 'acceptance', title: `${a.quotation_no}: acceptance link not opened yet`, body: `${a.client_name}${a.sent_to ? ` · sent to ${a.sent_to}` : ''}`, entity: 'quotation', entityId: a.quotation_no, link: `/quotations/${enc(a.quotation_no)}`, dedupeKey: `unseen:${a.id}` });
+  }
+
+  const { rows: late } = await db.query(
+    `SELECT c.id, c.assignee, c.from_email, c.from_name, c.response_due_at, t.subject, i.name AS inbox
+       FROM inbox_conversations c JOIN email_threads t ON t.id = c.thread_id JOIN inboxes i ON i.id = c.inbox_id
+      WHERE c.status = 'open' AND c.response_due_at < now()`);
+  for (const c of late) {
+    await add({ kind: 'inbox', title: `No reply yet: ${c.subject || '(no subject)'}`, body: `${c.inbox} · ${c.from_name || c.from_email}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'}`, link: `/inbox?c=${c.id}`, dedupeKey: `inbox-late:${c.id}:${day}` });
+  }
+
+  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length } };
 }
 
 /** The daily job: the sweep, then one digest email with everything still unread. */

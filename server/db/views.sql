@@ -571,6 +571,7 @@ SELECT
   q.expected_close_date,
   q.next_step,
   q.stage_changed_at,
+  q.last_contacted_at,
   GREATEST(0, (CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date))::int AS days_in_stage,
   (st.rotting_days IS NOT NULL AND st.type = 'open'
      AND CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date > st.rotting_days) AS stale,
@@ -630,6 +631,7 @@ SELECT
   c.name_key,
   c.sector,
   c.gstin,
+  c.last_contacted_at,
   c.website,
   c.address,
   c.city,

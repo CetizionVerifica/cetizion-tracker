@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -260,6 +260,7 @@ CREATE TABLE companies (
   city        text,
   notes       text,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  last_contacted_at timestamptz,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
@@ -273,6 +274,13 @@ CREATE TABLE contacts (
   is_billing         boolean NOT NULL DEFAULT false,
   opt_out_reminders  boolean NOT NULL DEFAULT false,
   notes              text,
+  whatsapp_number    text,
+  preferred_channel  text,
+  best_time_to_call  text,
+  do_not_contact     boolean NOT NULL DEFAULT false,
+  whatsapp_opt_in_at timestamptz,
+  whatsapp_opt_in_source text,
+  last_contacted_at  timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -351,6 +359,7 @@ CREATE TABLE quotations (
   expected_close_date    date,
   next_step              text,
   stage_changed_at       timestamptz,
+  last_contacted_at      timestamptz,
   lost_reason_id         int REFERENCES lost_reasons(id) ON DELETE SET NULL,
   lost_notes             text,
   competitor             text,
@@ -466,6 +475,7 @@ CREATE TABLE enquiries (
   services_interested    text,
   notes                  text,
   converted_at           timestamptz,
+  last_contacted_at      timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -1203,6 +1213,55 @@ CREATE TRIGGER task_stamps BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE
 CREATE TRIGGER tasks_set_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER notes_set_updated_at BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- One-click contact and the touch log (#31)
+CREATE TABLE IF NOT EXISTS communications (
+  id                 serial PRIMARY KEY,
+  channel            text NOT NULL CHECK (channel IN ('call','whatsapp','meeting','sms','email','other')),
+  direction          text NOT NULL DEFAULT 'outbound' CHECK (direction IN ('inbound','outbound')),
+  outcome            text CHECK (outcome IN ('connected','no_answer','left_message','wrong_number','sent','held')),
+  entity             text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id          text NOT NULL,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
+  username           text,
+  started_at         timestamptz NOT NULL DEFAULT now(),
+  duration_seconds   int CHECK (duration_seconds >= 0),
+  summary            text,
+  attendees          text,
+  next_step_task_id  int REFERENCES tasks(id) ON DELETE SET NULL,
+  provider           text NOT NULL DEFAULT 'manual',
+  provider_ref       text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS communications_entity_idx ON communications (entity, entity_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS communications_company_idx ON communications (company_id, started_at DESC);
+
+-- A touch moves "last contacted" forward on everything it concerns.
+CREATE OR REPLACE FUNCTION communication_touch() RETURNS trigger AS $$
+BEGIN
+  IF NEW.outcome IN ('no_answer','wrong_number') THEN
+    RETURN NEW;
+  END IF;
+  UPDATE contacts SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.contact_id;
+  UPDATE companies SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.company_id;
+  IF NEW.entity = 'quotation' THEN
+    UPDATE quotations SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE quotation_no = NEW.entity_id;
+  ELSIF NEW.entity = 'enquiry' THEN
+    UPDATE enquiries SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at),
+                         first_responded_at = COALESCE(first_responded_at, NEW.started_at)
+     WHERE enquiry_no = NEW.entity_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS communication_touch ON communications;
+CREATE TRIGGER communication_touch AFTER INSERT ON communications FOR EACH ROW EXECUTE FUNCTION communication_touch();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('no_contact_days', '7', 'Open deals and overdue invoices with no touch for this many days are listed under "No contact".')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------- bulk import
 -- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).
 CREATE TABLE IF NOT EXISTS import_batches (
@@ -1337,5 +1396,312 @@ INSERT INTO settings (key, value, notes) VALUES
   ('digest_email', '', 'Where the daily digest goes. Blank: the finance email.'),
   ('quotation_expiry_warning_days', '7', 'Days before a quotation expires at which its owner is told.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client acceptance links (#53)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS quotation_acceptances (
+  id                 serial PRIMARY KEY,
+  quotation_id       int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  revision           int NOT NULL DEFAULT 0,
+  token_hash         text NOT NULL UNIQUE,
+  sent_to            text,
+  status             text NOT NULL DEFAULT 'sent'
+                       CHECK (status IN ('sent','viewed','accepted','changes_requested','expired','revoked')),
+  expires_at         timestamptz NOT NULL,
+  viewed_at          timestamptz,
+  view_count         int NOT NULL DEFAULT 0,
+  decided_at         timestamptz,
+  decided_by_name    text,
+  decided_by_email   text,
+  comments           text,
+  ip                 text,
+  user_agent         text,
+  snapshot           jsonb,
+  pdf_sha256         text,
+  pdf_document_id    int REFERENCES documents(id),
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS quotation_acceptances_quotation_idx ON quotation_acceptances (quotation_id, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('public_app_url', '', 'The address clients use to open acceptance links, e.g. https://tracker.cetizionverifica.com. Blank: the address the app was opened on.'),
+  ('acceptance_unviewed_days', '3', 'Days after which an unopened acceptance link is flagged to the owner.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Certificates and deliverables (#43)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deliverables (
+  id                serial PRIMARY KEY,
+  company_id        int REFERENCES companies(id) ON DELETE SET NULL,
+  client_name       text NOT NULL,
+  project_id        text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  po_number         text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  service_id        int REFERENCES services(id) ON DELETE SET NULL,
+  service_name      text,
+  type              text NOT NULL DEFAULT 'certificate'
+                      CHECK (type IN ('certificate','scorecard','report','audit_finding','statement')),
+  reference         text,
+  title             text NOT NULL,
+  issued_on         date,
+  valid_from        date,
+  valid_until       date,
+  scope             text,
+  issuing_body      text,
+  status            text NOT NULL DEFAULT 'issued'
+                      CHECK (status IN ('draft','issued','expired','withdrawn','superseded')),
+  superseded_by_id  int REFERENCES deliverables(id) ON DELETE SET NULL,
+  document_id       int REFERENCES documents(id),
+  engagement_id     int REFERENCES engagements(id) ON DELETE SET NULL,
+  owner             text,
+  reminder_level    int NOT NULL DEFAULT 0,
+  notes             text,
+  created_by        text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from)
+);
+
+CREATE INDEX IF NOT EXISTS deliverables_company_idx ON deliverables (company_id);
+CREATE INDEX IF NOT EXISTS deliverables_expiry_idx ON deliverables (status, valid_until);
+CREATE INDEX IF NOT EXISTS deliverables_project_idx ON deliverables (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS deliverables_reference_key ON deliverables (type, lower(reference)) WHERE reference IS NOT NULL AND status <> 'draft';
+
+DROP TRIGGER IF EXISTS deliverables_set_updated_at ON deliverables;
+CREATE TRIGGER deliverables_set_updated_at BEFORE UPDATE ON deliverables
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- The client follows the project (or the PO's project) when not given.
+CREATE OR REPLACE FUNCTION deliverable_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.project_id IS NULL AND NEW.po_number IS NOT NULL THEN
+    SELECT project_id INTO NEW.project_id FROM purchase_orders WHERE po_number = NEW.po_number;
+  END IF;
+  IF NEW.project_id IS NOT NULL AND (NEW.company_id IS NULL OR NEW.client_name IS NULL OR NEW.client_name = '') THEN
+    SELECT COALESCE(NEW.company_id, p.company_id), COALESCE(NULLIF(NEW.client_name, ''), p.client_name)
+      INTO NEW.company_id, NEW.client_name FROM projects p WHERE p.project_id = NEW.project_id;
+  END IF;
+  IF NEW.company_id IS NOT NULL AND (NEW.client_name IS NULL OR NEW.client_name = '') THEN
+    SELECT name INTO NEW.client_name FROM companies WHERE id = NEW.company_id;
+  END IF;
+  IF NEW.service_id IS NOT NULL AND NEW.service_name IS NULL THEN
+    SELECT name INTO NEW.service_name FROM services WHERE id = NEW.service_id;
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.valid_until IS DISTINCT FROM OLD.valid_until THEN
+    NEW.reminder_level := 0;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS a_deliverable_defaults ON deliverables;
+CREATE TRIGGER a_deliverable_defaults BEFORE INSERT OR UPDATE ON deliverables
+  FOR EACH ROW EXECUTE FUNCTION deliverable_defaults();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('deliverable_reminder_days', '120,90,30', 'Days before a certificate or deliverable expires at which its owner is reminded.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Connected mailboxes (#29)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS connected_accounts (
+  id                 serial PRIMARY KEY,
+  username           text NOT NULL,
+  provider           text NOT NULL DEFAULT 'microsoft' CHECK (provider IN ('microsoft','imap','test')),
+  email              text NOT NULL,
+  display_name       text,
+  is_shared          boolean NOT NULL DEFAULT false,
+  tokens_encrypted   text,
+  token_expires_at   timestamptz,
+  scopes             text,
+  status             text NOT NULL DEFAULT 'active' CHECK (status IN ('active','needs_reconnect','disconnected')),
+  visibility         text NOT NULL DEFAULT 'metadata' CHECK (visibility IN ('metadata','subject','share_everything')),
+  import_days        int NOT NULL DEFAULT 30 CHECK (import_days BETWEEN 0 AND 365),
+  exclude_internal   boolean NOT NULL DEFAULT true,
+  auto_create_contacts boolean NOT NULL DEFAULT true,
+  last_synced_at     timestamptz,
+  last_error         text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS connected_accounts_email_key ON connected_accounts (lower(email)) WHERE status <> 'disconnected';
+
+CREATE TABLE IF NOT EXISTS mail_folders (
+  id                        serial PRIMARY KEY,
+  account_id                int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  folder                    text NOT NULL CHECK (folder IN ('inbox','sentitems')),
+  delta_link                text,
+  subscription_id           text,
+  subscription_client_state text,
+  subscription_expires_at   timestamptz,
+  UNIQUE (account_id, folder)
+);
+
+CREATE TABLE IF NOT EXISTS email_threads (
+  id               serial PRIMARY KEY,
+  account_id       int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  conversation_id  text NOT NULL,
+  subject          text,
+  company_id       int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id       int REFERENCES contacts(id) ON DELETE SET NULL,
+  entity           text CHECK (entity IN ('enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id        text,
+  first_message_at timestamptz,
+  last_message_at  timestamptz,
+  message_count    int NOT NULL DEFAULT 0,
+  last_direction   text CHECK (last_direction IN ('inbound','outbound')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, conversation_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_threads_company_idx ON email_threads (company_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS email_threads_entity_idx ON email_threads (entity, entity_id);
+
+CREATE TABLE IF NOT EXISTS email_messages (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  thread_id            int NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  from_email           text,
+  from_name            text,
+  to_emails            text[] NOT NULL DEFAULT '{}',
+  cc_emails            text[] NOT NULL DEFAULT '{}',
+  subject              text,
+  snippet              text,
+  body_html            text,
+  has_attachments      boolean NOT NULL DEFAULT false,
+  sent_at              timestamptz NOT NULL,
+  company_id           int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id           int REFERENCES contacts(id) ON DELETE SET NULL,
+  sent_from_tracker_by text,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_messages_thread_idx ON email_messages (thread_id, sent_at);
+
+-- Addresses and domains never synced (newsletters, personal contacts).
+CREATE TABLE IF NOT EXISTS email_blocklist (
+  id          serial PRIMARY KEY,
+  pattern     text NOT NULL UNIQUE,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS connected_accounts_set_updated_at ON connected_accounts;
+CREATE TRIGGER connected_accounts_set_updated_at BEFORE UPDATE ON connected_accounts
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- A client email moves "last contacted" forward, like a logged touch (#31).
+CREATE OR REPLACE FUNCTION email_message_touch() RETURNS trigger AS $$
+DECLARE t email_threads%ROWTYPE;
+BEGIN
+  UPDATE contacts SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE id = NEW.contact_id;
+  UPDATE companies SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE id = NEW.company_id;
+  SELECT * INTO t FROM email_threads WHERE id = NEW.thread_id;
+  IF t.entity = 'quotation' THEN
+    UPDATE quotations SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE quotation_no = t.entity_id;
+  ELSIF t.entity = 'enquiry' THEN
+    UPDATE enquiries SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at),
+                         first_responded_at = CASE WHEN NEW.direction = 'outbound' THEN COALESCE(first_responded_at, NEW.sent_at) ELSE first_responded_at END
+     WHERE enquiry_no = t.entity_id;
+  END IF;
+  UPDATE email_threads SET message_count = message_count + 1,
+         first_message_at = LEAST(COALESCE(first_message_at, NEW.sent_at), NEW.sent_at),
+         last_message_at = GREATEST(COALESCE(last_message_at, NEW.sent_at), NEW.sent_at),
+         last_direction = CASE WHEN last_message_at IS NULL OR NEW.sent_at >= last_message_at THEN NEW.direction ELSE last_direction END
+   WHERE id = NEW.thread_id;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS email_message_touch ON email_messages;
+CREATE TRIGGER email_message_touch AFTER INSERT ON email_messages FOR EACH ROW EXECUTE FUNCTION email_message_touch();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Shared sales inbox (#30)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inboxes (
+  id                    serial PRIMARY KEY,
+  name                  text NOT NULL,
+  account_id            int NOT NULL UNIQUE REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  default_assignment    text NOT NULL DEFAULT 'owner_of_company'
+                          CHECK (default_assignment IN ('owner_of_company','round_robin','unassigned')),
+  members               text[] NOT NULL DEFAULT '{}',
+  round_robin_last      text,
+  first_response_hours  int,
+  signature             text,
+  active                boolean NOT NULL DEFAULT true,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS inbox_conversations (
+  id                 serial PRIMARY KEY,
+  inbox_id           int NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
+  thread_id          int NOT NULL UNIQUE REFERENCES email_threads(id) ON DELETE CASCADE,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
+  from_email         text,
+  from_name          text,
+  status             text NOT NULL DEFAULT 'open' CHECK (status IN ('open','pending_client','snoozed','closed')),
+  assignee           text,
+  priority           text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high')),
+  labels             text[] NOT NULL DEFAULT '{}',
+  last_inbound_at    timestamptz,
+  first_response_at  timestamptz,
+  response_due_at    timestamptz,
+  snoozed_until      timestamptz,
+  closed_at          timestamptz,
+  enquiry_no         text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS inbox_conversations_queue_idx ON inbox_conversations (inbox_id, status, response_due_at);
+CREATE INDEX IF NOT EXISTS inbox_conversations_assignee_idx ON inbox_conversations (assignee, status);
+
+CREATE TABLE IF NOT EXISTS canned_responses (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL,
+  body        text NOT NULL,
+  owner       text,
+  shared      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS inboxes_set_updated_at ON inboxes;
+CREATE TRIGGER inboxes_set_updated_at BEFORE UPDATE ON inboxes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS inbox_conversations_set_updated_at ON inbox_conversations;
+CREATE TRIGGER inbox_conversations_set_updated_at BEFORE UPDATE ON inbox_conversations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS canned_responses_set_updated_at ON canned_responses;
+CREATE TRIGGER canned_responses_set_updated_at BEFORE UPDATE ON canned_responses FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO canned_responses (name, body, shared)
+SELECT v.name, v.body, true FROM (VALUES
+  ('Thanks, we will revert', E'Dear {{contact_name}},
+
+Thank you for writing to Cetizion Verifica. We have noted your requirement and {{my_name}} will get back to you within one working day.
+
+Regards,
+{{my_name}}'),
+  ('Request details for a quote', E'Dear {{contact_name}},
+
+Thank you for your enquiry. To prepare a quotation, could you share the number of sites, the standards in scope and your preferred timeline?
+
+Regards,
+{{my_name}}')
+) AS v(name, body)
+WHERE NOT EXISTS (SELECT 1 FROM canned_responses c WHERE c.name = v.name);
 
 COMMIT;

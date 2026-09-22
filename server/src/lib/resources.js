@@ -130,7 +130,7 @@ export const resources = {
     defaultSort: 'name',
     search: ['name', 'email', 'phone', 'role'],
     filters: ['company_id', 'is_billing'],
-    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes'],
+    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes', 'whatsapp_number', 'preferred_channel', 'best_time_to_call', 'do_not_contact', 'whatsapp_opt_in_at', 'whatsapp_opt_in_source'],
     schema: z.object({
       company_id: int({ min: 1 }),
       name: requiredStr(160),
@@ -140,6 +140,12 @@ export const resources = {
       is_billing: bool(),
       opt_out_reminders: bool(),
       notes: str(1000),
+      whatsapp_number: str(40),
+      preferred_channel: z.preprocess(blankToNull, z.enum(['email', 'call', 'whatsapp', 'meeting']).nullable().optional()),
+      best_time_to_call: str(120),
+      do_not_contact: bool(),
+      whatsapp_opt_in_at: date(),
+      whatsapp_opt_in_source: str(120),
     }),
   },
 

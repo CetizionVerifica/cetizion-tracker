@@ -63,11 +63,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #29 | Connected mailboxes: Microsoft 365 sync onto records | todo | Needs #20, #21, #22 and a Microsoft 365 app registration from the lead. |
-| #30 | Shared sales inbox | todo | Needs #29, #24. |
-| #31 | One-click email, call and WhatsApp with every touch logged | todo | Phase 1 needs no providers. |
-| #53 | Client acceptance of quotations, e-signature later | todo | Needs #23. |
-| #43 | Certificates and deliverables registry | todo | Pairs with #28. |
+| #29 | Connected mailboxes: Microsoft 365 sync onto records | done (checkpoint 4) | Code complete and tested with a stand-in mailbox. Microsoft Graph sign-in, encrypted tokens, delta sync every five minutes plus push notifications, contact and company matching, links to the open deal, visibility levels, reply from the tracker, disconnect. Migration 025. Going live needs the lead to register the Entra app and set the MS_* and MAIL_* variables. |
+| #30 | Shared sales inbox | done (checkpoint 4) | Inbox on top of #29: owner of the client, else round robin; reply deadlines; canned responses and signature; snooze and close; convert to enquiry; overdue replies notified. Migration 026. Live once the shared mailbox is connected. |
+| #31 | One-click email, call and WhatsApp with every touch logged | done (checkpoint 4) | Phase 1: contact bar (email, call, WhatsApp) on every record, log-a-touch with next step as a task, last-contacted stamps, do-not-contact, No contact tab. Migration 022. Phase 2 (Exotel or Twilio, WhatsApp Business) waits on the lead's decisions. |
+| #53 | Client acceptance of quotations, e-signature later | done (checkpoint 4) | Private single-use link per revision; client accepts with name and tick or asks for changes; snapshot and PDF hash kept; deal moves to Verbal yes; links die on revision or expiry; unopened links flagged. Migration 023. |
+| #43 | Certificates and deliverables registry | done (checkpoint 4) | Register with reference, dates, scope, issuing body and file; expiry drives the renewal engagement; supersede and withdraw; reminders at 120/90/30 days with tasks; company and project panels. Migration 024. |
 
 ### Batch 5: extended
 
@@ -145,6 +145,7 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 | `checkpoint/batch-1` | #45, #20, #21, #36, #37 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-2` | #23, #24, #25, #26, #46 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-3` | #22, #27, #28, #40, #44 | server tests 60/60, browser tests 4/4, migration check green, web build clean |
+| `checkpoint/batch-4` | #31, #53, #43, #29, #30 | server tests 70/70, browser tests 4/4, migration check green, web build clean |
 
 ## Log
 
@@ -153,3 +154,4 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 - 2026-09-17: Batch 1 done and tagged `checkpoint/batch-1`.
 - 2026-09-17: Batch 2 done and tagged `checkpoint/batch-2`.
 - 2026-09-17: Batch 3 done and tagged `checkpoint/batch-3`. The migration check caught a fresh-install ordering bug in the #28 schema; fixed before tagging.
+- 2026-09-17: Batch 4 done and tagged `checkpoint/batch-4`. #29 and #30 are built and tested against a stand-in mailbox; they go live when the lead registers the Microsoft app. Also fixed: the orphan-file sweep would have removed timeline attachments after a day.

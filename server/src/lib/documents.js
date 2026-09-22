@@ -14,6 +14,7 @@ import { ApiError } from '../middleware/error.js';
 
 const { cloudName, apiKey, apiSecret, folder } = config.cloudinary;
 const storageReady = Boolean(cloudName && apiKey && apiSecret);
+export const documentStorageReady = storageReady;
 if (storageReady) {
   cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
 }
@@ -21,7 +22,7 @@ if (storageReady) {
 const ASSET = { resource_type: 'raw', type: 'authenticated' };
 
 /** Record types that carry a document; each gets its own Cloudinary folder. */
-const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments']);
+const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments', 'deliverables']);
 export const isDocumentOwner = (owner) => OWNERS.has(owner);
 
 // A document may be attached, or deleted, only while no record points at it.
@@ -31,7 +32,9 @@ export const isDocumentOwner = (owner) => OWNERS.has(owner);
 const UNATTACHED = `NOT EXISTS (SELECT 1 FROM quotations q WHERE q.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM payment_stages ps WHERE ps.document_id = d.id)
-                AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.document_id = d.id)`;
+                AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.document_id = d.id)
+                AND NOT EXISTS (SELECT 1 FROM deliverables dl WHERE dl.document_id = d.id)
+                AND NOT EXISTS (SELECT 1 FROM quotation_acceptances qa WHERE qa.pdf_document_id = d.id)`;
 
 // Browsers display these themselves, and none of them can run script here.
 const INLINE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'text/plain']);
