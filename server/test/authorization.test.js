@@ -454,4 +454,75 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       }
     });
   });
+  // ------------------------------------------------ batch 4's new surfaces
+
+  describe('mailboxes and the shared inbox', () => {
+    /**
+     * A connected mailbox is somebody's correspondence with clients. The
+     * person who connected it administers it, an admin administers all of
+     * them, and a shared mailbox is the team's — which is the point of
+     * marking one shared.
+     *
+     * The review of #60 found every one of these open: read a colleague's
+     * client mail, reply from their mailbox so it lands in their Sent Items,
+     * wipe what is stored by changing their visibility, or flip their
+     * personal mailbox into the team queue.
+     */
+    test('a sales user cannot administer a mailbox that is not theirs', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status)
+         VALUES ('someone.else@example.test', 'microsoft', 'someone.else@example.test', 'active') RETURNING id`);
+
+      for (const [verb, path, body] of [
+        ['patch', `/api/mailboxes/${a.id}`, { visibility: 'metadata' }],
+        ['post', `/api/mailboxes/${a.id}/sync`, {}],
+        ['post', `/api/mailboxes/${a.id}/disconnect`, {}],
+      ]) {
+        const res = await as(sales.cookie)(verb, path).send(body);
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+
+      // and nothing was destroyed on the way past
+      const { rows: [still] } = await db.query('SELECT visibility FROM connected_accounts WHERE id = $1', [a.id]);
+      assert.equal(still.visibility, 'metadata', 'default is unchanged');
+    });
+
+    test('the rest of the mailbox administration is the admin\'s', async () => {
+      for (const [verb, path] of [
+        ['post', '/api/mailboxes/test'],
+        ['post', '/api/mailboxes/1/test-messages'],
+        ['post', '/api/mailboxes/blocklist'],
+        ['delete', '/api/mailboxes/blocklist/1'],
+      ]) {
+        const res = await as(sales.cookie)(verb, path).send({ pattern: 'nope@example.test' });
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+    });
+
+    test('a thread in somebody else\'s mailbox is not there as far as they are concerned', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('private@example.test', 'microsoft', 'private@example.test', 'active', 'share_everything') RETURNING id`);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, first_message_at, last_message_at)
+         VALUES ($1, $2, 'Client pricing', now(), now()) RETURNING id`, [a.id, `conv-${a.id}`]);
+
+      const read = await as(sales.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(read.status, 404, JSON.stringify(read.body));
+
+      const reply = await as(sales.cookie)('post', `/api/mail/threads/${t.id}/reply`).send({ html: 'Hello' });
+      assert.equal(reply.status, 404, JSON.stringify(reply.body));
+
+      const relink = await as(sales.cookie)('patch', `/api/mail/threads/${t.id}`).send({ entity: null, entity_id: null });
+      assert.equal(relink.status, 404, JSON.stringify(relink.body));
+
+      const admin_read = await as(admin.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(admin_read.status, 200, 'an admin can read it');
+    });
+
+    test('making a mailbox into a team inbox is the admin\'s call', async () => {
+      const res = await as(sales.cookie)('post', '/api/inbox/inboxes').send({ name: 'Mine now', account_id: 1 });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
+  });
 });
