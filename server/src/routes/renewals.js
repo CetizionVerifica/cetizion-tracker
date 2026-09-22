@@ -9,6 +9,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { discoverEngagements, openRenewal } from '../lib/renewals.js';
@@ -42,7 +43,9 @@ renewalsRouter.get('/', async (req, res) => {
   res.json({ data: rows, totals: t });
 });
 
-renewalsRouter.post('/discover', async (req, res) => {
+// Half of renewals.daily, and it writes: it creates engagements from
+// delivered POs. Operational, like running the job itself.
+renewalsRouter.post('/discover', requireAdmin, async (req, res) => {
   res.json({ data: await discoverEngagements() });
 });
 

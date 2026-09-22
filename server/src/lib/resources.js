@@ -366,7 +366,6 @@ export const resources = {
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
       'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
-      'on_hold', 'hold_reason', 'promise_to_pay_date',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -384,9 +383,6 @@ export const resources = {
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
       milestone_reached_on: date(),
-      on_hold: bool(),
-      hold_reason: str(500),
-      promise_to_pay_date: date(),
     }),
   },
 
@@ -499,6 +495,10 @@ export const resources = {
   },
 
   'pipeline-stages': {
+    // The board's own shape: a stage's status mapping and probability rewrite
+    // quotation statuses and the whole forecast through c_stage_sync.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'pipeline_stages',
     view: null,
     label: 'Pipeline stage',
@@ -538,6 +538,12 @@ export const resources = {
   },
 
   payments: {
+    // What has actually been received. payment_stages.amount_received is
+    // computed from these rows by trigger, so a deleted or re-pointed
+    // payment silently moves Due now, Collections and the forecast.
+    // Recording a receipt is ordinary work and goes through
+    // POST /payment-stages/:id/payment; editing the ledger by hand is not.
+    adminOnlyWrites: true,
     table: 'payments',
     view: null,
     label: 'Payment',
@@ -645,6 +651,9 @@ export const resources = {
   },
 
   'payment-terms-templates': {
+    // The invoicing schedules every new PO is built from.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'payment_terms_templates',
     view: null,
     label: 'Payment terms template',
@@ -656,6 +665,9 @@ export const resources = {
   },
 
   'payment-terms-template-lines': {
+    // The lines those schedules are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'payment_terms_template_lines',
     view: null,
     label: 'Payment terms line',
@@ -675,6 +687,9 @@ export const resources = {
   },
 
   'onboarding-templates': {
+    // The delivery checklists every new project starts with.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'onboarding_templates',
     view: null,
     label: 'Onboarding template',
@@ -686,6 +701,9 @@ export const resources = {
   },
 
   'onboarding-template-lines': {
+    // The steps those checklists are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'onboarding_template_lines',
     view: null,
     label: 'Onboarding template step',
@@ -704,6 +722,9 @@ export const resources = {
   },
 
   'lead-sources': {
+    // A Settings list. Deleting one blanks it on every enquiry that used it.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'lead_sources',
     view: null,
     label: 'Lead source',
@@ -715,6 +736,10 @@ export const resources = {
   },
 
   'lost-reasons': {
+    // A Settings list. Deleting one blanks it on every lost quotation and
+    // unqualified enquiry, through ON DELETE SET NULL.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'lost_reasons',
     view: null,
     label: 'Lost reason',
