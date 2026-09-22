@@ -159,12 +159,18 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
       </div>
 
       <header className="flex items-start gap-4 px-8 pt-4">
-        <span className={cn(
-          'grid size-11 shrink-0 place-items-center rounded-[10px] bg-secondary text-[14px] font-semibold',
-          markTone === 'late' ? 'text-late' : 'text-primary'
-        )}>
-          {mark ?? initialsOf(title)}
-        </span>
+        {/* `false` means this record has no mark at all — the deal and the
+            order carry their identity in the title and the facts row, and
+            an empty 44px square with a gap beside it is worse than none.
+            `undefined` still falls back to the title's initials. */}
+        {mark !== false && (
+          <span className={cn(
+            'grid size-11 shrink-0 place-items-center rounded-[10px] bg-secondary text-[14px] font-semibold',
+            markTone === 'late' ? 'text-late' : 'text-primary'
+          )}>
+            {mark ?? initialsOf(title)}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl/[1.25] font-semibold tracking-[-0.022em] text-foreground">{title}</h1>
           {facts.length > 0 && (
