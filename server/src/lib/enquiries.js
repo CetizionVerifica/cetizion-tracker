@@ -32,13 +32,14 @@ export async function quoteWonEnquiry(client, { before, after }) {
   await client.query(
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
                              sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9)`,
+                             status, remarks, quotation_value, currency)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10,$11)`,
     [
-      quotationNo, after.client_name, after.contact_person, after.service,
+      quotationNo, after.client_name, after.contact_person, after.service || after.services_interested,
       after.sector, after.sales_person, after.sales_person_email,
       quotationDate,
       `From enquiry ${after.enquiry_no}`,
+      after.estimated_value ?? null, after.currency || 'INR',
     ]
   );
   await client.query('UPDATE enquiries SET quotation_no = $1 WHERE id = $2', [quotationNo, after.id]);

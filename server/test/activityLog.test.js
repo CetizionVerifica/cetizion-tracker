@@ -268,7 +268,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows[0].entity_type, 'user');
       assert.equal(rows[0].entity_id, String(res.body.data.id));
       assert.deepEqual(rows[0].metadata, {
-        name: 'Nina', email: 'nina@example.com', role: 'sales', active: true,
+        name: 'Nina', email: 'nina@example.com', role: 'sales', active: true, actor_name: 'Alice',
       });
     });
 
@@ -285,7 +285,8 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows[0].action, 'user.updated');
       assert.equal(rows[0].entity_id, String(sam.id));
       assert.deepEqual(rows[0].metadata, {
-        changed_fields: ['name', 'role'], old_role: 'sales', new_role: 'admin',
+        changed_fields: ['name', 'role'], old_name: 'Sam', new_name: 'Samuel',
+        old_role: 'sales', new_role: 'admin', actor_name: 'Alice',
       });
     });
 
@@ -298,7 +299,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
 
       const rows = await logged();
       assert.equal(rows[0].action, 'user.updated');
-      assert.deepEqual(rows[0].metadata, { changed_fields: [] });
+      assert.deepEqual(rows[0].metadata, { changed_fields: [], actor_name: 'Alice' });
     });
 
     test('switching an account off records user.deactivated, and only that', async () => {
@@ -314,9 +315,12 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows[0].action, 'user.deactivated');
       assert.deepEqual(rows[0].metadata, {
         changed_fields: ['name', 'active'],
+        old_name: 'Sam',
+        new_name: 'Sam Two',
         old_active: true,
         new_active: false,
         sessions_revoked: true,
+        actor_name: 'Alice',
       });
     });
 
@@ -334,7 +338,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows.length, 1);
       assert.equal(rows[0].action, 'user.reactivated');
       assert.deepEqual(rows[0].metadata, {
-        changed_fields: ['active'], old_active: false, new_active: true,
+        changed_fields: ['active'], old_active: false, new_active: true, actor_name: 'Alice',
       });
     });
 
@@ -363,7 +367,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows.length, 1);
       assert.equal(rows[0].action, 'user.password_reset');
       assert.equal(rows[0].entity_id, String(sam.id));
-      assert.deepEqual(rows[0].metadata, { sessions_revoked: true });
+      assert.deepEqual(rows[0].metadata, { sessions_revoked: true, actor_name: 'Alice' });
 
       const written = JSON.stringify(rows[0]);
       for (const secret of ['another-good-long-password', PASSWORD, '$2b$', 'ctz_session']) {
@@ -397,6 +401,32 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       for (const attempt of attempts) assert.equal((await attempt).status, 403);
 
       assert.deepEqual(await logged(), []);
+    });
+
+    /**
+     * actor_user_id is ON DELETE SET NULL so that deleting somebody does not
+     * take everything they ever did with it — the one deletion an audit
+     * trail exists to survive. That only works if the name was written into
+     * the row as well: otherwise what survives is "a person did this", with
+     * no way to say which person.
+     */
+    test('the actor’s name survives the account being deleted', async () => {
+      await clean();
+      const admin = await asAdmin();
+      const sam = await createUser({ name: 'Sam', email: 'sam@example.com', password: PASSWORD }, db);
+
+      await patch(admin.cookie, sam.id, { name: 'Samuel' });
+      const before = await logged();
+      assert.equal(before.length, 1);
+      assert.equal(before[0].actor_user_id, admin.user.id);
+      assert.equal(before[0].metadata.actor_name, 'Alice');
+
+      await db.query('DELETE FROM users WHERE id = $1', [admin.user.id]);
+
+      const after = await logged();
+      assert.equal(after[0].actor_user_id, null, 'the link is cut, as the column says');
+      assert.equal(after[0].actor_type, 'user', 'it was still a person, not the system');
+      assert.equal(after[0].metadata.actor_name, 'Alice', 'and we can still say which person');
     });
   });
 
@@ -502,7 +532,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows[0].entity_type, 'email');
       assert.equal(rows[0].entity_id, String(res.body.data.id));
       assert.deepEqual(rows[0].metadata, {
-        to_domain: 'client.example', mode: 'log', status: 'suppressed',
+        to_domain: 'client.example', mode: 'log', status: 'suppressed', actor_name: 'Alice',
       });
       assert.ok(
         !JSON.stringify(rows[0].metadata).includes('someone@'),

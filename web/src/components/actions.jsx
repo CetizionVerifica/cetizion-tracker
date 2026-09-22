@@ -127,15 +127,23 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
 export function RecordPaymentDialog({ stage, onClose, onDone }) {
   const outstanding = Math.max(Number(stage.stage_amount || 0) - Number(stage.amount_received || 0), 0);
   const [amount, setAmount] = useState(String(outstanding));
+  const [tds, setTds] = useState('');
+  const [mode, setMode] = useState('bank_transfer');
+  const [reference, setReference] = useState('');
   const [paidOn, setPaidOn] = useState(today());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Payment recorded' });
 
   const submit = async (e) => {
     e.preventDefault();
+    // A receipt row (#27): what came in now, plus any TDS the client deducted.
     const ok = await run(() =>
       api.action(`/payment-stages/${stage.id}/payment`, {
-        amount_received: Number(amount) + Number(stage.amount_received || 0),
+        amount_received: Number(amount),
+        tds_amount: tds ? Number(tds) : 0,
+        payment_mode: mode,
+        reference,
         payment_received_date: paidOn,
+        mode: 'add',
       })
     );
     if (ok) onClose();
@@ -162,6 +170,19 @@ export function RecordPaymentDialog({ stage, onClose, onDone }) {
       <Field label="Received on" error={fieldErrors.payment_received_date}>
         <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
       </Field>
+      <div className="form-grid">
+        <Field label="TDS deducted" hint="Counts as settled">
+          <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} />
+        </Field>
+        <Field label="Mode">
+          <Select value={mode} placeholder={null} options={[{ value: 'bank_transfer', label: 'Bank transfer' }, { value: 'cheque', label: 'Cheque' }, { value: 'upi', label: 'UPI' }, { value: 'cash', label: 'Cash' }, { value: 'other', label: 'Other' }]} onChange={(e) => setMode(e.target.value)} />
+        </Field>
+        <div className="span-all">
+          <Field label="Reference" hint="UTR, cheque number">
+            <Input value={reference} onChange={(e) => setReference(e.target.value)} />
+          </Field>
+        </div>
+      </div>
     </ActionModal>
   );
 }
@@ -502,6 +523,7 @@ const scale = (percents, allocatable) => {
 };
 
 export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
+  const lookups = useLookups();
   // What is already invoiced or paid stays, so only the rest is up for
   // splitting. 100% of the PO with half of it billed would schedule 150%.
   const locked = pct(Number(lockedPercent || 0) * 100);
@@ -509,11 +531,29 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
   // Nothing left to split: every stage is invoiced or paid, and those are never
   // replaced. Offering a form the server must reject wastes the user's time.
   const nothingToSplit = allocatable < 0.01;
-  const [preset, setPreset] = useState('50/50');
-  const [stages, setStages] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
+  // The saved templates (#26) come first; the fixed splits stay as a fallback.
+  // A template keeps its own stage names, triggers, credit days and
+  // milestones, as /register copies them.
+  const presets = {
+    ...Object.fromEntries((lookups.payment_terms_templates || []).map((t) => [t.name, t.lines.map((l) => ({
+      stage_name: l.stage_name, trigger_event: l.trigger_event, percent: Number(l.percent),
+      credit_days: l.credit_days ?? null, milestone_name: l.milestone_name ?? null,
+    }))])),
+    ...PRESETS,
+  };
+  // A template's percentages are fitted to the free share the same way.
+  const fit = (split) => {
+    if (!split.length || typeof split[0] !== 'object') return scale(split, allocatable);
+    const scaled = scale(split.map((l) => l.percent), allocatable);
+    return split.map((l, i) => ({ ...l, percent: scaled[i] }));
+  };
+  const [preset, setPreset] = useState(() => (lookups.payment_terms_templates?.find((t) => t.is_default)?.name) || '50/50');
+  const [stages, setStages] = useState(() => buildStages(fit(presets[preset] || PRESETS['50/50'])));
   const { busy, error, run } = useAction({ onDone, successMessage: 'Payment stages created' });
 
-  function buildStages(percents) {
+  function buildStages(split) {
+    if (split.length && typeof split[0] === 'object') return split.map((line) => ({ ...line }));
+    const percents = split;
     return percents.map((p, i) => ({
       stage_name:
         percents.length === 1
@@ -539,6 +579,8 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           stage_name: s.stage_name,
           trigger_event: s.trigger_event,
           stage_percent: Number(s.percent) / 100,
+          credit_days: s.credit_days ?? null,
+          milestone_name: s.milestone_name ?? null,
         })),
         replace: true,
       })
@@ -584,10 +626,10 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         <Select
           value={preset}
           placeholder={null}
-          options={Object.keys(PRESETS)}
+          options={Object.keys(presets)}
           onChange={(e) => {
             setPreset(e.target.value);
-            setStages(buildStages(scale(PRESETS[e.target.value], allocatable)));
+            setStages(buildStages(fit(presets[e.target.value])));
           }}
         />
       </Field>
@@ -620,6 +662,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
                   >
                     <option>On PO Registration</option>
                     <option>On Delivery</option>
+                    <option>On Milestone</option>
                     <option>Manual</option>
                   </select>
                 </td>

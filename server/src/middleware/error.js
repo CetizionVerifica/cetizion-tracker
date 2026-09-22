@@ -1,3 +1,5 @@
+import { reportError } from '../lib/ops/errors.js';
+
 export class ApiError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
@@ -8,7 +10,7 @@ export class ApiError extends Error {
 
 // Postgres constraint violations are user mistakes far more often than
 // bugs, so translate the common ones into something a person can act on.
-function fromPgError(err) {
+export function fromPgError(err) {
   switch (err.code) {
     case '23505': {
       const match = /Key \((.+?)\)=\((.+?)\)/.exec(err.detail || '');
@@ -51,6 +53,8 @@ export function errorHandler(err, req, res, next) {
     return res.status(translated.status).json({ error: { message: translated.message } });
   }
 
-  console.error('[api]', err);
-  res.status(500).json({ error: { message: 'Something went wrong on the server' } });
+  (req.log || console).error?.({ err }, 'unhandled error');
+  // Reported without the body, cookies or query string (#38).
+  reportError(err, { source: 'api', route: req.route ? `${req.baseUrl}${req.route.path}` : undefined, method: req.method, url: req.originalUrl, requestId: req.id, user: req.user?.username });
+  res.status(500).json({ error: { message: 'Something went wrong on the server', request_id: req.id } });
 }

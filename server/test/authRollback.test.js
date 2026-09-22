@@ -214,7 +214,9 @@ describe('switching modes and switching back', { skip: !ADMIN_URL && 'set TEST_D
     assert.ok(!text.includes(ADMIN_EMAIL), 'not an admin address');
     assert.ok(!text.includes(SECRET), 'not the session secret');
     assert.ok(!/scrypt|password_hash/.test(text));
-    assert.deepEqual(Object.keys(result.health).sort(), ['auth_mode', 'started_at', 'status', 'time']);
+    // environment says production or staging (#35): the STAGING band reads it
+    // before anyone signs in, and it names no account or secret.
+    assert.deepEqual(Object.keys(result.health).sort(), ['auth_mode', 'environment', 'started_at', 'status', 'time']);
   });
 
   // --------------------------------------------- database mode is strict

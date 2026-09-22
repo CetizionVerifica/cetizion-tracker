@@ -8,7 +8,7 @@ import { financeDigest, paymentReminder } from '../src/lib/emailTemplates.js';
 
 const stage = (extra = {}) => ({
   id: 1, po_number: 'PO-1', stage_name: 'Advance (50%)', stage_status: 'Overdue', invoice_no: 'CVPL/2026-27/12', invoice_due_date: '2026-09-01',
-  days_overdue: 10, stage_amount: 100000, amount_received: 0, currency: 'INR', reminder_sent_on: null,
+  days_overdue: 10, stage_amount: 100000, amount_received: 0, currency: 'INR', reminder_sent_on: null, reminder_level: 0, on_hold: false, promise_to_pay_date: null,
   company_id: 5, company_name: 'Hetero', client_name: 'Hetero', contact_name: 'Ravi', contact_email: 'ravi@hetero.example', opt_out: false,
   ...extra,
 });
@@ -21,10 +21,23 @@ test('one reminder per client, listing every overdue invoice', () => {
   assert.equal(plan.reminders[0].to, 'ravi@hetero.example');
 });
 
-test('a stage chased inside the interval waits; one chased earlier goes again', () => {
-  const plan = planReminders([stage({ reminder_sent_on: '2026-09-14' }), stage({ id: 2, reminder_sent_on: '2026-09-01' })], { today, intervalDays: 7 });
+test('a stage already reminded at its level waits; one that has earned the next level goes again', () => {
+  const plan = planReminders([stage({ reminder_sent_on: '2026-09-14', reminder_level: 1 }), stage({ id: 2, reminder_sent_on: '2026-09-01', reminder_level: 1, days_overdue: 20 })], { today, intervalDays: 7 });
   assert.deepEqual(plan.reminders[0].stages.map((s) => s.id), [2]);
-  assert.match(plan.skipped[0].reason, /reminded 3 days ago/);
+  assert.equal(plan.reminders[0].level, 2);
+  assert.match(plan.skipped[0].reason, /reminded 3 days ago at level 1/);
+});
+
+test('after the final level a reminder repeats every interval; holds and promises pause it', () => {
+  const plan = planReminders([
+    stage({ reminder_sent_on: '2026-09-01', reminder_level: 3, days_overdue: 45 }),
+    stage({ id: 2, reminder_sent_on: '2026-09-14', reminder_level: 3, days_overdue: 45 }),
+    stage({ id: 3, days_overdue: 45, on_hold: true, hold_reason: 'disputed' }),
+    stage({ id: 4, days_overdue: 45, promise_to_pay_date: '2026-09-30' }),
+  ], { today, intervalDays: 7 });
+  assert.deepEqual(plan.reminders[0].stages.map((s) => s.id), [1]);
+  assert.equal(plan.reminders[0].level, 3);
+  assert.deepEqual(plan.skipped.map((s) => s.id), [2, 3, 4]);
 });
 
 test('grace period, missing email, opt-out and stages without an invoice are skipped with a reason', () => {

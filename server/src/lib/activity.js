@@ -143,10 +143,15 @@ export async function logActivity(db = pool, { actor, action, entityType, entity
   if (!cleanAction) throw new Error('An activity row needs an action.');
   if (!cleanEntityType) throw new Error('An activity row needs an entity type.');
 
-  // The shared admin's name and a system actor's label go here, where they
-  // read as what they are. actor_user_id stays null.
-  const withActorName =
-    actor.type !== 'user' && actor.name ? { actor_name: actor.name, ...metadata } : metadata;
+  // The name goes in the row for every kind of actor, the shared admin and a
+  // system label included.
+  //
+  // For a database user it is not redundant with actor_user_id: that column
+  // is ON DELETE SET NULL, so deleting an account would otherwise leave
+  // `{ actor: null, actor_type: 'user' }` — you would know a person did it
+  // and never which person. Surviving exactly that deletion is the reason
+  // the column is SET NULL rather than CASCADE.
+  const withActorName = actor.name ? { actor_name: actor.name, ...metadata } : metadata;
 
   const { rows } = await db.query(
     `INSERT INTO activity_log (actor_user_id, actor_type, action, entity_type, entity_id, metadata)

@@ -2,6 +2,11 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 
+import { query } from '../db.js';
+import { config } from '../config.js';
+import { raiseAlert } from '../lib/ops/alerts.js';
+import { failedSignIns } from '../lib/ops/metrics.js';
+
 import { ApiError } from '../middleware/error.js';
 import { verifyPasswordOrDummy } from '../lib/passwords.js';
 import { findUserByEmail, recordLogin } from '../lib/users.js';
@@ -80,6 +85,49 @@ const databaseBody = (user, expiresAt) => ({
 
 export const authRouter = Router();
 
+// ------------------------------------------------------------- lockout (#34)
+// Stored failures per address, on top of the in-memory limiter above: they
+// survive a restart, raise an alert once, and work the same in both sign-in
+// modes, because they wrap whichever check runs.
+const setting = async (key, fallback) => Number((await query('SELECT value FROM settings WHERE key = $1', [key]).catch(() => ({ rows: [] }))).rows[0]?.value) || fallback;
+
+/** Failures from this address inside the window, since its last success. */
+/**
+ * Failed sign-ins that still count, two ways: against this account from
+ * this address, and against this address whoever was being guessed at.
+ *
+ * The account one is what is enforced. Counting only the address locks the
+ * wrong people out: behind Traefik every request carries the proxy's
+ * address, so ten bad guesses from anywhere on the internet used to lock
+ * out the whole company for fifteen minutes — people typing the right
+ * password included. A success clears the count it belongs to, so getting
+ * it right on the eleventh attempt is not punished.
+ */
+async function recentFailures(ip, username) {
+  const minutes = await setting('signin_lockout_minutes', 15);
+  const name = String(username || '').slice(0, 120).toLowerCase();
+  const { rows: [r] } = await query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM auth_events
+         WHERE ip = $1 AND lower(username) = $3 AND NOT ok AND created_at > now() - make_interval(mins => $2)
+           AND created_at > COALESCE((SELECT MAX(created_at) FROM auth_events WHERE ip = $1 AND lower(username) = $3 AND ok), '-infinity')) AS account,
+       (SELECT COUNT(*)::int FROM auth_events
+         WHERE ip = $1 AND NOT ok AND created_at > now() - make_interval(mins => $2)
+           AND created_at > COALESCE((SELECT MAX(created_at) FROM auth_events WHERE ip = $1 AND ok), '-infinity')) AS address`,
+    [ip, minutes, name]).catch(() => ({ rows: [{ account: 0, address: 0 }] }));
+  return { account: r.account, address: r.address, minutes };
+}
+
+/**
+ * Whether req.ip is really the caller's address. With a proxy in front and
+ * TRUST_PROXY=0 it is the proxy's, and an address-wide lock built on it
+ * punishes everybody for one stranger. With no proxy at all there is
+ * nothing to forward, so the address stands.
+ */
+const addressIsTheCallers = (req) => config.trustProxy > 0 || !req.headers['x-forwarded-for'];
+const record = (who, ip, ok, reason) =>
+  query('INSERT INTO auth_events (username, ip, ok, reason) VALUES ($1,$2,$3,$4)', [String(who || '').slice(0, 120), ip, ok, reason]).catch(() => {});
+
 function sharedLogin(body) {
   const { username, password } = parse(sharedCredentials, body);
 
@@ -134,8 +182,35 @@ async function databaseLogin(body) {
 }
 
 authRouter.post('/login', loginLimiter, async (req, res) => {
-  const { payload, body, expiresAt } =
-    authConfig.mode === 'database' ? await databaseLogin(req.body) : sharedLogin(req.body);
+  // Whatever was typed as the name, for the record only; never used to decide.
+  const who = req.body?.email ?? req.body?.username ?? '';
+  const limit = await setting('signin_lockout_failures', 10);
+  const before = await recentFailures(req.ip, who);
+  // The account lock always applies. The address-wide one is five times the
+  // limit and only when the address is the caller's own, because otherwise
+  // it is the proxy's and locking it locks everyone.
+  const lockedOut = before.account >= limit || (addressIsTheCallers(req) && before.address >= limit * 5);
+  if (lockedOut) {
+    await record(who, req.ip, false, 'locked');
+    throw new ApiError(429, `Too many failed sign-ins. Try again in ${before.minutes} minutes.`);
+  }
+
+  let result;
+  try {
+    result = authConfig.mode === 'database' ? await databaseLogin(req.body) : sharedLogin(req.body);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      await record(who, req.ip, false, 'bad credentials');
+      failedSignIns.inc();
+      // Raised once, when this account reaches the limit.
+      if (before.account + 1 === limit) {
+        raiseAlert('signin', `${limit} failed sign-ins for one account from ${req.ip}`, `Name tried: ${String(who).slice(0, 60)}. That account is locked from this address for ${before.minutes} minutes.`).catch(() => {});
+      }
+    }
+    throw err;
+  }
+  await record(who, req.ip, true, null);
+  const { payload, body, expiresAt } = result;
 
   const token = signSession(payload, authConfig.sessionSecret);
   res.cookie(authConfig.cookieName, token, { ...cookieOptions(), maxAge: authConfig.sessionTtlMs });

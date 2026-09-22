@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_SERVICE, OTHER_SERVICE, serviceLinesFor } from '../src/lib/serviceLines.js';
-import { enquirySummary, quotationStatusSummary, serviceRows, summariseEnquiries } from '../src/lib/salesReviewData.js';
+import {
+  contractPipeline, countBy, enquiryPipeline, enquirySummary, quotationPipeline, quotationStatusSummary,
+  serviceRows, summariseEnquiries,
+} from '../src/lib/salesReviewData.js';
 import { donut, horizontalBars, niceScale, stackedColumns, wrapLabel } from '../src/lib/pdfCharts.js';
 import { clientAnalysis, quotationStatusAnalysis, sectorAnalysis } from '../src/lib/salesReviewAnalysis.js';
 
@@ -66,11 +69,11 @@ test('service totals count each quotation once', () => {
 // quotation section, so the enquiry figures are only about status here.
 test('enquiries split by status', () => {
   const rows = [
-    { status: 'Won - Quotation Sent' },
-    { status: 'Won - Quotation Sent' },
-    { status: 'Won - Quotation Sent' },
-    { status: 'Declined' },
-    { status: 'In Progress' },
+    { status: 'Converted' },
+    { status: 'Converted' },
+    { status: 'Converted' },
+    { status: 'Unqualified' },
+    { status: 'Contacted' },
   ];
   const s = summariseEnquiries(rows);
   assert.deepEqual(
@@ -116,4 +119,80 @@ test('concentration is flagged only when it is real', () => {
   });
   assert.equal(spread.insights[0].tag, 'HEADLINE');
   assert.ok(spread.insights[0].text.includes('33%'));
+});
+
+test('countBy: same spelling merges, blanks group last as "Not set"', () => {
+  const rows = [{ sector: 'Aluminium' }, { sector: 'aluminium ' }, { sector: 'Steel' }, { sector: '' }, { sector: null }];
+  assert.deepEqual(countBy(rows, 'sector'), [
+    { label: 'Aluminium', count: 2 },
+    { label: 'Steel', count: 1 },
+    { label: 'Not set', count: 2 },
+  ]);
+});
+
+test('enquiryPipeline: TAT is enquiry date to contract date, skipping what it cannot measure', () => {
+  const rows = [
+    // A contract 4 days after the enquiry.
+    { enquiry_no: 'E-1', status: 'Won - Quotation Sent', enquiry_date: '2026-01-01', contract_date: '2026-01-05' },
+    // Still open: no contract, so it counts as pending, not in the TAT average.
+    { enquiry_no: 'E-2', status: 'In Progress', enquiry_date: '2026-02-01', contract_date: null },
+    // A contract with no enquiry date on record: contracted, but its TAT cannot be measured.
+    { enquiry_no: 'E-3', status: 'Won - Quotation Sent', enquiry_date: null, contract_date: '2026-03-01' },
+    // Bad data: the "contract" is dated before the enquiry. Still computed, not hidden — a negative TAT is a data problem to surface, not paper over.
+    { enquiry_no: 'E-4', status: 'Won - Quotation Sent', enquiry_date: '2026-04-10', contract_date: '2026-04-05' },
+  ];
+  const p = enquiryPipeline(rows);
+  assert.deepEqual([p.total, p.contracted, p.declined, p.pending], [4, 3, 0, 1]);
+  assert.deepEqual(p.detail.map((d) => d.tat_days), [4, null, null, -5]);
+  assert.equal(p.tat_count, 2);
+  assert.equal(p.average_tat_days, -0.5); // (4 + -5) / 2, E-3 left out for having no enquiry date
+});
+
+test('quotationPipeline: zero rows read as unmeasured, not zero', () => {
+  const p = quotationPipeline([]);
+  assert.deepEqual(
+    [p.total, p.contracted, p.lost, p.pending, p.conversion_rate, p.average_ticket_inr, p.tat_count],
+    [0, 0, 0, 0, null, null, 0]
+  );
+});
+
+test('quotationPipeline: no value and no exchange rate are excluded from the average apart', () => {
+  const rows = [
+    { quotation_no: 'Q-1', status: 'Submitted', quotation_date: '2026-01-01', quotation_value: 100000, currency: 'INR', rate: 1, contract_date: null },
+    { quotation_no: 'Q-2', status: 'Submitted', quotation_date: '2026-01-01', quotation_value: null, currency: 'INR', rate: 1, contract_date: null },
+    { quotation_no: 'Q-3', status: 'Submitted', quotation_date: '2026-01-01', quotation_value: 5000, currency: 'USD', rate: null, contract_date: null },
+    { quotation_no: 'Q-4', status: 'Won - PO Received', quotation_date: '2026-01-01', quotation_value: 300000, currency: 'INR', rate: 1, contract_date: '2026-01-11' },
+  ];
+  const p = quotationPipeline(rows);
+  assert.deepEqual([p.total, p.contracted, p.lost, p.pending, p.conversion_rate], [4, 1, 0, 3, 0.25]);
+  assert.deepEqual([p.quotations_without_value, p.quotations_without_rate, p.average_ticket_count], [1, 1, 2]);
+  // Averaged over Q-1 and Q-4 only: (100000 + 300000) / 2.
+  assert.equal(p.average_ticket_inr, 200000);
+  assert.deepEqual([p.tat_count, p.average_tat_days], [1, 10]);
+});
+
+test('quotationPipeline: "won" with no PO is its own bucket, not silently folded into pending', () => {
+  const rows = [
+    // Status says won, but no purchase order was ever matched — a data gap, not an open quotation.
+    { quotation_no: 'Q-1', status: 'Won - PO Received', quotation_date: '2026-01-01', quotation_value: 100000, currency: 'INR', rate: 1, contract_date: null },
+    { quotation_no: 'Q-2', status: 'Won - PO Received', quotation_date: '2026-01-01', quotation_value: 50000, currency: 'INR', rate: 1, contract_date: '2026-01-05' },
+    { quotation_no: 'Q-3', status: 'Submitted', quotation_date: '2026-01-01', quotation_value: 20000, currency: 'INR', rate: 1, contract_date: null },
+  ];
+  const p = quotationPipeline(rows);
+  assert.deepEqual([p.total, p.contracted, p.won_without_po, p.lost, p.pending], [3, 1, 1, 0, 1]);
+});
+
+test('contractPipeline: a PO whose quotation cannot be found reports nulls, not a crash', () => {
+  const rows = [
+    { po_number: 'PO-1', po_date: '2026-09-01', po_value: 50000, currency: 'INR', rate: 1, client: null, service: null, sector: null, country: null },
+    { po_number: 'PO-2', po_date: '2026-09-05', po_value: 20000, currency: 'INR', rate: 1, client: 'Acme', service: 'LCA', sector: 'Steel', country: 'India' },
+  ];
+  const p = contractPipeline(rows);
+  assert.deepEqual([p.total, p.value_inr, p.without_value, p.unconverted], [2, 70000, 0, []]);
+  assert.deepEqual(p.by_service, [{ label: 'LCA', count: 1 }, { label: 'Not set', count: 1 }]);
+  const unmatched = p.detail.find((d) => d.po_number === 'PO-1');
+  assert.deepEqual(
+    [unmatched.client, unmatched.service, unmatched.sector, unmatched.country],
+    [null, null, null, null]
+  );
 });

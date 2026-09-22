@@ -3,6 +3,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, ErrorState, KeyValues, Modal, Select, Stat, Tabs, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
+import { DeliverablesTable } from '../components/Deliverables.jsx';
+import { PortalSettings } from '../components/PortalSettings.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -50,6 +53,9 @@ export default function CompanyDetail() {
     { key: 'quotations', label: `Quotations (${c.quotations.length})` },
     { key: 'projects', label: `Projects (${c.projects.length})` },
     { key: 'pos', label: `Purchase orders (${c.purchase_orders.length})` },
+    { key: 'certificates', label: 'Certificates' },
+    { key: 'activity', label: 'Activity' },
+    { key: 'portal', label: 'Client portal' },
   ];
 
   const contactFields = [
@@ -58,6 +64,12 @@ export default function CompanyDetail() {
     { name: 'role', label: 'Role' },
     { name: 'email', label: 'Email', type: 'email' },
     { name: 'phone', label: 'Phone' },
+    { name: 'whatsapp_number', label: 'WhatsApp number', hint: 'If different from the phone' },
+    { name: 'preferred_channel', label: 'Prefers', type: 'select', options: ['email', 'call', 'whatsapp', 'meeting'] },
+    { name: 'best_time_to_call', label: 'Best time to call' },
+    { name: 'do_not_contact', label: 'Contact from the app', type: 'boolean', trueLabel: 'Do not contact', falseLabel: 'Allowed', default: 'false' },
+    { name: 'whatsapp_opt_in_at', label: 'WhatsApp opt-in on', type: 'date' },
+    { name: 'whatsapp_opt_in_source', label: 'Opt-in source', hint: 'e.g. email reply, signed form' },
     { name: 'is_billing', label: 'Billing contact', type: 'boolean', hint: 'Receives payment reminders', default: 'false' },
     { name: 'opt_out_reminders', label: 'Automatic reminders', type: 'boolean', trueLabel: 'Never send', falseLabel: 'Allowed', default: 'false' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
@@ -127,6 +139,7 @@ export default function CompanyDetail() {
             <DataTable rows={c.enquiries} onRowClick={(r) => navigate(`/enquiries?q=${encodeURIComponent(r.enquiry_no)}`)} columns={[
               { key: 'enquiry_no', header: 'Enquiry', className: 'mono' },
               { key: 'enquiry_date', header: 'Date', render: (r) => date(r.enquiry_date) },
+              { key: 'sector', header: 'Sector' },
               { key: 'service', header: 'Service', className: 'wrap' },
               { key: 'sales_person', header: 'Sales person' },
               { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
@@ -170,6 +183,9 @@ export default function CompanyDetail() {
             ]} empty={<Empty title="No purchase orders" />} />
           </Card>
         )}
+        {tab === 'certificates' && <DeliverablesTable params={{ company_id: c.id }} preset={{ company_id: String(c.id) }} compact title="What this client holds" hint="Certificates, scorecards and reports we issued, across cycles." />}
+        {tab === 'activity' && <Timeline entity="company" id={String(c.id)} />}
+        {tab === 'portal' && <PortalSettings companyId={c.id} />}
       </div>
 
       {editing && (
