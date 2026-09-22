@@ -359,7 +359,6 @@ export const resources = {
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
       'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
-      'on_hold', 'hold_reason', 'promise_to_pay_date',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -377,9 +376,6 @@ export const resources = {
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
       milestone_reached_on: date(),
-      on_hold: bool(),
-      hold_reason: str(500),
-      promise_to_pay_date: date(),
     }),
   },
 
@@ -531,6 +527,12 @@ export const resources = {
   },
 
   payments: {
+    // What has actually been received. payment_stages.amount_received is
+    // computed from these rows by trigger, so a deleted or re-pointed
+    // payment silently moves Due now, Collections and the forecast.
+    // Recording a receipt is ordinary work and goes through
+    // POST /payment-stages/:id/payment; editing the ledger by hand is not.
+    adminOnlyWrites: true,
     table: 'payments',
     view: null,
     label: 'Payment',
