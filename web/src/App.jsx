@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
-import Overview from './pages/Overview.jsx';
+import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
 import Tasks from './pages/Tasks.jsx';
 import Enquiries from './pages/Enquiries.jsx';
@@ -254,7 +254,7 @@ export default function App() {
 
       <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'ml-60')}>
         <Routes>
-          <Route path="/" element={<Overview />} />
+          <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/companies" element={<Companies />} />

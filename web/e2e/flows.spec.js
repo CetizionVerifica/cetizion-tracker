@@ -23,7 +23,8 @@ async function signIn(page) {
   await page.getByLabel('Username').fill(USER);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  // The home page is a day, so its heading is today's date.
+  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
 }
 
 /**
@@ -64,7 +65,8 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
   await expect(page.getByText('Invoice number is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  // The home page is a day, so its heading is today's date.
+  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -73,7 +75,7 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByLabel('Password').fill('not-the-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.locator('.alert')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
 });
 
 test('quote a new client, then find the client once under Companies', async ({ page }) => {
