@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+/**
+ * Cetizion, from the v2 redesign (design project "Cetizion Tracker UI Mockups").
+ *
+ * The design is dark and only dark, so its palette is the root palette and
+ * `.dark` repeats it rather than inverting: a stray `dark` class cannot make
+ * the app light, and neither can a user's system setting.
+ *
+ * Its own rules, kept here because they are the thing that makes the screens
+ * look like one product:
+ *
+ *   Radius   6px chips and inputs · 10px cards · 14px overlays. Three values.
+ *   Heights  32 control · 36 table row · 44 touch. Three values.
+ *   Spacing  a 4px grid; gaps are 8, 12, 16, 24, 32 — never 7, 9, 11.
+ *   Type     24/600 page title · 15/600 section · 13/400 body and cells.
+ *   Money    mono and tabular, always.
+ *   Status   never hue alone; every state carries a word or an icon too.
+ *   Motion   120-180ms, and nothing at all under prefers-reduced-motion.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* The four states the tracker actually has. Named for what they mean,
+     not for their hue, because the hue is the least of what says it. */
+  --color-late: var(--late);
+  --color-late-foreground: var(--late-foreground);
+  --color-waiting: var(--waiting);
+  --color-waiting-foreground: var(--waiting-foreground);
+  --color-settled: var(--settled);
+  --color-settled-foreground: var(--settled-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Three radii, the design's own. --radius is the card. */
+  --radius-sm: 6px;
+  --radius-md: 6px;
+  --radius-lg: var(--radius);
+  --radius-xl: 14px;
+
+  --font-sans: "Geist", "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Three heights, the design's own. */
+  --spacing-control: 32px;
+  --spacing-row: 36px;
+  --spacing-touch: 44px;
+}
+
+:root {
+  --radius: 10px;
+
+  --background: #050506;         /* ground */
+  --foreground: #f4f4f6;
+  --card: #141417;               /* card */
+  --card-foreground: #f4f4f6;
+  --popover: #141417;
+  --popover-foreground: #f4f4f6;
+
+  --primary: #2ee0b8;            /* accent */
+  --primary-foreground: #06120f; /* ink, for text on the accent */
+
+  --secondary: #191920;
+  --secondary-foreground: #f4f4f6;
+
+  --muted: #0e0e10;              /* canvas */
+  --muted-foreground: #8e8e99;   /* meta, 5.4:1 — never load-bearing */
+
+  --accent: #1d1d21;             /* hover surface, not the brand accent */
+  --accent-foreground: #f4f4f6;
+
+  --destructive: #ff8095;
+  --destructive-foreground: #06120f;
+
+  --border: #26262b;             /* line */
+  --input: #26262b;
+  --ring: #2ee0b8;
+
+  --late: #ff8095;
+  --late-foreground: #06120f;
+  --waiting: #f0b45e;
+  --waiting-foreground: #06120f;
+  --settled: #4fd8b6;
+  --settled-foreground: #06120f;
+  --info: #7db6ff;
+  --info-foreground: #06120f;
+
+  /* Secondary text: #b9b9c2 at 9.8:1. Not muted — muted is the meta line. */
+  --secondary-text: #b9b9c2;
+
+  --sidebar: #0e0e10;
+  --sidebar-foreground: #b9b9c2;
+  --sidebar-primary: #2ee0b8;
+  --sidebar-primary-foreground: #06120f;
+  --sidebar-accent: #1d1d21;
+  --sidebar-accent-foreground: #f4f4f6;
+  --sidebar-border: #26262b;
+  --sidebar-ring: #2ee0b8;
+}
+
+/* Dark is the only mode, so the class changes nothing. */
+.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv01";
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A reference number or an amount is read by its shape, so it is mono and
+     tabular wherever it appears. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus is visible and generous: a 3px ring, offset by 2, on everything
+     that takes focus — the design asks for this by name. */
+  :focus-visible {
+    outline: 3px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Prose caps at 68ch; table cells wrap rather than truncate. */
+  .measure {
+    max-width: 68ch;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

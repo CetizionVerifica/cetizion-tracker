@@ -1,24 +1,49 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
+import { Badge as UiBadge } from '@/components/ui/badge.tsx';
+import { Card as UiCard, CardContent, CardHeader } from '@/components/ui/card.tsx';
+import {
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table.tsx';
+
+/**
+ * These keep the names and props every page already passes, and render the
+ * prebuilt shadcn components underneath. That is the whole migration plan in
+ * one line: a page changes appearance without being rewritten, and is
+ * converted properly only when somebody is in it for another reason.
+ *
+ * The design's own rules live in styles/globals.css — three radii, three
+ * heights, a 4px grid — so the classes below only ever compose those.
+ */
+
+/** The design names four states; toneFor still speaks in the old words. */
+const TONE = {
+  danger: 'border-late/30 bg-late/10 text-late',
+  warning: 'border-waiting/30 bg-waiting/10 text-waiting',
+  success: 'border-settled/30 bg-settled/10 text-settled',
+  info: 'border-info/30 bg-info/10 text-info',
+  neutral: 'border-border bg-secondary text-secondary-foreground',
+};
 
 /* ------------------------------------------------------------------ card */
 
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
-    <section className={`card ${className}`}>
+    <UiCard className={cn('gap-0 rounded-[10px] border-border bg-card py-0 shadow-none', className)}>
       {(title || actions) && (
-        <header className="card__head">
-          <div className="card__lead">
-            {title && <div className="card__title">{title}</div>}
-            {hint && <div className="card__hint">{hint}</div>}
+        <CardHeader className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
+            {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
-          {actions}
-        </header>
+          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        </CardHeader>
       )}
-      <div className={flush ? 'card__body card__body--flush' : 'card__body'}>{children}</div>
-    </section>
+      <CardContent className={flush ? 'p-0' : 'p-4'}>{children}</CardContent>
+    </UiCard>
   );
 }
 
@@ -41,13 +66,18 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
 /* ----------------------------------------------------------------- badge */
 
 export function Badge({ children, tone, dot = false }) {
-  if (children === null || children === undefined || children === '') return <span className="muted">—</span>;
+  if (children === null || children === undefined || children === '') {
+    return <span className="text-muted-foreground">—</span>;
+  }
   const resolved = tone || toneFor(children);
+  // The word is the state; the hue only agrees with it. Colour alone never
+  // says anything here, which is the design's rule and also the accessible
+  // one.
   return (
-    <span className={`badge ${resolved !== 'neutral' ? `badge--${resolved}` : ''}`}>
-      {dot && <span className="badge__dot" />}
+    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral)}>
+      {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
-    </span>
+    </UiBadge>
   );
 }
 
@@ -76,37 +106,53 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
+    <div className="w-full overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow className="border-border hover:bg-transparent">
             {columns.map((col) => (
-              <th key={col.key} className={col.align === 'right' ? 'num' : ''} style={col.width ? { width: col.width } : undefined}>
+              <TableHead
+                key={col.key}
+                className={cn(
+                  'h-row whitespace-nowrap px-3 text-[12px] font-semibold text-muted-foreground',
+                  col.align === 'right' && 'num text-right'
+                )}
+                style={col.width ? { width: col.width } : undefined}
+              >
                 {col.header}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row, i) => (
-            <tr
+            <TableRow
               key={row.id ?? i}
-              className={[onRowClick ? 'is-clickable' : '', rowClassName ? rowClassName(row) || '' : ''].join(' ').trim()}
+              className={cn(
+                'border-border',
+                onRowClick && 'cursor-pointer',
+                rowClassName ? rowClassName(row) || '' : ''
+              )}
               onClick={onRowClick ? (e) => {
                 if (e.target.closest('button, a, input, select')) return;
                 onRowClick(row);
               } : undefined}
             >
               {columns.map((col) => (
-                <td key={col.key} className={[col.align === 'right' ? 'num' : '', col.className || ''].join(' ').trim()}>
-                  {col.render ? col.render(row) : row[col.key] ?? <span className="muted">—</span>}
-                </td>
+                // Cells wrap rather than truncate: a client's name is the
+                // thing you came to read.
+                <TableCell
+                  key={col.key}
+                  className={cn('px-3 py-2 align-top text-[13px] whitespace-normal', col.align === 'right' && 'num text-right', col.className)}
+                >
+                  {col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>}
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-        {footer && <tfoot><tr>{footer}</tr></tfoot>}
-      </table>
+        </TableBody>
+        {footer && <TableFooter className="bg-muted/40"><TableRow className="border-border">{footer}</TableRow></TableFooter>}
+      </Table>
     </div>
   );
 }
