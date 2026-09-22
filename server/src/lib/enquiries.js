@@ -1,4 +1,4 @@
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { claimNextId } from './sequences.js';
 import { ENQUIRY_STATUS } from './statuses.js';
 
