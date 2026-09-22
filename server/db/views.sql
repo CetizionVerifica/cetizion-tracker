@@ -527,6 +527,7 @@ SELECT
   q.contact_id,
   q.service_quoted,
   q.sector,
+  q.country,
   q.sales_person,
   q.sales_person_email,
   q.quotation_date,
