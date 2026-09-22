@@ -4,6 +4,10 @@
  *   POST /api/quotations/:key/approval/request  { reason }            put an exception up for approval
  *   POST /api/quotations/:key/approval/decide   { decision, note }    approved | rejected
  *
+ * Asking for approval is open to anybody: it is the salesperson's own
+ * request. Deciding is not — an approval you can grant yourself is not an
+ * approval, and #46 exists because a discount needs somebody else's yes.
+ *
  * A discount above the Settings threshold goes to pending on its own when
  * the lines change (quotation_totals). Either way the approver is emailed,
  * and the sales person hears the decision. Until approved, the quotation
@@ -11,6 +15,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { approvalDecision, approvalRequest } from '../lib/emailTemplates.js';
@@ -52,7 +57,7 @@ approvalRouter.post('/:key/approval/request', async (req, res) => {
 
 const decideSchema = z.object({ decision: z.enum(['approved', 'rejected']), note: z.string().trim().max(1000).optional().default('') });
 
-approvalRouter.post('/:key/approval/decide', async (req, res) => {
+approvalRouter.post('/:key/approval/decide', requireAdmin, async (req, res) => {
   const parsed = decideSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Pick approved or rejected');
   const q = await load(req.params.key);

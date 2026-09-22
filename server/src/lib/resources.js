@@ -488,6 +488,10 @@ export const resources = {
   },
 
   'pipeline-stages': {
+    // The board's own shape: a stage's status mapping and probability rewrite
+    // quotation statuses and the whole forecast through c_stage_sync.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'pipeline_stages',
     view: null,
     label: 'Pipeline stage',
@@ -612,6 +616,9 @@ export const resources = {
   },
 
   'payment-terms-templates': {
+    // The invoicing schedules every new PO is built from.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'payment_terms_templates',
     view: null,
     label: 'Payment terms template',
@@ -623,6 +630,9 @@ export const resources = {
   },
 
   'payment-terms-template-lines': {
+    // The lines those schedules are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'payment_terms_template_lines',
     view: null,
     label: 'Payment terms line',
@@ -642,6 +652,9 @@ export const resources = {
   },
 
   'onboarding-templates': {
+    // The delivery checklists every new project starts with.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'onboarding_templates',
     view: null,
     label: 'Onboarding template',
@@ -653,6 +666,9 @@ export const resources = {
   },
 
   'onboarding-template-lines': {
+    // The steps those checklists are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'onboarding_template_lines',
     view: null,
     label: 'Onboarding template step',
@@ -671,6 +687,9 @@ export const resources = {
   },
 
   'lead-sources': {
+    // A Settings list. Deleting one blanks it on every enquiry that used it.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'lead_sources',
     view: null,
     label: 'Lead source',
@@ -682,6 +701,10 @@ export const resources = {
   },
 
   'lost-reasons': {
+    // A Settings list. Deleting one blanks it on every lost quotation and
+    // unqualified enquiry, through ON DELETE SET NULL.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
     table: 'lost_reasons',
     view: null,
     label: 'Lost reason',

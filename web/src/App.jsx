@@ -85,7 +85,7 @@ const NAV = [
       { to: '/settings', icon: '⚙', label: 'Settings' },
       { to: '/import', icon: '⇪', label: 'Bulk import' },
       { to: '/emails', icon: '✉', label: 'Emails & jobs' },
-      { to: '/templates', icon: '▤', label: 'Templates' },
+      { to: '/templates', icon: '▤', label: 'Templates', adminOnly: true },
     ],
   },
 ];
@@ -105,7 +105,7 @@ export default function App() {
   }, [hidden]);
   const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
   const location = useLocation();
-  const { displayName, signOut } = useAuth();
+  const { displayName, signOut, isAdmin } = useAuth();
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
@@ -146,7 +146,7 @@ export default function App() {
           {NAV.map((group) => (
             <div className="nav__group" key={group.label}>
               <div className="nav__label">{group.label}</div>
-              {group.items.map((item) => (
+              {group.items.filter((item) => isAdmin || !item.adminOnly).map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
