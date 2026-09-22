@@ -78,15 +78,34 @@ const NAV_TOP = [
 ];
 
 /**
- * The views worth a permanent place, each with the count that makes it
- * worth looking at. The square is a second signal beside the colour, and
- * the count carries the colour of what it means.
+ * Where each list lives, so a saved view knows where to send you.
+ *
+ * A view is stored as a resource key and a set of filters; this is the one
+ * place that turns a resource key into a route. Adding a list means adding
+ * a line here, and a view on a resource nobody has routed is simply not
+ * shown rather than linking into nothing.
  */
-const NAV_PINNED = [
-  { to: '/collections', label: 'Overdue money', badge: 'overdue', tone: 'late' },
-  { to: '/payment-stages', label: 'To invoice', badge: 'toInvoice', tone: 'waiting' },
-  { to: '/quotations', label: 'Open deals', badge: 'openDeals', tone: 'info' },
-];
+const RESOURCE_ROUTES = {
+  quotations: '/quotations',
+  enquiries: '/enquiries',
+  companies: '/companies',
+  projects: '/projects',
+  'purchase-orders': '/purchase-orders',
+  'payment-stages': '/payment-stages',
+  'travel-logs': '/travel',
+  'vendor-invoices': '/vendor-invoices',
+  'expense-claims': '/expense-claims',
+};
+
+/** `{stage_status: 'Overdue'}` → `/payment-stages?stage_status=Overdue`. */
+function viewHref(view) {
+  const base = RESOURCE_ROUTES[view.resource];
+  if (!base) return null;
+  const query = new URLSearchParams(
+    Object.entries(view.filters || {}).filter(([, value]) => value !== '' && value != null)
+  ).toString();
+  return query ? `${base}?${query}` : base;
+}
 
 const NAV_RECORDS = [
   { to: '/quotations', icon: FileText, label: 'Deals' },
@@ -164,19 +183,16 @@ export default function App() {
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
-  const { data } = useFetch(() => api.raw('/dashboard/worklist'), [location.pathname]);
-  const w = data?.data;
   const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
-  const { data: oData } = useFetch(() => api.raw('/dashboard/overview'), []);
-  const overview = oData?.data;
-  // A pinned view is only worth its place if it says how much is behind it.
+  // A pinned view is only worth its place if it says how much is behind it,
+  // and the count is the same one the list shows when you click through.
+  const { data: vData } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
+  const pinned = (vData?.data || []).filter((view) => view.pinned && viewHref(view));
+
   const counts = {
     inbox: iData?.data?.open ?? null,
     notifications: nData?.data?.unread ?? null,
-    overdue: w?.payment_stages.filter((s) => s.stage_status === 'Overdue').length ?? null,
-    toInvoice: w?.payment_stages.filter((s) => s.stage_status === 'To Invoice').length ?? null,
-    openDeals: overview?.sales?.open ?? null,
   };
   const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0 };
 
@@ -213,11 +229,11 @@ export default function App() {
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
 
-          <SideHeading>Pinned</SideHeading>
-          {NAV_PINNED.map((item) => (
+          {pinned.length > 0 && <SideHeading>Pinned</SideHeading>}
+          {pinned.map((view) => (
             <NavLink
-              key={item.label}
-              to={item.to}
+              key={view.id}
+              to={viewHref(view)}
               className={({ isActive }) => cn(
                 'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
                 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
@@ -226,11 +242,13 @@ export default function App() {
             >
               {/* A square as well as a colour: the state is never hue alone. */}
               <span className="grid w-4 shrink-0 place-items-center" aria-hidden="true">
-                <span className={cn('size-[7px] rounded-[2px]', TONES[item.tone].dot)} />
+                <span className={cn('size-[7px] rounded-[2px]', (TONES[view.tone] || TONES.info).dot)} />
               </span>
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
-              {counts[item.badge] > 0 && (
-                <span className={cn('num text-[11px] font-semibold', TONES[item.tone].count)}>{counts[item.badge]}</span>
+              <span className="min-w-0 flex-1 truncate">{view.name}</span>
+              {view.count > 0 && (
+                <span className={cn('num text-[11px] font-semibold', (TONES[view.tone] || TONES.info).count)}>
+                  {view.count}
+                </span>
               )}
             </NavLink>
           ))}

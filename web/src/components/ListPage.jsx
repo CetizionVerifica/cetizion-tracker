@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
@@ -36,16 +37,34 @@ export function ListPage({
   banner,
 }) {
   const toast = useToast();
-  const [search, setSearch] = useState(initialSearch || '');
+  const [urlParams] = useSearchParams();
+
+  /**
+   * A filter named in the address bar is applied, whatever list this is.
+   *
+   * A saved view is a resource and a set of filters, and it links here as
+   * `?stage_status=Overdue`. Reading the URL once, here, is what lets a
+   * view work on every list without each page being taught about it —
+   * before this, each page mapped its own handful of parameters by hand,
+   * and a view pointing at any other filter quietly did nothing.
+   */
+  const fromUrl = {};
+  for (const { name } of filters) {
+    const value = urlParams.get(name);
+    if (value) fromUrl[name] = value;
+  }
+  const urlSearch = urlParams.get('q') || '';
+
+  const [search, setSearch] = useState(initialSearch || urlSearch);
   // Arriving from a dashboard tile pre-selects the matching filter, so the
   // dropdown shows why the list is short.
-  const [filterValues, setFilterValues] = useState(() => initialFilters || {});
+  const [filterValues, setFilterValues] = useState(() => ({ ...initialFilters, ...fromUrl }));
 
   // Those props come from the URL, and this screen stays mounted when the URL
   // changes under it — a second tile, or another ?q= link. Without this the
   // address bar would say one thing and the table show another. Compared by
   // value, so a filter the user picked by hand is left alone.
-  const initialFiltersKey = JSON.stringify(initialFilters || {});
+  const initialFiltersKey = JSON.stringify({ ...initialFilters, ...fromUrl });
   useEffect(() => {
     setFilterValues(JSON.parse(initialFiltersKey));
   }, [initialFiltersKey]);

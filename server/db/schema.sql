@@ -610,8 +610,8 @@ CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, servic
 CREATE TABLE payments (
   id           serial PRIMARY KEY,
   stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
-  -- A receipt is positive. An adjustment — someone correcting a total that
-  -- was typed too high — is a negative row, so the ledger still adds up to
+  -- A receipt is positive. An adjustment ï¿½ someone correcting a total that
+  -- was typed too high ï¿½ is a negative row, so the ledger still adds up to
   -- the figure on the stage. Writing the figure by hand instead left the
   -- correction to be undone by the next receipt.
   amount       numeric(16,2) NOT NULL,
@@ -2249,5 +2249,53 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_id, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
+
+-- ---------------------------------------------------------------------
+-- Saved views: the pinned list in the sidebar, and every report.
+--
+-- A view is a resource, a set of filters and a name. That is enough to be
+-- three things at once â€” a sidebar entry with the count behind it, a
+-- preset on a list page, and, with `chart` set, a report, because a report
+-- here is a filtered list with a summary above it.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS saved_views (
+  id          serial PRIMARY KEY,
+  -- The resource key the API already knows, e.g. 'payment-stages'. Checked
+  -- against the resource registry on write: that registry is the one true
+  -- list and it lives in the code.
+  resource    text NOT NULL,
+  name        text NOT NULL,
+  -- The query the list endpoint would have been given. Re-validated
+  -- against the resource's declared filters on every read, so a filter
+  -- dropped from a resource stops being applied rather than erroring.
+  filters     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Null is everybody's; a username makes it one person's.
+  owner       text,
+  pinned      boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0,
+  -- What the count means, so the sidebar can colour it.
+  tone        text CHECK (tone IN ('late', 'waiting', 'settled', 'info')),
+  chart       text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Two views both called "Mine" on the same list is a bug reported later.
+CREATE UNIQUE INDEX IF NOT EXISTS saved_views_name_key
+  ON saved_views (resource, lower(name), COALESCE(owner, ''));
+CREATE INDEX IF NOT EXISTS saved_views_pinned_idx
+  ON saved_views (pinned, sort_order) WHERE pinned;
+
+-- The three the sidebar starts with. Rows, not code, so they can be
+-- renamed, reordered or unpinned without a deploy. Seeded only into an
+-- empty table, so a site that has made its own is left alone.
+INSERT INTO saved_views (resource, name, filters, pinned, sort_order, tone, chart)
+SELECT * FROM (VALUES
+  ('payment-stages', 'Overdue money', '{"stage_status":"Overdue"}'::jsonb, true, 1, 'late', 'ageing'),
+  ('payment-stages', 'To invoice',    '{"stage_status":"To Invoice"}'::jsonb, true, 2, 'waiting', NULL),
+  ('quotations',     'Open deals',    '{"status":"Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
+) AS seed(resource, name, filters, pinned, sort_order, tone, chart)
+WHERE NOT EXISTS (SELECT 1 FROM saved_views);
 
 COMMIT;

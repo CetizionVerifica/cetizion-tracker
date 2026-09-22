@@ -16,6 +16,7 @@ import { mountWebApp } from './web.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { lookupRouter, settingsRouter } from './routes/lookups.js';
 import { searchRouter } from './routes/search.js';
+import { viewRouter } from './routes/views.js';
 import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
@@ -129,6 +130,7 @@ app.use('/api', requireAuth);
 
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/search', searchRouter);
+app.use('/api/views', viewRouter);
 app.use('/api/lookups', lookupRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
