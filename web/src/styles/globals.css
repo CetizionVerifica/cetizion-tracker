@@ -42,6 +42,12 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  /* The design's third text tone, at 9.8:1. Without this line the raw
+     `--secondary-text` var exists but `text-secondary-text` is not a
+     utility Tailwind knows, so every use of it compiled to nothing and
+     the text quietly inherited whatever was above it. */
+  --color-secondary-text: var(--secondary-text);
+
   /* The four states the tracker actually has. Named for what they mean,
      not for their hue, because the hue is the least of what says it. */
   --color-late: var(--late);

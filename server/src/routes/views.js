@@ -13,7 +13,6 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { buildWhere } from '../lib/crud.js';
 import { ApiError } from '../middleware/error.js';
@@ -55,6 +54,11 @@ function mayWrite(req, row) {
  */
 function usable(def, filters) {
   const allowed = new Set([...(def.filters || []), 'q']);
+  // A list with a date column takes `from` and `to` as well, and they are
+  // not in `filters`. Without them a view like "invoiced this quarter"
+  // would be counted across all time, and the number in the sidebar would
+  // not be the number of rows you get when you click it.
+  if (def.dateFilter) { allowed.add('from'); allowed.add('to'); }
   return Object.fromEntries(Object.entries(filters || {}).filter(([key]) => allowed.has(key)));
 }
 
@@ -139,7 +143,11 @@ viewRouter.patch('/:id', async (req, res) => {
   if (body.sort_order !== undefined) set('sort_order', body.sort_order);
   if (body.tone !== undefined) set('tone', body.tone ?? null);
   if (body.chart !== undefined) set('chart', body.chart ?? null);
-  if (body.shared !== undefined) set('owner', body.shared ? null : who(req));
+  // Un-sharing returns a view to the person who owned it, not to whoever
+  // happens to be unsharing it. An admin taking a shared view private
+  // would otherwise quietly become its owner and remove it from everybody
+  // else's sidebar under their own name.
+  if (body.shared !== undefined) set('owner', body.shared ? null : (existing.created_by || existing.owner || who(req)));
   if (!sets.length) throw new ApiError(422, 'Nothing to change.');
   sets.push('updated_at = now()');
 
@@ -161,11 +169,26 @@ viewRouter.delete('/:id', async (req, res) => {
   res.status(204).end();
 });
 
-/** Reordering the sidebar is one request, not one per view. */
-viewRouter.post('/order', requireAdmin, async (req, res) => {
-  const order = z.array(z.number().int().positive()).max(50).parse(req.body?.order ?? []);
-  for (const [index, id] of order.entries()) {
-    await query('UPDATE saved_views SET sort_order = $1, updated_at = now() WHERE id = $2', [index + 1, id]);
+/**
+ * Reordering the sidebar is one request, not one per view.
+ *
+ * Not admin-only: a sales user may order their own sidebar. What they may
+ * not do is move a view that is not theirs, so the update names the owner
+ * as well as the id and a shared view simply does not match.
+ */
+viewRouter.post('/order', async (req, res) => {
+  const parsed = z.array(z.number().int().positive()).max(50).safeParse(req.body?.order);
+  if (!parsed.success) {
+    throw new ApiError(422, 'Send `order` as a list of view ids, newest first.', { fields: { order: 'A list of view ids' } });
   }
-  res.json({ data: { ordered: order.length } });
+  let moved = 0;
+  for (const [index, id] of parsed.data.entries()) {
+    const { rowCount } = await query(
+      `UPDATE saved_views SET sort_order = $1, updated_at = now()
+        WHERE id = $2 AND (owner = $3 OR ($4::boolean AND owner IS NULL))`,
+      [index + 1, id, who(req), isAdmin(req)]
+    );
+    moved += rowCount;
+  }
+  res.json({ data: { ordered: moved } });
 });

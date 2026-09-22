@@ -177,6 +177,61 @@ describe('saved views', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, 
     assert.equal(view.count, 1, 'on the filter that survives, ignoring the one that does not');
   });
 
+  test('un-sharing gives a view back to whoever made it', async () => {
+    // An admin taking a shared view private must not quietly become its
+    // owner — that removes it from everybody else's sidebar under
+    // somebody else's name.
+    const made = await as(sales.cookie)('post', '/api/views')
+      .send({ resource: 'projects', name: 'Sam\'s own' });
+    assert.equal(made.status, 201);
+
+    const shared = await as(admin.cookie)('patch', `/api/views/${made.body.data.id}`).send({ shared: true });
+    assert.equal(shared.status, 200);
+    assert.equal(shared.body.data.owner, null);
+
+    const back = await as(admin.cookie)('patch', `/api/views/${made.body.data.id}`).send({ shared: false });
+    assert.equal(back.status, 200);
+    assert.equal(back.body.data.owner, 'sales@example.test', 'back to Sam, not to the admin who unshared it');
+  });
+
+  test('a sales user may order their own sidebar, and only their own', async () => {
+    const mine = await as(sales.cookie)('post', '/api/views')
+      .send({ resource: 'companies', name: 'Ordering test', pinned: true });
+    assert.equal(mine.status, 201);
+    const shared = (await exec(`SELECT id FROM saved_views WHERE name = 'To invoice'`))[0];
+
+    const res = await as(sales.cookie)('post', '/api/views/order')
+      .send({ order: [mine.body.data.id, shared.id] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    // Their own moved; the shared one did not, because it is not theirs.
+    assert.equal(res.body.data.ordered, 1, JSON.stringify(res.body));
+  });
+
+  test('a malformed order is refused, not a 500', async () => {
+    const res = await as(sales.cookie)('post', '/api/views/order').send({ order: 'first please' });
+    assert.equal(res.status, 422, JSON.stringify(res.body));
+  });
+
+  test('a dated view is counted over its own dates', async () => {
+    // Without `from`/`to` surviving into the count, "invoiced this
+    // quarter" would be counted across all time and the sidebar would
+    // disagree with the list it links to.
+    await exec(`INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status)
+                VALUES ('CTZ/QT/2026/901', 'Old Ltd', '2020-01-01', 100000, 'Submitted')`);
+
+    const made = await as(admin.cookie)('post', '/api/views').send({
+      resource: 'quotations', name: 'Quoted this era', filters: { from: '2026-01-01', to: '2026-12-31' },
+    });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+
+    const counted = await as(admin.cookie)('get', '/api/views?counts=1');
+    const view = counted.body.data.find((v) => v.name === 'Quoted this era');
+    const list = await as(admin.cookie)('get', '/api/quotations?from=2026-01-01&to=2026-12-31');
+    assert.equal(view.count, list.body.data.length, 'the count is the list');
+    assert.ok(view.count >= 1 && !list.body.data.some((q) => q.quotation_no === 'CTZ/QT/2026/901'),
+      'and the 2020 one is outside it');
+  });
+
   test('signing out closes it', async () => {
     assert.equal((await request(app).get('/api/views')).status, 401);
   });

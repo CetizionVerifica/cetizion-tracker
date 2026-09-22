@@ -25,6 +25,7 @@ import Profitability from './pages/Profitability.jsx';
 import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
+import TripDetail from './pages/TripDetail.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
@@ -299,6 +300,7 @@ export default function App() {
           <Route path="/webhooks" element={<Webhooks />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/travel" element={<TravelLogs />} />
+          <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />

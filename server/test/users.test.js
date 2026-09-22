@@ -251,12 +251,22 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
   test('updated_at follows an edit, the way every other table does', async () => {
     await clean();
     const { rows } = await insertRow(login('touch@example.com'));
-    const before = await scalar('SELECT updated_at FROM users WHERE id = $1', [rows[0].id]);
+
+    // Compared in Postgres, and carried as text between the two reads.
+    // timestamptz keeps microseconds; a JavaScript Date keeps
+    // milliseconds, so reading both into JS and comparing them failed
+    // whenever the insert and the update landed in the same millisecond —
+    // which on a fast machine is most of the time. The trigger was always
+    // firing; the assertion was losing the difference.
+    const before = await scalar('SELECT updated_at::text FROM users WHERE id = $1', [rows[0].id]);
 
     await db.query(`UPDATE users SET name = 'Renamed' WHERE id = $1`, [rows[0].id]);
 
-    const after = await scalar('SELECT updated_at FROM users WHERE id = $1', [rows[0].id]);
-    assert.ok(after > before, 'updated_at moved');
+    const moved = await scalar(
+      'SELECT updated_at > $2::timestamptz FROM users WHERE id = $1',
+      [rows[0].id, before]
+    );
+    assert.ok(moved, 'updated_at moved');
   });
 
   // -------------------------------------------------------- the data layer
