@@ -9,6 +9,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -102,7 +103,10 @@ collectionsRouter.post('/log', async (req, res) => {
 
 const holdSchema = z.object({ on_hold: z.boolean(), hold_reason: z.string().trim().max(500).optional().nullable() });
 
-collectionsRouter.post('/stages/:id/hold', async (req, res) => {
+// Putting a debt on hold stops the chasing job, so it is the admin's
+// call rather than something a salesperson does to their own client.
+// Logging a chase stays open — that is the work itself.
+collectionsRouter.post('/stages/:id/hold', requireAdmin, async (req, res) => {
   const parsed = holdSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'on_hold must be true or false');
   const { rows } = await query('UPDATE payment_stages SET on_hold = $2, hold_reason = CASE WHEN $2 THEN $3 ELSE NULL END WHERE id = $1 RETURNING id, on_hold, hold_reason', [Number(req.params.id), parsed.data.on_hold, parsed.data.hold_reason ?? null]);

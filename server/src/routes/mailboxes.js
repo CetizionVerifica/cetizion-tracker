@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
@@ -35,6 +36,40 @@ export const mailThreadRouter = Router();
 export const mailWebhookRouter = Router();
 
 const who = (req) => req.user?.username || 'admin';
+
+/**
+ * Whose mailbox this is, and who may do what with it.
+ *
+ * Administering one — its settings, a sync, disconnecting it — belongs to
+ * the person who connected it, and to an admin. Reading is wider: a shared
+ * mailbox is the team's, which is the whole point of it.
+ *
+ * A person is matched on both spellings the tracker knows, the address they
+ * sign in with and the name on their account, because `username` on a
+ * connected account is whatever was recorded when it was connected.
+ */
+const isAdmin = (req) => req.user?.role === 'admin';
+const identities = (req) => [req.user?.username || 'admin', req.user?.name || req.user?.username || 'admin'];
+
+/** "mailboxes this person may read", as SQL with placeholders from $from. */
+function readable(req, alias, from) {
+  if (isAdmin(req)) return { clause: 'TRUE', params: [] };
+  return {
+    clause: `(${alias}.is_shared OR lower(${alias}.username) IN (lower($${from}), lower($${from + 1})))`,
+    params: identities(req),
+  };
+}
+
+/** Null when there is no such mailbox, so the caller can 404 rather than leak. */
+async function mayAdminister(req, id) {
+  const { rows } = await query('SELECT username FROM connected_accounts WHERE id = $1', [id]);
+  if (!rows.length) return null;
+  if (isAdmin(req)) return true;
+  return identities(req).some((name) => String(rows[0].username || '').toLowerCase() === name.toLowerCase());
+}
+
+/** The 403 every one of those routes gives, worded the same way. */
+const NOT_YOURS = 'That mailbox belongs to somebody else';
 const fields = (parsed) => new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
 
 // The OAuth state is signed, so a callback cannot be forged or replayed after ten minutes.
@@ -51,13 +86,14 @@ function readState(state) {
 }
 
 mailboxRouter.get('/', async (req, res) => {
+  const listScope = readable(req, 'a', 1);
   const { rows } = await query(
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
             a.auto_create_contacts, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             (SELECT COUNT(*)::int FROM email_threads t WHERE t.account_id = a.id) AS threads,
             (SELECT COUNT(*)::int FROM email_messages m WHERE m.account_id = a.id) AS messages,
             (SELECT json_agg(json_build_object('folder', f.folder, 'subscribed_until', f.subscription_expires_at, 'synced', f.delta_link IS NOT NULL)) FROM mail_folders f WHERE f.account_id = a.id) AS folders
-       FROM connected_accounts a ORDER BY a.status = 'disconnected', a.email`);
+       FROM connected_accounts a WHERE ${listScope.clause} ORDER BY a.status = 'disconnected', a.email`, listScope.params);
   res.json({ data: rows, configured: { microsoft: microsoftConfigured(), token_key: Boolean(config.microsoft.tokenKey), webhook: Boolean(config.microsoft.webhookUrl), test_mailboxes: config.nodeEnv !== 'production' } });
 });
 
@@ -91,7 +127,7 @@ mailboxRouter.get('/oauth/microsoft', async (req, res) => {
   }
 });
 
-mailboxRouter.post('/test', async (req, res) => {
+mailboxRouter.post('/test', requireAdmin, async (req, res) => {
   if (config.nodeEnv === 'production') throw new ApiError(404, 'Not found');
   const parsed = z.object({ email: z.string().trim().email(), shared: z.boolean().optional().default(false), display_name: z.string().max(120).optional() }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
@@ -101,7 +137,7 @@ mailboxRouter.post('/test', async (req, res) => {
   res.status(201).json({ data: a });
 });
 
-mailboxRouter.post('/:id/test-messages', async (req, res) => {
+mailboxRouter.post('/:id/test-messages', requireAdmin, async (req, res) => {
   if (config.nodeEnv === 'production') throw new ApiError(404, 'Not found');
   const { rows: [a] } = await query(`SELECT * FROM connected_accounts WHERE id = $1 AND provider = 'test'`, [Number(req.params.id)]);
   if (!a) throw new ApiError(404, 'No test mailbox with that id');
@@ -118,6 +154,9 @@ const settingsSchema = z.object({
 });
 
 mailboxRouter.patch('/:id', async (req, res) => {
+  const allowed = await mayAdminister(req, Number(req.params.id));
+  if (allowed === null) throw new ApiError(404, 'Mailbox not found');
+  if (!allowed) throw new ApiError(403, NOT_YOURS);
   const parsed = settingsSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
@@ -132,12 +171,18 @@ mailboxRouter.patch('/:id', async (req, res) => {
 });
 
 mailboxRouter.post('/:id/sync', async (req, res) => {
+  const allowed = await mayAdminister(req, Number(req.params.id));
+  if (allowed === null) throw new ApiError(404, 'Mailbox not found');
+  if (!allowed) throw new ApiError(403, NOT_YOURS);
   const r = await syncAccount(Number(req.params.id));
   if (r.skipped === 'not active') throw new ApiError(409, 'This mailbox is not active; reconnect it first');
   res.json({ data: r });
 });
 
 mailboxRouter.post('/:id/disconnect', async (req, res) => {
+  const allowed = await mayAdminister(req, Number(req.params.id));
+  if (allowed === null) throw new ApiError(404, 'Mailbox not found');
+  if (!allowed) throw new ApiError(403, NOT_YOURS);
   const r = await disconnect(Number(req.params.id), { removeBodies: req.body?.remove_bodies !== false });
   if (!r) throw new ApiError(404, 'Mailbox not found');
   res.json({ data: r });
@@ -147,13 +192,13 @@ mailboxRouter.get('/blocklist', async (req, res) => {
   const { rows } = await query('SELECT * FROM email_blocklist ORDER BY pattern');
   res.json({ data: rows });
 });
-mailboxRouter.post('/blocklist', async (req, res) => {
+mailboxRouter.post('/blocklist', requireAdmin, async (req, res) => {
   const pattern = String(req.body?.pattern || '').trim().toLowerCase();
   if (!/^(\*\.)?[a-z0-9._%+-]*@?[a-z0-9.-]+\.[a-z]{2,}$/.test(pattern)) throw new ApiError(422, 'Please check the highlighted fields', { fields: { pattern: 'An address or a domain, e.g. news@x.com or x.com' } });
   const { rows: [r] } = await query('INSERT INTO email_blocklist (pattern, created_by) VALUES ($1,$2) ON CONFLICT (pattern) DO UPDATE SET pattern = EXCLUDED.pattern RETURNING *', [pattern, who(req)]);
   res.status(201).json({ data: r });
 });
-mailboxRouter.delete('/blocklist/:id', async (req, res) => {
+mailboxRouter.delete('/blocklist/:id', requireAdmin, async (req, res) => {
   await query('DELETE FROM email_blocklist WHERE id = $1', [Number(req.params.id)]);
   res.status(204).end();
 });
@@ -166,19 +211,26 @@ mailThreadRouter.get('/threads', async (req, res) => {
   if (entity === 'company' || companyId) { params.push(Number(companyId || id)); where.push(`t.company_id = $${params.length}`); }
   else if (entity && id) { params.push(String(entity), String(id)); where.push(`t.entity = $${params.length - 1} AND t.entity_id = $${params.length}`); }
   else throw new ApiError(422, 'entity and id, or company_id, are required');
+  const scope = readable(req, 'a', params.length + 1);
+  where.push(scope.clause);
   const { rows } = await query(
     `SELECT t.id, t.subject, t.company_id, t.contact_id, t.entity, t.entity_id, t.first_message_at, t.last_message_at, t.message_count, t.last_direction,
             a.email AS mailbox, a.visibility, a.is_shared, ct.name AS contact_name
        FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id LEFT JOIN contacts ct ON ct.id = t.contact_id
-      WHERE ${where.join(' AND ')} ORDER BY t.last_message_at DESC LIMIT 200`, params);
+      WHERE ${where.join(' AND ')} ORDER BY t.last_message_at DESC LIMIT 200`, [...params, ...scope.params]);
   res.json({ data: rows.map((t) => (t.visibility === 'metadata' ? { ...t, subject: null } : t)) });
 });
 
 mailThreadRouter.get('/threads/:id', async (req, res) => {
+  // A thread somebody else's mailbox holds answers the same as one that is
+  // not there: whether a colleague is talking to a client is not a question
+  // this route should answer.
+  const scope = readable(req, 'a', 2);
   const { rows: [t] } = await query(
     `SELECT t.*, a.email AS mailbox, a.visibility, a.status AS mailbox_status, c.name AS company_name, ct.name AS contact_name
        FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id
-       LEFT JOIN companies c ON c.id = t.company_id LEFT JOIN contacts ct ON ct.id = t.contact_id WHERE t.id = $1`, [Number(req.params.id)]);
+       LEFT JOIN companies c ON c.id = t.company_id LEFT JOIN contacts ct ON ct.id = t.contact_id
+      WHERE t.id = $1 AND ${scope.clause}`, [Number(req.params.id), ...scope.params]);
   if (!t) throw new ApiError(404, 'Thread not found');
   const { rows } = await query('SELECT id, direction, from_email, from_name, to_emails, cc_emails, subject, snippet, body_html, has_attachments, sent_at, sent_from_tracker_by FROM email_messages WHERE thread_id = $1 ORDER BY sent_at', [t.id]);
   res.json({ data: { ...(t.visibility === 'metadata' ? { ...t, subject: null } : t), messages: rows.map((m) => applyVisibility(m, t.visibility)) } });
@@ -187,7 +239,12 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
 mailThreadRouter.patch('/threads/:id', async (req, res) => {
   const parsed = z.object({ entity: z.enum(['enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']).nullable(), entity_id: z.string().max(120).nullable() }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const { rows: [t] } = await query('UPDATE email_threads SET entity = $2, entity_id = $3 WHERE id = $1 RETURNING id, entity, entity_id', [Number(req.params.id), parsed.data.entity, parsed.data.entity ? parsed.data.entity_id : null]);
+  const scope = readable(req, 'a', 4);
+  const { rows: [t] } = await query(
+    `UPDATE email_threads t SET entity = $2, entity_id = $3
+       FROM connected_accounts a WHERE a.id = t.account_id AND t.id = $1 AND ${scope.clause}
+     RETURNING t.id, t.entity, t.entity_id`,
+    [Number(req.params.id), parsed.data.entity, parsed.data.entity ? parsed.data.entity_id : null, ...scope.params]);
   if (!t) throw new ApiError(404, 'Thread not found');
   res.json({ data: t });
 });
@@ -195,6 +252,13 @@ mailThreadRouter.patch('/threads/:id', async (req, res) => {
 mailThreadRouter.post('/threads/:id/reply', async (req, res) => {
   const parsed = z.object({ html: z.string().trim().min(1, 'Write a reply').max(100_000), reply_all: z.boolean().optional().default(true) }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
+  // The reply goes out as the mailbox and lands in its Sent Items, so it
+  // has to be a mailbox this person is entitled to speak from.
+  const scope = readable(req, 'a', 2);
+  const { rows: [ok] } = await query(
+    `SELECT t.id FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id WHERE t.id = $1 AND ${scope.clause}`,
+    [Number(req.params.id), ...scope.params]);
+  if (!ok) throw new ApiError(404, 'Thread not found');
   try {
     res.json({ data: await replyToThread(Number(req.params.id), parsed.data.html, who(req), { replyAll: parsed.data.reply_all }) });
   } catch (err) {

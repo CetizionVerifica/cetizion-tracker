@@ -4,6 +4,7 @@ import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
 import { RecordPaymentDialog } from '../components/actions.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { useFetch } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 
@@ -16,6 +17,7 @@ export default function Collections() {
   const toast = useToast();
   const [open, setOpen] = useState(null);           // company key expanded
   const [chase, setChase] = useState(null);         // { stage } | { company }
+  const { isAdmin } = useAuth();
   const [hold, setHold] = useState(null);           // stage
   const [paying, setPaying] = useState(null);       // stage
   const [logFor, setLogFor] = useState(null);       // stage id
@@ -78,7 +80,7 @@ export default function Collections() {
                 { key: 'due', header: 'Due', render: (s) => <>{date(s.invoice_due_date)}{s.days_overdue > 0 && <div className="small" style={{ color: 'var(--danger-fg)' }}>{s.days_overdue} days overdue · {s.bucket}</div>}</> },
                 { key: 'status', header: 'Status', render: (s) => <><Badge>{s.stage_status}</Badge>{s.on_hold && <div><Badge tone="warning">on hold</Badge> <span className="small muted">{s.hold_reason}</span></div>}{s.promise_to_pay_date && <div className="small">promised {date(s.promise_to_pay_date)}</div>}{s.reminder_level > 0 && <div className="small muted">reminder level {s.reminder_level}{s.reminder_sent_on ? ` on ${date(s.reminder_sent_on)}` : ''}</div>}</> },
                 { key: 'last', header: 'Last chase', className: 'wrap small', render: (s) => (s.last_chased_at ? <>{new Date(s.last_chased_at).toLocaleDateString()} · {s.last_channel}<div className="muted">{s.last_summary}</div>{s.next_action_on && <div>next: {date(s.next_action_on)}</div>}</> : <span className="muted">never</span>) },
-                { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm btn--primary" onClick={() => setPaying(s)}>Payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
+                { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm btn--primary" onClick={() => setPaying(s)}>Payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{isAdmin && (s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>)}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
               ]}
             />
           </Card>

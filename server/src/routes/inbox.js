@@ -14,6 +14,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
@@ -48,7 +49,7 @@ inboxRouter.get('/inboxes', async (req, res) => {
   res.json({ data: rows, available_mailboxes: shared });
 });
 
-inboxRouter.post('/inboxes', async (req, res) => {
+inboxRouter.post('/inboxes', requireAdmin, async (req, res) => {
   const parsed = inboxSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const v = parsed.data;
@@ -61,7 +62,7 @@ inboxRouter.post('/inboxes', async (req, res) => {
   res.status(201).json({ data: i });
 });
 
-inboxRouter.patch('/inboxes/:id', async (req, res) => {
+inboxRouter.patch('/inboxes/:id', requireAdmin, async (req, res) => {
   const parsed = inboxSchema.partial().omit({ account_id: true }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
@@ -83,7 +84,8 @@ inboxRouter.post('/canned', async (req, res) => {
   const { rows: [c] } = await query('INSERT INTO canned_responses (name, body, shared, owner) VALUES ($1,$2,$3,$4) RETURNING *', [parsed.data.name, parsed.data.body, parsed.data.shared, who(req)]);
   res.status(201).json({ data: c });
 });
-inboxRouter.patch('/canned/:id', async (req, res) => {
+// Yours to change, or an admin's. The GET already filters by owner.
+inboxRouter.patch('/canned/:id', ownCanned, async (req, res) => {
   const parsed = cannedSchema.partial().safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
@@ -92,12 +94,39 @@ inboxRouter.patch('/canned/:id', async (req, res) => {
   if (!c) throw new ApiError(404, 'Not found');
   res.json({ data: c });
 });
-inboxRouter.delete('/canned/:id', async (req, res) => {
+inboxRouter.delete('/canned/:id', ownCanned, async (req, res) => {
   await query('DELETE FROM canned_responses WHERE id = $1', [Number(req.params.id)]);
   res.status(204).end();
 });
 
 // ------------------------------------------------------------ conversations
+/**
+ * Whose queue this is. An inbox lists its members; an admin sees every
+ * inbox. An inbox with no members named is the whole team's, which is how
+ * they start and how a small team will leave them.
+ *
+ * Both spellings of a person are matched — the address they sign in with
+ * and the name on their account — because members and assignees are typed
+ * by hand.
+ */
+const isAdmin = (req) => req.user?.role === 'admin';
+
+/** A canned response belongs to whoever wrote it; an admin may tidy any. */
+async function ownCanned(req, res, next) {
+  try {
+    const { rows } = await query('SELECT owner FROM canned_responses WHERE id = $1', [Number(req.params.id)]);
+    if (!rows.length) return next(new ApiError(404, 'Canned response not found'));
+    const mine = [req.user?.username, req.user?.name].filter(Boolean)
+      .some((name) => String(rows[0].owner || '').toLowerCase() === String(name).toLowerCase());
+    if (!mine && !isAdmin(req)) return next(new ApiError(403, 'That reply belongs to somebody else'));
+    return next();
+  } catch (err) { return next(err); }
+}
+const identities = (req) => [req.user?.username || 'admin', req.user?.name || req.user?.username || 'admin'];
+const inboxScope = (req, from) => (isAdmin(req)
+  ? { clause: 'TRUE', params: [] }
+  : { clause: `(i.members = '{}' OR i.members && ARRAY[$${from}, $${from + 1}]::text[] OR c.assignee IS NULL OR lower(c.assignee) IN (lower($${from}), lower($${from + 1})))`, params: identities(req) });
+
 const LIST = `
   SELECT c.*, i.name AS inbox_name, t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
          co.name AS company_name, ct.name AS contact_name,
@@ -113,12 +142,14 @@ const wake = () => query(`UPDATE inbox_conversations SET status = 'open', snooze
 
 inboxRouter.get('/summary', async (req, res) => {
   await wake();
+  const scope = inboxScope(req, 2);
   const { rows: [r] } = await query(
-    `SELECT COUNT(*) FILTER (WHERE status = 'open')::int AS open,
-            COUNT(*) FILTER (WHERE status = 'open' AND assignee IS NULL)::int AS unassigned,
-            COUNT(*) FILTER (WHERE status = 'open' AND assignee = $1)::int AS mine,
-            COUNT(*) FILTER (WHERE status = 'open' AND response_due_at < now())::int AS overdue
-       FROM inbox_conversations`, [who(req)]);
+    `SELECT COUNT(*) FILTER (WHERE c.status = 'open')::int AS open,
+            COUNT(*) FILTER (WHERE c.status = 'open' AND c.assignee IS NULL)::int AS unassigned,
+            COUNT(*) FILTER (WHERE c.status = 'open' AND c.assignee = $1)::int AS mine,
+            COUNT(*) FILTER (WHERE c.status = 'open' AND c.response_due_at < now())::int AS overdue
+       FROM inbox_conversations c JOIN inboxes i ON i.id = c.inbox_id
+      WHERE ${scope.clause}`, [who(req), ...scope.params]);
   res.json({ data: r });
 });
 
@@ -134,19 +165,25 @@ inboxRouter.get('/', async (req, res) => {
   else if (view !== 'overdue') where.push(`c.status IN ('open','pending_client')`);
   if (req.query.inbox_id) add('c.inbox_id = ?', Number(req.query.inbox_id));
   if (req.query.q) add('(t.subject ILIKE ? OR c.from_email ILIKE ? OR c.from_name ILIKE ? OR co.name ILIKE ?)', `%${req.query.q}%`);
+  const scope = inboxScope(req, params.length + 1);
+  where.push(scope.clause);
+  params.push(...scope.params);
   const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY (c.status = 'open') DESC, c.response_due_at NULLS LAST, t.last_message_at DESC LIMIT 500`, params);
   res.json({ data: rows });
 });
 
-async function loadConversation(id) {
-  const { rows: [c] } = await query(`${LIST} WHERE c.id = $1`, [id]);
+async function loadConversation(id, req) {
+  // A conversation in somebody else's queue answers the same as one that is
+  // not there.
+  const scope = req ? inboxScope(req, 2) : { clause: 'TRUE', params: [] };
+  const { rows: [c] } = await query(`${LIST} WHERE c.id = $1 AND ${scope.clause}`, [id, ...scope.params]);
   if (!c) throw new ApiError(404, 'Conversation not found');
   return c;
 }
 
 inboxRouter.get('/:id', async (req, res) => {
-  res.json({ data: await loadConversation(Number(req.params.id)) });
+  res.json({ data: await loadConversation(Number(req.params.id), req) });
 });
 
 const patchSchema = z.object({
@@ -170,13 +207,13 @@ inboxRouter.patch('/:id', async (req, res) => {
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   const { rowCount } = await query(`UPDATE inbox_conversations SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!rowCount) throw new ApiError(404, 'Conversation not found');
-  res.json({ data: await loadConversation(Number(req.params.id)) });
+  res.json({ data: await loadConversation(Number(req.params.id), req) });
 });
 
 inboxRouter.post('/:id/reply', async (req, res) => {
   const parsed = z.object({ body: z.string().max(20000).optional(), html: z.string().max(100000).optional(), canned_id: z.coerce.number().int().positive().optional(), close: z.boolean().optional() }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const c = await loadConversation(Number(req.params.id));
+  const c = await loadConversation(Number(req.params.id), req);
   const { rows: [inbox] } = await query('SELECT signature FROM inboxes WHERE id = $1', [c.inbox_id]);
   let text = parsed.data.body || '';
   if (parsed.data.canned_id) {
@@ -192,7 +229,7 @@ inboxRouter.post('/:id/reply', async (req, res) => {
     const r = await replyToThread(c.thread_id, signed, who(req));
     if (!c.assignee) await query('UPDATE inbox_conversations SET assignee = $2 WHERE id = $1 AND assignee IS NULL', [c.id, who(req)]);
     if (parsed.data.close) await query(`UPDATE inbox_conversations SET status = 'closed', closed_at = now() WHERE id = $1`, [c.id]);
-    res.json({ data: { ...r, conversation: await loadConversation(c.id) } });
+    res.json({ data: { ...r, conversation: await loadConversation(c.id, req) } });
   } catch (err) {
     if (err.status) throw new ApiError(err.status, err.message);
     throw new ApiError(502, `The reply could not be sent: ${err.message}`);
@@ -211,7 +248,7 @@ const convertSchema = z.object({
 inboxRouter.post('/:id/convert', async (req, res) => {
   const parsed = convertSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
-  const c = await loadConversation(Number(req.params.id));
+  const c = await loadConversation(Number(req.params.id), req);
   if (c.enquiry_no) throw new ApiError(409, `Already converted to ${c.enquiry_no}`);
   const v = parsed.data;
   const client = v.client_name || c.company_name;

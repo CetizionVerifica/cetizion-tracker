@@ -454,4 +454,223 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       }
     });
   });
+  // ------------------------------------------------ batch 2's new surfaces
+
+  describe('the catalogues batch 2 adds', () => {
+    /**
+     * Seven Settings lists arrived with #58. They are the same kind of thing
+     * as services and exchange rates: everybody reads them, one person
+     * curates them. A pipeline stage's status mapping rewrites quotation
+     * statuses through a trigger, a payment-terms template is the invoicing
+     * schedule every new PO is built from, and deleting a lost reason blanks
+     * it on every record that used it.
+     */
+    const LISTS = [
+      'pipeline-stages', 'payment-terms-templates', 'payment-terms-template-lines',
+      'onboarding-templates', 'onboarding-template-lines', 'lead-sources', 'lost-reasons',
+    ];
+
+    for (const list of LISTS) {
+      test(`a sales user reads ${list} but cannot write it`, async () => {
+        const read = await as(sales.cookie)('get', `/api/${list}`);
+        assert.equal(read.status, 200, `${list} read -> ${read.status}`);
+
+        for (const [verb, path] of [['post', ''], ['patch', '/1'], ['delete', '/1']]) {
+          const res = await as(sales.cookie)(verb, `/api/${list}${path}`).send({ name: 'Nope' });
+          assert.equal(res.status, 403, `${verb} ${list} -> ${res.status}`);
+        }
+      });
+    }
+
+    test('an admin is not stopped by the gate', async () => {
+      for (const list of LISTS) {
+        const res = await as(admin.cookie)('post', `/api/${list}`).send({ name: 'Anything' });
+        assert.notEqual(res.status, 403, `${list} -> admin got 403`);
+      }
+    });
+  });
+
+  describe('discount approvals', () => {
+    /**
+     * #46 exists because a discount needs somebody else's yes. Asking is the
+     * salesperson's own request and stays open; deciding is the whole point
+     * and does not. The review of #58 found a sales user could raise a 40%
+     * discount and approve it, two clicks apart on the same screen.
+     */
+    test('a sales user cannot decide an approval', async () => {
+      const res = await as(sales.cookie)('post', '/api/quotations/any/approval/decide')
+        .send({ decision: 'approved' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('asking for one stays open to them', async () => {
+      const res = await as(sales.cookie)('post', '/api/quotations/no-such-quotation/approval/request')
+        .send({ reason: 'Client asked for a discount' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('an admin reaches the decision handler', async () => {
+      const res = await as(admin.cookie)('post', '/api/quotations/no-such-quotation/approval/decide')
+        .send({ decision: 'approved' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    test('an unauthenticated caller is turned away first', async () => {
+      const res = await as(null)('post', '/api/quotations/any/approval/decide').send({ decision: 'approved' });
+      assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
+
+  // ------------------------------------------------ batch 3's new surfaces
+
+  describe('money received, and the operational routes batch 3 adds', () => {
+    /**
+     * `payments` is the ledger payment_stages.amount_received is computed
+     * from, by trigger. Recording a receipt is ordinary sales work and goes
+     * through POST /payment-stages/:id/payment; editing or deleting a row of
+     * the ledger by hand moves Due now, Collections and the forecast with
+     * nothing to show for it.
+     *
+     * The three routes below each do the same work as something already
+     * gated: two are halves of daily jobs, and a hold stops the chasing job
+     * on a debt.
+     */
+    test('a sales user reads payments but cannot write them', async () => {
+      const read = await as(sales.cookie)('get', '/api/payments');
+      assert.equal(read.status, 200, `read -> ${read.status}`);
+
+      for (const [verb, path] of [['post', ''], ['patch', '/1'], ['delete', '/1']]) {
+        const res = await as(sales.cookie)(verb, `/api/payments${path}`).send({ amount: 1000 });
+        assert.equal(res.status, 403, `${verb} -> ${res.status}`);
+      }
+    });
+
+    test('an admin is not stopped by that gate', async () => {
+      const res = await as(admin.cookie)('post', '/api/payments').send({ amount: 1000 });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    for (const [label, path] of [
+      ['run the notification sweep', '/api/notifications/sweep'],
+      ['discover renewals', '/api/renewals/discover'],
+      ['put a debt on hold', '/api/collections/stages/1/hold'],
+    ]) {
+      test(`a sales user cannot ${label}`, async () => {
+        const res = await as(sales.cookie)('post', path).send({ on_hold: true });
+        assert.equal(res.status, 403, `${path} -> ${res.status}`);
+      });
+
+      test(`an admin reaches ${label}`, async () => {
+        const res = await as(admin.cookie)('post', path).send({ on_hold: true });
+        assert.notEqual(res.status, 403, `${path} -> ${res.status}`);
+      });
+    }
+
+    test('logging a chase stays open — that is the work itself', async () => {
+      const res = await as(sales.cookie)('post', '/api/collections/log').send({ stage_id: 1, channel: 'call', summary: 'Chased' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+  });
+
+  // ------------------------------------------------ batch 4's new surfaces
+
+  describe('mailboxes and the shared inbox', () => {
+    /**
+     * A connected mailbox is somebody's correspondence with clients. The
+     * person who connected it administers it, an admin administers all of
+     * them, and a shared mailbox is the team's — which is the point of
+     * marking one shared.
+     *
+     * The review of #60 found every one of these open: read a colleague's
+     * client mail, reply from their mailbox so it lands in their Sent Items,
+     * wipe what is stored by changing their visibility, or flip their
+     * personal mailbox into the team queue.
+     */
+    test('a sales user cannot administer a mailbox that is not theirs', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status)
+         VALUES ('someone.else@example.test', 'microsoft', 'someone.else@example.test', 'active') RETURNING id`);
+
+      for (const [verb, path, body] of [
+        ['patch', `/api/mailboxes/${a.id}`, { visibility: 'metadata' }],
+        ['post', `/api/mailboxes/${a.id}/sync`, {}],
+        ['post', `/api/mailboxes/${a.id}/disconnect`, {}],
+      ]) {
+        const res = await as(sales.cookie)(verb, path).send(body);
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+
+      // and nothing was destroyed on the way past
+      const { rows: [still] } = await db.query('SELECT visibility FROM connected_accounts WHERE id = $1', [a.id]);
+      assert.equal(still.visibility, 'metadata', 'default is unchanged');
+    });
+
+    test('the rest of the mailbox administration is the admin\'s', async () => {
+      for (const [verb, path] of [
+        ['post', '/api/mailboxes/test'],
+        ['post', '/api/mailboxes/1/test-messages'],
+        ['post', '/api/mailboxes/blocklist'],
+        ['delete', '/api/mailboxes/blocklist/1'],
+      ]) {
+        const res = await as(sales.cookie)(verb, path).send({ pattern: 'nope@example.test' });
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+    });
+
+    test('a thread in somebody else\'s mailbox is not there as far as they are concerned', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('private@example.test', 'microsoft', 'private@example.test', 'active', 'share_everything') RETURNING id`);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, first_message_at, last_message_at)
+         VALUES ($1, $2, 'Client pricing', now(), now()) RETURNING id`, [a.id, `conv-${a.id}`]);
+
+      const read = await as(sales.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(read.status, 404, JSON.stringify(read.body));
+
+      const reply = await as(sales.cookie)('post', `/api/mail/threads/${t.id}/reply`).send({ html: 'Hello' });
+      assert.equal(reply.status, 404, JSON.stringify(reply.body));
+
+      const relink = await as(sales.cookie)('patch', `/api/mail/threads/${t.id}`).send({ entity: null, entity_id: null });
+      assert.equal(relink.status, 404, JSON.stringify(relink.body));
+
+      const admin_read = await as(admin.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(admin_read.status, 200, 'an admin can read it');
+    });
+
+    test('making a mailbox into a team inbox is the admin\'s call', async () => {
+      const res = await as(sales.cookie)('post', '/api/inbox/inboxes').send({ name: 'Mine now', account_id: 1 });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
+  });
+  // ------------------------------------------------ batch 6's new surfaces
+
+  describe('API tokens for MCP', () => {
+    /**
+     * A token carries its own role, so whoever may create one may create an
+     * admin one — and read the whole company through MCP whatever their own
+     * role is. Revoking is that power pointed the other way: you could turn
+     * off everybody else's.
+     *
+     * mcp.test.js signs in as the shared admin, where there is only one kind
+     * of user, which is why this belongs here instead.
+     */
+    test('a sales user cannot list, create or revoke tokens', async () => {
+      for (const [verb, path] of [['get', '/api/api-tokens'], ['post', '/api/api-tokens'], ['post', '/api/api-tokens/1/revoke']]) {
+        const res = await as(sales.cookie)(verb, path).send({ name: 'Mine', role: 'admin' });
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+    });
+
+    test('an admin can', async () => {
+      const res = await as(admin.cookie)('post', '/api/api-tokens').send({ name: 'Reporting', role: 'admin' });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.match(res.body.data.token, /^ctz_/, 'the token is shown once, here');
+    });
+
+    test('an unauthenticated caller is turned away first', async () => {
+      const res = await as(null)('get', '/api/api-tokens');
+      assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
 });
