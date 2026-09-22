@@ -26,6 +26,11 @@ import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
 import { registerRouter } from './routes/register.js';
 import { approvalRouter } from './routes/approvals.js';
+import { taskSummaryRouter, timelineRouter } from './routes/timeline.js';
+import { collectionsRouter } from './routes/collections.js';
+import { renewalsRouter } from './routes/renewals.js';
+import { cashflowRouter } from './routes/cashflow.js';
+import { notificationsRouter } from './routes/notifications.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -82,6 +87,12 @@ app.use('/api/users', userRouter);
 app.use('/api/companies', companyRouter);
 app.use('/api/emails', emailRouter);
 app.use('/api/pipeline', pipelineRouter);
+app.use('/api/timeline', timelineRouter);
+app.use('/api/collections', collectionsRouter);
+app.use('/api/renewals', renewalsRouter);
+app.use('/api/cashflow', cashflowRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
 app.use('/api/purchase-orders', poRouter);

@@ -53,11 +53,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #22 | Tasks, notes, files and a timeline on every record | todo | Needs #18 (shivam-balyan) merged for owners and the activity log. |
-| #27 | Collections: due dates, automatic reminders, chasing log, payments | todo | Needs #21, #26, #7. Invoices become their own table; the importer's invoice and receipt steps follow. |
-| #28 | Renewals for recurring services | todo | Needs #23, #21, #25. |
-| #40 | Cash-flow forecast from payment schedules and pipeline | todo | Needs #25, #27. |
-| #44 | Notification centre and a daily digest | todo | Needs #21, #22. |
+| #22 | Tasks, notes, files and a timeline on every record | done (checkpoint 3) | Tasks, notes and attachments on companies, contacts, enquiries, quotations, projects, POs and stages; one timeline per record; Tasks page. Owners stay usernames until #18. Migration 018. |
+| #27 | Collections: due dates, automatic reminders, chasing log, payments | done (checkpoint 3) | Payments table with TDS and mode, stage totals kept by trigger, reminder levels 3/14/30 days, promise-to-pay and hold, chasing log, Collections page. Invoices stay on the stage (the team's #7 design). Migration 019. |
+| #28 | Renewals for recurring services | done (checkpoint 3) | Engagements found from delivered renewable services, renewal quotation drafted inside the lead time, renewed or lapsed closed automatically, Renewals page, daily job. Migration 020. |
+| #40 | Cash-flow forecast from payment schedules and pipeline | done (checkpoint 3) | Month-by-month forecast: invoiced by due date, scheduled stages by expected trigger, pipeline weighted by probability, vendor bills and claims out; foreign currencies listed apart. |
+| #44 | Notification centre and a daily digest | done (checkpoint 3) | Notification centre with unread count in the sidebar, daily sweep with de-duplication, digest email, approval requests notify at once. Migration 021. |
 
 ### Batch 4: client communication
 
@@ -144,6 +144,7 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 | --- | --- | --- |
 | `checkpoint/batch-1` | #45, #20, #21, #36, #37 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-2` | #23, #24, #25, #26, #46 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
+| `checkpoint/batch-3` | #22, #27, #28, #40, #44 | server tests 60/60, browser tests 4/4, migration check green, web build clean |
 
 ## Log
 
@@ -151,3 +152,4 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
   all four checks. #45 claimed on this branch.
 - 2026-09-17: Batch 1 done and tagged `checkpoint/batch-1`.
 - 2026-09-17: Batch 2 done and tagged `checkpoint/batch-2`.
+- 2026-09-17: Batch 3 done and tagged `checkpoint/batch-3`. The migration check caught a fresh-install ordering bug in the #28 schema; fixed before tagging.

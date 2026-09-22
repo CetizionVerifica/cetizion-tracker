@@ -88,6 +88,10 @@ describe('columns the database will not accept as empty', () => {
     ['a payment-terms line with no template', '/api/payment-terms-template-lines', { stage_no: 1, stage_name: 'Advance', percent: 50 }, 'template_id'],
     ['a payment-terms line with no percentage', '/api/payment-terms-template-lines', { template_id: 1, stage_no: 1, stage_name: 'Advance' }, 'percent'],
     ['a checklist line with no step number', '/api/onboarding-template-lines', { template_id: 1, step: 'Kick-off' }, 'step_no'],
+    ['a receipt with no stage', '/api/payments', { amount: 1000, received_on: '2026-09-21' }, 'stage_id'],
+    ['a receipt with no amount', '/api/payments', { stage_id: 1, received_on: '2026-09-21' }, 'amount'],
+    ['an engagement with no next due date', '/api/engagements', { client_name: 'Hetero', service_name: 'EcoVadis' }, 'next_due_on'],
+    ['an attachment with no document', '/api/attachments', { entity: 'company', entity_id: '1' }, 'document_id'],
   ];
 
   for (const [name, path, body, field] of cases) {

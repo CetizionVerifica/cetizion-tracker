@@ -520,4 +520,55 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       assert.equal(res.status, 401, JSON.stringify(res.body));
     });
   });
+
+  // ------------------------------------------------ batch 3's new surfaces
+
+  describe('money received, and the operational routes batch 3 adds', () => {
+    /**
+     * `payments` is the ledger payment_stages.amount_received is computed
+     * from, by trigger. Recording a receipt is ordinary sales work and goes
+     * through POST /payment-stages/:id/payment; editing or deleting a row of
+     * the ledger by hand moves Due now, Collections and the forecast with
+     * nothing to show for it.
+     *
+     * The three routes below each do the same work as something already
+     * gated: two are halves of daily jobs, and a hold stops the chasing job
+     * on a debt.
+     */
+    test('a sales user reads payments but cannot write them', async () => {
+      const read = await as(sales.cookie)('get', '/api/payments');
+      assert.equal(read.status, 200, `read -> ${read.status}`);
+
+      for (const [verb, path] of [['post', ''], ['patch', '/1'], ['delete', '/1']]) {
+        const res = await as(sales.cookie)(verb, `/api/payments${path}`).send({ amount: 1000 });
+        assert.equal(res.status, 403, `${verb} -> ${res.status}`);
+      }
+    });
+
+    test('an admin is not stopped by that gate', async () => {
+      const res = await as(admin.cookie)('post', '/api/payments').send({ amount: 1000 });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
+    for (const [label, path] of [
+      ['run the notification sweep', '/api/notifications/sweep'],
+      ['discover renewals', '/api/renewals/discover'],
+      ['put a debt on hold', '/api/collections/stages/1/hold'],
+    ]) {
+      test(`a sales user cannot ${label}`, async () => {
+        const res = await as(sales.cookie)('post', path).send({ on_hold: true });
+        assert.equal(res.status, 403, `${path} -> ${res.status}`);
+      });
+
+      test(`an admin reaches ${label}`, async () => {
+        const res = await as(admin.cookie)('post', path).send({ on_hold: true });
+        assert.notEqual(res.status, 403, `${path} -> ${res.status}`);
+      });
+    }
+
+    test('logging a chase stays open — that is the work itself', async () => {
+      const res = await as(sales.cookie)('post', '/api/collections/log').send({ stage_id: 1, channel: 'call', summary: 'Chased' });
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+  });
 });

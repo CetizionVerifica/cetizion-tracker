@@ -511,6 +511,110 @@ export const resources = {
     }),
   },
 
+  engagements: {
+    table: 'engagements',
+    view: null,
+    label: 'Engagement',
+    defaultSort: 'next_due_on',
+    search: ['client_name', 'service_name', 'po_number'],
+    filters: ['status', 'company_id', 'owner'],
+    columns: ['client_name', 'service_name', 'valid_until', 'next_due_on', 'status', 'owner', 'notes'],
+    schema: z.object({
+      client_name: requiredStr(160),
+      service_name: requiredStr(300),
+      valid_until: date(),
+      next_due_on: requiredDate(),
+      status: enumOf(['active', 'renewal_open', 'renewed', 'lapsed', 'cancelled']).default('active'),
+      owner: str(120),
+      notes: str(2000),
+    }),
+  },
+
+  payments: {
+    // What has actually been received. payment_stages.amount_received is
+    // computed from these rows by trigger, so a deleted or re-pointed
+    // payment silently moves Due now, Collections and the forecast.
+    // Recording a receipt is ordinary work and goes through
+    // POST /payment-stages/:id/payment; editing the ledger by hand is not.
+    adminOnlyWrites: true,
+    table: 'payments',
+    view: null,
+    label: 'Payment',
+    defaultSort: 'received_on DESC, id DESC',
+    search: ['reference', 'notes'],
+    filters: ['stage_id', 'mode'],
+    columns: ['stage_id', 'amount', 'tds_amount', 'received_on', 'mode', 'reference', 'notes', 'recorded_by'],
+    schema: z.object({
+      stage_id: requiredInt({ min: 1 }),
+      amount: requiredNum({ min: 0 }),
+      tds_amount: num({ min: 0 }).default(0),
+      received_on: date(),
+      mode: enumOf(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).default('bank_transfer'),
+      reference: str(120),
+      notes: str(1000),
+      recorded_by: str(120),
+    }),
+  },
+
+  tasks: {
+    table: 'tasks',
+    view: null,
+    label: 'Task',
+    defaultSort: 'due_at NULLS LAST, id',
+    search: ['title', 'description', 'entity_id', 'assignee'],
+    filters: ['entity', 'entity_id', 'status', 'assignee', 'priority', 'type'],
+    columns: ['entity', 'entity_id', 'title', 'description', 'due_at', 'status', 'priority', 'type', 'assignee', 'created_by'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      title: requiredStr(300),
+      description: str(2000),
+      due_at: date(),
+      status: enumOf(['todo', 'in_progress', 'done']).default('todo'),
+      priority: enumOf(['low', 'normal', 'high']).default('normal'),
+      type: enumOf(['call', 'email', 'meeting', 'follow_up', 'document', 'other']).default('follow_up'),
+      assignee: str(120),
+      created_by: str(120),
+    }),
+  },
+
+  notes: {
+    table: 'notes',
+    stampActor: 'author',
+    view: null,
+    label: 'Note',
+    defaultSort: 'pinned DESC, created_at DESC',
+    search: ['body'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'body', 'author', 'pinned'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      body: requiredStr(10000),
+      author: str(120),
+      pinned: bool(),
+    }),
+  },
+
+  attachments: {
+    table: 'attachments',
+    view: null,
+    label: 'Attachment',
+    hasDocument: true,
+    defaultSort: 'created_at DESC',
+    search: ['label'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
+    stampActor: 'uploaded_by',
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      document_id: requiredInt({ min: 1 }),
+      label: str(200),
+      uploaded_by: str(120),
+    }),
+  },
+
   'payment-terms-templates': {
     // The invoicing schedules every new PO is built from.
     // Admins curate it, everybody reads it.

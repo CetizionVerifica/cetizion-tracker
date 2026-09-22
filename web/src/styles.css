@@ -554,3 +554,31 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .kanban__card.is-stale { border-left: 3px solid var(--danger-fg); }
 .kanban__card.is-dragging { opacity: .5; }
 @media (max-width: 600px) { .kanban__col { flex-basis: 220px; } }
+
+/* ---------------------------------------------------------------- timeline (#22) */
+.timeline { list-style: none; margin: 0; padding: 8px 18px 14px; }
+.timeline__item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--ink-100); }
+.timeline__item:last-child { border-bottom: none; }
+.timeline__icon { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; background: var(--ink-100); color: var(--ink-600); margin-top: 1px; }
+.timeline__item--note .timeline__icon { background: var(--warn-bg); color: var(--warn-fg); }
+.timeline__item--task .timeline__icon { background: var(--info-bg); color: var(--info-fg); }
+.timeline__item--email .timeline__icon { background: var(--brand-100); color: var(--brand-800); }
+.timeline__item--file .timeline__icon { background: var(--ok-bg); color: var(--ok-fg); }
+.timeline__body { flex: 1; min-width: 0; }
+.timeline__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.timeline__when { margin-left: auto; white-space: nowrap; }
+.timeline__detail { margin-top: 4px; white-space: pre-wrap; color: var(--ink-700); font-size: 13px; }
+.timeline__actions { margin-top: 4px; display: flex; gap: 4px; }
+
+/* ---------------------------------------------------------------- cash flow (#40) */
+.cashflow { display: flex; flex-direction: column; gap: 6px; }
+.cashflow__row { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; align-items: center; padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer; }
+.cashflow__row:hover, .cashflow__row.is-open { background: var(--ink-100); }
+.cashflow__label { font-weight: 600; font-size: 13px; }
+.cashflow__bars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cashflow__bar { display: flex; height: 10px; background: var(--ink-100); border-radius: 5px; overflow: hidden; }
+.cashflow__in { background: var(--brand-600); display: block; height: 100%; }
+.cashflow__pipe { background: var(--brand-200); display: block; height: 100%; }
+.cashflow__out { background: var(--danger-fg); opacity: .8; display: block; height: 100%; }
+.cashflow__nums { display: flex; gap: 12px; font-size: 12px; white-space: nowrap; color: var(--ink-600); }
+@media (max-width: 700px) { .cashflow__row { grid-template-columns: 1fr; gap: 4px; } .cashflow__nums { flex-wrap: wrap; gap: 8px; } }

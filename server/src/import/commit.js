@@ -207,7 +207,12 @@ export async function commitBatch(batch, items, { user }) {
             if (item.action === 'skip') { results.set(item.seq, { ref: item.existing_ref }); written.push({ seq: item.seq, ref: item.existing_ref, action: 'kept' }); break; }
             const amt = Number(p.amount_received);
             if (!Number.isFinite(amt) || amt < 0) throw new Error('receipt amount must be a number');
-            await client.query('UPDATE payment_stages SET amount_received = $1, payment_received_date = $2 WHERE id = $3', [amt, p.payment_received_date || null, parent.stage_id]);
+            // A receipt row (#27); the stage total follows by trigger. Replacing removes what was there first.
+            if (replacing) await client.query('DELETE FROM payments WHERE stage_id = $1', [parent.stage_id]);
+            await client.query(
+              `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by) VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
+              [parent.stage_id, amt, p.payment_received_date || null, `Imported from ${batch.filename}`, user]
+            );
             results.set(item.seq, { ref: String(amt) });
             written.push({ seq: item.seq, ref: String(amt), action: replacing ? 'replaced' : 'recorded' });
             break;

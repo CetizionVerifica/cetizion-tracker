@@ -5,6 +5,7 @@ import { Alert, Badge, Card, ConfirmDialog, DataTable, DocumentLink, Empty, Erro
 import { RecordForm } from '../components/RecordForm.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
+import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -163,6 +164,7 @@ export default function QuotationDetail() {
             ]} />
           </Card>
         )}
+        <Timeline entity="quotation" id={q.quotation_no} />
       </div>
 
       {editing && (

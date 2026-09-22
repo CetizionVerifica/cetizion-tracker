@@ -8,7 +8,7 @@ is waiting on a decision. Updated with every pull request. Last update:
 
 The tracker holds the company's quotations, projects, purchase orders, payment
 stages, invoices and travel spend. The team has logged 47 improvement items on
-GitHub. Seven are fixed. Five are being handled by PavithraCJ and shivam-balyan.
+GitHub. Seven were already fixed by the team, and fifteen more are now done in three batches. Five are being handled by PavithraCJ and shivam-balyan.
 Three need a decision from the lead. The remaining 30 are planned in six
 batches below, and Sami is working through them in order.
 
@@ -115,6 +115,29 @@ emailed.
   squeezing text into one word per line.
 - A purchase-order number made only of digits no longer crashes its page.
 
+### Batch 3: after the sale (done, checkpoint 3)
+
+**Tasks, notes and a timeline (#22).** Every company, enquiry, quotation,
+project, PO and payment stage can carry tasks, notes and files, and shows one
+timeline of everything that happened to it. A Tasks page lists what is due.
+
+**Collections (#27).** Each payment is recorded with its date, mode, TDS and
+reference, and the stage totals follow. Reminders go out at 3, 14 and 30 days
+overdue. Finance can log a call, record a promise to pay, or put a stage on
+hold. A Collections page shows who owes what.
+
+**Renewals (#28).** Delivered services that recur, such as annual audits,
+become engagements. A renewal quotation is drafted before the due date, and
+renewed or lapsed work is closed on its own.
+
+**Cash-flow forecast (#40).** Money expected in and out by month, from
+invoices, the payment schedule, the weighted pipeline, vendor bills and
+expense claims.
+
+**Notifications (#44).** A bell count in the sidebar and a Notifications page
+for tasks due, follow-ups, approvals, newly overdue invoices, renewals and
+quotations about to expire. A digest email goes out every morning.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -162,3 +185,5 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   tests, security scanning). Checkpoint 1 tagged locally; nothing pushed yet.
 - 2026-09-17: Batch 2 finished (quotation documents, leads, pipeline board,
   one-step PO registration with templates, approvals). Checkpoint 2 tagged.
+- 2026-09-17: Batch 3 finished (timeline and tasks, collections, renewals,
+  cash-flow forecast, notifications). Checkpoint 3 tagged; nothing pushed.

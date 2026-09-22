@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -548,12 +548,129 @@ CREATE TABLE payment_stages (
   credit_days           int CHECK (credit_days >= 0),
   milestone_name        text,
   milestone_reached_on  date,
+  -- Collections (#27)
+  on_hold               boolean NOT NULL DEFAULT false,
+  hold_reason           text,
+  promise_to_pay_date   date,
+  reminder_level        int NOT NULL DEFAULT 0,
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (po_number, stage_no)
 );
 
 CREATE INDEX ON payment_stages (po_number);
+
+-- ---------------------------------------------------------------------
+-- Engagements: what a client holds and when it renews (#28)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE engagements (
+  id                     serial PRIMARY KEY,
+  company_id             int REFERENCES companies(id) ON DELETE SET NULL,
+  client_name            text NOT NULL,
+  service_id             int REFERENCES services(id) ON DELETE SET NULL,
+  service_name           text NOT NULL,
+  project_id             text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  po_number              text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_id           int REFERENCES quotations(id) ON DELETE SET NULL,
+  cycle                  int NOT NULL DEFAULT 1,
+  started_on             date,
+  valid_until            date,
+  next_due_on            date NOT NULL,
+  status                 text NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active','renewal_open','renewed','lapsed','cancelled')),
+  renewal_quotation_id   int REFERENCES quotations(id) ON DELETE SET NULL,
+  renewal_opened_at      timestamptz,
+  owner                  text,
+  notes                  text,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX engagements_due_idx ON engagements (status, next_due_on);
+CREATE INDEX engagements_company_idx ON engagements (company_id);
+-- One engagement per delivered PO and service.
+CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, service_name) WHERE po_number IS NOT NULL;
+
+
+-- ---------------------------------------------------------------------
+-- Payments and the chasing log (#27)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE payments (
+  id           serial PRIMARY KEY,
+  stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
+  -- A receipt is positive. An adjustment — someone correcting a total that
+  -- was typed too high — is a negative row, so the ledger still adds up to
+  -- the figure on the stage. Writing the figure by hand instead left the
+  -- correction to be undone by the next receipt.
+  amount       numeric(16,2) NOT NULL,
+  tds_amount   numeric(16,2) NOT NULL DEFAULT 0 CHECK (tds_amount >= 0),
+  -- Nullable on purpose. The route before this one accepted an amount
+  -- with no date, and those receipts are carried over as they are: a
+  -- missing date stays missing rather than becoming the day of the deploy.
+  received_on  date,
+  mode         text NOT NULL DEFAULT 'bank_transfer'
+                 CHECK (mode IN ('bank_transfer','cheque','upi','cash','other')),
+  reference    text,
+  notes        text,
+  recorded_by  text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX payments_stage_idx ON payments (stage_id, received_on);
+
+-- The stage's received total and date follow its payments. TDS counts as
+-- settled: the client paid it to the government on our behalf.
+CREATE OR REPLACE FUNCTION payments_changed() RETURNS trigger AS $$
+DECLARE sid int;
+BEGIN
+  sid := COALESCE(NEW.stage_id, OLD.stage_id);
+  UPDATE payment_stages ps
+     SET amount_received = COALESCE((SELECT SUM(amount + tds_amount) FROM payments WHERE stage_id = sid), 0),
+         payment_received_date = (SELECT MAX(received_on) FROM payments WHERE stage_id = sid)
+   WHERE ps.id = sid;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_changed AFTER INSERT OR UPDATE OR DELETE ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_changed();
+
+-- The first receipt on a stage that already carries a received amount
+-- (seeded, imported, or typed before receipts existed) first books that
+-- amount as an opening receipt, so nothing already received is lost.
+CREATE OR REPLACE FUNCTION payments_opening() RETURNS trigger AS $$
+DECLARE cur record;
+BEGIN
+  IF NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
+  IF NOT EXISTS (SELECT 1 FROM payments WHERE stage_id = NEW.stage_id) THEN
+    SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
+    IF cur.amount_received > 0 THEN
+      INSERT INTO payments (stage_id, amount, received_on, mode, notes)
+      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other', 'Opening balance from the stage');
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_opening BEFORE INSERT ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_opening();
+
+CREATE TABLE collection_log (
+  id                   serial PRIMARY KEY,
+  stage_id             int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  company_id           int REFERENCES companies(id) ON DELETE SET NULL,
+  channel              text NOT NULL DEFAULT 'call' CHECK (channel IN ('email','call','whatsapp','meeting','note')),
+  happened_at          timestamptz NOT NULL DEFAULT now(),
+  by_whom              text,
+  summary              text NOT NULL,
+  promise_to_pay_date  date,
+  next_action_on       date,
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX collection_log_stage_idx ON collection_log (stage_id, happened_at DESC);
+CREATE INDEX collection_log_company_idx ON collection_log (company_id, happened_at DESC);
 
 -- ---------------------------------------------------------------------
 -- Onboarding / lifecycle checklist  (Onboarding)
@@ -670,7 +787,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','quotation_lines','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
-      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
+      'travel_vendor_invoices','employee_expense_claims','settings','engagements','exchange_rates',
       'sequence_counters']
   LOOP
     EXECUTE format(
@@ -869,6 +986,10 @@ INSERT INTO settings (key, value, notes) VALUES
   ('approver_email', '', 'Who is emailed when a quotation needs approval. Blank: the finance email.')
 ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO settings (key, value, notes) VALUES
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------- companies
 -- The grouping key the reports already use for free-text names.
 CREATE OR REPLACE FUNCTION name_key(p_name text) RETURNS text AS $$
@@ -1020,6 +1141,68 @@ INSERT INTO settings (key, value, notes) VALUES
   ('reminder_grace_days', '3', 'Days after the due date before the first reminder goes out.')
 ON CONFLICT (key) DO NOTHING;
 
+-- ---------------------------------------------------------------- activity (#22)
+CREATE TABLE tasks (
+  id            serial PRIMARY KEY,
+  entity        text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id     text NOT NULL,
+  title         text NOT NULL,
+  description   text,
+  due_at        date,
+  status        text NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','in_progress','done')),
+  priority      text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high')),
+  type          text NOT NULL DEFAULT 'follow_up' CHECK (type IN ('call','email','meeting','follow_up','document','other')),
+  assignee      text,
+  created_by    text,
+  completed_at  timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX tasks_entity_idx ON tasks (entity, entity_id);
+CREATE INDEX tasks_open_idx ON tasks (status, due_at) WHERE status <> 'done';
+
+CREATE TABLE notes (
+  id          serial PRIMARY KEY,
+  entity      text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id   text NOT NULL,
+  body        text NOT NULL,
+  author      text,
+  pinned      boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX notes_entity_idx ON notes (entity, entity_id, created_at DESC);
+
+-- Many files per record, beside the single document field some records carry.
+CREATE TABLE attachments (
+  id           serial PRIMARY KEY,
+  entity       text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id    text NOT NULL,
+  document_id  int NOT NULL UNIQUE REFERENCES documents(id),
+  label        text,
+  uploaded_by  text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX attachments_entity_idx ON attachments (entity, entity_id);
+
+-- A task marked done remembers when.
+CREATE OR REPLACE FUNCTION task_stamps() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND (TG_OP = 'INSERT' OR OLD.status <> 'done') THEN
+    NEW.completed_at := COALESCE(NEW.completed_at, now());
+  ELSIF NEW.status <> 'done' THEN
+    NEW.completed_at := NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_stamps BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION task_stamps();
+CREATE TRIGGER tasks_set_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER notes_set_updated_at BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- ---------------------------------------------------------------- bulk import
 -- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).
 CREATE TABLE IF NOT EXISTS import_batches (
@@ -1113,5 +1296,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ---------------------------------------------------------------------
+-- Notifications (#44)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notifications (
+  id          serial PRIMARY KEY,
+  -- NULL means everyone: a failed backup or an overdue invoice is not one
+  -- person's. A name here is matched against the reader's account name as
+  -- well as their sign-in address.
+  username    text,
+  kind        text NOT NULL,
+  title       text NOT NULL,
+  body        text,
+  entity      text,
+  entity_id   text,
+  link        text,
+  dedupe_key  text,
+  read_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Who has read what. A notification addressed to nobody is everyone's, and
+-- a single read_at on a shared row would mean the first person to look
+-- cleared it for the whole team. Read state belongs to the reader, so it
+-- lives here rather than on the row. read_at on the row survives for the
+-- digest, which asks whether anyone has seen a thing at all.
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id int NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  reader          text NOT NULL,
+  read_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (notification_id, reader)
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (username, read_at, created_at DESC);
+-- The same thing is not raised twice on the same day.
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_dedupe_key ON notifications (dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('digest_email', '', 'Where the daily digest goes. Blank: the finance email.'),
+  ('quotation_expiry_warning_days', '7', 'Days before a quotation expires at which its owner is told.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

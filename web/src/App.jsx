@@ -3,18 +3,23 @@ import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 
 import Overview from './pages/Overview.jsx';
 import Worklist from './pages/Worklist.jsx';
+import Tasks from './pages/Tasks.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Quotations from './pages/Quotations.jsx';
 import QuotationDetail from './pages/QuotationDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
+import Renewals from './pages/Renewals.jsx';
 import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
 import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
+import Collections from './pages/Collections.jsx';
+import Cashflow from './pages/Cashflow.jsx';
+import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
@@ -34,7 +39,9 @@ const NAV = [
     label: 'Overview',
     items: [
       { to: '/', icon: '◈', label: 'Dashboard', end: true },
+      { to: '/notifications', icon: '◔', label: 'Notifications', badge: 'notifications' },
       { to: '/worklist', icon: '◉', label: 'Action list', badge: 'worklist' },
+      { to: '/tasks', icon: '☐', label: 'Tasks' },
     ],
   },
   {
@@ -44,6 +51,7 @@ const NAV = [
       { to: '/enquiries', icon: '◇', label: 'Enquiries' },
       { to: '/quotations', icon: '◆', label: 'Quotations' },
       { to: '/pipeline', icon: '▥', label: 'Pipeline' },
+      { to: '/renewals', icon: '↻', label: 'Renewals' },
       { to: '/sales-report', icon: '◔', label: 'Sales reports' },
     ],
   },
@@ -56,7 +64,11 @@ const NAV = [
   },
   {
     label: 'Finance',
-    items: [{ to: '/payment-stages', icon: '₹', label: 'Payment schedule', badge: 'stages' }],
+    items: [
+      { to: '/payment-stages', icon: '₹', label: 'Payment schedule', badge: 'stages' },
+      { to: '/collections', icon: '◔', label: 'Collections' },
+      { to: '/cashflow', icon: '◐', label: 'Cash-flow forecast' },
+    ],
   },
   {
     label: 'Travel & expenses',
@@ -99,11 +111,13 @@ export default function App() {
   // on someone, visible without opening anything.
   const { data } = useFetch(() => api.raw('/dashboard/worklist'), [location.pathname]);
   const w = data?.data;
+  const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   const counts = {
     worklist: w
       ? w.payment_stages.length + w.vendor_invoices.length + w.expense_claims.length +
         w.late_deliveries.length + w.won_without_project.length
       : null,
+    notifications: nData?.data?.unread ?? null,
     stages: w?.payment_stages.length ?? null,
     vendors: w?.vendor_invoices.length ?? null,
     claims: w?.expense_claims.length ?? null,
@@ -113,6 +127,7 @@ export default function App() {
     stages: w ? w.payment_stages.some((s) => s.stage_status === 'Overdue') : false,
     vendors: w ? w.vendor_invoices.some((v) => v.payment_status === 'Overdue') : false,
     claims: false,
+    notifications: false,
   };
 
   return (
@@ -164,18 +179,23 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/pipeline" element={<Pipeline />} />
+          <Route path="/renewals" element={<Renewals />} />
           <Route path="/sales-report" element={<SalesReport />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/purchase-orders" element={<PurchaseOrders />} />
           <Route path="/purchase-orders/:poNumber" element={<PurchaseOrderDetail />} />
           <Route path="/payment-stages" element={<PaymentStages />} />
+          <Route path="/collections" element={<Collections />} />
+          <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/notifications" element={<Notifications />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />

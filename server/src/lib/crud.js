@@ -232,6 +232,14 @@ export function crudRouter(name, def) {
 
   router.post('/', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: false });
+    // Who wrote it, taken from the session rather than the request body: a
+    // note or a file with nobody's name on it is the timeline saying an
+    // anonymous someone did this, which #22 asks it not to do. Only filled
+    // when the caller left it blank, so an import can still carry its own.
+    if (def.stampActor && !values[def.stampActor]) {
+      const actor = req.user?.name || req.user?.username;
+      if (actor) values[def.stampActor] = actor;
+    }
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
