@@ -62,8 +62,12 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await expect(page.getByPlaceholder('Which stage?')).toBeVisible();
   await page.getByRole('option').first().click();
   await expect(page.getByLabel(/Invoice number/)).toBeVisible();
+  // The number is deliberately NOT required — left blank the server takes
+  // the next in the GST series, which is the only way that series stays
+  // unbroken when two people raise at once. The date still guards the form.
+  await page.getByLabel(/Invoice date/).fill('');
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
-  await expect(page.getByText('Invoice number is needed.')).toBeVisible();
+  await expect(page.getByText('Invoice date is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
   // The home page is a day, so its heading is today's date.
   await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();

@@ -26,6 +26,7 @@ import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
 import TripDetail from './pages/TripDetail.jsx';
+import InvoiceRun from './pages/InvoiceRun.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
@@ -385,6 +386,7 @@ export default function App() {
           <Route path="/accounting" element={<Accounting />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/inbox" element={<Inbox />} />
+          <Route path="/money/invoice-run" element={<InvoiceRun />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />

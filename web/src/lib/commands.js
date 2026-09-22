@@ -50,12 +50,15 @@ export const STEPS = [
   {
     id: 'raise-invoice',
     verb: 'Raise an invoice',
-    hint: 'pick a stage that is ready to bill',
+    hint: 'one stage, without leaving this page — or run the whole queue',
     icon: 'money',
     keywords: 'invoice bill raise stage payment',
     picks: { type: 'stage', resource: 'payment-stages', params: { stage_status: 'To Invoice' }, label: 'Which stage?' },
     fields: [
-      f.text('invoice_no', 'Invoice number', { required: true, maxLength: 60 }),
+      // Not required: left blank the server takes the next number in the
+      // series inside the transaction that writes the stage. A GST series
+      // has to be unbroken, so a number typed here is the exception.
+      f.text('invoice_no', 'Invoice number', { maxLength: 60, placeholder: 'next in series' }),
       f.date('invoice_date', 'Invoice date', { required: true, value: today }),
     ],
     endpoint: (record) => `/payment-stages/${record.id}/invoice`,
@@ -209,6 +212,7 @@ export const JUMPS = [
   { id: 'go-companies', verb: 'Companies', to: '/companies', icon: 'company', keywords: 'clients accounts companies' },
   { id: 'go-projects', verb: 'Projects', to: '/projects', icon: 'project', keywords: 'projects delivery' },
   { id: 'go-orders', verb: 'Purchase orders', to: '/purchase-orders', icon: 'order', keywords: 'po orders purchase' },
+  { id: 'go-invoice-run', verb: 'Raise the invoices that are due', to: '/money/invoice-run', icon: 'money', keywords: 'invoice run raise billing queue bill' },
   { id: 'go-stages', verb: 'Payment schedule', to: '/payment-stages', icon: 'money', keywords: 'stages invoices payment schedule billing' },
   { id: 'go-collections', verb: 'Collections', to: '/collections', icon: 'money', keywords: 'collections overdue chase debt ageing' },
   { id: 'go-cashflow', verb: 'Cash-flow forecast', to: '/cashflow', icon: 'money', keywords: 'cash flow forecast money in out' },
