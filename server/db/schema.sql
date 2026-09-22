@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -2211,5 +2211,43 @@ INSERT INTO settings (key, value, notes) VALUES
   ('backup_max_age_hours', '8', 'Alert when no successful backup has been recorded for this many hours.'),
   ('backup_verify_max_age_days', '8', 'Alert when the restore check has not passed for this many days.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ------------------------------------------------------------- activity
+-- What was done, by whom (see migrations/044_activity_log.sql).
+-- Append-only: nothing in the application updates or deletes a row here,
+-- and the only route over it reads. actor_user_id is null for the shared
+-- admin, for a background job, and for an account deleted since — so the
+-- record of an act survives the account that made it.
+CREATE TABLE IF NOT EXISTS activity_log (
+  id             bigserial PRIMARY KEY,
+  actor_user_id  integer REFERENCES users(id) ON DELETE SET NULL,
+  -- Which authority the request came through, not what the actor may do:
+  -- a role changes, this does not.
+  actor_type     text NOT NULL
+                   CHECK (actor_type IN ('user','shared_admin','system')),
+  -- A stable machine key, dotted: 'user.deactivated', 'company.merged'.
+  action         text NOT NULL,
+  entity_type    text NOT NULL,
+  -- text, because some things acted on are named rather than numbered
+  -- (a job is 'reminders.payment'), as in email_log.entity_id.
+  entity_id      text,
+  -- Context only. Never passwords, hashes, cookies, tokens or secrets.
+  metadata       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT activity_log_action_not_blank      CHECK (btrim(action) <> ''),
+  CONSTRAINT activity_log_entity_type_not_blank CHECK (btrim(entity_type) <> ''),
+  CONSTRAINT activity_log_entity_id_not_blank   CHECK (entity_id IS NULL OR btrim(entity_id) <> ''),
+  -- A shared admin and a job have no account; a deleted one leaves
+  -- actor_type 'user' with a null id, which is allowed.
+  CONSTRAINT activity_log_actor_id_needs_user   CHECK (actor_user_id IS NULL OR actor_type = 'user'),
+  CONSTRAINT activity_log_metadata_is_object    CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+-- The unfiltered listing pages on id DESC, which the primary key already
+-- serves. These three back the three supported filters, each carrying the
+-- paging column so one index answers both.
+CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_id, id DESC);
+CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
+CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
 
 COMMIT;
