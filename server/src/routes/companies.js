@@ -13,19 +13,14 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { similarName } from '../lib/names.js';
+import { similarNamePairs } from '../lib/names.js';
 
 export const companyRouter = Router();
 
 /** Look-alike pairs, most similar first. A suggestion only; merging is a person's call. */
 companyRouter.get('/duplicates', async (req, res) => {
   const { rows } = await query('SELECT id, name, sector, quotations, projects, enquiries FROM v_companies ORDER BY name');
-  const pairs = [];
-  for (let i = 0; i < rows.length; i++) {
-    for (let j = i + 1; j < rows.length; j++) {
-      if (similarName(rows[i].name, rows[j].name)) pairs.push({ a: rows[i], b: rows[j] });
-    }
-  }
+  const pairs = similarNamePairs(rows.map((r) => r.name)).map(([i, j]) => ({ a: rows[i], b: rows[j] }));
   // The one with more records is the natural survivor; offer it first.
   const weight = (c) => c.quotations + c.projects + c.enquiries;
   for (const p of pairs) if (weight(p.b) > weight(p.a)) [p.a, p.b] = [p.b, p.a];

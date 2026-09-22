@@ -91,7 +91,42 @@ API tokens, webhook secrets, portal links and sessions, and `users`, which
 holds the password hashes and the team's addresses — and its queries time
 out after a minute.
 
-## 5. Access review (every quarter)
+## 5. The `xlsx` package comes from the vendor, not npm — on purpose
+
+`server/package.json` installs `xlsx` from SheetJS's own site:
+
+```json
+"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+```
+
+**Do not "fix" this back to the npm registry.** SheetJS stopped publishing
+there after 0.18.5, and that frozen copy carries two HIGH advisories fixed in
+later releases: CVE-2023-30533 (prototype pollution, fixed in 0.19.3) and
+CVE-2024-22363 (ReDoS, fixed in 0.20.2). Moving to npm would be a downgrade
+into both. Check for yourself before touching it:
+
+```bash
+npm view xlsx version          # 0.18.5 — what npm has
+grep xlsx server/package.json  # 0.20.3 — what we run
+```
+
+What this costs, and what covers it:
+
+| Concern | Where it stands |
+| --- | --- |
+| A tampered tarball | `server/package-lock.json` pins it with a `sha512` integrity hash; a changed file fails `npm ci` |
+| Not in `npm audit` or Dependabot | Neither can see this package at all, so **a new SheetJS release has to be noticed by a person** — check <https://sheetjs.com/> each quarter, at the access review below |
+| The CDN being down | CI caches npm packages against the lockfile, so a normal run never fetches it. A cold cache during an outage fails the build; re-run it once the CDN is back |
+
+If the outage risk is ever judged unacceptable, mirror the tarball to GitHub
+Packages or an internal store and point the URL there. That keeps 0.20.3 and
+drops the outside dependency.
+
+To upgrade: change the version in the URL **and** in the version field, run
+`npm install` in `server/`, confirm the `integrity` hash in the lockfile
+changed, and commit the lockfile with it.
+
+## 6. Access review (every quarter)
 
 | System | Check |
 | --- | --- |
@@ -100,6 +135,7 @@ out after a minute.
 | Cloudinary, Zoho, Microsoft 365 app, Sentry | who can sign in; 2FA on |
 | Server SSH | `~/.ssh/authorized_keys`: one key per person, remove leavers |
 | Tracker | API tokens (Settings), webhook endpoints, portal access per client |
+| SheetJS | a newer `xlsx` at <https://sheetjs.com/> — nothing automated watches this (section 5) |
 
 Write the date and who did it at the bottom of this file.
 

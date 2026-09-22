@@ -250,16 +250,39 @@ export async function reviewRows(rows, { chunkSize = 15, concurrency = 6 } = {})
       const base = hints[row.sno];
       if (!base) continue;
       aiRows += 1;
-      const pct = Number(row.advance_percent);
-      if (Number.isFinite(pct) && pct >= 1 && pct <= 99) base.advance_percent = pct;
-      for (const f of row.flags || []) {
-        if (f && codes.has(f.code) && !base.flags.some((x) => x.code === f.code)) {
-          base.flags.push({ level: 'warn', code: f.code, message: String(f.message || f.code).slice(0, 120), by: 'ai' });
-        }
-      }
+      mergeAiRow(base, row, codes);
     }
   });
   return { hints, source: errors.length === chunks.length ? 'heuristic' : 'heuristic+ai', ai_error: errors.length ? errors.join('; ') : undefined, ai_rows: aiRows, ai_sent: worth.length, ai_ms: Date.now() - started };
+}
+
+/**
+ * Fold one row of the model's reply into the hint the rules produced.
+ *
+ * A percentage the model states replaces the one read from the text. A null
+ * does NOT clear it: the model cannot tell "the remark states no advance"
+ * apart from "I did not spot one", and clearing on that would throw away a
+ * share the text really does state. The disagreement is worth a person's eye
+ * though, so it becomes a flag on the row like any other — the split stands,
+ * and the reviewer can see the model did not agree with it.
+ */
+export function mergeAiRow(base, row, codes = new Set(REVIEW_CODES)) {
+  const pct = Number(row.advance_percent);
+  const stated = Number.isFinite(pct) && pct >= 1 && pct <= 99;
+  if (stated) base.advance_percent = pct;
+  else if (base.advance_percent !== null && base.advance_percent !== undefined
+           && !base.flags.some((f) => f.code === 'advance_percent_unconfirmed')) {
+    base.flags.push({
+      level: 'warn', code: 'advance_percent_unconfirmed', by: 'ai',
+      message: `Remarks read as a ${base.advance_percent}% advance; the AI review found none. Check the split`,
+    });
+  }
+  for (const f of row.flags || []) {
+    if (f && codes.has(f.code) && !base.flags.some((x) => x.code === f.code)) {
+      base.flags.push({ level: 'warn', code: f.code, message: String(f.message || f.code).slice(0, 120), by: 'ai' });
+    }
+  }
+  return base;
 }
 
 /** Promise.allSettled with at most `limit` tasks in flight. */

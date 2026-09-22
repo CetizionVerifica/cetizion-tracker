@@ -97,6 +97,14 @@ On a database that holds real data, `npm run db:upgrade` runs only the files in
 or a migration ran. Production needs no one to run it: the container does it on every
 start (see [Deploying](#deploying)).
 
+The table above is for a checkout on your own machine. **The container has no npm** —
+it runs `node` and nothing else, so the scan covers every file in it. On the rare
+occasion a migration has to be applied by hand inside the container, the command is:
+
+```bash
+docker exec <container> node server/scripts/db.js upgrade
+```
+
 A schema change goes in two places: `schema.sql`, and a new file in `db/migrations`
 numbered after the last (`010_…sql`). Each migration:
 

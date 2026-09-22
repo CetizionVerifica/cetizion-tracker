@@ -93,3 +93,48 @@ test('a reminder that was only logged does not mark the stage as chased', async 
   assert.equal(result.sent[0].status, 'suppressed');
   assert.deepEqual(writes, []);
 });
+
+// What each outcome of a send does to the stage. The stamp is what silences a
+// client for the whole interval, so only a mail that truly left may set it.
+/** A database that records the writes a run makes, with one overdue stage. */
+const recordingDb = (stages = [stage()]) => {
+  const writes = { stamps: [], collectionLog: [] };
+  return {
+    writes,
+    async query(sql, params = []) {
+      if (/FROM settings/.test(sql)) return { rows: [] };
+      if (/FROM v_payment_stages/.test(sql)) return { rows: stages };
+      if (/UPDATE payment_stages/.test(sql)) writes.stamps.push(params);
+      if (/INSERT INTO collection_log/.test(sql)) writes.collectionLog.push(params);
+      return { rows: [] };
+    },
+  };
+};
+/** A stand-in for lib/mail.js that reports the outcome a real server would. */
+const sender = (status, reason = null) => async () => ({ id: 7, status, reason });
+
+test('a reminder that really goes out stamps the stage and logs the contact', async () => {
+  const db = recordingDb();
+  const result = await runPaymentReminders({ db, today, send: sender('sent') });
+  assert.equal(result.sent[0].status, 'sent');
+  assert.deepEqual(db.writes.stamps, [[today, 1, 1]]);       // date, stage id, level 1
+  assert.equal(db.writes.collectionLog.length, 1);
+});
+
+test('log mode, a suppressed address and a failed send all leave the stage due', async () => {
+  for (const [status, reason] of [['suppressed', 'EMAIL_MODE=log'], ['suppressed', 'not on EMAIL_ALLOWLIST'], ['failed', 'SMTP refused']]) {
+    const db = recordingDb();
+    const result = await runPaymentReminders({ db, today, send: sender(status, reason) });
+    assert.equal(result.sent[0].status, status, reason);
+    assert.deepEqual(db.writes.stamps, [], reason);
+    assert.deepEqual(db.writes.collectionLog, [], reason);
+  }
+});
+
+test('a stage chased by hand keeps its date: the run reads it and never rewrites it', async () => {
+  // Someone recorded a chase yesterday on the stages form. Nothing today
+  // touches that column, whatever the send did.
+  const db = recordingDb([stage({ reminder_sent_on: '2026-09-16', reminder_level: 1 })]);
+  await runPaymentReminders({ db, today, send: sender('suppressed', 'EMAIL_MODE=log') });
+  assert.deepEqual(db.writes.stamps, []);
+});

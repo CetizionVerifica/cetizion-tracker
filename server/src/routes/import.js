@@ -19,9 +19,11 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, rulesSchema } from '../import/rules.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, rulesSchema, sanitizeRules } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
+import { UploadCache } from '../import/uploadCache.js';
 import { businessYear } from '../lib/businessDate.js';
+import { nextId } from '../lib/sequences.js';
 
 export const importRouter = Router();
 
@@ -42,21 +44,29 @@ function checkRules(input) {
 // gate keeps meaning the same thing after the cutover.
 importRouter.use(requireAdmin);
 
+/** The number off the end of a reference: CTZ/QT/2026/063 → 63, PRJ-2026-008 → 8. */
+const seriesNumber = (ref) => Number(/(\d+)$/.exec(String(ref))?.[1] ?? 1);
+
 /** What the plan needs to know about the live data, in one round trip. */
 async function liveSnapshot() {
-  const [q, po, pr, sv, st, nq, np] = await Promise.all([
+  const [q, po, pr, sv, st, nextQuotation, nextProject] = await Promise.all([
     query('SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person FROM quotations'),
     query('SELECT po_number, project_id, po_date::text AS po_date, po_value, currency FROM purchase_orders'),
     query('SELECT project_id, client_name, primary_service FROM projects'),
     query('SELECT po_number, service, service_value FROM po_services ORDER BY id'),
     query('SELECT po_number, stage_no, stage_name, stage_percent, invoice_no, invoice_date::text AS invoice_date, amount_received FROM payment_stages'),
-    query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(quotation_no, '^.*/', ''), '')::int), 0) AS n FROM quotations WHERE quotation_no ~ '^CTZ/QT/\\d{4}/\\d+$'`),
-    query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(project_id, '^.*-', ''), '')::int), 0) AS n FROM projects WHERE project_id ~ '^PRJ-\\d{4}-\\d+$'`),
+    // The same preview the forms show, so the numbers in the review are the
+    // ones a commit will actually take: this year's series only, and the
+    // counter as well as the records, exactly as claimNextId decides. Reading
+    // the highest number across every year handed out one already in use, and
+    // the commit then had to renumber the row it had shown.
+    nextId('quotation'),
+    nextId('project'),
   ]);
   return {
     quotations: q.rows, purchase_orders: po.rows, projects: pr.rows, services: sv.rows, stages: st.rows,
-    next_quotation_no: Number(nq.rows[0].n) + 1,
-    next_project_no: Number(np.rows[0].n) + 1,
+    next_quotation_no: seriesNumber(nextQuotation),
+    next_project_no: seriesNumber(nextProject),
     year: businessYear(),
   };
 }
@@ -92,8 +102,8 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
   return plan;
 }
 
-// Keep uploaded bytes for re-planning within the process lifetime.
-const fileCache = new Map();
+// Uploaded bytes, kept only while the batch can still be re-planned.
+const fileCache = new UploadCache();
 
 /** A CSV template with the columns the importer understands and one example row. */
 importRouter.get('/template.csv', (req, res) => {
@@ -163,9 +173,14 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const buffer = fileCache.get(id);
   if (!buffer) throw new ApiError(410, 'The uploaded file is no longer held in memory; upload it again');
-  const rules = { ...(rows[0].rules || {}), ...checkRules(req.body?.rules || {}) };
+  // Stored rules are sanitized, not refused: a batch saved before the schema
+  // existed must still be re-plannable. Anything the request sends is checked
+  // whole, exactly as on upload.
+  const stored = sanitizeRules(rows[0].rules);
+  const rules = { ...stored.rules, ...checkRules(req.body?.rules || {}) };
   await planBatch({ batchId: id, buffer, sheet: req.body?.sheet || rows[0].sheet_name, rules });
-  res.json({ data: await loadBatch(id) });
+  const data = await loadBatch(id);
+  res.json({ data, ...(stored.dropped.length ? { meta: { dropped_rules: stored.dropped } } : {}) });
 });
 
 importRouter.delete('/batches/:id', async (req, res) => {
@@ -260,6 +275,8 @@ importRouter.post('/batches/:id/commit', async (req, res) => {
   if (blocking.length) throw new ApiError(422, `${blocking.length} included item(s) still have errors. Fix or untick them first.`, { items: blocking.map((b) => b.id) });
   try {
     const result = await commitBatch(batch, items, { user: req.user.username });
+    // Committed batches never re-plan, so the sheet is no longer needed.
+    fileCache.delete(batch.id);
     res.json({ data: { ...(await loadBatch(batch.id)), written: result.written } });
   } catch (err) {
     if (err.status === 422) throw new ApiError(422, err.message, { item_seq: err.item_seq });

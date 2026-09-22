@@ -82,8 +82,14 @@ async function setting(db, key, fallback) {
   return rows[0]?.value ?? fallback;
 }
 
-/** Send today's payment reminders. Returns what was sent and what was skipped, for the job log. */
-export async function runPaymentReminders({ db = { query }, today = businessToday(), startedBy = 'schedule' } = {}) {
+/**
+ * Send today's payment reminders. Returns what was sent and what was skipped,
+ * for the job log.
+ *
+ * `send` is lib/mail.js in every real run; a test passes its own to drive the
+ * outcomes a real server decides — sent, suppressed, failed — without one.
+ */
+export async function runPaymentReminders({ db = { query }, today = businessToday(), startedBy = 'schedule', send = sendMail } = {}) {
   const intervalDays = Number(await setting(db, 'reminder_interval_days', '7')) || 7;
   const levelDays = String(await setting(db, 'reminder_levels_days', '3,14,30')).split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b);
   const { rows } = await db.query(`${STAGE_ROWS} WHERE ps.stage_status = 'Overdue'`);
@@ -92,7 +98,7 @@ export async function runPaymentReminders({ db = { query }, today = businessToda
   const sent = [];
   for (const r of plan.reminders) {
     const email = paymentReminder({ company: r.company, contactName: r.contactName, stages: r.stages, financeEmail, level: r.level, finalLevel: levelDays.length || 3 });
-    const log = await sendMail({ ...email, to: r.to, cc: financeEmail, template: 'payment_reminder', entity: 'company', entityId: r.companyId, sentBy: startedBy }, db);
+    const log = await send({ ...email, to: r.to, cc: financeEmail, template: 'payment_reminder', entity: 'company', entityId: r.companyId, sentBy: startedBy }, db);
     // Only a mail that left the server counts as a chase. A logged, suppressed or
     // failed one leaves the stage due, so it goes out the first day delivery works —
     // and is not recorded as a collection contact that never actually happened.

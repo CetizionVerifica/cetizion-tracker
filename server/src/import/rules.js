@@ -71,6 +71,33 @@ export const rulesSchema = z.object({
   overwrite_existing: z.boolean(),
 }).partial().strict();
 
+/**
+ * Rules already stored on a batch, made safe to plan with again.
+ *
+ * A batch saved before the schema existed can hold anything, and a re-plan
+ * reads those rules back. Refusing them would leave an old draft impossible to
+ * re-plan through no fault of the person reviewing it, so each value is judged
+ * on its own: the good ones are kept, a bad or unknown one is dropped and the
+ * default takes its place. Rules arriving in a request are never treated this
+ * leniently — those are checked whole and refused outright.
+ *
+ * Returns the usable rules and the names of whatever was dropped, so the
+ * reason a re-plan differs can be shown rather than guessed at.
+ */
+export function sanitizeRules(stored) {
+  const kept = {};
+  const dropped = [];
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return { rules: kept, dropped };
+  for (const [key, value] of Object.entries(stored)) {
+    const field = rulesSchema.shape[key];
+    if (!field) { dropped.push(key); continue; }
+    const parsed = field.safeParse(value);
+    if (parsed.success) kept[key] = parsed.data;
+    else dropped.push(key);
+  }
+  return { rules: kept, dropped };
+}
+
 const ISO = /\bISO\b/i;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 

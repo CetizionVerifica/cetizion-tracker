@@ -30,14 +30,64 @@ const tokens = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((
  * Used to suggest duplicates, never to merge on its own.
  */
 export function similarName(a, b) {
-  const na = compact(a); const nb = compact(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  if ((na.length >= 5 && nb.includes(na)) || (nb.length >= 5 && na.includes(nb))) return true;
-  const ta = tokens(a); const tb = tokens(b);
-  if (!ta.length || !tb.length) return false;
-  const shared = ta.filter((t) => tb.includes(t));
-  return shared.length >= 1 && shared.some((t) => t.length >= 4) && shared.length / Math.min(ta.length, tb.length) >= 0.5;
+  return alike(profile(a), profile(b));
+}
+
+/** A name reduced to what matching looks at, worked out once per name. */
+const profile = (name) => ({ c: compact(name), t: tokens(name) });
+
+function alike(a, b) {
+  if (!a.c || !b.c) return false;
+  if (a.c === b.c) return true;
+  if ((a.c.length >= 5 && b.c.includes(a.c)) || (b.c.length >= 5 && a.c.includes(b.c))) return true;
+  if (!a.t.length || !b.t.length) return false;
+  const shared = a.t.filter((t) => b.t.includes(t));
+  return shared.length >= 1 && shared.some((t) => t.length >= 4) && shared.length / Math.min(a.t.length, b.t.length) >= 0.5;
+}
+
+/**
+ * Every pair of names that look like one client, as [i, j] index pairs.
+ *
+ * Comparing all names with all others is a square: 77 companies is 2,926
+ * comparisons on every page load, 500 would be 125,000. Instead each name is
+ * filed under what a match would have to share — the whole name, any run of
+ * five letters, any distinctive word — and only names filed together are
+ * compared. similarName still decides, so the answer is the same list.
+ */
+const GRAM = 5;
+export function similarNamePairs(names) {
+  const profiles = names.map(profile);
+  const keysFor = (p) => {
+    if (!p.c) return [];
+    const keys = [`=${p.c}`];                                              // the same spelling
+    for (let k = 0; k + GRAM <= p.c.length; k++) keys.push(`~${p.c.slice(k, k + GRAM)}`); // one name inside the other
+    for (const t of p.t) if (t.length >= 4) keys.push(`#${t}`);            // a distinctive word in common
+    return keys;
+  };
+
+  const buckets = new Map();
+  const keys = profiles.map((p, i) => {
+    const ks = keysFor(p);
+    for (const key of ks) {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(i);
+      else buckets.set(key, [i]);
+    }
+    return ks;
+  });
+
+  const pairs = [];
+  const candidates = new Set();
+  for (let i = 0; i < profiles.length; i++) {
+    candidates.clear();
+    for (const key of keys[i]) {
+      for (const j of buckets.get(key)) if (j > i) candidates.add(j);
+    }
+    for (const j of [...candidates].sort((x, y) => x - y)) {
+      if (alike(profiles[i], profiles[j])) pairs.push([i, j]);
+    }
+  }
+  return pairs;
 }
 
 const SERVICE_FILLER = new Set(['proposal', 'for', 'of', 'and', 'the', 'assessment', 'audit', 'service', 'services', 'report', 'project', 'work', 'quote', 'quotation']);
