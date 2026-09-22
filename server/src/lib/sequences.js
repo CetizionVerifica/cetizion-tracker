@@ -72,6 +72,20 @@ export async function claimNextId(kind, client, year) {
   return `${prefix}${String(counter.last_n).padStart(width, '0')}`;
 }
 
+/**
+ * Which year of its series a record dated `isoDate` belongs to.
+ *
+ * A financial-year series answers '25-26' for 28 March and '26-27' for 1
+ * April; every other series answers the calendar year. This is what lets a
+ * preview ask for the year a save will actually use, rather than assuming
+ * today's — the two differ for the first and last days of the financial
+ * year, which is exactly when somebody is entering a late invoice.
+ */
+export function yearFor(kind, isoDate) {
+  if (!isoDate) return undefined;
+  return SEQUENCES[kind].pattern.includes('{fy}') ? financialYear(isoDate) : isoDate.slice(0, 4);
+}
+
 /** The prefix, number width and year a series uses for a given year. */
 function seriesFor(kind, year) {
   const spec = SEQUENCES[kind];

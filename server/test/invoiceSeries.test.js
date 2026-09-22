@@ -138,6 +138,32 @@ describe('raising an invoice', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to r
     assert.equal(res.body.data.invoice_no, preview.body.data.next, 'what the panel showed is what it took');
   });
 
+  test('the preview can be asked for the year the record itself will use', async () => {
+    // Without `?on`, a preview taken on 2 April shows a 26-27 number while
+    // a save dated 28 March takes a 25-26 one. Two days a year, at exactly
+    // the moment somebody is entering a late invoice.
+    const today = await request(app).get('/api/lookups/next-id/invoice').set('Cookie', cookie);
+    const lastYear = await request(app).get('/api/lookups/next-id/invoice?on=2026-03-28').set('Cookie', cookie);
+    assert.match(today.body.data.next, /^CVPL\/26-27\//);
+    assert.match(lastYear.body.data.next, /^CVPL\/25-26\//, 'its own year, not today\'s');
+
+    const [stage] = await exec(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, trigger_event)
+                                VALUES ('PO-INV-1', 8, 'March', 0.0001, 'Manual') RETURNING id`);
+    const res = await raise(stage.id, { invoice_date: '2026-03-28' });
+    assert.equal(res.body.data.invoice_no, lastYear.body.data.next, 'and the save takes exactly what the preview showed');
+  });
+
+  test('a preview for a series that counts by calendar year ignores the financial year', async () => {
+    const res = await request(app).get('/api/lookups/next-id/quotation?on=2026-03-28').set('Cookie', cookie);
+    assert.equal(res.status, 200);
+    assert.match(res.body.data.next, /^CTZ\/QT\/2026\//, 'March 2026 is still 2026 for a quotation');
+  });
+
+  test('a malformed date on the preview is refused rather than guessed at', async () => {
+    const res = await request(app).get('/api/lookups/next-id/invoice?on=last-March').set('Cookie', cookie);
+    assert.equal(res.status, 422, JSON.stringify(res.body));
+  });
+
   test('a date that is not a date is refused before anything is written', async () => {
     const [spare] = await exec(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, trigger_event)
                                 VALUES ('PO-INV-1', 7, 'Spare', 0.0001, 'Manual') RETURNING id`);
