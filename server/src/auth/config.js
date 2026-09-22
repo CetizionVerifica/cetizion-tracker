@@ -45,15 +45,31 @@ function fatal(message) {
   );
 }
 
-function resolvePassword() {
+/**
+ * The shared password, and how hard we insist on it.
+ *
+ * Only `shared` mode signs anybody in with this. Under `database` it is
+ * kept in the environment as the rollback and nothing can use it, so its
+ * strength is not a reason to refuse to start — and refusing to start is
+ * what this did on 22 Sep 2026: production ran database sign-in with the
+ * old short password still sitting in the environment, the guard threw
+ * before migrations, and the site was down until the deploy was rolled
+ * back. A credential nothing accepts cannot be a weakness worth an outage.
+ *
+ * In shared mode it is the only lock on the door, and the rule stands (#34).
+ */
+function resolvePassword(mode) {
   const provided = process.env.AUTH_PASSWORD || '';
+  const isTheLock = mode === 'shared';
+
   if (provided) {
-    // A weak shared password in production is refused outright (#34).
-    if (isProduction && (provided.length < 14 || provided === DEV_PASSWORD)) fatal('AUTH_PASSWORD must be at least 14 characters and not the development password.');
+    if (isProduction && isTheLock && (provided.length < 14 || provided === DEV_PASSWORD)) {
+      fatal('AUTH_PASSWORD must be at least 14 characters and not the development password.');
+    }
     return provided;
   }
-  if (isProduction) fatal('AUTH_PASSWORD is not set.');
-  console.warn(`[auth] AUTH_PASSWORD is not set — using the development password "${DEV_PASSWORD}".`);
+  if (isProduction && isTheLock) fatal('AUTH_PASSWORD is not set.');
+  if (isTheLock) console.warn(`[auth] AUTH_PASSWORD is not set — using the development password "${DEV_PASSWORD}".`);
   return DEV_PASSWORD;
 }
 
@@ -104,10 +120,12 @@ function resolveSecureCookie() {
   return override !== 'false' && override !== '0';
 }
 
+const mode = resolveMode();
+
 export const authConfig = {
-  mode: resolveMode(),
+  mode,
   username: process.env.AUTH_USERNAME || 'admin',
-  password: resolvePassword(),
+  password: resolvePassword(mode),
   sessionSecret: resolveSecret(),
   sessionTtlMs: resolveSessionTtlMs(),
   secureCookie: resolveSecureCookie(),
