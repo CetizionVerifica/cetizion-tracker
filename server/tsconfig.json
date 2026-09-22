@@ -1,0 +1,36 @@
+{
+  // The server runs TypeScript as it is: Node 24 strips the types and runs
+  // the JavaScript underneath, so there is no build step and no bundler.
+  // This file is for the checker, which runs in CI and in your editor.
+  //
+  // Because Node only strips types, the syntax that needs generating code —
+  // enums, namespaces holding values, parameter properties, decorators —
+  // cannot be used. `erasableSyntaxOnly` is what refuses it here rather than
+  // at three in the morning on a deploy.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+
+    // JavaScript is still most of the codebase. It is compiled alongside so
+    // a .ts file can import it, but it is not type-checked: turning that on
+    // across 17,000 lines at once would bury the errors that matter.
+    // Convert a module and it starts being checked.
+    "allowJs": true,
+    "checkJs": false,
+
+    // Nothing is emitted. Node runs the source.
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.js", "test/**/*.ts", "types/**/*.ts"]
+}

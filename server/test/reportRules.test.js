@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { businessToday, businessYear } from '../src/lib/businessDate.js';
-import { normalizeName } from '../src/lib/names.js';
+import { businessToday, businessYear } from '../src/lib/businessDate.ts';
+import { normalizeName } from '../src/lib/names.ts';
 import {
   PAYMENT_STATUSES, monthLabel, monthRows, paymentStatusRows, summariseOrders, summarisePurchaseOrders,
 } from '../src/lib/revenueReport.js';

@@ -11,7 +11,7 @@
  *     soon. Returns what it raised and the counts for the digest.
  */
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { sendMail } from './mail.js';
 import { dailyDigest } from './emailTemplates.js';
 import { costAlerts } from '../routes/profitability.js';

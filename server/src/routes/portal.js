@@ -31,7 +31,7 @@ import { signSession, verifySession } from '../auth/session.js';
 import { ApiError } from '../middleware/error.js';
 import { sendMail } from '../lib/mail.js';
 import { notify } from '../lib/notify.js';
-import { businessToday } from '../lib/businessDate.js';
+import { businessToday } from '../lib/businessDate.ts';
 import { fetchDocument, isInlineType } from '../lib/documents.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import { companyOwnsDocument, portalCertificates, portalDocuments, portalInvoices, portalProjects, SECTIONS, statementPdf } from '../lib/portal.js';

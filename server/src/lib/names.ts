@@ -6,12 +6,12 @@
  */
 
 /** SQL grouping key for a free-text name column or expression. */
-export const nameKey = (column) => `lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`;
+export const nameKey = (column: string): string => `lower(regexp_replace(btrim(${column}), '\\s+', ' ', 'g'))`;
 
 /** The same key in JavaScript, for values compared against nameKey(). */
-export const normalizeName = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+export const normalizeName = (value: unknown): string => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-const compact = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const compact = (s: unknown): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 // Words that say what kind of company it is, not which one: two clients
 // sharing only "Labs" or "Aluminium" are not the same client.
 const GENERIC = new Set([
@@ -22,14 +22,14 @@ const GENERIC = new Set([
   'enterprises', 'enterprise', 'international', 'global', 'services', 'systems', 'products', 'cements', 'cement', 'agro', 'exports',
   'copper', 'alloys', 'power', 'energy', 'green', 'auto', 'automotive', 'engineering', 'infra', 'infrastructure', 'projects',
 ]);
-const tokens = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !GENERIC.has(t));
+const tokens = (s: unknown): string[] => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !GENERIC.has(t));
 
 /**
  * Loose match for two spellings of what is probably one client:
  * "Hindalco Alupuram" ~ "Hindalco - Alupuram" ~ "Hindalco Industries Alupuram unit".
  * Used to suggest duplicates, never to merge on its own.
  */
-export function similarName(a, b) {
+export function similarName(a: unknown, b: unknown): boolean {
   const na = compact(a); const nb = compact(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
@@ -41,10 +41,10 @@ export function similarName(a, b) {
 }
 
 const SERVICE_FILLER = new Set(['proposal', 'for', 'of', 'and', 'the', 'assessment', 'audit', 'service', 'services', 'report', 'project', 'work', 'quote', 'quotation']);
-const serviceTokens = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !SERVICE_FILLER.has(t));
+const serviceTokens = (s: unknown): string[] => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !SERVICE_FILLER.has(t));
 
 /** "LCA" ~ "LCA proposal" ~ "LCA (Life cycle assessment)"; "ASI Surveillance Audit" !~ "ASI Recertification". */
-export function sameService(a, b) {
+export function sameService(a: unknown, b: unknown): boolean {
   const na = compact(a); const nb = compact(b);
   if (!na || !nb) return false;
   if (na === nb) return true;

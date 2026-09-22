@@ -3,7 +3,7 @@
  * how loaded each person is in a month.
  */
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { config } from '../config.js';
 import { sendMail } from './mail.js';
 import { notify } from './notify.js';

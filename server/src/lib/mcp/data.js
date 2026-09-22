@@ -6,7 +6,7 @@
  */
 import { query, transaction } from '../../db.js';
 import { RATES } from '../salesReport.js';
-import { businessToday } from '../businessDate.js';
+import { businessToday } from '../businessDate.ts';
 
 const isAdmin = (scope) => scope.role === 'admin';
 

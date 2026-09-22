@@ -21,7 +21,7 @@ import { readWorkbook } from '../import/parse.js';
 import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
 import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
-import { businessYear } from '../lib/businessDate.js';
+import { businessYear } from '../lib/businessDate.ts';
 
 export const importRouter = Router();
 

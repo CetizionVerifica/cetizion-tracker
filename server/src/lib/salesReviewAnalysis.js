@@ -1,5 +1,5 @@
 import { amounts, compactInr, decimal, number, percent, plural } from './reportFormat.js';
-import { r2, share } from './reportMath.js';
+import { r2, share } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**

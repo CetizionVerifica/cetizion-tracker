@@ -2,8 +2,8 @@ import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
-import { r2, share } from './reportMath.js';
-import { normalizeName } from './names.js';
+import { r2, share } from './reportMath.ts';
+import { normalizeName } from './names.ts';
 import { daysBetween } from './salesReviewAnalysis.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 

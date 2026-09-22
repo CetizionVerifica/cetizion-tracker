@@ -19,7 +19,7 @@ import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { capacity, findConflicts } from '../lib/visits.js';
-import { businessToday } from '../lib/businessDate.js';
+import { businessToday } from '../lib/businessDate.ts';
 
 export const visitsRouter = Router();
 

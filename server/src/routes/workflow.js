@@ -5,7 +5,7 @@ import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
-import { normalizeName } from '../lib/names.js';
+import { normalizeName } from '../lib/names.ts';
 
 export const projectRouter = Router();
 export const poRouter = Router();

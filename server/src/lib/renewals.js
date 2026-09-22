@@ -10,7 +10,7 @@
  *                        renewed; one lost, or long overdue, lapses it
  */
 import { query, transaction } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { claimNextId } from './sequences.js';
 
 const plusMonths = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };

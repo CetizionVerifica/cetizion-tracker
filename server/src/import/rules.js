@@ -27,7 +27,7 @@
  */
 import { parseMoney } from './parse.js';
 import { resources } from '../lib/resources.js';
-import { sameService, similarName } from '../lib/names.js';
+import { sameService, similarName } from '../lib/names.ts';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
