@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bookmark, Check, Pin, Trash2, X } from 'lucide-react';
+import { Bookmark, Check, Pin, PinOff, Trash2, X } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { useToast } from './ui.jsx';
@@ -63,6 +63,18 @@ export function SavedViews({ resource, filters, search, onApply }) {
     }
   }
 
+  // `next`, not `pinned`: the naming form already has a `pinned` state and
+  // a shadowed name here would be read as that one by the next person.
+  async function pin(view, next) {
+    try {
+      await api.update('views', view.id, { pinned: next });
+      toast(next ? `"${view.name}" is in the sidebar.` : `"${view.name}" is no longer pinned.`, 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
   async function remove(view) {
     try {
       await api.remove('views', view.id);
@@ -73,7 +85,6 @@ export function SavedViews({ resource, filters, search, onApply }) {
     }
   }
 
-  if (!mine.length && !isFiltered) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
@@ -118,6 +129,25 @@ export function SavedViews({ resource, filters, search, onApply }) {
         >
           Save these filters
         </button>
+      )}
+
+      {/* Pinning is the point of saving, so it is offered on the view you
+          are looking at rather than only at the moment you name it. */}
+      {active && !naming && (
+        <button
+          type="button"
+          onClick={() => pin(active, !active.pinned)}
+          className={`${CHIP} border-border bg-secondary text-secondary-text hover:border-primary hover:text-primary`}
+        >
+          {active.pinned ? <><PinOff className="size-3" strokeWidth={2} aria-hidden="true" />Unpin from sidebar</>
+            : <><Pin className="size-3" strokeWidth={2} aria-hidden="true" />Pin to sidebar</>}
+        </button>
+      )}
+
+      {!isFiltered && !mine.length && (
+        <span className="text-[12px] text-muted-foreground">
+          Filter this list, then save it as a view to keep it a click away.
+        </span>
       )}
 
       {naming && (

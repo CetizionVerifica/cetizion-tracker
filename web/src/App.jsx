@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
@@ -43,6 +43,9 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar.tsx';
 import { ScrollArea } from '@/components/ui/scroll-area.tsx';
 import { Separator } from '@/components/ui/separator.tsx';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet.tsx';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
   Building2,
@@ -55,7 +58,9 @@ import {
   LogOut,
   PanelLeft,
   Plane,
+  PinOff,
   Search,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 
 // A fresh review (tab, filters, messages) for each batch.
@@ -169,7 +174,7 @@ function initials(name) {
  * inside a fixed column above lg. One definition, so the drawer cannot
  * drift from the column.
  */
-function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch }) {
+function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
@@ -198,28 +203,48 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch }) 
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
 
-          {pinned.length > 0 && <SideHeading>Pinned</SideHeading>}
+          <SideHeading>Pinned</SideHeading>
+          {pinned.length === 0 && (
+            <p className="px-2.5 pb-1 text-[11.5px]/[1.5] text-muted-foreground">
+              Filter any list, then <span className="text-secondary-text">Save these filters</span> to keep it here with its count.
+            </p>
+          )}
           {pinned.map((view) => (
-            <NavLink
-              key={view.id}
-              to={viewHref(view)}
-              className={({ isActive }) => cn(
-                'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
-                'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                isActive && 'bg-sidebar-accent text-sidebar-accent-foreground'
-              )}
-            >
-              {/* A square as well as a colour: the state is never hue alone. */}
-              <span className="grid w-4 shrink-0 place-items-center" aria-hidden="true">
-                <span className={cn('size-[7px] rounded-[2px]', (TONES[view.tone] || TONES.info).dot)} />
-              </span>
-              <span className="min-w-0 flex-1 truncate">{view.name}</span>
-              {view.count > 0 && (
-                <span className={cn('num text-[11px] font-semibold', (TONES[view.tone] || TONES.info).count)}>
-                  {view.count}
+            <div key={view.id} className="group/pin relative">
+              <NavLink
+                to={viewHref(view)}
+                className={({ isActive }) => cn(
+                  'flex h-control items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium text-sidebar-foreground transition-colors duration-150',
+                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                  isActive && 'bg-sidebar-accent text-sidebar-accent-foreground'
+                )}
+              >
+                {/* A square as well as a colour: the state is never hue alone. */}
+                <span className="grid w-4 shrink-0 place-items-center" aria-hidden="true">
+                  <span className={cn('size-[7px] rounded-[2px]', (TONES[view.tone] || TONES.info).dot)} />
                 </span>
-              )}
-            </NavLink>
+                <span className="min-w-0 flex-1 truncate">{view.name}</span>
+                {view.count > 0 && (
+                  <span className={cn(
+                    'num text-[11px] font-semibold group-hover/pin:opacity-0',
+                    (TONES[view.tone] || TONES.info).count
+                  )}>
+                    {view.count}
+                  </span>
+                )}
+              </NavLink>
+              {/* Anything you put here you can take off again, without
+                  hunting for the list it came from. */}
+              <button
+                type="button"
+                aria-label={`Unpin ${view.name}`}
+                title="Unpin from the sidebar"
+                onClick={() => onUnpin(view)}
+                className="absolute inset-y-0 right-1.5 hidden place-items-center rounded-[4px] px-1 text-muted-foreground hover:text-late group-hover/pin:grid"
+              >
+                <PinOff className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            </div>
           ))}
 
           <SideHeading>Records</SideHeading>
@@ -230,14 +255,36 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch }) 
       </ScrollArea>
 
       <Separator className="bg-sidebar-border" />
+      {/* Settings lives here rather than in the nav, which is where the
+          design puts it: a "help and settings" button beside whoever is
+          signed in. It is a place you go occasionally, so it does not
+          earn a permanent row — but it does have to be findable without
+          knowing the palette exists, which is what stranded it before. */}
       <div className="flex items-center gap-2 px-3 py-3">
         <Avatar className="size-6">
           <AvatarFallback className="bg-secondary text-[10px] font-semibold text-primary">{initials(displayName)}</AvatarFallback>
         </Avatar>
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-secondary-text" title={displayName}>{displayName}</span>
-        <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="size-7 shrink-0">
-          <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Settings and sign out" className="size-7 shrink-0">
+              <SettingsIcon className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="top" className="min-w-48">
+            <DropdownMenuItem asChild>
+              <Link to="/settings"><SettingsIcon className="size-4" aria-hidden="true" />Settings</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onSearch}>
+              <Search className="size-4" aria-hidden="true" />Search or do anything
+              <span className="num ml-auto text-[10.5px] text-muted-foreground">⌘K</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={signOut}>
+              <LogOut className="size-4" aria-hidden="true" />Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
@@ -316,8 +363,20 @@ export default function App() {
   const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
   // A pinned view is only worth its place if it says how much is behind it,
   // and the count is the same one the list shows when you click through.
-  const { data: vData } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
+  const { data: vData, refetch: refetchViews } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
   const pinned = (vData?.data || []).filter((view) => view.pinned && viewHref(view));
+
+  // Unpinning leaves the view itself alone: it keeps its name and filters
+  // and stays on the list it belongs to, it just stops taking a row here.
+  const unpin = async (view) => {
+    try {
+      await api.update('views', view.id, { pinned: false });
+      refetchViews();
+    } catch {
+      /* A shared view a sales user may not change: the server says 403 and
+         the sidebar simply does not move. */
+    }
+  };
 
   const counts = {
     inbox: iData?.data?.open ?? null,
@@ -341,7 +400,7 @@ export default function App() {
             <SheetDescription>Today, the inbox, your pinned views and the records.</SheetDescription>
           </SheetHeader>
           <SidebarNav
-            pinned={pinned} counts={counts} alerts={alerts}
+            pinned={pinned} counts={counts} alerts={alerts} onUnpin={unpin}
             displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
           />
         </SheetContent>
@@ -355,7 +414,7 @@ export default function App() {
         )}
       >
         <SidebarNav
-          pinned={pinned} counts={counts} alerts={alerts}
+          pinned={pinned} counts={counts} alerts={alerts} onUnpin={unpin}
           displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
         />
       </aside>
