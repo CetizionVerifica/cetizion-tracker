@@ -13,7 +13,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { number } from '../lib/format.js';
+import { ago, number } from '../lib/format.js';
 
 /**
  * Connected mailboxes (#29), as C10 draws it.
@@ -46,21 +46,6 @@ const VIS = [
   { value: 'subject', label: 'Subject only' },
   { value: 'share_everything', label: 'Everything' },
 ];
-
-const MINUTE = 60_000;
-
-function ago(value) {
-  if (!value) return null;
-  const then = new Date(value);
-  if (Number.isNaN(then.getTime())) return null;
-  const mins = Math.floor((Date.now() - then.getTime()) / MINUTE);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
-}
 
 /** A line in the server-setup card: a requirement, and whether it is met. */
 function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
