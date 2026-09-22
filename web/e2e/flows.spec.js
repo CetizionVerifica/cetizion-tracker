@@ -28,7 +28,7 @@ async function signIn(page) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  await expect(page.getByRole('link', { name: 'Quotations' })).toBeVisible();
+  await expect(page.locator('nav').getByRole('link', { name: /Quotations/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -43,9 +43,9 @@ test('a wrong password is refused', async ({ page }) => {
 test('quote a new client, then find the client once under Companies', async ({ page }) => {
   await signIn(page);
   const client = `E2E Client ${stamp}`;
-  await page.getByRole('link', { name: 'Quotations' }).click();
+  await page.locator('nav').getByRole('link', { name: /Quotations/ }).click();
   await page.getByRole('button', { name: '+ Quotation' }).click();
-  await page.getByLabel('Client').fill(client);
+  await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
   await page.getByLabel('Quotation value').fill('250000');
@@ -53,7 +53,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await expect(page.locator('.toast', { hasText: 'Created CTZ/QT/' })).toBeVisible();
   await expect(page.locator('table')).toContainText(client);
 
-  await page.getByRole('link', { name: 'Companies' }).click();
+  await page.locator('nav').getByRole('link', { name: /Companies/ }).click();
   await page.getByPlaceholder(/Search company/).fill(client);
   await expect(page.locator('table tbody tr')).toHaveCount(1);
   await page.locator('table tbody tr td').nth(1).click();
@@ -63,7 +63,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
 
 test('import a sales sheet, review the duplicates, commit', async ({ page }) => {
   await signIn(page);
-  await page.getByRole('link', { name: 'Bulk import' }).click();
+  await page.locator('nav').getByRole('link', { name: /Bulk import/ }).click();
   await page.locator('input[type=file]').setInputFiles(join(here, 'fixtures', 'sales-sheet.xlsx'));
   await page.getByRole('button', { name: 'Upload and analyse' }).click();
   await expect(page.getByRole('heading', { name: /Import #\d+/ })).toBeVisible({ timeout: 90_000 });

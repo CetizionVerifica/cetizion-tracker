@@ -39,7 +39,10 @@ SELECT
   pr.client_name,
   po.po_value,
   po.currency,
-  po.payment_terms_days                                  AS terms_days,
+  COALESCE(ps.credit_days, po.payment_terms_days)        AS terms_days,
+  ps.credit_days,
+  ps.milestone_name,
+  ps.milestone_reached_on,
   po.po_date,
   po.actual_delivery_date                                AS delivery_date,
   ps.stage_no,
@@ -91,9 +94,10 @@ CROSS JOIN LATERAL (
          CASE ps.trigger_event
            WHEN 'On PO Registration' THEN po.po_date IS NOT NULL
            WHEN 'On Delivery'        THEN po.actual_delivery_date IS NOT NULL
+           WHEN 'On Milestone'       THEN ps.milestone_reached_on IS NOT NULL
            ELSE true
          END,
-         ps.invoice_date + po.payment_terms_days
+         ps.invoice_date + COALESCE(ps.credit_days, po.payment_terms_days)
 ) b(amount, due_to_invoice, invoice_due_date)
 CROSS JOIN LATERAL (
   SELECT CASE
@@ -539,6 +543,45 @@ SELECT
   q.remarks,
   q.document_id,
   doc.file_name                               AS document_name,
+  q.valid_until,
+  q.revision,
+  q.terms,
+  q.place_of_supply_state,
+  q.subtotal,
+  q.tax_total,
+  q.total,
+  q.sent_at,
+  q.accepted_at,
+  q.accepted_by_name,
+  (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  q.stage_id,
+  st.name                                     AS stage,
+  st.type                                     AS stage_type,
+  st.sort_order                               AS stage_order,
+  st.color                                    AS stage_color,
+  q.probability,
+  ROUND(COALESCE(q.quotation_value, 0) * COALESCE(q.probability, 0) / 100.0, 2) AS weighted_value,
+  q.expected_close_date,
+  q.next_step,
+  q.stage_changed_at,
+  GREATEST(0, (CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date))::int AS days_in_stage,
+  (st.rotting_days IS NOT NULL AND st.type = 'open'
+     AND CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date > st.rotting_days) AS stale,
+  q.lost_reason_id,
+  lr.name                                     AS lost_reason,
+  q.lost_notes,
+  q.competitor,
+  q.closed_at,
+  q.discount_percent,
+  q.approval_status,
+  q.approval_reason,
+  q.approval_requested_at,
+  q.approval_requested_by,
+  q.approval_decided_at,
+  q.approved_by,
+  q.approval_note,
+  CASE WHEN q.valid_until IS NOT NULL AND q.valid_until < CURRENT_DATE
+        AND q.status IN ('Submitted','Under Negotiation') THEN true ELSE false END AS expired,
   r.invoiced,
   r.received,
   r.outstanding,
@@ -558,6 +601,8 @@ SELECT
   END                                         AS payment_note
 FROM quotations q
 LEFT JOIN documents doc ON doc.id = q.document_id
+LEFT JOIN pipeline_stages st ON st.id = q.stage_id
+LEFT JOIN lost_reasons lr ON lr.id = q.lost_reason_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),

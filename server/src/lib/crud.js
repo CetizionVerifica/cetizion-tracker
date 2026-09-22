@@ -32,7 +32,10 @@ export function buildWhere(def, reqQuery, params) {
   for (const col of def.filters || []) {
     const raw = reqQuery[col];
     if (raw === undefined || raw === '') continue;
-    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean);
+    // Old names for a value (e.g. enquiry statuses renamed by #24) still
+    // filter, the same way the schema accepts them on a write.
+    const aliases = def.filterAliases?.[col] || {};
+    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean).map((v) => aliases[v] ?? v);
     if (!values.length) continue;
     // Free-text names match the way the sales reports group them: case and
     // extra spaces ignored, and a blank value counts as not set.

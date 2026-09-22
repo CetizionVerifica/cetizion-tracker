@@ -10,10 +10,11 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
-  travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
+  purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
+  travel_vendors, services, onboarding_template_lines, onboarding_templates,
+  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -69,11 +70,112 @@ CREATE TABLE sequence_counters (
   PRIMARY KEY (kind, year)
 );
 
+-- ---------------------------------------------------------------------
+-- Templates (#26): payment schedules and onboarding checklists
+-- ---------------------------------------------------------------------
+
+CREATE TABLE payment_terms_templates (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  is_default  boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+CREATE TABLE payment_terms_template_lines (
+  id              serial PRIMARY KEY,
+  template_id     int NOT NULL REFERENCES payment_terms_templates(id) ON DELETE CASCADE,
+  sort_order      int NOT NULL DEFAULT 0,
+  stage_name      text NOT NULL,
+  percent         numeric(5,2) NOT NULL CHECK (percent > 0 AND percent <= 100),
+  trigger_event   text NOT NULL DEFAULT 'On PO Registration'
+                    CHECK (trigger_event IN ('On PO Registration','On Delivery','On Milestone','Manual')),
+  credit_days     int CHECK (credit_days >= 0),
+  milestone_name  text
+);
+
+CREATE INDEX payment_terms_template_lines_template_idx ON payment_terms_template_lines (template_id, sort_order);
+
+-- Seeded from what production already uses.
+INSERT INTO payment_terms_templates (name, is_default, sort_order) VALUES
+  ('50% on PO / 50% on delivery', true, 1),
+  ('100% on delivery', false, 2),
+  ('30% on PO / 70% on delivery', false, 3),
+  ('20% on PO / 80% on delivery', false, 4)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO payment_terms_template_lines (template_id, sort_order, stage_name, percent, trigger_event)
+SELECT t.id, l.sort_order, l.stage_name, l.percent, l.trigger_event
+  FROM payment_terms_templates t
+  JOIN (VALUES
+    ('50% on PO / 50% on delivery', 1, 'Advance (50%)',     50, 'On PO Registration'),
+    ('50% on PO / 50% on delivery', 2, 'On delivery (50%)', 50, 'On Delivery'),
+    ('100% on delivery',            1, 'Full value (100%)', 100, 'On Delivery'),
+    ('30% on PO / 70% on delivery', 1, 'Advance (30%)',     30, 'On PO Registration'),
+    ('30% on PO / 70% on delivery', 2, 'On delivery (70%)', 70, 'On Delivery'),
+    ('20% on PO / 80% on delivery', 1, 'Advance (20%)',     20, 'On PO Registration'),
+    ('20% on PO / 80% on delivery', 2, 'On delivery (80%)', 80, 'On Delivery')
+  ) AS l(template, sort_order, stage_name, percent, trigger_event) ON l.template = t.name
+ WHERE NOT EXISTS (SELECT 1 FROM payment_terms_template_lines x WHERE x.template_id = t.id);
+
+CREATE TABLE onboarding_templates (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  is_default  boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+CREATE TABLE onboarding_template_lines (
+  id                serial PRIMARY KEY,
+  template_id       int NOT NULL REFERENCES onboarding_templates(id) ON DELETE CASCADE,
+  step_no           int NOT NULL,
+  stage             text,
+  step              text NOT NULL,
+  owner_role        text,
+  days_after_start  int
+);
+
+CREATE INDEX onboarding_template_lines_template_idx ON onboarding_template_lines (template_id, step_no);
+
+INSERT INTO onboarding_templates (name, is_default, sort_order) VALUES ('Standard project lifecycle', true, 1)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO onboarding_template_lines (template_id, step_no, stage, step, owner_role, days_after_start)
+SELECT t.id, l.step_no, l.stage, l.step, l.owner_role, l.days_after_start
+  FROM onboarding_templates t
+  JOIN (VALUES
+    (1,  'Onboarding', 'Purchase order(s) received and registered in the PO Register', 'Sales', 0),
+    (2,  'Onboarding', 'Services on each PO listed against the PO', 'Sales', 0),
+    (3,  'Onboarding', 'Payment stages for each PO entered in the payment schedule', 'Finance', 1),
+    (4,  'Onboarding', 'Finance raises the stage-1 (advance) invoice per the PO payment terms', 'Finance', 2),
+    (5,  'Onboarding', 'Project manager and delivery team assigned', 'Delivery', 3),
+    (6,  'Onboarding', 'Client kick-off meeting held; scope and delivery date confirmed', 'Delivery', 7),
+    (7,  'Execution',  'Fieldwork / assessment / data collection completed', 'Delivery', 30),
+    (8,  'Execution',  'Draft deliverable shared with client for review', 'Delivery', 45),
+    (9,  'Delivery',   'Final deliverable / report / certificate issued to client', 'Delivery', 60),
+    (10, 'Delivery',   'Finance raises the on-delivery stage invoice(s)', 'Finance', 61),
+    (11, 'Closure',    'All stage invoices paid on time as per agreed terms - project closed', 'Finance', 90)
+  ) AS l(step_no, stage, step, owner_role, days_after_start) ON t.name = 'Standard project lifecycle'
+ WHERE NOT EXISTS (SELECT 1 FROM onboarding_template_lines x WHERE x.template_id = t.id);
+
 CREATE TABLE services (
-  id       serial PRIMARY KEY,
-  name     text NOT NULL UNIQUE,
-  active   boolean NOT NULL DEFAULT true,
-  sort_order int NOT NULL DEFAULT 0
+  id         serial PRIMARY KEY,
+  name       text NOT NULL UNIQUE,
+  active     boolean NOT NULL DEFAULT true,
+  sort_order int NOT NULL DEFAULT 0,
+  -- The catalogue (#23): what a line for this service looks like by default.
+  code                    text,
+  sac_code                text,
+  default_rate            numeric(16,2),
+  currency                text NOT NULL DEFAULT 'INR',
+  gst_rate                numeric(5,2) NOT NULL DEFAULT 18,
+  unit                    text NOT NULL DEFAULT 'engagement',
+  description             text,
+  renewal_interval_months int,
+  renewal_lead_days       int NOT NULL DEFAULT 60,
+  onboarding_template_id    int REFERENCES onboarding_templates(id) ON DELETE SET NULL,
+  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL
 );
 
 CREATE TABLE travel_vendors (
@@ -103,6 +205,44 @@ CREATE TABLE documents (
   -- Set when removal starts; a marked document can never be attached.
   purging_at    timestamptz
 );
+
+-- ---------------------------------------------------------------------
+-- Pipeline stages and lost reasons (#25)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE pipeline_stages (
+  id              serial PRIMARY KEY,
+  name            text NOT NULL UNIQUE,
+  probability     int NOT NULL CHECK (probability BETWEEN 0 AND 100),
+  type            text NOT NULL CHECK (type IN ('open','paused','won','lost')),
+  maps_to_status  text NOT NULL,
+  sort_order      int NOT NULL DEFAULT 0,
+  color           text,
+  rotting_days    int,
+  active          boolean NOT NULL DEFAULT true
+);
+
+INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order, color, rotting_days) VALUES
+  ('Draft',                   10, 'open',   'Submitted',         1, '#94a3b8', 14),
+  ('Sent',                    40, 'open',   'Submitted',         2, '#38bdf8', 21),
+  ('Negotiation',             60, 'open',   'Under Negotiation', 3, '#f59e0b', 21),
+  ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
+  ('On Hold',                 20, 'paused', 'On Hold',           5, '#a3a3a3', NULL),
+  ('Won, PO received',       100, 'won',    'Won - PO Received', 6, '#16a34a', NULL),
+  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL)
+ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE lost_reasons (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+INSERT INTO lost_reasons (name, sort_order) VALUES
+  ('Price', 1), ('Went with a competitor', 2), ('No budget this year', 3), ('Project cancelled or postponed', 4),
+  ('No response', 5), ('Timing', 6), ('Scope changed', 7), ('Quotation expired', 8), ('Other', 9)
+ON CONFLICT (name) DO NOTHING;
 
 -- ---------------------------------------------------------------------
 -- Companies and contacts — a client exists once, keyed on its normalised
@@ -194,13 +334,98 @@ CREATE TABLE quotations (
                        ON UPDATE CASCADE ON DELETE SET NULL,
   remarks            text,
   document_id        int UNIQUE REFERENCES documents(id),
+  -- A quotation as a document (#23)
+  valid_until            date,
+  revision               int NOT NULL DEFAULT 0,
+  terms                  text,
+  place_of_supply_state  text,
+  subtotal               numeric(16,2),
+  tax_total              numeric(16,2),
+  total                  numeric(16,2),
+  sent_at                timestamptz,
+  accepted_at            timestamptz,
+  accepted_by_name       text,
+  -- The pipeline (#25)
+  stage_id               int REFERENCES pipeline_stages(id),
+  probability            int CHECK (probability BETWEEN 0 AND 100),
+  expected_close_date    date,
+  next_step              text,
+  stage_changed_at       timestamptz,
+  lost_reason_id         int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  lost_notes             text,
+  competitor             text,
+  closed_at              timestamptz,
+  -- Approvals (#46)
+  discount_percent       numeric(5,2),
+  approval_status        text NOT NULL DEFAULT 'not_needed'
+                           CHECK (approval_status IN ('not_needed','pending','approved','rejected')),
+  approval_reason        text,
+  approval_requested_at  timestamptz,
+  approval_requested_by  text,
+  approval_decided_at    timestamptz,
+  approved_by            text,
+  approval_note          text,
+  approved_discount_percent numeric(5,2),
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON quotations (project_id);
 CREATE INDEX quotations_company_id_idx ON quotations (company_id);
+CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 CREATE INDEX ON quotations (status);
+
+-- ---------------------------------------------------------------------
+-- Quotation lines and revisions (#23)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE quotation_lines (
+  id                serial PRIMARY KEY,
+  quotation_id      int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  service_id        int REFERENCES services(id) ON DELETE SET NULL,
+  description       text NOT NULL,
+  qty               numeric(12,2) NOT NULL DEFAULT 1 CHECK (qty > 0),
+  unit              text,
+  rate              numeric(16,2) NOT NULL DEFAULT 0 CHECK (rate >= 0),
+  discount_percent  numeric(5,2) NOT NULL DEFAULT 0 CHECK (discount_percent BETWEEN 0 AND 100),
+  gst_rate          numeric(5,2) NOT NULL DEFAULT 18 CHECK (gst_rate BETWEEN 0 AND 100),
+  amount            numeric(16,2) GENERATED ALWAYS AS (round(qty * rate * (1 - discount_percent / 100), 2)) STORED,
+  sort_order        int NOT NULL DEFAULT 0,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_lines_quotation_id_idx ON quotation_lines (quotation_id, sort_order, id);
+
+
+-- What a quotation looked like before each revision.
+CREATE TABLE quotation_revisions (
+  id            serial PRIMARY KEY,
+  quotation_id  int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  revision      int NOT NULL,
+  snapshot      jsonb NOT NULL,
+  note          text,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_revisions_quotation_id_idx ON quotation_revisions (quotation_id, revision);
+
+-- ---------------------------------------------------------------------
+-- Lead sources (#24)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE lead_sources (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+INSERT INTO lead_sources (name, sort_order) VALUES
+  ('Existing client', 1), ('Referral', 2), ('Website', 3), ('Inbound email or call', 4),
+  ('Event or webinar', 5), ('Partner or certification body', 6), ('Outreach', 7), ('Other', 8)
+ON CONFLICT (name) DO NOTHING;
 
 -- ---------------------------------------------------------------------
 -- Enquiries — logged before anything is quoted. Marking one
@@ -221,15 +446,32 @@ CREATE TABLE enquiries (
   sales_person       text,
   sales_person_email text,
   service            text,
-  status             text NOT NULL DEFAULT 'In Progress'
-                       CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
+  status             text NOT NULL DEFAULT 'New'
+                       -- The words from before #24 are still accepted while a deploy
+                       -- runs both containers: the old one writes them until the swap
+                       -- completes. A later migration drops them.
+                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified',
+                                        'In Progress','Declined','Won - Quotation Sent')),
   quotation_no       text REFERENCES quotations(quotation_no)
                        ON UPDATE CASCADE ON DELETE SET NULL,
+  -- A lead (#24)
+  source_id              int REFERENCES lead_sources(id) ON DELETE SET NULL,
+  estimated_value        numeric(16,2),
+  currency               text NOT NULL DEFAULT 'INR',
+  expected_decision_date date,
+  next_follow_up_at      date,
+  first_responded_at     timestamptz,
+  unqualified_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  unqualified_notes      text,
+  services_interested    text,
+  notes                  text,
+  converted_at           timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
+CREATE INDEX enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -293,8 +535,7 @@ CREATE TABLE payment_stages (
   stage_no              int NOT NULL CHECK (stage_no > 0),
   stage_name            text NOT NULL,
   trigger_event         text NOT NULL DEFAULT 'On PO Registration'
-                          CHECK (trigger_event IN ('On PO Registration',
-                                                   'On Delivery','Manual')),
+                          CHECK (trigger_event IN ('On PO Registration','On Delivery','On Milestone','Manual')),
   stage_percent         numeric(6,4) NOT NULL CHECK (stage_percent > 0),
   invoice_no            text,
   invoice_date          date,
@@ -303,6 +544,10 @@ CREATE TABLE payment_stages (
   payment_received_date date,
   reminder_sent_on      date,
   remarks               text,
+  -- Per-stage terms and milestone triggers (#26)
+  credit_days           int CHECK (credit_days >= 0),
+  milestone_name        text,
+  milestone_reached_on  date,
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (po_number, stage_no)
@@ -423,7 +668,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','enquiries','purchase_orders',
+  FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','quotation_lines','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
       'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
       'sequence_counters']
@@ -433,6 +678,196 @@ BEGIN
          FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------- quotation totals
+-- Totals follow the lines. With lines, quotation_value is the total; without
+-- any, the typed quotation_value stands and the totals are blank.
+CREATE OR REPLACE FUNCTION quotation_totals(p_quotation int) RETURNS void AS $$
+DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold numeric; st text; approved_at numeric;
+BEGIN
+  SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(round(amount * gst_rate / 100, 2)), 0), COALESCE(SUM(round(qty * rate, 2)), 0)
+    INTO n, s, t, gross FROM quotation_lines WHERE quotation_id = p_quotation;
+  IF n = 0 THEN
+    UPDATE quotations SET subtotal = NULL, tax_total = NULL, total = NULL, discount_percent = NULL,
+           approval_status = CASE WHEN approval_status = 'pending' AND approval_reason IS NULL THEN 'not_needed' ELSE approval_status END
+     WHERE id = p_quotation;
+    RETURN;
+  END IF;
+  disc := CASE WHEN gross > 0 THEN round((gross - s) / gross * 100, 2) ELSE 0 END;
+  threshold := setting_num('discount_approval_threshold_percent', 10);
+  SELECT approval_status, approved_discount_percent INTO st, approved_at FROM quotations WHERE id = p_quotation;
+  UPDATE quotations
+     SET subtotal = s, tax_total = t, total = s + t, quotation_value = s + t, discount_percent = disc,
+         approval_status = CASE
+           -- Over the threshold needs a decision, and an approval covers
+           -- only the discount it was given for: raising it asks again.
+           -- This applies to hand-requested exceptions too.
+           WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN 'pending'
+           -- otherwise an exception someone asked for by hand keeps its own state
+           WHEN approval_reason IS NOT NULL THEN approval_status
+           WHEN disc <= threshold AND st IN ('pending', 'rejected') THEN 'not_needed'
+           ELSE approval_status END,
+         approval_requested_at = CASE WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN now() ELSE approval_requested_at END
+   WHERE id = p_quotation;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION quotation_lines_changed() RETURNS trigger AS $$
+BEGIN
+  PERFORM quotation_totals(COALESCE(NEW.quotation_id, OLD.quotation_id));
+  IF TG_OP = 'UPDATE' AND NEW.quotation_id IS DISTINCT FROM OLD.quotation_id THEN PERFORM quotation_totals(OLD.quotation_id); END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER quotation_lines_changed AFTER INSERT OR UPDATE OR DELETE ON quotation_lines
+  FOR EACH ROW EXECUTE FUNCTION quotation_lines_changed();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('quotation_validity_days', '30', 'How long a quotation stays open for acceptance, from its date. Sets valid_until on new quotations and revisions.'),
+  ('gst_rate_default', '18', 'GST % offered on a new quotation line when the service has none.'),
+  ('company_name', 'Cetizion Verifica Pvt. Ltd.', 'Printed at the top of quotation PDFs.'),
+  ('company_address', '', 'Printed under the company name on quotation PDFs.'),
+  ('company_gstin', '', 'Printed on quotation PDFs.'),
+  ('quotation_terms_default', 'Payment: 50% advance with the purchase order, 50% on delivery of the final report. Prices exclude GST unless stated. Valid until the date shown.', 'Terms printed on a new quotation; editable per quotation.')
+ON CONFLICT (key) DO NOTHING;
+
+-- A new quotation takes its validity and terms from Settings when none were typed.
+-- A numeric setting, or the default. views.sql defines the same function;
+-- it is here too because triggers call it, and a database built from this
+-- file alone (as some tests do) must be able to insert rows.
+CREATE OR REPLACE FUNCTION setting_num(p_key text, p_default numeric)
+RETURNS numeric AS $$
+  SELECT COALESCE(
+    (SELECT NULLIF(regexp_replace(value, '[^0-9.\-]', '', 'g'), '')::numeric
+       FROM settings WHERE key = p_key),
+    p_default);
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION quotation_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.valid_until IS NULL AND NEW.quotation_date IS NOT NULL THEN
+    NEW.valid_until := NEW.quotation_date + (setting_num('quotation_validity_days', 30))::int;
+  END IF;
+  IF NEW.terms IS NULL THEN
+    SELECT NULLIF(value, '') INTO NEW.terms FROM settings WHERE key = 'quotation_terms_default';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER quotation_defaults BEFORE INSERT ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_defaults();
+
+-- ---------------------------------------------------------------- pipeline
+-- Stage and status agree, whichever one was changed. Moving to a stage sets
+-- the status it maps to and takes the stage's probability unless one was
+-- given with the move. Changing the status (the form, the importer, a
+-- conversion) picks the default stage for it; sending a draft moves it to
+-- Sent, and an acceptance moves an open one to Verbal yes.
+CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
+DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    stage_changed := NEW.stage_id IS NOT NULL;
+    status_changed := NOT stage_changed;
+  ELSE
+    stage_changed := NEW.stage_id IS DISTINCT FROM OLD.stage_id AND NEW.stage_id IS NOT NULL;
+    status_changed := NEW.stage_id IS NULL OR NEW.status IS DISTINCT FROM OLD.status;
+  END IF;
+
+  IF stage_changed THEN
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    NEW.status := st.maps_to_status;
+    IF TG_OP = 'INSERT' OR NEW.probability IS NOT DISTINCT FROM OLD.probability OR NEW.probability IS NULL THEN
+      NEW.probability := st.probability;
+    END IF;
+  ELSIF status_changed THEN
+    SELECT * INTO st FROM pipeline_stages ps
+     WHERE ps.maps_to_status = NEW.status AND ps.active
+     ORDER BY CASE
+       WHEN NEW.status = 'Submitted' AND NEW.sent_at IS NOT NULL AND ps.name = 'Sent' THEN 0
+       WHEN NEW.status = 'Under Negotiation' AND NEW.accepted_at IS NOT NULL AND ps.name = 'Verbal yes, awaiting PO' THEN 0
+       ELSE 1 END, ps.sort_order
+     LIMIT 1;
+    IF st.id IS NOT NULL THEN
+      NEW.stage_id := st.id;
+      NEW.probability := st.probability;
+    END IF;
+  ELSE
+    -- Same stage: a send or an acceptance made in this write moves it
+    -- forward, and a revision (which clears both) moves it back. Only the
+    -- change counts, so a card moved back by hand stays where it was put.
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    IF NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL AND st.name IN ('Draft', 'Sent', 'Negotiation') THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Verbal yes, awaiting PO';
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+    END IF;
+  END IF;
+
+  IF TG_OP = 'INSERT' OR NEW.stage_id IS DISTINCT FROM OLD.stage_id THEN
+    NEW.stage_changed_at := now();
+    IF st.type IN ('won', 'lost') THEN
+      NEW.closed_at := COALESCE(NEW.closed_at, now());
+    ELSE
+      NEW.closed_at := NULL;
+    END IF;
+    -- Reopened: the reason it was lost no longer applies.
+    IF st.type <> 'lost' THEN
+      NEW.lost_reason_id := NULL;
+      NEW.lost_notes := NULL;
+      NEW.competitor := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- Runs after the company link (a_) and before nothing else that matters: c_.
+CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_stage_sync();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------- enquiry stamps
+-- Stamps: the first response, the conversion, and a default follow-up date.
+CREATE OR REPLACE FUNCTION enquiry_stamps() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.status = 'New' AND NEW.status <> 'New' AND NEW.first_responded_at IS NULL THEN
+    NEW.first_responded_at := now();
+  END IF;
+  IF NEW.status = 'Converted' AND (TG_OP = 'INSERT' OR OLD.status <> 'Converted') THEN
+    NEW.converted_at := COALESCE(NEW.converted_at, now());
+  END IF;
+  IF NEW.status IN ('Converted', 'Unqualified') THEN
+    NEW.next_follow_up_at := NULL;
+  ELSIF NEW.next_follow_up_at IS NULL AND (TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status) THEN
+    NEW.next_follow_up_at := CURRENT_DATE + (setting_num('lead_follow_up_default_days', 3))::int;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER c_enquiry_stamps BEFORE INSERT OR UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_stamps();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('lead_first_response_hours', '24', 'Target hours from a new enquiry to the first contact. Enquiries past it are flagged.'),
+  ('lead_follow_up_default_days', '3', 'Days ahead the next follow-up is set when an enquiry is created or moves stage without one.')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('discount_approval_threshold_percent', '10', 'A quotation discounted above this overall % waits for approval before it can be sent.'),
+  ('approver_email', '', 'Who is emailed when a quotation needs approval. Blank: the finance email.')
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies
 -- The grouping key the reports already use for free-text names.

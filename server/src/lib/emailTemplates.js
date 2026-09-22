@@ -91,3 +91,22 @@ export function testEmail({ to, mode }) {
   const text = `This is a test email from the Cetizion Tracker to ${to}. Delivery mode: ${mode}. If you are reading this, sending works.`;
   return { subject, text, html: layout('Test email', `<p>${esc(text)}</p>`) };
 }
+
+/** To the approver: a quotation needs a yes. */
+export function approvalRequest({ quotation: q, reason, requestedBy }) {
+  const subject = `Approval needed: quotation ${q.quotation_no} for ${q.client_name}`;
+  const text = `${requestedBy || 'Sales'} asks for approval on quotation ${q.quotation_no} (${q.client_name}, ${q.service_quoted || 'services'}).
+
+Value: ${inr(q.total ?? q.quotation_value, q.currency)}${q.discount_percent ? `\nOverall discount: ${Number(q.discount_percent)}%` : ''}
+Reason: ${reason}
+
+Open the quotation in the tracker to approve or reject it.`;
+  return { subject, text, html: layout('Approval needed', `<p>${esc(text).replace(/\n/g, '<br>')}</p>`) };
+}
+
+/** To the sales person: the decision. */
+export function approvalDecision({ quotation: q, decision, note, decidedBy }) {
+  const subject = `Quotation ${q.quotation_no} ${decision}`;
+  const text = `Quotation ${q.quotation_no} for ${q.client_name} was ${decision}${decidedBy ? ` by ${decidedBy}` : ''}.${note ? `\n\nNote: ${note}` : ''}${decision === 'approved' ? '\n\nIt can now be sent to the client.' : '\n\nRevise the discount or terms and ask again.'}`;
+  return { subject, text, html: layout(`Quotation ${decision}`, `<p>${esc(text).replace(/\n/g, '<br>')}</p>`) };
+}

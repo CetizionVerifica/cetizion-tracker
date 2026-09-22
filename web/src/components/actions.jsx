@@ -502,6 +502,7 @@ const scale = (percents, allocatable) => {
 };
 
 export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
+  const lookups = useLookups();
   // What is already invoiced or paid stays, so only the rest is up for
   // splitting. 100% of the PO with half of it billed would schedule 150%.
   const locked = pct(Number(lockedPercent || 0) * 100);
@@ -509,11 +510,29 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
   // Nothing left to split: every stage is invoiced or paid, and those are never
   // replaced. Offering a form the server must reject wastes the user's time.
   const nothingToSplit = allocatable < 0.01;
-  const [preset, setPreset] = useState('50/50');
-  const [stages, setStages] = useState(() => buildStages(scale(PRESETS['50/50'], allocatable)));
+  // The saved templates (#26) come first; the fixed splits stay as a fallback.
+  // A template keeps its own stage names, triggers, credit days and
+  // milestones, as /register copies them.
+  const presets = {
+    ...Object.fromEntries((lookups.payment_terms_templates || []).map((t) => [t.name, t.lines.map((l) => ({
+      stage_name: l.stage_name, trigger_event: l.trigger_event, percent: Number(l.percent),
+      credit_days: l.credit_days ?? null, milestone_name: l.milestone_name ?? null,
+    }))])),
+    ...PRESETS,
+  };
+  // A template's percentages are fitted to the free share the same way.
+  const fit = (split) => {
+    if (!split.length || typeof split[0] !== 'object') return scale(split, allocatable);
+    const scaled = scale(split.map((l) => l.percent), allocatable);
+    return split.map((l, i) => ({ ...l, percent: scaled[i] }));
+  };
+  const [preset, setPreset] = useState(() => (lookups.payment_terms_templates?.find((t) => t.is_default)?.name) || '50/50');
+  const [stages, setStages] = useState(() => buildStages(fit(presets[preset] || PRESETS['50/50'])));
   const { busy, error, run } = useAction({ onDone, successMessage: 'Payment stages created' });
 
-  function buildStages(percents) {
+  function buildStages(split) {
+    if (split.length && typeof split[0] === 'object') return split.map((line) => ({ ...line }));
+    const percents = split;
     return percents.map((p, i) => ({
       stage_name:
         percents.length === 1
@@ -539,6 +558,8 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           stage_name: s.stage_name,
           trigger_event: s.trigger_event,
           stage_percent: Number(s.percent) / 100,
+          credit_days: s.credit_days ?? null,
+          milestone_name: s.milestone_name ?? null,
         })),
         replace: true,
       })
@@ -584,10 +605,10 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         <Select
           value={preset}
           placeholder={null}
-          options={Object.keys(PRESETS)}
+          options={Object.keys(presets)}
           onChange={(e) => {
             setPreset(e.target.value);
-            setStages(buildStages(scale(PRESETS[e.target.value], allocatable)));
+            setStages(buildStages(fit(presets[e.target.value])));
           }}
         />
       </Field>
@@ -620,6 +641,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
                   >
                     <option>On PO Registration</option>
                     <option>On Delivery</option>
+                    <option>On Milestone</option>
                     <option>Manual</option>
                   </select>
                 </td>

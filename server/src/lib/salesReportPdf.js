@@ -1,6 +1,4 @@
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import pdfmake from 'pdfmake';
+import pdfmake from './pdf.js';
 import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
 import { share } from './reportMath.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
@@ -17,16 +15,6 @@ import {
  */
 
 export { money };
-
-const require = createRequire(import.meta.url);
-const ROBOTO = require('pdfmake/fonts/Roboto.js');
-const FONT_DIR = resolve(dirname(ROBOTO.Roboto.normal));
-
-pdfmake.setFonts(ROBOTO);
-// The report is built only from our own data: it may read the bundled fonts
-// and nothing else, and it never fetches a URL.
-pdfmake.setUrlAccessPolicy(() => false);
-pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
 
 const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
 const INK_900 = '#0f172a';
@@ -344,7 +332,7 @@ export function salesReportDocDefinition(data) {
         widths: ['*', '*', '*'],
         body: [
           [
-            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} declined`),
+            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} unqualified`),
             tile(number(sectors.summary.pos), 'POs won', `Win rate ${percent(sectors.summary.win_rate)} on decided quotations`),
             tile(compactInr(ct.won_value_inr), 'Won value (INR)', ct.unconverted.length ? `+ ${amounts(ct.unconverted)} without a rate` : `${plural(ct.clients, 'client')}`),
           ],
@@ -413,7 +401,7 @@ export function salesReportDocDefinition(data) {
         series: [
           { name: 'Quotation sent', color: GREEN, values: months.map((m) => m.quoted) },
           { name: 'In progress', color: GOLD, values: months.map((m) => m.in_progress) },
-          { name: 'Declined', color: RED, values: months.map((m) => m.declined) },
+          { name: 'Unqualified', color: RED, values: months.map((m) => m.declined) },
         ],
         width: W,
         height: 190,
@@ -430,8 +418,9 @@ export function salesReportDocDefinition(data) {
     ['Reached a contract (PO)', number(pipeline.contracted)],
     ['Quoted, no contract yet', number(Math.max(et.quoted - pipeline.contracted, 0))],
     ['In progress (not yet quoted)', number(et.in_progress)],
-    ['Declined', number(et.declined)],
+    ['Unqualified', number(et.declined)],
     ['TAT — enquiry to contract (average)', pipeline.tat_count ? `${decimal(pipeline.average_tat_days)} days` : '— (none reached a contract yet)'],
+
     ...(gaps.undated_enquiries ? [['Enquiries with no date (not counted)', number(gaps.undated_enquiries)]] : []),
   ];
   const mixColumn = (title, rows) => ({
@@ -1057,7 +1046,7 @@ export function salesReportDocDefinition(data) {
     subsection('D.  Notes and definitions', null, {
       ul: [
         `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
-        'Enquiries are the rows on the Enquiries page, counted by their status there: In Progress, Declined, or Won - Quotation Sent ("quotation sent").',
+        'Enquiries are the rows on the Enquiries page, counted by their status there: open (New, Contacted, Qualified or Nurture), Unqualified, or Converted ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
         `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
         'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',

@@ -11,12 +11,15 @@ export const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Au
 
 const missing = (value) => value === null || value === undefined || value === '' || Number.isNaN(Number(value));
 
-/** Indian grouping for rupees, western grouping for everything else. */
-export function money(value, currency = 'INR') {
+/**
+ * Indian grouping for rupees, western grouping for everything else. Whole
+ * units by default; a document such as a quotation passes { decimals: 2 }.
+ */
+export function money(value, currency = 'INR', { decimals = 0 } = {}) {
   if (missing(value)) return '—';
   const n = Number(value);
   const locale = currency === 'INR' ? 'en-IN' : 'en-US';
-  const digits = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.abs(n));
+  const digits = new Intl.NumberFormat(locale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(Math.abs(n));
   return `${n < 0 ? '-' : ''}${SYMBOL[currency] ?? `${currency} `}${digits}`;
 }
 

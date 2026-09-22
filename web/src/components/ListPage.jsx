@@ -132,7 +132,7 @@ export function ListPage({
       />
 
       <div className="page stack">
-        {banner}
+        {typeof banner === 'function' ? banner(rows) : banner}
 
         <Card flush>
           <div className="toolbar">

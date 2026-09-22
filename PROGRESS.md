@@ -73,6 +73,39 @@ client, import a sheet and commit it, on every change. The build also scans
 dependencies, the container image, the code and the history for known
 vulnerabilities and leaked secrets, and proposes dependency updates weekly.
 
+### Batch 2: selling (done, checkpoint 2)
+
+**Quotations are now real documents (#23).** A quotation is priced line by
+line from a service catalogue, with GST, a validity date and terms. The
+total follows the lines. It can be revised, with each earlier version kept;
+turned into a PDF; emailed to the client; and marked accepted. A quotation
+sent from the tracker that runs past its validity is marked lost as
+expired after a grace period.
+
+**Enquiries are leads (#24).** Each enquiry records where it came from, who
+owns it, what it is worth, when to follow up and when the client will
+decide. It moves New, Contacted, Qualified, Converted, or is parked or
+dropped with a reason. Converting creates the quotation with the estimate
+already filled in. Overdue follow-ups and slow first responses are called
+out at the top of the page.
+
+**A pipeline board (#25).** Every open quotation sits in a stage with a
+probability: Draft, Sent, Negotiation, Verbal yes, On hold. Cards are
+dragged between stages; marking one lost asks why. The board shows the
+weighted value of the pipeline, a forecast by expected close month, and
+the last ninety days' wins and losses with their reasons.
+
+**PO to project in one step (#26).** Registering a PO from a quotation
+now creates or joins the project, records the PO against the quotation,
+lists the services, builds the payment stages from a saved schedule such
+as 50/50 or 30/70, and adds the onboarding checklist with target dates, in
+one save. Schedules and checklists are edited under Admin.
+
+**Discount approvals (#46).** A quotation discounted beyond the threshold
+set in Settings waits for approval before it can be sent; special terms
+can be put up for approval by hand. The approver and the sales person are
+emailed.
+
 ### Smaller fixes made along the way
 
 - The project page's onboarding checklist can be edited, reordered and extended.
@@ -127,3 +160,5 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   working rules written.
 - 2026-09-17: Batch 1 finished (companies, reminders, import extras, browser
   tests, security scanning). Checkpoint 1 tagged locally; nothing pushed yet.
+- 2026-09-17: Batch 2 finished (quotation documents, leads, pipeline board,
+  one-step PO registration with templates, approvals). Checkpoint 2 tagged.

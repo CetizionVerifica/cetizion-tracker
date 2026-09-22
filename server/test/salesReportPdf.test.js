@@ -33,10 +33,10 @@ const POS = [
 ];
 
 const ENQUIRIES = [
-  { enquiry_no: 'ENQ-1', client: 'Hetero', enquiry_date: '2026-08-03', month: '2026-08', status: 'Won - Quotation Sent', quotation_status: 'Won - PO Received', quotation_value: 100000, currency: 'INR', rate: 1 },
-  { enquiry_no: 'ENQ-2', client: 'Harman', enquiry_date: '2026-08-20', month: '2026-08', status: 'Won - Quotation Sent', quotation_status: 'Lost', quotation_value: 50000, currency: 'INR', rate: 1 },
-  { enquiry_no: 'ENQ-3', client: 'Orion', enquiry_date: '2026-06-01', month: '2026-06', status: 'In Progress', quotation_status: null, quotation_value: null, currency: null, rate: null },
-  { enquiry_no: 'ENQ-4', client: 'Midal', enquiry_date: '2026-09-02', month: '2026-09', status: 'Declined', quotation_status: null, quotation_value: null, currency: null, rate: null },
+  { enquiry_no: 'ENQ-1', client: 'Hetero', enquiry_date: '2026-08-03', month: '2026-08', status: 'Converted', quotation_status: 'Won - PO Received', quotation_value: 100000, currency: 'INR', rate: 1 },
+  { enquiry_no: 'ENQ-2', client: 'Harman', enquiry_date: '2026-08-20', month: '2026-08', status: 'Converted', quotation_status: 'Lost', quotation_value: 50000, currency: 'INR', rate: 1 },
+  { enquiry_no: 'ENQ-3', client: 'Orion', enquiry_date: '2026-06-01', month: '2026-06', status: 'Contacted', quotation_status: null, quotation_value: null, currency: null, rate: null },
+  { enquiry_no: 'ENQ-4', client: 'Midal', enquiry_date: '2026-09-02', month: '2026-09', status: 'Unqualified', quotation_status: null, quotation_value: null, currency: null, rate: null },
 ];
 ENQUIRIES.sort((a, b) => a.enquiry_date.localeCompare(b.enquiry_date));
 
@@ -164,7 +164,7 @@ test('enquiry counts come from the Enquiries page', () => {
   const text = textOf(salesReportDocDefinition(fixture()));
   // 4 enquiries: 2 quotation sent, 1 in progress, 1 declined. Apr–Sep is 6 months, quiet months included.
   assert.ok(text.includes('4 enquiries were logged on the Enquiries page over 6 months, an average of 0.7 a month.'));
-  assert.ok(text.includes('2 of 4 enquiries (50%) reached a quotation; 1 was declined and 1 is still in progress.'));
+  assert.ok(text.includes('2 of 4 enquiries (50%) reached a quotation; 1 was unqualified and 1 is still in progress.'));
   assert.ok(text.includes('Aug 2026 — 2'), 'busiest month');
   // Oldest open enquiry: 1 Jun → 14 Sep = 105 days.
   assert.ok(text.includes('the oldest, Orion (ENQ-3), has been open 105 days'));
@@ -242,7 +242,7 @@ test('every chart is drawn, in the report font', () => {
     assert.ok(svg.startsWith('<svg '));
     assert.ok(!/font-family="(?!Roboto)/.test(svg), 'only Roboto');
   }
-  assert.ok(svgs.some((svg) => svg.includes('Quotation sent') && svg.includes('Declined')), 'enquiries by month');
+  assert.ok(svgs.some((svg) => svg.includes('Quotation sent') && svg.includes('Unqualified')), 'enquiries by month');
   assert.ok(svgs.some((svg) => svg.includes('Under negotiation') && svg.includes('On hold') && svg.includes('Won - PO received')), 'quotations by status');
   assert.ok(svgs.some((svg) => svg.includes('₹12.8 L')), 'won value by sector in lakh');
 });

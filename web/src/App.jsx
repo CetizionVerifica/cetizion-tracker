@@ -7,6 +7,8 @@ import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Quotations from './pages/Quotations.jsx';
+import QuotationDetail from './pages/QuotationDetail.jsx';
+import Pipeline from './pages/Pipeline.jsx';
 import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
@@ -21,6 +23,7 @@ import Settings from './pages/Settings.jsx';
 import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Emails from './pages/Emails.jsx';
+import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
@@ -40,6 +43,7 @@ const NAV = [
       { to: '/companies', icon: '⌂', label: 'Companies' },
       { to: '/enquiries', icon: '◇', label: 'Enquiries' },
       { to: '/quotations', icon: '◆', label: 'Quotations' },
+      { to: '/pipeline', icon: '▥', label: 'Pipeline' },
       { to: '/sales-report', icon: '◔', label: 'Sales reports' },
     ],
   },
@@ -69,6 +73,7 @@ const NAV = [
       { to: '/settings', icon: '⚙', label: 'Settings' },
       { to: '/import', icon: '⇪', label: 'Bulk import' },
       { to: '/emails', icon: '✉', label: 'Emails & jobs' },
+      { to: '/templates', icon: '▤', label: 'Templates', adminOnly: true },
     ],
   },
 ];
@@ -88,7 +93,7 @@ export default function App() {
   }, [hidden]);
   const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
   const location = useLocation();
-  const { displayName, signOut } = useAuth();
+  const { displayName, signOut, isAdmin } = useAuth();
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
@@ -126,7 +131,7 @@ export default function App() {
           {NAV.map((group) => (
             <div className="nav__group" key={group.label}>
               <div className="nav__label">{group.label}</div>
-              {group.items.map((item) => (
+              {group.items.filter((item) => isAdmin || !item.adminOnly).map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -163,6 +168,8 @@ export default function App() {
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
+          <Route path="/quotations/:key" element={<QuotationDetail />} />
+          <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/sales-report" element={<SalesReport />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
@@ -177,6 +184,7 @@ export default function App() {
           <Route path="/import" element={<BulkImport />} />
           <Route path="/import/:id" element={<ImportReview />} />
           <Route path="/emails" element={<Emails />} />
+          <Route path="/templates" element={<Templates />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

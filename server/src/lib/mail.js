@@ -53,7 +53,7 @@ async function emailsEnabled(db) {
  * Compose, log and (when allowed) send one email. Returns the email_log row.
  * Never throws for a delivery failure: the row records it, the caller goes on.
  */
-export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false }, db = { query }) {
+export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [] }, db = { query }) {
   const enabled = await emailsEnabled(db);
   const decision = decideDelivery({ to, enabled, optedOut });
   const { rows: [row] } = await db.query(
@@ -66,7 +66,7 @@ export async function sendMail({ to, cc = null, subject, text, html, template, e
   try {
     const info = await smtp().sendMail({
       from: config.mail.from, to, cc: cc || undefined, replyTo: config.mail.replyTo || undefined,
-      bcc: config.mail.bcc || undefined, subject, text, html,
+      bcc: config.mail.bcc || undefined, subject, text, html, attachments,
     });
     const { rows: [sent] } = await db.query(
       `UPDATE email_log SET status = 'sent', provider_message_id = $2, sent_at = now() WHERE id = $1 RETURNING *`,

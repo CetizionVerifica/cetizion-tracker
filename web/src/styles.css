@@ -541,3 +541,16 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .sidebar__signout-icon { display: inline; }
   .page, .topbar { padding-left: 16px; padding-right: 16px; }
 }
+
+/* ---------------------------------------------------------------- kanban (#25) */
+.kanban { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+.kanban__col { flex: 0 0 260px; max-width: 100%; background: var(--ink-100); border-radius: var(--radius); border: 1px dashed transparent; min-height: 200px; }
+.kanban__col.is-over { border-color: var(--brand-600); background: var(--brand-50); }
+.kanban__col--lost { background: var(--danger-bg, #fef2f2); }
+.kanban__head { padding: 10px 12px; border-top: 3px solid var(--ink-300); border-radius: var(--radius) var(--radius) 0 0; background: var(--white); }
+.kanban__cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.kanban__card { background: var(--white); border: 1px solid var(--ink-200); border-radius: var(--radius-sm); padding: 10px 12px; cursor: grab; box-shadow: var(--shadow-sm); }
+.kanban__card:hover { border-color: var(--brand-600); }
+.kanban__card.is-stale { border-left: 3px solid var(--danger-fg); }
+.kanban__card.is-dragging { opacity: .5; }
+@media (max-width: 600px) { .kanban__col { flex-basis: 220px; } }

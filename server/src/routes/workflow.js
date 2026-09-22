@@ -280,8 +280,10 @@ const splitSchema = z.object({
     .array(
       z.object({
         stage_name: z.string().trim().min(1),
-        trigger_event: z.enum(['On PO Registration', 'On Delivery', 'Manual']),
+        trigger_event: z.enum(['On PO Registration', 'On Delivery', 'On Milestone', 'Manual']),
         stage_percent: z.number().min(0.0001).max(1),
+        credit_days: z.number().int().min(0).max(365).nullable().optional(),
+        milestone_name: z.string().trim().max(200).nullable().optional(),
       })
     )
     .min(1, 'Add at least one stage'),
@@ -340,9 +342,9 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     for (const stage of body.stages) {
       n += 1;
       const { rows: r } = await client.query(
-        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [po, n, stage.stage_name, stage.trigger_event, stage.stage_percent]
+        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days, milestone_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [po, n, stage.stage_name, stage.trigger_event, stage.stage_percent, stage.credit_days ?? null, stage.milestone_name || null]
       );
       created.push(r[0].id);
     }
