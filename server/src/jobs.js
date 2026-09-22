@@ -15,7 +15,9 @@ export const JOBS = {
   },
   'finance.digest': {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',
-    cron: '30 8 * * 1-5',
+    // After reminders.payment, not before it: the digest counts the reminders
+    // sent this morning, and at 08:30 that count was always zero.
+    cron: '30 9 * * 1-5',
     run: (opts) => runFinanceDigest(opts),
   },
   // A purge that could not reach Cloudinary leaves the row marked and tries

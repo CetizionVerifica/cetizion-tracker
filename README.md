@@ -55,6 +55,19 @@ Everything has a working default in development. To change one, copy
 | `CLOUDINARY_FOLDER` | `cetizion-tracker` — use another folder locally |
 | `DOCUMENT_MAX_MB`   | `10` (the Cloudinary Free plan limit)        |
 | `BUSINESS_TIME_ZONE` | `Asia/Kolkata` — the year in reference numbers and server-stamped dates |
+| `EMAIL_MODE`        | `log` — nothing is sent. `sandbox`: only `EMAIL_ALLOWLIST` addresses. `live`: over SMTP |
+| `SMTP_HOST` / `_PORT` / `_SECURE` / `_USER` / `_PASS` | none — needed for `EMAIL_MODE=live` |
+| `EMAIL_FROM` / `EMAIL_REPLY_TO` / `EMAIL_BCC` | the sender on every outgoing email |
+| `OPENROUTER_API_KEY` | none — without it the importer uses its built-in rules only |
+| `OPENROUTER_MODEL`  | `deepseek/deepseek-v4.1-flash` — any model id OpenRouter serves |
+
+Every email is written to `email_log` whatever the mode, so `log` gives a full dry run:
+the reminder is composed and recorded, and marked `suppressed` because nothing left the
+server. A stage only counts as chased once an email really goes out, so switching to
+`live` sends the first real reminders that day rather than treating them as already sent.
+
+The repository variable `CODEQL_ENABLED=true` turns on the CodeQL scan in CI. It is off
+until GitHub code scanning is enabled for the repository; the other scans always run.
 
 ### Tests
 
@@ -356,6 +369,32 @@ only its reference in Postgres. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY
 `CLOUDINARY_API_SECRET` too — without them uploads are refused.
 
 `web/dist` is not committed, so `npm run build` has to run as part of the deploy.
+
+### The worker
+
+Scheduled work runs in a second process, not in the API:
+
+```bash
+npm run worker --prefix server
+```
+
+**Without it nothing scheduled happens at all** — no payment reminders, no finance
+digest, no nightly document purge. The API still serves the app, and the admin
+"Run now" button on Emails & jobs still runs a job by hand, so the absence is quiet.
+
+In Dokploy it is a second application from the same image and the same environment,
+with the start command changed to `node server/src/worker.js`. Run exactly one:
+two workers would send every reminder twice.
+
+The schedule lives in `server/src/jobs.js`, in the business time zone:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| `reminders.payment` | 09:00, weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |
+| `finance.digest` | 09:30, weekdays | Summary to `finance_email`: stages to invoice, overdue invoices, reminders sent today |
+| `documents.purge` | 03:00, daily | Finishes interrupted document removals |
+
+The digest runs after the reminders so its count covers the same morning.
 
 ### CI/CD: from a merge to production
 
