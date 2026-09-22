@@ -8,10 +8,28 @@
  * Periods filter on the project's first PO date.
  */
 import { Router } from 'express';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
 export const profitabilityRouter = Router();
+
+/**
+ * #39 asks for margin to be admin-only "unless settings say otherwise".
+ * Delivery cost against PO value is what the business earns on a project,
+ * and whoever can write project_costs can move it. Set
+ * `margin_visible_to_sales` to true to open these to everybody.
+ */
+async function maySeeMargin(req, res, next) {
+  if (req.user?.role === 'admin') return next();
+  try {
+    const { rows: [s] } = await query(`SELECT value FROM settings WHERE key = 'margin_visible_to_sales'`);
+    if (String(s?.value ?? '').trim().toLowerCase() === 'true') return next();
+    return requireAdmin(req, res, next);
+  } catch (err) { return next(err); }
+}
+
+profitabilityRouter.use(maySeeMargin);
 
 const GROUPS = {
   project: 'pp.project_id',
