@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { cn } from 'cn';
 
 import { Assumptions, Catalogue, ExchangeRates, CATALOGUES } from './Settings.jsx';
+import { CompanyProfile } from './CompanyProfile.jsx';
 import { ApiTokens } from '../components/ApiTokens.jsx';
 import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import Mailboxes from './Mailboxes.jsx';
@@ -30,6 +31,12 @@ import BulkImport from './BulkImport.jsx';
  */
 
 const GROUPS = [
+  {
+    label: 'Organisation',
+    items: [
+      { to: 'company', label: 'Company profile', element: <CompanyProfile />, adminOnly: true },
+    ],
+  },
   {
     label: 'Money',
     items: [
