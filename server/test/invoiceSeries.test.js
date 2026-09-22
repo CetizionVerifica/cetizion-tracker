@@ -164,6 +164,25 @@ describe('raising an invoice', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to r
     assert.equal(res.status, 422, JSON.stringify(res.body));
   });
 
+  test('a number the importer wrote is never handed out again', async () => {
+    // The bulk importer expands a sheet's "77" into a full invoice number
+    // using a four-digit financial year, where the series issues a
+    // two-digit one. Both are this company's GST series. A counter that
+    // matched only its own spelling would hand out a number already in
+    // the books — the same integrity problem as the concurrent case,
+    // arriving by a different door.
+    await exec(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, trigger_event, invoice_no, invoice_date)
+                VALUES ('PO-INV-1', 20, 'Imported', 0.0001, 'Manual', 'CVPL/2026-27/77', '2026-09-01')`);
+
+    const [stage] = await exec(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, trigger_event)
+                                VALUES ('PO-INV-1', 21, 'After the import', 0.0001, 'Manual') RETURNING id`);
+    const res = await raise(stage.id, { invoice_date: '2026-09-22' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    const issued = Number(res.body.data.invoice_no.split('/').pop());
+    assert.ok(issued > 77, `expected the series to continue past the imported 77, got ${res.body.data.invoice_no}`);
+  });
+
   test('a date that is not a date is refused before anything is written', async () => {
     const [spare] = await exec(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, trigger_event)
                                 VALUES ('PO-INV-1', 7, 'Spare', 0.0001, 'Manual') RETURNING id`);
