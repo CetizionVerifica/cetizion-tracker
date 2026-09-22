@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { rateLimit } from 'express-rate-limit';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
@@ -151,6 +152,12 @@ mcpRouter.get('/', (req, res) => res.status(405).set('Allow', 'POST').json({ jso
 mcpRouter.delete('/', (req, res) => res.status(405).set('Allow', 'POST').end());
 
 // ------------------------------------------------------------ tokens (staff)
+
+// Issuing one is issuing a key to the tracker: a token carries its own role,
+// so anybody who may create one may create an admin one and read the whole
+// company through MCP, whatever their own role is. Revoking is the same
+// power pointed the other way — you could turn off everybody else's.
+apiTokenRouter.use(requireAdmin);
 
 apiTokenRouter.get('/', async (req, res) => {
   const { rows } = await query(

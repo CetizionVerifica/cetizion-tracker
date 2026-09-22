@@ -39,7 +39,7 @@ export default function Settings() {
 
         {active === 'users' ? <UsersAdmin /> : <Catalogue key={active} {...CATALOGUES[active]} />}
 
-        <ApiTokens />
+        {isAdmin && <ApiTokens />}
       </div>
     </>
   );
