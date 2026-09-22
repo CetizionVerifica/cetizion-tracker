@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -460,11 +460,7 @@ CREATE TABLE enquiries (
   sales_person_email text,
   service            text,
   status             text NOT NULL DEFAULT 'New'
-                       -- The words from before #24 are still accepted while a deploy
-                       -- runs both containers: the old one writes them until the swap
-                       -- completes. A later migration drops them.
-                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified',
-                                        'In Progress','Declined','Won - Quotation Sent')),
+                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
   quotation_no       text REFERENCES quotations(quotation_no)
                        ON UPDATE CASCADE ON DELETE SET NULL,
   -- A lead (#24)
@@ -2135,6 +2131,85 @@ INSERT INTO settings (key, value, notes) VALUES
   ('accounting_provider', 'none', 'Where the books are: none, zoho, tally or file (export files uploaded by hand).'),
   ('accounting_apply_payments', 'false', 'Record payments found in the books on the matching tracker invoice automatically.'),
   ('company_state_code', '', 'Two-digit GST state code of our registration (e.g. 27 for Maharashtra). Decides CGST+SGST or IGST on draft invoices.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- API tokens for the MCP server (#50)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id            serial PRIMARY KEY,
+  name          text NOT NULL,
+  token_hash    text NOT NULL UNIQUE,
+  token_prefix  text NOT NULL,
+  role          text NOT NULL DEFAULT 'sales' CHECK (role IN ('admin','sales')),
+  -- role says whose records the token sees; this says whether it may
+  -- change any of them. Off unless asked for: a token requested without
+  -- saying otherwise is a reading token (#50).
+  can_write     boolean NOT NULL DEFAULT false,
+  person        text,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz,
+  revoked_at    timestamptz,
+  CHECK (role = 'admin' OR person IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS api_token_log (
+  id          bigserial PRIMARY KEY,
+  token_id    int REFERENCES api_tokens(id) ON DELETE CASCADE,
+  tool        text NOT NULL,
+  arguments   jsonb,
+  ok          boolean NOT NULL DEFAULT true,
+  error       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS api_token_log_token_idx ON api_token_log (token_id, created_at DESC);
+
+-- Operational alerts (#38)
+INSERT INTO settings (key, value, notes) VALUES
+  ('alert_email', '', 'Who is emailed about failed jobs, backups, sign-in attacks, certificates and disk space. Blank: ALERT_EMAIL, else nobody.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Sign-in protection (#34)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS auth_events (
+  id          bigserial PRIMARY KEY,
+  username    text,
+  ip          text,
+  ok          boolean NOT NULL,
+  reason      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('signin_lockout_failures', '10', 'Failed sign-ins for one account from one address, within the lockout window, before it is refused and an alert is raised.'),
+  ('signin_lockout_minutes', '15', 'The lockout window, in minutes.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Backup records (#33)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_runs (
+  id           bigserial PRIMARY KEY,
+  kind         text NOT NULL CHECK (kind IN ('backup','verify','drill')),
+  ok           boolean NOT NULL,
+  started_at   timestamptz,
+  finished_at  timestamptz NOT NULL DEFAULT now(),
+  size_bytes   bigint,
+  location     text,
+  detail       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error        text
+);
+
+CREATE INDEX IF NOT EXISTS backup_runs_kind_idx ON backup_runs (kind, finished_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('backup_max_age_hours', '8', 'Alert when no successful backup has been recorded for this many hours.'),
+  ('backup_verify_max_age_days', '8', 'Alert when the restore check has not passed for this many days.')
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

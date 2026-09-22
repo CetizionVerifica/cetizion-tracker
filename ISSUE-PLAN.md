@@ -21,7 +21,7 @@ request. WORKFLOW.md has the rules; PROGRESS.md is the plain-language summary.
 
 | Issue | Title | Decision needed |
 | --- | --- | --- |
-| #17 | Migrate the web app to Next.js 16, shadcn/ui, Tailwind 4 | Whether to rewrite now. Every UI issue below is built in the current app until decided. |
+| #17 | Migrate the web app to Next.js 16, shadcn/ui, Tailwind 4 | Being done by another team member; not ours. Our UI work stays in the current app. |
 | #51 | Mobile app for field staff | Scope and priority |
 | #52 | Timesheets and utilisation | The issue itself says: decide first whether time is billed |
 
@@ -83,11 +83,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #50 | MCP server so Claude can answer questions from live tracker data | todo | Read-only, admin-scoped. |
-| #38 | Error tracking, uptime checks and metrics | todo | We add the code side; the lead sets up the services. |
-| #35 | A staging environment with its own database | todo | Lead: Dokploy. We: configuration and seed. |
-| #33 | Database backups, off-site, with a restore drill | todo | Lead: server access. We: the scripts and the drill runbook. |
-| #34 | Close the public database port, rotate secrets, harden the app | todo | Lead: server. We: password policy, rate limits, headers. |
+| #50 | MCP server so Claude can answer questions from live tracker data | done (checkpoint 6) | MCP server at /api/mcp with hashed tokens (admin or one sales person), 9 read tools and 4 guarded writes, all logged; scoping tests; docs/mcp.md. Migration 032. |
+| #38 | Error tracking, uptime checks and metrics | done (checkpoint 6) | pino request logs with masked tokens, SDK-free Sentry/GlitchTip reports, /metrics, deep health, alerts from an ops.watch job; docs/operations.md. Migration 033. The lead sets up Uptime Kuma and the Sentry project. |
+| #35 | A staging environment with its own database | done (checkpoint 6) | Scrub script with a test that no real name, email or phone survives; refresh script that swaps in a scrubbed copy; APP_ENV=staging blocks email, webhooks, mailbox sync and the books; basic-auth gate; STAGING band; CI deploy-staging job (off until the lead enables it); docs/staging.md. The Dokploy set-up is the lead's. |
+| #33 | Database backups, off-site, with a restore drill | done (checkpoint 6) | backup.sh, verify.sh (weekly restore check with row counts and views, recorded, alerts on failure or staleness), restore-table.sh; local drill passed in 2 s; docs/backups.md. Migration 035. The bucket, schedules and the production drill are the lead's. |
+| #34 | Close the public database port, rotate secrets, harden the app | done (checkpoint 6) | Sign-in lockout with an alert, production password rule, HSTS, frame denial, referrer policy, read-only database user script, no secrets in the tracked files; docs/security.md. Migration 034. Closing port 55432 and rotating secrets are the lead's. |
 
 The lead's own order puts #33, #34 and #35 first. They are last here only
 because they need server access we do not have; the moment the lead gives it,
@@ -147,6 +147,7 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 | `checkpoint/batch-3` | #22, #27, #28, #40, #44 | server tests 60/60, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-4` | #31, #53, #43, #29, #30 | server tests 70/70, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-5` | #39, #42, #49, #47, #48 | server tests 100/100 (with the database suites), browser tests 4/4, migration check green, web build clean |
+| `checkpoint/batch-6` | #50, #38, #34, #33, #35 | server tests 113/113 (with the database suites), browser tests 4/4, migration check green, web build clean |
 
 ## Log
 
@@ -157,3 +158,6 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 - 2026-09-17: Batch 3 done and tagged `checkpoint/batch-3`. The migration check caught a fresh-install ordering bug in the #28 schema; fixed before tagging.
 - 2026-09-17: Batch 4 done and tagged `checkpoint/batch-4`. #29 and #30 are built and tested against a stand-in mailbox; they go live when the lead registers the Microsoft app. Also fixed: the orphan-file sweep would have removed timeline attachments after a day.
 - 2026-09-17: Batch 5 done and tagged `checkpoint/batch-5`. Also fixed: the background worker could not start (pg-boss 12 import), found while testing webhooks.
+- 2026-09-17: Paused mid Batch 6 at the end of the session. #50 and #38 done and committed; #35, #33, #34 next, then checkpoint 6. README already links docs/backups.md, docs/security.md and docs/staging.md, which those issues add.
+- 2026-09-18: Batch 6 done and tagged `checkpoint/batch-6`. Every planned issue is now built. Next: a full testing pass. #17 (Next.js) is being done by another team member.
+- 2026-09-17: Final testing pass clean (116 server tests, 4 browser tests, 463 pages, live checks with Cloudinary). #17 dropped from our list: another team member is doing it.

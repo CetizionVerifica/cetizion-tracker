@@ -74,8 +74,15 @@ test('import a sales sheet, review the duplicates, commit', async ({ page }) => 
   // The sheet holds clients the seed data already has: duplicates show in yellow.
   await expect(page.locator('tr.tr--dup').first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Quotations/ })).toBeVisible();
+  // A client-and-service match is only a possible duplicate: it can be imported as new.
+  await expect(page.getByText(/possible duplicates? (was|were) matched only by client name and service/)).toBeVisible();
+  const possible = page.locator('tr', { hasText: 'Not certain' }).first();
+  await possible.locator('select').selectOption('create');
+  await expect(possible.locator('select')).toHaveValue('create');
   await page.getByRole('button', { name: /6\. Summary/ }).click();
   await page.getByRole('button', { name: 'Complete and commit' }).first().click();
   await page.getByRole('dialog').getByRole('button', { name: 'Complete and commit' }).click();
   await expect(page.locator('.alert', { hasText: 'This batch has been committed' })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: /1\. Quotations/ }).click();
+  await expect(page.getByText('imported as new').first()).toBeVisible();
 });

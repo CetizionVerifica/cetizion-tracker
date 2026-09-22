@@ -105,7 +105,7 @@ export async function commitBatch(batch, items, { user }) {
             const data = validate('quotations', { ...p, quotation_no: no, project_id: null });
             const q = await insert(client, 'quotations', data);
             results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
-            written.push({ seq: item.seq, ref: q.quotation_no, action: no === p.quotation_no ? 'created' : `created as ${no} (planned number was taken)` });
+            written.push({ seq: item.seq, ref: q.quotation_no, action: no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)` });
             break;
           }
 
@@ -134,7 +134,7 @@ export async function commitBatch(batch, items, { user }) {
               }
             }
             results.set(item.seq, { ref: pid, project_id: pid, quotation_no: parent.ref });
-            written.push({ seq: item.seq, ref: pid, action: pid === p.project_id ? 'created' : `created as ${pid} (planned id was taken)` });
+            written.push({ seq: item.seq, ref: pid, action: pid === p.project_id ? 'created' : item.existing_ref ? `created as ${pid} (new, with its quotation; not ${item.existing_ref})` : `created as ${pid} (planned id was taken)` });
             break;
           }
 

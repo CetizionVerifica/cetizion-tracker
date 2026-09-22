@@ -703,4 +703,35 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       assert.notEqual(res.status, 403, JSON.stringify(res.body));
     });
   });
+
+  // ------------------------------------------------ batch 6's new surfaces
+
+  describe('API tokens for MCP', () => {
+    /**
+     * A token carries its own role, so whoever may create one may create an
+     * admin one — and read the whole company through MCP whatever their own
+     * role is. Revoking is that power pointed the other way: you could turn
+     * off everybody else's.
+     *
+     * mcp.test.js signs in as the shared admin, where there is only one kind
+     * of user, which is why this belongs here instead.
+     */
+    test('a sales user cannot list, create or revoke tokens', async () => {
+      for (const [verb, path] of [['get', '/api/api-tokens'], ['post', '/api/api-tokens'], ['post', '/api/api-tokens/1/revoke']]) {
+        const res = await as(sales.cookie)(verb, path).send({ name: 'Mine', role: 'admin' });
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+    });
+
+    test('an admin can', async () => {
+      const res = await as(admin.cookie)('post', '/api/api-tokens').send({ name: 'Reporting', role: 'admin' });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.match(res.body.data.token, /^ctz_/, 'the token is shown once, here');
+    });
+
+    test('an unauthenticated caller is turned away first', async () => {
+      const res = await as(null)('get', '/api/api-tokens');
+      assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
 });

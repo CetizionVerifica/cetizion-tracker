@@ -2,7 +2,6 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
-import morgan from 'morgan';
 import compression from 'compression';
 
 import { config } from './config.js';
@@ -41,6 +40,11 @@ import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
 import { accountingRouter } from './routes/accounting.js';
+import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
+import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
+import { requestLogger } from './lib/ops/logger.js';
+import { httpMetrics } from './lib/ops/metrics.js';
+import { appEnv, stagingGate } from './lib/ops/environment.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -67,7 +71,16 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.use(helmet());
+// Security headers (#34): HSTS where cookies are secure, no framing by other
+// sites, no full referrer to other origins.
+app.use(helmet({
+  hsts: authConfig.secureCookie ? { maxAge: 31536000, includeSubDomains: true } : false,
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginEmbedderPolicy: false,
+}));
+// Staging sits behind a shared credential (#35).
+app.use(stagingGate);
 app.use(compression());
 app.use(cors({
   origin: config.corsOrigin.split(',').map((s) => s.trim()),
@@ -76,7 +89,8 @@ app.use(cors({
 // The raw bytes are kept for routes that check a signature over them.
 app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
-if (config.nodeEnv !== 'test') app.use(morgan('dev'));
+app.use(requestLogger);
+app.use(httpMetrics);
 
 // When this process started. The deploy job watches it change to know the
 // new container is serving, which also means its migrations went through.
@@ -84,13 +98,14 @@ const STARTED_AT = new Date().toISOString();
 
 // Public: the platform needs somewhere to point a health check, and this
 // says nothing beyond "the database answered" and when the API started.
+// ?deep=1 is for signed-in people only (#38); the plain answer stays public.
 // auth_mode is here so a cutover can be confirmed with one request rather
 // than a browser. It gives nothing away: /api/auth/config already tells any
 // unauthenticated caller the same thing, because the sign-in form has to
 // know which field to draw.
-app.get('/api/health', async (req, res) => {
+app.get('/api/health', healthHandler, async (req, res) => {
   const { rows } = await query('SELECT now() AS now');
-  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, auth_mode: authConfig.mode });
+  res.json({ status: 'ok', time: rows[0].now, started_at: STARTED_AT, environment: appEnv(), auth_mode: authConfig.mode });
 });
 
 app.use('/api/auth', authRouter);
@@ -104,6 +119,8 @@ app.use('/api/mail', mailWebhookRouter);
 app.use('/api/hooks', incomingHooksRouter);
 // The client portal (#47) has its own sign-in and session; see routes/portal.js.
 app.use('/api/portal', portalRouter);
+// MCP clients authenticate with an API token instead of a session (#50).
+app.use('/api/mcp', mcpRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
@@ -137,6 +154,8 @@ app.use('/api/visits', visitsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/portal-admin', portalAdminRouter);
 app.use('/api/accounting', accountingRouter);
+app.use('/api/api-tokens', apiTokenRouter);
+app.use('/api/client-errors', clientErrorRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);
@@ -158,6 +177,9 @@ for (const [name, def] of Object.entries(resources)) {
 // An unknown /api path is a 404 in JSON; anything else is a front-end route
 // and belongs to the SPA.
 app.use('/api', notFound);
+// Prometheus metrics (#38): a bearer token or a staff session, never public.
+app.use('/metrics', metricsRouter);
+
 mountWebApp(app);
 app.use(notFound);
 app.use(errorHandler);

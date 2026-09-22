@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Tabs, Badge, Alert, Empty, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { ApiTokens } from '../components/ApiTokens.jsx';
 import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
@@ -37,6 +38,8 @@ export default function Settings() {
         <Tabs active={active} onChange={setTab} tabs={tabs} />
 
         {active === 'users' ? <UsersAdmin /> : <Catalogue key={active} {...CATALOGUES[active]} />}
+
+        {isAdmin && <ApiTokens />}
       </div>
     </>
   );

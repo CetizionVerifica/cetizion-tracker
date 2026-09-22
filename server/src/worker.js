@@ -16,6 +16,9 @@ import { config } from './config.js';
 import { JOBS, runJob } from './jobs.js';
 import { pool } from './db.js';
 import { runWebhooks } from './lib/webhooks.js';
+import { watchProcess } from './lib/ops/errors.js';
+
+watchProcess('worker');
 
 const boss = new PgBoss({ connectionString: config.databaseUrl, schema: 'pgboss' });
 boss.on('error', (err) => console.error('[worker] pg-boss', err));

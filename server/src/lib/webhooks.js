@@ -11,6 +11,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { query } from '../db.js';
 import { config } from '../config.js';
+import { isStaging } from './ops/environment.js';
 
 export const EVENT_TYPES = [
   'enquiry.created', 'quotation.sent', 'quotation.stage_changed', 'quotation.won', 'quotation.lost',
@@ -148,6 +149,7 @@ export async function deliverOne(deliveryId, { fetchImpl = fetch } = {}) {
     `SELECT d.*, row_to_json(e) AS ev, row_to_json(ep) AS ep FROM webhook_deliveries d
        JOIN webhook_events e ON e.id = d.event_id JOIN webhook_endpoints ep ON ep.id = d.endpoint_id WHERE d.id = $1`, [deliveryId]);
   if (!d) return null;
+  if (isStaging()) return { id: d.id, status: 'held', error: 'staging: webhooks are off' };
   if (!d.ep.active) {
     await query(`UPDATE webhook_deliveries SET status = 'held' WHERE id = $1 AND status = 'pending'`, [d.id]);
     return { id: d.id, status: 'held' };
@@ -186,6 +188,7 @@ export async function deliverOne(deliveryId, { fetchImpl = fetch } = {}) {
 
 /** The worker's loop body: fan out, then send what is due. */
 export async function runWebhooks({ limit = 50 } = {}) {
+  if (isStaging()) return { fanned: 0, delivered: 0, retrying: 0, failed: 0, skipped: 'staging' };
   const fanned = await fanOut();
   const { rows } = await query(`SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_attempt_at <= now() ORDER BY next_attempt_at LIMIT $1`, [limit]);
   const results = [];

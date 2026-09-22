@@ -11,6 +11,7 @@
  */
 import { query } from '../../db.js';
 import { checkGstin, splitTax, STATE_ALPHA } from './gst.js';
+import { assertNotStaging } from '../ops/environment.js';
 
 // ------------------------------------------------------------ the draft
 
@@ -81,6 +82,7 @@ async function zohoFetch(path, { method = 'GET', body, params = {}, fetchImpl = 
 
 /** Invoices and customer payments changed since a date, as books entries. */
 export async function zohoPull(sinceIso, opts = {}) {
+  assertNotStaging('Reading the books');
   const entries = [];
   for (let page = 1; page < 50; page += 1) {
     const j = await zohoFetch('/invoices', { params: { page, per_page: 200, ...(sinceIso ? { last_modified_time: `${sinceIso}T00:00:00+0530` } : {}) }, ...opts });
@@ -100,6 +102,7 @@ export async function zohoPull(sinceIso, opts = {}) {
 }
 
 export async function zohoCreateDraft(draft, opts = {}) {
+  assertNotStaging('Creating invoices in the books');
   if (!draft.customer.books_ref) throw Object.assign(new Error('Map this client to a Zoho customer first (Accounting → Mappings)'), { status: 422 });
   const { rows: [item] } = await query(`SELECT books_ref FROM accounting_mappings WHERE kind = 'service' AND tracker_ref = 'default'`);
   const j = await zohoFetch('/invoices', {
@@ -139,6 +142,7 @@ ${taxes.join('\n')}
 export const tallyConfigured = () => Boolean(process.env.TALLY_URL);
 
 export async function tallyPush(xml, { fetchImpl = fetch } = {}) {
+  assertNotStaging('Sending vouchers to Tally');
   const r = await fetchImpl(process.env.TALLY_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml' }, body: xml, signal: AbortSignal.timeout(30_000) });
   const text = await r.text();
   const created = Number(text.match(/<CREATED>(\d+)<\/CREATED>/)?.[1] || 0);
