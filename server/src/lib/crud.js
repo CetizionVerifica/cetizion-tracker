@@ -3,7 +3,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
-import { nameKey, normalizeName } from './names.js';
+import { nameKey, normalizeName } from './names.ts';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
 

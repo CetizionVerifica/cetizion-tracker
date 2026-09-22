@@ -1,6 +1,6 @@
 import pdfmake from './pdf.js';
 import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
-import { share } from './reportMath.js';
+import { share } from './reportMath.ts';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
 import {

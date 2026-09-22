@@ -5,8 +5,8 @@ import { config } from '../config.js';
  * clock is. The container runs on UTC, so between 00:00 and 05:30 IST the
  * server's own date is still yesterday — and on 1 January, last year.
  */
-export function businessToday(now = new Date(), timeZone = config.businessTimeZone) {
-  const parts = Object.fromEntries(
+export function businessToday(now: Date = new Date(), timeZone: string = config.businessTimeZone): string {
+  const parts: Record<string, string> = Object.fromEntries(
     new Intl.DateTimeFormat('en-GB', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
       .formatToParts(now)
       .map((part) => [part.type, part.value])
@@ -14,7 +14,7 @@ export function businessToday(now = new Date(), timeZone = config.businessTimeZo
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-export const businessYear = (now, timeZone) => Number(businessToday(now, timeZone).slice(0, 4));
+export const businessYear = (now?: Date, timeZone?: string): number => Number(businessToday(now, timeZone).slice(0, 4));
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -25,6 +25,6 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
  * already tomorrow in Mumbai, so an hour on Saturday evening UTC is Sunday
  * to everyone who works here.
  */
-export function businessWeekday(now = new Date(), timeZone = config.businessTimeZone) {
+export function businessWeekday(now: Date = new Date(), timeZone: string = config.businessTimeZone): number {
   return WEEKDAYS.indexOf(new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short' }).format(now));
 }

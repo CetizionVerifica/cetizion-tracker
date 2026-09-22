@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 
 const SEQUENCES = {
   enquiry: { table: 'enquiries', column: 'enquiry_no', pattern: 'CTZ/ENQ/{year}/{n:3}' },

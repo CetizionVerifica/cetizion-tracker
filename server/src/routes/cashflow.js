@@ -15,7 +15,7 @@
  */
 import { Router } from 'express';
 import { query } from '../db.js';
-import { businessToday } from '../lib/businessDate.js';
+import { businessToday } from '../lib/businessDate.ts';
 
 export const cashflowRouter = Router();
 

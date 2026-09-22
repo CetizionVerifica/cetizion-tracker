@@ -9,7 +9,7 @@
  *                              the configured days before expiry, with a task.
  */
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { notify } from './notify.js';
 
 const OPEN = ['active', 'renewal_open'];

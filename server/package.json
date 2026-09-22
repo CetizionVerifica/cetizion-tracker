@@ -17,7 +17,8 @@
     "seed:demo": "node scripts/db.js demo",
     "reset": "node scripts/db.js reset",
     "bootstrap": "node scripts/db.js bootstrap",
-    "auth:check": "node scripts/auth-check.js"
+    "auth:check": "node scripts/auth-check.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -42,6 +43,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "supertest": "^7.2.2"
+    "@types/node": "^26.6.2",
+    "supertest": "^7.2.2",
+    "typescript": "^7.0.2"
   }
 }

@@ -1,7 +1,7 @@
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { nameKey } from './names.js';
-import { share } from './reportMath.js';
+import { nameKey } from './names.ts';
+import { share } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**

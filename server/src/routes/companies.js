@@ -14,7 +14,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
-import { similarName } from '../lib/names.js';
+import { similarName } from '../lib/names.ts';
 
 export const companyRouter = Router();
 

@@ -60,6 +60,43 @@ describe('AUTH_MODE', () => {
   });
 });
 
+describe('the shared password, in production', () => {
+  /**
+   * 22 Sep 2026: production ran database sign-in with the old short shared
+   * password still in the environment as the rollback. A guard added for
+   * #34 refused to start over it — before migrations, so the container
+   * exited, the site went to 502 and the deploy had to be rolled back.
+   *
+   * A credential that nothing accepts cannot be a weakness worth an outage.
+   * In shared mode it is the only lock on the door and the rule stands.
+   */
+  const production = { NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(48) };
+
+  test('a short one does not stop the start when sign-in is by account', () => {
+    const result = loadConfigWith({ ...production, AUTH_MODE: 'database', AUTH_PASSWORD: 'short-one' });
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.mode, 'database');
+  });
+
+  test('nor does an absent one', () => {
+    const result = loadConfigWith({ ...production, AUTH_MODE: 'database', AUTH_PASSWORD: '' });
+    assert.equal(result.ok, true, result.message);
+  });
+
+  test('but in shared mode it is the lock, and a weak one is refused', () => {
+    const short = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: 'short-one' });
+    assert.equal(short.ok, false, 'a short shared password should stop the start');
+    assert.match(short.message, /at least 14 characters/);
+
+    const missing = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: '' });
+    assert.equal(missing.ok, false, 'no shared password at all should stop the start');
+    assert.match(missing.message, /AUTH_PASSWORD is not set/);
+
+    const good = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: 'a-long-enough-password' });
+    assert.equal(good.ok, true, good.message);
+  });
+});
+
 describe('sessionSubject', () => {
   const shared = sharedPayload('admin', Date.now() + 1000);
   const database = databasePayload(7, 1, Date.now() + 1000);
