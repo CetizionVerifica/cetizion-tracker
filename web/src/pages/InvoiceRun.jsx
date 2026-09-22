@@ -110,10 +110,17 @@ export default function InvoiceRun() {
   const queue = (data?.data ?? []).filter((s) => !raised.includes(s.id));
   const stage = queue[index] ?? null;
 
-  /** The next number in the series, for display only. */
+  /**
+   * The next number in the series, for display only.
+   *
+   * Asked for the invoice's own date, not today's: the series runs April
+   * to March, so an invoice dated 28 March takes a number from the year
+   * that is ending. Re-asked whenever the date changes, because that is
+   * exactly when somebody cannot guess it.
+   */
   const { data: series } = useFetch(
-    () => api.raw('/lookups/next-id/invoice').catch(() => null),
-    []
+    () => api.raw(`/lookups/next-id/invoice?on=${encodeURIComponent(invoiceDate)}`).catch(() => null),
+    [invoiceDate]
   );
   const nextInSeries = series?.data?.next ?? null;
 
