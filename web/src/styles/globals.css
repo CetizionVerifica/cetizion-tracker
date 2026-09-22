@@ -178,3 +178,172 @@
     }
   }
 }
+
+/* ---------------------------------------------------------------------
+ * The classes the pages already use.
+ *
+ * 39 pages say `btn`, `muted`, `small`, `page`, `stack`. Restyling those
+ * against the design's tokens moves every page at once; rewriting them to
+ * Tailwind classes one by one would take weeks and change nothing a user
+ * can see. They go when a page is converted for another reason, not before.
+ * --------------------------------------------------------------------- */
+@layer components {
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+  }
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  /* Named for what they are, so neither can collide with a Tailwind
+     utility the way a bare `.grid` did. */
+  .auto-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .auto-grid--stats { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  /* The old modifiers, kept so the pages using them still lay out. */
+  .grid--stats { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  .grid--2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .grid--3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .span-all { grid-column: 1 / -1; }
+
+  .muted { color: var(--muted-foreground); }
+  .small { font-size: 12px; }
+  .strong { font-weight: 600; color: var(--foreground); }
+  .num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* Four button kinds, the design's own: primary, secondary, ghost,
+     destructive. Height 32, radius 6, and a focus ring that is visible. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    font: 500 13px/1 var(--font-sans);
+    cursor: pointer;
+    transition: background-color 150ms, border-color 150ms, color 150ms;
+  }
+  .btn:hover:not(:disabled) { background: var(--accent); border-color: var(--muted-foreground); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn--primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+  }
+  .btn--primary:hover:not(:disabled) { background: #4fd8b6; border-color: #4fd8b6; }
+  .btn--ghost { background: transparent; border-color: transparent; color: var(--secondary-text); }
+  .btn--ghost:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+  .btn--danger {
+    background: transparent;
+    border-color: color-mix(in oklab, var(--late) 40%, transparent);
+    color: var(--late);
+  }
+  .btn--danger:hover:not(:disabled) { background: color-mix(in oklab, var(--late) 12%, transparent); }
+  .btn--sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+  .input, .select, .textarea {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--input);
+    border-radius: 6px;
+    background: var(--secondary);
+    color: var(--foreground);
+    font: 400 13px/1 var(--font-sans);
+  }
+  .textarea { height: auto; min-height: 80px; padding: 8px 10px; line-height: 1.5; }
+  .input::placeholder, .textarea::placeholder { color: var(--muted-foreground); }
+  .has-error { border-color: var(--late); }
+
+  .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .table__actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .skeleton {
+    background: linear-gradient(90deg, var(--secondary), var(--accent), var(--secondary));
+    background-size: 200% 100%;
+    border-radius: 6px;
+    animation: cetizion-shimmer 1.4s infinite;
+  }
+  @keyframes cetizion-shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+}
+
+/* The rest of what the pages still name. The client-facing acceptance and
+   portal pages keep their own small set, because they are seen by people
+   outside the company and are worth leaving alone until last. */
+@layer components {
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar .input, .toolbar .select { width: auto; min-width: 180px; }
+  .spacer { flex: 1; }
+  .nowrap { white-space: nowrap; }
+  .card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .table-wrap { width: 100%; overflow-x: auto; }
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th {
+    height: 36px;
+    padding: 0 12px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .table tbody tr:hover { background: var(--accent); }
+
+  .kv__k { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+  .kv__v { font-size: 13px; color: var(--foreground); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--secondary);
+    font-size: 12px;
+    color: var(--secondary-foreground);
+  }
+  .chart-label { font-size: 12px; color: var(--muted-foreground); }
+  .contact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .portal__row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .portal__item { display: flex; flex-direction: column; gap: 2px; }
+
+  /* The client-facing acceptance page: its own light-touch rules, on the
+     same tokens so it reads as the same product. */
+  .accept { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; display: flex; flex-direction: column; gap: 16px; }
+  .accept__card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 20px; }
+  .accept__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  .accept__seller { font-size: 12px; color: var(--muted-foreground); }
+  .accept__muted { color: var(--muted-foreground); font-size: 12.5px; }
+  .accept__form { display: flex; flex-direction: column; gap: 12px; }
+  .accept__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .accept__done { border-radius: 10px; border: 1px solid var(--border); padding: 20px; text-align: center; }
+  .accept__done--ok { border-color: color-mix(in oklab, var(--settled) 40%, transparent); color: var(--settled); }
+  .accept__error { color: var(--late); }
+}
+
+@layer components {
+  /* A row already on the site, in the import review. The tint is a hint;
+     the row also says so in words. */
+  .tr--dup { background: color-mix(in oklab, var(--waiting) 10%, transparent); }
+  .tr--dup:hover { background: color-mix(in oklab, var(--waiting) 16%, transparent); }
+}

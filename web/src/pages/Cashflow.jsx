@@ -30,7 +30,7 @@ export default function Cashflow() {
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {d && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label={`In, next ${months} months`} value={money(totals.inflow)} meta="invoiced + scheduled" />
             <Stat label="Pipeline on top" value={money(totals.pipeline)} meta="weighted by probability" />
             <Stat label="Out" value={money(totals.outflow)} meta="vendors + claims" />

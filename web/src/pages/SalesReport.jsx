@@ -165,7 +165,7 @@ export default function SalesReport() {
               </Alert>
             )}
 
-            <div className="grid grid--stats">
+            <div className="auto-grid--stats">
               <Stat
                 label="Won POs"
                 value={number(sectors.summary.pos)}

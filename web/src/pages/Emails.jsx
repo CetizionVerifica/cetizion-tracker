@@ -59,7 +59,7 @@ export default function Emails() {
         )}
         {mode === 'live' && !emails.data?.configured && <Alert tone="danger">EMAIL_MODE is live but SMTP_HOST or EMAIL_FROM is not set; emails will be logged as suppressed.</Alert>}
 
-        <div className="grid grid--2">
+        <div className="auto-grid grid--2">
           <Card title="Automatic email" hint="The kill switch. Off stops every reminder and digest; they are still logged so you can see what would have gone.">
             <KeyValues items={[
               { label: 'Status', value: <Badge tone={enabled ? 'success' : 'danger'}>{enabled ? 'On' : 'Off'}</Badge> },

@@ -35,7 +35,7 @@ export default function Collections() {
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {d && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
             <Stat label="Overdue" value={money(d.totals.overdue)} tone={d.totals.overdue > 0 ? 'danger' : ''} />
             {d.buckets.map((b) => <Stat key={b} label={`${b} days`} value={money(d.totals.buckets[b])} tone={b === '90+' && d.totals.buckets[b] > 0 ? 'danger' : ''} />)}

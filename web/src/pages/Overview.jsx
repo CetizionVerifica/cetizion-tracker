@@ -37,7 +37,7 @@ export default function Overview() {
         {d && (
           <>
             {/* What needs a person today, before anything else */}
-            <div className="grid grid--stats">
+            <div className="auto-grid--stats">
               <Stat
                 label="Overdue payment stages"
                 value={number(d.finance.overdue)}
@@ -68,7 +68,7 @@ export default function Overview() {
               />
             </div>
 
-            <div className="grid grid--stats">
+            <div className="auto-grid--stats">
               <Stat label="Quotations" value={number(d.sales.quotations)} meta={`${d.sales.won} won · ${d.sales.open} open`} tone="brand" to="/quotations" />
               <Stat label="Quoted value (₹ only)" value={money(d.sales.value_inr, 'INR', { compact: true })} meta={`${money(d.sales.won_value_inr, 'INR', { compact: true })} won`} />
               <Stat label="Live projects" value={number(d.portfolio.projects)} meta={`${d.portfolio.purchase_orders} purchase orders`} to="/projects" />
@@ -111,7 +111,7 @@ export default function Overview() {
               </Card>
             )}
 
-            <div className="grid grid--2">
+            <div className="auto-grid grid--2">
               <Card title="Projects by stage" hint="Where the delivery portfolio sits right now">
                 <BarList
                   items={d.projects_by_stage.map((s) => ({ label: s.label, value: s.count, extra: s.value }))}
@@ -158,7 +158,7 @@ export default function Overview() {
 
 function LoadingTiles() {
   return (
-    <div className="grid grid--stats">
+    <div className="auto-grid--stats">
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="skeleton" style={{ height: 92 }} />
       ))}

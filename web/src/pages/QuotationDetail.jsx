@@ -97,7 +97,7 @@ export default function QuotationDetail() {
         {q.approval_status === 'rejected' && <Alert tone="danger"><span><strong>Rejected</strong>{q.approved_by ? ` by ${q.approved_by}` : ''}{q.approval_note ? `: ${q.approval_note}` : ''}. Revise the discount or terms, then ask again.</span></Alert>}
         {q.approval_status === 'approved' && <Alert tone="success"><span><strong>Approved</strong>{q.approved_by ? ` by ${q.approved_by}` : ''}{q.approval_decided_at ? ` on ${new Date(q.approval_decided_at).toLocaleDateString()}` : ''}{q.approval_note ? `: ${q.approval_note}` : ''}.</span></Alert>}
 
-        <div className="grid grid--2">
+        <div className="auto-grid grid--2">
           <Card title="Quotation">
             <KeyValues items={[
               { label: 'Client', value: q.company_id ? <Link to={`/companies/${q.company_id}`}>{q.client_name}</Link> : q.client_name },

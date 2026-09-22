@@ -98,7 +98,7 @@ export default function CompanyDetail() {
         }
       />
       <div className="page stack">
-        <div className="grid grid--stats">
+        <div className="auto-grid--stats">
           <Stat label="Enquiries" value={c.enquiries.length} />
           <Stat label="Quotations" value={c.quotations.length} meta={`${c.won_quotations} won`} />
           <Stat label="Projects" value={c.projects.length} />

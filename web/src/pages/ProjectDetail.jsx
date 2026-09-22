@@ -147,7 +147,7 @@ export default function ProjectDetail() {
           <Alert tone={p.payment_status === 'Overdue' ? 'danger' : 'warning'}>{p.follow_up_action}</Alert>
         )}
 
-        <div className="grid grid--stats">
+        <div className="auto-grid--stats">
           {/* Sums across the project's POs, so they only read in one currency.
               v_projects gives it, or null when the POs disagree — then the
               amount is withheld rather than shown with the wrong symbol, and
