@@ -12,7 +12,31 @@ const SEQUENCES = {
     column: 'vendor_invoice_id',
     pattern: 'VINV-{year}-{n:3}',
   },
+  // The one series numbered by financial year rather than calendar year.
+  // A GST invoice series runs April to March and is written as the two
+  // years it spans, so an invoice raised in September 2026 is 26-27.
+  // Four digits, because a company issuing more than 999 invoices in a
+  // year should not have its numbering break.
+  invoice: {
+    table: 'payment_stages',
+    column: 'invoice_no',
+    pattern: 'CVPL/{fy}/{n:4}',
+  },
 };
+
+/**
+ * The Indian financial year a date falls in, as the two years it spans.
+ *
+ * April starts it, so 2026-09-22 is 26-27 and 2026-02-11 is 25-26. Taken
+ * from the business date rather than the server clock, for the same
+ * reason every other date here is: before 05:30 IST on 1 April the
+ * server's UTC clock still says March.
+ */
+export function financialYear(businessDate = businessToday()) {
+  const [year, month] = businessDate.split('-').map(Number);
+  const startYear = month >= 4 ? year : year - 1;
+  return `${String(startYear % 100).padStart(2, '0')}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
 
 export const isSequence = (kind) => Object.hasOwn(SEQUENCES, kind);
 
@@ -51,13 +75,20 @@ export async function claimNextId(kind, client, year) {
 /** The prefix, number width and year a series uses for a given year. */
 function seriesFor(kind, year) {
   const spec = SEQUENCES[kind];
+  // A financial-year series counts by financial year, so its counter row
+  // is keyed by one too: '26-27' rather than '2026'. Both shapes are
+  // allowed by sequence_counters (migration 046).
+  const byFinancialYear = spec.pattern.includes('{fy}');
   // Use the explicitly requested year, or fall back to the business's current
   // year. On 1 January before 05:30 IST the server's UTC clock still says last
   // year, so businessToday() is always used rather than new Date().
-  const resolvedYear = year ?? businessToday().slice(0, 4);
+  const resolvedYear = year ?? (byFinancialYear ? financialYear() : businessToday().slice(0, 4));
   return {
     resolvedYear,
-    prefix: spec.pattern.replace('{year}', resolvedYear).replace(/\{n:\d+\}$/, ''),
+    prefix: spec.pattern
+      .replace('{year}', resolvedYear)
+      .replace('{fy}', resolvedYear)
+      .replace(/\{n:\d+\}$/, ''),
     width: Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3),
   };
 }

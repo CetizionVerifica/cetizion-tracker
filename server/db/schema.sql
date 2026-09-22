@@ -64,7 +64,10 @@ CREATE INDEX exchange_rates_lookup_idx
 -- already present, so a seeded or imported database numbers on from there.
 CREATE TABLE sequence_counters (
   kind       text NOT NULL,
-  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$'),
+  -- A calendar year for five of the six series, and a financial year —
+  -- '26-27' — for the invoice series, which runs April to March the way a
+  -- GST invoice series has to.
+  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$' OR year ~ '^[0-9]{2}-[0-9]{2}$'),
   last_n     int  NOT NULL DEFAULT 0 CHECK (last_n >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (kind, year)
@@ -569,6 +572,16 @@ CREATE TABLE payment_stages (
 );
 
 CREATE INDEX ON payment_stages (po_number);
+
+-- A GST invoice series has to be unbroken and unrepeated for the company,
+-- not merely unique within one order. Stages not yet invoiced hold NULL,
+-- and NULLs do not collide.
+--
+-- Migration 046 adds this to an existing database only when its data
+-- already satisfies it, because a number typed in by hand years ago may
+-- be duplicated and a migration that throws stops the container.
+CREATE UNIQUE INDEX payment_stages_invoice_no_key
+  ON payment_stages (invoice_no) WHERE invoice_no IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- Engagements: what a client holds and when it renews (#28)
