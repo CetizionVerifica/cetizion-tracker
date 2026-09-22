@@ -32,7 +32,10 @@ export function buildWhere(def, reqQuery, params) {
   for (const col of def.filters || []) {
     const raw = reqQuery[col];
     if (raw === undefined || raw === '') continue;
-    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean);
+    // Old names for a value (e.g. enquiry statuses renamed by #24) still
+    // filter, the same way the schema accepts them on a write.
+    const aliases = def.filterAliases?.[col] || {};
+    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean).map((v) => aliases[v] ?? v);
     if (!values.length) continue;
     // Free-text names match the way the sales reports group them: case and
     // extra spaces ignored, and a blank value counts as not set.
@@ -229,6 +232,14 @@ export function crudRouter(name, def) {
 
   router.post('/', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: false });
+    // Who wrote it, taken from the session rather than the request body: a
+    // note or a file with nobody's name on it is the timeline saying an
+    // anonymous someone did this, which #22 asks it not to do. Only filled
+    // when the caller left it blank, so an import can still carry its own.
+    if (def.stampActor && !values[def.stampActor]) {
+      const actor = req.user?.name || req.user?.username;
+      if (actor) values[def.stampActor] = actor;
+    }
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);

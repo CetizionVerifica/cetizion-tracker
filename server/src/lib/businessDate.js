@@ -15,3 +15,16 @@ export function businessToday(now = new Date(), timeZone = config.businessTimeZo
 }
 
 export const businessYear = (now, timeZone) => Number(businessToday(now, timeZone).slice(0, 4));
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * The day of the week where the business is, 0 for Sunday.
+ *
+ * The same trap as businessToday: between 18:30 and midnight UTC it is
+ * already tomorrow in Mumbai, so an hour on Saturday evening UTC is Sunday
+ * to everyone who works here.
+ */
+export function businessWeekday(now = new Date(), timeZone = config.businessTimeZone) {
+  return WEEKDAYS.indexOf(new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short' }).format(now));
+}

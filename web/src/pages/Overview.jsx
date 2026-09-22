@@ -8,6 +8,7 @@ import { money, number, percent, date } from '../lib/format.js';
 export default function Overview() {
   const { data, loading, error, refetch } = useFetch(() => api.raw('/dashboard/overview'));
   const work = useFetch(() => api.raw('/dashboard/worklist'));
+  const visitsToday = useFetch(() => api.raw('/visits/today'));
 
   if (error) {
     return (
@@ -75,6 +76,16 @@ export default function Overview() {
               <Stat label="Invoiced" value={money(d.finance.invoiced, 'INR', { compact: true })} meta={`${money(d.finance.received, 'INR', { compact: true })} received`} />
               <Stat label="Collection rate" value={percent(collection)} meta={`${money(d.finance.outstanding, 'INR', { compact: true })} outstanding`} tone={collection >= 0.8 ? 'ok' : collection > 0 ? 'warn' : ''} />
             </div>
+
+            {visitsToday.data?.data?.length > 0 && (
+              <Card title="Visits today" hint="Audits and site visits under way" actions={<Link className="btn btn--sm" to="/schedule">Schedule</Link>}>
+                <ul className="plain-list">
+                  {visitsToday.data.data.map((v) => (
+                    <li key={v.id}><span className="strong">{v.title}</span> · {v.client_name}{v.city ? `, ${v.city}` : ''} · {v.assignees.map((a) => a.name).join(', ') || 'nobody assigned'} <Badge>{v.status}</Badge></li>
+                  ))}
+                </ul>
+              </Card>
+            )}
 
             {d.sales.won_without_project > 0 && (
               <Card

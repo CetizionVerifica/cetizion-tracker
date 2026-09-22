@@ -14,6 +14,7 @@
  */
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
+import { isStaging } from './ops/environment.js';
 import { query } from '../db.js';
 
 let transport = null;
@@ -36,12 +37,20 @@ export function decideDelivery({ to, mode = config.mail.mode, enabled = true, al
   if (!enabled) return { deliver: false, reason: 'emails_enabled is false' };
   if (optedOut) return { deliver: false, reason: 'contact opted out of automatic email' };
   if (mode === 'log') return { deliver: false, reason: 'EMAIL_MODE=log' };
+  // Staging never emails anyone for real (#35); sandbox to the team still works.
+  if (isStaging() && mode !== 'sandbox') return { deliver: false, reason: 'staging: outbound email is off' };
   if (mode === 'sandbox') {
     const ok = allowlist.some((a) => a.toLowerCase() === String(to).toLowerCase() || (a.startsWith('@') && String(to).toLowerCase().endsWith(a.toLowerCase())));
     return ok ? { deliver: true } : { deliver: false, reason: `EMAIL_MODE=sandbox and ${to} is not on EMAIL_ALLOWLIST` };
   }
   if (!configured) return { deliver: false, reason: 'SMTP_HOST or EMAIL_FROM not set' };
   return { deliver: true };
+}
+
+/** A copy of a body with every secret in it replaced, for the email log. */
+export function redact(body, secrets = []) {
+  if (body === null || body === undefined) return body;
+  return secrets.filter(Boolean).reduce((s, secret) => s.split(String(secret)).join('[redacted]'), String(body));
 }
 
 async function emailsEnabled(db) {
@@ -53,20 +62,26 @@ async function emailsEnabled(db) {
  * Compose, log and (when allowed) send one email. Returns the email_log row.
  * Never throws for a delivery failure: the row records it, the caller goes on.
  */
-export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false }, db = { query }) {
+export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [], secrets = [] }, db = { query }) {
   const enabled = await emailsEnabled(db);
   const decision = decideDelivery({ to, enabled, optedOut });
+  // The client gets the real message; the log keeps a copy with any secret
+  // in it masked. An acceptance link is a bearer token and the log is
+  // readable inside the tracker: stored in clear, anyone who can list
+  // emails could accept a quotation as the client (#53).
+  const storedText = redact(text, secrets);
+  const storedHtml = redact(html, secrets);
   const { rows: [row] } = await db.query(
     `INSERT INTO email_log (to_email, cc, subject, template, entity, entity_id, status, mode, reason, body_text, body_html, sent_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [to, cc, subject, template, entity, entityId === null ? null : String(entityId), decision.deliver ? 'queued' : 'suppressed', config.mail.mode, decision.reason || null, text, html, sentBy]
+    [to, cc, subject, template, entity, entityId === null ? null : String(entityId), decision.deliver ? 'queued' : 'suppressed', config.mail.mode, decision.reason || null, storedText, storedHtml, sentBy]
   );
   if (!decision.deliver) return row;
 
   try {
     const info = await smtp().sendMail({
       from: config.mail.from, to, cc: cc || undefined, replyTo: config.mail.replyTo || undefined,
-      bcc: config.mail.bcc || undefined, subject, text, html,
+      bcc: config.mail.bcc || undefined, subject, text, html, attachments,
     });
     const { rows: [sent] } = await db.query(
       `UPDATE email_log SET status = 'sent', provider_message_id = $2, sent_at = now() WHERE id = $1 RETURNING *`,

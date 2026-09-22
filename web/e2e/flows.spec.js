@@ -28,7 +28,7 @@ async function signIn(page) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  await expect(page.getByRole('link', { name: 'Quotations' })).toBeVisible();
+  await expect(page.locator('nav').getByRole('link', { name: /Quotations/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -43,9 +43,9 @@ test('a wrong password is refused', async ({ page }) => {
 test('quote a new client, then find the client once under Companies', async ({ page }) => {
   await signIn(page);
   const client = `E2E Client ${stamp}`;
-  await page.getByRole('link', { name: 'Quotations' }).click();
+  await page.locator('nav').getByRole('link', { name: /Quotations/ }).click();
   await page.getByRole('button', { name: '+ Quotation' }).click();
-  await page.getByLabel('Client').fill(client);
+  await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
   await page.getByLabel('Quotation value').fill('250000');
@@ -53,7 +53,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await expect(page.locator('.toast', { hasText: 'Created CTZ/QT/' })).toBeVisible();
   await expect(page.locator('table')).toContainText(client);
 
-  await page.getByRole('link', { name: 'Companies' }).click();
+  await page.locator('nav').getByRole('link', { name: /Companies/ }).click();
   await page.getByPlaceholder(/Search company/).fill(client);
   await expect(page.locator('table tbody tr')).toHaveCount(1);
   await page.locator('table tbody tr td').nth(1).click();
@@ -63,7 +63,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
 
 test('import a sales sheet, review the duplicates, commit', async ({ page }) => {
   await signIn(page);
-  await page.getByRole('link', { name: 'Bulk import' }).click();
+  await page.locator('nav').getByRole('link', { name: /Bulk import/ }).click();
   await page.locator('input[type=file]').setInputFiles(join(here, 'fixtures', 'sales-sheet.xlsx'));
   await page.getByRole('button', { name: 'Upload and analyse' }).click();
   await expect(page.getByRole('heading', { name: /Import #\d+/ })).toBeVisible({ timeout: 90_000 });
@@ -74,8 +74,15 @@ test('import a sales sheet, review the duplicates, commit', async ({ page }) => 
   // The sheet holds clients the seed data already has: duplicates show in yellow.
   await expect(page.locator('tr.tr--dup').first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Quotations/ })).toBeVisible();
+  // A client-and-service match is only a possible duplicate: it can be imported as new.
+  await expect(page.getByText(/possible duplicates? (was|were) matched only by client name and service/)).toBeVisible();
+  const possible = page.locator('tr', { hasText: 'Not certain' }).first();
+  await possible.locator('select').selectOption('create');
+  await expect(possible.locator('select')).toHaveValue('create');
   await page.getByRole('button', { name: /6\. Summary/ }).click();
   await page.getByRole('button', { name: 'Complete and commit' }).first().click();
   await page.getByRole('dialog').getByRole('button', { name: 'Complete and commit' }).click();
   await expect(page.locator('.alert', { hasText: 'This batch has been committed' })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: /1\. Quotations/ }).click();
+  await expect(page.getByText('imported as new').first()).toBeVisible();
 });

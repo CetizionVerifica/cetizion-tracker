@@ -25,9 +25,9 @@ function sectorOptions(used) {
  */
 lookupRouter.get('/', async (req, res) => {
   const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
-         currenciesInUse] =
+         currenciesInUse, stages, lostReasons, leadSources, ptt, pttLines, obt] =
     await Promise.all([
-      query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query('SELECT project_id, client_name FROM projects ORDER BY project_id DESC'),
@@ -64,17 +64,25 @@ lookupRouter.get('/', async (req, res) => {
              ) c
               WHERE currency IS NOT NULL AND currency <> 'INR'
               ORDER BY 1`),
+      query('SELECT id, name, probability, type, maps_to_status, color FROM pipeline_stages WHERE active ORDER BY sort_order'),
+      query('SELECT id, name FROM lost_reasons WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name FROM lead_sources WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, is_default FROM payment_terms_templates WHERE active ORDER BY sort_order, name'),
+      query('SELECT template_id, stage_name, percent, trigger_event, credit_days, milestone_name FROM payment_terms_template_lines ORDER BY template_id, sort_order, id'),
+      query('SELECT id, name, is_default FROM onboarding_templates WHERE active ORDER BY sort_order, name'),
     ]);
 
   res.json({
     data: {
       services: services.rows.map((r) => r.name),
+      catalogue: services.rows,
       travel_vendors: vendors.rows.map((r) => r.name),
       expense_categories: categories.rows.map((r) => r.name),
       projects: projects.rows,
       purchase_orders: pos.rows,
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
+      staff: (await query('SELECT id, name, role FROM staff WHERE active ORDER BY name')).rows,
       clients: clients.rows.map((r) => r.name),
       companies: clients.rows,
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
@@ -85,6 +93,11 @@ lookupRouter.get('/', async (req, res) => {
       // still claim. won_quotations is the opposite set: already registered,
       // for linking a PO to its project's order.
       unregistered_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && !q.project_id),
+      pipeline_stages: stages.rows,
+      lost_reasons: lostReasons.rows,
+      lead_sources: leadSources.rows,
+      payment_terms_templates: ptt.rows.map((t) => ({ ...t, lines: pttLines.rows.filter((l) => l.template_id === t.id) })),
+      onboarding_templates: obt.rows,
       enums: STATUS,
       currencies_in_use: currenciesInUse.rows.map((r) => r.currency),
       limits: { document_max_bytes: config.documentMaxBytes },

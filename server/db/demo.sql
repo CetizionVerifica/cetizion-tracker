@@ -20,4 +20,10 @@ INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stag
   ('PO-77455', 2, 'On delivery (50%)', 'On Delivery', 0.5, NULL, NULL, 0, 'Workbook example');
 
 
+-- People for the visit schedule (#42): everyone who runs projects or travels.
+INSERT INTO staff (name)
+SELECT DISTINCT btrim(n) FROM (SELECT project_manager AS n FROM projects UNION SELECT employee_name FROM travel_logs) x
+WHERE n IS NOT NULL AND btrim(n) <> ''
+ON CONFLICT DO NOTHING;
+
 COMMIT;

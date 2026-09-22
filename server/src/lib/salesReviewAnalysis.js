@@ -48,11 +48,11 @@ export function enquiryAnalysis(enquiries, today) {
   const tone = t.quote_rate >= 0.6 ? 'good' : t.quote_rate < 0.4 ? 'watch' : 'note';
   insights.push(insight(tone === 'watch' ? 'WATCH' : 'HEADLINE', tone,
     `${number(t.quoted)} of ${plural(t.enquiries, 'enquiry', 'enquiries')} (${percent(t.quote_rate)}) reached a quotation; ` +
-    `${number(t.declined)} ${was(t.declined)} declined and ${number(t.in_progress)} ${is(t.in_progress)} still in progress.`));
+    `${number(t.declined)} ${was(t.declined)} unqualified and ${number(t.in_progress)} ${is(t.in_progress)} still in progress.`));
 
   const declined = share(t.declined, t.enquiries);
   if (t.declined >= 3 && declined >= 0.3) {
-    insights.push(insight('WATCH', 'watch', `${percent(declined)} of enquiries were declined. Noting the reason on each one (price, scope, capacity or fit) would show which could have been won.`));
+    insights.push(insight('WATCH', 'watch', `${percent(declined)} of enquiries were unqualified. Noting the reason on each one (price, scope, capacity or fit) would show which could have been won.`));
   }
   if (enquiries.oldest_open && today) {
     const days = daysBetween(enquiries.oldest_open.enquiry_date, today);
@@ -335,7 +335,7 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
   }
   if (gaps.quoted_enquiries_unlinked) {
     add('Link each quoted enquiry to its quotation',
-      `${plural(gaps.quoted_enquiries_unlinked, 'enquiry', 'enquiries')} marked "Won - Quotation Sent" ${has(gaps.quoted_enquiries_unlinked)} no quotation linked, so ${gaps.quoted_enquiries_unlinked === 1 ? 'its' : 'their'} outcome is unknown.`);
+      `${plural(gaps.quoted_enquiries_unlinked, 'enquiry', 'enquiries')} marked "Converted" ${has(gaps.quoted_enquiries_unlinked)} no quotation linked, so ${gaps.quoted_enquiries_unlinked === 1 ? 'its' : 'their'} outcome is unknown.`);
   }
   if (services.summary.unmatched) {
     add('Use consistent service names',

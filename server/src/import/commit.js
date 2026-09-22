@@ -105,7 +105,7 @@ export async function commitBatch(batch, items, { user }) {
             const data = validate('quotations', { ...p, quotation_no: no, project_id: null });
             const q = await insert(client, 'quotations', data);
             results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
-            written.push({ seq: item.seq, ref: q.quotation_no, action: no === p.quotation_no ? 'created' : `created as ${no} (planned number was taken)` });
+            written.push({ seq: item.seq, ref: q.quotation_no, action: no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)` });
             break;
           }
 
@@ -134,7 +134,7 @@ export async function commitBatch(batch, items, { user }) {
               }
             }
             results.set(item.seq, { ref: pid, project_id: pid, quotation_no: parent.ref });
-            written.push({ seq: item.seq, ref: pid, action: pid === p.project_id ? 'created' : `created as ${pid} (planned id was taken)` });
+            written.push({ seq: item.seq, ref: pid, action: pid === p.project_id ? 'created' : item.existing_ref ? `created as ${pid} (new, with its quotation; not ${item.existing_ref})` : `created as ${pid} (planned id was taken)` });
             break;
           }
 
@@ -207,7 +207,12 @@ export async function commitBatch(batch, items, { user }) {
             if (item.action === 'skip') { results.set(item.seq, { ref: item.existing_ref }); written.push({ seq: item.seq, ref: item.existing_ref, action: 'kept' }); break; }
             const amt = Number(p.amount_received);
             if (!Number.isFinite(amt) || amt < 0) throw new Error('receipt amount must be a number');
-            await client.query('UPDATE payment_stages SET amount_received = $1, payment_received_date = $2 WHERE id = $3', [amt, p.payment_received_date || null, parent.stage_id]);
+            // A receipt row (#27); the stage total follows by trigger. Replacing removes what was there first.
+            if (replacing) await client.query('DELETE FROM payments WHERE stage_id = $1', [parent.stage_id]);
+            await client.query(
+              `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by) VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
+              [parent.stage_id, amt, p.payment_received_date || null, `Imported from ${batch.filename}`, user]
+            );
             results.set(item.seq, { ref: String(amt) });
             written.push({ seq: item.seq, ref: String(amt), action: replacing ? 'replaced' : 'recorded' });
             break;

@@ -10,10 +10,11 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
-  purchase_orders, projects, enquiries, quotations, contacts, companies, expense_categories,
-  travel_vendors, services, settings, exchange_rates, sequence_counters, documents CASCADE;
+  purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
+  travel_vendors, services, onboarding_template_lines, onboarding_templates,
+  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -69,11 +70,112 @@ CREATE TABLE sequence_counters (
   PRIMARY KEY (kind, year)
 );
 
+-- ---------------------------------------------------------------------
+-- Templates (#26): payment schedules and onboarding checklists
+-- ---------------------------------------------------------------------
+
+CREATE TABLE payment_terms_templates (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  is_default  boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+CREATE TABLE payment_terms_template_lines (
+  id              serial PRIMARY KEY,
+  template_id     int NOT NULL REFERENCES payment_terms_templates(id) ON DELETE CASCADE,
+  sort_order      int NOT NULL DEFAULT 0,
+  stage_name      text NOT NULL,
+  percent         numeric(5,2) NOT NULL CHECK (percent > 0 AND percent <= 100),
+  trigger_event   text NOT NULL DEFAULT 'On PO Registration'
+                    CHECK (trigger_event IN ('On PO Registration','On Delivery','On Milestone','Manual')),
+  credit_days     int CHECK (credit_days >= 0),
+  milestone_name  text
+);
+
+CREATE INDEX payment_terms_template_lines_template_idx ON payment_terms_template_lines (template_id, sort_order);
+
+-- Seeded from what production already uses.
+INSERT INTO payment_terms_templates (name, is_default, sort_order) VALUES
+  ('50% on PO / 50% on delivery', true, 1),
+  ('100% on delivery', false, 2),
+  ('30% on PO / 70% on delivery', false, 3),
+  ('20% on PO / 80% on delivery', false, 4)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO payment_terms_template_lines (template_id, sort_order, stage_name, percent, trigger_event)
+SELECT t.id, l.sort_order, l.stage_name, l.percent, l.trigger_event
+  FROM payment_terms_templates t
+  JOIN (VALUES
+    ('50% on PO / 50% on delivery', 1, 'Advance (50%)',     50, 'On PO Registration'),
+    ('50% on PO / 50% on delivery', 2, 'On delivery (50%)', 50, 'On Delivery'),
+    ('100% on delivery',            1, 'Full value (100%)', 100, 'On Delivery'),
+    ('30% on PO / 70% on delivery', 1, 'Advance (30%)',     30, 'On PO Registration'),
+    ('30% on PO / 70% on delivery', 2, 'On delivery (70%)', 70, 'On Delivery'),
+    ('20% on PO / 80% on delivery', 1, 'Advance (20%)',     20, 'On PO Registration'),
+    ('20% on PO / 80% on delivery', 2, 'On delivery (80%)', 80, 'On Delivery')
+  ) AS l(template, sort_order, stage_name, percent, trigger_event) ON l.template = t.name
+ WHERE NOT EXISTS (SELECT 1 FROM payment_terms_template_lines x WHERE x.template_id = t.id);
+
+CREATE TABLE onboarding_templates (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  is_default  boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+CREATE TABLE onboarding_template_lines (
+  id                serial PRIMARY KEY,
+  template_id       int NOT NULL REFERENCES onboarding_templates(id) ON DELETE CASCADE,
+  step_no           int NOT NULL,
+  stage             text,
+  step              text NOT NULL,
+  owner_role        text,
+  days_after_start  int
+);
+
+CREATE INDEX onboarding_template_lines_template_idx ON onboarding_template_lines (template_id, step_no);
+
+INSERT INTO onboarding_templates (name, is_default, sort_order) VALUES ('Standard project lifecycle', true, 1)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO onboarding_template_lines (template_id, step_no, stage, step, owner_role, days_after_start)
+SELECT t.id, l.step_no, l.stage, l.step, l.owner_role, l.days_after_start
+  FROM onboarding_templates t
+  JOIN (VALUES
+    (1,  'Onboarding', 'Purchase order(s) received and registered in the PO Register', 'Sales', 0),
+    (2,  'Onboarding', 'Services on each PO listed against the PO', 'Sales', 0),
+    (3,  'Onboarding', 'Payment stages for each PO entered in the payment schedule', 'Finance', 1),
+    (4,  'Onboarding', 'Finance raises the stage-1 (advance) invoice per the PO payment terms', 'Finance', 2),
+    (5,  'Onboarding', 'Project manager and delivery team assigned', 'Delivery', 3),
+    (6,  'Onboarding', 'Client kick-off meeting held; scope and delivery date confirmed', 'Delivery', 7),
+    (7,  'Execution',  'Fieldwork / assessment / data collection completed', 'Delivery', 30),
+    (8,  'Execution',  'Draft deliverable shared with client for review', 'Delivery', 45),
+    (9,  'Delivery',   'Final deliverable / report / certificate issued to client', 'Delivery', 60),
+    (10, 'Delivery',   'Finance raises the on-delivery stage invoice(s)', 'Finance', 61),
+    (11, 'Closure',    'All stage invoices paid on time as per agreed terms - project closed', 'Finance', 90)
+  ) AS l(step_no, stage, step, owner_role, days_after_start) ON t.name = 'Standard project lifecycle'
+ WHERE NOT EXISTS (SELECT 1 FROM onboarding_template_lines x WHERE x.template_id = t.id);
+
 CREATE TABLE services (
-  id       serial PRIMARY KEY,
-  name     text NOT NULL UNIQUE,
-  active   boolean NOT NULL DEFAULT true,
-  sort_order int NOT NULL DEFAULT 0
+  id         serial PRIMARY KEY,
+  name       text NOT NULL UNIQUE,
+  active     boolean NOT NULL DEFAULT true,
+  sort_order int NOT NULL DEFAULT 0,
+  -- The catalogue (#23): what a line for this service looks like by default.
+  code                    text,
+  sac_code                text,
+  default_rate            numeric(16,2),
+  currency                text NOT NULL DEFAULT 'INR',
+  gst_rate                numeric(5,2) NOT NULL DEFAULT 18,
+  unit                    text NOT NULL DEFAULT 'engagement',
+  description             text,
+  renewal_interval_months int,
+  renewal_lead_days       int NOT NULL DEFAULT 60,
+  onboarding_template_id    int REFERENCES onboarding_templates(id) ON DELETE SET NULL,
+  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL
 );
 
 CREATE TABLE travel_vendors (
@@ -105,6 +207,44 @@ CREATE TABLE documents (
 );
 
 -- ---------------------------------------------------------------------
+-- Pipeline stages and lost reasons (#25)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE pipeline_stages (
+  id              serial PRIMARY KEY,
+  name            text NOT NULL UNIQUE,
+  probability     int NOT NULL CHECK (probability BETWEEN 0 AND 100),
+  type            text NOT NULL CHECK (type IN ('open','paused','won','lost')),
+  maps_to_status  text NOT NULL,
+  sort_order      int NOT NULL DEFAULT 0,
+  color           text,
+  rotting_days    int,
+  active          boolean NOT NULL DEFAULT true
+);
+
+INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order, color, rotting_days) VALUES
+  ('Draft',                   10, 'open',   'Submitted',         1, '#94a3b8', 14),
+  ('Sent',                    40, 'open',   'Submitted',         2, '#38bdf8', 21),
+  ('Negotiation',             60, 'open',   'Under Negotiation', 3, '#f59e0b', 21),
+  ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
+  ('On Hold',                 20, 'paused', 'On Hold',           5, '#a3a3a3', NULL),
+  ('Won, PO received',       100, 'won',    'Won - PO Received', 6, '#16a34a', NULL),
+  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL)
+ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE lost_reasons (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+INSERT INTO lost_reasons (name, sort_order) VALUES
+  ('Price', 1), ('Went with a competitor', 2), ('No budget this year', 3), ('Project cancelled or postponed', 4),
+  ('No response', 5), ('Timing', 6), ('Scope changed', 7), ('Quotation expired', 8), ('Other', 9)
+ON CONFLICT (name) DO NOTHING;
+
+-- ---------------------------------------------------------------------
 -- Companies and contacts â€” a client exists once, keyed on its normalised
 -- name; records keep client_name and link to it by trigger (below).
 -- ---------------------------------------------------------------------
@@ -120,6 +260,9 @@ CREATE TABLE companies (
   city        text,
   notes       text,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  portal_enabled boolean NOT NULL DEFAULT false,
+  portal_sections text[] NOT NULL DEFAULT '{projects,documents,invoices,certificates,contact}',
+  last_contacted_at timestamptz,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
@@ -133,6 +276,14 @@ CREATE TABLE contacts (
   is_billing         boolean NOT NULL DEFAULT false,
   opt_out_reminders  boolean NOT NULL DEFAULT false,
   notes              text,
+  whatsapp_number    text,
+  preferred_channel  text,
+  best_time_to_call  text,
+  do_not_contact     boolean NOT NULL DEFAULT false,
+  whatsapp_opt_in_at timestamptz,
+  whatsapp_opt_in_source text,
+  last_contacted_at  timestamptz,
+  portal_access      boolean NOT NULL DEFAULT false,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -158,6 +309,7 @@ CREATE TABLE projects (
   sales_person          text,
   planned_start_date    date,
   planned_delivery_date date,
+  estimated_cost        numeric(16,2) CHECK (estimated_cost >= 0),
   percent_complete      numeric(5,4) NOT NULL DEFAULT 0
                           CHECK (percent_complete BETWEEN 0 AND 1),
   remarks               text,
@@ -194,13 +346,99 @@ CREATE TABLE quotations (
                        ON UPDATE CASCADE ON DELETE SET NULL,
   remarks            text,
   document_id        int UNIQUE REFERENCES documents(id),
+  -- A quotation as a document (#23)
+  valid_until            date,
+  revision               int NOT NULL DEFAULT 0,
+  terms                  text,
+  place_of_supply_state  text,
+  subtotal               numeric(16,2),
+  tax_total              numeric(16,2),
+  total                  numeric(16,2),
+  sent_at                timestamptz,
+  accepted_at            timestamptz,
+  accepted_by_name       text,
+  -- The pipeline (#25)
+  stage_id               int REFERENCES pipeline_stages(id),
+  probability            int CHECK (probability BETWEEN 0 AND 100),
+  expected_close_date    date,
+  next_step              text,
+  stage_changed_at       timestamptz,
+  last_contacted_at      timestamptz,
+  lost_reason_id         int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  lost_notes             text,
+  competitor             text,
+  closed_at              timestamptz,
+  -- Approvals (#46)
+  discount_percent       numeric(5,2),
+  approval_status        text NOT NULL DEFAULT 'not_needed'
+                           CHECK (approval_status IN ('not_needed','pending','approved','rejected')),
+  approval_reason        text,
+  approval_requested_at  timestamptz,
+  approval_requested_by  text,
+  approval_decided_at    timestamptz,
+  approved_by            text,
+  approval_note          text,
+  approved_discount_percent numeric(5,2),
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX ON quotations (project_id);
 CREATE INDEX quotations_company_id_idx ON quotations (company_id);
+CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 CREATE INDEX ON quotations (status);
+
+-- ---------------------------------------------------------------------
+-- Quotation lines and revisions (#23)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE quotation_lines (
+  id                serial PRIMARY KEY,
+  quotation_id      int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  service_id        int REFERENCES services(id) ON DELETE SET NULL,
+  description       text NOT NULL,
+  qty               numeric(12,2) NOT NULL DEFAULT 1 CHECK (qty > 0),
+  unit              text,
+  rate              numeric(16,2) NOT NULL DEFAULT 0 CHECK (rate >= 0),
+  discount_percent  numeric(5,2) NOT NULL DEFAULT 0 CHECK (discount_percent BETWEEN 0 AND 100),
+  gst_rate          numeric(5,2) NOT NULL DEFAULT 18 CHECK (gst_rate BETWEEN 0 AND 100),
+  amount            numeric(16,2) GENERATED ALWAYS AS (round(qty * rate * (1 - discount_percent / 100), 2)) STORED,
+  sort_order        int NOT NULL DEFAULT 0,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_lines_quotation_id_idx ON quotation_lines (quotation_id, sort_order, id);
+
+
+-- What a quotation looked like before each revision.
+CREATE TABLE quotation_revisions (
+  id            serial PRIMARY KEY,
+  quotation_id  int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  revision      int NOT NULL,
+  snapshot      jsonb NOT NULL,
+  note          text,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_revisions_quotation_id_idx ON quotation_revisions (quotation_id, revision);
+
+-- ---------------------------------------------------------------------
+-- Lead sources (#24)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE lead_sources (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  int NOT NULL DEFAULT 0
+);
+
+INSERT INTO lead_sources (name, sort_order) VALUES
+  ('Existing client', 1), ('Referral', 2), ('Website', 3), ('Inbound email or call', 4),
+  ('Event or webinar', 5), ('Partner or certification body', 6), ('Outreach', 7), ('Other', 8)
+ON CONFLICT (name) DO NOTHING;
 
 -- ---------------------------------------------------------------------
 -- Enquiries â€” logged before anything is quoted. Marking one
@@ -221,15 +459,29 @@ CREATE TABLE enquiries (
   sales_person       text,
   sales_person_email text,
   service            text,
-  status             text NOT NULL DEFAULT 'In Progress'
-                       CHECK (status IN ('In Progress','Declined','Won - Quotation Sent')),
+  status             text NOT NULL DEFAULT 'New'
+                       CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
   quotation_no       text REFERENCES quotations(quotation_no)
                        ON UPDATE CASCADE ON DELETE SET NULL,
+  -- A lead (#24)
+  source_id              int REFERENCES lead_sources(id) ON DELETE SET NULL,
+  estimated_value        numeric(16,2),
+  currency               text NOT NULL DEFAULT 'INR',
+  expected_decision_date date,
+  next_follow_up_at      date,
+  first_responded_at     timestamptz,
+  unqualified_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  unqualified_notes      text,
+  services_interested    text,
+  notes                  text,
+  converted_at           timestamptz,
+  last_contacted_at      timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
+CREATE INDEX enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
 CREATE UNIQUE INDEX enquiries_quotation_no_key ON enquiries (quotation_no) WHERE quotation_no IS NOT NULL;
@@ -293,8 +545,7 @@ CREATE TABLE payment_stages (
   stage_no              int NOT NULL CHECK (stage_no > 0),
   stage_name            text NOT NULL,
   trigger_event         text NOT NULL DEFAULT 'On PO Registration'
-                          CHECK (trigger_event IN ('On PO Registration',
-                                                   'On Delivery','Manual')),
+                          CHECK (trigger_event IN ('On PO Registration','On Delivery','On Milestone','Manual')),
   stage_percent         numeric(6,4) NOT NULL CHECK (stage_percent > 0),
   invoice_no            text,
   invoice_date          date,
@@ -303,12 +554,133 @@ CREATE TABLE payment_stages (
   payment_received_date date,
   reminder_sent_on      date,
   remarks               text,
+  -- Per-stage terms and milestone triggers (#26)
+  credit_days           int CHECK (credit_days >= 0),
+  milestone_name        text,
+  milestone_reached_on  date,
+  -- Collections (#27)
+  on_hold               boolean NOT NULL DEFAULT false,
+  hold_reason           text,
+  promise_to_pay_date   date,
+  reminder_level        int NOT NULL DEFAULT 0,
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now(),
   UNIQUE (po_number, stage_no)
 );
 
 CREATE INDEX ON payment_stages (po_number);
+
+-- ---------------------------------------------------------------------
+-- Engagements: what a client holds and when it renews (#28)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE engagements (
+  id                     serial PRIMARY KEY,
+  company_id             int REFERENCES companies(id) ON DELETE SET NULL,
+  client_name            text NOT NULL,
+  service_id             int REFERENCES services(id) ON DELETE SET NULL,
+  service_name           text NOT NULL,
+  project_id             text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  po_number              text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_id           int REFERENCES quotations(id) ON DELETE SET NULL,
+  cycle                  int NOT NULL DEFAULT 1,
+  started_on             date,
+  valid_until            date,
+  next_due_on            date NOT NULL,
+  status                 text NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active','renewal_open','renewed','lapsed','cancelled')),
+  renewal_quotation_id   int REFERENCES quotations(id) ON DELETE SET NULL,
+  renewal_opened_at      timestamptz,
+  owner                  text,
+  notes                  text,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX engagements_due_idx ON engagements (status, next_due_on);
+CREATE INDEX engagements_company_idx ON engagements (company_id);
+-- One engagement per delivered PO and service.
+CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, service_name) WHERE po_number IS NOT NULL;
+
+
+-- ---------------------------------------------------------------------
+-- Payments and the chasing log (#27)
+-- ---------------------------------------------------------------------
+
+CREATE TABLE payments (
+  id           serial PRIMARY KEY,
+  stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
+  -- A receipt is positive. An adjustment — someone correcting a total that
+  -- was typed too high — is a negative row, so the ledger still adds up to
+  -- the figure on the stage. Writing the figure by hand instead left the
+  -- correction to be undone by the next receipt.
+  amount       numeric(16,2) NOT NULL,
+  tds_amount   numeric(16,2) NOT NULL DEFAULT 0 CHECK (tds_amount >= 0),
+  -- Nullable on purpose. The route before this one accepted an amount
+  -- with no date, and those receipts are carried over as they are: a
+  -- missing date stays missing rather than becoming the day of the deploy.
+  received_on  date,
+  mode         text NOT NULL DEFAULT 'bank_transfer'
+                 CHECK (mode IN ('bank_transfer','cheque','upi','cash','other')),
+  reference    text,
+  notes        text,
+  recorded_by  text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX payments_stage_idx ON payments (stage_id, received_on);
+
+-- The stage's received total and date follow its payments. TDS counts as
+-- settled: the client paid it to the government on our behalf.
+CREATE OR REPLACE FUNCTION payments_changed() RETURNS trigger AS $$
+DECLARE sid int;
+BEGIN
+  sid := COALESCE(NEW.stage_id, OLD.stage_id);
+  UPDATE payment_stages ps
+     SET amount_received = COALESCE((SELECT SUM(amount + tds_amount) FROM payments WHERE stage_id = sid), 0),
+         payment_received_date = (SELECT MAX(received_on) FROM payments WHERE stage_id = sid)
+   WHERE ps.id = sid;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_changed AFTER INSERT OR UPDATE OR DELETE ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_changed();
+
+-- The first receipt on a stage that already carries a received amount
+-- (seeded, imported, or typed before receipts existed) first books that
+-- amount as an opening receipt, so nothing already received is lost.
+CREATE OR REPLACE FUNCTION payments_opening() RETURNS trigger AS $$
+DECLARE cur record;
+BEGIN
+  IF NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
+  IF NOT EXISTS (SELECT 1 FROM payments WHERE stage_id = NEW.stage_id) THEN
+    SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
+    IF cur.amount_received > 0 THEN
+      INSERT INTO payments (stage_id, amount, received_on, mode, notes)
+      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other', 'Opening balance from the stage');
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payments_opening BEFORE INSERT ON payments
+  FOR EACH ROW EXECUTE FUNCTION payments_opening();
+
+CREATE TABLE collection_log (
+  id                   serial PRIMARY KEY,
+  stage_id             int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  company_id           int REFERENCES companies(id) ON DELETE SET NULL,
+  channel              text NOT NULL DEFAULT 'call' CHECK (channel IN ('email','call','whatsapp','meeting','note')),
+  happened_at          timestamptz NOT NULL DEFAULT now(),
+  by_whom              text,
+  summary              text NOT NULL,
+  promise_to_pay_date  date,
+  next_action_on       date,
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX collection_log_stage_idx ON collection_log (stage_id, happened_at DESC);
+CREATE INDEX collection_log_company_idx ON collection_log (company_id, happened_at DESC);
 
 -- ---------------------------------------------------------------------
 -- Onboarding / lifecycle checklist  (Onboarding)
@@ -423,9 +795,9 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','enquiries','purchase_orders',
+  FOREACH t IN ARRAY ARRAY['companies','contacts','projects','quotations','quotation_lines','enquiries','purchase_orders',
       'po_services','payment_stages','onboarding_tasks','travel_logs',
-      'travel_vendor_invoices','employee_expense_claims','settings','exchange_rates',
+      'travel_vendor_invoices','employee_expense_claims','settings','engagements','exchange_rates',
       'sequence_counters']
   LOOP
     EXECUTE format(
@@ -433,6 +805,200 @@ BEGIN
          FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------- quotation totals
+-- Totals follow the lines. With lines, quotation_value is the total; without
+-- any, the typed quotation_value stands and the totals are blank.
+CREATE OR REPLACE FUNCTION quotation_totals(p_quotation int) RETURNS void AS $$
+DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold numeric; st text; approved_at numeric;
+BEGIN
+  SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(round(amount * gst_rate / 100, 2)), 0), COALESCE(SUM(round(qty * rate, 2)), 0)
+    INTO n, s, t, gross FROM quotation_lines WHERE quotation_id = p_quotation;
+  IF n = 0 THEN
+    UPDATE quotations SET subtotal = NULL, tax_total = NULL, total = NULL, discount_percent = NULL,
+           approval_status = CASE WHEN approval_status = 'pending' AND approval_reason IS NULL THEN 'not_needed' ELSE approval_status END
+     WHERE id = p_quotation;
+    RETURN;
+  END IF;
+  disc := CASE WHEN gross > 0 THEN round((gross - s) / gross * 100, 2) ELSE 0 END;
+  threshold := setting_num('discount_approval_threshold_percent', 10);
+  SELECT approval_status, approved_discount_percent INTO st, approved_at FROM quotations WHERE id = p_quotation;
+  UPDATE quotations
+     SET subtotal = s, tax_total = t, total = s + t, quotation_value = s + t, discount_percent = disc,
+         approval_status = CASE
+           -- Over the threshold needs a decision, and an approval covers
+           -- only the discount it was given for: raising it asks again.
+           -- This applies to hand-requested exceptions too.
+           WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN 'pending'
+           -- otherwise an exception someone asked for by hand keeps its own state
+           WHEN approval_reason IS NOT NULL THEN approval_status
+           WHEN disc <= threshold AND st IN ('pending', 'rejected') THEN 'not_needed'
+           ELSE approval_status END,
+         approval_requested_at = CASE WHEN disc > threshold AND (st IN ('not_needed', 'rejected')
+                OR (st = 'approved' AND disc > COALESCE(approved_at, -1))) THEN now() ELSE approval_requested_at END
+   WHERE id = p_quotation;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION quotation_lines_changed() RETURNS trigger AS $$
+BEGIN
+  PERFORM quotation_totals(COALESCE(NEW.quotation_id, OLD.quotation_id));
+  IF TG_OP = 'UPDATE' AND NEW.quotation_id IS DISTINCT FROM OLD.quotation_id THEN PERFORM quotation_totals(OLD.quotation_id); END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER quotation_lines_changed AFTER INSERT OR UPDATE OR DELETE ON quotation_lines
+  FOR EACH ROW EXECUTE FUNCTION quotation_lines_changed();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('quotation_validity_days', '30', 'How long a quotation stays open for acceptance, from its date. Sets valid_until on new quotations and revisions.'),
+  ('gst_rate_default', '18', 'GST % offered on a new quotation line when the service has none.'),
+  ('company_name', 'Cetizion Verifica Pvt. Ltd.', 'Printed at the top of quotation PDFs.'),
+  ('company_address', '', 'Printed under the company name on quotation PDFs.'),
+  ('company_gstin', '', 'Printed on quotation PDFs.'),
+  ('quotation_terms_default', 'Payment: 50% advance with the purchase order, 50% on delivery of the final report. Prices exclude GST unless stated. Valid until the date shown.', 'Terms printed on a new quotation; editable per quotation.')
+ON CONFLICT (key) DO NOTHING;
+
+-- A new quotation takes its validity and terms from Settings when none were typed.
+-- A numeric setting, or the default. views.sql defines the same function;
+-- it is here too because triggers call it, and a database built from this
+-- file alone (as some tests do) must be able to insert rows.
+CREATE OR REPLACE FUNCTION setting_num(p_key text, p_default numeric)
+RETURNS numeric AS $$
+  SELECT COALESCE(
+    (SELECT NULLIF(regexp_replace(value, '[^0-9.\-]', '', 'g'), '')::numeric
+       FROM settings WHERE key = p_key),
+    p_default);
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION quotation_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.valid_until IS NULL AND NEW.quotation_date IS NOT NULL THEN
+    NEW.valid_until := NEW.quotation_date + (setting_num('quotation_validity_days', 30))::int;
+  END IF;
+  IF NEW.terms IS NULL THEN
+    SELECT NULLIF(value, '') INTO NEW.terms FROM settings WHERE key = 'quotation_terms_default';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER quotation_defaults BEFORE INSERT ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_defaults();
+
+-- ---------------------------------------------------------------- pipeline
+-- Stage and status agree, whichever one was changed. Moving to a stage sets
+-- the status it maps to and takes the stage's probability unless one was
+-- given with the move. Changing the status (the form, the importer, a
+-- conversion) picks the default stage for it; sending a draft moves it to
+-- Sent, and an acceptance moves an open one to Verbal yes.
+CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
+DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    stage_changed := NEW.stage_id IS NOT NULL;
+    status_changed := NOT stage_changed;
+  ELSE
+    stage_changed := NEW.stage_id IS DISTINCT FROM OLD.stage_id AND NEW.stage_id IS NOT NULL;
+    status_changed := NEW.stage_id IS NULL OR NEW.status IS DISTINCT FROM OLD.status;
+  END IF;
+
+  IF stage_changed THEN
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    NEW.status := st.maps_to_status;
+    IF TG_OP = 'INSERT' OR NEW.probability IS NOT DISTINCT FROM OLD.probability OR NEW.probability IS NULL THEN
+      NEW.probability := st.probability;
+    END IF;
+  ELSIF status_changed THEN
+    SELECT * INTO st FROM pipeline_stages ps
+     WHERE ps.maps_to_status = NEW.status AND ps.active
+     ORDER BY CASE
+       WHEN NEW.status = 'Submitted' AND NEW.sent_at IS NOT NULL AND ps.name = 'Sent' THEN 0
+       WHEN NEW.status = 'Under Negotiation' AND NEW.accepted_at IS NOT NULL AND ps.name = 'Verbal yes, awaiting PO' THEN 0
+       ELSE 1 END, ps.sort_order
+     LIMIT 1;
+    IF st.id IS NOT NULL THEN
+      NEW.stage_id := st.id;
+      NEW.probability := st.probability;
+    END IF;
+  ELSE
+    -- Same stage: a send or an acceptance made in this write moves it
+    -- forward, and a revision (which clears both) moves it back. Only the
+    -- change counts, so a card moved back by hand stays where it was put.
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    IF NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL AND st.name IN ('Draft', 'Sent', 'Negotiation') THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Verbal yes, awaiting PO';
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
+    ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
+      SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
+      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+    END IF;
+  END IF;
+
+  IF TG_OP = 'INSERT' OR NEW.stage_id IS DISTINCT FROM OLD.stage_id THEN
+    NEW.stage_changed_at := now();
+    IF st.type IN ('won', 'lost') THEN
+      NEW.closed_at := COALESCE(NEW.closed_at, now());
+    ELSE
+      NEW.closed_at := NULL;
+    END IF;
+    -- Reopened: the reason it was lost no longer applies.
+    IF st.type <> 'lost' THEN
+      NEW.lost_reason_id := NULL;
+      NEW.lost_notes := NULL;
+      NEW.competitor := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- Runs after the company link (a_) and before nothing else that matters: c_.
+CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_stage_sync();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------- enquiry stamps
+-- Stamps: the first response, the conversion, and a default follow-up date.
+CREATE OR REPLACE FUNCTION enquiry_stamps() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.status = 'New' AND NEW.status <> 'New' AND NEW.first_responded_at IS NULL THEN
+    NEW.first_responded_at := now();
+  END IF;
+  IF NEW.status = 'Converted' AND (TG_OP = 'INSERT' OR OLD.status <> 'Converted') THEN
+    NEW.converted_at := COALESCE(NEW.converted_at, now());
+  END IF;
+  IF NEW.status IN ('Converted', 'Unqualified') THEN
+    NEW.next_follow_up_at := NULL;
+  ELSIF NEW.next_follow_up_at IS NULL AND (TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status) THEN
+    NEW.next_follow_up_at := CURRENT_DATE + (setting_num('lead_follow_up_default_days', 3))::int;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER c_enquiry_stamps BEFORE INSERT OR UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_stamps();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('lead_first_response_hours', '24', 'Target hours from a new enquiry to the first contact. Enquiries past it are flagged.'),
+  ('lead_follow_up_default_days', '3', 'Days ahead the next follow-up is set when an enquiry is created or moves stage without one.')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('discount_approval_threshold_percent', '10', 'A quotation discounted above this overall % waits for approval before it can be sent.'),
+  ('approver_email', '', 'Who is emailed when a quotation needs approval. Blank: the finance email.')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies
 -- The grouping key the reports already use for free-text names.
@@ -585,6 +1151,117 @@ INSERT INTO settings (key, value, notes) VALUES
   ('reminder_grace_days', '3', 'Days after the due date before the first reminder goes out.')
 ON CONFLICT (key) DO NOTHING;
 
+-- ---------------------------------------------------------------- activity (#22)
+CREATE TABLE tasks (
+  id            serial PRIMARY KEY,
+  entity        text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id     text NOT NULL,
+  title         text NOT NULL,
+  description   text,
+  due_at        date,
+  status        text NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','in_progress','done')),
+  priority      text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high')),
+  type          text NOT NULL DEFAULT 'follow_up' CHECK (type IN ('call','email','meeting','follow_up','document','other')),
+  assignee      text,
+  created_by    text,
+  completed_at  timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX tasks_entity_idx ON tasks (entity, entity_id);
+CREATE INDEX tasks_open_idx ON tasks (status, due_at) WHERE status <> 'done';
+
+CREATE TABLE notes (
+  id          serial PRIMARY KEY,
+  entity      text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id   text NOT NULL,
+  body        text NOT NULL,
+  author      text,
+  pinned      boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX notes_entity_idx ON notes (entity, entity_id, created_at DESC);
+
+-- Many files per record, beside the single document field some records carry.
+CREATE TABLE attachments (
+  id           serial PRIMARY KEY,
+  entity       text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id    text NOT NULL,
+  document_id  int NOT NULL UNIQUE REFERENCES documents(id),
+  label        text,
+  uploaded_by  text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX attachments_entity_idx ON attachments (entity, entity_id);
+
+-- A task marked done remembers when.
+CREATE OR REPLACE FUNCTION task_stamps() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND (TG_OP = 'INSERT' OR OLD.status <> 'done') THEN
+    NEW.completed_at := COALESCE(NEW.completed_at, now());
+  ELSIF NEW.status <> 'done' THEN
+    NEW.completed_at := NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_stamps BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION task_stamps();
+CREATE TRIGGER tasks_set_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER notes_set_updated_at BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- One-click contact and the touch log (#31)
+CREATE TABLE IF NOT EXISTS communications (
+  id                 serial PRIMARY KEY,
+  channel            text NOT NULL CHECK (channel IN ('call','whatsapp','meeting','sms','email','other')),
+  direction          text NOT NULL DEFAULT 'outbound' CHECK (direction IN ('inbound','outbound')),
+  outcome            text CHECK (outcome IN ('connected','no_answer','left_message','wrong_number','sent','held')),
+  entity             text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id          text NOT NULL,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
+  username           text,
+  started_at         timestamptz NOT NULL DEFAULT now(),
+  duration_seconds   int CHECK (duration_seconds >= 0),
+  summary            text,
+  attendees          text,
+  next_step_task_id  int REFERENCES tasks(id) ON DELETE SET NULL,
+  provider           text NOT NULL DEFAULT 'manual',
+  provider_ref       text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS communications_entity_idx ON communications (entity, entity_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS communications_company_idx ON communications (company_id, started_at DESC);
+
+-- A touch moves "last contacted" forward on everything it concerns.
+CREATE OR REPLACE FUNCTION communication_touch() RETURNS trigger AS $$
+BEGIN
+  IF NEW.outcome IN ('no_answer','wrong_number') THEN
+    RETURN NEW;
+  END IF;
+  UPDATE contacts SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.contact_id;
+  UPDATE companies SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE id = NEW.company_id;
+  IF NEW.entity = 'quotation' THEN
+    UPDATE quotations SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at) WHERE quotation_no = NEW.entity_id;
+  ELSIF NEW.entity = 'enquiry' THEN
+    UPDATE enquiries SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.started_at), NEW.started_at),
+                         first_responded_at = COALESCE(first_responded_at, NEW.started_at)
+     WHERE enquiry_no = NEW.entity_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS communication_touch ON communications;
+CREATE TRIGGER communication_touch AFTER INSERT ON communications FOR EACH ROW EXECUTE FUNCTION communication_touch();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('no_contact_days', '7', 'Open deals and overdue invoices with no touch for this many days are listed under "No contact".')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------- bulk import
 -- Holding area for uploaded sales sheets (see migrations/010_import_batches.sql).
 CREATE TABLE IF NOT EXISTS import_batches (
@@ -678,5 +1355,861 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ---------------------------------------------------------------------
+-- Notifications (#44)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notifications (
+  id          serial PRIMARY KEY,
+  -- NULL means everyone: a failed backup or an overdue invoice is not one
+  -- person's. A name here is matched against the reader's account name as
+  -- well as their sign-in address.
+  username    text,
+  kind        text NOT NULL,
+  title       text NOT NULL,
+  body        text,
+  entity      text,
+  entity_id   text,
+  link        text,
+  dedupe_key  text,
+  read_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Who has read what. A notification addressed to nobody is everyone's, and
+-- a single read_at on a shared row would mean the first person to look
+-- cleared it for the whole team. Read state belongs to the reader, so it
+-- lives here rather than on the row. read_at on the row survives for the
+-- digest, which asks whether anyone has seen a thing at all.
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id int NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  reader          text NOT NULL,
+  read_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (notification_id, reader)
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (username, read_at, created_at DESC);
+-- The same thing is not raised twice on the same day.
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_dedupe_key ON notifications (dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('digest_email', '', 'Where the daily digest goes. Blank: the finance email.'),
+  ('quotation_expiry_warning_days', '7', 'Days before a quotation expires at which its owner is told.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client acceptance links (#53)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS quotation_acceptances (
+  id                 serial PRIMARY KEY,
+  quotation_id       int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  revision           int NOT NULL DEFAULT 0,
+  token_hash         text NOT NULL UNIQUE,
+  sent_to            text,
+  status             text NOT NULL DEFAULT 'sent'
+                       CHECK (status IN ('sent','viewed','accepted','changes_requested','expired','revoked')),
+  expires_at         timestamptz NOT NULL,
+  viewed_at          timestamptz,
+  view_count         int NOT NULL DEFAULT 0,
+  decided_at         timestamptz,
+  decided_by_name    text,
+  decided_by_email   text,
+  comments           text,
+  ip                 text,
+  user_agent         text,
+  snapshot           jsonb,
+  pdf_sha256         text,
+  pdf_document_id    int REFERENCES documents(id),
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS quotation_acceptances_quotation_idx ON quotation_acceptances (quotation_id, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('public_app_url', '', 'The address clients use to open acceptance links, e.g. https://tracker.cetizionverifica.com. Blank: the address the app was opened on.'),
+  ('acceptance_unviewed_days', '3', 'Days after which an unopened acceptance link is flagged to the owner.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Certificates and deliverables (#43)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deliverables (
+  id                serial PRIMARY KEY,
+  company_id        int REFERENCES companies(id) ON DELETE SET NULL,
+  client_name       text NOT NULL,
+  project_id        text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  po_number         text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  service_id        int REFERENCES services(id) ON DELETE SET NULL,
+  service_name      text,
+  type              text NOT NULL DEFAULT 'certificate'
+                      CHECK (type IN ('certificate','scorecard','report','audit_finding','statement')),
+  reference         text,
+  title             text NOT NULL,
+  issued_on         date,
+  valid_from        date,
+  valid_until       date,
+  scope             text,
+  issuing_body      text,
+  status            text NOT NULL DEFAULT 'issued'
+                      CHECK (status IN ('draft','issued','expired','withdrawn','superseded')),
+  superseded_by_id  int REFERENCES deliverables(id) ON DELETE SET NULL,
+  document_id       int REFERENCES documents(id),
+  engagement_id     int REFERENCES engagements(id) ON DELETE SET NULL,
+  owner             text,
+  reminder_level    int NOT NULL DEFAULT 0,
+  notes             text,
+  created_by        text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  CHECK (valid_until IS NULL OR valid_from IS NULL OR valid_until >= valid_from)
+);
+
+CREATE INDEX IF NOT EXISTS deliverables_company_idx ON deliverables (company_id);
+CREATE INDEX IF NOT EXISTS deliverables_expiry_idx ON deliverables (status, valid_until);
+CREATE INDEX IF NOT EXISTS deliverables_project_idx ON deliverables (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS deliverables_reference_key ON deliverables (type, lower(reference)) WHERE reference IS NOT NULL AND status <> 'draft';
+
+DROP TRIGGER IF EXISTS deliverables_set_updated_at ON deliverables;
+CREATE TRIGGER deliverables_set_updated_at BEFORE UPDATE ON deliverables
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- The client follows the project (or the PO's project) when not given.
+CREATE OR REPLACE FUNCTION deliverable_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.project_id IS NULL AND NEW.po_number IS NOT NULL THEN
+    SELECT project_id INTO NEW.project_id FROM purchase_orders WHERE po_number = NEW.po_number;
+  END IF;
+  IF NEW.project_id IS NOT NULL AND (NEW.company_id IS NULL OR NEW.client_name IS NULL OR NEW.client_name = '') THEN
+    SELECT COALESCE(NEW.company_id, p.company_id), COALESCE(NULLIF(NEW.client_name, ''), p.client_name)
+      INTO NEW.company_id, NEW.client_name FROM projects p WHERE p.project_id = NEW.project_id;
+  END IF;
+  IF NEW.company_id IS NOT NULL AND (NEW.client_name IS NULL OR NEW.client_name = '') THEN
+    SELECT name INTO NEW.client_name FROM companies WHERE id = NEW.company_id;
+  END IF;
+  IF NEW.service_id IS NOT NULL AND NEW.service_name IS NULL THEN
+    SELECT name INTO NEW.service_name FROM services WHERE id = NEW.service_id;
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.valid_until IS DISTINCT FROM OLD.valid_until THEN
+    NEW.reminder_level := 0;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS a_deliverable_defaults ON deliverables;
+CREATE TRIGGER a_deliverable_defaults BEFORE INSERT OR UPDATE ON deliverables
+  FOR EACH ROW EXECUTE FUNCTION deliverable_defaults();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('deliverable_reminder_days', '120,90,30', 'Days before a certificate or deliverable expires at which its owner is reminded.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Connected mailboxes (#29)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS connected_accounts (
+  id                 serial PRIMARY KEY,
+  username           text NOT NULL,
+  provider           text NOT NULL DEFAULT 'microsoft' CHECK (provider IN ('microsoft','imap','test')),
+  email              text NOT NULL,
+  display_name       text,
+  is_shared          boolean NOT NULL DEFAULT false,
+  tokens_encrypted   text,
+  token_expires_at   timestamptz,
+  scopes             text,
+  status             text NOT NULL DEFAULT 'active' CHECK (status IN ('active','needs_reconnect','disconnected')),
+  visibility         text NOT NULL DEFAULT 'metadata' CHECK (visibility IN ('metadata','subject','share_everything')),
+  import_days        int NOT NULL DEFAULT 30 CHECK (import_days BETWEEN 0 AND 365),
+  exclude_internal   boolean NOT NULL DEFAULT true,
+  auto_create_contacts boolean NOT NULL DEFAULT true,
+  last_synced_at     timestamptz,
+  last_error         text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS connected_accounts_email_key ON connected_accounts (lower(email)) WHERE status <> 'disconnected';
+
+CREATE TABLE IF NOT EXISTS mail_folders (
+  id                        serial PRIMARY KEY,
+  account_id                int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  folder                    text NOT NULL CHECK (folder IN ('inbox','sentitems')),
+  delta_link                text,
+  subscription_id           text,
+  subscription_client_state text,
+  subscription_expires_at   timestamptz,
+  UNIQUE (account_id, folder)
+);
+
+CREATE TABLE IF NOT EXISTS email_threads (
+  id               serial PRIMARY KEY,
+  account_id       int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  conversation_id  text NOT NULL,
+  subject          text,
+  company_id       int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id       int REFERENCES contacts(id) ON DELETE SET NULL,
+  entity           text CHECK (entity IN ('enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id        text,
+  first_message_at timestamptz,
+  last_message_at  timestamptz,
+  message_count    int NOT NULL DEFAULT 0,
+  last_direction   text CHECK (last_direction IN ('inbound','outbound')),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, conversation_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_threads_company_idx ON email_threads (company_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS email_threads_entity_idx ON email_threads (entity, entity_id);
+
+CREATE TABLE IF NOT EXISTS email_messages (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  thread_id            int NOT NULL REFERENCES email_threads(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  from_email           text,
+  from_name            text,
+  to_emails            text[] NOT NULL DEFAULT '{}',
+  cc_emails            text[] NOT NULL DEFAULT '{}',
+  subject              text,
+  snippet              text,
+  body_html            text,
+  has_attachments      boolean NOT NULL DEFAULT false,
+  sent_at              timestamptz NOT NULL,
+  company_id           int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id           int REFERENCES contacts(id) ON DELETE SET NULL,
+  sent_from_tracker_by text,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_messages_thread_idx ON email_messages (thread_id, sent_at);
+
+-- Addresses and domains never synced (newsletters, personal contacts).
+CREATE TABLE IF NOT EXISTS email_blocklist (
+  id          serial PRIMARY KEY,
+  pattern     text NOT NULL UNIQUE,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS connected_accounts_set_updated_at ON connected_accounts;
+CREATE TRIGGER connected_accounts_set_updated_at BEFORE UPDATE ON connected_accounts
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- A client email moves "last contacted" forward, like a logged touch (#31).
+CREATE OR REPLACE FUNCTION email_message_touch() RETURNS trigger AS $$
+DECLARE t email_threads%ROWTYPE;
+BEGIN
+  UPDATE contacts SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE id = NEW.contact_id;
+  UPDATE companies SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE id = NEW.company_id;
+  SELECT * INTO t FROM email_threads WHERE id = NEW.thread_id;
+  IF t.entity = 'quotation' THEN
+    UPDATE quotations SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at) WHERE quotation_no = t.entity_id;
+  ELSIF t.entity = 'enquiry' THEN
+    UPDATE enquiries SET last_contacted_at = GREATEST(COALESCE(last_contacted_at, NEW.sent_at), NEW.sent_at),
+                         first_responded_at = CASE WHEN NEW.direction = 'outbound' THEN COALESCE(first_responded_at, NEW.sent_at) ELSE first_responded_at END
+     WHERE enquiry_no = t.entity_id;
+  END IF;
+  UPDATE email_threads SET message_count = message_count + 1,
+         first_message_at = LEAST(COALESCE(first_message_at, NEW.sent_at), NEW.sent_at),
+         last_message_at = GREATEST(COALESCE(last_message_at, NEW.sent_at), NEW.sent_at),
+         last_direction = CASE WHEN last_message_at IS NULL OR NEW.sent_at >= last_message_at THEN NEW.direction ELSE last_direction END
+   WHERE id = NEW.thread_id;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS email_message_touch ON email_messages;
+CREATE TRIGGER email_message_touch AFTER INSERT ON email_messages FOR EACH ROW EXECUTE FUNCTION email_message_touch();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Shared sales inbox (#30)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inboxes (
+  id                    serial PRIMARY KEY,
+  name                  text NOT NULL,
+  account_id            int NOT NULL UNIQUE REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  default_assignment    text NOT NULL DEFAULT 'owner_of_company'
+                          CHECK (default_assignment IN ('owner_of_company','round_robin','unassigned')),
+  members               text[] NOT NULL DEFAULT '{}',
+  round_robin_last      text,
+  first_response_hours  int,
+  signature             text,
+  active                boolean NOT NULL DEFAULT true,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS inbox_conversations (
+  id                 serial PRIMARY KEY,
+  inbox_id           int NOT NULL REFERENCES inboxes(id) ON DELETE CASCADE,
+  thread_id          int NOT NULL UNIQUE REFERENCES email_threads(id) ON DELETE CASCADE,
+  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
+  from_email         text,
+  from_name          text,
+  status             text NOT NULL DEFAULT 'open' CHECK (status IN ('open','pending_client','snoozed','closed')),
+  assignee           text,
+  priority           text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high')),
+  labels             text[] NOT NULL DEFAULT '{}',
+  last_inbound_at    timestamptz,
+  first_response_at  timestamptz,
+  response_due_at    timestamptz,
+  snoozed_until      timestamptz,
+  closed_at          timestamptz,
+  enquiry_no         text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS inbox_conversations_queue_idx ON inbox_conversations (inbox_id, status, response_due_at);
+CREATE INDEX IF NOT EXISTS inbox_conversations_assignee_idx ON inbox_conversations (assignee, status);
+
+CREATE TABLE IF NOT EXISTS canned_responses (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL,
+  body        text NOT NULL,
+  owner       text,
+  shared      boolean NOT NULL DEFAULT true,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+DROP TRIGGER IF EXISTS inboxes_set_updated_at ON inboxes;
+CREATE TRIGGER inboxes_set_updated_at BEFORE UPDATE ON inboxes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS inbox_conversations_set_updated_at ON inbox_conversations;
+CREATE TRIGGER inbox_conversations_set_updated_at BEFORE UPDATE ON inbox_conversations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS canned_responses_set_updated_at ON canned_responses;
+CREATE TRIGGER canned_responses_set_updated_at BEFORE UPDATE ON canned_responses FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO canned_responses (name, body, shared)
+SELECT v.name, v.body, true FROM (VALUES
+  ('Thanks, we will revert', E'Dear {{contact_name}},
+
+Thank you for writing to Cetizion Verifica. We have noted your requirement and {{my_name}} will get back to you within one working day.
+
+Regards,
+{{my_name}}'),
+  ('Request details for a quote', E'Dear {{contact_name}},
+
+Thank you for your enquiry. To prepare a quotation, could you share the number of sites, the standards in scope and your preferred timeline?
+
+Regards,
+{{my_name}}')
+) AS v(name, body)
+WHERE NOT EXISTS (SELECT 1 FROM canned_responses c WHERE c.name = v.name);
+
+-- ---------------------------------------------------------------------
+-- Project costs (#39)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS project_costs (
+  id           serial PRIMARY KEY,
+  project_id   text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  po_number    text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  category     text NOT NULL DEFAULT 'subcontractor'
+                 CHECK (category IN ('subcontractor','auditor_fee','certification_body','lab_testing','travel','accommodation','materials','other')),
+  description  text NOT NULL,
+  vendor       text,
+  amount       numeric(16,2) CHECK (amount >= 0),
+  currency     text NOT NULL DEFAULT 'INR',
+  incurred_on  date,
+  status       text NOT NULL DEFAULT 'committed' CHECK (status IN ('committed','paid')),
+  document_id  int REFERENCES documents(id),
+  source       text NOT NULL DEFAULT 'manual',
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS project_costs_project_idx ON project_costs (project_id);
+
+DROP TRIGGER IF EXISTS project_costs_set_updated_at ON project_costs;
+CREATE TRIGGER project_costs_set_updated_at BEFORE UPDATE ON project_costs
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('margin_alert_percent', '20', 'Projects with a margin below this percentage are flagged red.'),
+  ('cost_alert_share_percent', '80', 'When a project''s costs pass this share of its PO value, its manager gets a task.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Visits and availability (#42)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS staff (
+  id            serial PRIMARY KEY,
+  name          text NOT NULL,
+  email         text,
+  role          text,
+  working_days  int[] NOT NULL DEFAULT '{1,2,3,4,5,6}',   -- ISO weekdays, Monday = 1
+  active        boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS staff_name_key ON staff (lower(btrim(name)));
+
+CREATE TABLE IF NOT EXISTS staff_leave (
+  id          serial PRIMARY KEY,
+  staff_id    int NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  starts_on   date NOT NULL,
+  ends_on     date NOT NULL,
+  reason      text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_on >= starts_on)
+);
+
+CREATE INDEX IF NOT EXISTS staff_leave_idx ON staff_leave (staff_id, starts_on, ends_on);
+
+CREATE TABLE IF NOT EXISTS visits (
+  id                  serial PRIMARY KEY,
+  project_id          text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  po_number           text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  company_id          int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id          int REFERENCES contacts(id) ON DELETE SET NULL,
+  type                text NOT NULL DEFAULT 'audit' CHECK (type IN ('audit','assessment','training','meeting','follow_up')),
+  title               text NOT NULL,
+  starts_at           timestamptz NOT NULL,
+  ends_at             timestamptz NOT NULL,
+  all_day             boolean NOT NULL DEFAULT true,
+  location            text,
+  city                text,
+  state               text,
+  status              text NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','confirmed','done','cancelled','rescheduled')),
+  milestone_stage_id  int REFERENCES payment_stages(id) ON DELETE SET NULL,
+  travel_id           text REFERENCES travel_logs(travel_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  notify_client       boolean NOT NULL DEFAULT false,
+  reminder_sent_at    timestamptz,
+  confirmed_at        timestamptz,
+  completed_at        timestamptz,
+  notes               text,
+  created_by          text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_at >= starts_at)
+);
+
+CREATE INDEX IF NOT EXISTS visits_when_idx ON visits (starts_at, ends_at);
+CREATE INDEX IF NOT EXISTS visits_project_idx ON visits (project_id);
+
+CREATE TABLE IF NOT EXISTS visit_assignees (
+  visit_id  int NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+  staff_id  int NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  role      text NOT NULL DEFAULT 'member' CHECK (role IN ('lead','member')),
+  PRIMARY KEY (visit_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS visit_assignees_staff_idx ON visit_assignees (staff_id);
+
+DROP TRIGGER IF EXISTS staff_set_updated_at ON staff;
+CREATE TRIGGER staff_set_updated_at BEFORE UPDATE ON staff FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS visits_set_updated_at ON visits;
+CREATE TRIGGER visits_set_updated_at BEFORE UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- The client, contact and stamps follow the project and the status.
+CREATE OR REPLACE FUNCTION visit_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.project_id IS NULL AND NEW.po_number IS NOT NULL THEN
+    SELECT project_id INTO NEW.project_id FROM purchase_orders WHERE po_number = NEW.po_number;
+  END IF;
+  IF NEW.company_id IS NULL AND NEW.project_id IS NOT NULL THEN
+    SELECT company_id INTO NEW.company_id FROM projects WHERE project_id = NEW.project_id;
+  END IF;
+  IF NEW.status = 'confirmed' AND (TG_OP = 'INSERT' OR OLD.status <> 'confirmed') THEN
+    NEW.confirmed_at := COALESCE(NEW.confirmed_at, now());
+  END IF;
+  IF NEW.status = 'done' THEN
+    NEW.completed_at := COALESCE(NEW.completed_at, now());
+  ELSE
+    NEW.completed_at := NULL;
+  END IF;
+  IF TG_OP = 'UPDATE' AND (NEW.starts_at IS DISTINCT FROM OLD.starts_at) THEN
+    NEW.reminder_sent_at := NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS a_visit_defaults ON visits;
+CREATE TRIGGER a_visit_defaults BEFORE INSERT OR UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION visit_defaults();
+
+-- Completing a visit reaches its milestone; the stage becomes invoiceable.
+CREATE OR REPLACE FUNCTION visit_milestone() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND NEW.milestone_stage_id IS NOT NULL
+     AND (TG_OP = 'INSERT' OR OLD.status <> 'done' OR OLD.milestone_stage_id IS DISTINCT FROM NEW.milestone_stage_id) THEN
+    UPDATE payment_stages
+       SET milestone_reached_on = COALESCE(milestone_reached_on, (NEW.ends_at AT TIME ZONE 'Asia/Kolkata')::date)
+     WHERE id = NEW.milestone_stage_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS b_visit_milestone ON visits;
+CREATE TRIGGER b_visit_milestone AFTER INSERT OR UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION visit_milestone();
+
+-- Everyone who has run a project or a trip is a starting list of people.
+INSERT INTO staff (name)
+SELECT DISTINCT btrim(n) FROM (
+  SELECT project_manager AS n FROM projects
+  UNION SELECT employee_name FROM travel_logs
+) x
+WHERE n IS NOT NULL AND btrim(n) <> ''
+ON CONFLICT DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('visit_reminder_days', '1', 'Days before a visit at which the team (and, if chosen, the client) are reminded.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Outgoing webhooks (#49)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id                     serial PRIMARY KEY,
+  name                   text NOT NULL,
+  url                    text NOT NULL,
+  events                 text[] NOT NULL DEFAULT '{}',
+  secret                 text NOT NULL,
+  min_value              numeric(16,2),
+  sector                 text,
+  include_personal_data  boolean NOT NULL DEFAULT false,
+  active                 boolean NOT NULL DEFAULT true,
+  when_inactive          text NOT NULL DEFAULT 'queue' CHECK (when_inactive IN ('queue','drop')),
+  created_by             text,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id             bigserial PRIMARY KEY,
+  event          text NOT NULL,
+  entity         text,
+  entity_id      text,
+  value          numeric(16,2),
+  company_id     int,
+  data           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at    timestamptz NOT NULL DEFAULT now(),
+  dispatched_at  timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS webhook_events_pending_idx ON webhook_events (id) WHERE dispatched_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id                bigserial PRIMARY KEY,
+  endpoint_id       int NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id          bigint NOT NULL REFERENCES webhook_events(id) ON DELETE CASCADE,
+  idempotency_key   text NOT NULL UNIQUE,
+  status            text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','held','succeeded','failed')),
+  attempts          int NOT NULL DEFAULT 0,
+  next_attempt_at   timestamptz NOT NULL DEFAULT now(),
+  last_status_code  int,
+  last_response     text,
+  last_error        text,
+  delivered_at      timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (endpoint_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS webhook_deliveries_endpoint_idx ON webhook_deliveries (endpoint_id, created_at DESC);
+
+DROP TRIGGER IF EXISTS webhook_endpoints_set_updated_at ON webhook_endpoints;
+CREATE TRIGGER webhook_endpoints_set_updated_at BEFORE UPDATE ON webhook_endpoints FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Record one event, if anyone listens, and wake the worker.
+CREATE OR REPLACE FUNCTION webhook_emit(p_event text, p_entity text, p_entity_id text, p_value numeric, p_company int, p_data jsonb)
+RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM webhook_endpoints WHERE (active OR when_inactive = 'queue') AND p_event = ANY(events)) THEN
+    RETURN;
+  END IF;
+  INSERT INTO webhook_events (event, entity, entity_id, value, company_id, data)
+  VALUES (p_event, p_entity, p_entity_id, p_value, p_company, COALESCE(p_data, '{}'::jsonb));
+  PERFORM pg_notify('webhook_events', p_event);
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION webhook_quotation_events() RETURNS trigger AS $$
+DECLARE st pipeline_stages%ROWTYPE; d jsonb;
+BEGIN
+  d := jsonb_build_object('quotation_no', NEW.quotation_no, 'client_name', NEW.client_name, 'company_id', NEW.company_id,
+         'service', NEW.service_quoted, 'status', NEW.status, 'value', NEW.quotation_value, 'currency', NEW.currency,
+         'sales_person', NEW.sales_person, 'contact_person', NEW.contact_person, 'revision', NEW.revision, 'valid_until', NEW.valid_until);
+  IF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL THEN
+    PERFORM webhook_emit('quotation.sent', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+  END IF;
+  IF NEW.stage_id IS DISTINCT FROM OLD.stage_id AND NEW.stage_id IS NOT NULL THEN
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    d := d || jsonb_build_object('stage', st.name, 'probability', NEW.probability,
+           'previous_stage', (SELECT name FROM pipeline_stages WHERE id = OLD.stage_id));
+    PERFORM webhook_emit('quotation.stage_changed', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+    IF st.type = 'won' THEN
+      PERFORM webhook_emit('quotation.won', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+    ELSIF st.type = 'lost' THEN
+      PERFORM webhook_emit('quotation.lost', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id,
+        d || jsonb_build_object('lost_reason', (SELECT name FROM lost_reasons WHERE id = NEW.lost_reason_id), 'competitor', NEW.competitor));
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_webhook_quotation ON quotations;
+CREATE TRIGGER z_webhook_quotation AFTER UPDATE ON quotations FOR EACH ROW EXECUTE FUNCTION webhook_quotation_events();
+
+CREATE OR REPLACE FUNCTION webhook_record_events() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'enquiries' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('enquiry.created', 'enquiry', NEW.enquiry_no, NEW.estimated_value, NEW.company_id,
+      jsonb_build_object('enquiry_no', NEW.enquiry_no, 'client_name', NEW.client_name, 'service', NEW.service, 'status', NEW.status,
+        'sales_person', NEW.sales_person, 'contact_person', NEW.contact_person, 'estimated_value', NEW.estimated_value, 'currency', NEW.currency));
+  ELSIF TG_TABLE_NAME = 'purchase_orders' THEN
+    IF TG_OP = 'INSERT' THEN
+      PERFORM webhook_emit('po.received', 'purchase_order', NEW.po_number, NEW.po_value,
+        (SELECT company_id FROM projects WHERE project_id = NEW.project_id),
+        jsonb_build_object('po_number', NEW.po_number, 'project_id', NEW.project_id, 'quotation_no', NEW.quotation_no,
+          'po_date', NEW.po_date, 'value', NEW.po_value, 'currency', NEW.currency,
+          'client_name', (SELECT client_name FROM projects WHERE project_id = NEW.project_id)));
+    ELSIF NEW.actual_delivery_date IS NOT NULL AND OLD.actual_delivery_date IS NULL THEN
+      PERFORM webhook_emit('project.delivered', 'project', NEW.project_id, NEW.po_value,
+        (SELECT company_id FROM projects WHERE project_id = NEW.project_id),
+        jsonb_build_object('project_id', NEW.project_id, 'po_number', NEW.po_number, 'delivered_on', NEW.actual_delivery_date,
+          'client_name', (SELECT client_name FROM projects WHERE project_id = NEW.project_id)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'payment_stages' THEN
+    IF NEW.invoice_no IS NOT NULL AND OLD.invoice_no IS NULL THEN
+    PERFORM webhook_emit('invoice.issued', 'payment_stage', NEW.id::text, (SELECT round(NEW.stage_percent * po_value, 2) FROM purchase_orders WHERE po_number = NEW.po_number),
+      (SELECT p.company_id FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = NEW.po_number),
+      jsonb_build_object('invoice_no', NEW.invoice_no, 'invoice_date', NEW.invoice_date, 'po_number', NEW.po_number,
+        'stage', NEW.stage_name, 'amount', (SELECT round(NEW.stage_percent * po_value, 2) FROM purchase_orders WHERE po_number = NEW.po_number)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'payments' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('payment.received', 'payment_stage', NEW.stage_id::text, NEW.amount,
+      (SELECT p.company_id FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id WHERE s.id = NEW.stage_id),
+      jsonb_build_object('stage_id', NEW.stage_id, 'amount', NEW.amount, 'tds_amount', NEW.tds_amount, 'received_on', NEW.received_on,
+        'mode', NEW.mode, 'reference', NEW.reference,
+        'invoice_no', (SELECT invoice_no FROM payment_stages WHERE id = NEW.stage_id),
+        'po_number', (SELECT po_number FROM payment_stages WHERE id = NEW.stage_id)));
+  ELSIF TG_TABLE_NAME = 'engagements' THEN
+    IF NEW.status = 'renewal_open' AND OLD.status IS DISTINCT FROM 'renewal_open' THEN
+    PERFORM webhook_emit('renewal.opened', 'company', NEW.company_id::text, NULL, NEW.company_id,
+      jsonb_build_object('client_name', NEW.client_name, 'service', NEW.service_name, 'due_on', NEW.next_due_on, 'owner', NEW.owner,
+        'renewal_quotation_no', (SELECT quotation_no FROM quotations WHERE id = NEW.renewal_quotation_id)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'visits' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('visit.scheduled', 'project', NEW.project_id, NULL, NEW.company_id,
+      jsonb_build_object('visit_id', NEW.id, 'title', NEW.title, 'type', NEW.type, 'starts_at', NEW.starts_at, 'ends_at', NEW.ends_at,
+        'project_id', NEW.project_id, 'city', NEW.city, 'status', NEW.status));
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_webhook_enquiry ON enquiries;
+CREATE TRIGGER z_webhook_enquiry AFTER INSERT ON enquiries FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_po ON purchase_orders;
+CREATE TRIGGER z_webhook_po AFTER INSERT OR UPDATE ON purchase_orders FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_stage ON payment_stages;
+CREATE TRIGGER z_webhook_stage AFTER UPDATE ON payment_stages FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_payment ON payments;
+CREATE TRIGGER z_webhook_payment AFTER INSERT ON payments FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_engagement ON engagements;
+CREATE TRIGGER z_webhook_engagement AFTER UPDATE ON engagements FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_visit ON visits;
+CREATE TRIGGER z_webhook_visit AFTER INSERT ON visits FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('incoming_enquiries_enabled', 'false', 'Accept enquiries posted to /api/hooks/enquiries with a valid signature (INCOMING_WEBHOOK_SECRET).')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client portal (#47)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portal_links (
+  id          serial PRIMARY KEY,
+  contact_id  int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS portal_sessions (
+  id            text PRIMARY KEY,
+  contact_id    int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  company_id    int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  expires_at    timestamptz NOT NULL,
+  revoked_at    timestamptz,
+  last_seen_at  timestamptz,
+  ip            text,
+  user_agent    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_sessions_contact_idx ON portal_sessions (contact_id);
+
+CREATE TABLE IF NOT EXISTS portal_audit (
+  id          bigserial PRIMARY KEY,
+  session_id  text,
+  contact_id  int REFERENCES contacts(id) ON DELETE SET NULL,
+  company_id  int REFERENCES companies(id) ON DELETE CASCADE,
+  action      text NOT NULL,
+  target      text,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_audit_company_idx ON portal_audit (company_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- Accounting integration (#48)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS accounting_mappings (
+  id          serial PRIMARY KEY,
+  kind        text NOT NULL CHECK (kind IN ('customer','service','ledger','tax')),
+  tracker_ref text NOT NULL,
+  books_ref   text NOT NULL,
+  books_name  text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (kind, tracker_ref)
+);
+
+CREATE TABLE IF NOT EXISTS books_entries (
+  id              serial PRIMARY KEY,
+  source          text NOT NULL CHECK (source IN ('zoho','tally','file')),
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment','credit_note')),
+  books_id        text NOT NULL,
+  number          text,
+  customer_name   text,
+  customer_gstin  text,
+  company_id      int REFERENCES companies(id) ON DELETE SET NULL,
+  entry_date      date,
+  due_date        date,
+  taxable_amount  numeric(16,2),
+  tax_amount      numeric(16,2),
+  total_amount    numeric(16,2),
+  tds_amount      numeric(16,2),
+  currency        text NOT NULL DEFAULT 'INR',
+  reference       text,
+  status          text,
+  raw             jsonb,
+  imported_at     timestamptz NOT NULL DEFAULT now(),
+  imported_by     text,
+  UNIQUE (source, kind, books_id)
+);
+
+CREATE INDEX IF NOT EXISTS books_entries_number_idx ON books_entries (kind, upper(regexp_replace(number, '\s', '', 'g')));
+
+CREATE TABLE IF NOT EXISTS reconciliation_items (
+  id              serial PRIMARY KEY,
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment')),
+  match_key       text NOT NULL UNIQUE,
+  stage_id        int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  payment_id      int REFERENCES payments(id) ON DELETE SET NULL,
+  books_entry_id  int REFERENCES books_entries(id) ON DELETE CASCADE,
+  status          text NOT NULL CHECK (status IN ('matched','amount_differs','date_differs','missing_in_books','missing_in_tracker','resolved')),
+  differences     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  note            text,
+  resolved_by     text,
+  resolved_at     timestamptz,
+  checked_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS reconciliation_items_status_idx ON reconciliation_items (status);
+
+CREATE TABLE IF NOT EXISTS accounting_log (
+  id          bigserial PRIMARY KEY,
+  action      text NOT NULL,
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  done_by     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('accounting_provider', 'none', 'Where the books are: none, zoho, tally or file (export files uploaded by hand).'),
+  ('accounting_apply_payments', 'false', 'Record payments found in the books on the matching tracker invoice automatically.'),
+  ('company_state_code', '', 'Two-digit GST state code of our registration (e.g. 27 for Maharashtra). Decides CGST+SGST or IGST on draft invoices.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- API tokens for the MCP server (#50)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id            serial PRIMARY KEY,
+  name          text NOT NULL,
+  token_hash    text NOT NULL UNIQUE,
+  token_prefix  text NOT NULL,
+  role          text NOT NULL DEFAULT 'sales' CHECK (role IN ('admin','sales')),
+  -- role says whose records the token sees; this says whether it may
+  -- change any of them. Off unless asked for: a token requested without
+  -- saying otherwise is a reading token (#50).
+  can_write     boolean NOT NULL DEFAULT false,
+  person        text,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz,
+  revoked_at    timestamptz,
+  CHECK (role = 'admin' OR person IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS api_token_log (
+  id          bigserial PRIMARY KEY,
+  token_id    int REFERENCES api_tokens(id) ON DELETE CASCADE,
+  tool        text NOT NULL,
+  arguments   jsonb,
+  ok          boolean NOT NULL DEFAULT true,
+  error       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS api_token_log_token_idx ON api_token_log (token_id, created_at DESC);
+
+-- Operational alerts (#38)
+INSERT INTO settings (key, value, notes) VALUES
+  ('alert_email', '', 'Who is emailed about failed jobs, backups, sign-in attacks, certificates and disk space. Blank: ALERT_EMAIL, else nobody.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Sign-in protection (#34)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS auth_events (
+  id          bigserial PRIMARY KEY,
+  username    text,
+  ip          text,
+  ok          boolean NOT NULL,
+  reason      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('signin_lockout_failures', '10', 'Failed sign-ins for one account from one address, within the lockout window, before it is refused and an alert is raised.'),
+  ('signin_lockout_minutes', '15', 'The lockout window, in minutes.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Backup records (#33)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_runs (
+  id           bigserial PRIMARY KEY,
+  kind         text NOT NULL CHECK (kind IN ('backup','verify','drill')),
+  ok           boolean NOT NULL,
+  started_at   timestamptz,
+  finished_at  timestamptz NOT NULL DEFAULT now(),
+  size_bytes   bigint,
+  location     text,
+  detail       jsonb NOT NULL DEFAULT '{}'::jsonb,
+  error        text
+);
+
+CREATE INDEX IF NOT EXISTS backup_runs_kind_idx ON backup_runs (kind, finished_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('backup_max_age_hours', '8', 'Alert when no successful backup has been recorded for this many hours.'),
+  ('backup_verify_max_age_days', '8', 'Alert when the restore check has not passed for this many days.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

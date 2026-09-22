@@ -11,9 +11,14 @@
  * admin page can run any job by hand, and reminders are also logged when
  * EMAIL_MODE is not live.
  */
-import PgBoss from 'pg-boss';
+import { PgBoss } from 'pg-boss';
 import { config } from './config.js';
 import { JOBS, runJob } from './jobs.js';
+import { pool } from './db.js';
+import { runWebhooks } from './lib/webhooks.js';
+import { watchProcess } from './lib/ops/errors.js';
+
+watchProcess('worker');
 
 const boss = new PgBoss({ connectionString: config.databaseUrl, schema: 'pgboss' });
 boss.on('error', (err) => console.error('[worker] pg-boss', err));
@@ -28,8 +33,22 @@ for (const [name, job] of Object.entries(JOBS)) {
   });
   console.log(`[worker] ${name} at "${job.cron}" (${config.businessTimeZone})`);
 }
+// Webhook events are sent within seconds: the database notifies on each
+// one, and the minute schedule above catches anything missed.
+let sending = false;
+let again = false;
+async function sendWebhooks() {
+  if (sending) { again = true; return; }
+  sending = true;
+  try { do { again = false; await runWebhooks(); } while (again); }
+  catch (err) { console.error('[worker] webhooks', err.message); }
+  finally { sending = false; }
+}
+const listener = await pool.connect();
+listener.on('notification', () => { sendWebhooks(); });
+await listener.query('LISTEN webhook_events');
 console.log('[worker] running');
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, async () => { await boss.stop({ graceful: true, timeout: 10_000 }); process.exit(0); });
+  process.on(signal, async () => { listener.release(); await boss.stop({ graceful: true, timeout: 10_000 }); process.exit(0); });
 }

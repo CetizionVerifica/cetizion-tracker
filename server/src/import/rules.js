@@ -27,6 +27,7 @@
  */
 import { z } from 'zod';
 import { parseMoney } from './parse.js';
+import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.js';
 
 export const DEFAULT_RULES = {
@@ -115,9 +116,15 @@ export function extractRow(raw, mapping) {
   const pending = parseMoney(get('pending'));
   const invAmt = parseMoney(get('invoice_amount'));
   const snoRaw = get('sno');
-  const sno = Number.isFinite(Number(snoRaw)) && snoRaw !== null ? Number(snoRaw) : raw.__row;
+  // The sheet's own S.No when it has one, else the row's position. Two rows
+  // can end up with the same one — a blank S.No on row 12 next to a row
+  // numbered 12 — so it labels a row for a person, and never identifies it:
+  // `row` is the sheet position and is unique.
+  const snoGiven = Number.isFinite(Number(snoRaw)) && snoRaw !== null && String(snoRaw).trim() !== '';
+  const sno = snoGiven ? Number(snoRaw) : raw.__row;
   return {
     sno,
+    sno_given: snoGiven,
     row: raw.__row,
     client: str(get('client')),
     industry: str(get('industry')),
@@ -178,10 +185,6 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
   for (const s of live.stages || []) stageCount[norm(s.po_number)] = (stageCount[norm(s.po_number)] || 0) + 1;
   const liveInvoiceNos = new Map((live.stages || []).filter((s) => s.invoice_no).map((s) => [norm(s.invoice_no), s]));
 
-  // PO numbers that appear on more than one row of the sheet.
-  const poCounts = {};
-  for (const raw of rows) { const r = extractRow(raw, mapping); if (r.po_number) poCounts[norm(r.po_number)] = (poCounts[norm(r.po_number)] || 0) + 1; }
-
   const push = (item) => { seq += 1; items.push({ seq, included: true, action: 'create', flags: [], assumptions: [], ...item }); return items[items.length - 1]; };
   const nextQuotationNo = () => { let n; do { n = `CTZ/QT/${live.year}/${String(qNo++).padStart(3, '0')}`; } while (usedQ.has(n)); usedQ.add(n); return n; };
   const nextProjectId = () => { let n; do { n = `PRJ-${live.year}-${String(pNo++).padStart(3, '0')}`; } while (usedP.has(n)); usedP.add(n); return n; };
@@ -192,12 +195,20 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     item.flags.push({ level: 'warn', code: 'duplicate', message: `${certain ? 'Already' : 'Possibly already'} on the site as ${ref} · matched by ${how}`, by: 'rule', match: how, certain });
   };
 
+  // S.No repeated on several rows, so a label can say which row it means.
+  const snoCounts = {};
+  for (const raw of rows) { const x = extractRow(raw, mapping); if (x.sno_given) snoCounts[x.sno] = (snoCounts[x.sno] || 0) + 1; }
+
   let lastProposalDate = null;   // nearest earlier row's date, for rows with none
 
   for (const raw of rows) {
     const r = extractRow(raw, mapping);
-    const hint = hints[r.sno] || { advance_percent: null, flags: [] };
-    const tag = `S.No ${r.sno}`;
+    // Keyed by the sheet position: hints must never cross between two rows
+    // that happen to share an S.No.
+    const hint = hints[r.row] || { advance_percent: null, flags: [] };
+    const tag = !r.sno_given ? `sheet row ${r.row}`
+      : snoCounts[r.sno] > 1 ? `S.No ${r.sno} (sheet row ${r.row})`
+      : `S.No ${r.sno}`;
     const dateBasis = r.proposal_date || lastProposalDate;
     const dateBasisNote = r.proposal_date ? 'proposal date' : `previous row's proposal date (${lastProposalDate})`;
     if (r.proposal_date) lastProposalDate = r.proposal_date;
@@ -281,7 +292,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
     const fullOnCompletion = hint.flags.some((f) => f.code === 'full_payment_on_completion');
     const poItem = push({
-      step: 'purchase_order', source_row: r.sno, parent_seq: projItem.seq,
+      step: 'purchase_order', source_row: r.sno, source_label: tag, parent_seq: projItem.seq,
       assumptions: poAssumptions,
       payload: {
         po_number: r.po_number, project_id: projectId, po_date: poDate, po_value: r.po_amount,
@@ -296,7 +307,6 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       if (Number(poExisting.po_value) !== Number(r.po_amount)) poItem.flags.push({ level: 'info', code: 'value_differs', message: `Site has ${poExisting.currency || ''} ${poExisting.po_value}, sheet has ${r.po_amount}`, by: 'rule' });
     }
     if (!poDate) poItem.flags.push({ level: 'warn', code: 'no_po_date', message: 'No PO date and no proposal date to derive one', by: 'rule' });
-    if (poCounts[norm(r.po_number)] > 1) poItem.flags.push({ level: 'warn', code: 'duplicate_po_in_sheet', message: 'This PO number appears on more than one row of the sheet', by: 'rule' });
     if (r.received !== null && r.received > r.po_amount + 0.01) poItem.flags.push({ level: 'warn', code: 'received_exceeds_po', message: `Received ${r.received} is more than the PO value ${r.po_amount}: check the PO amount in the sheet`, by: 'rule' });
     if (r.po_amount_reinterpreted) poItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.po_amount_reinterpreted}"; read as ${r.po_amount} assuming a mistyped comma. Confirm with sales`, by: 'rule' });
 
@@ -375,8 +385,67 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
   }
 
+  flagRepeatedPoNumbers(items);
+  for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
   const summary = summarise(items, skipped);
   return { items, skipped, summary, rules };
+}
+
+/**
+ * Two rows carrying the same PO number each plan to create it, and the second
+ * insert breaks the unique constraint at commit time — after the quotations
+ * and projects before it have been written, so the whole batch rolls back and
+ * the review starts again. Settle it during review instead: the first row
+ * creates the PO, the others have to be unticked (or given their own number)
+ * before the commit is allowed.
+ *
+ * Rows whose PO is already on the site are left alone: those keep or update
+ * the existing one and never insert, so they cannot collide.
+ */
+export function flagRepeatedPoNumbers(items) {
+  const byNumber = new Map();
+  for (const it of items) {
+    if (it.step !== 'purchase_order' || it.action !== 'create') continue;
+    const key = norm(it.payload?.po_number);
+    if (!key) continue;
+    if (!byNumber.has(key)) byNumber.set(key, []);
+    byNumber.get(key).push(it);
+  }
+  for (const group of byNumber.values()) {
+    if (group.length < 2) continue;
+    const [first, ...rest] = group;
+    const label = (it) => it.source_label || `S.No ${it.source_row}`;
+    const where = group.map(label).join(', ');
+    first.flags.push({ level: 'warn', code: 'duplicate_po_in_sheet', message: `PO ${first.payload.po_number} is on ${group.length} rows of the sheet (${where}); this row creates it`, by: 'rule' });
+    for (const it of rest) {
+      it.flags.push({ level: 'error', code: 'duplicate_po_in_sheet', message: `PO ${it.payload.po_number} is already created by ${label(first)}. Untick this row, or correct its PO number`, by: 'rule' });
+    }
+  }
+  return items;
+}
+
+const AMOUNT_FIELDS = ['quotation_value', 'po_value', 'service_value', 'amount_received'];
+const SCHEMAS = { quotation: 'quotations', project: 'projects' };
+
+/**
+ * What would stop the commit, shown at review time instead: a negative
+ * amount, or a value the record's own form would refuse (too long, wrong
+ * type). Checks only the fields present, since ids are filled at commit.
+ */
+export function reviewFlags(step, payload, flags = []) {
+  const kept = flags.filter((f) => f.code !== 'negative_amount' && f.code !== 'invalid_value');
+  const bad = AMOUNT_FIELDS.filter((k) => payload?.[k] !== null && payload?.[k] !== undefined && payload[k] !== '' && Number(payload[k]) < 0);
+  if (bad.length) kept.push({ level: 'error', code: 'negative_amount', message: `Negative amount in ${bad.map((k) => k.replace(/_/g, ' ')).join(', ')}: correct it or untick the row`, by: 'rule' });
+  const resource = resources[SCHEMAS[step]];
+  if (resource && payload) {
+    const present = Object.fromEntries(Object.entries(payload).filter(([k, v]) => v !== null && v !== undefined && v !== '' && !(AMOUNT_FIELDS.includes(k) && bad.includes(k))));
+    const parsed = resource.schema.partial().safeParse(present);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((x) => `${String(x.path[0]).replace(/_/g, ' ')}: ${x.message}`).join('; ');
+      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Correct it or untick the row`, by: 'rule' });
+    }
+  }
+  return kept;
 }
 
 export function summarise(items, skipped = []) {

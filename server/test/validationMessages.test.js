@@ -77,3 +77,28 @@ describe('amounts', () => {
     assert.equal(fields.amount_reimbursed, 'Enter an amount');
   });
 });
+
+describe('columns the database will not accept as empty', () => {
+  // Each of these is NOT NULL with no default. Declared optional, a missing
+  // value slipped past validation, reached Postgres and came back as a 500
+  // with no field named — so the form had nothing to show the person.
+  const cases = [
+    ['a pipeline stage without a probability', '/api/pipeline-stages', { name: 'Negotiating', type: 'open' }, 'probability'],
+    ['a quotation line with no quotation', '/api/quotation-lines', { description: 'Audit', qty: 1, rate: 100 }, 'quotation_id'],
+    ['a payment-terms line with no template', '/api/payment-terms-template-lines', { stage_no: 1, stage_name: 'Advance', percent: 50 }, 'template_id'],
+    ['a payment-terms line with no percentage', '/api/payment-terms-template-lines', { template_id: 1, stage_no: 1, stage_name: 'Advance' }, 'percent'],
+    ['a checklist line with no step number', '/api/onboarding-template-lines', { template_id: 1, step: 'Kick-off' }, 'step_no'],
+    ['a receipt with no stage', '/api/payments', { amount: 1000, received_on: '2026-09-21' }, 'stage_id'],
+    ['a receipt with no amount', '/api/payments', { stage_id: 1, received_on: '2026-09-21' }, 'amount'],
+    ['an engagement with no next due date', '/api/engagements', { client_name: 'Hetero', service_name: 'EcoVadis' }, 'next_due_on'],
+    ['an attachment with no document', '/api/attachments', { entity: 'company', entity_id: '1' }, 'document_id'],
+  ];
+
+  for (const [name, path, body, field] of cases) {
+    test(`${name} is a field error, not a 500`, async () => {
+      const fields = await fieldsFrom(path, body);
+
+      assert.equal(fields[field], 'Required');
+    });
+  }
+});

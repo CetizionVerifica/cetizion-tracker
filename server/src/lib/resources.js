@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { quoteWonEnquiry } from './enquiries.js';
 import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
-import { STATUS } from './statuses.js';
+import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -72,6 +72,7 @@ const requiredDate = () =>
   z.preprocess(blankToNull, z.string({ error: 'Required' }).regex(DATE_PATTERN, 'Use YYYY-MM-DD'));
 
 const int = (opts) => num(opts).transform((v) => (v === null || v === undefined ? v : Math.round(v)));
+const requiredInt = (opts) => requiredNum(opts).transform((v) => Math.round(v));
 
 const bool = () =>
   z.preprocess(
@@ -82,8 +83,8 @@ const bool = () =>
 const enumOf = (values) => z.enum(values);
 
 // Defined in statuses.js, which the report modules read without pulling in
-// this registry. Re-exported here because the routes import it from here.
-export { STATUS };
+// this registry. Re-exported here because the routes import them from here.
+export { LEGACY_ENQUIRY_STATUS, STATUS };
 
 // ---------------------------------------------------------------------
 // Resource registry
@@ -129,7 +130,7 @@ export const resources = {
     defaultSort: 'name',
     search: ['name', 'email', 'phone', 'role'],
     filters: ['company_id', 'is_billing'],
-    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes'],
+    columns: ['company_id', 'name', 'email', 'phone', 'role', 'is_billing', 'opt_out_reminders', 'notes', 'whatsapp_number', 'preferred_channel', 'best_time_to_call', 'do_not_contact', 'whatsapp_opt_in_at', 'whatsapp_opt_in_source'],
     schema: z.object({
       company_id: int({ min: 1 }),
       name: requiredStr(160),
@@ -139,11 +140,18 @@ export const resources = {
       is_billing: bool(),
       opt_out_reminders: bool(),
       notes: str(1000),
+      whatsapp_number: str(40),
+      preferred_channel: z.preprocess(blankToNull, z.enum(['email', 'call', 'whatsapp', 'meeting']).nullable().optional()),
+      best_time_to_call: str(120),
+      do_not_contact: bool(),
+      whatsapp_opt_in_at: date(),
+      whatsapp_opt_in_source: str(120),
     }),
   },
 
   enquiries: {
     table: 'enquiries',
+    filterAliases: { status: LEGACY_ENQUIRY_STATUS },
     view: null,
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
@@ -153,14 +161,17 @@ export const resources = {
     autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
     search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
+    dateFilter: 'enquiry_date',
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
-      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector', 'country',
-      'contact_person', 'sales_person', 'sales_person_email', 'service',
-      'status', 'quotation_no',
+      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector',
+      'country', 'contact_person', 'sales_person', 'sales_person_email', 'service',
+      'status', 'quotation_no', 'source_id', 'estimated_value', 'currency',
+      'expected_decision_date', 'next_follow_up_at', 'unqualified_reason_id', 'unqualified_notes', 'services_interested',
+      'notes',
     ],
     schema: z.object({
       enquiry_no: str(60),
@@ -173,8 +184,17 @@ export const resources = {
       sales_person: str(120),
       sales_person_email: str(160),
       service: str(300),
-      status: enumOf(STATUS.enquiry).default('In Progress'),
+      status: z.preprocess((v) => LEGACY_ENQUIRY_STATUS[v] ?? v, enumOf(STATUS.enquiry)).default('New'),
       quotation_no: str(60),
+      source_id: int({ min: 1 }),
+      estimated_value: num({ min: 0 }),
+      currency: enumOf(STATUS.currency).default('INR'),
+      expected_decision_date: date(),
+      next_follow_up_at: date(),
+      unqualified_reason_id: int({ min: 1 }),
+      unqualified_notes: str(1000),
+      services_interested: str(500),
+      notes: str(2000),
     }),
     onSave: quoteWonEnquiry,
   },
@@ -191,13 +211,15 @@ export const resources = {
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
+      'valid_until', 'terms', 'place_of_supply_state',
+      'stage_id', 'probability', 'expected_close_date', 'next_step', 'lost_reason_id', 'lost_notes', 'competitor',
     ],
     schema: z.object({
       quotation_no: str(60),
@@ -216,6 +238,16 @@ export const resources = {
       project_id: str(40),
       remarks: str(1000),
       document_id: int({ min: 1 }),
+      valid_until: date(),
+      terms: str(4000),
+      place_of_supply_state: str(80),
+      stage_id: int({ min: 1 }),
+      probability: int({ min: 0, max: 100 }),
+      expected_close_date: date(),
+      next_step: str(300),
+      lost_reason_id: int({ min: 1 }),
+      lost_notes: str(1000),
+      competitor: str(160),
     }),
   },
 
@@ -234,7 +266,7 @@ export const resources = {
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
-      'planned_delivery_date', 'percent_complete', 'remarks',
+      'planned_delivery_date', 'percent_complete', 'remarks', 'estimated_cost',
     ],
     schema: z.object({
       project_id: str(40),
@@ -248,6 +280,7 @@ export const resources = {
       // The column is NOT NULL; a blank form field means not started.
       percent_complete: num({ min: 0, max: 1 }).transform((v) => v ?? 0),
       remarks: str(1000),
+      estimated_cost: num({ min: 0 }),
       // Not a column on projects: the link lives on quotations.project_id and
       // is written by linkProjectQuotation. Declared here so it survives
       // validation and reaches onSave.
@@ -332,7 +365,7 @@ export const resources = {
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
-      'reminder_sent_on', 'remarks', 'document_id',
+      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -347,6 +380,9 @@ export const resources = {
       reminder_sent_on: date(),
       document_id: int({ min: 1 }),
       remarks: str(1000),
+      credit_days: int({ min: 0, max: 365 }),
+      milestone_name: str(160),
+      milestone_reached_on: date(),
     }),
   },
 
@@ -363,7 +399,7 @@ export const resources = {
     ],
     schema: z.object({
       project_id: requiredStr(40),
-      step_no: int({ min: 1 }),
+      step_no: requiredInt({ min: 1 }),
       stage: str(60),
       step: requiredStr(400),
       owner: str(120),
@@ -458,6 +494,262 @@ export const resources = {
     }),
   },
 
+  'pipeline-stages': {
+    // The board's own shape: a stage's status mapping and probability rewrite
+    // quotation statuses and the whole forecast through c_stage_sync.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'pipeline_stages',
+    view: null,
+    label: 'Pipeline stage',
+    defaultSort: 'sort_order, id',
+    search: ['name'],
+    filters: ['type', 'active'],
+    columns: ['name', 'probability', 'type', 'maps_to_status', 'sort_order', 'color', 'rotting_days', 'active'],
+    schema: z.object({
+      name: requiredStr(80),
+      probability: requiredInt({ min: 0, max: 100 }),
+      type: enumOf(['open', 'paused', 'won', 'lost']).default('open'),
+      maps_to_status: enumOf(STATUS.quotation).default('Submitted'),
+      sort_order: int().default(0),
+      color: str(20),
+      rotting_days: int({ min: 1, max: 365 }),
+      active: bool(),
+    }),
+  },
+
+  engagements: {
+    table: 'engagements',
+    view: null,
+    label: 'Engagement',
+    defaultSort: 'next_due_on',
+    search: ['client_name', 'service_name', 'po_number'],
+    filters: ['status', 'company_id', 'owner'],
+    columns: ['client_name', 'service_name', 'valid_until', 'next_due_on', 'status', 'owner', 'notes'],
+    schema: z.object({
+      client_name: requiredStr(160),
+      service_name: requiredStr(300),
+      valid_until: date(),
+      next_due_on: requiredDate(),
+      status: enumOf(['active', 'renewal_open', 'renewed', 'lapsed', 'cancelled']).default('active'),
+      owner: str(120),
+      notes: str(2000),
+    }),
+  },
+
+  payments: {
+    // What has actually been received. payment_stages.amount_received is
+    // computed from these rows by trigger, so a deleted or re-pointed
+    // payment silently moves Due now, Collections and the forecast.
+    // Recording a receipt is ordinary work and goes through
+    // POST /payment-stages/:id/payment; editing the ledger by hand is not.
+    adminOnlyWrites: true,
+    table: 'payments',
+    view: null,
+    label: 'Payment',
+    defaultSort: 'received_on DESC, id DESC',
+    search: ['reference', 'notes'],
+    filters: ['stage_id', 'mode'],
+    columns: ['stage_id', 'amount', 'tds_amount', 'received_on', 'mode', 'reference', 'notes', 'recorded_by'],
+    schema: z.object({
+      stage_id: requiredInt({ min: 1 }),
+      amount: requiredNum({ min: 0 }),
+      tds_amount: num({ min: 0 }).default(0),
+      received_on: date(),
+      mode: enumOf(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).default('bank_transfer'),
+      reference: str(120),
+      notes: str(1000),
+      recorded_by: str(120),
+    }),
+  },
+
+  tasks: {
+    table: 'tasks',
+    view: null,
+    label: 'Task',
+    defaultSort: 'due_at NULLS LAST, id',
+    search: ['title', 'description', 'entity_id', 'assignee'],
+    filters: ['entity', 'entity_id', 'status', 'assignee', 'priority', 'type'],
+    columns: ['entity', 'entity_id', 'title', 'description', 'due_at', 'status', 'priority', 'type', 'assignee', 'created_by'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      title: requiredStr(300),
+      description: str(2000),
+      due_at: date(),
+      status: enumOf(['todo', 'in_progress', 'done']).default('todo'),
+      priority: enumOf(['low', 'normal', 'high']).default('normal'),
+      type: enumOf(['call', 'email', 'meeting', 'follow_up', 'document', 'other']).default('follow_up'),
+      assignee: str(120),
+      created_by: str(120),
+    }),
+  },
+
+  notes: {
+    table: 'notes',
+    stampActor: 'author',
+    view: null,
+    label: 'Note',
+    defaultSort: 'pinned DESC, created_at DESC',
+    search: ['body'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'body', 'author', 'pinned'],
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      body: requiredStr(10000),
+      author: str(120),
+      pinned: bool(),
+    }),
+  },
+
+  'project-costs': {
+    // What a project cost to deliver, and so what it earned. Writing these
+    // moves the margin on a deal, so they belong to whoever owns the
+    // numbers rather than to whoever sold it.
+    adminOnlyWrites: true,
+    table: 'project_costs',
+    view: null,
+    label: 'Project cost',
+    hasDocument: true,
+    defaultSort: 'incurred_on DESC NULLS LAST, id DESC',
+    search: ['description', 'vendor'],
+    filters: ['project_id', 'category', 'status'],
+    columns: ['project_id', 'po_number', 'category', 'description', 'vendor', 'amount', 'currency', 'incurred_on', 'status', 'document_id', 'created_by'],
+    schema: z.object({
+      project_id: requiredStr(40),
+      po_number: str(80),
+      category: enumOf(['subcontractor', 'auditor_fee', 'certification_body', 'lab_testing', 'travel', 'accommodation', 'materials', 'other']).default('subcontractor'),
+      description: requiredStr(300),
+      vendor: str(160),
+      amount: num({ min: 0 }),
+      currency: str(3).transform((v) => (v === undefined ? v : v ? v.toUpperCase() : 'INR')),
+      incurred_on: date(),
+      status: enumOf(['committed', 'paid']).default('committed'),
+      document_id: int({ min: 1 }),
+      created_by: str(120),
+    }),
+  },
+
+  attachments: {
+    table: 'attachments',
+    view: null,
+    label: 'Attachment',
+    hasDocument: true,
+    defaultSort: 'created_at DESC',
+    search: ['label'],
+    filters: ['entity', 'entity_id'],
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
+    stampActor: 'uploaded_by',
+    schema: z.object({
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity_id: requiredStr(120),
+      document_id: requiredInt({ min: 1 }),
+      label: str(200),
+      uploaded_by: str(120),
+    }),
+  },
+
+  'payment-terms-templates': {
+    // The invoicing schedules every new PO is built from.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'payment_terms_templates',
+    view: null,
+    label: 'Payment terms template',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'is_default', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), is_default: bool(), sort_order: int().default(0) }),
+  },
+
+  'payment-terms-template-lines': {
+    // The lines those schedules are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'payment_terms_template_lines',
+    view: null,
+    label: 'Payment terms line',
+    defaultSort: 'template_id, sort_order, id',
+    search: ['stage_name'],
+    filters: ['template_id'],
+    columns: ['template_id', 'sort_order', 'stage_name', 'percent', 'trigger_event', 'credit_days', 'milestone_name'],
+    schema: z.object({
+      template_id: requiredInt({ min: 1 }),
+      sort_order: int().default(0),
+      stage_name: requiredStr(120),
+      percent: requiredNum({ min: 0.01, max: 100 }),
+      trigger_event: enumOf(STATUS.trigger).default('On PO Registration'),
+      credit_days: int({ min: 0, max: 365 }),
+      milestone_name: str(160),
+    }),
+  },
+
+  'onboarding-templates': {
+    // The delivery checklists every new project starts with.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'onboarding_templates',
+    view: null,
+    label: 'Onboarding template',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'is_default', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), is_default: bool(), sort_order: int().default(0) }),
+  },
+
+  'onboarding-template-lines': {
+    // The steps those checklists are made of.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'onboarding_template_lines',
+    view: null,
+    label: 'Onboarding template step',
+    defaultSort: 'template_id, step_no',
+    search: ['step'],
+    filters: ['template_id'],
+    columns: ['template_id', 'step_no', 'stage', 'step', 'owner_role', 'days_after_start'],
+    schema: z.object({
+      template_id: requiredInt({ min: 1 }),
+      step_no: requiredInt({ min: 1 }),
+      stage: str(60),
+      step: requiredStr(400),
+      owner_role: str(60),
+      days_after_start: int({ min: 0, max: 730 }),
+    }),
+  },
+
+  'lead-sources': {
+    // A Settings list. Deleting one blanks it on every enquiry that used it.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'lead_sources',
+    view: null,
+    label: 'Lead source',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
+  },
+
+  'lost-reasons': {
+    // A Settings list. Deleting one blanks it on every lost quotation and
+    // unqualified enquiry, through ON DELETE SET NULL.
+    // Admins curate it, everybody reads it.
+    adminOnlyWrites: true,
+    table: 'lost_reasons',
+    view: null,
+    label: 'Lost reason',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active'],
+    columns: ['name', 'active', 'sort_order'],
+    schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
+  },
+
   services: {
     // A Settings list: admins curate it, everybody reads it.
     adminOnlyWrites: true,
@@ -467,10 +759,42 @@ export const resources = {
     defaultSort: 'sort_order, name',
     search: ['name'],
     filters: ['active'],
-    columns: ['name', 'active', 'sort_order'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
+      sort_order: int().default(0),
+      code: str(30),
+      sac_code: str(20),
+      default_rate: num({ min: 0 }),
+      currency: enumOf(STATUS.currency).default('INR'),
+      gst_rate: num({ min: 0, max: 100 }).default(18),
+      unit: enumOf(STATUS.unit).default('engagement'),
+      description: str(2000),
+      renewal_interval_months: int({ min: 1, max: 120 }),
+      renewal_lead_days: int({ min: 0, max: 365 }).default(60),
+      onboarding_template_id: int({ min: 1 }),
+      payment_terms_template_id: int({ min: 1 }),
+    }),
+  },
+
+  'quotation-lines': {
+    table: 'quotation_lines',
+    view: null,
+    label: 'Quotation line',
+    defaultSort: 'sort_order, id',
+    search: ['description'],
+    filters: ['quotation_id', 'service_id'],
+    columns: ['quotation_id', 'service_id', 'description', 'qty', 'unit', 'rate', 'discount_percent', 'gst_rate', 'sort_order'],
+    schema: z.object({
+      quotation_id: requiredInt({ min: 1 }),
+      service_id: int({ min: 1 }),
+      description: requiredStr(500),
+      qty: num({ min: 0.01 }).default(1),
+      unit: str(40),
+      rate: num({ min: 0 }).default(0),
+      discount_percent: num({ min: 0, max: 100 }).default(0),
+      gst_rate: num({ min: 0, max: 100 }).default(18),
       sort_order: int().default(0),
     }),
   },

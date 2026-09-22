@@ -206,7 +206,11 @@ const REVIEW_CODES = ['remark_contradicts_figures', 'multiple_invoices', 'reissu
  * Anything else is dropped. Returns a map keyed by source row number.
  */
 export async function reviewRows(rows, { chunkSize = 15, concurrency = 6 } = {}) {
-  const heuristic = Object.fromEntries(rows.map((r) => [r.sno, heuristicReview(r)]));
+  // Keyed by the row's position in the sheet, never by S.No: a blank S.No
+  // falls back to the row number, so two rows can carry the same one and a
+  // hint would land on the wrong row.
+  const key = (r) => r.row ?? r.sno;
+  const heuristic = Object.fromEntries(rows.map((r) => [key(r), heuristicReview(r)]));
   if (!aiConfig.enabled || !rows.length) return { hints: heuristic, source: 'heuristic' };
 
   // A row with only a client, a stage and a service has nothing for the
@@ -217,7 +221,9 @@ export async function reviewRows(rows, { chunkSize = 15, concurrency = 6 } = {})
   const codes = new Set(REVIEW_CODES);
   // Keys shortened and empty fields dropped: fewer tokens, same content.
   const compact = worth.map((r) => {
-    const o = { sno: r.sno, stage: r.stage };
+    // `sno` here is the identifier the model echoes back, so it is the unique
+    // row position; the prompt only ever uses it to say which row it means.
+    const o = { sno: key(r), stage: r.stage };
     if (r.po_number) o.po = r.po_number;
     if (r.po_amount !== null) o.po_amt = r.po_amount;
     if (r.currency) o.cur = r.currency;
@@ -271,13 +277,49 @@ async function runLimited(tasks, limit) {
   return results;
 }
 
+// A percentage in the remarks is only the advance share when the text says so.
+// Sheets are full of other percentages — "18% GST", "TDS 2%", "5% discount",
+// "2% per month" — and reading one of those as the advance splits the payment
+// stages wrongly, on a row that looks perfectly ordinary in review.
+const PERCENT = /(\d{1,3})\s*(?:%|percent\b|pct\b)/gi;
+const NOT_ADVANCE = /(gst|vat|tax|tds|tcs|discount|interest|penalt|late fee|margin|commission|retention)/i;
+const ADVANCE = /(advance|\badv\b|upfront|up front|mobilis|mobiliz|token|booking|on po|against po|with po|on order|on confirmation)/i;
+
+/**
+ * The advance share stated in the text, or null when nothing states one.
+ *
+ * Each percentage is judged by the words around it: one next to a tax word is
+ * never the advance; one next to an advance word is taken. A lone percentage
+ * with neither is taken as before, because "Invoice shared for 30%" is an
+ * advance in this sheet. Several such percentages are left for a person.
+ */
+export function advanceShare(text) {
+  const strong = [];
+  const weak = [];
+  for (const m of text.matchAll(PERCENT)) {
+    const p = Number(m[1]);
+    if (!(p > 0 && p < 100)) continue;
+    // Only the words in the same clause count: "18% GST | 50% adv" is two
+    // separate statements, and the GST must not disqualify the advance.
+    const before = text.slice(Math.max(0, m.index - 25), m.index).split(/[|,;.\n]/).pop();
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 20).split(/[|,;\n]/)[0];
+    const around = `${before} ${after}`;
+    if (NOT_ADVANCE.test(around)) continue;
+    (ADVANCE.test(around) ? strong : weak).push(p);
+  }
+  if (strong.length) return { percent: strong[0] };
+  if (weak.length === 1) return { percent: weak[0] };
+  if (weak.length > 1) return { percent: null, unclear: true };
+  return { percent: null };
+}
+
 /** What code alone can read from a row's text. */
 function heuristicReview(r) {
   const text = [r.follow_up, r.remarks].filter(Boolean).join(' | ');
   const flags = [];
-  let advance_percent = null;
-  const m = /(\d{1,3})\s*%/.exec(text);
-  if (m) { const p = Number(m[1]); if (p > 0 && p < 100) advance_percent = p; }
+  const share = advanceShare(text);
+  const advance_percent = share.percent;
+  if (share.unclear) flags.push({ level: 'warn', code: 'advance_percent_unclear', message: 'Several percentages in the remarks and none says which is the advance; the default split was used', by: 'rule' });
   // Whole amount after the work: "100% within 30 days of completion", "No advance. Full amount payable on submission of final report",
   // "Single payment on completion", "Entire payment after sign-off", "Full payment against final deliverable".
   const wholeAmount = /(100\s*(%|percent)|full (amount|payment)|entire (amount|payment)|single payment|no advance)/i;

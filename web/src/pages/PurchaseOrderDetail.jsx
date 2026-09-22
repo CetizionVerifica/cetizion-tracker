@@ -6,6 +6,7 @@ import {
 } from '../components/ui.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
@@ -220,6 +221,7 @@ export default function PurchaseOrderDetail() {
             />
           </Card>
         )}
+        <Timeline entity="purchase_order" id={po.po_number} />
       </div>
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}

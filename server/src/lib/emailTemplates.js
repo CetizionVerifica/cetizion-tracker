@@ -37,10 +37,11 @@ function table(headers, rows) {
  * A payment reminder to one client for its overdue stages.
  * stages: [{ po_number, stage_name, invoice_no, invoice_date, invoice_due_date, currency, stage_amount, amount_received, days_overdue }]
  */
-export function paymentReminder({ company, contactName, stages, financeEmail }) {
+export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3 }) {
   const total = stages.reduce((n, s) => n + (Number(s.stage_amount) - Number(s.amount_received || 0)), 0);
   const currency = stages[0]?.currency || 'INR';
-  const subject = `Payment reminder: ${stages.length === 1 ? `invoice ${stages[0].invoice_no}` : `${stages.length} invoices`} due from ${company}`;
+  const prefix = level >= finalLevel ? 'Final reminder' : level === 2 ? 'Second reminder' : 'Payment reminder';
+  const subject = `${prefix}: ${stages.length === 1 ? `invoice ${stages[0].invoice_no}` : `${stages.length} invoices`} due from ${company}`;
   const lines = stages.map((s) => `- Invoice ${s.invoice_no} (${s.po_number}, ${s.stage_name}): ${inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency)} outstanding, due ${date(s.invoice_due_date)}, ${s.days_overdue} days overdue`);
   const text = `Dear ${contactName || company},
 
@@ -54,7 +55,7 @@ If payment has already been made, please share the transaction reference so we c
 
 Thank you,
 Cetizion Verifica`;
-  const html = layout('Payment reminder', `
+  const html = layout(prefix, `
 <p>Dear ${esc(contactName || company)},</p>
 <p>This is a reminder that the following ${stages.length === 1 ? 'invoice is' : 'invoices are'} past due:</p>
 ${table(['Invoice', 'PO / stage', 'Outstanding', 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
@@ -86,8 +87,38 @@ ${overdue.length ? table(['Client', 'Invoice', 'Outstanding', 'Overdue'], overdu
   return { subject, text, html };
 }
 
+/** The daily digest (#44): everything unread in the notification centre. */
+export function dailyDigest({ today, items }) {
+  const subject = `Tracker digest ${date(today)}: ${items.length} thing${items.length === 1 ? '' : 's'} need attention`;
+  const text = `Tracker digest for ${date(today)}
+
+${items.map((n) => `- ${n.title}${n.body ? ` (${n.body})` : ''}`).join('\n')}
+`;
+  const html = layout(`Tracker digest, ${date(today)}`, table(['What', 'Details'], items.map((n) => [n.title, n.body || ''])));
+  return { subject, text, html };
+}
+
 export function testEmail({ to, mode }) {
   const subject = 'Cetizion Tracker: test email';
   const text = `This is a test email from the Cetizion Tracker to ${to}. Delivery mode: ${mode}. If you are reading this, sending works.`;
   return { subject, text, html: layout('Test email', `<p>${esc(text)}</p>`) };
+}
+
+/** To the approver: a quotation needs a yes. */
+export function approvalRequest({ quotation: q, reason, requestedBy }) {
+  const subject = `Approval needed: quotation ${q.quotation_no} for ${q.client_name}`;
+  const text = `${requestedBy || 'Sales'} asks for approval on quotation ${q.quotation_no} (${q.client_name}, ${q.service_quoted || 'services'}).
+
+Value: ${inr(q.total ?? q.quotation_value, q.currency)}${q.discount_percent ? `\nOverall discount: ${Number(q.discount_percent)}%` : ''}
+Reason: ${reason}
+
+Open the quotation in the tracker to approve or reject it.`;
+  return { subject, text, html: layout('Approval needed', `<p>${esc(text).replace(/\n/g, '<br>')}</p>`) };
+}
+
+/** To the sales person: the decision. */
+export function approvalDecision({ quotation: q, decision, note, decidedBy }) {
+  const subject = `Quotation ${q.quotation_no} ${decision}`;
+  const text = `Quotation ${q.quotation_no} for ${q.client_name} was ${decision}${decidedBy ? ` by ${decidedBy}` : ''}.${note ? `\n\nNote: ${note}` : ''}${decision === 'approved' ? '\n\nIt can now be sent to the client.' : '\n\nRevise the discount or terms and ask again.'}`;
+  return { subject, text, html: layout(`Quotation ${decision}`, `<p>${esc(text).replace(/\n/g, '<br>')}</p>`) };
 }

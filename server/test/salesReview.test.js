@@ -69,11 +69,11 @@ test('service totals count each quotation once', () => {
 // quotation section, so the enquiry figures are only about status here.
 test('enquiries split by status', () => {
   const rows = [
-    { status: 'Won - Quotation Sent' },
-    { status: 'Won - Quotation Sent' },
-    { status: 'Won - Quotation Sent' },
-    { status: 'Declined' },
-    { status: 'In Progress' },
+    { status: 'Converted' },
+    { status: 'Converted' },
+    { status: 'Converted' },
+    { status: 'Unqualified' },
+    { status: 'Contacted' },
   ];
   const s = summariseEnquiries(rows);
   assert.deepEqual(
