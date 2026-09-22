@@ -6,6 +6,8 @@ node_modules/
 dist/
 .env
 .env.local
+# Sales sheets and import specs: real client data, never in the repo.
+server/import/
 *.log
 .DS_Store
 .mcp.json
