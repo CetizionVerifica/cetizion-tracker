@@ -15,6 +15,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
@@ -23,6 +24,12 @@ import { claimNextId } from '../lib/sequences.js';
 import { checkDestination, deliverOne, EVENT_TYPES, newSecret, releaseHeld, runWebhooks, verify } from '../lib/webhooks.js';
 
 export const webhooksRouter = Router();
+
+// Every one of these is configuration or an operation: where the tracker
+// sends your data, the secret it signs with, replaying a delivery. The
+// delivery log holds the responses too. The incoming hook is separate —
+// that one is public and signed.
+webhooksRouter.use(requireAdmin);
 export const incomingHooksRouter = Router();
 
 const fields = (parsed) => new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });

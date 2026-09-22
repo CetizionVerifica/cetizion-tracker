@@ -13,6 +13,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
@@ -51,7 +52,10 @@ const staffSchema = z.object({
   working_days: z.array(z.number().int().min(1).max(7)).min(1).max(7).optional(),
   active: z.boolean().optional(),
 });
-visitsRouter.post('/staff', async (req, res) => {
+// Who the auditors are, and when they are away, is the team's roster —
+// not something a visit's scheduler edits in passing. Scheduling a visit
+// stays open: that is the work.
+visitsRouter.post('/staff', requireAdmin, async (req, res) => {
   const parsed = staffSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const v = parsed.data;
@@ -59,7 +63,7 @@ visitsRouter.post('/staff', async (req, res) => {
     .catch((e) => { if (e.code === '23505') throw new ApiError(409, 'Someone with that name is already listed'); throw e; });
   res.status(201).json({ data: s });
 });
-visitsRouter.patch('/staff/:id', async (req, res) => {
+visitsRouter.patch('/staff/:id', requireAdmin, async (req, res) => {
   const parsed = staffSchema.partial().safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   const set = Object.entries(sentFields(parsed.data, req.body)).filter(([, x]) => x !== undefined);
@@ -68,7 +72,7 @@ visitsRouter.patch('/staff/:id', async (req, res) => {
   if (!s) throw new ApiError(404, 'Not found');
   res.json({ data: s });
 });
-visitsRouter.post('/staff/:id/leave', async (req, res) => {
+visitsRouter.post('/staff/:id/leave', requireAdmin, async (req, res) => {
   const parsed = z.object({ starts_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), ends_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), reason: opt(z.string().max(200)) }).safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
   if (parsed.data.ends_on < parsed.data.starts_on) throw new ApiError(422, 'Please check the highlighted fields', { fields: { ends_on: 'Must be on or after the start' } });
@@ -80,7 +84,7 @@ visitsRouter.post('/staff/:id/leave', async (req, res) => {
     [l.staff_id, l.starts_on, l.ends_on]);
   res.status(201).json({ data: l, clashes });
 });
-visitsRouter.delete('/leave/:id', async (req, res) => {
+visitsRouter.delete('/leave/:id', requireAdmin, async (req, res) => {
   await query('DELETE FROM staff_leave WHERE id = $1', [recordId(req.params.id)]);
   res.status(204).end();
 });

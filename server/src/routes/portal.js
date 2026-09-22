@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { authConfig } from '../auth/config.js';
 import { signSession, verifySession } from '../auth/session.js';
@@ -247,6 +248,10 @@ portalRouter.post('/messages', section('contact'), rateLimit({ windowMs: 60 * 60
 });
 
 // ------------------------------------------------------------ staff side
+
+// Turning the portal on for a company, and inviting a contact into it,
+// decides who outside the company sees its invoices and certificates.
+portalAdminRouter.use(requireAdmin);
 
 portalAdminRouter.get('/companies/:id', async (req, res) => {
   const id = Number(req.params.id);

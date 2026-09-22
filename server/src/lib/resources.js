@@ -604,6 +604,10 @@ export const resources = {
   },
 
   'project-costs': {
+    // What a project cost to deliver, and so what it earned. Writing these
+    // moves the margin on a deal, so they belong to whoever owns the
+    // numbers rather than to whoever sold it.
+    adminOnlyWrites: true,
     table: 'project_costs',
     view: null,
     label: 'Project cost',

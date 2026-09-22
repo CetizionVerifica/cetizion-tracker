@@ -20,6 +20,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { acceptBooks, applyBookPayments, log, parseBooksFile, reconcile, saveEntries } from '../lib/accounting/books.js';
@@ -27,6 +28,11 @@ import { draftForStage, tallyConfigured, tallyPush, tallyVoucherXml, zohoConfigu
 import { checkGstin, fyQuarter, gstDate } from '../lib/accounting/gst.js';
 
 export const accountingRouter = Router();
+
+// Pushing invoices into the books, pulling payments out, accepting a
+// reconciliation, and the GST and TDS reports: whoever operates the
+// accounting system, not whoever happens to be signed in.
+accountingRouter.use(requireAdmin);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const who = (req) => req.user?.username || 'admin';
 const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
