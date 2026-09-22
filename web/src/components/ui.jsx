@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
+import { TriangleAlert } from 'lucide-react';
 import { Badge as UiBadge } from '@/components/ui/badge.tsx';
+import { Button } from '@/components/ui/button.tsx';
 import { Card as UiCard, CardContent, CardHeader } from '@/components/ui/card.tsx';
 import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
@@ -50,18 +52,28 @@ export function Card({ title, hint, actions, children, flush = false, className 
 /* ------------------------------------------------------------------ stat */
 
 export function Stat({ label, value, meta, tone = '', to, onClick }) {
-  const className = `stat ${tone ? `stat--${tone}` : ''} ${to || onClick ? 'stat--link' : ''}`;
+  const accent = {
+    danger: 'text-late',
+    warning: 'text-waiting',
+    success: 'text-settled',
+    info: 'text-info',
+  }[tone];
+  const className = cn(
+    'flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
+    (to || onClick) && 'hover:border-primary/40 hover:bg-accent'
+  );
   const inner = (
     <>
-      <div className="stat__label">{label}</div>
-      <div className="stat__value">{value}</div>
-      {meta && <div className="stat__meta">{meta}</div>}
+      <div className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{label}</div>
+      <div className={cn('num text-2xl font-semibold', accent || 'text-foreground')}>{value}</div>
+      {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
     </>
   );
   if (to) return <Link className={className} to={to}>{inner}</Link>;
-  if (onClick) return <button type="button" className={className} onClick={onClick} style={{ textAlign: 'left', font: 'inherit' }}>{inner}</button>;
+  if (onClick) return <button type="button" className={className} onClick={onClick}>{inner}</button>;
   return <div className={className}>{inner}</div>;
 }
+
 
 /* ----------------------------------------------------------------- badge */
 
@@ -169,16 +181,17 @@ function TableSkeleton() {
 
 /* ----------------------------------------------------------------- empty */
 
-export function Empty({ icon = '◇', title, text, action }) {
+export function Empty({ icon, title, text, action }) {
   return (
-    <div className="empty">
-      <div className="empty__icon">{icon}</div>
-      <div className="empty__title">{title}</div>
-      {text && <p className="empty__text">{text}</p>}
-      {action && <div style={{ marginTop: 14 }}>{action}</div>}
+    <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+      {icon && <div className="text-muted-foreground" aria-hidden="true">{icon}</div>}
+      <div className="text-[15px] font-semibold text-foreground">{title}</div>
+      {text && <p className="measure m-0 text-[13px] text-muted-foreground">{text}</p>}
+      {action && <div className="mt-2">{action}</div>}
     </div>
   );
 }
+
 
 /* ----------------------------------------------------------------- modal */
 
@@ -268,16 +281,21 @@ export function Combo({ options = [], listId, error, ...props }) {
 export function Progress({ value }) {
   const pct = Math.max(0, Math.min(1, Number(value) || 0));
   return (
-    <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-      <div className="progress" style={{ flex: 1 }}>
-        <div className="progress__bar" style={{ width: `${pct * 100}%` }} />
+    <div className="flex items-center gap-2">
+      <div
+        className="h-1.5 flex-1 overflow-hidden rounded-[6px] bg-secondary"
+        role="progressbar"
+        aria-valuenow={Math.round(pct * 100)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className="h-full rounded-[6px] bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
       </div>
-      <span className="small muted num" style={{ minWidth: 32, textAlign: 'right' }}>
-        {Math.round(pct * 100)}%
-      </span>
+      <span className="num min-w-8 text-right text-[12px] text-muted-foreground">{Math.round(pct * 100)}%</span>
     </div>
   );
 }
+
 
 export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
   const max = providedMax ?? Math.max(...items.map((i) => Number(i.value) || 0), 1);
@@ -304,16 +322,17 @@ export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
 
 export function KeyValues({ items }) {
   return (
-    <div className="kv">
+    <dl className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
       {items.filter(Boolean).map((item) => (
-        <div key={item.label}>
-          <div className="kv__k">{item.label}</div>
-          <div className="kv__v">{item.value ?? <span className="muted">—</span>}</div>
+        <div key={item.label} className="min-w-0">
+          <dt className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{item.label}</dt>
+          <dd className="mt-0.5 ml-0 text-[13px] text-foreground">{item.value ?? <span className="text-muted-foreground">—</span>}</dd>
         </div>
       ))}
-    </div>
+    </dl>
   );
 }
+
 
 export function Tabs({ tabs, active, onChange }) {
   return (
@@ -334,19 +353,33 @@ export function Tabs({ tabs, active, onChange }) {
 }
 
 export function Alert({ tone = 'info', children }) {
-  return <div className={`alert ${tone !== 'info' ? `alert--${tone}` : ''}`}>{children}</div>;
+  // Tone is never the only signal: the text says what it is, and the icon
+  // agrees with it.
+  const look = {
+    info: 'border-info/30 bg-info/10 text-info',
+    warning: 'border-waiting/30 bg-waiting/10 text-waiting',
+    danger: 'border-late/30 bg-late/10 text-late',
+    success: 'border-settled/30 bg-settled/10 text-settled',
+  }[tone] || 'border-info/30 bg-info/10 text-info';
+  return (
+    <div className={cn('flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px]', look)} role="status">
+      {children}
+    </div>
+  );
 }
+
 
 export function ErrorState({ message, onRetry }) {
   return (
     <Empty
-      icon="⚠"
+      icon={<TriangleAlert className="size-6" strokeWidth={1.75} />}
       title="Could not load this"
       text={message}
-      action={onRetry && <button type="button" className="btn" onClick={onRetry}>Try again</button>}
+      action={onRetry && <Button variant="outline" size="sm" onClick={onRetry}>Try again</Button>}
     />
   );
 }
+
 
 /* ---------------------------------------------------------------- toasts */
 

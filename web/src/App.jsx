@@ -40,6 +40,42 @@ import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
 import { useAuth } from './lib/auth.jsx';
+import { cn } from 'cn';
+import { Button } from '@/components/ui/button.tsx';
+import {
+  BadgeCheck,
+  Bell,
+  Building2,
+  CalendarDays,
+  ChartNoAxesColumn,
+  CheckSquare,
+  ClipboardList,
+  Columns3,
+  FileText,
+  FolderKanban,
+  Inbox as InboxIcon,
+  IndianRupee,
+  LayoutDashboard,
+  LayoutTemplate,
+  LogOut,
+  Mail,
+  MailOpen,
+  MapPinned,
+  MessageSquare,
+  PanelLeft,
+  Percent,
+  PiggyBank,
+  Plane,
+  ReceiptText,
+  RefreshCw,
+  Scale,
+  Settings as SettingsIcon,
+  Target,
+  TrendingUp,
+  Upload,
+  Wallet,
+  Webhook,
+} from 'lucide-react';
 
 // A fresh review (tab, filters, messages) for each batch.
 function ImportReviewPage() {
@@ -51,61 +87,61 @@ const NAV = [
   {
     label: 'Overview',
     items: [
-      { to: '/', icon: '◈', label: 'Dashboard', end: true },
-      { to: '/notifications', icon: '◔', label: 'Notifications', badge: 'notifications' },
-      { to: '/worklist', icon: '◉', label: 'Action list', badge: 'worklist' },
-      { to: '/tasks', icon: '☐', label: 'Tasks' },
+      { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
+      { to: '/notifications', icon: Bell, label: 'Notifications', badge: 'notifications' },
+      { to: '/worklist', icon: Target, label: 'Action list', badge: 'worklist' },
+      { to: '/tasks', icon: CheckSquare, label: 'Tasks' },
     ],
   },
   {
     label: 'Sales',
     items: [
-      { to: '/inbox', icon: '✉', label: 'Inbox', badge: 'inbox' },
-      { to: '/companies', icon: '⌂', label: 'Companies' },
-      { to: '/enquiries', icon: '◇', label: 'Enquiries' },
-      { to: '/quotations', icon: '◆', label: 'Quotations' },
-      { to: '/pipeline', icon: '▥', label: 'Pipeline' },
-      { to: '/renewals', icon: '↻', label: 'Renewals' },
-      { to: '/sales-report', icon: '◔', label: 'Sales reports' },
+      { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
+      { to: '/companies', icon: Building2, label: 'Companies' },
+      { to: '/enquiries', icon: MessageSquare, label: 'Enquiries' },
+      { to: '/quotations', icon: FileText, label: 'Quotations' },
+      { to: '/pipeline', icon: Columns3, label: 'Pipeline' },
+      { to: '/renewals', icon: RefreshCw, label: 'Renewals' },
+      { to: '/sales-report', icon: ChartNoAxesColumn, label: 'Sales reports' },
     ],
   },
   {
     label: 'Delivery',
     items: [
-      { to: '/projects', icon: '▤', label: 'Projects' },
-      { to: '/purchase-orders', icon: '▦', label: 'Purchase orders' },
-      { to: '/schedule', icon: '▤', label: 'Schedule' },
-      { to: '/deliverables', icon: '✪', label: 'Certificates' },
+      { to: '/projects', icon: FolderKanban, label: 'Projects' },
+      { to: '/purchase-orders', icon: ClipboardList, label: 'Purchase orders' },
+      { to: '/schedule', icon: CalendarDays, label: 'Schedule' },
+      { to: '/deliverables', icon: BadgeCheck, label: 'Certificates' },
     ],
   },
   {
     label: 'Finance',
     items: [
-      { to: '/payment-stages', icon: '₹', label: 'Payment schedule', badge: 'stages' },
-      { to: '/collections', icon: '◔', label: 'Collections' },
-      { to: '/cashflow', icon: '◐', label: 'Cash-flow forecast' },
-      { to: '/profitability', icon: '%', label: 'Profitability' , adminOnly: true },
-      { to: '/accounting', icon: '⚖', label: 'Accounting' , adminOnly: true },
+      { to: '/payment-stages', icon: IndianRupee, label: 'Payment schedule', badge: 'stages' },
+      { to: '/collections', icon: PiggyBank, label: 'Collections' },
+      { to: '/cashflow', icon: TrendingUp, label: 'Cash-flow forecast' },
+      { to: '/profitability', icon: Percent, label: 'Profitability' , adminOnly: true },
+      { to: '/accounting', icon: Scale, label: 'Accounting' , adminOnly: true },
     ],
   },
   {
     label: 'Travel & expenses',
     items: [
-      { to: '/travel', icon: '✈', label: 'Trips' },
-      { to: '/vendor-invoices', icon: '▥', label: 'Vendor invoices', badge: 'vendors' },
-      { to: '/expense-claims', icon: '◫', label: 'Expense claims', badge: 'claims' },
-      { to: '/travel-dashboard', icon: '◷', label: 'Travel spend' },
+      { to: '/travel', icon: Plane, label: 'Trips' },
+      { to: '/vendor-invoices', icon: ReceiptText, label: 'Vendor invoices', badge: 'vendors' },
+      { to: '/expense-claims', icon: Wallet, label: 'Expense claims', badge: 'claims' },
+      { to: '/travel-dashboard', icon: MapPinned, label: 'Travel spend' },
     ],
   },
   {
     label: 'Admin',
     items: [
-      { to: '/settings', icon: '⚙', label: 'Settings' },
-      { to: '/import', icon: '⇪', label: 'Bulk import' },
-      { to: '/emails', icon: '✉', label: 'Emails & jobs' },
-      { to: '/mailboxes', icon: '✉', label: 'Mailboxes', adminOnly: true },
-      { to: '/webhooks', icon: '⇄', label: 'Webhooks', adminOnly: true },
-      { to: '/templates', icon: '▤', label: 'Templates', adminOnly: true },
+      { to: '/settings', icon: SettingsIcon, label: 'Settings' },
+      { to: '/import', icon: Upload, label: 'Bulk import' },
+      { to: '/emails', icon: Mail, label: 'Emails & jobs' },
+      { to: '/mailboxes', icon: MailOpen, label: 'Mailboxes', adminOnly: true },
+      { to: '/webhooks', icon: Webhook, label: 'Webhooks', adminOnly: true },
+      { to: '/templates', icon: LayoutTemplate, label: 'Templates', adminOnly: true },
     ],
   },
 ];
@@ -155,32 +191,50 @@ export default function App() {
 
   return (
     <SidebarContext.Provider value={sidebar}>
-    <div className={`app ${hidden ? 'sidebar-hidden' : ''}`}>
-      <aside className="sidebar">
-        <div className="sidebar__brand">
-          <div className="sidebar__mark">
-            <span className="sidebar__logo">C</span>
-            <span className="sidebar__name">Cetizion</span>
+    <div className="flex min-h-screen bg-background text-foreground">
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-30 flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width,transform] duration-150',
+          hidden && '-translate-x-full'
+        )}
+      >
+        <div className="flex flex-col gap-1 border-b border-sidebar-border px-4 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-7 place-items-center rounded-[6px] bg-primary font-semibold text-primary-foreground">C</span>
+            <span className="text-[15px] font-semibold text-foreground">Cetizion</span>
           </div>
-          <div className="sidebar__tagline">Sales · Projects · Payments · Travel</div>
+          <div className="text-[11.5px] text-muted-foreground">Sales · Projects · Payments · Travel</div>
         </div>
 
-        <nav className="nav">
+        <nav className="flex-1 overflow-y-auto px-2 py-3">
           {NAV.map((group) => (
-            <div className="nav__group" key={group.label}>
-              <div className="nav__label">{group.label}</div>
+            <div className="mb-4" key={group.label}>
+              <div className="px-2 pb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                {group.label}
+              </div>
               {group.items.filter((item) => isAdmin || !item.adminOnly).map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   end={item.end}
-                  title={item.label}
-                  className={({ isActive }) => `nav__item ${isActive ? 'is-active' : ''}`}
+                  className={({ isActive }) => cn(
+                    'flex h-control items-center gap-2.5 rounded-[6px] px-2 text-[13px] text-sidebar-foreground transition-colors duration-150',
+                    'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                    isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                  )}
                 >
-                  <span className="nav__icon">{item.icon}</span>
-                  <span className="nav__text">{item.label}</span>
+                  {/* The icon is decorative — the label is what names the page. */}
+                  <item.icon className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   {item.badge && counts[item.badge] > 0 && (
-                    <span className={`nav__count ${alerts[item.badge] ? 'is-alert' : ''}`}>
+                    <span
+                      className={cn(
+                        'num rounded-[6px] px-1.5 py-0.5 text-[11px] font-medium',
+                        alerts[item.badge]
+                          ? 'bg-late/15 text-late'
+                          : 'bg-secondary text-secondary-foreground'
+                      )}
+                    >
                       {counts[item.badge]}
                     </span>
                   )}
@@ -190,15 +244,16 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar__foot">
-          <span className="sidebar__user" title={displayName}>{displayName}</span>
-          <button type="button" className="btn btn--sm sidebar__signout" onClick={signOut} title="Sign out">
-            <span className="nav__text">Sign out</span><span className="sidebar__signout-icon" aria-hidden="true">⏻</span>
-          </button>
+        <div className="flex items-center justify-between gap-2 border-t border-sidebar-border px-3 py-3">
+          <span className="min-w-0 truncate text-[12.5px] text-muted-foreground" title={displayName}>{displayName}</span>
+          <Button variant="ghost" size="sm" onClick={signOut} className="h-control gap-1.5 px-2 text-[12.5px]">
+            <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            Sign out
+          </Button>
         </div>
       </aside>
 
-      <main className="main">
+      <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'ml-60')}>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/worklist" element={<Worklist />} />
@@ -247,13 +302,22 @@ export default function App() {
 export function PageHeader({ title, subtitle, actions }) {
   const { hidden, toggle } = useContext(SidebarContext);
   return (
-    <header className="topbar">
-      <button type="button" className="btn btn--ghost btn--sm menu-toggle" onClick={toggle} title={hidden ? 'Show sidebar' : 'Hide sidebar'} aria-label={hidden ? 'Show sidebar' : 'Hide sidebar'}>☰</button>
-      <div className="topbar__title">
-        <h1>{title}</h1>
-        {subtitle && <div className="topbar__sub">{subtitle}</div>}
+    <header className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-background/95 px-6 py-4 backdrop-blur">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggle}
+        aria-label={hidden ? 'Show sidebar' : 'Hide sidebar'}
+        className="size-control shrink-0"
+      >
+        <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+      </Button>
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-2xl font-semibold text-foreground">{title}</h1>
+        {subtitle && <div className="measure mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>}
       </div>
-      {actions && <div className="topbar__actions">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   );
 }
+
