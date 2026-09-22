@@ -8,6 +8,7 @@ import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Deliverables from './pages/Deliverables.jsx';
+import Schedule from './pages/Schedule.jsx';
 import Quotations from './pages/Quotations.jsx';
 import QuotationDetail from './pages/QuotationDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
@@ -20,6 +21,8 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
+import Profitability from './pages/Profitability.jsx';
+import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
 import TravelLogs from './pages/TravelLogs.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
@@ -30,6 +33,7 @@ import BulkImport from './pages/BulkImport.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Emails from './pages/Emails.jsx';
 import Mailboxes from './pages/Mailboxes.jsx';
+import Webhooks from './pages/Webhooks.jsx';
 import Inbox from './pages/Inbox.jsx';
 import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
@@ -64,6 +68,7 @@ const NAV = [
     items: [
       { to: '/projects', icon: '▤', label: 'Projects' },
       { to: '/purchase-orders', icon: '▦', label: 'Purchase orders' },
+      { to: '/schedule', icon: '▤', label: 'Schedule' },
       { to: '/deliverables', icon: '✪', label: 'Certificates' },
     ],
   },
@@ -73,6 +78,8 @@ const NAV = [
       { to: '/payment-stages', icon: '₹', label: 'Payment schedule', badge: 'stages' },
       { to: '/collections', icon: '◔', label: 'Collections' },
       { to: '/cashflow', icon: '◐', label: 'Cash-flow forecast' },
+      { to: '/profitability', icon: '%', label: 'Profitability' , adminOnly: true },
+      { to: '/accounting', icon: '⚖', label: 'Accounting' , adminOnly: true },
     ],
   },
   {
@@ -90,7 +97,8 @@ const NAV = [
       { to: '/settings', icon: '⚙', label: 'Settings' },
       { to: '/import', icon: '⇪', label: 'Bulk import' },
       { to: '/emails', icon: '✉', label: 'Emails & jobs' },
-      { to: '/mailboxes', icon: '✉', label: 'Mailboxes' },
+      { to: '/mailboxes', icon: '✉', label: 'Mailboxes', adminOnly: true },
+      { to: '/webhooks', icon: '⇄', label: 'Webhooks', adminOnly: true },
       { to: '/templates', icon: '▤', label: 'Templates', adminOnly: true },
     ],
   },
@@ -192,6 +200,7 @@ export default function App() {
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/deliverables" element={<Deliverables />} />
+          <Route path="/schedule" element={<Schedule />} />
           <Route path="/enquiries" element={<Enquiries />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/quotations/:key" element={<QuotationDetail />} />
@@ -205,8 +214,11 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/profitability" element={<Profitability />} />
+          <Route path="/accounting" element={<Accounting />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/mailboxes" element={<Mailboxes />} />
+          <Route path="/webhooks" element={<Webhooks />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />

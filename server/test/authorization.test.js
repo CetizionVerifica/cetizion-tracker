@@ -643,4 +643,64 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       assert.equal(res.status, 403, JSON.stringify(res.body));
     });
   });
+  // ------------------------------------------------ batch 5's new surfaces
+
+  describe('webhooks, accounting, the portal switch and margin', () => {
+    /**
+     * #49 asks for the webhook endpoints to be admin-only, #39 for margin to
+     * be admin-only unless settings say otherwise, and #47 for an admin to
+     * be the one who turns the portal on per company. The review of #61
+     * found all three open: a sales user could subscribe an endpoint they
+     * own to every event with personal data included, turn on the client
+     * portal for any company, trigger an accounting sync, and move the
+     * margin on their own deals by writing project costs.
+     */
+    for (const [label, verb, path] of [
+      ['list webhook endpoints', 'get', '/api/webhooks'],
+      ['create a webhook endpoint', 'post', '/api/webhooks'],
+      ['read the delivery log', 'get', '/api/webhooks/deliveries'],
+      ['sync the accounting system', 'post', '/api/accounting/sync'],
+      ['read the accounting log', 'get', '/api/accounting/log'],
+      ['turn the portal on for a company', 'patch', '/api/portal-admin/companies/1'],
+      ['read margin by project', 'get', '/api/profitability'],
+      ['add somebody to the roster', 'post', '/api/visits/staff'],
+    ]) {
+      test(`a sales user cannot ${label}`, async () => {
+        const res = await as(sales.cookie)(verb, path).send({ name: 'Nope', url: 'https://example.test/hook' });
+        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      });
+    }
+
+    test('an admin reaches all of them', async () => {
+      for (const [verb, path] of [['get', '/api/webhooks'], ['get', '/api/webhooks/deliveries'],
+                                  ['get', '/api/accounting/log'], ['get', '/api/profitability']]) {
+        const res = await as(admin.cookie)(verb, path);
+        assert.notEqual(res.status, 403, `${verb} ${path} -> ${res.status}`);
+      }
+    });
+
+    test('margin opens to everybody when the setting says so', async () => {
+      await db.query(`INSERT INTO settings (key, value) VALUES ('margin_visible_to_sales', 'true')
+                      ON CONFLICT (key) DO UPDATE SET value = 'true'`);
+      const open = await as(sales.cookie)('get', '/api/profitability');
+      assert.notEqual(open.status, 403, JSON.stringify(open.body));
+
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'margin_visible_to_sales'`);
+      const shut = await as(sales.cookie)('get', '/api/profitability');
+      assert.equal(shut.status, 403, JSON.stringify(shut.body));
+    });
+
+    test('project costs are the admin\'s to write, and everyone\'s to read', async () => {
+      const read = await as(sales.cookie)('get', '/api/project-costs');
+      assert.equal(read.status, 200, `read -> ${read.status}`);
+
+      const write = await as(sales.cookie)('post', '/api/project-costs').send({ project_id: 'PRJ-1', amount: 1000 });
+      assert.equal(write.status, 403, `write -> ${write.status}`);
+    });
+
+    test('scheduling a visit stays open — that is the delivery work', async () => {
+      const res = await as(sales.cookie)('get', '/api/visits');
+      assert.notEqual(res.status, 403, JSON.stringify(res.body));
+    });
+  });
 });

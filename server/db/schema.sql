@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS users, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS users, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -260,6 +260,8 @@ CREATE TABLE companies (
   city        text,
   notes       text,
   created_at  timestamptz NOT NULL DEFAULT now(),
+  portal_enabled boolean NOT NULL DEFAULT false,
+  portal_sections text[] NOT NULL DEFAULT '{projects,documents,invoices,certificates,contact}',
   last_contacted_at timestamptz,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -281,6 +283,7 @@ CREATE TABLE contacts (
   whatsapp_opt_in_at timestamptz,
   whatsapp_opt_in_source text,
   last_contacted_at  timestamptz,
+  portal_access      boolean NOT NULL DEFAULT false,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -306,6 +309,7 @@ CREATE TABLE projects (
   sales_person          text,
   planned_start_date    date,
   planned_delivery_date date,
+  estimated_cost        numeric(16,2) CHECK (estimated_cost >= 0),
   percent_complete      numeric(5,4) NOT NULL DEFAULT 0
                           CHECK (percent_complete BETWEEN 0 AND 1),
   remarks               text,
@@ -1703,5 +1707,434 @@ Regards,
 {{my_name}}')
 ) AS v(name, body)
 WHERE NOT EXISTS (SELECT 1 FROM canned_responses c WHERE c.name = v.name);
+
+-- ---------------------------------------------------------------------
+-- Project costs (#39)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS project_costs (
+  id           serial PRIMARY KEY,
+  project_id   text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  po_number    text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  category     text NOT NULL DEFAULT 'subcontractor'
+                 CHECK (category IN ('subcontractor','auditor_fee','certification_body','lab_testing','travel','accommodation','materials','other')),
+  description  text NOT NULL,
+  vendor       text,
+  amount       numeric(16,2) CHECK (amount >= 0),
+  currency     text NOT NULL DEFAULT 'INR',
+  incurred_on  date,
+  status       text NOT NULL DEFAULT 'committed' CHECK (status IN ('committed','paid')),
+  document_id  int REFERENCES documents(id),
+  source       text NOT NULL DEFAULT 'manual',
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS project_costs_project_idx ON project_costs (project_id);
+
+DROP TRIGGER IF EXISTS project_costs_set_updated_at ON project_costs;
+CREATE TRIGGER project_costs_set_updated_at BEFORE UPDATE ON project_costs
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('margin_alert_percent', '20', 'Projects with a margin below this percentage are flagged red.'),
+  ('cost_alert_share_percent', '80', 'When a project''s costs pass this share of its PO value, its manager gets a task.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Visits and availability (#42)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS staff (
+  id            serial PRIMARY KEY,
+  name          text NOT NULL,
+  email         text,
+  role          text,
+  working_days  int[] NOT NULL DEFAULT '{1,2,3,4,5,6}',   -- ISO weekdays, Monday = 1
+  active        boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS staff_name_key ON staff (lower(btrim(name)));
+
+CREATE TABLE IF NOT EXISTS staff_leave (
+  id          serial PRIMARY KEY,
+  staff_id    int NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  starts_on   date NOT NULL,
+  ends_on     date NOT NULL,
+  reason      text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_on >= starts_on)
+);
+
+CREATE INDEX IF NOT EXISTS staff_leave_idx ON staff_leave (staff_id, starts_on, ends_on);
+
+CREATE TABLE IF NOT EXISTS visits (
+  id                  serial PRIMARY KEY,
+  project_id          text REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  po_number           text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  company_id          int REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id          int REFERENCES contacts(id) ON DELETE SET NULL,
+  type                text NOT NULL DEFAULT 'audit' CHECK (type IN ('audit','assessment','training','meeting','follow_up')),
+  title               text NOT NULL,
+  starts_at           timestamptz NOT NULL,
+  ends_at             timestamptz NOT NULL,
+  all_day             boolean NOT NULL DEFAULT true,
+  location            text,
+  city                text,
+  state               text,
+  status              text NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','confirmed','done','cancelled','rescheduled')),
+  milestone_stage_id  int REFERENCES payment_stages(id) ON DELETE SET NULL,
+  travel_id           text REFERENCES travel_logs(travel_id) ON UPDATE CASCADE ON DELETE SET NULL,
+  notify_client       boolean NOT NULL DEFAULT false,
+  reminder_sent_at    timestamptz,
+  confirmed_at        timestamptz,
+  completed_at        timestamptz,
+  notes               text,
+  created_by          text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CHECK (ends_at >= starts_at)
+);
+
+CREATE INDEX IF NOT EXISTS visits_when_idx ON visits (starts_at, ends_at);
+CREATE INDEX IF NOT EXISTS visits_project_idx ON visits (project_id);
+
+CREATE TABLE IF NOT EXISTS visit_assignees (
+  visit_id  int NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+  staff_id  int NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  role      text NOT NULL DEFAULT 'member' CHECK (role IN ('lead','member')),
+  PRIMARY KEY (visit_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS visit_assignees_staff_idx ON visit_assignees (staff_id);
+
+DROP TRIGGER IF EXISTS staff_set_updated_at ON staff;
+CREATE TRIGGER staff_set_updated_at BEFORE UPDATE ON staff FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS visits_set_updated_at ON visits;
+CREATE TRIGGER visits_set_updated_at BEFORE UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- The client, contact and stamps follow the project and the status.
+CREATE OR REPLACE FUNCTION visit_defaults() RETURNS trigger AS $$
+BEGIN
+  IF NEW.project_id IS NULL AND NEW.po_number IS NOT NULL THEN
+    SELECT project_id INTO NEW.project_id FROM purchase_orders WHERE po_number = NEW.po_number;
+  END IF;
+  IF NEW.company_id IS NULL AND NEW.project_id IS NOT NULL THEN
+    SELECT company_id INTO NEW.company_id FROM projects WHERE project_id = NEW.project_id;
+  END IF;
+  IF NEW.status = 'confirmed' AND (TG_OP = 'INSERT' OR OLD.status <> 'confirmed') THEN
+    NEW.confirmed_at := COALESCE(NEW.confirmed_at, now());
+  END IF;
+  IF NEW.status = 'done' THEN
+    NEW.completed_at := COALESCE(NEW.completed_at, now());
+  ELSE
+    NEW.completed_at := NULL;
+  END IF;
+  IF TG_OP = 'UPDATE' AND (NEW.starts_at IS DISTINCT FROM OLD.starts_at) THEN
+    NEW.reminder_sent_at := NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS a_visit_defaults ON visits;
+CREATE TRIGGER a_visit_defaults BEFORE INSERT OR UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION visit_defaults();
+
+-- Completing a visit reaches its milestone; the stage becomes invoiceable.
+CREATE OR REPLACE FUNCTION visit_milestone() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND NEW.milestone_stage_id IS NOT NULL
+     AND (TG_OP = 'INSERT' OR OLD.status <> 'done' OR OLD.milestone_stage_id IS DISTINCT FROM NEW.milestone_stage_id) THEN
+    UPDATE payment_stages
+       SET milestone_reached_on = COALESCE(milestone_reached_on, (NEW.ends_at AT TIME ZONE 'Asia/Kolkata')::date)
+     WHERE id = NEW.milestone_stage_id;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS b_visit_milestone ON visits;
+CREATE TRIGGER b_visit_milestone AFTER INSERT OR UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION visit_milestone();
+
+-- Everyone who has run a project or a trip is a starting list of people.
+INSERT INTO staff (name)
+SELECT DISTINCT btrim(n) FROM (
+  SELECT project_manager AS n FROM projects
+  UNION SELECT employee_name FROM travel_logs
+) x
+WHERE n IS NOT NULL AND btrim(n) <> ''
+ON CONFLICT DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('visit_reminder_days', '1', 'Days before a visit at which the team (and, if chosen, the client) are reminded.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Outgoing webhooks (#49)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id                     serial PRIMARY KEY,
+  name                   text NOT NULL,
+  url                    text NOT NULL,
+  events                 text[] NOT NULL DEFAULT '{}',
+  secret                 text NOT NULL,
+  min_value              numeric(16,2),
+  sector                 text,
+  include_personal_data  boolean NOT NULL DEFAULT false,
+  active                 boolean NOT NULL DEFAULT true,
+  when_inactive          text NOT NULL DEFAULT 'queue' CHECK (when_inactive IN ('queue','drop')),
+  created_by             text,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id             bigserial PRIMARY KEY,
+  event          text NOT NULL,
+  entity         text,
+  entity_id      text,
+  value          numeric(16,2),
+  company_id     int,
+  data           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at    timestamptz NOT NULL DEFAULT now(),
+  dispatched_at  timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS webhook_events_pending_idx ON webhook_events (id) WHERE dispatched_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id                bigserial PRIMARY KEY,
+  endpoint_id       int NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id          bigint NOT NULL REFERENCES webhook_events(id) ON DELETE CASCADE,
+  idempotency_key   text NOT NULL UNIQUE,
+  status            text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','held','succeeded','failed')),
+  attempts          int NOT NULL DEFAULT 0,
+  next_attempt_at   timestamptz NOT NULL DEFAULT now(),
+  last_status_code  int,
+  last_response     text,
+  last_error        text,
+  delivered_at      timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (endpoint_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due_idx ON webhook_deliveries (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS webhook_deliveries_endpoint_idx ON webhook_deliveries (endpoint_id, created_at DESC);
+
+DROP TRIGGER IF EXISTS webhook_endpoints_set_updated_at ON webhook_endpoints;
+CREATE TRIGGER webhook_endpoints_set_updated_at BEFORE UPDATE ON webhook_endpoints FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Record one event, if anyone listens, and wake the worker.
+CREATE OR REPLACE FUNCTION webhook_emit(p_event text, p_entity text, p_entity_id text, p_value numeric, p_company int, p_data jsonb)
+RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM webhook_endpoints WHERE (active OR when_inactive = 'queue') AND p_event = ANY(events)) THEN
+    RETURN;
+  END IF;
+  INSERT INTO webhook_events (event, entity, entity_id, value, company_id, data)
+  VALUES (p_event, p_entity, p_entity_id, p_value, p_company, COALESCE(p_data, '{}'::jsonb));
+  PERFORM pg_notify('webhook_events', p_event);
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION webhook_quotation_events() RETURNS trigger AS $$
+DECLARE st pipeline_stages%ROWTYPE; d jsonb;
+BEGIN
+  d := jsonb_build_object('quotation_no', NEW.quotation_no, 'client_name', NEW.client_name, 'company_id', NEW.company_id,
+         'service', NEW.service_quoted, 'status', NEW.status, 'value', NEW.quotation_value, 'currency', NEW.currency,
+         'sales_person', NEW.sales_person, 'contact_person', NEW.contact_person, 'revision', NEW.revision, 'valid_until', NEW.valid_until);
+  IF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL THEN
+    PERFORM webhook_emit('quotation.sent', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+  END IF;
+  IF NEW.stage_id IS DISTINCT FROM OLD.stage_id AND NEW.stage_id IS NOT NULL THEN
+    SELECT * INTO st FROM pipeline_stages WHERE id = NEW.stage_id;
+    d := d || jsonb_build_object('stage', st.name, 'probability', NEW.probability,
+           'previous_stage', (SELECT name FROM pipeline_stages WHERE id = OLD.stage_id));
+    PERFORM webhook_emit('quotation.stage_changed', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+    IF st.type = 'won' THEN
+      PERFORM webhook_emit('quotation.won', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id, d);
+    ELSIF st.type = 'lost' THEN
+      PERFORM webhook_emit('quotation.lost', 'quotation', NEW.quotation_no, NEW.quotation_value, NEW.company_id,
+        d || jsonb_build_object('lost_reason', (SELECT name FROM lost_reasons WHERE id = NEW.lost_reason_id), 'competitor', NEW.competitor));
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_webhook_quotation ON quotations;
+CREATE TRIGGER z_webhook_quotation AFTER UPDATE ON quotations FOR EACH ROW EXECUTE FUNCTION webhook_quotation_events();
+
+CREATE OR REPLACE FUNCTION webhook_record_events() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'enquiries' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('enquiry.created', 'enquiry', NEW.enquiry_no, NEW.estimated_value, NEW.company_id,
+      jsonb_build_object('enquiry_no', NEW.enquiry_no, 'client_name', NEW.client_name, 'service', NEW.service, 'status', NEW.status,
+        'sales_person', NEW.sales_person, 'contact_person', NEW.contact_person, 'estimated_value', NEW.estimated_value, 'currency', NEW.currency));
+  ELSIF TG_TABLE_NAME = 'purchase_orders' THEN
+    IF TG_OP = 'INSERT' THEN
+      PERFORM webhook_emit('po.received', 'purchase_order', NEW.po_number, NEW.po_value,
+        (SELECT company_id FROM projects WHERE project_id = NEW.project_id),
+        jsonb_build_object('po_number', NEW.po_number, 'project_id', NEW.project_id, 'quotation_no', NEW.quotation_no,
+          'po_date', NEW.po_date, 'value', NEW.po_value, 'currency', NEW.currency,
+          'client_name', (SELECT client_name FROM projects WHERE project_id = NEW.project_id)));
+    ELSIF NEW.actual_delivery_date IS NOT NULL AND OLD.actual_delivery_date IS NULL THEN
+      PERFORM webhook_emit('project.delivered', 'project', NEW.project_id, NEW.po_value,
+        (SELECT company_id FROM projects WHERE project_id = NEW.project_id),
+        jsonb_build_object('project_id', NEW.project_id, 'po_number', NEW.po_number, 'delivered_on', NEW.actual_delivery_date,
+          'client_name', (SELECT client_name FROM projects WHERE project_id = NEW.project_id)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'payment_stages' THEN
+    IF NEW.invoice_no IS NOT NULL AND OLD.invoice_no IS NULL THEN
+    PERFORM webhook_emit('invoice.issued', 'payment_stage', NEW.id::text, (SELECT round(NEW.stage_percent * po_value, 2) FROM purchase_orders WHERE po_number = NEW.po_number),
+      (SELECT p.company_id FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = NEW.po_number),
+      jsonb_build_object('invoice_no', NEW.invoice_no, 'invoice_date', NEW.invoice_date, 'po_number', NEW.po_number,
+        'stage', NEW.stage_name, 'amount', (SELECT round(NEW.stage_percent * po_value, 2) FROM purchase_orders WHERE po_number = NEW.po_number)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'payments' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('payment.received', 'payment_stage', NEW.stage_id::text, NEW.amount,
+      (SELECT p.company_id FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id WHERE s.id = NEW.stage_id),
+      jsonb_build_object('stage_id', NEW.stage_id, 'amount', NEW.amount, 'tds_amount', NEW.tds_amount, 'received_on', NEW.received_on,
+        'mode', NEW.mode, 'reference', NEW.reference,
+        'invoice_no', (SELECT invoice_no FROM payment_stages WHERE id = NEW.stage_id),
+        'po_number', (SELECT po_number FROM payment_stages WHERE id = NEW.stage_id)));
+  ELSIF TG_TABLE_NAME = 'engagements' THEN
+    IF NEW.status = 'renewal_open' AND OLD.status IS DISTINCT FROM 'renewal_open' THEN
+    PERFORM webhook_emit('renewal.opened', 'company', NEW.company_id::text, NULL, NEW.company_id,
+      jsonb_build_object('client_name', NEW.client_name, 'service', NEW.service_name, 'due_on', NEW.next_due_on, 'owner', NEW.owner,
+        'renewal_quotation_no', (SELECT quotation_no FROM quotations WHERE id = NEW.renewal_quotation_id)));
+    END IF;
+  ELSIF TG_TABLE_NAME = 'visits' AND TG_OP = 'INSERT' THEN
+    PERFORM webhook_emit('visit.scheduled', 'project', NEW.project_id, NULL, NEW.company_id,
+      jsonb_build_object('visit_id', NEW.id, 'title', NEW.title, 'type', NEW.type, 'starts_at', NEW.starts_at, 'ends_at', NEW.ends_at,
+        'project_id', NEW.project_id, 'city', NEW.city, 'status', NEW.status));
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_webhook_enquiry ON enquiries;
+CREATE TRIGGER z_webhook_enquiry AFTER INSERT ON enquiries FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_po ON purchase_orders;
+CREATE TRIGGER z_webhook_po AFTER INSERT OR UPDATE ON purchase_orders FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_stage ON payment_stages;
+CREATE TRIGGER z_webhook_stage AFTER UPDATE ON payment_stages FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_payment ON payments;
+CREATE TRIGGER z_webhook_payment AFTER INSERT ON payments FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_engagement ON engagements;
+CREATE TRIGGER z_webhook_engagement AFTER UPDATE ON engagements FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+DROP TRIGGER IF EXISTS z_webhook_visit ON visits;
+CREATE TRIGGER z_webhook_visit AFTER INSERT ON visits FOR EACH ROW EXECUTE FUNCTION webhook_record_events();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('incoming_enquiries_enabled', 'false', 'Accept enquiries posted to /api/hooks/enquiries with a valid signature (INCOMING_WEBHOOK_SECRET).')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- Client portal (#47)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portal_links (
+  id          serial PRIMARY KEY,
+  contact_id  int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS portal_sessions (
+  id            text PRIMARY KEY,
+  contact_id    int NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  company_id    int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  expires_at    timestamptz NOT NULL,
+  revoked_at    timestamptz,
+  last_seen_at  timestamptz,
+  ip            text,
+  user_agent    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_sessions_contact_idx ON portal_sessions (contact_id);
+
+CREATE TABLE IF NOT EXISTS portal_audit (
+  id          bigserial PRIMARY KEY,
+  session_id  text,
+  contact_id  int REFERENCES contacts(id) ON DELETE SET NULL,
+  company_id  int REFERENCES companies(id) ON DELETE CASCADE,
+  action      text NOT NULL,
+  target      text,
+  ip          text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_audit_company_idx ON portal_audit (company_id, created_at DESC);
+
+-- ---------------------------------------------------------------------
+-- Accounting integration (#48)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS accounting_mappings (
+  id          serial PRIMARY KEY,
+  kind        text NOT NULL CHECK (kind IN ('customer','service','ledger','tax')),
+  tracker_ref text NOT NULL,
+  books_ref   text NOT NULL,
+  books_name  text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (kind, tracker_ref)
+);
+
+CREATE TABLE IF NOT EXISTS books_entries (
+  id              serial PRIMARY KEY,
+  source          text NOT NULL CHECK (source IN ('zoho','tally','file')),
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment','credit_note')),
+  books_id        text NOT NULL,
+  number          text,
+  customer_name   text,
+  customer_gstin  text,
+  company_id      int REFERENCES companies(id) ON DELETE SET NULL,
+  entry_date      date,
+  due_date        date,
+  taxable_amount  numeric(16,2),
+  tax_amount      numeric(16,2),
+  total_amount    numeric(16,2),
+  tds_amount      numeric(16,2),
+  currency        text NOT NULL DEFAULT 'INR',
+  reference       text,
+  status          text,
+  raw             jsonb,
+  imported_at     timestamptz NOT NULL DEFAULT now(),
+  imported_by     text,
+  UNIQUE (source, kind, books_id)
+);
+
+CREATE INDEX IF NOT EXISTS books_entries_number_idx ON books_entries (kind, upper(regexp_replace(number, '\s', '', 'g')));
+
+CREATE TABLE IF NOT EXISTS reconciliation_items (
+  id              serial PRIMARY KEY,
+  kind            text NOT NULL CHECK (kind IN ('invoice','payment')),
+  match_key       text NOT NULL UNIQUE,
+  stage_id        int REFERENCES payment_stages(id) ON DELETE CASCADE,
+  payment_id      int REFERENCES payments(id) ON DELETE SET NULL,
+  books_entry_id  int REFERENCES books_entries(id) ON DELETE CASCADE,
+  status          text NOT NULL CHECK (status IN ('matched','amount_differs','date_differs','missing_in_books','missing_in_tracker','resolved')),
+  differences     jsonb NOT NULL DEFAULT '[]'::jsonb,
+  note            text,
+  resolved_by     text,
+  resolved_at     timestamptz,
+  checked_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS reconciliation_items_status_idx ON reconciliation_items (status);
+
+CREATE TABLE IF NOT EXISTS accounting_log (
+  id          bigserial PRIMARY KEY,
+  action      text NOT NULL,
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  done_by     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('accounting_provider', 'none', 'Where the books are: none, zoho, tally or file (export files uploaded by hand).'),
+  ('accounting_apply_payments', 'false', 'Record payments found in the books on the matching tracker invoice automatically.'),
+  ('company_state_code', '', 'Two-digit GST state code of our registration (e.g. 27 for Maharashtra). Decides CGST+SGST or IGST on draft invoices.')
+ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

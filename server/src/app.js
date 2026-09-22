@@ -36,6 +36,11 @@ import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js
 import { deliverablesRouter } from './routes/deliverables.js';
 import { mailboxRouter, mailThreadRouter, mailWebhookRouter } from './routes/mailboxes.js';
 import { inboxRouter } from './routes/inbox.js';
+import { profitabilityRouter } from './routes/profitability.js';
+import { visitsRouter } from './routes/visits.js';
+import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
+import { portalAdminRouter, portalRouter } from './routes/portal.js';
+import { accountingRouter } from './routes/accounting.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
   vendorInvoiceRouter, claimRouter, travelRouter,
@@ -68,7 +73,8 @@ app.use(cors({
   origin: config.corsOrigin.split(',').map((s) => s.trim()),
   credentials: true,
 }));
-app.use(express.json({ limit: '1mb' }));
+// The raw bytes are kept for routes that check a signature over them.
+app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(cookieParser());
 if (config.nodeEnv !== 'test') app.use(morgan('dev'));
 
@@ -94,6 +100,10 @@ app.use('/api/auth', authRouter);
 app.use('/api/public/accept', publicAcceptanceRouter);
 // Microsoft Graph posts mail notifications here; each is checked against its subscription's secret.
 app.use('/api/mail', mailWebhookRouter);
+// Signed incoming events (#49), off unless switched on in Settings.
+app.use('/api/hooks', incomingHooksRouter);
+// The client portal (#47) has its own sign-in and session; see routes/portal.js.
+app.use('/api/portal', portalRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
@@ -122,6 +132,11 @@ app.use('/api/deliverables', deliverablesRouter);
 app.use('/api/mailboxes', mailboxRouter);
 app.use('/api/mail', mailThreadRouter);
 app.use('/api/inbox', inboxRouter);
+app.use('/api/profitability', profitabilityRouter);
+app.use('/api/visits', visitsRouter);
+app.use('/api/webhooks', webhooksRouter);
+app.use('/api/portal-admin', portalAdminRouter);
+app.use('/api/accounting', accountingRouter);
 app.use('/api/tasks', taskSummaryRouter);
 app.use('/api/jobs', jobRouter);
 app.use('/api/projects', projectRouter);

@@ -14,6 +14,8 @@ import { query } from '../db.js';
 import { businessToday } from './businessDate.js';
 import { sendMail } from './mail.js';
 import { dailyDigest } from './emailTemplates.js';
+import { costAlerts } from '../routes/profitability.js';
+import { emit } from './webhooks.js';
 
 /**
  * Raise one notification.
@@ -38,6 +40,16 @@ export async function notify({ username = null, kind, title, body = null, entity
 
 const enc = (s) => encodeURIComponent(String(s));
 
+/** Whole days from a date to another, both read as plain dates. */
+const daysApart = (from, to) => Math.round((Date.parse(`${String(to).slice(0, 10)}T00:00:00Z`) - Date.parse(`${String(from).slice(0, 10)}T00:00:00Z`)) / 864e5);
+
+// When an overdue task is announced to a webhook receiver: the day it goes
+// overdue and a few milestones after. Emitting on every daily run gave each
+// day its own event and its own idempotency key, so a task a fortnight old
+// had already fired a receiving workflow fourteen times. invoice.overdue
+// below has always worked this way.
+export const TASK_OVERDUE_DAYS = [1, 7, 14, 30];
+
 export async function collectNotifications({ today = businessToday(), db = { query } } = {}) {
   const raised = [];
   const add = async (n) => { const r = await notify(n, db); if (r) raised.push(r); return r; };
@@ -46,6 +58,10 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: tasks } = await db.query(`SELECT * FROM tasks WHERE status <> 'done' AND due_at <= $1 ORDER BY due_at`, [today]);
   for (const t of tasks) {
     const overdue = t.due_at < today;
+    const daysOverdue = overdue ? daysApart(t.due_at, today) : 0;
+    if (TASK_OVERDUE_DAYS.includes(daysOverdue)) {
+      await emit('task.overdue', { entity: t.entity, entityId: t.entity_id, data: { task_id: t.id, title: t.title, due_at: t.due_at, days_overdue: daysOverdue, assignee: t.assignee } }, db);
+    }
     await add({ username: t.assignee || null, kind: overdue ? 'task_overdue' : 'task_due', title: `${overdue ? 'Overdue' : 'Due today'}: ${t.title}`, body: `${t.entity.replace('_', ' ')} ${t.entity_id}${t.assignee ? ` · ${t.assignee}` : ''}`, entity: t.entity, entityId: t.entity_id, link: '/tasks', dedupeKey: `task:${t.id}:${day}` });
   }
 
@@ -62,6 +78,12 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: overdue } = await db.query(`SELECT id, po_number, stage_name, invoice_no, client_name, days_overdue FROM v_payment_stages WHERE stage_status = 'Overdue' AND days_overdue <= 1`);
   for (const s of overdue) {
     await add({ kind: 'invoice_overdue', title: `Invoice ${s.invoice_no} is now overdue`, body: `${s.client_name} · ${s.po_number} · ${s.stage_name}`, entity: 'payment_stage', entityId: s.id, link: '/collections', dedupeKey: `overdue:${s.id}` });
+  }
+
+  // For automation: an overdue invoice is announced on its first day and at 15, 30, 45, 60 and 90 days.
+  const { rows: milestones } = await db.query(`SELECT id, po_number, stage_name, invoice_no, client_name, days_overdue, stage_amount, currency FROM v_payment_stages WHERE stage_status = 'Overdue' AND days_overdue IN (1, 15, 30, 45, 60, 90)`);
+  for (const s of milestones) {
+    await emit('invoice.overdue', { entity: 'payment_stage', entityId: s.id, value: s.stage_amount, data: { invoice_no: s.invoice_no, po_number: s.po_number, stage: s.stage_name, client_name: s.client_name, days_overdue: s.days_overdue, amount: s.stage_amount, currency: s.currency } }, db);
   }
 
   const { rows: renewals } = await db.query(`SELECT e.id, e.client_name, e.service_name, e.next_due_on, q.quotation_no FROM engagements e LEFT JOIN quotations q ON q.id = e.renewal_quotation_id WHERE e.status = 'renewal_open' AND e.renewal_opened_at >= $1::date - 1`, [today]);
@@ -93,7 +115,9 @@ export async function collectNotifications({ today = businessToday(), db = { que
     await add({ kind: 'inbox', title: `No reply yet: ${c.subject || '(no subject)'}`, body: `${c.inbox} · ${c.from_name || c.from_email}${c.assignee ? ` · ${c.assignee}` : ' · unassigned'}`, link: `/inbox?c=${c.id}`, dedupeKey: `inbox-late:${c.id}:${day}` });
   }
 
-  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length } };
+  const costs = await costAlerts({ db, notify: (n, d) => add(n, d) });
+
+  return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length, cost_alerts: costs.length } };
 }
 
 /** The daily job: the sweep, then one digest email with everything still unread. */

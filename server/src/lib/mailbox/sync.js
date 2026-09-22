@@ -257,6 +257,7 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
     if (c?.do_not_contact) throw Object.assign(new Error('This contact is marked do not contact'), { status: 409 });
   }
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [t.account_id]);
+  if (t.conversation_id.startsWith('portal-')) return replyToPortal(t, account, html, by);
   const provider = providerFor(account);
   await provider.reply(last.provider_id, html, { replyAll });
   await saveTokens(account, provider);
@@ -264,6 +265,23 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
   const { messages } = await provider.delta('sentitems', (await query(`SELECT delta_link FROM mail_folders WHERE account_id = $1 AND folder = 'sentitems'`, [account.id])).rows[0]?.delta_link || null, new Date(Date.now() - 3600e3).toISOString());
   const r = await ingest(account, messages, { sentBy: by });
   return { sent: true, synced: r.stored };
+}
+
+/** A message that came through the client portal (#47) is answered by email. */
+async function replyToPortal(t, account, html, by) {
+  const { rows: [c] } = await query('SELECT name, email FROM contacts WHERE id = $1', [t.contact_id]);
+  if (!c?.email) throw Object.assign(new Error('The client contact has no email address'), { status: 422 });
+  const { sendMail } = await import('../mail.js');
+  const subject = `RE: ${String(t.subject || '').replace(/^\[Portal\]\s*/, '')}`;
+  await sendMail({ to: c.email, subject, text: snippet(html, 10000), html, template: 'portal_reply', entity: 'company', entityId: String(t.company_id), sentBy: by });
+  await transaction(async (db) => {
+    const { rows: [msg] } = await db.query(
+      `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, to_emails, subject, snippet, body_html, sent_at, company_id, contact_id, sent_from_tracker_by)
+       VALUES ($1,$2,$3,'outbound',$4,$5,$6,$7,$8,now(),$9,$10,$11) RETURNING *`,
+      [account.id, t.id, `portal-reply-${crypto.randomUUID()}`, account.email, [c.email], subject, snippet(html), cleanHtml(html), t.company_id, t.contact_id, by]);
+    for (const hook of messageHooks) await hook({ db, account, thread: t, message: msg, participants: [] });
+  });
+  return { sent: true, synced: 1, by_email: true };
 }
 
 /** Where a person withdraws the tracker's access to their mailbox. */

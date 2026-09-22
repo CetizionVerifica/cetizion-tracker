@@ -73,11 +73,11 @@ Status values: `todo`, `claimed`, `in progress`, `PR open`, `merged`.
 
 | Issue | Title | Status | Notes |
 | --- | --- | --- | --- |
-| #39 | Project profitability: delivery cost against PO value | todo | Uses trips, vendor invoices and claims already tracked. |
-| #42 | Audit and site-visit scheduling with auditor availability | todo | |
-| #47 | Client portal | todo | Needs #20, #27, #43. Separate login surface; security review first. |
-| #48 | Accounting integration (Tally or Zoho Books) and GST/TDS reports | todo | Needs an account from the lead. |
-| #49 | Outgoing webhooks and n8n automation | todo | |
+| #39 | Project profitability: delivery cost against PO value | done (checkpoint 5) | Margin per project from PO value against travel bills, claims and new manual costs (with documents), paid and committed, planned against actual; gaps never counted as zero; report by service, client, sector, owner; cost alert with a task. Migration 027. |
+| #42 | Audit and site-visit scheduling with auditor availability | done (checkpoint 5) | Visits with team, dates, site and milestone; completing one makes an On Milestone stage invoiceable; working days and leave with clash warnings; trip created from a visit; calendar, agenda, capacity; reminders. Migration 028. |
+| #47 | Client portal | done (checkpoint 5) | Magic-link portal scoped to one company: projects, documents, invoices with a statement, certificates, messages into the shared inbox; per-company and per-section switches; audit of every view; isolation tests. Migration 030. |
+| #48 | Accounting integration (Tally or Zoho Books) and GST/TDS reports | done (checkpoint 5) | Export-file import from Zoho or Tally (and the Zoho API and Tally XML behind configuration), reconciliation with take-books-value or resolve, draft invoices with CGST/SGST/IGST, TDS by quarter and GSTR-1 B2B CSV. Migration 031. The system choice and credentials are the lead's. |
+| #49 | Outgoing webhooks and n8n automation | done (checkpoint 5) | Signed webhooks for 13 events, delivered within a second by the worker, retried for a day, replayable, held or dropped while off, personal data stripped unless allowed; signed incoming enquiries; n8n recipes in docs. Migration 029. |
 
 ### Batch 6: platform and tooling, with the lead
 
@@ -146,6 +146,7 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 | `checkpoint/batch-2` | #23, #24, #25, #26, #46 | server tests 59/59, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-3` | #22, #27, #28, #40, #44 | server tests 60/60, browser tests 4/4, migration check green, web build clean |
 | `checkpoint/batch-4` | #31, #53, #43, #29, #30 | server tests 70/70, browser tests 4/4, migration check green, web build clean |
+| `checkpoint/batch-5` | #39, #42, #49, #47, #48 | server tests 100/100 (with the database suites), browser tests 4/4, migration check green, web build clean |
 
 ## Log
 
@@ -155,3 +156,4 @@ with a tag after every five issues. Nothing is pushed until Sami says so.
 - 2026-09-17: Batch 2 done and tagged `checkpoint/batch-2`.
 - 2026-09-17: Batch 3 done and tagged `checkpoint/batch-3`. The migration check caught a fresh-install ordering bug in the #28 schema; fixed before tagging.
 - 2026-09-17: Batch 4 done and tagged `checkpoint/batch-4`. #29 and #30 are built and tested against a stand-in mailbox; they go live when the lead registers the Microsoft app. Also fixed: the orphan-file sweep would have removed timeline attachments after a day.
+- 2026-09-17: Batch 5 done and tagged `checkpoint/batch-5`. Also fixed: the background worker could not start (pg-boss 12 import), found while testing webhooks.
