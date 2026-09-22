@@ -32,6 +32,11 @@ collectionsRouter.get('/', async (req, res) => {
      ORDER BY ps.days_overdue DESC, ps.invoice_due_date`);
   const clients = new Map();
   const totals = { outstanding: 0, overdue: 0, buckets: Object.fromEntries(BUCKETS.map((b) => [b[2], 0])), on_hold: 0, promised: 0 };
+  // Debt in another currency is not converted here — there is no rate on a
+  // collections screen and inventing one would be worse — but it is not
+  // silently dropped either. It is listed, unconverted, the way Cashflow
+  // does it, so a figure that excludes it says so.
+  const foreign = [];
   for (const s of rows) {
     const key = s.company_id ?? s.client_name;
     if (!clients.has(key)) clients.set(key, { company_id: s.company_id, company: s.company_name, contact_name: s.contact_name, contact_email: s.contact_email, contact_phone: s.contact_phone, outstanding: 0, overdue: 0, oldest_days: 0, buckets: Object.fromEntries(BUCKETS.map((b) => [b[2], 0])), stages: [], last_chased_at: null, promise_to_pay_date: null });
@@ -42,6 +47,7 @@ collectionsRouter.get('/', async (req, res) => {
     const bucket = bucketOf(days);
     cl.stages.push({ ...s, bucket });
     if (inr) { cl.outstanding += out; totals.outstanding += out; if (days > 0) { cl.overdue += out; totals.overdue += out; } cl.buckets[bucket] += out; totals.buckets[bucket] += out; }
+    else foreign.push({ ref: `${s.po_number} · ${s.stage_name}`, invoice_no: s.invoice_no, client: s.company_name || s.client_name, currency: s.currency, amount: out, days_overdue: days });
     cl.oldest_days = Math.max(cl.oldest_days, days);
     if (s.last_chased_at && (!cl.last_chased_at || s.last_chased_at > cl.last_chased_at)) cl.last_chased_at = s.last_chased_at;
     if (s.promise_to_pay_date && (!cl.promise_to_pay_date || s.promise_to_pay_date > cl.promise_to_pay_date)) cl.promise_to_pay_date = s.promise_to_pay_date;
@@ -49,7 +55,7 @@ collectionsRouter.get('/', async (req, res) => {
     if (s.promise_to_pay_date) totals.promised += inr ? out : 0;
   }
   const list = [...clients.values()].sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
-  res.json({ data: { totals, clients: list, buckets: BUCKETS.map((b) => b[2]) } });
+  res.json({ data: { totals, clients: list, buckets: BUCKETS.map((b) => b[2]), foreign } });
 });
 
 collectionsRouter.get('/log', async (req, res) => {

@@ -70,10 +70,15 @@ export async function openRenewal(engagementId, { today = businessToday(), by = 
 }
 
 export async function openRenewals({ db = { query }, today = businessToday() } = {}) {
+  // Inside the lead window, and not long past it. Without the lower bound,
+  // an engagement discovered from a delivery two years old is "due" and a
+  // quotation is minted for work nobody is renewing.
   const { rows } = await db.query(`
     SELECT e.id FROM engagements e
       LEFT JOIN services sv ON sv.id = e.service_id
-     WHERE e.status = 'active' AND e.next_due_on - COALESCE(sv.renewal_lead_days, 60) <= $1::date`, [today]);
+     WHERE e.status = 'active'
+       AND e.next_due_on - COALESCE(sv.renewal_lead_days, 60) <= $1::date
+       AND e.next_due_on + 90 >= $1::date`, [today]);
   const opened = [];
   for (const r of rows) opened.push(await openRenewal(r.id, { today }));
   return opened;
@@ -95,10 +100,19 @@ export async function settleEngagements({ db = { query }, today = businessToday(
   return { renewed, lapsed: [...lapsed, ...lapsedActive] };
 }
 
-/** The daily job: discover, open, settle. */
+/**
+ * The daily job: settle first, then discover, then open.
+ *
+ * The order matters on the first run. Discovery back-dates next_due_on from
+ * deliveries that may be more than a year old, and opening a renewal mints
+ * a real quotation against real numbers. Running open before settle meant
+ * the first morning would open renewals for engagements that were already
+ * dead, and only then mark them lapsed -- leaving the quotations behind.
+ * Settling first retires them before anything is minted for them.
+ */
 export async function runRenewals({ today = businessToday() } = {}) {
+  const settled = await settleEngagements({ today });
   const discovered = await discoverEngagements();
   const opened = await openRenewals({ today });
-  const settled = await settleEngagements({ today });
   return { today, discovered, opened, ...settled };
 }

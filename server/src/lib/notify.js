@@ -15,7 +15,19 @@ import { businessToday } from './businessDate.js';
 import { sendMail } from './mail.js';
 import { dailyDigest } from './emailTemplates.js';
 
-export async function notify({ username = 'admin', kind, title, body = null, entity = null, entityId = null, link = null, dedupeKey = null }, db = { query }) {
+/**
+ * Raise one notification.
+ *
+ * `username` is who it is for: a name the tracker already records — a
+ * task's assignee, an enquiry's sales person — or null, which means
+ * everyone. Null is the honest answer for most of them: a backup that
+ * failed or an invoice gone overdue is not one person's business.
+ *
+ * It used to default to the literal string 'admin' while the route read as
+ * req.user.username, which in database mode is an email address. Nothing
+ * ever matched, so the bell read zero for everybody (#44).
+ */
+export async function notify({ username = null, kind, title, body = null, entity = null, entityId = null, link = null, dedupeKey = null }, db = { query }) {
   const { rows } = await db.query(
     `INSERT INTO notifications (username, kind, title, body, entity, entity_id, link, dedupe_key)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING RETURNING *`,
@@ -34,12 +46,12 @@ export async function collectNotifications({ today = businessToday(), db = { que
   const { rows: tasks } = await db.query(`SELECT * FROM tasks WHERE status <> 'done' AND due_at <= $1 ORDER BY due_at`, [today]);
   for (const t of tasks) {
     const overdue = t.due_at < today;
-    await add({ kind: overdue ? 'task_overdue' : 'task_due', title: `${overdue ? 'Overdue' : 'Due today'}: ${t.title}`, body: `${t.entity.replace('_', ' ')} ${t.entity_id}${t.assignee ? ` · ${t.assignee}` : ''}`, entity: t.entity, entityId: t.entity_id, link: '/tasks', dedupeKey: `task:${t.id}:${day}` });
+    await add({ username: t.assignee || null, kind: overdue ? 'task_overdue' : 'task_due', title: `${overdue ? 'Overdue' : 'Due today'}: ${t.title}`, body: `${t.entity.replace('_', ' ')} ${t.entity_id}${t.assignee ? ` · ${t.assignee}` : ''}`, entity: t.entity, entityId: t.entity_id, link: '/tasks', dedupeKey: `task:${t.id}:${day}` });
   }
 
   const { rows: followups } = await db.query(`SELECT enquiry_no, client_name, next_follow_up_at, sales_person FROM enquiries WHERE status IN ('New','Contacted','Qualified','Nurture') AND next_follow_up_at <= $1`, [today]);
   for (const e of followups) {
-    await add({ kind: 'follow_up', title: `Follow up ${e.client_name}`, body: `Enquiry ${e.enquiry_no}, due ${e.next_follow_up_at}${e.sales_person ? ` · ${e.sales_person}` : ''}`, entity: 'enquiry', entityId: e.enquiry_no, link: `/enquiries?q=${enc(e.enquiry_no)}`, dedupeKey: `followup:${e.enquiry_no}:${day}` });
+    await add({ username: e.sales_person || null, kind: 'follow_up', title: `Follow up ${e.client_name}`, body: `Enquiry ${e.enquiry_no}, due ${e.next_follow_up_at}${e.sales_person ? ` · ${e.sales_person}` : ''}`, entity: 'enquiry', entityId: e.enquiry_no, link: `/enquiries?q=${enc(e.enquiry_no)}`, dedupeKey: `followup:${e.enquiry_no}:${day}` });
   }
 
   const { rows: approvals } = await db.query(`SELECT quotation_no, client_name, approval_reason, discount_percent FROM quotations WHERE approval_status = 'pending'`);

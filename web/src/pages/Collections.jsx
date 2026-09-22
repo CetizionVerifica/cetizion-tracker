@@ -39,6 +39,14 @@ export default function Collections() {
             {d.buckets.map((b) => <Stat key={b} label={`${b} days`} value={money(d.totals.buckets[b])} tone={b === '90+' && d.totals.buckets[b] > 0 ? 'danger' : ''} />)}
             <Stat label="Promised" value={money(d.totals.promised)} meta="pay-by dates given" />
             <Stat label="On hold" value={money(d.totals.on_hold)} meta="disputes" />
+            {d.foreign?.length > 0 && (
+              <Stat
+                label="Not in these totals"
+                value={`${d.foreign.length} invoice${d.foreign.length === 1 ? '' : 's'}`}
+                meta={[...new Set(d.foreign.map((f) => f.currency))].join(', ')}
+                tone="warn"
+              />
+            )}
           </div>
         )}
         <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">

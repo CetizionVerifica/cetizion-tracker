@@ -1302,7 +1302,10 @@ CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS notifications (
   id          serial PRIMARY KEY,
-  username    text NOT NULL DEFAULT 'admin',
+  -- NULL means everyone: a failed backup or an overdue invoice is not one
+  -- person's. A name here is matched against the reader's account name as
+  -- well as their sign-in address.
+  username    text,
   kind        text NOT NULL,
   title       text NOT NULL,
   body        text,
@@ -1312,6 +1315,18 @@ CREATE TABLE IF NOT EXISTS notifications (
   dedupe_key  text,
   read_at     timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Who has read what. A notification addressed to nobody is everyone's, and
+-- a single read_at on a shared row would mean the first person to look
+-- cleared it for the whole team. Read state belongs to the reader, so it
+-- lives here rather than on the row. read_at on the row survives for the
+-- digest, which asks whether anyone has seen a thing at all.
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id int NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  reader          text NOT NULL,
+  read_at         timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (notification_id, reader)
 );
 
 CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (username, read_at, created_at DESC);

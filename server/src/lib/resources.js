@@ -574,6 +574,7 @@ export const resources = {
 
   notes: {
     table: 'notes',
+    stampActor: 'author',
     view: null,
     label: 'Note',
     defaultSort: 'pinned DESC, created_at DESC',
@@ -598,6 +599,7 @@ export const resources = {
     search: ['label'],
     filters: ['entity', 'entity_id'],
     columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
+    stampActor: 'uploaded_by',
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
       entity_id: requiredStr(120),

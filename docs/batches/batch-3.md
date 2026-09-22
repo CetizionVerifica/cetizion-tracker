@@ -42,6 +42,33 @@ should have had. Nothing else changed: no route, no response, no behaviour.
 blocks of table definitions and resolves in seconds, rather than two
 different features arriving in one file.
 
+**The notification centre works now.** Every row was written as
+`username = 'admin'` while the page read as `req.user.username`, which in
+database auth mode is a person's email address — so the bell read zero for
+everybody and mark-as-read answered 404. A notification is addressed to the
+person the record names (a task's assignee, an enquiry's sales person) or to
+nobody, which means everyone: a failed backup is not one person's business.
+The reader is matched on both spellings the tracker has for them, their
+sign-in address and their account name, which is what makes this work before
+#18 joins those up. Read state moved to a `notification_reads` row per
+reader — with one `read_at` on a shared row, the first person to look would
+have cleared the bell for the whole team.
+
+Three smaller ones from the same review:
+
+- **The renewals job settles before it opens anything.** Opening mints a
+  real quotation, and discovery back-dates `next_due_on` from deliveries
+  that can be a year old, so the first morning would have opened renewals
+  for engagements that were already dead. Opening is bounded at both ends
+  now, not just at the lead time.
+- **A note or a file is signed by whoever added it**, taken from the
+  session, not the request body. An author sent explicitly is kept, so an
+  import can still carry its own.
+- **Collections says what it is leaving out.** Debt in another currency was
+  dropped from every total silently; it is listed unconverted now, the way
+  Cashflow already did it, and the page shows how many invoices and in which
+  currencies.
+
 Also in this round: the daily purge no longer destroys every uploaded file,
 a client hears about an overdue invoice once per interval rather than three
 mornings running, a receipt with no date stays undated instead of being
