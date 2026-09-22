@@ -16,7 +16,7 @@ import { hashPassword } from './passwords.js';
 
 export const ROLES = ['admin', 'sales'];
 
-const COLUMNS = 'id, name, email, password_hash, role, active, last_login_at, created_at, updated_at';
+const COLUMNS = 'id, name, email, password_hash, role, active, session_version, last_login_at, created_at, updated_at';
 
 /** Trimmed as typed, or null when there is nothing there. Case is kept: it is the reader's, not the index's. */
 export function normalizeEmail(email) {
@@ -131,7 +131,35 @@ export class LastAdminError extends Error {}
 /** Somebody already holds that address. */
 export class DuplicateEmailError extends Error {}
 
+/**
+ * Switching on an account that has nothing to sign in with. The database
+ * refuses it through users_active_needs_login; this is that refusal in
+ * words a person can act on, raised before the constraint name reaches
+ * anybody outside this module.
+ */
+export class ActiveNeedsLoginError extends Error {}
+
 const UNIQUE_VIOLATION = '23505';
+const CHECK_VIOLATION = '23514';
+const ACTIVE_NEEDS_LOGIN = 'users_active_needs_login';
+
+/**
+ * Turn the two constraint violations this module can provoke into errors
+ * the API layer knows how to answer. Anything else is somebody else's
+ * problem and is rethrown untouched.
+ */
+function asDomainError(err) {
+  if (err?.code === UNIQUE_VIOLATION) {
+    return new DuplicateEmailError('Somebody already uses that email address.');
+  }
+  if (err?.code === CHECK_VIOLATION && err?.constraint === ACTIVE_NEEDS_LOGIN) {
+    return new ActiveNeedsLoginError(
+      'An active user needs an email address and a password. Give this account both, ' +
+        'or leave it switched off.'
+    );
+  }
+  return err;
+}
 
 /**
  * Every user, newest account last, without their hashes. Attribution-only
@@ -213,6 +241,21 @@ export async function updateUser(id, changes, db = pool) {
   if (changes.active !== undefined) {
     values.push(Boolean(changes.active));
     sets.push(`${FIELDS.active} = $${values.length}`);
+    // Switching somebody off ends the sessions they already hold, in the
+    // same statement that switches them off — so there is no instant where
+    // the account is inactive and its cookies are still current.
+    //
+    // `active` on the right-hand side is the row's OLD value: inside an
+    // UPDATE, Postgres reads columns as they were before the statement. So
+    // this raises the counter on the true -> false transition and on
+    // nothing else. Switching an already-off account off again, or on,
+    // leaves it where it is — and leaving it where it is, on the way back
+    // on, is the point: reactivating must not hand back cookies that were
+    // revoked. The counter only ever goes up.
+    sets.push(
+      `session_version = session_version + ` +
+        `CASE WHEN ${FIELDS.active} AND NOT $${values.length} THEN 1 ELSE 0 END`
+    );
   }
   if (sets.length === 0) throw new Error('Nothing to change.');
 
@@ -228,8 +271,7 @@ export async function updateUser(id, changes, db = pool) {
       return rows[0];
     });
   } catch (err) {
-    if (err?.code === UNIQUE_VIOLATION) throw new DuplicateEmailError('Somebody already uses that email address.');
-    throw err;
+    throw asDomainError(err);
   }
 }
 
@@ -245,8 +287,15 @@ export async function updateUser(id, changes, db = pool) {
 export async function setUserPassword(id, password, db = pool) {
   const hash = await hashPassword(password);
 
+  // One statement, so the new password and the end of every session signed
+  // under the old one commit together. Two statements would leave a window
+  // where the password had changed and the old cookies still worked, which
+  // is the exact window a reset after a leak exists to close.
   const { rows } = await db.query(
-    `UPDATE users SET password_hash = $1 WHERE id = $2
+    `UPDATE users
+        SET password_hash = $1,
+            session_version = session_version + 1
+      WHERE id = $2
      RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
     [hash, id]
   );
@@ -261,7 +310,6 @@ export async function createUserAsAdmin(input, db = pool) {
   try {
     return await guardingAdmins(db, (client) => createUser(input, client));
   } catch (err) {
-    if (err?.code === UNIQUE_VIOLATION) throw new DuplicateEmailError('Somebody already uses that email address.');
-    throw err;
+    throw asDomainError(err);
   }
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { money, reportTimeZone, salesReportDocDefinition, salesReportPdf } from '../src/lib/salesReportPdf.js';
 import { monthRows, paymentStatusRows, summariseOrders, summarisePurchaseOrders } from '../src/lib/revenueReport.js';
-import { enquirySummary, quotationStatusSummary, serviceRows } from '../src/lib/salesReviewData.js';
+import { contractPipeline, enquirySummary, quotationStatusSummary, serviceRows } from '../src/lib/salesReviewData.js';
 
 // Report data in the exact shapes the report modules return; the revenue,
 // enquiry and service parts are built with those modules' own functions.
@@ -56,6 +56,11 @@ const QUOTES = [
   { service: 'Something new', status: 'Submitted', quotation_value: null, currency: 'INR', rate: 1 },
 ];
 
+const CONTRACT_POS = [
+  { po_number: 'PO-1', po_date: '2026-09-01', month: '2026-09', po_value: 100000, currency: 'INR', rate: 1, client: 'Panda Aluminium', service: 'ASI Certification', sector: 'Aluminium', country: 'India' },
+  { po_number: 'PO-2', po_date: '2026-09-05', month: '2026-09', po_value: 10700, currency: 'EUR', rate: 110.43, client: 'Midal', service: 'LCA', sector: 'Aluminium', country: 'Bahrain' },
+];
+
 const GAPS = {
   quotations: 4, quotations_without_value: 1, won_without_value: 0, won_without_po: 1, quotations_without_sector: 2,
   quotations_without_sales_person: 0, enquiries: 4, enquiries_without_sector: 0, quoted_enquiries_unlinked: 0,
@@ -66,8 +71,6 @@ function fixture(overrides = {}) {
   const period = { from: '2026-04-01', to: '2026-09-14' };
   return {
     period,
-    year: 2026,
-    month: null,
     generatedAt: new Date('2026-09-14T10:30:00Z'),
     timeZone: 'Asia/Kolkata',
     // The latest rate on record per currency, for the report's rate strip;
@@ -99,6 +102,7 @@ function fixture(overrides = {}) {
     enquiries: enquirySummary(ENQUIRIES, period),
     quotationStatus: quotationStatusSummary(QUOTE_STATUS, period),
     services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }]),
+    contracts: contractPipeline(CONTRACT_POS),
     gaps: GAPS,
     ...overrides,
   };
@@ -179,6 +183,20 @@ test('quotation status comes from the Quotations page statuses', () => {
   assert.ok(!text.includes('Outcome of quoted enquiries'), 'the enquiry outcome table is gone');
 });
 
+test('contracts received: count, value and the service/sector/country split', () => {
+  const text = textOf(salesReportDocDefinition(fixture()));
+  assert.ok(text.includes('Contracts (purchase orders) received'));
+  assert.ok(text.includes("2 purchase orders were received in the period, by the PO's own date."));
+  assert.ok(text.includes('Purchase orders received'));
+  // ₹1,00,000 + €10,700 × 110.43 = ₹12,81,601.
+  assert.ok(text.includes('₹12,81,601'), 'total contract value in INR');
+  assert.ok(text.includes('Aluminium'), 'sector split');
+  assert.ok(text.includes('India'), 'country split');
+  assert.ok(text.includes('Contract detail'));
+  assert.ok(text.includes('PO-1'));
+  assert.ok(text.includes('PO-2'));
+});
+
 test('figures carry through: sectors, services, clients and revenue', () => {
   const text = textOf(salesReportDocDefinition(fixture()));
   for (const figure of [
@@ -202,7 +220,7 @@ test('figures carry through: sectors, services, clients and revenue', () => {
 test('the analysis names the priority and the data gaps', () => {
   const text = textOf(salesReportDocDefinition(fixture()));
   assert.ok(text.includes('THE HEADLINE'));
-  assert.ok(text.includes('2 of 4 enquiries reached a quotation; 67% of decided quotations were won (2 POs, ₹2 L); 64% of 2026 PO value has been invoiced and 78% of invoices collected.'));
+  assert.ok(text.includes('2 of 4 enquiries reached a quotation; 67% of decided quotations were won (2 POs, ₹2 L); 64% of 01 Apr 2026 – 14 Sep 2026 PO value has been invoiced and 78% of invoices collected.'));
   assert.ok(text.includes('Enter a value on every quotation. '));
   assert.ok(text.includes('1 won quotation has no purchase order registered'));
   assert.ok(text.includes('Use consistent service names. '));
@@ -247,11 +265,26 @@ test('problems in the data are called out, not hidden', () => {
   assert.ok(textOf(salesReportDocDefinition(undated)).includes('1 purchase order has no PO date, so it is left out of the revenue figures: PO-9.'));
 });
 
-test('one month of revenue is labelled as that month', () => {
-  const september = fixture({ month: '09', revenue: revenueFrom(ORDERS, POS, { from: '2026-09-01', to: '2026-09-30' }) });
+test('revenue follows the same period as the rest of the report, not a separate one', () => {
+  const narrowed = { from: '2026-09-01', to: '2026-09-14' };
+  const september = fixture({ period: narrowed, revenue: revenueFrom(ORDERS, POS, narrowed) });
   const text = textOf(salesReportDocDefinition(september));
-  assert.ok(text.includes('Revenue: Sep 2026'));
-  assert.ok(text.includes('Section 6 covers Sep 2026'));
+  assert.ok(text.includes('Period: 01 Sep 2026 – 14 Sep 2026'));
+  assert.ok(text.includes('Order intake by month (INR), 01 Sep 2026 – 14 Sep 2026'));
+  assert.ok(text.includes('Every section covers 01 Sep 2026 – 14 Sep 2026: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.'));
+  assert.ok(!text.includes('PLEASE NOTE'), 'no more "revenue covers a different period" disclaimer');
+});
+
+test('an unfiltered period reads "All time" everywhere, never a second phrase for the same thing', () => {
+  const all = fixture({
+    period: { from: '', to: '' },
+    revenue: revenueFrom(ORDERS, POS, { from: '', to: '' }),
+  });
+  const text = textOf(salesReportDocDefinition(all));
+  assert.ok(text.includes('Period: All time'));
+  assert.ok(text.includes('dated in All time'));
+  assert.ok(text.includes('Every section covers All time: enquiries by enquiry date'));
+  assert.ok(!text.includes('all dates'), 'no separate lowercase phrase for the same unfiltered state');
 });
 
 test('an empty period still produces a complete report', async () => {
@@ -261,6 +294,7 @@ test('an empty period still produces a complete report', async () => {
     enquiries: enquirySummary([], {}),
     quotationStatus: quotationStatusSummary([], {}),
     services: serviceRows([], []),
+    contracts: contractPipeline([]),
     gaps: { ...GAPS, quotations: 0, quotations_without_value: 0, won_without_po: 0, quotations_without_sector: 0, enquiries: 0 },
   });
   const text = textOf(salesReportDocDefinition(empty));

@@ -4,11 +4,13 @@
  *   GET  /api/companies/duplicates      pairs that look like one client spelt twice
  *   GET  /api/companies/:id/full        the company with its contacts and records
  *   POST /api/companies/:id/merge       { into } fold this company into another
+ *                                       — admin only, see below
  *
  * Mounted ahead of the generic router so the two-segment paths win.
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { similarName } from '../lib/names.js';
@@ -51,8 +53,15 @@ const mergeSchema = z.object({ into: z.coerce.number().int().positive() });
  * Fold one company into another: every record and contact moves across and
  * takes the surviving company's name; a contact that exists on both sides
  * is kept once. The merged company is deleted. One transaction.
+ *
+ * Admin only. This is the most destructive thing the API does: it rewrites
+ * the client name on every quotation, enquiry and project belonging to one
+ * company, drops the duplicate contacts, and deletes a company row — with
+ * no undo, and consequences across records the caller never sees. The
+ * /duplicates suggestion above stays open to everybody, because spotting a
+ * duplicate is useful and costs nothing; acting on one is the admin's.
  */
-companyRouter.post('/:id/merge', async (req, res) => {
+companyRouter.post('/:id/merge', requireAdmin, async (req, res) => {
   const source = Number(req.params.id);
   const parsed = mergeSchema.safeParse(req.body || {});
   if (!Number.isInteger(source) || !parsed.success) throw new ApiError(422, 'Pick the company to merge into');

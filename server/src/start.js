@@ -26,14 +26,15 @@ try {
 
 // After the migrations, so the users table is certainly there, and before
 // the API listens. Does nothing unless BOOTSTRAP_ADMIN_* is set, and
-// nothing a second time. Signing in is unaffected either way: it still
-// checks AUTH_USERNAME / AUTH_PASSWORD.
+// nothing a second time. It fills a row; it never signs anybody in, in
+// either mode.
 //
 // Only an unreadable configuration stops the start. If the variables are
 // fine but the account they name already exists, bootstrapAdmin warns and
 // returns; the tracker is no worse off than before, and refusing to serve
-// over it would take working sign-in down to protect a facility nobody is
-// using yet.
+// over it would take working sign-in down. Whether the tracker can be
+// signed into at all is the readiness gate's question, below, and it is
+// only fatal in database mode.
 //
 // A failure here is still fatal, but what it is told to fix depends on what
 // actually broke — see bootstrapFailureLines. A database that would not

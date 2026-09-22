@@ -206,3 +206,101 @@ describe('verifyPasswordOrDummy', () => {
     assert.equal(Buffer.from(parts[6], 'base64url').length, 32);
   });
 });
+
+
+/**
+ * The sign-in path must cost the same however it fails (#18 Phase 1C).
+ *
+ * The review found the hole: verifyPasswordOrDummy only reached for the
+ * dummy when the stored value was absent, so a row holding a *malformed*
+ * hash returned false without doing any scrypt at all. That is a timing
+ * signal about a particular account, which is the thing this helper exists
+ * to remove.
+ *
+ * The assertions below are deliberately coarse and relative: one real
+ * scrypt is measured on this machine first, and every other path has to
+ * cost a meaningful fraction of it. The gap being measured is between
+ * ~0 ms and a full derivation, so nothing here depends on a tight timing.
+ */
+describe('verifyPasswordOrDummy — every refusal costs the same', () => {
+  // Non-empty strings that all look like stored credentials and none of
+  // which parseHash can use. Before the fix, each returned false for free.
+  const UNUSABLE = {
+    'null (no account)': null,
+    'undefined': undefined,
+    'empty string': '',
+    'not a hash at all': 'not-a-hash',
+    'too few fields': 'scrypt$v1$16384$8$5$onlysixfields',
+    'too many fields': 'scrypt$v1$16384$8$5$c2FsdA$aGFzaA$extra',
+    'another algorithm': 'bcrypt$v1$16384$8$5$c2FsdA$aGFzaA',
+    'a version we do not know': 'scrypt$v9$16384$8$5$c2FsdA$aGFzaA',
+    'N that is not a number': 'scrypt$v1$abc$8$5$c2FsdA$aGFzaA',
+    'the wrong parameters': 'scrypt$v1$16384$8$1$c2FsdA$aGFzaA',
+    'no salt': 'scrypt$v1$16384$8$5$$aGFzaA',
+    'a truncated key': 'scrypt$v1$16384$8$5$c2FsdHNhbHQ$aGFzaA',
+    'a malformed base64 body': 'scrypt$v1$16384$8$5$!!!!$!!!!',
+  };
+
+  const ms = async (fn) => {
+    const started = process.hrtime.bigint();
+    await fn();
+    return Number(process.hrtime.bigint() - started) / 1e6;
+  };
+
+  test('every unusable stored hash still answers false', async () => {
+    for (const [label, bad] of Object.entries(UNUSABLE)) {
+      assert.equal(await verifyPasswordOrDummy(PASSWORD, bad), false, label);
+    }
+  });
+
+  test('and pays for a real scrypt on the way to saying it', async () => {
+    // Warm the memoised dummy, so the first case measured below is not the
+    // one that also has to create it.
+    await dummyPasswordHash();
+
+    const good = await hashPassword(PASSWORD);
+    // What one genuine verification costs here, right now. Everything else
+    // is judged against this rather than against a number written down.
+    const real = Math.min(
+      await ms(() => verifyPassword('a-wrong-password-of-length', good)),
+      await ms(() => verifyPassword('a-wrong-password-of-length', good))
+    );
+    assert.ok(real > 1, `a real scrypt should be measurable, got ${real.toFixed(2)}ms`);
+
+    // A quarter of one derivation. The path being caught returns in
+    // microseconds, so this is a chasm, not a hair.
+    const floor = real / 4;
+
+    for (const [label, bad] of Object.entries(UNUSABLE)) {
+      const took = await ms(() => verifyPasswordOrDummy(PASSWORD, bad));
+      assert.ok(
+        took > floor,
+        `${label}: ${took.toFixed(2)}ms — under ${floor.toFixed(2)}ms means no scrypt was done, ` +
+          'which is exactly the signal this helper exists to remove'
+      );
+    }
+  });
+
+  test('a usable hash is still checked against itself, not the dummy', async () => {
+    // The fix must not have turned real verification into dummy work.
+    const good = await hashPassword(PASSWORD);
+
+    assert.equal(await verifyPasswordOrDummy(PASSWORD, good), true);
+    assert.equal(await verifyPasswordOrDummy('the-wrong-password-here', good), false);
+  });
+
+  test('the dummy is reused rather than made again for each refusal', async () => {
+    // Each fresh module instance starts with no dummy, so the first refusal
+    // through it has to build one; the ones after must not.
+    const fresh = await import('../src/lib/passwords.js?case=reuse');
+
+    const first = await ms(() => fresh.verifyPasswordOrDummy(PASSWORD, 'not-a-hash'));
+    const second = await ms(() => fresh.verifyPasswordOrDummy(PASSWORD, 'not-a-hash'));
+
+    // Building the dummy is a hash of its own, so the first call does two
+    // derivations and the rest do one. Generous margin: the point is only
+    // that it is not rebuilt every time.
+    assert.ok(second < first, `first ${first.toFixed(2)}ms, second ${second.toFixed(2)}ms`);
+    assert.equal(await fresh.dummyPasswordHash(), await fresh.dummyPasswordHash());
+  });
+});

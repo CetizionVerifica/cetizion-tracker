@@ -97,14 +97,34 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
 
     assert.deepEqual(Object.keys(byName).sort(), [
       'active', 'created_at', 'email', 'id', 'last_login_at',
-      'name', 'password_hash', 'role', 'updated_at',
+      'name', 'password_hash', 'role', 'session_version', 'updated_at',
     ]);
     assert.equal(byName.name.is_nullable, 'NO');
     assert.equal(byName.role.is_nullable, 'NO');
     assert.equal(byName.active.is_nullable, 'NO');
+    // Never null: a row with no counter could not be compared against, and
+    // "no counter" must never read as "any cookie will do".
+    assert.equal(byName.session_version.is_nullable, 'NO');
     // The two that a historical, attribution-only row leaves empty.
     assert.equal(byName.email.is_nullable, 'YES');
     assert.equal(byName.password_hash.is_nullable, 'YES');
+  });
+
+  test('session_version starts at 1 and cannot be pushed below it', async () => {
+    await clean();
+    const { rows: [{ id }] } = await insertRow(login('counter@example.com'));
+
+    assert.equal(await scalar('SELECT session_version FROM users WHERE id = $1', [id]), 1);
+
+    // The counter is the whole revocation mechanism; lowering it would hand
+    // back cookies that were already ended, so the table refuses it.
+    await assert.rejects(
+      db.query('UPDATE users SET session_version = 0 WHERE id = $1', [id]),
+      (err) => err.code === '23514' && /users_session_version_positive/.test(err.constraint ?? '')
+    );
+
+    await db.query('UPDATE users SET session_version = session_version + 1 WHERE id = $1', [id]);
+    assert.equal(await scalar('SELECT session_version FROM users WHERE id = $1', [id]), 2);
   });
 
   // --------------------------------------------------------------- the role

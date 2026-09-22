@@ -121,7 +121,16 @@ async function databaseLogin(body) {
   await recordLogin(user.id);
 
   const expiresAt = Date.now() + authConfig.sessionTtlMs;
-  return { payload: databasePayload(user.id, expiresAt), body: databaseBody(user, expiresAt), expiresAt };
+  // Signed with the counter the row carries right now. A reset or a
+  // deactivation raises it, and every cookie signed before that — this one
+  // included, if it loses the race — stops matching on its next request.
+  // Failing that way round is the safe one: a session too few, never one
+  // too many.
+  return {
+    payload: databasePayload(user.id, user.session_version, expiresAt),
+    body: databaseBody(user, expiresAt),
+    expiresAt,
+  };
 }
 
 authRouter.post('/login', loginLimiter, async (req, res) => {

@@ -44,6 +44,7 @@ export default function Quotations() {
     { name: 'quotation_date', label: 'Quotation date', type: 'date' },
     { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'Reports treat the same spelling as the same client' },
     { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors, hint: 'Pick from the list, or type a new sector' },
+    { name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
     { name: 'contact_person', label: 'Contact person' },
     { name: 'service_quoted', label: 'Service quoted', type: 'combo', options: lookups.services, span: 2 },
     { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },

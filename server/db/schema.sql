@@ -180,6 +180,7 @@ CREATE TABLE quotations (
   contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   service_quoted     text,
   sector             text,
+  country            text,
   sales_person       text,
   sales_person_email text,
   quotation_date     date,
@@ -212,7 +213,9 @@ CREATE TABLE enquiries (
   enquiry_date       date,
   client_name        text NOT NULL,
   company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  source             text,
   sector             text,
+  country            text,
   contact_person     text,
   contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   sales_person       text,
@@ -625,11 +628,14 @@ CREATE TABLE IF NOT EXISTS import_items (
 CREATE INDEX IF NOT EXISTS import_items_batch_idx ON import_items (batch_id, step, seq);
 
 -- ---------------------------------------------------------------- people
--- The accounts records will belong to (see migrations/015_users.sql).
+-- The accounts records will belong to (see migrations/015_users.sql and
+-- 016_session_version.sql).
 -- `active` tells the two kinds of row apart: someone who signs in has an
 -- email and a password hash, an attribution-only name from the old data
--- has neither. Nothing signs in against this table yet — the API still
--- authenticates with AUTH_USERNAME / AUTH_PASSWORD.
+-- has neither. Whether this table is the lock depends on AUTH_MODE: in
+-- `database` mode a sign-in is checked against these rows, and in the
+-- default `shared` mode against AUTH_USERNAME / AUTH_PASSWORD instead.
+-- The two never stand in for each other.
 CREATE TABLE IF NOT EXISTS users (
   id             serial PRIMARY KEY,
   name           text NOT NULL,
@@ -641,6 +647,12 @@ CREATE TABLE IF NOT EXISTS users (
   role           text NOT NULL DEFAULT 'sales'
                    CHECK (role IN ('admin','sales')),
   active         boolean NOT NULL DEFAULT true,
+  -- Raised to end every session already signed for this user: a password
+  -- reset, or the moment the account is switched off. A cookie carries the
+  -- value it was signed with and is only honoured while the two agree.
+  -- It only ever goes up, so reactivating an account never hands its old
+  -- cookies back. See migrations/016_session_version.sql.
+  session_version integer NOT NULL DEFAULT 1,
   last_login_at  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
@@ -648,6 +660,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- '' would satisfy "email IS NOT NULL" while being no address at all.
   CONSTRAINT users_email_not_blank CHECK (email IS NULL OR btrim(email) <> ''),
   CONSTRAINT users_password_hash_not_blank CHECK (password_hash IS NULL OR btrim(password_hash) <> ''),
+  -- Only ever upwards: a lowered counter would revive cookies that were
+  -- already revoked.
+  CONSTRAINT users_session_version_positive CHECK (session_version >= 1),
   -- The invariant the application depends on: anyone who can sign in has
   -- something to sign in with. Enforced here rather than only in code, so
   -- a later importer, admin screen or hand-written UPDATE cannot skip it.

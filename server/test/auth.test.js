@@ -44,7 +44,7 @@ describe('the gate', () => {
     // Signed with this API's own secret; only the shape is a database one.
     // Shared mode must not accept it, or a cutover could be walked back
     // while the sessions it issued quietly went on working.
-    const token = signSession(databasePayload(1, Date.now() + 3_600_000), process.env.SESSION_SECRET);
+    const token = signSession(databasePayload(1, 1, Date.now() + 3_600_000), process.env.SESSION_SECRET);
 
     for (const path of ['/api/auth/me', '/api/projects']) {
       const response = await request(app).get(path).set('Cookie', [`cetizion_session=${token}`]);

@@ -21,34 +21,55 @@ const requiredStr = (max = 255) =>
   z.preprocess(
     blankToNull,
     z
-      .string({ required_error: 'Required', invalid_type_error: 'Required' })
+      .string({ error: 'Required' })
       .trim()
       .min(1, 'Required')
       .max(max, `Keep this under ${max} characters`)
   );
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const date = () =>
   z.preprocess(
     blankToNull,
     z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+      .regex(DATE_PATTERN, 'Use YYYY-MM-DD')
       .nullable()
       .optional()
   );
 
+const toNumber = (v) => {
+  const cleaned = blankToNull(v);
+  if (cleaned === null || cleaned === undefined) return cleaned;
+  const n = typeof cleaned === 'string' ? Number(cleaned.replace(/,/g, '')) : cleaned;
+  return Number.isNaN(n) ? cleaned : n;
+};
+
+const bounded = (schema, { min, max }) => {
+  let s = schema;
+  if (min !== undefined) s = s.min(min, `Must be at least ${min}`);
+  if (max !== undefined) s = s.max(max, `Must be at most ${max}`);
+  return s;
+};
+
 const num = ({ min, max } = {}) =>
-  z.preprocess((v) => {
-    const cleaned = blankToNull(v);
-    if (cleaned === null || cleaned === undefined) return cleaned;
-    const n = typeof cleaned === 'string' ? Number(cleaned.replace(/,/g, '')) : cleaned;
-    return Number.isNaN(n) ? cleaned : n;
-  }, (() => {
-    let s = z.number({ invalid_type_error: 'Enter a number' });
-    if (min !== undefined) s = s.min(min, `Must be at least ${min}`);
-    if (max !== undefined) s = s.max(max, `Must be at most ${max}`);
-    return s.nullable().optional();
-  })());
+  z.preprocess(toNumber, bounded(z.number({ error: 'Enter a number' }), { min, max }).nullable().optional());
+
+/**
+ * A number or a date the caller must actually supply.
+ *
+ * These are not `num()`/`date()` with a "is it there?" refinement on top,
+ * which is what they were until zod 4: a refinement wrapped around an
+ * optional field never runs when the key is absent, so the check quietly
+ * stopped happening and an exchange rate could be saved with no rate and
+ * no date at all. Being required has to belong to the field's own type.
+ */
+const requiredNum = ({ min, max } = {}) =>
+  z.preprocess(toNumber, bounded(z.number({ error: 'Required' }), { min, max }));
+
+const requiredDate = () =>
+  z.preprocess(blankToNull, z.string({ error: 'Required' }).regex(DATE_PATTERN, 'Use YYYY-MM-DD'));
 
 const int = (opts) => num(opts).transform((v) => (v === null || v === undefined ? v : Math.round(v)));
 
@@ -74,6 +95,11 @@ export { STATUS };
 
 export const resources = {
   companies: {
+    // Shared master data: every quotation, enquiry and project that ever
+    // named this client points at it, and the link trigger creates one on
+    // its own the first time somebody types a new name. Anybody may add and
+    // correct; only an admin may delete.
+    adminOnlyDeletes: true,
     table: 'companies',
     view: 'v_companies',
     label: 'Company',
@@ -94,6 +120,9 @@ export const resources = {
   },
 
   contacts: {
+    // Shared master data, for the same reasons as companies above, and
+    // created the same way — by the trigger, from a name on a record.
+    adminOnlyDeletes: true,
     table: 'contacts',
     view: null,
     label: 'Contact',
@@ -123,20 +152,23 @@ export const resources = {
     // The year in the generated number comes from the enquiry's own date.
     autoIdDateField: 'enquiry_date',
     defaultSort: 'enquiry_date DESC NULLS LAST, id DESC',
-    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'sales_person', 'quotation_no'],
-    filters: ['status', 'sales_person', 'client_name', 'sector', 'company_id'],
+    search: ['enquiry_no', 'client_name', 'contact_person', 'service', 'sector', 'country', 'source', 'sales_person', 'quotation_no'],
+    filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
-      'enquiry_no', 'enquiry_date', 'client_name', 'sector', 'contact_person',
-      'sales_person', 'sales_person_email', 'service', 'status', 'quotation_no',
+      'enquiry_no', 'enquiry_date', 'client_name', 'source', 'sector', 'country',
+      'contact_person', 'sales_person', 'sales_person_email', 'service',
+      'status', 'quotation_no',
     ],
     schema: z.object({
       enquiry_no: str(60),
       enquiry_date: date(),
       client_name: requiredStr(160),
+      source: str(120),
       sector: str(120),
+      country: str(120),
       contact_person: str(120),
       sales_person: str(120),
       sales_person_email: str(160),
@@ -158,12 +190,12 @@ export const resources = {
     // The year in the generated number comes from the quotation's own date.
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
-    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'payment_status', 'company_id'],
+    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
-      'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector',
+      'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
     ],
@@ -173,6 +205,7 @@ export const resources = {
       contact_person: str(120),
       service_quoted: str(300),
       sector: str(120),
+      country: str(120),
       sales_person: str(120),
       sales_person_email: str(160),
       quotation_date: date(),
@@ -224,6 +257,11 @@ export const resources = {
   },
 
   'purchase-orders': {
+    // A financial record. The PO value is what every billing figure — Due
+    // now, To bill, project profitability — is computed against, and
+    // deleting one takes its services and payment stages with it. Entering
+    // and correcting POs is ordinary sales work; removing one is not.
+    adminOnlyDeletes: true,
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
@@ -259,6 +297,9 @@ export const resources = {
   },
 
   'po-services': {
+    // The lines a PO's value is made of, so deleting one silently changes
+    // what the project is worth. Admin-only to delete, like the PO itself.
+    adminOnlyDeletes: true,
     table: 'po_services',
     view: null,
     label: 'PO service line',
@@ -275,6 +316,11 @@ export const resources = {
   },
 
   'payment-stages': {
+    // The invoicing schedule: what has been raised, what is due and what has
+    // been paid. A deleted stage is an invoice the tracker stops accounting
+    // for. Sales users raise and record against stages as usual; only an
+    // admin removes one.
+    adminOnlyDeletes: true,
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
@@ -459,6 +505,12 @@ export const resources = {
   // figure at the rate in force on that record's own date, so entering a new
   // rate never changes what an older quotation, PO or invoice was worth.
   'exchange-rates': {
+    // A Settings list like the three above, and the one with the most reach:
+    // a rate is what every report converts at, so one row decides what every
+    // historical deal in every currency is reported to be worth. Admins
+    // curate it; everybody reads it, because the same rows drive the figures
+    // sales users work from.
+    adminOnlyWrites: true,
     table: 'exchange_rates',
     view: null,
     label: 'Exchange rate',
@@ -473,8 +525,8 @@ export const resources = {
       to_currency: z.literal('INR').default('INR'),
       // numeric(18,6) holds 12 digits before the point; anything larger is a
       // typo, and letting it through turns a bad rate into a 500.
-      rate: num({ min: 0.000001, max: 1000000 }).refine((v) => v !== null && v !== undefined, 'Required'),
-      effective_from: date().refine((v) => v !== null && v !== undefined, 'Required'),
+      rate: requiredNum({ min: 0.000001, max: 1000000 }),
+      effective_from: requiredDate(),
       source: enumOf(['manual', 'feed']).default('manual'),
       entered_by: str(120),
       note: str(300),

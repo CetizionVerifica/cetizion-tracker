@@ -41,7 +41,9 @@ function changes(resourceName, payload, cols) {
     const fields = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`invalid ${resourceName}: ${fields}`);
   }
-  return parsed.data;
+  // Only the sheet's own values: zod 4 fills .default() inside .partial(),
+  // which would overwrite a stored PO's terms with 30 days.
+  return Object.fromEntries(Object.entries(parsed.data).filter(([col]) => Object.hasOwn(subset, col)));
 }
 
 async function insert(client, table, values) {
