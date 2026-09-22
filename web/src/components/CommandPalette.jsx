@@ -6,6 +6,12 @@ import {
   FolderKanban, Home, Inbox, Plane, Receipt, Search, X,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
+import { Button } from '@/components/ui/button.tsx';
+import { Input } from '@/components/ui/input.tsx';
+import { Label } from '@/components/ui/label.tsx';
+import { Textarea } from '@/components/ui/textarea.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.tsx';
 import { api } from '../lib/api.js';
 import { bodyFor, commandsFor, initialValues, missingFields } from '../lib/commands.js';
 import { useToast } from './ui.jsx';
@@ -104,9 +110,7 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
   const firstField = useRef(null);
   useEffect(() => { firstField.current?.focus(); }, []);
 
-  const set = (name) => (event) => setValues({ ...values, [name]: event.target.value });
-  const input = 'h-control w-full rounded-[6px] border border-input bg-muted px-2.5 text-[13px] text-foreground ' +
-    'placeholder:text-muted-foreground focus:border-primary';
+  const set = (name) => (value) => setValues({ ...values, [name]: value });
 
   return (
     <form
@@ -114,9 +118,9 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
       onSubmit={(event) => { event.preventDefault(); onRun(); }}
     >
       <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-        <button type="button" onClick={onBack} className="inline-flex items-center gap-1 hover:text-foreground">
+        <Button type="button" variant="ghost" size="sm" onClick={onBack} className="h-6 gap-1 px-1.5 text-[12.5px]">
           <X className="size-3.5" strokeWidth={2} aria-hidden="true" />Back
-        </button>
+        </Button>
         {record && (
           <>
             <span aria-hidden="true">·</span>
@@ -129,54 +133,60 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
       </div>
 
       {step.fields.map((field, index) => (
-        <label key={field.name} className="flex flex-col gap-1.5">
-          <span className="text-[12px] font-semibold text-secondary-text">
+        <div key={field.name} className="flex flex-col gap-1.5">
+          <Label htmlFor={`step-${field.name}`} className="text-[12px] font-semibold text-secondary-text">
             {field.label}{field.required && <span className="ml-0.5 text-late">*</span>}
-          </span>
+          </Label>
+
           {field.type === 'select' ? (
-            <select
-              ref={index === 0 ? firstField : undefined}
-              className={input}
-              value={values[field.name] ?? ''}
-              onChange={set(field.name)}
-            >
-              {field.options.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
+            <Select value={values[field.name] ?? ''} onValueChange={set(field.name)}>
+              <SelectTrigger id={`step-${field.name}`} ref={index === 0 ? firstField : undefined} className="h-control w-full bg-muted text-[13px]">
+                <SelectValue placeholder={`Choose ${field.label.toLowerCase()}`} />
+              </SelectTrigger>
+              <SelectContent>
+                {field.options.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           ) : field.type === 'textarea' ? (
-            <textarea
+            <Textarea
+              id={`step-${field.name}`}
               ref={index === 0 ? firstField : undefined}
-              className={`${input} h-auto min-h-[72px] py-2 leading-relaxed`}
+              className="min-h-[72px] bg-muted text-[13px]"
               maxLength={field.maxLength}
               value={values[field.name] ?? ''}
-              onChange={set(field.name)}
+              onChange={(e) => set(field.name)(e.target.value)}
             />
           ) : (
-            <input
+            <Input
+              id={`step-${field.name}`}
               ref={index === 0 ? firstField : undefined}
-              className={input}
+              className="h-control bg-muted text-[13px]"
               type={field.type}
               min={field.min}
               step={field.step}
               maxLength={field.maxLength}
               value={values[field.name] ?? ''}
-              onChange={set(field.name)}
+              onChange={(e) => set(field.name)(e.target.value)}
             />
           )}
+
           {field.hint && <span className="text-[11.5px] text-muted-foreground">{field.hint}</span>}
-        </label>
+        </div>
       ))}
 
-      {error && <div className="rounded-[6px] border border-late/30 bg-late/10 px-3 py-2 text-[12.5px] text-late">{error}</div>}
+      {error && (
+        <Alert variant="destructive" className="border-late/30 bg-late/10 text-late">
+          <AlertDescription className="text-[12.5px] text-late">{error}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={busy}
-          className="inline-flex h-control items-center gap-2 rounded-[6px] border border-primary bg-primary px-4 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
-        >
+        <Button type="submit" disabled={busy} className="h-control gap-2 text-[13px] font-semibold">
           {busy ? 'Working…' : step.verb}
           <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-        </button>
+        </Button>
         <span className="text-[12.5px] text-secondary-text">{step.hint}</span>
       </div>
     </form>

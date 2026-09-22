@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, BadgeCheck, FileText, FolderKanban, MessageSquare, Receipt } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
 import { ConfirmDialog, ErrorState, Modal, Select, useToast } from '../components/ui.jsx';
-import { Chip, RailPerson, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
+import { Chip, RailPerson, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
@@ -125,7 +125,6 @@ export default function CompanyDetail() {
   const open = c.quotations.filter((q) => OPEN_STATUSES.has(q.status));
   const total = (rows, key) => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
   const rows = relationship(c);
-  const menuItem = 'rounded-[6px] px-2.5 py-1.5 text-left text-[13px] text-secondary-text hover:bg-accent hover:text-foreground';
 
   return (
     <>
@@ -148,9 +147,9 @@ export default function CompanyDetail() {
         }
         menu={
           <>
-            <button type="button" className={menuItem} onClick={() => navigate('/quotations')}>New deal for this client</button>
-            <button type="button" className={menuItem} onClick={() => setContact('new')}>Add a contact</button>
-            {isAdmin && <button type="button" className={menuItem} onClick={() => setMerge(true)}>Merge into another company…</button>}
+            <RecordMenuItem onSelect={() => navigate('/quotations')}>New deal for this client</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setContact('new')}>Add a contact</RecordMenuItem>
+            {isAdmin && <RecordMenuItem onSelect={() => setMerge(true)}>Merge into another company…</RecordMenuItem>}
           </>
         }
         stats={

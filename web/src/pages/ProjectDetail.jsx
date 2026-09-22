@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { FolderKanban } from 'lucide-react';
-import { RecordPage, RecordStat } from '../components/record.jsx';
+import { RecordMenuItem, RecordPage, RecordStat } from '../components/record.jsx';
 import {
   Card, Stat, Badge, DataTable, KeyValues, Progress, Tabs,
   ErrorState, Empty, useToast, Alert, ConfirmDialog,
@@ -17,7 +17,6 @@ import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
 
-const MENU_ITEM = 'rounded-[6px] px-2.5 py-1.5 text-left text-[13px] text-secondary-text hover:bg-accent hover:text-foreground';
 
 export default function ProjectDetail() {
   const { projectId } = useParams();
@@ -155,8 +154,8 @@ export default function ProjectDetail() {
         }
         menu={
           <>
-            <button type="button" className={MENU_ITEM} onClick={() => setDialog({ type: 'newPo' })}>Add a purchase order</button>
-            <button type="button" className={MENU_ITEM} onClick={() => setDialog({ type: 'edit' })}>Edit the project</button>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'newPo' })}>Add a purchase order</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'edit' })}>Edit the project</RecordMenuItem>
           </>
         }
         stats={

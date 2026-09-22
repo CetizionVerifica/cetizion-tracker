@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
+import { useMediaQuery } from '../lib/hooks.js';
 import { TriangleAlert } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner.tsx';
@@ -42,13 +43,16 @@ const TONE = {
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
     <UiCard className={cn('gap-0 rounded-[10px] border-border bg-card py-0 shadow-none', className)}>
+      {/* The actions sit beside the title when there is room and under it
+          when there is not. Held `shrink-0` beside it, a card header
+          carrying two filters pushed a phone page past its viewport. */}
       {(title || actions) && (
-        <CardHeader className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
           <div className="min-w-0">
             {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
             {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
-          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+          {actions && <div className="flex min-w-0 flex-wrap items-center gap-2 sm:shrink-0">{actions}</div>}
         </CardHeader>
       )}
       <CardContent className={flush ? 'p-0' : 'p-4'}>{children}</CardContent>
@@ -120,12 +124,72 @@ export function DocumentLink({ id, name }) {
 
 /* ----------------------------------------------------------------- table */
 
+/**
+ * The same rows as a stack of cards, for a phone.
+ *
+ * A twelve-column table on a 390px screen is a horizontal scrollbar and a
+ * guess about which column you are looking at. Below the breakpoint each
+ * row becomes a card and each cell a labelled line, so the column header
+ * travels with the value instead of being three swipes away.
+ *
+ * Columns with no header are actions; they keep their place at the foot
+ * of the card rather than getting a label that says nothing.
+ */
+function CardList({ columns, rows, onRowClick, rowClassName }) {
+  const labelled = columns.filter((col) => col.header);
+  const actions = columns.filter((col) => !col.header);
+  return (
+    <div className="flex flex-col gap-2 p-3">
+      {rows.map((row, i) => {
+        const Cell = ({ col }) => col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>;
+        return (
+          <UiCard
+            key={row.id ?? i}
+            className={cn(
+              'gap-0 rounded-[10px] border-border bg-card py-0 shadow-none',
+              onRowClick && 'cursor-pointer',
+              rowClassName ? rowClassName(row) || '' : ''
+            )}
+            onClick={onRowClick ? (e) => {
+              if (e.target.closest('button, a, input, select')) return;
+              onRowClick(row);
+            } : undefined}
+          >
+            <CardContent className="px-3 py-3">
+            {labelled.map((col, index) => (
+              <div key={col.key} className={cn('flex gap-3 py-1', index > 0 && 'border-t border-border/60 pt-2')}>
+                <span className="w-[38%] shrink-0 text-[11px] font-semibold tracking-[0.04em] text-muted-foreground uppercase">
+                  {col.header}
+                </span>
+                <span className={cn('min-w-0 flex-1 wrap-anywhere text-[13px]', col.align === 'right' && 'num')}>
+                  <Cell col={col} />
+                </span>
+              </div>
+            ))}
+            {actions.length > 0 && (
+              <div className="mt-2 flex flex-wrap justify-end gap-2 border-t border-border/60 pt-2">
+                {actions.map((col) => <Cell key={col.key} col={col} />)}
+              </div>
+            )}
+            </CardContent>
+          </UiCard>
+        );
+      })}
+    </div>
+  );
+}
+
 export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName }) {
+  const wide = useMediaQuery('(min-width: 768px)');
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 
+  // One or the other, never both: rendering the rows twice put every row
+  // in the document twice and left the first match hidden.
+  if (!wide) return <CardList columns={columns} rows={rows} onRowClick={onRowClick} rowClassName={rowClassName} />;
+
   return (
-    <div className="w-full overflow-x-auto">
+      <div className="w-full overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow className="border-border hover:bg-transparent">
@@ -172,7 +236,7 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
         </TableBody>
         {footer && <TableFooter className="bg-muted/40"><TableRow className="border-border">{footer}</TableRow></TableFooter>}
       </Table>
-    </div>
+      </div>
   );
 }
 

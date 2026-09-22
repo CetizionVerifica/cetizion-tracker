@@ -363,6 +363,29 @@
 }
 
 /* ---------------------------------------------------------------------
+ * A filter in a header sizes to itself, and this rule is deliberately
+ * unlayered.
+ *
+ * The kit's fields are `w-full`, because they are built for forms. In a
+ * header that makes each one claim the whole row, which on a phone pushed
+ * the page past the viewport. `w-full` is a Tailwind utility, and the
+ * utilities layer beats the components layer whatever the specificity —
+ * so a rule that overrides it has to sit outside the layers altogether.
+ *
+ * Scoped to the two containers that hold header filters, so it cannot
+ * reach a field in a form.
+ * --------------------------------------------------------------------- */
+.card__actions > select,
+.card__actions > input,
+.page-actions > select,
+.page-actions > input {
+  width: auto;
+  min-width: 8rem;
+  max-width: 100%;
+}
+.card__actions { min-width: 0; }
+
+/* ---------------------------------------------------------------------
  * The screens that are more than a card and a table.
  *
  * Seven features draw something of their own — a board, a calendar, a

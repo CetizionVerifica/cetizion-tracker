@@ -43,6 +43,10 @@ import { api } from './lib/api.js';
 import { useAuth } from './lib/auth.jsx';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button.tsx';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar.tsx';
+import { ScrollArea } from '@/components/ui/scroll-area.tsx';
+import { Separator } from '@/components/ui/separator.tsx';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet.tsx';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
   Building2,
@@ -164,68 +168,36 @@ function initials(name) {
   return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
-// The burger in every page header toggles the sidebar. The choice is
-// remembered per browser so a hidden sidebar stays hidden after a reload.
-const SidebarContext = createContext({ hidden: false, toggle: () => {} });
-
-function readHidden() {
-  try { return localStorage.getItem('cetizion.sidebar') === 'hidden'; } catch { return false; }
-}
-
-export default function App() {
-  const [hidden, setHidden] = useState(readHidden);
-  useEffect(() => {
-    try { localStorage.setItem('cetizion.sidebar', hidden ? 'hidden' : 'shown'); } catch { /* private mode */ }
-  }, [hidden]);
-  const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
-  const location = useLocation();
-  const { displayName, signOut, isAdmin } = useAuth();
-  const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
-
-  // The sidebar counters are the whole point of the app: what is waiting
-  // on someone, visible without opening anything.
-  const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
-  const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
-  // A pinned view is only worth its place if it says how much is behind it,
-  // and the count is the same one the list shows when you click through.
-  const { data: vData } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
-  const pinned = (vData?.data || []).filter((view) => view.pinned && viewHref(view));
-
-  const counts = {
-    inbox: iData?.data?.open ?? null,
-    notifications: nData?.data?.unread ?? null,
-  };
-  const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0 };
-
+/**
+ * The sidebar's contents, rendered twice: inside a Sheet on a phone and
+ * inside a fixed column above lg. One definition, so the drawer cannot
+ * drift from the column.
+ */
+function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch }) {
   return (
-    <SidebarContext.Provider value={sidebar}>
-    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} />
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside
-        className={cn(
-          'fixed inset-y-0 left-0 z-30 flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width,transform] duration-150',
-          hidden && '-translate-x-full'
-        )}
-      >
-        <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-          <span className="grid size-6 shrink-0 place-items-center rounded-[6px] bg-primary text-[12px] font-bold text-primary-foreground">C</span>
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">Cetizion Verifica</span>
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+        <Avatar className="size-6 rounded-[6px]">
+          <AvatarFallback className="rounded-[6px] bg-primary text-[12px] font-bold text-primary-foreground">C</AvatarFallback>
+        </Avatar>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">Cetizion Verifica</span>
+      </div>
 
-        {/* The way to find anything, said once and kept in view. */}
-        <div className="px-3 pb-4">
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="flex h-control w-full items-center gap-2 rounded-[6px] border border-border bg-card px-2.5 text-left transition-colors duration-150 hover:border-muted-foreground"
-          >
-            <Search className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
-            <span className="flex-1 truncate text-[12.5px] text-muted-foreground">Search or do anything</span>
-            <kbd className="num rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10.5px] text-secondary-text">⌘K</kbd>
-          </button>
-        </div>
+      {/* The way to find anything, said once and kept in view. */}
+      <div className="px-3 pb-4">
+        <Button
+          variant="outline"
+          onClick={onSearch}
+          className="h-control w-full justify-start gap-2 bg-card px-2.5 font-normal"
+        >
+          <Search className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
+          <span className="flex-1 truncate text-left text-[12.5px] text-muted-foreground">Search or do anything</span>
+          <kbd className="num rounded-[4px] bg-secondary px-1.5 py-0.5 text-[10.5px] text-secondary-text">⌘K</kbd>
+        </Button>
+      </div>
 
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-2">
+      <ScrollArea className="min-h-0 flex-1">
+        <nav className="space-y-0.5 px-2 pb-2">
           {NAV_TOP.map((item) => (
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
@@ -259,19 +231,140 @@ export default function App() {
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
         </nav>
+      </ScrollArea>
 
-        <div className="flex items-center gap-2 border-t border-sidebar-border px-3 py-3">
-          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold text-primary">
-            {initials(displayName)}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-secondary-text" title={displayName}>{displayName}</span>
-          <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="size-7 shrink-0">
-            <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
-          </Button>
-        </div>
+      <Separator className="bg-sidebar-border" />
+      <div className="flex items-center gap-2 px-3 py-3">
+        <Avatar className="size-6">
+          <AvatarFallback className="bg-secondary text-[10px] font-semibold text-primary">{initials(displayName)}</AvatarFallback>
+        </Avatar>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-secondary-text" title={displayName}>{displayName}</span>
+        <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out" className="size-7 shrink-0">
+          <LogOut className="size-4" strokeWidth={1.75} aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// The burger in every page header toggles the sidebar. The choice is
+// remembered per browser so a hidden sidebar stays hidden after a reload.
+const SidebarContext = createContext({ hidden: false, toggle: () => {} });
+
+/**
+ * Hidden by default on a phone, remembered on a desktop.
+ *
+ * A drawer that starts open covers the page somebody just navigated to,
+ * so below the breakpoint the answer is always "closed" until they open
+ * it. Above it, the choice is theirs and it survives a reload.
+ */
+const WIDE = '(min-width: 1024px)';
+
+/**
+ * Whether we are at desktop width, as state rather than as a CSS class.
+ *
+ * The drawer has to be *unmounted* above the breakpoint, not just hidden:
+ * a Sheet is modal, so while it is open Radix marks the rest of the
+ * document aria-hidden. Hiding only its content with `lg:hidden` left an
+ * open modal over a desktop page, and every heading on it vanished from
+ * the accessibility tree.
+ */
+function useIsWide() {
+  const [wide, setWide] = useState(() => {
+    try { return window.matchMedia(WIDE).matches; } catch { return true; }
+  });
+  useEffect(() => {
+    let mq;
+    try { mq = window.matchMedia(WIDE); } catch { return undefined; }
+    const onChange = (event) => setWide(event.matches);
+    mq.addEventListener('change', onChange);
+    setWide(mq.matches);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return wide;
+}
+
+function readHidden() {
+  try {
+    if (!window.matchMedia(WIDE).matches) return true;
+    return localStorage.getItem('cetizion.sidebar') === 'hidden';
+  } catch { return false; }
+}
+
+export default function App() {
+  const [hidden, setHidden] = useState(readHidden);
+  useEffect(() => {
+    // Only the wide choice is worth remembering; on a phone it is always
+    // closed to begin with, so storing "shown" there would fight that.
+    try {
+      if (window.matchMedia(WIDE).matches) localStorage.setItem('cetizion.sidebar', hidden ? 'hidden' : 'shown');
+    } catch { /* private mode */ }
+  }, [hidden]);
+  const sidebar = { hidden, toggle: () => setHidden((h) => !h) };
+  const location = useLocation();
+
+  // Going somewhere closes the drawer, because on a phone it is covering
+  // the thing you just asked for.
+  useEffect(() => {
+    try {
+      if (!window.matchMedia(WIDE).matches) setHidden(true);
+    } catch { /* private mode */ }
+  }, [location.pathname]);
+  const { displayName, signOut, isAdmin } = useAuth();
+  const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
+  const isWide = useIsWide();
+
+  // The sidebar counters are the whole point of the app: what is waiting
+  // on someone, visible without opening anything.
+  const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
+  const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
+  // A pinned view is only worth its place if it says how much is behind it,
+  // and the count is the same one the list shows when you click through.
+  const { data: vData } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
+  const pinned = (vData?.data || []).filter((view) => view.pinned && viewHref(view));
+
+  const counts = {
+    inbox: iData?.data?.open ?? null,
+    notifications: nData?.data?.unread ?? null,
+  };
+  const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0 };
+
+  return (
+    <SidebarContext.Provider value={sidebar}>
+    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} />
+    <div className="flex min-h-screen bg-background text-foreground">
+      {/* Below lg the sidebar is a Sheet over the page, not a column
+          beside it: 240px of a 390px screen left the content a hundred and
+          fifty, which wrapped every sentence one word per line. Above lg it
+          is the column it always was, and `hidden` still collapses it. */}
+      {!isWide && (
+      <Sheet open={!hidden} onOpenChange={(open) => setHidden(!open)}>
+        <SheetContent side="left" className="w-60 gap-0 border-sidebar-border bg-sidebar p-0">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Menu</SheetTitle>
+            <SheetDescription>Today, the inbox, your pinned views and the records.</SheetDescription>
+          </SheetHeader>
+          <SidebarNav
+            pinned={pinned} counts={counts} alerts={alerts}
+            displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
+          />
+        </SheetContent>
+      </Sheet>
+      )}
+
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-30 hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar transition-transform duration-150 lg:flex lg:flex-col',
+          hidden && 'lg:-translate-x-full'
+        )}
+      >
+        <SidebarNav
+          pinned={pinned} counts={counts} alerts={alerts}
+          displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
+        />
       </aside>
 
-      <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'ml-60')}>
+      <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'lg:ml-60')}>
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
@@ -320,8 +413,11 @@ export default function App() {
 /** Shared page chrome so every screen has the same header rhythm. */
 export function PageHeader({ title, subtitle, actions }) {
   const { hidden, toggle } = useContext(SidebarContext);
+  // On a phone the actions go under the title rather than beside it.
+  // Beside it they are `shrink-0`, so three buttons left the title a
+  // column two words wide and pushed the page past the viewport.
   return (
-    <header className="sticky top-0 z-20 flex items-start gap-3 border-b border-border bg-background/95 px-6 py-4 backdrop-blur">
+    <header className="sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur sm:flex-row sm:items-start sm:px-6">
       <Button
         variant="ghost"
         size="icon"
@@ -339,7 +435,7 @@ export function PageHeader({ title, subtitle, actions }) {
           because they are built for forms; left that way each one claims the
           whole actions column and the row becomes a stack. */}
       {actions && (
-        <div className="page-actions flex shrink-0 flex-wrap items-center gap-2 [&_input]:w-auto [&_select]:w-auto">
+        <div className="page-actions flex flex-wrap items-center gap-2 sm:shrink-0 [&_input]:w-auto [&_select]:w-auto">
           {actions}
         </div>
       )}
