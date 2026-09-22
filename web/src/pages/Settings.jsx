@@ -8,7 +8,7 @@ import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
 
-const CATALOGUES = {
+export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
   'travel-vendors': { resource: 'travel-vendors', label: 'Travel vendor', title: 'Travel vendors', hint: 'Who trips are booked through' },
   'expense-categories': { resource: 'expense-categories', label: 'Expense category', title: 'Expense categories', hint: 'What employees can claim against' },
@@ -33,7 +33,7 @@ export default function Settings() {
 
       <div className="page stack">
         <ExchangeRates />
-        <SettingsValues />
+        <Assumptions />
 
         <Tabs active={active} onChange={setTab} tabs={tabs} />
 
@@ -51,7 +51,7 @@ export default function Settings() {
  * date, the invoice date, the payment date — so adding today's rate never
  * changes what last year's deals were worth.
  */
-function ExchangeRates() {
+export function ExchangeRates() {
   const toast = useToast();
   const lookups = useLookups();
   const { rows, loading, refetch } = useList('exchange-rates', { limit: 500 });
@@ -209,7 +209,7 @@ function RateHistoryChart({ rows, currencies }) {
   );
 }
 
-function SettingsValues() {
+export function Assumptions() {
   const toast = useToast();
   const { data, loading, refetch } = useFetch(() => api.raw('/lookups'));
   const [editing, setEditing] = useState(null);
@@ -297,7 +297,7 @@ function SettingsValues() {
   );
 }
 
-function Catalogue({ resource, label, title, hint }) {
+export function Catalogue({ resource, label, title, hint }) {
   const toast = useToast();
   const { rows, loading, refetch } = useList(resource, {});
   const [editing, setEditing] = useState(null);

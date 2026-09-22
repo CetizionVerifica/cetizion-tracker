@@ -10,7 +10,7 @@ import { useFetch } from '../lib/hooks.js';
  */
 const TONE = { succeeded: 'success', pending: 'info', held: 'warning', failed: 'danger' };
 
-export default function Webhooks() {
+export default function Webhooks({ bare = false }) {
   const toast = useToast();
   const { data, refetch } = useFetch(() => api.raw('/webhooks'));
   const [endpoint, setEndpoint] = useState('');
@@ -34,11 +34,11 @@ export default function Webhooks() {
 
   return (
     <>
-      <PageHeader title="Webhooks" subtitle="Tell n8n or other systems when something happens in the tracker. Every call is signed; failures are retried for a day."
+      {!bare && <PageHeader title="Webhooks" subtitle="Tell n8n or other systems when something happens in the tracker. Every call is signed; failures are retried for a day."
         actions={<>
           <a className="btn" href="https://github.com/CetizionVerifica/cetizion-tracker/blob/main/docs/webhooks-n8n.md" target="_blank" rel="noopener noreferrer">How to receive</a>
           <button type="button" className="btn btn--primary" onClick={() => setForm({ name: '', url: 'https://', events: [], min_value: '', sector: '', include_personal_data: false, when_inactive: 'queue' })}>+ Endpoint</button>
-        </>} />
+        </>} />}
       <div className="page stack">
         <Card flush title="Endpoints">
           <DataTable rows={rows} empty={<Empty title="No endpoints yet" text="Add an n8n webhook URL and choose the events it should get." />} columns={[

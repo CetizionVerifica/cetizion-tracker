@@ -9,10 +9,10 @@ import { invalidateLookups, useFetch } from '../lib/hooks.js';
  * Admin › Templates (#26): the payment schedules and onboarding checklists
  * that "Register the PO" offers. Each template is a header with lines.
  */
-export default function Templates() {
+export default function Templates({ bare = false }) {
   return (
     <>
-      <PageHeader title="Templates" subtitle="Payment schedules and onboarding checklists offered when a PO is registered" />
+      {!bare && <PageHeader title="Templates" subtitle="Payment schedules and onboarding checklists offered when a PO is registered" />}
       <div className="page stack">
         <TemplateSet
           kind="payment"

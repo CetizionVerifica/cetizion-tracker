@@ -10,7 +10,7 @@ import { useFetch } from '../lib/hooks.js';
  * projects, POs and payments from it, then review step by step before
  * anything reaches the live tables.
  */
-export default function BulkImport() {
+export default function BulkImport({ bare = false }) {
   const navigate = useNavigate();
   const toast = useToast();
   const fileRef = useRef(null);
@@ -51,7 +51,7 @@ export default function BulkImport() {
 
   return (
     <>
-      <PageHeader title="Bulk import" subtitle="Upload a sheet, review what the importer derived, then commit it in one go" />
+      {!bare && <PageHeader title="Bulk import" subtitle="Upload a sheet, review what the importer derived, then commit it in one go" />}
       <div className="page stack">
         <Card
           title="Upload a sheet"

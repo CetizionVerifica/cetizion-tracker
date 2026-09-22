@@ -8,7 +8,7 @@ import { useFetch } from '../lib/hooks.js';
  * What the tracker sends on its own (#21): the scheduled jobs, the kill
  * switch, and every email composed, whether it left the server or not.
  */
-export default function Emails() {
+export default function Emails({ bare = false }) {
   const toast = useToast();
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState(null);
@@ -50,7 +50,7 @@ export default function Emails() {
   const mode = emails.data?.mode;
   return (
     <>
-      <PageHeader title="Emails & jobs" subtitle="Reminders and digests the tracker sends on its own, and the record of every email" />
+      {!bare && <PageHeader title="Emails & jobs" subtitle="Reminders and digests the tracker sends on its own, and the record of every email" />}
       <div className="page stack">
         {mode && mode !== 'live' && (
           <Alert tone="warning">

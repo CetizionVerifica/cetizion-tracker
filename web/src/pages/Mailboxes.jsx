@@ -15,7 +15,7 @@ const VIS = [
   { value: 'share_everything', label: 'Everything (subject and body)' },
 ];
 
-export default function Mailboxes() {
+export default function Mailboxes({ bare = false }) {
   const toast = useToast();
   const [params] = useSearchParams();
   const { data, refetch } = useFetch(() => api.raw('/mailboxes'));
@@ -35,7 +35,7 @@ export default function Mailboxes() {
 
   return (
     <>
-      <PageHeader
+      {!bare && <PageHeader
         title="Mailboxes"
         subtitle="Client email from connected Microsoft 365 mailboxes appears on companies, quotations and enquiries. Mail only between colleagues is never synced."
         actions={<>
@@ -43,7 +43,7 @@ export default function Mailboxes() {
           <a className={`btn ${cfg?.microsoft ? '' : 'is-disabled'}`} href={cfg?.microsoft ? '/api/mailboxes/connect/microsoft?shared=1' : undefined} aria-disabled={!cfg?.microsoft}>Connect a shared mailbox</a>
           {cfg?.test_mailboxes && <button type="button" className="btn btn--ghost" onClick={() => run('new', () => api.action('/mailboxes/test', { email: `test${Date.now() % 10000}@cetizionverifica.com` }), () => 'Test mailbox added')}>Add test mailbox</button>}
         </>}
-      />
+      />}
       <div className="page stack">
         {params.get('connected') && <Alert tone="success"><span>Connected {params.get('connected')}. The first sync is running.</span></Alert>}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}

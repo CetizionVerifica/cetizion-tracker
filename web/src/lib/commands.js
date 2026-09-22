@@ -224,12 +224,18 @@ export const JUMPS = [
   { id: 'go-profitability', verb: 'Profitability', to: '/profitability', icon: 'money', adminOnly: true, keywords: 'margin profit cost' },
   { id: 'go-accounting', verb: 'Accounting', to: '/accounting', icon: 'money', adminOnly: true, keywords: 'books zoho tally reconcile' },
   { id: 'go-settings', verb: 'Settings', to: '/settings', icon: 'waiting', keywords: 'settings preferences rates services users' },
-  { id: 'go-import', verb: 'Bulk import', to: '/import', icon: 'today', keywords: 'import upload sheet excel csv' },
-  { id: 'go-templates', verb: 'Templates', to: '/templates', icon: 'done', adminOnly: true, keywords: 'templates payment terms onboarding checklist' },
-  { id: 'go-mailboxes', verb: 'Mailboxes', to: '/mailboxes', icon: 'inbox', adminOnly: true, keywords: 'mailbox connect outlook microsoft sync' },
-  { id: 'go-webhooks', verb: 'Webhooks', to: '/webhooks', icon: 'waiting', adminOnly: true, keywords: 'webhooks events n8n integrations' },
-  { id: 'go-emails', verb: 'Emails & jobs', to: '/emails', icon: 'inbox', keywords: 'emails jobs reminders digest' },
+  { id: 'go-import', verb: 'Bulk import', to: '/settings/import', icon: 'today', keywords: 'import upload sheet excel csv' },
+  { id: 'go-templates', verb: 'Templates', to: '/settings/templates', icon: 'done', adminOnly: true, keywords: 'templates payment terms onboarding checklist' },
+  { id: 'go-mailboxes', verb: 'Mailboxes', to: '/settings/mailboxes', icon: 'inbox', adminOnly: true, keywords: 'mailbox connect outlook microsoft sync' },
+  { id: 'go-webhooks', verb: 'Webhooks', to: '/settings/webhooks', icon: 'waiting', adminOnly: true, keywords: 'webhooks events n8n integrations' },
+  { id: 'go-emails', verb: 'Emails & jobs', to: '/settings/emails', icon: 'inbox', keywords: 'emails jobs reminders digest' },
   { id: 'go-notifications', verb: 'Notifications', to: '/notifications', icon: 'waiting', keywords: 'notifications alerts bell' },
+  // The settings panes by name, because "exchange rates" is what somebody
+  // types — not "settings".
+  { id: 'go-rates', verb: 'Exchange rates', to: '/settings/rates', icon: 'money', keywords: 'exchange rates currency fx usd eur conversion' },
+  { id: 'go-assumptions', verb: 'Assumptions', to: '/settings/assumptions', icon: 'waiting', keywords: 'assumptions settings defaults terms thresholds' },
+  { id: 'go-users', verb: 'Users & roles', to: '/settings/users', icon: 'company', adminOnly: true, keywords: 'users people roles accounts passwords access' },
+  { id: 'go-tokens', verb: 'API tokens', to: '/settings/tokens', icon: 'waiting', adminOnly: true, keywords: 'api tokens mcp claude assistant access' },
 ];
 
 /** Everything, with the steps first: a verb is more useful than a screen. */

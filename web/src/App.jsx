@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
@@ -29,14 +29,9 @@ import TripDetail from './pages/TripDetail.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
-import Settings from './pages/Settings.jsx';
-import BulkImport from './pages/BulkImport.jsx';
+import SettingsArea from './pages/SettingsArea.jsx';
 import ImportReview from './pages/ImportReview.jsx';
-import Emails from './pages/Emails.jsx';
-import Mailboxes from './pages/Mailboxes.jsx';
-import Webhooks from './pages/Webhooks.jsx';
 import Inbox from './pages/Inbox.jsx';
-import Templates from './pages/Templates.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
@@ -389,19 +384,23 @@ export default function App() {
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<Accounting />} />
           <Route path="/notifications" element={<Notifications />} />
-          <Route path="/mailboxes" element={<Mailboxes />} />
-          <Route path="/webhooks" element={<Webhooks />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/import" element={<BulkImport />} />
+          {/* One Settings area. The five admin pages it absorbed keep
+              their old routes as redirects, so a bookmark still lands
+              somewhere rather than on the not-found page. */}
+          <Route path="/settings/*" element={<SettingsArea />} />
+          <Route path="/mailboxes" element={<Navigate to="/settings/mailboxes" replace />} />
+          <Route path="/webhooks" element={<Navigate to="/settings/webhooks" replace />} />
+          <Route path="/templates" element={<Navigate to="/settings/templates" replace />} />
+          <Route path="/emails" element={<Navigate to="/settings/emails" replace />} />
+          <Route path="/import" element={<Navigate to="/settings/import" replace />} />
+          {/* A batch in progress is its own screen, not a settings pane. */}
           <Route path="/import/:id" element={<ImportReviewPage />} />
-          <Route path="/emails" element={<Emails />} />
-          <Route path="/templates" element={<Templates />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
