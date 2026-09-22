@@ -6,6 +6,7 @@ import { RecordForm } from '../components/RecordForm.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
 import { quotationFields } from './Quotations.jsx';
@@ -17,6 +18,7 @@ import { quotationFields } from './Quotations.jsx';
 export default function QuotationDetail() {
   const { key } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const lookups = useLookups();
   const [editing, setEditing] = useState(false);
@@ -83,8 +85,10 @@ export default function QuotationDetail() {
           <Alert tone="warning">
             <span>
               <strong>Waiting for approval</strong>{q.approval_reason ? `: ${q.approval_reason}` : ` — overall discount ${Number(q.discount_percent)}% is above the ${q.settings?.discount_approval_threshold_percent || 10}% threshold`}. It cannot be sent until approved.
-              {' '}<button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => setDeciding('approved')}>Approve</button>{' '}
-              <button type="button" className="btn btn--sm" disabled={busy} onClick={() => setDeciding('rejected')}>Reject</button>
+              {isAdmin && <>
+                {' '}<button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => setDeciding('approved')}>Approve</button>{' '}
+                <button type="button" className="btn btn--sm" disabled={busy} onClick={() => setDeciding('rejected')}>Reject</button>
+              </>}
             </span>
           </Alert>
         )}
