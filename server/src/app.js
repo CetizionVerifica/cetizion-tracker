@@ -26,7 +26,7 @@ import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
 import { registerRouter } from './routes/register.js';
 import { approvalRouter } from './routes/approvals.js';
-import { taskSummaryRouter, timelineRouter } from './routes/activity.js';
+import { taskSummaryRouter, timelineRouter } from './routes/timeline.js';
 import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';

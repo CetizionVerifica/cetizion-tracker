@@ -29,6 +29,25 @@ Merge after batch 2.
 
 Server tests, browser tests, migration check and web build passing at this batch; no conflicts with `main` or the team's open PRs #54 and #55.
 
+## Review round 2 (#59)
+
+The timeline route lives in `server/src/routes/timeline.js`, not
+`activity.js`. Shivam's #83 adds an `activity.js` of its own — an audit log
+of who changed what, which is a different feature with the same file name —
+and the two collided as an add/add conflict for whoever merged second. Ours
+serves `/api/timeline` and exports `timelineRouter`, so this is the name it
+should have had. Nothing else changed: no route, no response, no behaviour.
+
+`server/db/schema.sql` still conflicts with #83, but that is two independent
+blocks of table definitions and resolves in seconds, rather than two
+different features arriving in one file.
+
+Also in this round: the daily purge no longer destroys every uploaded file,
+a client hears about an overdue invoice once per interval rather than three
+mornings running, a receipt with no date stays undated instead of being
+stamped with the deploy date, a downward correction survives the next
+receipt, and four more 500s are field errors. Each has a test.
+
 ## Rolling back
 
 Revert the merge. Migrations only add tables and columns.
