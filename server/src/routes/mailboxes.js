@@ -60,6 +60,34 @@ function readable(req, alias, from) {
   };
 }
 
+/**
+ * "threads this person may read": the mailboxes above, plus a thread that
+ * sits on a record they own.
+ *
+ * #29 asks for that third case in so many words — "a sales user sees
+ * threads on their own records" — and without it the client's reply about
+ * your own deal is invisible to you whenever it arrived in a colleague's
+ * mailbox, which is most of the time.
+ *
+ * Reading only. Replying stays on `readable`, because a reply leaves from
+ * the mailbox and lands in that person's Sent Items: seeing the thread and
+ * speaking as somebody else are different questions.
+ */
+function readableThread(req, accountAlias, threadAlias, from) {
+  const base = readable(req, accountAlias, from);
+  if (isAdmin(req)) return base;
+  const t = threadAlias;
+  const mine = (table, key, column) => `EXISTS (SELECT 1 FROM ${table} x WHERE ${t}.entity = '${column}' AND x.${key} = ${t}.entity_id
+      AND (lower(x.sales_person) = lower($${from}) OR lower(x.sales_person) = lower($${from + 1})))`;
+  return {
+    clause: `(${base.clause}
+      OR ${mine('quotations', 'quotation_no', 'quotation')}
+      OR ${mine('projects', 'project_id', 'project')}
+      OR ${mine('enquiries', 'enquiry_no', 'enquiry')})`,
+    params: base.params,
+  };
+}
+
 /** Null when there is no such mailbox, so the caller can 404 rather than leak. */
 async function mayAdminister(req, id) {
   const { rows } = await query('SELECT username FROM connected_accounts WHERE id = $1', [id]);
@@ -211,7 +239,7 @@ mailThreadRouter.get('/threads', async (req, res) => {
   if (entity === 'company' || companyId) { params.push(Number(companyId || id)); where.push(`t.company_id = $${params.length}`); }
   else if (entity && id) { params.push(String(entity), String(id)); where.push(`t.entity = $${params.length - 1} AND t.entity_id = $${params.length}`); }
   else throw new ApiError(422, 'entity and id, or company_id, are required');
-  const scope = readable(req, 'a', params.length + 1);
+  const scope = readableThread(req, 'a', 't', params.length + 1);
   where.push(scope.clause);
   const { rows } = await query(
     `SELECT t.id, t.subject, t.company_id, t.contact_id, t.entity, t.entity_id, t.first_message_at, t.last_message_at, t.message_count, t.last_direction,
@@ -225,7 +253,7 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // A thread somebody else's mailbox holds answers the same as one that is
   // not there: whether a colleague is talking to a client is not a question
   // this route should answer.
-  const scope = readable(req, 'a', 2);
+  const scope = readableThread(req, 'a', 't', 2);
   const { rows: [t] } = await query(
     `SELECT t.*, a.email AS mailbox, a.visibility, a.status AS mailbox_status, c.name AS company_name, ct.name AS contact_name
        FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id

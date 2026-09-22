@@ -638,6 +638,62 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       assert.equal(admin_read.status, 200, 'an admin can read it');
     });
 
+    test('a thread on a record they own is theirs to read, wherever it arrived', async () => {
+      // #29 asks for this in so many words: "a sales user sees threads on
+      // their own records". The client replies to whoever they have always
+      // written to, so the thread about your own deal usually lands in
+      // somebody else's mailbox.
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('colleague@example.test', 'microsoft', 'colleague@example.test', 'active', 'share_everything') RETURNING id`);
+      const no = `CTZ/QT/2026/9${Math.floor(Math.random() * 90) + 10}`;
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Their Client Ltd', '2026-09-01', 50000, 'Submitted', $2)`, [no, sales.user.name]);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id, first_message_at, last_message_at)
+         VALUES ($1, $2, 'About your quotation', 'quotation', $3, now(), now()) RETURNING id`,
+        [a.id, `conv-own-${a.id}`, no]);
+
+      const read = await as(sales.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(read.status, 200, `their own deal, in a colleague's mailbox: ${JSON.stringify(read.body)}`);
+
+      const listed = await as(sales.cookie)('get', `/api/mail/threads?entity=quotation&id=${encodeURIComponent(no)}`);
+      assert.equal(listed.status, 200);
+      assert.ok(listed.body.data.some((x) => x.id === t.id), 'and it shows on the record page');
+
+      // Reading it is not the same as speaking as its owner: a reply leaves
+      // from that mailbox and lands in that person's Sent Items.
+      const reply = await as(sales.cookie)('post', `/api/mail/threads/${t.id}/reply`).send({ html: 'Hello' });
+      assert.equal(reply.status, 404, 'replying still needs the mailbox to be theirs');
+    });
+
+    test('a thread on a deal that is not theirs stays invisible', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('other@example.test', 'microsoft', 'other@example.test', 'active', 'share_everything') RETURNING id`);
+      const no = `CTZ/QT/2026/8${Math.floor(Math.random() * 90) + 10}`;
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Not Their Client', '2026-09-01', 50000, 'Submitted', 'Somebody Else')`, [no]);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id, first_message_at, last_message_at)
+         VALUES ($1, $2, 'Not your deal', 'quotation', $3, now(), now()) RETURNING id`,
+        [a.id, `conv-other-${a.id}`, no]);
+      assert.equal((await as(sales.cookie)('get', `/api/mail/threads/${t.id}`)).status, 404);
+    });
+
+    test('a task records who made it, the way a note and a file already do', async () => {
+      const made = await as(sales.cookie)('post', '/api/tasks')
+        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'Chase the signed copy' });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      assert.ok(made.body.data.created_by, 'a task with nobody\'s name on it is an anonymous timeline entry (#22)');
+
+      const imported = await as(admin.cookie)('post', '/api/tasks')
+        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'From the old sheet', created_by: 'Ramesh' });
+      assert.equal(imported.body.data.created_by, 'Ramesh', 'an author sent explicitly is kept, so an import carries its own');
+    });
+
     test('making a mailbox into a team inbox is the admin\'s call', async () => {
       const res = await as(sales.cookie)('post', '/api/inbox/inboxes').send({ name: 'Mine now', account_id: 1 });
       assert.equal(res.status, 403, JSON.stringify(res.body));

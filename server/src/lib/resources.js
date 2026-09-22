@@ -565,6 +565,7 @@ export const resources = {
 
   tasks: {
     table: 'tasks',
+    stampActor: 'created_by',
     view: null,
     label: 'Task',
     defaultSort: 'due_at NULLS LAST, id',
