@@ -1,13 +1,29 @@
 import { useState } from 'react';
 import { PageHeader } from '../App.jsx';
-import { Alert, Badge, Card, DataTable, Empty, Field, Input, KeyValues, Modal, Select, useToast } from '../components/ui.jsx';
+import { Alert, DataTable, Empty, Field, Input, KeyValues, Modal, useToast } from '../components/ui.jsx';
+import { Chip, RecordSection } from '../components/record.jsx';
+import { Button } from '../components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { api } from '../lib/api.js';
+import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
 
 /**
  * What the tracker sends on its own (#21): the scheduled jobs, the kill
  * switch, and every email composed, whether it left the server or not.
+ *
+ * C12 does not draw this pane — it is only named in C9's list of the six
+ * screens the settings area absorbed — so it takes the shape the other
+ * panes settled on rather than inventing a third one. The log stays a
+ * table, because a log is what it is and nothing in the design argues
+ * otherwise.
  */
+
+const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
+const LOG_STATUSES = ['sent', 'suppressed', 'failed', 'queued'];
+
+const statusTone = (status) => (status === 'sent' || status === 'done' ? 'settled' : status === 'failed' ? 'late' : 'waiting');
+
 export default function Emails({ bare = false }) {
   const toast = useToast();
   const [status, setStatus] = useState('');
@@ -48,75 +64,139 @@ export default function Emails({ bare = false }) {
   }
 
   const mode = emails.data?.mode;
+
   return (
     <>
-      {!bare && <PageHeader title="Emails & jobs" subtitle="Reminders and digests the tracker sends on its own, and the record of every email" />}
-      <div className="page stack">
-        {mode && mode !== 'live' && (
-          <Alert tone="warning">
-            <span>Delivery mode is <strong>{mode}</strong>: {mode === 'log' ? 'nothing leaves the server; every email is only logged here.' : `only addresses on the allowlist (${(emails.data.allowlist || []).join(', ') || 'none'}) receive mail.`} Set EMAIL_MODE=live on the server to send.</span>
-          </Alert>
-        )}
-        {mode === 'live' && !emails.data?.configured && <Alert tone="danger">EMAIL_MODE is live but SMTP_HOST or EMAIL_FROM is not set; emails will be logged as suppressed.</Alert>}
+      {!bare && <PageHeader title="Emails & jobs" />}
 
-        <div className="auto-grid grid--2">
-          <Card title="Automatic email" hint="The kill switch. Off stops every reminder and digest; they are still logged so you can see what would have gone.">
-            <KeyValues items={[
-              { label: 'Status', value: <Badge tone={enabled ? 'success' : 'danger'}>{enabled ? 'On' : 'Off'}</Badge> },
-              { label: 'Delivery mode', value: mode || '…' },
-              { label: 'From', value: emails.data?.from || <span className="muted">EMAIL_FROM not set</span> },
-              { label: 'Reminder interval', value: interval ? `${interval} days (Settings)` : '…' },
-            ]} />
-            <div style={{ marginTop: 14 }}>
-              <button type="button" className={`btn ${enabled ? '' : 'btn--primary'}`} onClick={toggle}>{enabled ? 'Stop automatic email' : 'Enable automatic email'}</button>
-            </div>
-          </Card>
-          <Card title="Send a test email" hint="Goes through the same log and mode as everything else.">
-            <form onSubmit={sendTest} className="stack">
-              <Field label="To"><Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@company.com" required /></Field>
-              <div><button type="submit" className="btn btn--primary" disabled={busy || !testTo}>Send test</button></div>
-            </form>
-          </Card>
+      <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
+        <div>
+          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Emails &amp; jobs</h1>
+          <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
+            The reminders and digests the tracker sends on its own, the schedule they run on, and a record of every
+            email it composed — including the ones that never left the server.
+          </p>
         </div>
 
-        <Card flush title="Scheduled jobs" hint="Run by the worker process on the schedule shown, in the business time zone. Run now runs the job from here, for a check or after a fix.">
+        {mode && mode !== 'live' && (
+          <Alert tone="warning">
+            <span>
+              Delivery mode is <strong>{mode}</strong>:{' '}
+              {mode === 'log'
+                ? 'nothing leaves the server; every email is only logged here.'
+                : `only addresses on the allowlist (${(emails.data.allowlist || []).join(', ') || 'none'}) receive mail.`}
+              {' '}Set EMAIL_MODE=live on the server to send.
+            </span>
+          </Alert>
+        )}
+        {mode === 'live' && !emails.data?.configured && (
+          <Alert tone="danger">EMAIL_MODE is live but SMTP_HOST or EMAIL_FROM is not set; emails will be logged as suppressed.</Alert>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RecordSection title="Automatic email" hint="the kill switch">
+            <div className="flex flex-col gap-4 px-5 py-4">
+              <KeyValues items={[
+                { label: 'Status', value: <Chip tone={enabled ? 'settled' : 'late'}>{enabled ? 'On' : 'Off'}</Chip> },
+                { label: 'Delivery mode', value: mode || '…' },
+                { label: 'From', value: emails.data?.from || <span className="muted">EMAIL_FROM not set</span> },
+                { label: 'Reminder interval', value: interval ? `${interval} days` : '…' },
+              ]} />
+              <div>
+                <Button
+                  variant={enabled ? 'secondary' : 'default'}
+                  size="sm"
+                  className="h-8 px-4 text-[13px]"
+                  onClick={toggle}
+                >
+                  {enabled ? 'Stop automatic email' : 'Enable automatic email'}
+                </Button>
+              </div>
+              <p className="text-[11.5px]/[1.6] text-muted-foreground">
+                Off stops every reminder and digest. They are still composed and logged, so you can see what would
+                have gone out.
+              </p>
+            </div>
+          </RecordSection>
+
+          <RecordSection title="Send a test email" hint="same log and mode as the rest">
+            <form onSubmit={sendTest} className="flex flex-col gap-4 px-5 py-4">
+              <Field label="To">
+                <Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@company.com" required />
+              </Field>
+              <div>
+                <Button type="submit" size="sm" className="h-8 px-4 text-[13px]" disabled={busy || !testTo}>Send test</Button>
+              </div>
+            </form>
+          </RecordSection>
+        </div>
+
+        <RecordSection
+          title="Scheduled jobs"
+          hint="run by the worker on the schedule shown, in the business time zone"
+        >
           <DataTable
             rows={jobs.data?.data ?? []}
             columns={[
               { key: 'name', header: 'Job', className: 'mono strong' },
               { key: 'description', header: 'What it does', className: 'wrap' },
               { key: 'cron', header: 'Schedule', className: 'mono small', render: (j) => `${j.cron} (${j.time_zone})` },
-              { key: 'last', header: 'Last run', render: (j) => j.last_run ? <><Badge tone={j.last_run.status === 'done' ? 'success' : j.last_run.status === 'failed' ? 'danger' : 'info'}>{j.last_run.status}</Badge><div className="small muted">{new Date(j.last_run.started_at).toLocaleString()} · {j.last_run.started_by}</div>{j.last_run.result && <div className="small muted">{summarise(j.last_run.result)}</div>}{j.last_run.error && <div className="small" style={{ color: 'var(--danger-fg)' }}>{j.last_run.error}</div>}</> : <span className="muted">never</span> },
-              { key: 'run', header: '', align: 'right', render: (j) => <button type="button" className="btn btn--sm" disabled={busy} onClick={() => run(j.name)}>Run now</button> },
+              {
+                key: 'last', header: 'Last run', render: (j) => (j.last_run ? (
+                  <>
+                    <Chip tone={statusTone(j.last_run.status)}>{j.last_run.status}</Chip>
+                    <div className="small muted">{ago(j.last_run.started_at)} · {j.last_run.started_by}</div>
+                    {j.last_run.result && <div className="small muted">{summarise(j.last_run.result)}</div>}
+                    {j.last_run.error && <div className="small text-late">{j.last_run.error}</div>}
+                  </>
+                ) : <span className="muted">never</span>),
+              },
+              {
+                key: 'run', header: '', align: 'right',
+                render: (j) => <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy} onClick={() => run(j.name)}>Run now</Button>,
+              },
             ]}
           />
-        </Card>
+        </RecordSection>
 
-        <Card flush title="Email log" hint="Every email the tracker composed, newest first." actions={
-          <div className="card__actions">
-            <Select value={status} placeholder="Status: all" options={['sent', 'suppressed', 'failed', 'queued']} onChange={(e) => setStatus(e.target.value)} />
-            <span className="small muted">{rows.length} shown</span>
-          </div>
-        }>
+        <RecordSection
+          title="Email log"
+          hint={`every email composed, newest first — ${number(rows.length)} shown`}
+          action={
+            <Select value={status || 'all'} onValueChange={(v) => setStatus(v === 'all' ? '' : v)}>
+              <SelectTrigger size="sm" className="h-7 text-[12.5px]" aria-label="Filter the log by status"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-[12.5px]">All statuses</SelectItem>
+                {LOG_STATUSES.map((s) => <SelectItem key={s} value={s} className="text-[12.5px]">{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          }
+        >
           <DataTable
             rows={rows}
             onRowClick={(r) => setOpen(r)}
             columns={[
-              { key: 'created_at', header: 'When', render: (r) => new Date(r.created_at).toLocaleString() },
+              { key: 'created_at', header: 'When', className: 'small', render: (r) => ago(r.created_at) },
               { key: 'to_email', header: 'To', className: 'mono small' },
               { key: 'subject', header: 'Subject', className: 'wrap strong' },
-              { key: 'template', header: 'Kind', render: (r) => <Badge>{r.template}</Badge> },
-              { key: 'status', header: 'Status', render: (r) => <><Badge tone={r.status === 'sent' ? 'success' : r.status === 'failed' ? 'danger' : 'warning'}>{r.status}</Badge>{r.reason && <div className="small muted">{r.reason}</div>}{r.error && <div className="small" style={{ color: 'var(--danger-fg)' }}>{r.error}</div>}</> },
+              { key: 'template', header: 'Kind', render: (r) => <Chip>{r.template}</Chip> },
+              {
+                key: 'status', header: 'Status', render: (r) => (
+                  <>
+                    <Chip tone={statusTone(r.status)}>{r.status}</Chip>
+                    {r.reason && <div className="small muted">{r.reason}</div>}
+                    {r.error && <div className="small text-late">{r.error}</div>}
+                  </>
+                ),
+              },
               { key: 'sent_by', header: 'By', className: 'small muted' },
             ]}
             empty={<Empty title="No emails yet" text="Run a job or send a test email; everything the tracker composes appears here." />}
           />
-        </Card>
+        </RecordSection>
       </div>
 
-      {open && (
-        <EmailBody id={open.id} onClose={() => setOpen(null)} />
-      )}
+      {open && <EmailBody id={open.id} onClose={() => setOpen(null)} />}
     </>
   );
 }
@@ -133,8 +213,16 @@ function EmailBody({ id, onClose }) {
   const { data, loading } = useFetch(() => api.raw(`/emails/${id}`), [id]);
   const e = data?.data;
   return (
-    <Modal title={e?.subject || 'Email'} subtitle={e ? `To ${e.to_email}${e.cc ? `, cc ${e.cc}` : ''} · ${e.status}${e.reason ? ` (${e.reason})` : ''}` : ''} onClose={onClose} size="lg" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
-      {loading || !e ? <div className="skeleton" style={{ height: 120 }} /> : <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>{e.body_text}</pre>}
+    <Modal
+      title={e?.subject || 'Email'}
+      subtitle={e ? `To ${e.to_email}${e.cc ? `, cc ${e.cc}` : ''} · ${e.status}${e.reason ? ` (${e.reason})` : ''}` : ''}
+      onClose={onClose}
+      size="lg"
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+    >
+      {loading || !e
+        ? <div className="skeleton" style={{ height: 120 }} />
+        : <pre className="m-0 font-[inherit] whitespace-pre-wrap">{e.body_text}</pre>}
     </Modal>
   );
 }

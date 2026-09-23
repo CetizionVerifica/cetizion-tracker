@@ -114,8 +114,10 @@ test('import a sales sheet, review the duplicates, commit', async ({ page }) => 
   // palette is how it is reached now.
   await palette(page, 'bulk import');
   await page.getByRole('option', { name: 'Bulk import' }).click();
+  // The drop zone reads the sheet as soon as one is chosen — there is no
+  // second button. Nothing reaches the live tables until the review is
+  // committed at the end of this test, which is what makes that safe.
   await page.locator('input[type=file]').setInputFiles(join(here, 'fixtures', 'sales-sheet.xlsx'));
-  await page.getByRole('button', { name: 'Upload and analyse' }).click();
   await expect(page.getByRole('heading', { name: /Import #\d+/ })).toBeVisible({ timeout: 90_000 });
   // How the batch was planned, in words. Never the model id: it means
   // nothing to whoever is importing, and it changes whenever the importer

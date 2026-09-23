@@ -74,7 +74,9 @@ export function RecordSection({ title, hint, action, children, className }) {
   return (
     <Card className={cn(PANEL, 'overflow-hidden', className)}>
       <CardHeader className="flex h-11 flex-row items-center gap-3 space-y-0 border-b border-border px-5 pb-0">
-        <CardTitle className="text-[14px] font-semibold text-foreground">{title}</CardTitle>
+        {/* The title never shrinks: letting it wrap broke the 44px header
+            and pushed it into the hint beside it. The hint truncates instead. */}
+        <CardTitle className="shrink-0 text-[14px] font-semibold text-foreground">{title}</CardTitle>
         {hint && <span className="min-w-0 truncate text-[12.5px] font-normal text-muted-foreground">{hint}</span>}
         {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
       </CardHeader>
