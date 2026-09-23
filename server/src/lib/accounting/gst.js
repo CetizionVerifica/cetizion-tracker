@@ -55,6 +55,67 @@ export function splitTax(taxable, rate, { ourState, theirState }) {
   return { cgst: 0, sgst: 0, igst: tax, tax, intra: false };
 }
 
+/**
+ * The GST on a set of quotation or invoice lines, split the way an Indian
+ * document has to show it (#23).
+ *
+ * One number called "GST" is not what a quotation may print. Within the
+ * state it is CGST and SGST, half the rate each; outside it, IGST at the
+ * full rate. A document with lines at different rates shows a band per
+ * rate, because "18%" and "5%" are separate entries on a return and the
+ * average of them is a rate that does not exist.
+ *
+ * Nothing here is stored: it is a function of the lines, the two states and
+ * the currency, and it is worked out wherever it is shown.
+ *
+ * `problems` is what stops it being decided — an unset state, a foreign
+ * currency — so a screen can say why rather than quietly showing zero.
+ */
+export function gstBreakdown(lines, { ourState, theirState, currency = 'INR' } = {}) {
+  const zeroRated = String(currency || 'INR').toUpperCase() !== 'INR';
+  const problems = [];
+  if (zeroRated) problems.push(`This quotation is in ${String(currency).toUpperCase()}. Exports are zero-rated; confirm the treatment with accounts.`);
+  else if (!ourState) problems.push('Set the company state code in Settings to decide CGST + SGST or IGST.');
+  else if (!theirState) problems.push('No place of supply on this quotation, and the client has no GSTIN, so the split cannot be decided.');
+
+  const byRate = new Map();
+  let subtotal = 0;
+  for (const l of lines || []) {
+    const amount = Math.round(Number(l.amount ?? 0) * 100) / 100;
+    if (!Number.isFinite(amount)) continue;
+    subtotal = Math.round((subtotal + amount) * 100) / 100;
+    const rate = zeroRated ? 0 : Number(l.gst_rate ?? 0);
+    const band = byRate.get(rate) || { rate, taxable: 0 };
+    band.taxable = Math.round((band.taxable + amount) * 100) / 100;
+    byRate.set(rate, band);
+  }
+
+  // Undecidable is not the same as zero: with no states to compare, the tax
+  // is still owed, it is the split that is unknown. splitTax answers IGST
+  // in that case, which is the safer of the two to show.
+  const bands = [...byRate.values()]
+    .filter((b) => b.taxable !== 0)
+    .sort((a, b) => b.rate - a.rate)
+    .map((b) => ({ ...b, ...splitTax(b.taxable, b.rate, { ourState, theirState }) }));
+
+  const sum = (key) => Math.round(bands.reduce((n, b) => n + Number(b[key] || 0), 0) * 100) / 100;
+  const taxTotal = sum('tax');
+  return {
+    zero_rated: zeroRated,
+    intra: Boolean(ourState && theirState && String(ourState).padStart(2, '0') === String(theirState).padStart(2, '0')),
+    our_state: ourState || null,
+    their_state: theirState || null,
+    bands,
+    subtotal,
+    cgst: sum('cgst'),
+    sgst: sum('sgst'),
+    igst: sum('igst'),
+    tax_total: taxTotal,
+    total: Math.round((subtotal + taxTotal) * 100) / 100,
+    problems,
+  };
+}
+
 /** Indian financial year quarter: April–June is Q1 of the year that starts in April. */
 export function fyQuarter(isoDate) {
   const [y, m] = String(isoDate).slice(0, 7).split('-').map(Number);

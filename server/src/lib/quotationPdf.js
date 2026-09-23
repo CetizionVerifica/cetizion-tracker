@@ -17,12 +17,28 @@ const date = (d) => {
 };
 
 /** The document definition, exported so a test can check it without rendering. */
+/** 18 -> "18", 2.5 -> "2.5"; half(18) -> "9" for the CGST and SGST halves. */
+const trim = (n) => String(Math.round(Number(n) * 100) / 100);
+const half = (n) => trim(Number(n) / 2);
+
 export function quotationDocument(q) {
   const s = q.settings || {};
   const cur = q.currency || 'INR';
   const hasLines = q.lines?.length > 0;
-  const gstRates = [...new Set((q.lines || []).map((l) => Number(l.gst_rate)))];
-  const taxLabel = gstRates.length === 1 ? `GST @ ${gstRates[0]}%` : 'GST';
+  // What an Indian quotation has to show: CGST and SGST within the state,
+  // IGST outside it, one band per rate. A single line called "GST" is not a
+  // document anybody can file against (#23). The split is worked out in
+  // fullQuotation; this only prints it, and falls back to the stored total
+  // for a quotation loaded without it (an old revision snapshot).
+  const gst = q.gst || null;
+  const taxRows = gst && gst.bands?.length
+    ? gst.bands.flatMap((b) => (b.intra
+      ? [[`CGST @ ${half(b.rate)}%`, money(b.cgst, cur)], [`SGST @ ${half(b.rate)}%`, money(b.sgst, cur)]]
+      : [[`IGST @ ${trim(b.rate)}%`, money(b.igst, cur)]]))
+    : [[(() => {
+      const rates = [...new Set((q.lines || []).map((l) => Number(l.gst_rate)))];
+      return rates.length === 1 ? `GST @ ${trim(rates[0])}%` : 'GST';
+    })(), money(q.tax_total, cur)]];
   const lineRows = (q.lines || []).map((l, i) => [
     { text: String(i + 1), color: MUTED },
     { stack: [{ text: l.description }, l.service_name && l.service_name !== l.description ? { text: l.service_name, color: MUTED, fontSize: 8 } : null].filter(Boolean) },
@@ -33,7 +49,7 @@ export function quotationDocument(q) {
     { text: money(l.amount, cur), alignment: 'right' },
   ]);
   const totals = hasLines
-    ? [['Subtotal', money(q.subtotal, cur)], [taxLabel, money(q.tax_total, cur)], ['Total', money(q.total, cur)]]
+    ? [['Subtotal', money(q.subtotal, cur)], ...taxRows, ['Total', money(q.total, cur)]]
     : [['Quoted value', money(q.quotation_value, cur)]];
 
   return {

@@ -17,6 +17,7 @@ import { ApiError } from '../middleware/error.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { sendMail } from '../lib/mail.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
+import { checkGstin, gstBreakdown } from '../lib/accounting/gst.js';
 
 export const quotationDocRouter = Router();
 
@@ -36,12 +37,24 @@ export async function fullQuotation(key) {
     query('SELECT enquiry_no, enquiry_date, status FROM enquiries WHERE quotation_no = $1', [q.quotation_no]),
     q.project_id ? query('SELECT * FROM v_projects WHERE project_id = $1', [q.project_id]) : { rows: [] },
     query('SELECT * FROM v_purchase_orders WHERE quotation_no = $1 ORDER BY po_date', [q.quotation_no]),
-    query(`SELECT key, value FROM settings WHERE key IN ('company_name','company_address','company_gstin','quotation_validity_days','gst_rate_default','quotation_terms_default','discount_approval_threshold_percent')`),
+    query(`SELECT key, value FROM settings WHERE key IN ('company_name','company_address','company_gstin','company_state_code','quotation_validity_days','gst_rate_default','quotation_terms_default','discount_approval_threshold_percent')`),
   ]);
+  const set = Object.fromEntries(settings.rows.map((r) => [r.key, r.value]));
+  const theirs = company.rows[0] || null;
+  // Where the supply is made decides CGST + SGST against IGST. The client's
+  // own GSTIN is the most reliable answer; the place of supply typed on the
+  // quotation is the fallback, and it carries its state code at the front
+  // ("27-Maharashtra"). The same order accounting/providers.js uses.
+  const ourState = set.company_state_code || checkGstin(set.company_gstin).state_code || null;
+  const buyer = checkGstin(theirs?.gstin);
+  const theirState = (buyer.valid && buyer.state_code)
+    || (q.place_of_supply_state || '').match(/^\d{2}/)?.[0]
+    || null;
   return {
-    ...q, lines: lines.rows, revisions: revisions.rows, company: company.rows[0] || null, contact: contact.rows[0] || null,
+    ...q, lines: lines.rows, revisions: revisions.rows, company: theirs, contact: contact.rows[0] || null,
     enquiry: enquiry.rows[0] || null, project: project.rows[0] || null, purchase_orders: pos.rows,
-    settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
+    gst: gstBreakdown(lines.rows, { ourState, theirState, currency: q.currency }),
+    settings: set,
   };
 }
 
