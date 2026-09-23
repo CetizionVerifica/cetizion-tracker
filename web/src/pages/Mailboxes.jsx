@@ -37,7 +37,7 @@ import { ago, number } from '../lib/format.js';
  * and at the design's 140/220/160/120 an ordinary address like
  * shyam@cetizionverifica.com wrapped mid-word in the first column.
  */
-const GRID = 'lg:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
+const GRID = '@3xl:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
 const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
@@ -145,7 +145,7 @@ export default function Mailboxes() {
         )}
 
         <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-          <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 lg:grid', GRID, COL_LABEL)}>
+          <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
             <span>Mailbox</span><span>Status</span><span>Team sees</span><span>Synced</span><span />
           </div>
 
@@ -157,7 +157,7 @@ export default function Mailboxes() {
             const broken = row.status === 'needs_reconnect';
             return (
               <div key={row.id} className={cn(i < rows.length - 1 && 'border-b border-border', broken && 'bg-late/[0.04]')}>
-                <div className={cn('grid gap-3 px-5 py-3 lg:items-center lg:gap-4', GRID)}>
+                <div className={cn('grid gap-3 px-5 py-3 @3xl:items-center @3xl:gap-4', GRID)}>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium break-words text-foreground">
                       {row.email}
@@ -231,7 +231,7 @@ export default function Mailboxes() {
                 {/* The reason lives under the row it belongs to, because a
                     status word on its own never told anybody what to do. */}
                 {broken && (
-                  <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text lg:max-w-[80ch]">
+                  <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text @3xl:max-w-[80ch]">
                     <strong className="font-semibold text-foreground">Why:</strong>{' '}
                     {row.last_error || 'Microsoft stopped accepting the saved sign-in, which usually means the password changed or the permission was withdrawn.'}
                     {' '}Reconnecting takes one sign-in; nothing already synced is lost.
@@ -242,7 +242,7 @@ export default function Mailboxes() {
           })}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 @3xl:grid-cols-2">
           <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
             <p className="text-[12.5px]/[1.6] text-secondary-text">

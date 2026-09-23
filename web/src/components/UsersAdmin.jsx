@@ -40,7 +40,7 @@ const ROLES = [
   { value: 'sales', label: 'Sales' },
 ];
 
-const GRID = 'lg:grid-cols-[minmax(0,1.5fr)_150px_110px_150px_90px]';
+const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';
 const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 
 /** Server-side field errors, shown against the field that caused them. */
@@ -87,7 +87,7 @@ export function UsersAdmin() {
           <ErrorState message={error} onRetry={refetch} />
         ) : (
           <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-            <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 lg:grid', GRID, COL_LABEL)}>
+            <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
               <span>Person</span><span>Role</span><span>Signs in</span><span>Last seen</span><span />
             </div>
 
@@ -102,7 +102,7 @@ export function UsersAdmin() {
               return (
                 <div
                   key={user.id}
-                  className={cn('grid gap-3 px-5 py-3 lg:items-center lg:gap-4', GRID, i < users.length - 1 && 'border-b border-border')}
+                  className={cn('grid gap-3 px-5 py-3 @3xl:items-center @3xl:gap-4', GRID, i < users.length - 1 && 'border-b border-border')}
                 >
                   <div className="flex min-w-0 items-center gap-2.5">
                     <span className={cn(
@@ -154,7 +154,7 @@ export function UsersAdmin() {
                     {ago(user.last_login_at) ?? <span className="text-muted-foreground">never</span>}
                   </div>
 
-                  <div className="flex items-center gap-1 lg:justify-end">
+                  <div className="flex items-center gap-1 @3xl:justify-end">
                     <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" onClick={() => setEditing(user)}>
                       {attributionOnly ? 'Invite' : 'Edit'}
                     </Button>

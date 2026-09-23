@@ -192,13 +192,16 @@ export default function Inbox() {
             {/* This screen draws its own header instead of using PageHeader,
                 and PageHeader is where the burger lives. Without this the
                 inbox is a dead end on a phone: you can reach it and then
-                not leave it. */}
+                not leave it. It is not `lg:hidden` either — PageHeader's
+                burger shows at every width, so hiding this one made the
+                inbox the one screen where a desktop cannot reclaim the
+                240px the sidebar takes. */}
             <Button
               variant="ghost"
               size="icon"
               onClick={sidebar.toggle}
-              aria-label={sidebar.hidden ? 'Show the menu' : 'Hide the menu'}
-              className="size-control shrink-0 lg:hidden"
+              aria-label={sidebar.hidden ? 'Show sidebar' : 'Hide sidebar'}
+              className="size-control shrink-0"
             >
               <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
             </Button>

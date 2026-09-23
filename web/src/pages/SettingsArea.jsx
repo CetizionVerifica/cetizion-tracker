@@ -41,11 +41,16 @@ import BulkImport from './BulkImport.jsx';
  */
 export function SettingsPane({ title, description, actions, children }) {
   return (
-    <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
-      {/* On a phone the actions go under the title rather than beside it.
-          Wrapping them individually let the first button sit next to the
-          heading and squeeze the sentence into a column a few words wide. */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start">
+    /* A container, not just a box: the panes inside sit between two rails
+       and are far narrower than the window, so a grid that switched on
+       viewport width went multi-column while it had 744px to do it in. */
+    <div className="@container flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
+      {/* Actions go under the title until the pane itself is wide, not until
+          the window is — the same threshold the tables inside use, so a pane
+          changes shape once rather than twice. Beside a 744px pane three
+          buttons left the sentence a column six words wide, and the window
+          being 1280 did not help. */}
+      <div className="flex flex-col gap-4 @3xl:flex-row @3xl:flex-wrap @3xl:items-start">
         <div className="min-w-0 flex-1">
           <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">{title}</h1>
           {description && (
