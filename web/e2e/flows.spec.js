@@ -165,3 +165,30 @@ test('every report chart has a table twin, and its rows link into the list', asy
   await page.getByRole('button', { name: 'Show all' }).click();
   await expect(page).toHaveURL(/\/collections$/);
 });
+
+/**
+ * The project record (C15): the checklist is the page, and the steps
+ * another record owns are not ticked by hand.
+ */
+test('a checklist step that finance owns has no tick box, and says who has it', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/projects/PRJ-2026-001');
+  await expect(page.getByText('The standard eleven, from the template')).toBeVisible();
+
+  // A step a person owns is a real checkbox, and ticking it is the fact.
+  const manual = page.getByRole('listitem').filter({ hasText: 'Project manager and delivery team assigned' });
+  await expect(manual.getByRole('checkbox')).toBeVisible();
+
+  // A step finance owns is not offered as a checkbox at all — a disabled
+  // one would read as "you may not", and the truth is "not yours to do".
+  const finance = page.getByRole('listitem').filter({ hasText: 'Finance raises the stage-1 (advance) invoice' });
+  await expect(finance.getByRole('checkbox')).toHaveCount(0);
+  await expect(finance.getByText('with finance', { exact: true })).toBeVisible();
+  // And it reads its state from the payment schedule, not from the stored
+  // status — this row is seeded 'Done' and one order is still unbilled.
+  await expect(finance.getByText(/With finance · PO-/)).toBeVisible();
+
+  // The one button on the page says what it will do before you press it.
+  await expect(page.getByText(/Recording the delivery date closes the delivery step/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record the delivery date' })).toHaveCount(1);
+});

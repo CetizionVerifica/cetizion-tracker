@@ -6,6 +6,7 @@ import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
+import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
 
 export const projectRouter = Router();
 export const poRouter = Router();
@@ -65,13 +66,27 @@ projectRouter.get('/:projectId/full', async (req, res) => {
     query('SELECT * FROM v_quotations WHERE project_id = $1 ORDER BY quotation_date', [id]),
   ]);
 
+  // The checklist steps that another record owns answer for themselves,
+  // and they are worked out here rather than in the client: a derived
+  // figure belongs next to the rows it is derived from, like every other
+  // rollup in this codebase.
+  const context = {
+    project: project.rows[0],
+    purchase_orders: pos.rows,
+    services: services.rows,
+    payment_stages: stages.rows,
+    travel: travel.rows,
+  };
+  const checklist = withDerivedSteps(onboarding.rows, context);
+
   res.json({
     data: {
       project: project.rows[0],
       purchase_orders: pos.rows,
       services: services.rows,
       payment_stages: stages.rows,
-      onboarding: onboarding.rows,
+      onboarding: checklist,
+      onboarding_progress: onboardingProgress(checklist),
       travel: travel.rows,
       quotations: quotations.rows,
     },
