@@ -78,8 +78,11 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByLabel('Username').fill(USER);
   await page.getByLabel('Password').fill('not-the-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.locator('.alert')).toBeVisible();
+  // A real alert, announced, not a div with a class on it.
+  await expect(page.getByRole('alert')).toContainText(/do not match/);
   await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
+  // And the password box is cleared rather than left holding a wrong one.
+  await expect(page.getByLabel('Password')).toHaveValue('');
 });
 
 test('quote a new client, then find the client once under Companies', async ({ page }) => {

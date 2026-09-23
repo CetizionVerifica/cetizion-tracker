@@ -154,7 +154,9 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
     const res = await request(app).get('/api/auth/config');
 
     assert.equal(res.status, 200, 'readable without signing in');
-    assert.deepEqual(res.body.data, { mode: 'shared' });
+    // Shared mode has one account and no per-person row to attach an
+    // identity to, so provider sign-in is never offered in it.
+    assert.deepEqual(res.body.data, { mode: 'shared', providers: [] });
     // Nothing else: not the shared username, not a bootstrap address.
     const text = JSON.stringify(res.body);
     assert.ok(!text.includes('shared-admin'), text);

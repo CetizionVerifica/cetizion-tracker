@@ -13,9 +13,12 @@ import { findUserByEmail, recordLogin } from '../lib/users.js';
 import { authConfig } from './config.js';
 import { currentUser } from './middleware.js';
 import { constantTimeEqual, databasePayload, sharedPayload, signSession } from './session.js';
+import { enabledProviders, oauthRouter } from './oauth.js';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 10;
+// The sign-in form starts warning at this many attempts remaining.
+const WARN_WHEN_LEFT = 2;
 
 const sharedCredentials = z.object({
   username: z.string().trim().min(1, 'Enter the username'),
@@ -202,6 +205,12 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
     if (err instanceof ApiError && err.status === 401) {
       await record(who, req.ip, false, 'bad credentials');
       failedSignIns.inc();
+      // "Two attempts left" only once it is two, so an ordinary typo is not
+      // alarming and the number is not a running commentary for whoever is
+      // guessing. They could count their own failures anyway; what this
+      // avoids is announcing the limit from the first mistake.
+      const left = limit - (before.account + 1);
+      if (left <= WARN_WHEN_LEFT && left > 0) err.extra = { ...err.extra, attempts_left: left, lockout_minutes: before.minutes };
       // Raised once, when this account reaches the limit.
       if (before.account + 1 === limit) {
         raiseAlert('signin', `${limit} failed sign-ins for one account from ${req.ip}`, `Name tried: ${String(who).slice(0, 60)}. That account is locked from this address for ${before.minutes} minutes.`).catch(() => {});
@@ -227,8 +236,14 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
  * question they will be asked, which they would learn from the form anyway.
  */
 authRouter.get('/config', (req, res) => {
-  res.json({ data: { mode: authConfig.mode } });
+  // The mode, and which provider buttons to draw. Both are things the form
+  // would learn by being rendered anyway. Still not: AUTH_USERNAME, the
+  // bootstrap address, the password policy, or whether a given account
+  // exists.
+  res.json({ data: { mode: authConfig.mode, providers: enabledProviders() } });
 });
+
+authRouter.use('/oauth', oauthRouter);
 
 authRouter.post('/logout', (req, res) => {
   res.clearCookie(authConfig.cookieName, cookieOptions());
