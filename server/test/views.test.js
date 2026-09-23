@@ -232,6 +232,36 @@ describe('saved views', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, 
       'and the 2020 one is outside it');
   });
 
+  test('changing one thing about a view changes only that thing', async () => {
+    // zod applies a `.default()` inside `.partial()`, so a patch schema
+    // carrying defaults turns "unpin this" into "unpin this, and clear
+    // its filters, and move it to the top". It did exactly that, and a
+    // saved view lost the filters that were the whole point of it.
+    const made = await as(admin.cookie)('post', '/api/views').send({
+      resource: 'quotations',
+      name: 'Keeps its filters',
+      filters: { status: 'Submitted' },
+      pinned: true,
+      sort_order: 7,
+      tone: 'late',
+      chart: 'ageing',
+      shared: true,
+    });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+
+    const patched = await as(admin.cookie)('patch', `/api/views/${made.body.data.id}`).send({ pinned: false });
+    assert.equal(patched.status, 200, JSON.stringify(patched.body));
+
+    const after = patched.body.data;
+    assert.equal(after.pinned, false, 'the thing that was asked for');
+    assert.deepEqual(after.filters, { status: 'Submitted' }, 'and nothing else');
+    assert.equal(after.sort_order, 7);
+    assert.equal(after.tone, 'late');
+    assert.equal(after.chart, 'ageing');
+    assert.equal(after.name, 'Keeps its filters');
+    assert.equal(after.owner, null, 'still everybody\'s');
+  });
+
   test('signing out closes it', async () => {
     assert.equal((await request(app).get('/api/views')).status, 401);
   });

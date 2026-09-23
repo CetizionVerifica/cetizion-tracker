@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
-import { Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Tabs, Textarea, useToast } from '../components/ui.jsx';
+import { Badge, Card, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Button } from '@/components/ui/button.tsx';
+import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 
@@ -9,9 +11,103 @@ import { useFetch, useLookups } from '../lib/hooks.js';
  * The shared sales inbox (#30): who owns each email, what is waiting on
  * us, replies from the shared address, and conversion to enquiries.
  */
-const VIEWS = [{ key: 'mine', label: 'Mine' }, { key: 'unassigned', label: 'Unassigned' }, { key: 'overdue', label: 'Overdue' }, { key: 'all', label: 'All open' }, { key: 'closed', label: 'Closed' }, { key: 'setup', label: 'Set-up' }];
-const STATUS_TONE = { open: 'info', pending_client: '', snoozed: 'warning', closed: '' };
-const since = (iso) => { const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`; };
+/**
+ * Three views, not six.
+ *
+ * "Unassigned" and "Overdue" were tabs somebody had to think about; they
+ * are now reasons a row stands out in Open, which is where they were
+ * always going to be looked at anyway.
+ */
+const VIEWS = [
+  { key: 'all', label: 'Open' },
+  { key: 'mine', label: 'Mine' },
+  { key: 'closed', label: 'Done' },
+];
+
+const since = (iso) => {
+  const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (mins < 60) return `${mins}m`;
+  if (mins < 1440) return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (mins < 2880) return 'Yesterday';
+  if (mins < 10080) return new Date(iso).toLocaleDateString('en-GB', { weekday: 'short' });
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+};
+
+const initials = (name, email) => {
+  const from = String(name || '').trim();
+  if (!from) return '?';
+  const parts = from.split(/\s+/).filter(Boolean);
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+};
+
+/** A small square label. The word carries the meaning; the hue agrees. */
+function Tag({ tone = 'plain', mono = false, children }) {
+  const tones = {
+    waiting: 'border-waiting/28 bg-waiting/10 text-waiting',
+    settled: 'border-settled/28 bg-settled/10 text-settled',
+    late: 'border-late/30 bg-late/10 text-late',
+    plain: 'border-border bg-secondary text-secondary-text',
+  };
+  return (
+    <span className={cn(
+      'inline-flex h-5 items-center rounded-[6px] border px-2 text-[11px] font-semibold',
+      mono && 'num font-medium', tones[tone]
+    )}>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * One conversation in the list.
+ *
+ * Everything the row says is a reason to pick it up or leave it: who it is
+ * from, what it is about, whether anybody owns it, and what the tracker
+ * already matched it to. That last part is the point — the inbox is not a
+ * second CRM, so a thread arrives already knowing its company and its
+ * deal.
+ */
+function ThreadRow({ row, selected, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(row)}
+      aria-current={selected ? 'true' : undefined}
+      className={cn(
+        'flex w-full gap-3 border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
+        selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
+      )}
+    >
+      <span className={cn(
+        'grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold',
+        row.company_name ? 'text-primary' : 'text-muted-foreground'
+      )}>
+        {initials(row.from_name || row.company_name, row.from_email)}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
+            {row.company_name || row.from_email}
+            {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
+          </span>
+          <span className="shrink-0 text-[11.5px] text-muted-foreground">{since(row.last_message_at)}</span>
+        </span>
+        <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text">
+          {row.subject || '(no subject)'}
+        </span>
+        <span className="mt-1.5 flex flex-wrap gap-1.5">
+          {row.overdue && <Tag tone="late">Reply overdue</Tag>}
+          {row.looks_new && <Tag tone="waiting">New enquiry</Tag>}
+          {row.for_finance && <Tag tone="settled">Payment · for finance</Tag>}
+          {row.enquiry_no && <Tag tone="settled" mono>{row.enquiry_no}</Tag>}
+          {row.entity_id && <Tag mono>{row.entity_id}</Tag>}
+          {row.assignee ? <Tag>{row.assignee}</Tag> : <Tag>no owner</Tag>}
+          {!row.company_name && <Tag>no company match</Tag>}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 export default function Inbox() {
   const [params, setParams] = useSearchParams();
@@ -23,42 +119,92 @@ export default function Inbox() {
   const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : api.raw(listUrl)), [listUrl]);
   const s = summary.data?.data;
   const put = (k, v) => { const n = new URLSearchParams(params); if (v) n.set(k, v); else n.delete(k); setParams(n, { replace: true }); };
-  const counts = { mine: s?.mine, unassigned: s?.unassigned, overdue: s?.overdue, all: s?.open };
+  const rows = list.data?.data ?? [];
+
+  if (view === 'setup') {
+    return (
+      <>
+        <PageHeader
+          title="Inbox"
+          subtitle="Email to the shared sales addresses."
+          actions={<Button variant="secondary" onClick={() => put('view', 'all')}>Back to the inbox</Button>}
+        />
+        <div className="page stack"><InboxSetup /></div>
+      </>
+    );
+  }
 
   return (
-    <>
-      <PageHeader title="Inbox" subtitle="Email to the shared sales addresses. Every conversation has an owner and a reply deadline; turn new business into an enquiry in one step."
-        actions={view !== 'setup' && <Input placeholder="Search subject, sender, company…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 260 }} />} />
-      <div className="page stack">
-        <Tabs active={view} onChange={(k) => { const n = new URLSearchParams(); n.set('view', k); setParams(n, { replace: true }); }} tabs={VIEWS.map((v) => ({ ...v, count: counts[v.key] }))} />
-        {view === 'setup' ? <InboxSetup /> : (
-          <div className="inbox">
-            <Card flush className="inbox__list">
-              <DataTable
-                loading={list.loading && !list.data}
-                rows={list.data?.data ?? []}
-                onRowClick={(r) => put('c', String(r.id))}
-                rowClassName={(r) => (String(r.id) === selected ? 'is-selected' : '')}
-                empty={<Empty icon="✓" title="Nothing here" text="New email to a shared mailbox appears here after the next sync." />}
-                columns={[
-                  { key: 'subject', header: 'Conversation', className: 'wrap', render: (r) => <><div className="strong">{r.subject || '(no subject)'}</div><div className="small muted">{r.from_name || r.from_email}{r.company_name ? ` · ${r.company_name}` : ''}</div></> },
-                  { key: 'assignee', header: 'Owner', render: (r) => r.assignee || <span className="muted">—</span> },
-                  { key: 'state', header: '', render: (r) => <>{r.overdue ? <Badge tone="danger">overdue</Badge> : <Badge tone={STATUS_TONE[r.status]}>{r.status.replace('_', ' ')}</Badge>}{r.priority === 'high' && <> <Badge tone="danger">high</Badge></>}{r.enquiry_no && <> <Badge tone="success">enquiry</Badge></>}</> },
-                  { key: 'last', header: 'Last', align: 'right', className: 'small muted', render: (r) => since(r.last_message_at) },
-                ]}
-              />
-            </Card>
-            <div className="inbox__detail">
-              {selected ? <Conversation id={selected} onChanged={() => { list.refetch(); summary.refetch(); }} /> : <Card><Empty title="Pick a conversation" /></Card>}
+    <div className="flex h-[calc(100vh-1px)] flex-col lg:h-screen">
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[400px_minmax(0,1fr)]">
+        {/* The list. Its own header, because this screen is a place you
+            live in rather than a page you visit. */}
+        <div className={cn(
+          'flex min-w-0 flex-col border-r border-border',
+          selected && 'hidden lg:flex'
+        )}>
+          <div className="flex items-center gap-3 px-5 pt-6 pb-3">
+            <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Inbox</h1>
+            <span className="text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => { const n = new URLSearchParams(); n.set('view', v.key); setParams(n, { replace: true }); }}
+                  className={cn(
+                    'rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    view === v.key ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {v.label}
+                </button>
+              ))}
             </div>
           </div>
-        )}
+
+          <div className="px-5 pb-3">
+            <Input placeholder="Search subject, sender, company…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {list.loading && !list.data ? (
+              <div className="p-5"><div className="skeleton" style={{ height: 120 }} /></div>
+            ) : rows.length === 0 ? (
+              <Empty title="Nothing here" text="New email to a shared mailbox appears here after the next sync." />
+            ) : rows.map((row) => (
+              <ThreadRow
+                key={row.id}
+                row={row}
+                selected={String(row.id) === selected}
+                onSelect={(r) => put('c', String(r.id))}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* The reading pane. On a phone it takes the screen, and the back
+            link is how you get to the list again. */}
+        <div className={cn('min-w-0 overflow-y-auto', !selected && 'hidden lg:block')}>
+          {selected ? (
+            <Conversation
+              id={selected}
+              onBack={() => put('c', null)}
+              onChanged={() => { list.refetch(); summary.refetch(); }}
+            />
+          ) : (
+            <div className="grid h-full place-items-center p-8">
+              <Empty title="Pick a conversation" text="Every thread here already knows its company and its deal." />
+            </div>
+          )}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
 
-function Conversation({ id, onChanged }) {
+function Conversation({ id, onBack, onChanged }) {
   const toast = useToast();
   const lookups = useLookups();
   const conv = useFetch(() => api.raw(`/inbox/${id}`), [id]);
@@ -82,21 +228,76 @@ function Conversation({ id, onChanged }) {
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
   }
-  if (!c) return <Card><div className="skeleton" style={{ height: 200 }} /></Card>;
+  if (!c) return <div className="p-6"><div className="skeleton" style={{ height: 200 }} /></div>;
   const t = thread.data?.data;
 
   return (
-    <Card flush title={c.subject || '(no subject)'} hint={<>{c.from_name || c.from_email} &lt;{c.from_email}&gt;{c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}{c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}{c.response_due_at && c.status === 'open' && <> · reply due {new Date(c.response_due_at).toLocaleString()}</>}</>}
-      actions={<div className="card__actions">
-        {!c.enquiry_no && <button type="button" className="btn btn--sm btn--primary" onClick={() => setConverting(true)}>Convert to enquiry</button>}
-        {c.status !== 'closed' ? <button type="button" className="btn btn--sm" disabled={busy} onClick={() => update({ status: 'closed' }, 'Closed')}>Close</button> : <button type="button" className="btn btn--sm" disabled={busy} onClick={() => update({ status: 'open' }, 'Reopened')}>Reopen</button>}
-        {c.status !== 'snoozed' && c.status !== 'closed' && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setSnoozing(true)}>Snooze</button>}
-      </div>}>
-      <div className="contact-bar">
-        <Field label="Owner"><Input list="inbox-people" defaultValue={c.assignee || ''} key={`${c.id}-${c.assignee}`} onBlur={(e) => e.target.value !== (c.assignee || '') && update({ assignee: e.target.value || null }, 'Reassigned')} placeholder="Unassigned" /><datalist id="inbox-people">{lookups.sales_people.map((p) => <option key={p} value={p} />)}</datalist></Field>
-        <Field label="Priority"><Select value={c.priority} placeholder={null} options={['low', 'normal', 'high']} onChange={(e) => update({ priority: e.target.value })} /></Field>
-        <span className="small muted">{c.inbox_name} · {c.status.replace('_', ' ')}{c.first_response_at ? ` · first reply ${new Date(c.first_response_at).toLocaleString()}` : ''}</span>
-      </div>
+    <div className="flex flex-col">
+      <header className="border-b border-border px-6 py-5">
+        <button
+          type="button"
+          onClick={onBack}
+          className="mb-2 inline-flex items-center gap-1 text-[12.5px] text-muted-foreground hover:text-foreground lg:hidden"
+        >
+          ← All conversations
+        </button>
+        <h2 className="text-[17px]/[1.4] font-semibold text-foreground">{c.subject || '(no subject)'}</h2>
+        <p className="mt-1 text-[12.5px] text-secondary-text">
+          {c.from_name || c.from_email} &lt;{c.from_email}&gt;
+          {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
+          {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
+          {c.response_due_at && c.status === 'open' && <> · reply due {new Date(c.response_due_at).toLocaleString()}</>}
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {c.status !== 'closed'
+            ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'closed' }, 'Closed')}>Close</Button>
+            : <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'open' }, 'Reopened')}>Reopen</Button>}
+          {c.status !== 'snoozed' && c.status !== 'closed' && (
+            <Button variant="ghost" size="sm" onClick={() => setSnoozing(true)}>Snooze</Button>
+          )}
+          <div className="flex-1" />
+          <Input
+            list="inbox-people"
+            defaultValue={c.assignee || ''}
+            key={`${c.id}-${c.assignee}`}
+            onBlur={(e) => e.target.value !== (c.assignee || '') && update({ assignee: e.target.value || null }, 'Reassigned')}
+            placeholder="Unassigned"
+            aria-label="Owner"
+            className="w-40"
+          />
+          <datalist id="inbox-people">{lookups.sales_people.map((p) => <option key={p} value={p} />)}</datalist>
+        </div>
+      </header>
+
+      {/* One banner, one button.
+          The tracker has already matched this thread to a company and
+          looked for an open deal, so it says what it found and offers the
+          single thing that follows. Only ever one suggestion: two would be
+          a decision again, which is what this screen exists to remove. */}
+      {c.suggestion && (
+        <div className={cn(
+          'flex flex-wrap items-center gap-3 border-b px-6 py-4',
+          c.suggestion.kind === 'new_enquiry'
+            ? 'border-primary/20 bg-primary/[0.06]'
+            : 'border-waiting/20 bg-waiting/[0.07]'
+        )}>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13.5px] font-medium text-foreground">{c.suggestion.headline}</div>
+            <div className="mt-0.5 text-[12.5px] text-secondary-text">{c.suggestion.detail}</div>
+          </div>
+          <Button size="sm" onClick={() => setConverting(true)}>{c.suggestion.action}</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => update({ status: 'closed' }, 'Closed without an enquiry')}
+          >
+            Not an enquiry
+          </Button>
+        </div>
+      )}
+
       <div className="stack" style={{ padding: 14 }}>
         {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m) => (
           <div key={m.id} className={`mail mail--${m.direction}`}>
@@ -115,7 +316,7 @@ function Conversation({ id, onChanged }) {
       </div>
       {converting && <ConvertDialog c={c} people={lookups.sales_people} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
       {snoozing && <SnoozeDialog onClose={() => setSnoozing(false)} onSnooze={(until) => { setSnoozing(false); update({ status: 'snoozed', snoozed_until: until }, 'Snoozed'); }} />}
-    </Card>
+    </div>
   );
 }
 

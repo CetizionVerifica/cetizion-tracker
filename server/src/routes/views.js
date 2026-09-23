@@ -23,17 +23,38 @@ export const viewRouter = Router();
 /** The charts a view may draw above its table. Named for what they show. */
 const CHARTS = ['ageing', 'by-month', 'by-stage', 'by-client', 'cash-flow'];
 
-const schema = z.object({
+/**
+ * The shape of a view, with no defaults on it.
+ *
+ * Defaults belong on create and nowhere near a patch. zod applies a
+ * `.default()` inside `.partial()` — a key left out still comes back with
+ * its default value — so a schema that carried them would turn
+ * "unpin this" into "unpin this, and clear its filters, and move it to
+ * the top". Which is exactly what it did: a saved view lost the filters
+ * that were the whole point of it, the first time anybody unpinned one.
+ */
+const shape = z.object({
   resource: z.string().min(1).max(60),
   name: z.string().trim().min(1).max(80),
-  filters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
-  pinned: z.boolean().default(false),
-  sort_order: z.number().int().min(0).max(999).default(0),
+  filters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  pinned: z.boolean(),
+  sort_order: z.number().int().min(0).max(999),
   tone: z.enum(['late', 'waiting', 'settled', 'info']).nullish(),
   chart: z.enum(CHARTS).nullish(),
   /** A shared view belongs to nobody, and only an admin may write one. */
-  shared: z.boolean().default(false),
+  shared: z.boolean(),
 });
+
+/** Creating one fills in what was not said. */
+const createSchema = shape.extend({
+  filters: shape.shape.filters.default({}),
+  pinned: shape.shape.pinned.default(false),
+  sort_order: shape.shape.sort_order.default(0),
+  shared: shape.shape.shared.default(false),
+});
+
+/** Changing one touches only the keys that were sent. */
+const patchSchema = shape.partial();
 
 const who = (req) => req.user?.username || 'admin';
 const isAdmin = (req) => req.user?.role === 'admin';
@@ -105,7 +126,7 @@ viewRouter.get('/', async (req, res) => {
 });
 
 viewRouter.post('/', async (req, res) => {
-  const body = schema.parse(req.body ?? {});
+  const body = createSchema.parse(req.body ?? {});
   resourceOf(body.resource);
   if (body.shared && !isAdmin(req)) {
     throw new ApiError(403, 'Only an admin may save a view for everybody.');
@@ -127,7 +148,7 @@ viewRouter.patch('/:id', async (req, res) => {
   if (!existing) throw new ApiError(404, 'No such view.');
   if (!mayWrite(req, existing)) throw new ApiError(403, 'That view is not yours to change.');
 
-  const body = schema.partial().parse(req.body ?? {});
+  const body = patchSchema.parse(req.body ?? {});
   if (body.resource) resourceOf(body.resource);
   if (body.shared !== undefined && !isAdmin(req)) {
     throw new ApiError(403, 'Only an admin may share a view with everybody.');
