@@ -214,6 +214,7 @@ export const JUMPS = [
   { id: 'go-orders', verb: 'Purchase orders', to: '/purchase-orders', icon: 'order', keywords: 'po orders purchase' },
   { id: 'go-invoice-run', verb: 'Raise the invoices that are due', to: '/money/invoice-run', icon: 'money', keywords: 'invoice run raise billing queue bill' },
   { id: 'go-stages', verb: 'Payment schedule', to: '/payment-stages', icon: 'money', keywords: 'stages invoices payment schedule billing' },
+  { id: 'go-reports', verb: 'Reports', to: '/reports', icon: 'today', keywords: 'reports charts pipeline ageing cash win rate graphs' },
   { id: 'go-collections', verb: 'Collections', to: '/collections', icon: 'money', keywords: 'collections overdue chase debt ageing' },
   { id: 'go-cashflow', verb: 'Cash-flow forecast', to: '/cashflow', icon: 'money', keywords: 'cash flow forecast money in out' },
   { id: 'go-renewals', verb: 'Renewals', to: '/renewals', icon: 'waiting', keywords: 'renewals expiring recurring' },

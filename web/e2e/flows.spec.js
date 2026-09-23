@@ -138,3 +138,30 @@ test('import a sales sheet, review the duplicates, commit', async ({ page }) => 
   await page.getByRole('button', { name: /1\. Quotations/ }).click();
   await expect(page.getByText('imported as new').first()).toBeVisible();
 });
+
+/**
+ * Reports (#22): a chart is a picture, so every one of them has a table
+ * twin, and the twin is what a screen reader gets whether or not anyone
+ * presses the toggle. This test reads the numbers the way that reader
+ * would — off the twin, not off the bars.
+ */
+test('every report chart has a table twin, and its rows link into the list', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Reports' }).click();
+  await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
+
+  // Before the toggle is touched: the chart is hidden from the tree and the
+  // twin is there in text. A band with nothing in it still has a row.
+  await expect(page.getByRole('table', { name: /Collections ageing/ })).toBeAttached();
+  await expect(page.getByRole('cell', { name: 'Not yet due' })).toBeAttached();
+
+  const ageing = page.locator('[data-slot="card"]').filter({ hasText: 'Collections ageing' });
+  await ageing.getByRole('button', { name: 'Open as table' }).click();
+  await expect(page.getByRole('button', { name: 'Show the chart' })).toBeVisible();
+  // Now the same row is a link, and it lands on the queue filtered to it.
+  await page.getByRole('link', { name: '31–60 days' }).click();
+  await expect(page).toHaveURL(/\/collections\?bucket=31-60/);
+  await expect(page.getByText(/Showing 31–60 days only/)).toBeVisible();
+  await page.getByRole('button', { name: 'Show all' }).click();
+  await expect(page).toHaveURL(/\/collections$/);
+});

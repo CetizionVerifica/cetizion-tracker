@@ -58,6 +58,8 @@
   --color-settled-foreground: var(--settled-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
+  --color-forecast: var(--forecast);
+  --color-forecast-foreground: var(--forecast-foreground);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -120,6 +122,13 @@
   --settled-foreground: #06120f;
   --info: #7db6ff;
   --info-foreground: #06120f;
+
+  /* A forecast band on a chart: the quietest thing that is still a thing.
+     The design names #2a2a32, which is a step and a half above the card and
+     disappears at a glance; this is the same intent at 3:1 against it, so a
+     bar you are asked to compare can actually be seen. */
+  --forecast: #4c4c58;
+  --forecast-foreground: #f4f4f6;
 
   /* Secondary text: #b9b9c2 at 9.8:1. Not muted — muted is the meta line. */
   --secondary-text: #b9b9c2;

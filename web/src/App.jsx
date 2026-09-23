@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, lazy, Suspense, useContext, useEffect, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Today from './pages/Today.jsx';
@@ -21,6 +21,10 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
+// Reports is the only page that draws charts, and Recharts is a third of
+// the bundle. Loaded when someone asks for it, so every other page is not
+// paying for it on first visit.
+const Reports = lazy(() => import('./pages/Reports.jsx'));
 import Profitability from './pages/Profitability.jsx';
 import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
@@ -48,6 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu.tsx';
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
+  BarChart3,
   Building2,
   ClipboardList,
   FileText,
@@ -81,6 +86,7 @@ function ImportReviewPage() {
 const NAV_TOP = [
   { to: '/', icon: Home, label: 'Today', end: true },
   { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
+  { to: '/reports', icon: BarChart3, label: 'Reports' },
 ];
 
 /**
@@ -443,6 +449,7 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<Accounting />} />
           <Route path="/notifications" element={<Notifications />} />
