@@ -92,7 +92,9 @@ const totalRow = (columns, total) =>
  * orders — matching the Purchase orders list. Uses the same period as every
  * other section on the page, and the same period the PDF download covers.
  */
-export function RevenueReport({ period }) {
+// `showStaleNotice` is off where this sits inside another page that carries
+// the notice itself: one banner about the exchange rates, not two.
+export function RevenueReport({ period, showStaleNotice = true }) {
   const qs = new URLSearchParams(Object.fromEntries(Object.entries(period).filter(([, v]) => v))).toString();
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/dashboard/revenue-report?${qs}`), [qs]);
 
@@ -119,6 +121,13 @@ export function RevenueReport({ period }) {
 
       {report && (
         <>
+          {showStaleNotice && report.stale_rates?.length > 0 && (
+            <Alert tone="warning">
+              The newest exchange rate held for <strong>{report.stale_rates.map((r) => r.currency).join(', ')}</strong> is not
+              from this week, so recent figures convert at an older number: {report.stale_rates.map((r) => r.note).join('; ')}.{' '}
+              <Link to="/settings">Check the rates in Settings</Link>.
+            </Alert>
+          )}
           {missingRates.length > 0 && (
             <Alert tone="warning">
               No exchange rate covers the dates of some <strong>{missingRates.join(', ')}</strong> amounts, so those are left out of the

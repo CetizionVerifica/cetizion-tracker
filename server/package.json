@@ -18,6 +18,9 @@
     "reset": "node scripts/db.js reset",
     "bootstrap": "node scripts/db.js bootstrap",
     "auth:check": "node scripts/auth-check.js",
+    "fx:today": "node scripts/fx.js today",
+    "fx:backfill": "node scripts/fx.js backfill",
+    "fx:status": "node scripts/fx.js status",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

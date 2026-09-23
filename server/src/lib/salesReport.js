@@ -1,5 +1,7 @@
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { businessToday } from './businessDate.ts';
+import { staleRates } from './fx.ts';
 import { nameKey } from './names.ts';
 import { share } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
@@ -61,6 +63,28 @@ export const rateOn = (alias, currency, date) => `LEFT JOIN LATERAL (
      ORDER BY effective_from DESC
      LIMIT 1
   ) ${alias} ON true`;
+
+/**
+ * Currencies on this report whose newest stored rate is days old.
+ *
+ * Reports convert each record at the rate in force on its own date, so an old
+ * rate on an old record is right and saying so would be noise. What is worth
+ * saying is that a currency's newest rate is itself from months ago: every
+ * recent figure in it then converts at a number from before. Weekends and
+ * bank holidays do not count towards that age — the ECB does not publish on
+ * them (lib/fx.ts).
+ *
+ * Only the currencies the page actually shows are named.
+ */
+export async function staleAmong(used, { today = businessToday(), maxPublishingDays = 4, period = {} } = {}) {
+  // A report of last year says nothing about today's rates: every figure on it
+  // converts at a rate from its own time, which is right, and a notice about
+  // this week would be about deals that are not on the page.
+  if (period.to && period.to < today) return [];
+  const currencies = [...new Set(used.map((u) => u && u.currency).filter((c) => c && c !== 'INR'))];
+  if (!currencies.length) return [];
+  return staleRates({ currencies, today, maxPublishingDays });
+}
 
 /** Won value per currency as [{ currency, amount }] — never summed across currencies. */
 const amountsFor = (table, key, outerKey) => `
@@ -269,6 +293,7 @@ export async function fxReport({ from, to }) {
       amounts: sumAmounts([rows]),
       amount_inr: Math.round(converted.reduce((sum, row) => sum + row.amount_inr, 0) * 100) / 100,
       missing_rates: [...new Set(rows.filter((row) => row.rate === null).map((row) => row.currency))].sort(),
+      stale_rates: await staleAmong(rows, { period: { from, to } }),
     },
   };
 }

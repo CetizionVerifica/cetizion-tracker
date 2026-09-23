@@ -6,6 +6,7 @@
 import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
+import { runExchangeRateSync } from './lib/fx.ts';
 import { runRenewals } from './lib/renewals.js';
 import { runNotifications } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
@@ -98,6 +99,16 @@ export const JOBS = {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',
     cron: '30 8 * * 1-5',
     run: (opts) => runFinanceDigest(opts),
+  },
+  // The ECB publishes its reference rates each working day at about 16:00
+  // CET, which is the evening in the business time zone. A failure throws
+  // before anything is written, so the run is recorded as failed and
+  // yesterday's rates stand: an older record's rate has not changed just
+  // because today's file was late.
+  'exchange.rates': {
+    description: 'Fetch the day\'s ECB reference rates and store one row per currency; hand-entered rates are left alone',
+    cron: '0 21 * * 1-5',        // after the ECB has published, business time zone
+    run: (opts) => runExchangeRateSync(opts),
   },
   // A purge that could not reach Cloudinary leaves the row marked and tries
   // again here. Without a schedule the only retry was the next upload, so on

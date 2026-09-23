@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod, rateOn, staleAmong } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2, share as ratio } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
@@ -279,6 +279,9 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
     payment_status: { rows: paymentStatusRows(purchaseOrders.rows), total: poTotal },
     years: years.rows.map((row) => row.year),
     rates: [...rates].map(([currency, rate]) => ({ currency, ...rate })),
+    // A currency whose newest rate is days old still converts every recent
+    // figure above. Say which, rather than let an old number pass for today's.
+    stale_rates: await staleAmong([...rates].map(([currency]) => ({ currency })), { period }),
     // With a date range those POs are left out of every PO figure above, so
     // name them; without one they are already counted in a "No date" row.
     undated_pos: from || to ? undated.rows.map((row) => row.po_number) : [],

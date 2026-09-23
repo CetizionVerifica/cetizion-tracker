@@ -157,6 +157,15 @@ export default function SalesReport() {
 
         {d && (
           <>
+            {fx.summary.stale_rates?.length > 0 && (
+              <Alert tone="warning">
+                The newest exchange rate held for{' '}
+                <strong>{fx.summary.stale_rates.map((r) => r.currency).join(', ')}</strong> is not from this week, so recent
+                deals convert at an older number: {fx.summary.stale_rates.map((r) => r.note).join('; ')}.{' '}
+                <Link to="/settings">Check the rates in Settings</Link>.
+              </Alert>
+            )}
+
             {fx.summary.missing_rates.length > 0 && (
               <Alert tone="warning">
                 No exchange rate covers the date of some <strong>{fx.summary.missing_rates.join(', ')}</strong> deals, so those are
@@ -370,7 +379,7 @@ export default function SalesReport() {
         )}
 
         {/* Mounted regardless of the sales data above, so a failed load there does not also hide revenue. */}
-        {!backwards && <RevenueReport period={params} />}
+        {!backwards && <RevenueReport period={params} showStaleNotice={false} />}
       </div>
     </>
   );
