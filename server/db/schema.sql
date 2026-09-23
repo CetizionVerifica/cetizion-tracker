@@ -1010,7 +1010,7 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, it repeats at the interval below.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies
