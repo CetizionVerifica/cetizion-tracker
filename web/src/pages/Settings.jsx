@@ -221,6 +221,19 @@ const MOVED = new Set([
 ]);
 
 /**
+ * Seeded, shown for months, and read by nothing.
+ *
+ * `default_advance_percent` and `default_delivery_percent` were the
+ * suggested 50/50 split before payment-terms templates (#26) replaced
+ * them. Nothing in `server/src` or `web/src` reads either one —
+ * RegisterPoDialog takes the template marked default, and actions.jsx
+ * says as much where it builds the split. A row somebody can edit that
+ * changes nothing is worse than no row, so they are not offered here.
+ * They should come out of seed.sql too.
+ */
+const RETIRED = new Set(['default_advance_percent', 'default_delivery_percent']);
+
+/**
  * The assumptions, grouped by the question they answer.
  *
  * They were one alphabetical list of thirty-four keys, which meant the
@@ -256,8 +269,6 @@ const GROUPS = [
     hint: 'suggested when a PO is registered',
     items: [
       { key: 'default_po_payment_terms_days', quiet: true, label: 'Payment terms on a new order', unit: 'days' },
-      { key: 'default_advance_percent', label: 'Suggested advance stage', unit: 'of the order' },
-      { key: 'default_delivery_percent', quiet: true, label: 'Suggested closing stage', unit: 'of the order' },
       { key: 'deliverable_reminder_days', label: 'Remind before a certificate expires', type: 'list', unit: 'days' },
       { key: 'visit_reminder_days', label: 'Remind before a visit', unit: 'days' },
     ],
@@ -302,7 +313,7 @@ const GROUPS = [
   {
     title: 'The books',
     items: [
-      { key: 'accounting_provider', label: 'Where the books are', type: 'choice', options: ['none', 'zoho', 'tally', 'file'] },
+      { key: 'accounting_provider', quiet: true, label: 'Where the books are', type: 'choice', options: ['none', 'zoho', 'tally', 'file'] },
       { key: 'accounting_apply_payments', label: 'Apply payments found in the books', type: 'bool' },
     ],
   },
@@ -355,7 +366,7 @@ export function Assumptions() {
   // Anything the server grows that this file has not been taught about
   // still has to be editable, so it lands here rather than vanishing.
   const extras = rows
-    .filter((r) => !KNOWN.has(r.key) && !MOVED.has(r.key) && !r.key.startsWith('fx_rate_'))
+    .filter((r) => !KNOWN.has(r.key) && !MOVED.has(r.key) && !RETIRED.has(r.key) && !r.key.startsWith('fx_rate_'))
     .map((r) => ({ key: r.key, label: r.key.replace(/_/g, ' ') }));
   const groups = extras.length ? [...GROUPS, { title: 'Anything else', items: extras }] : GROUPS;
 
@@ -451,7 +462,8 @@ export function Assumptions() {
 
       <p className="max-w-[70ch] text-[11.5px]/[1.6] text-muted-foreground">
         The company&rsquo;s own details are under Company profile, the default quotation terms under Templates, and
-        the automatic-email switch under Emails &amp; jobs — each with the context that makes it make sense.
+        the automatic-email switch under Emails &amp; jobs — each with the context that makes it make sense. The
+        payment split a new order starts from comes from a payment-schedule template, also under Templates.
       </p>
     </SettingsPane>
   );
