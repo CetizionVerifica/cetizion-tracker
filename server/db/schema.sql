@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1343,6 +1343,14 @@ CREATE TABLE IF NOT EXISTS users (
   -- It only ever goes up, so reactivating an account never hands its old
   -- cookies back. See migrations/016_session_version.sql.
   session_version integer NOT NULL DEFAULT 1,
+  -- What a person may change about themselves (C20, 049). Role, email and
+  -- active are facts about their job and stay on the admin screens.
+  phone          text,
+  signature      text,
+  time_zone      text,
+  -- Which emails they want. {} means the defaults, so nobody is silently
+  -- unsubscribed from everything by the column arriving.
+  notify         jsonb NOT NULL DEFAULT '{}'::jsonb,
   last_login_at  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
@@ -1368,6 +1376,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Sign in with Microsoft 365 or Google (C18, 048). One person, several ways
+-- in. Nothing here creates a person: an identity attaches to a users row an
+-- admin has already added. users_active_needs_login above is deliberately
+-- unchanged, so a linked provider is an extra door rather than the only one.
+CREATE TABLE IF NOT EXISTS auth_identities (
+  id            serial PRIMARY KEY,
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider      text NOT NULL CHECK (provider IN ('microsoft', 'google')),
+  -- The provider's immutable id for the person. Email can change; this
+  -- cannot, so it is what a returning sign-in is matched on.
+  subject       text NOT NULL CHECK (btrim(subject) <> ''),
+  email         text,
+  linked_at     timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_subject_idx ON auth_identities (provider, subject);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_user_provider_idx ON auth_identities (user_id, provider);
+
+-- Sessions you can see and end (C20, 049). The cookie still proves who
+-- somebody is; this row is what can be taken away, which is what makes
+-- "sign out that phone" a real button rather than a list nobody can act on.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  via           text NOT NULL DEFAULT 'password' CHECK (via IN ('password', 'microsoft', 'google')),
+  user_agent    text,
+  ip            text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions (user_id, last_seen_at DESC);
 
 -- ---------------------------------------------------------------------
 -- Notifications (#44)

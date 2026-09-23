@@ -193,7 +193,7 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
   );
 }
 
-export function CommandPalette({ open, onOpenChange, isAdmin }) {
+export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [q, setQ] = useState('');
@@ -205,7 +205,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin }), [isAdmin]);
+  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, mode }), [isAdmin, mode]);
 
   const reset = useCallback(() => {
     setQ(''); setFound([]); setStep(null); setRecord(null);

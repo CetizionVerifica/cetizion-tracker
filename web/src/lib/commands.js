@@ -228,6 +228,7 @@ export const JUMPS = [
   { id: 'go-sales-report', verb: 'Sales reports', to: '/sales-report', icon: 'today', keywords: 'reports sales funnel analysis' },
   { id: 'go-profitability', verb: 'Profitability', to: '/profitability', icon: 'money', adminOnly: true, keywords: 'margin profit cost' },
   { id: 'go-accounting', verb: 'Accounting', to: '/accounting', icon: 'money', adminOnly: true, keywords: 'books zoho tally reconcile' },
+  { id: 'go-account', verb: 'My account', to: '/account', icon: 'company', personalOnly: true, keywords: 'account profile password sessions devices signature linked microsoft google sign out everywhere' },
   { id: 'go-settings', verb: 'Settings', to: '/settings', icon: 'waiting', keywords: 'settings preferences rates services users' },
   { id: 'go-import', verb: 'Bulk import', to: '/settings/import', icon: 'today', keywords: 'import upload sheet excel csv' },
   { id: 'go-templates', verb: 'Templates', to: '/settings/templates', icon: 'done', adminOnly: true, keywords: 'templates payment terms onboarding checklist' },
@@ -244,8 +245,11 @@ export const JUMPS = [
 ];
 
 /** Everything, with the steps first: a verb is more useful than a screen. */
-export function commandsFor({ isAdmin }) {
-  const allowed = (c) => !c.adminOnly || isAdmin;
+export function commandsFor({ isAdmin, mode }) {
+  // `personalOnly` is the account page: shared mode is one account in an
+  // environment variable, so there is nothing personal to go to and the
+  // route answers 404. A palette entry that 404s is worse than no entry.
+  const allowed = (c) => (!c.adminOnly || isAdmin) && (!c.personalOnly || mode === 'database');
   return {
     steps: STEPS.filter(allowed),
     jumps: JUMPS.filter(allowed),

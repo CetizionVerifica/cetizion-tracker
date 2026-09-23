@@ -10,10 +10,12 @@ import { failedSignIns } from '../lib/ops/metrics.js';
 import { ApiError } from '../middleware/error.js';
 import { verifyPasswordOrDummy } from '../lib/passwords.js';
 import { findUserByEmail, recordLogin } from '../lib/users.js';
+import { startSession } from '../lib/sessions.js';
 import { authConfig } from './config.js';
 import { currentUser } from './middleware.js';
 import { constantTimeEqual, databasePayload, sharedPayload, signSession } from './session.js';
 import { enabledProviders, oauthRouter } from './oauth.js';
+import { accountRouter } from './account.js';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 10;
@@ -157,7 +159,7 @@ function sharedLogin(body) {
  * exists — would answer the question "does this person work here?" to
  * whoever asked.
  */
-async function databaseLogin(body) {
+async function databaseLogin(body, req) {
   const { email, password } = parse(databaseCredentials, body);
 
   const user = await findUserByEmail(email);
@@ -177,8 +179,9 @@ async function databaseLogin(body) {
   // included, if it loses the race — stops matching on its next request.
   // Failing that way round is the safe one: a session too few, never one
   // too many.
+  const sessionId = await startSession({ userId: user.id, via: 'password', req });
   return {
-    payload: databasePayload(user.id, user.session_version, expiresAt),
+    payload: databasePayload(user.id, user.session_version, expiresAt, sessionId),
     body: databaseBody(user, expiresAt),
     expiresAt,
   };
@@ -200,7 +203,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
 
   let result;
   try {
-    result = authConfig.mode === 'database' ? await databaseLogin(req.body) : sharedLogin(req.body);
+    result = authConfig.mode === 'database' ? await databaseLogin(req.body, req) : sharedLogin(req.body);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       await record(who, req.ip, false, 'bad credentials');
@@ -244,6 +247,7 @@ authRouter.get('/config', (req, res) => {
 });
 
 authRouter.use('/oauth', oauthRouter);
+authRouter.use('/account', accountRouter);
 
 authRouter.post('/logout', (req, res) => {
   res.clearCookie(authConfig.cookieName, cookieOptions());

@@ -27,6 +27,7 @@ import { config } from '../config.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { findUserByEmail, findUserById, recordLogin } from '../lib/users.js';
+import { startSession } from '../lib/sessions.js';
 import { authConfig } from './config.js';
 import { databasePayload, signSession, verifySession } from './session.js';
 
@@ -244,9 +245,10 @@ oauthRouter.get('/:provider/callback', async (req, res) => {
     [String(user.email || '').slice(0, 120), req.ip, provider.id]).catch(() => {});
 
   const expiresAt = Date.now() + authConfig.sessionTtlMs;
+  const sessionId = await startSession({ userId: user.id, via: provider.id, req });
   res.cookie(
     authConfig.cookieName,
-    signSession(databasePayload(user.id, user.session_version, expiresAt), authConfig.sessionSecret),
+    signSession(databasePayload(user.id, user.session_version, expiresAt, sessionId), authConfig.sessionSecret),
     { ...cookieOptions(), maxAge: authConfig.sessionTtlMs }
   );
   res.redirect(next);

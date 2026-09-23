@@ -97,8 +97,15 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
 
     assert.deepEqual(Object.keys(byName).sort(), [
       'active', 'created_at', 'email', 'id', 'last_login_at',
-      'name', 'password_hash', 'role', 'session_version', 'updated_at',
+      'name', 'notify', 'password_hash', 'phone', 'role', 'session_version',
+      'signature', 'time_zone', 'updated_at',
     ]);
+    // The four a person owns about themselves (C20). All optional: an
+    // account created before the column existed is not made invalid by it.
+    for (const own of ['phone', 'signature', 'time_zone']) {
+      assert.equal(byName[own].is_nullable, 'YES', own);
+    }
+    assert.equal(byName.notify.is_nullable, 'NO', 'notify defaults to {} rather than null');
     assert.equal(byName.name.is_nullable, 'NO');
     assert.equal(byName.role.is_nullable, 'NO');
     assert.equal(byName.active.is_nullable, 'NO');

@@ -21,6 +21,7 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
+import Account from './pages/Account.jsx';
 // Reports is the only page that draws charts, and Recharts is a third of
 // the bundle. Loaded when someone asks for it, so every other page is not
 // paying for it on first visit.
@@ -66,6 +67,7 @@ import {
   PinOff,
   Search,
   Settings as SettingsIcon,
+  UserRound,
 } from 'lucide-react';
 
 // A fresh review (tab, filters, messages) for each batch.
@@ -180,7 +182,7 @@ function initials(name) {
  * inside a fixed column above lg. One definition, so the drawer cannot
  * drift from the column.
  */
-function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin }) {
+function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin, mode }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
@@ -278,6 +280,14 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="top" className="min-w-48">
+            {/* Only in database mode: shared mode is one account in an
+                environment variable, so there is no personal account to
+                own, and the route answers 404 rather than half-working. */}
+            {mode === 'database' && (
+              <DropdownMenuItem asChild>
+                <Link to="/account"><UserRound className="size-4" aria-hidden="true" />My account</Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem asChild>
               <Link to="/settings"><SettingsIcon className="size-4" aria-hidden="true" />Settings</Link>
             </DropdownMenuItem>
@@ -361,7 +371,7 @@ export default function App() {
       if (!window.matchMedia(WIDE).matches) setHidden(true);
     } catch { /* private mode */ }
   }, [location.pathname]);
-  const { displayName, signOut, isAdmin } = useAuth();
+  const { displayName, signOut, isAdmin, mode } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const isWide = useIsWide();
 
@@ -394,7 +404,7 @@ export default function App() {
 
   return (
     <SidebarContext.Provider value={sidebar}>
-    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} />
+    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} mode={mode} />
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Below lg the sidebar is a Sheet over the page, not a column
           beside it: 240px of a 390px screen left the content a hundred and
@@ -409,7 +419,7 @@ export default function App() {
           </SheetHeader>
           <SidebarNav
             pinned={pinned} counts={counts} alerts={alerts} onUnpin={unpin}
-            displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
+            displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)} mode={mode}
           />
         </SheetContent>
       </Sheet>
@@ -423,7 +433,7 @@ export default function App() {
       >
         <SidebarNav
           pinned={pinned} counts={counts} alerts={alerts} onUnpin={unpin}
-          displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)}
+          displayName={displayName} signOut={signOut} onSearch={() => setPaletteOpen(true)} mode={mode}
         />
       </aside>
 
@@ -449,6 +459,7 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
+          <Route path="/account" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<Accounting />} />
