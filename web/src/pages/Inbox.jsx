@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { PageHeader } from '../App.jsx';
+import { PageHeader, SidebarContext } from '../App.jsx';
+import { PanelLeft } from 'lucide-react';
 import { Badge, Card, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import { cn } from 'cn';
@@ -67,14 +68,25 @@ function Tag({ tone = 'plain', mono = false, children }) {
  * second CRM, so a thread arrives already knowing its company and its
  * deal.
  */
-function ThreadRow({ row, selected, onSelect }) {
+const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
+  // An option in a listbox rather than a button, so a screen reader says
+  // "2 of 4, selected" and the arrow keys mean what they look like they
+  // mean. Roving tabindex: Tab reaches the list once, arrows move inside.
   return (
-    <button
-      type="button"
+    <div
+      ref={ref}
+      role="option"
+      aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
       onClick={() => onSelect(row)}
-      aria-current={selected ? 'true' : undefined}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect(row);
+        }
+      }}
       className={cn(
-        'flex w-full gap-3 border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
+        'flex w-full cursor-pointer gap-3 border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
         selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
       )}
     >
@@ -86,13 +98,19 @@ function ThreadRow({ row, selected, onSelect }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
+          <span
+            className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
+            title={[row.company_name || row.from_email, row.from_name].filter(Boolean).join(' · ')}
+          >
             {row.company_name || row.from_email}
             {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
           <span className="shrink-0 text-[11.5px] text-muted-foreground">{since(row.last_message_at)}</span>
         </span>
-        <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text">
+        {/* Truncation has to be recoverable: the subject is the thing you
+            are scanning for, and a clipped one with no way to read it is
+            worse than a wrapped one. */}
+        <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text" title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
         </span>
         <span className="mt-1.5 flex flex-wrap gap-1.5">
@@ -105,21 +123,48 @@ function ThreadRow({ row, selected, onSelect }) {
           {!row.company_name && <Tag>no company match</Tag>}
         </span>
       </span>
-    </button>
+    </div>
   );
-}
+});
 
 export default function Inbox() {
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'all';
   const selected = params.get('c');
   const [q, setQ] = useState('');
+  const sidebar = useContext(SidebarContext);
   const summary = useFetch(() => api.raw('/inbox/summary'), [view, selected]);
   const listUrl = view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
   const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : api.raw(listUrl)), [listUrl]);
   const s = summary.data?.data;
   const put = (k, v) => { const n = new URLSearchParams(params); if (v) n.set(k, v); else n.delete(k); setParams(n, { replace: true }); };
   const rows = list.data?.data ?? [];
+  const rowRefs = useRef([]);
+  const at = rows.findIndex((r) => String(r.id) === selected);
+
+  /**
+   * Up and down move through the list; Enter and Space open. Home and End
+   * jump to the ends.
+   *
+   * A mail list you cannot walk with the keyboard is a mail list you
+   * cannot use without a mouse, and this is a screen people live in.
+   */
+  const onListKey = useCallback((event) => {
+    const keys = { ArrowDown: 1, ArrowUp: -1 };
+    let next = null;
+    if (event.key in keys) next = Math.min(rows.length - 1, Math.max(0, (at < 0 ? 0 : at) + keys[event.key]));
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = rows.length - 1;
+    if (next === null || !rows[next]) return;
+    event.preventDefault();
+    put('c', String(rows[next].id));
+  }, [rows, at]);
+
+  // Selection follows the keyboard, so focus has to follow it too —
+  // otherwise the next arrow press starts from wherever focus was left.
+  useEffect(() => {
+    if (at >= 0) rowRefs.current[at]?.focus({ preventScroll: false });
+  }, [at]);
 
   if (view === 'setup') {
     return (
@@ -135,7 +180,7 @@ export default function Inbox() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-1px)] flex-col lg:h-screen">
+    <div className="flex h-dvh flex-col">
       <div className="grid min-h-0 flex-1 lg:grid-cols-[400px_minmax(0,1fr)]">
         {/* The list. Its own header, because this screen is a place you
             live in rather than a page you visit. */}
@@ -144,8 +189,21 @@ export default function Inbox() {
           selected && 'hidden lg:flex'
         )}>
           <div className="flex items-center gap-3 px-5 pt-6 pb-3">
+            {/* This screen draws its own header instead of using PageHeader,
+                and PageHeader is where the burger lives. Without this the
+                inbox is a dead end on a phone: you can reach it and then
+                not leave it. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={sidebar.toggle}
+              aria-label={sidebar.hidden ? 'Show the menu' : 'Hide the menu'}
+              className="size-control shrink-0 lg:hidden"
+            >
+              <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+            </Button>
             <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Inbox</h1>
-            <span className="text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
+            <span aria-live="polite" className="text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
             <div className="flex-1" />
             <div className="flex items-center gap-1">
               {VIEWS.map((v) => (
@@ -168,14 +226,20 @@ export default function Inbox() {
             <Input placeholder="Search subject, sender, company…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            role="listbox"
+            aria-label="Conversations"
+            onKeyDown={onListKey}
+            className="min-h-0 flex-1 overflow-y-auto focus:outline-none"
+          >
             {list.loading && !list.data ? (
               <div className="p-5"><div className="skeleton" style={{ height: 120 }} /></div>
             ) : rows.length === 0 ? (
               <Empty title="Nothing here" text="New email to a shared mailbox appears here after the next sync." />
-            ) : rows.map((row) => (
+            ) : rows.map((row, i) => (
               <ThreadRow
                 key={row.id}
+                ref={(node) => { rowRefs.current[i] = node; }}
                 row={row}
                 selected={String(row.id) === selected}
                 onSelect={(r) => put('c', String(r.id))}
@@ -242,7 +306,7 @@ function Conversation({ id, onBack, onChanged }) {
           ← All conversations
         </button>
         <h2 className="text-[17px]/[1.4] font-semibold text-foreground">{c.subject || '(no subject)'}</h2>
-        <p className="mt-1 text-[12.5px] text-secondary-text">
+        <p className="mt-1 wrap-anywhere text-[12.5px] text-secondary-text">
           {c.from_name || c.from_email} &lt;{c.from_email}&gt;
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
           {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}

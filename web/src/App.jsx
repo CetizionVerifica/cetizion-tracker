@@ -292,7 +292,9 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
 
 // The burger in every page header toggles the sidebar. The choice is
 // remembered per browser so a hidden sidebar stays hidden after a reload.
-const SidebarContext = createContext({ hidden: false, toggle: () => {} });
+// Exported, because a screen that draws its own header — the inbox does —
+// still needs the burger the shared header would have given it.
+export const SidebarContext = createContext({ hidden: false, toggle: () => {} });
 
 /**
  * Hidden by default on a phone, remembered on a desktop.
