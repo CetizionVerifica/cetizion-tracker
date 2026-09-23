@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { PageHeader } from '../App.jsx';
+import { SettingsPane } from './SettingsArea.jsx';
+import { Button } from '../components/ui/button';
 import { Card, DataTable, Tabs, Badge, Alert, Empty, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { ApiTokens } from '../components/ApiTokens.jsx';
@@ -85,13 +87,12 @@ export function ExchangeRates() {
   }
 
   return (
-    <>
-      <Card
-        flush
-        title="Exchange rates"
-        hint="INR for 1 unit, from the date it took effect · reports convert each figure at the rate in force on its own date"
-        actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setEditing('new')}>+ Rate</button>}
-      >
+    <SettingsPane
+      title="Exchange rates"
+      description="INR for one unit, from the date it took effect. Reports convert each figure at the rate in force on its own date, so a restated rate never rewrites history."
+      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a rate</Button>}
+    >
+      <Card flush>
         {missing.length > 0 && (
           <Alert tone="warning">
             <span>
@@ -152,7 +153,7 @@ export function ExchangeRates() {
           ]}
         />
       )}
-    </>
+    </SettingsPane>
   );
 }
 
@@ -209,6 +210,12 @@ function RateHistoryChart({ rows, currencies }) {
   );
 }
 
+/** Settings that now have a pane of their own, with the context to match. */
+const MOVED = new Set([
+  'company_name', 'company_address', 'company_gstin', 'company_state_code', 'finance_email',
+  'quotation_terms_default', 'emails_enabled',
+]);
+
 export function Assumptions() {
   const toast = useToast();
   const { data, loading, refetch } = useFetch(() => api.raw('/lookups'));
@@ -219,7 +226,7 @@ export function Assumptions() {
   const settings = data?.data?.settings || {};
   // fx_rate_* moved to Exchange rates above, where each rate carries its date.
   const rows = Object.entries(settings)
-    .filter(([key]) => !key.startsWith('fx_rate_'))
+    .filter(([key]) => !key.startsWith('fx_rate_') && !MOVED.has(key))
     .map(([key, val]) => ({ id: key, key, value: val }));
 
   async function save(key) {
@@ -238,7 +245,11 @@ export function Assumptions() {
   }
 
   return (
-    <Card flush title="Assumptions" hint="Changing these changes what the app computes everywhere">
+    <SettingsPane
+      title="Assumptions"
+      description="The numbers the app computes with when a record does not say otherwise. Changing one changes what every future calculation assumes; nothing already recorded moves."
+    >
+      <Card flush>
       <Alert>
         <span>
           <strong>Vendor invoice window</strong> drives the "invoice overdue from vendor" flag.
@@ -293,7 +304,12 @@ export function Assumptions() {
         ]}
         empty={<Empty title="No settings recorded" />}
       />
-    </Card>
+      </Card>
+      <p className="max-w-[70ch] text-[11.5px]/[1.6] text-muted-foreground">
+        The company&rsquo;s own details are under Company profile, the default quotation terms under Templates, and
+        the automatic-email switch under Emails &amp; jobs — each with the context that makes it make sense.
+      </p>
+    </SettingsPane>
   );
 }
 
@@ -313,13 +329,12 @@ export function Catalogue({ resource, label, title, hint }) {
   }
 
   return (
-    <>
-      <Card
-        flush
-        title={title}
-        hint={hint}
-        actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setEditing('new')}>+ {label}</button>}
-      >
+    <SettingsPane
+      title={title}
+      description={hint}
+      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</Button>}
+    >
+      <Card flush>
         <DataTable
           loading={loading}
           rows={rows}
@@ -361,6 +376,6 @@ export function Catalogue({ resource, label, title, hint }) {
           ]}
         />
       )}
-    </>
+    </SettingsPane>
   );
 }

@@ -2,10 +2,10 @@ import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, UploadCloud } from 'lucide-react';
 import { cn } from 'cn';
-import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
@@ -49,7 +49,7 @@ function state(batch) {
   return { tone: 'waiting', label: dupes ? `Review · ${number(dupes)} duplicates` : `Review · ${number(batch.row_count)} rows` };
 }
 
-export default function BulkImport({ bare = false }) {
+export default function BulkImport() {
   const navigate = useNavigate();
   const toast = useToast();
   const fileRef = useRef(null);
@@ -90,20 +90,15 @@ export default function BulkImport({ bare = false }) {
 
   return (
     <>
-      {!bare && <PageHeader title="Import" />}
-
-      <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Import</h1>
-            <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-              A spreadsheet in, a review out. Nothing is written until you approve the batch.
-            </p>
-          </div>
+      <SettingsPane
+        title="Import"
+        description="A spreadsheet in, a review out. Nothing is written until you approve the batch."
+        actions={
           <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" asChild>
             <a href={api.importTemplateUrl()} download>Download the template</a>
           </Button>
-        </div>
+        }
+      >
 
         {error && <Alert tone="danger">{error}</Alert>}
 
@@ -184,7 +179,7 @@ export default function BulkImport({ bare = false }) {
           beside its match, never silently skipped. ISO proposals are left out, a won deal needs a PO number, a missing
           PO date becomes the proposal plus seven days, and a missing invoice date the PO plus one.
         </p>
-      </div>
+      </SettingsPane>
 
       {deleting && (
         <ConfirmDialog

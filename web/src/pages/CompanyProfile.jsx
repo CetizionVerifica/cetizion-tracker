@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch } from '../lib/hooks.js';
 
@@ -110,16 +111,12 @@ export function CompanyProfile() {
   if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
 
   return (
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+    <SettingsPane
+      title="Company profile"
+      description="The legal identity and tax registration printed on every quotation. The preview beside it is the header the PDF generator actually lays out, so a change here shows where it lands before it is saved."
+    >
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="flex min-w-0 flex-col gap-5">
-        <div>
-          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Company profile</h1>
-          <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-            The legal identity and tax registration printed on every quotation. The preview on the right is the
-            header the PDF generator actually lays out, so a change here shows where it lands before it is saved.
-          </p>
-        </div>
-
         <div className="grid gap-x-6 gap-y-4 rounded-[10px] border border-border bg-card p-5 sm:grid-cols-2">
           {FIELDS.map((field) => (
             <div key={field.key} className={cn('min-w-0', field.span && 'sm:col-span-2')}>
@@ -166,6 +163,7 @@ export function CompanyProfile() {
           {' '}<span className="mono">CVPL/26-27/…</span> — stay server-owned and are not editable here.
         </p>
       </div>
-    </div>
+      </div>
+    </SettingsPane>
   );
 }

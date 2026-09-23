@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
-import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
@@ -11,6 +10,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, number } from '../lib/format.js';
@@ -60,7 +60,7 @@ function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
   );
 }
 
-export default function Mailboxes({ bare = false }) {
+export default function Mailboxes() {
   const toast = useToast();
   const [params] = useSearchParams();
   const { data, refetch } = useFetch(() => api.raw('/mailboxes'));
@@ -96,17 +96,10 @@ export default function Mailboxes({ bare = false }) {
 
   return (
     <>
-      {!bare && <PageHeader title="Mailboxes" />}
-
-      <div className="flex flex-col gap-6 px-4 pt-6 pb-8 sm:px-8">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Mailboxes</h1>
-            <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-              Client email from a connected mailbox appears on the company, deal and enquiry it belongs to.
-              Mail only between colleagues is never synced.
-            </p>
-          </div>
+      <SettingsPane
+        title="Mailboxes"
+        description="Client email from a connected mailbox appears on the company, deal and enquiry it belongs to. Mail only between colleagues is never synced."
+        actions={<>
           <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={!cfg?.microsoft} asChild={Boolean(cfg?.microsoft)}>
             {cfg?.microsoft ? <a href={connectUrl(true)}>Connect a shared mailbox</a> : <span>Connect a shared mailbox</span>}
           </Button>
@@ -123,8 +116,8 @@ export default function Mailboxes({ bare = false }) {
               Add test mailbox
             </Button>
           )}
-        </div>
-
+        </>}
+      >
         {params.get('connected') && <Alert tone="success"><span>Connected {params.get('connected')}. The first sync is running.</span></Alert>}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
 
@@ -281,7 +274,7 @@ export default function Mailboxes({ bare = false }) {
             </p>
           </div>
         </div>
-      </div>
+      </SettingsPane>
 
       {disconnecting && (
         <ConfirmDialog

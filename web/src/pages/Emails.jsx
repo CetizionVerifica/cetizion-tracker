@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { PageHeader } from '../App.jsx';
 import { Alert, DataTable, Empty, Field, Input, KeyValues, Modal, useToast } from '../components/ui.jsx';
 import { Chip, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
@@ -24,7 +24,7 @@ const LOG_STATUSES = ['sent', 'suppressed', 'failed', 'queued'];
 
 const statusTone = (status) => (status === 'sent' || status === 'done' ? 'settled' : status === 'failed' ? 'late' : 'waiting');
 
-export default function Emails({ bare = false }) {
+export default function Emails() {
   const toast = useToast();
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState(null);
@@ -67,16 +67,10 @@ export default function Emails({ bare = false }) {
 
   return (
     <>
-      {!bare && <PageHeader title="Emails & jobs" />}
-
-      <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
-        <div>
-          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Emails &amp; jobs</h1>
-          <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-            The reminders and digests the tracker sends on its own, the schedule they run on, and a record of every
-            email it composed — including the ones that never left the server.
-          </p>
-        </div>
+      <SettingsPane
+        title="Emails & jobs"
+        description="The reminders and digests the tracker sends on its own, the schedule they run on, and a record of every email it composed — including the ones that never left the server."
+      >
 
         {mode && mode !== 'live' && (
           <Alert tone="warning">
@@ -194,7 +188,7 @@ export default function Emails({ bare = false }) {
             empty={<Empty title="No emails yet" text="Run a job or send a test email; everything the tracker composes appears here." />}
           />
         </RecordSection>
-      </div>
+      </SettingsPane>
 
       {open && <EmailBody id={open.id} onClose={() => setOpen(null)} />}
     </>

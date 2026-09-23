@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
 
+import { SettingsPane } from '../pages/SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago } from '../lib/format.js';
@@ -76,17 +77,11 @@ export function UsersAdmin() {
 
   return (
     <>
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Users &amp; roles</h1>
-            <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-              Who can sign in and what they see. Names carried over from the workbook&rsquo;s &ldquo;sales person&rdquo;
-              column have no login and are kept for attribution only.
-            </p>
-          </div>
-          <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Invite someone</Button>
-        </div>
+      <SettingsPane
+        title="Users & roles"
+        description="Who can sign in and what they see. Names carried over from the workbook’s “sales person” column have no login and are kept for attribution only."
+        actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Invite someone</Button>}
+      >
 
         {error ? (
           <ErrorState message={error} onRetry={refetch} />
@@ -190,7 +185,7 @@ export function UsersAdmin() {
           the server. Passwords are {minPassword}+ characters. Deactivating somebody ends their session on their next
           request — there is no deleting, so the records they are attached to keep making sense.
         </p>
-      </div>
+      </SettingsPane>
 
       {editing && (
         <UserForm

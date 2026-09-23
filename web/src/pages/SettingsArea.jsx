@@ -30,6 +30,32 @@ import BulkImport from './BulkImport.jsx';
  * anyway would get a 403 from it rather than a page.
  */
 
+/**
+ * The shell every settings pane wears.
+ *
+ * The panes arrived from six separate screens and each carried its own
+ * idea of a heading — some put the title inside a card, some had none,
+ * and the padding differed by pane, so moving between them in the rail
+ * looked like moving between apps. This is the one shape: a title, a
+ * sentence saying what the pane is for, and the room around it.
+ */
+export function SettingsPane({ title, description, actions, children }) {
+  return (
+    <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">{title}</h1>
+          {description && (
+            <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">{description}</p>
+          )}
+        </div>
+        {actions}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 const GROUPS = [
   {
     label: 'Organisation',
@@ -50,7 +76,7 @@ const GROUPS = [
       ...Object.entries(CATALOGUES).map(([key, c]) => ({
         to: key, label: c.title, element: <Catalogue key={key} {...c} />,
       })),
-      { to: 'templates', label: 'Templates', element: <Templates bare />, adminOnly: true },
+      { to: 'templates', label: 'Templates', element: <Templates />, adminOnly: true },
     ],
   },
   {
@@ -63,15 +89,15 @@ const GROUPS = [
   {
     label: 'Connections',
     items: [
-      { to: 'mailboxes', label: 'Mailboxes', element: <Mailboxes bare />, adminOnly: true },
-      { to: 'webhooks', label: 'Webhooks', element: <Webhooks bare />, adminOnly: true },
+      { to: 'mailboxes', label: 'Mailboxes', element: <Mailboxes />, adminOnly: true },
+      { to: 'webhooks', label: 'Webhooks', element: <Webhooks />, adminOnly: true },
     ],
   },
   {
     label: 'Data',
     items: [
-      { to: 'import', label: 'Import', element: <BulkImport bare />, adminOnly: true },
-      { to: 'emails', label: 'Emails & jobs', element: <Emails bare />, adminOnly: true },
+      { to: 'import', label: 'Import', element: <BulkImport />, adminOnly: true },
+      { to: 'emails', label: 'Emails & jobs', element: <Emails />, adminOnly: true },
     ],
   },
 ];

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { AlertTriangle, Check } from 'lucide-react';
 import { cn } from 'cn';
-import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, Field, Input, Modal, Select as LegacySelect, useToast } from '../components/ui.jsx';
 import { Chip, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
@@ -35,7 +35,7 @@ function health(endpoint) {
   return { tone: 'settled', label: 'Healthy', icon: Check };
 }
 
-export default function Webhooks({ bare = false }) {
+export default function Webhooks() {
   const toast = useToast();
   const { data, refetch } = useFetch(() => api.raw('/webhooks'));
   const [endpoint, setEndpoint] = useState('');
@@ -67,17 +67,10 @@ export default function Webhooks({ bare = false }) {
 
   return (
     <>
-      {!bare && <PageHeader title="Webhooks" />}
-
-      <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Webhooks</h1>
-            <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-              Signed POSTs to n8n or anything else when a record changes. Every call is signed; failures are retried
-              for a day and then paused.
-            </p>
-          </div>
+      <SettingsPane
+        title="Webhooks"
+        description="Signed POSTs to n8n or anything else when a record changes. Every call is signed; failures are retried for a day and then paused."
+        actions={<>
           <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" asChild>
             <a href="https://github.com/CetizionVerifica/cetizion-tracker/blob/main/docs/webhooks-n8n.md" target="_blank" rel="noopener noreferrer">How to receive</a>
           </Button>
@@ -88,7 +81,8 @@ export default function Webhooks({ bare = false }) {
           >
             Add endpoint
           </Button>
-        </div>
+        </>}
+      >
 
         <div className="overflow-hidden rounded-[10px] border border-border bg-card">
           {rows.length === 0 ? (
@@ -205,7 +199,7 @@ export default function Webhooks({ bare = false }) {
             </div>
           ))}
         </RecordSection>
-      </div>
+      </SettingsPane>
 
       {form && (
         <Modal size="lg" title={form.id ? `Edit ${form.name}` : 'New endpoint'} onClose={() => setForm(null)}

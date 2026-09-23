@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { AlignLeft, ChevronLeft, ChevronRight, IndianRupee, ListChecks } from 'lucide-react';
 import { cn } from 'cn';
-import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, DataTable, Empty, useToast } from '../components/ui.jsx';
 import { Chip, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useList } from '../lib/hooks.js';
 
@@ -114,7 +114,7 @@ function KindRow({ kind, count, last, onOpen }) {
   );
 }
 
-export default function Templates({ bare = false }) {
+export default function Templates() {
   const [open, setOpen] = useState(null);
   const payment = useList('payment-terms-templates', { limit: 200 });
   const onboarding = useList('onboarding-templates', { limit: 200 });
@@ -123,26 +123,21 @@ export default function Templates({ bare = false }) {
 
   return (
     <>
-      {!bare && <PageHeader title="Templates" />}
-
-      <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
+      <SettingsPane
+        title={open ? open.label : 'Templates'}
+        description={open
+          ? open.meta
+          : 'The payment splits and onboarding steps a new order starts from, and the terms printed on every quotation. Pick the one you came to change.'}
+        actions={open && (
+          <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" onClick={() => setOpen(null)}>
+            <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />All templates
+          </Button>
+        )}
+      >
         {open ? (
-          <>
-            <Button variant="ghost" size="sm" className="h-7 w-fit px-2 text-[12.5px]" onClick={() => setOpen(null)}>
-              <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />All templates
-            </Button>
-            {open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />}
-          </>
+          open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />
         ) : (
           <>
-            <div>
-              <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Templates</h1>
-              <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">
-                The payment splits and onboarding steps a new order starts from, and the terms printed on every
-                quotation. Pick the one you came to change.
-              </p>
-            </div>
-
             <div className="overflow-hidden rounded-[10px] border border-border bg-card">
               {KINDS.map((kind, i) => (
                 <KindRow key={kind.key} kind={kind} count={counts[kind.key]} last={i === KINDS.length - 1} onOpen={() => setOpen(kind)} />
@@ -155,7 +150,7 @@ export default function Templates({ bare = false }) {
             </p>
           </>
         )}
-      </div>
+      </SettingsPane>
     </>
   );
 }
