@@ -179,7 +179,15 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
   );
 }
 
-export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName }) {
+/**
+ * The table every list in the app draws.
+ *
+ * `sort` and `onSort` make a column header sortable: a header only offers
+ * it when the column names a real field, because sorting by a computed
+ * cell would silently sort by something else. `label` names the table for
+ * anybody who cannot see it sitting under a heading.
+ */
+export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false }) {
   const wide = useMediaQuery('(min-width: 768px)');
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
@@ -188,29 +196,81 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
   // in the document twice and left the first match hidden.
   if (!wide) return <CardList columns={columns} rows={rows} onRowClick={onRowClick} rowClassName={rowClassName} />;
 
+  const [sortKey, sortDir] = String(sort || '').split(':');
+
   return (
-      <div className="w-full overflow-x-auto">
-      <Table>
+      /**
+       * `position: sticky` resolves against the nearest scrolling
+       * ancestor, and every one of these tables is wider than its box, so
+       * the horizontal wrapper is always that ancestor. A sticky header
+       * therefore does nothing unless this wrapper scrolls vertically too
+       * — which is why the same `position: sticky` in the old stylesheet
+       * never worked either.
+       *
+       * Full-page lists opt in: the table gets the height and the page
+       * stops scrolling, so there is one scroll region rather than two
+       * fighting. A table embedded in a record page does not, because
+       * there it is one section among several.
+       */
+      <div className="w-full">
+      <Table containerClassName={cn(stickyHeader && 'max-h-[calc(100dvh_-_17rem)] overflow-y-auto')}>
+        {label && <caption className="sr-only">{label}</caption>}
         <TableHeader>
           <TableRow className="border-border hover:bg-transparent">
-            {columns.map((col) => (
+            {columns.map((col) => {
+              const sortable = onSort && col.sortBy;
+              const active = sortable && sortKey === col.sortBy;
+              const next = active && sortDir === 'asc' ? 'desc' : 'asc';
+              return (
               <TableHead
                 key={col.key}
+                scope="col"
+                // Sticky, because a list of sixty rows loses its headers
+                // on the first scroll and every column becomes a guess.
+                aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : sortable ? 'none' : undefined}
                 className={cn(
-                  'h-row whitespace-nowrap px-3 text-[12px] font-semibold text-muted-foreground',
+                  'h-row whitespace-nowrap bg-card px-3 text-[12px] font-semibold text-muted-foreground',
+                  stickyHeader && 'sticky top-0 z-10',
                   col.align === 'right' && 'num text-right'
                 )}
                 style={col.width ? { width: col.width } : undefined}
               >
-                {col.header}
+                {sortable ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(`${col.sortBy}:${next}`)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-[4px] hover:text-foreground',
+                      active && 'text-foreground'
+                    )}
+                  >
+                    {col.header}
+                    <span aria-hidden="true" className={cn('text-[10px]', !active && 'opacity-0 group-hover:opacity-60')}>
+                      {active ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
+                    </span>
+                  </button>
+                ) : col.header}
               </TableHead>
-            ))}
+              );
+            })}
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((row, i) => (
             <TableRow
               key={row.id ?? i}
+              // A row that opens a record has to be openable without a
+              // pointer. `tabIndex` and Enter give it that without a
+              // wrapper element inside the cell, which shrink-wrapped the
+              // identifier column and broke references across three lines.
+              tabIndex={onRowClick ? 0 : undefined}
+              aria-label={onRowClick ? `Open ${String(row[columns[0].key] ?? 'this record')}` : undefined}
+              onKeyDown={onRowClick ? (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                if (e.target !== e.currentTarget) return;
+                e.preventDefault();
+                onRowClick(row);
+              } : undefined}
               className={cn(
                 'border-border',
                 onRowClick && 'cursor-pointer',

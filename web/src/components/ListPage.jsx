@@ -72,12 +72,16 @@ export function ListPage({
   useEffect(() => {
     setSearch(initialSearch || '');
   }, [initialSearch]);
+  // The server already understands `?sort=column:dir`; nothing in the UI
+  // ever asked for it, so a sixty-row list could only be read in the one
+  // order the resource happened to default to.
+  const [sort, setSort] = useState('');
   const [editing, setEditing] = useState(null); // record | 'new' | null
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const debouncedSearch = useDebounced(search);
-  const params = { q: debouncedSearch, ...filterValues };
+  const params = { q: debouncedSearch, ...filterValues, ...(sort ? { sort } : {}) };
   // refreshToken lets a parent pull fresh rows after an action without
   // remounting, so the user's search and filters survive.
   const { rows, total, loading, error, refetch } = useList(resource, params, [refreshToken]);
@@ -104,9 +108,23 @@ export function ListPage({
     }
   }
 
+  /**
+   * A column is sortable when its key is a field the rows actually carry.
+   *
+   * Derived from the data rather than declared per page, so it cannot
+   * name a field that does not exist — and a column that only renders
+   * something computed has no key in the row, so it stays unsorted rather
+   * than sorting by something the reader cannot see. A page can still say
+   * `sortBy` explicitly when the visible column and the field differ.
+   */
+  const sortable = columns.map((col) => ({
+    ...col,
+    sortBy: col.sortBy ?? (rows[0] && Object.hasOwn(rows[0], col.key) ? col.key : undefined),
+  }));
+
   const tableColumns = rowActions
     ? [
-        ...columns,
+        ...sortable,
         {
           key: '__actions',
           header: '',
@@ -126,7 +144,7 @@ export function ListPage({
           ),
         },
       ]
-    : columns;
+    : sortable;
 
   return (
     <>
@@ -234,6 +252,10 @@ export function ListPage({
               rows={rows}
               loading={loading}
               onRowClick={onRowClick}
+              label={title}
+              sort={sort}
+              onSort={setSort}
+              stickyHeader
               empty={
                 emptyState || (
                   <Empty
