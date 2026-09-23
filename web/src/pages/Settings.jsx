@@ -221,19 +221,6 @@ const MOVED = new Set([
 ]);
 
 /**
- * Seeded, shown for months, and read by nothing.
- *
- * `default_advance_percent` and `default_delivery_percent` were the
- * suggested 50/50 split before payment-terms templates (#26) replaced
- * them. Nothing in `server/src` or `web/src` reads either one —
- * RegisterPoDialog takes the template marked default, and actions.jsx
- * says as much where it builds the split. A row somebody can edit that
- * changes nothing is worse than no row, so they are not offered here.
- * They should come out of seed.sql too.
- */
-const RETIRED = new Set(['default_advance_percent', 'default_delivery_percent']);
-
-/**
  * The assumptions, grouped by the question they answer.
  *
  * They were one alphabetical list of thirty-four keys, which meant the
@@ -366,7 +353,7 @@ export function Assumptions() {
   // Anything the server grows that this file has not been taught about
   // still has to be editable, so it lands here rather than vanishing.
   const extras = rows
-    .filter((r) => !KNOWN.has(r.key) && !MOVED.has(r.key) && !RETIRED.has(r.key) && !r.key.startsWith('fx_rate_'))
+    .filter((r) => !KNOWN.has(r.key) && !MOVED.has(r.key) && !r.key.startsWith('fx_rate_'))
     .map((r) => ({ key: r.key, label: r.key.replace(/_/g, ' ') }));
   const groups = extras.length ? [...GROUPS, { title: 'Anything else', items: extras }] : GROUPS;
 
