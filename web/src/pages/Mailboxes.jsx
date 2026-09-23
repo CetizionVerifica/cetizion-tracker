@@ -37,7 +37,7 @@ import { ago, number } from '../lib/format.js';
  * and at the design's 140/220/160/120 an ordinary address like
  * shyam@cetizionverifica.com wrapped mid-word in the first column.
  */
-const GRID = 'lg:grid-cols-[minmax(0,1.6fr)_120px_200px_150px_96px]';
+const GRID = 'lg:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
 const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
@@ -108,7 +108,7 @@ export default function Mailboxes() {
           </Button>
           {cfg?.test_mailboxes && (
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               className="h-8 px-4 text-[13px]"
               onClick={() => run('new', () => api.action('/mailboxes/test', { email: `test${Date.now() % 10000}@cetizionverifica.com` }), () => 'Test mailbox added')}
@@ -120,6 +120,29 @@ export default function Mailboxes() {
       >
         {params.get('connected') && <Alert tone="success"><span>Connected {params.get('connected')}. The first sync is running.</span></Alert>}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
+
+        {/* Both Connect buttons are dead until the server is set up, and a
+            disabled button that does not say why is the thing this whole
+            page exists to stop doing. */}
+        {cfg && !cfg.microsoft && (
+          <Alert tone="warning">
+            <span>
+              Microsoft 365 is not set up on this server, so no mailbox can be connected yet. The lead registers an
+              app in Microsoft Entra ID and sets <code className="mono">MS_TENANT_ID</code>,{' '}
+              <code className="mono">MS_CLIENT_ID</code>, <code className="mono">MS_CLIENT_SECRET</code>,{' '}
+              <code className="mono">MS_REDIRECT_URI</code> and <code className="mono">MAIL_TOKEN_KEY</code> — Server
+              setup below says which are still missing.
+            </span>
+          </Alert>
+        )}
+        {cfg?.microsoft && !cfg.webhook && (
+          <Alert tone="info">
+            <span>
+              <code className="mono">MAIL_WEBHOOK_URL</code> is not set, so new mail arrives on the five-minute sweep
+              rather than the moment it lands.
+            </span>
+          </Alert>
+        )}
 
         <div className="overflow-hidden rounded-[10px] border border-border bg-card">
           <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 lg:grid', GRID, COL_LABEL)}>

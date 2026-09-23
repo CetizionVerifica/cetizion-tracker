@@ -42,14 +42,17 @@ import BulkImport from './BulkImport.jsx';
 export function SettingsPane({ title, description, actions, children }) {
   return (
     <div className="flex flex-col gap-5 px-4 pt-6 pb-8 sm:px-8">
-      <div className="flex flex-wrap items-start gap-4">
+      {/* On a phone the actions go under the title rather than beside it.
+          Wrapping them individually let the first button sit next to the
+          heading and squeeze the sentence into a column a few words wide. */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start">
         <div className="min-w-0 flex-1">
           <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">{title}</h1>
           {description && (
             <p className="mt-1.5 max-w-[66ch] text-[13px]/[1.6] text-secondary-text">{description}</p>
           )}
         </div>
-        {actions}
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
       {children}
     </div>
