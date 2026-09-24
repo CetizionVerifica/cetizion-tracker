@@ -99,6 +99,25 @@ export default function Mailboxes() {
 
   const connectUrl = (shared) => (cfg?.microsoft ? `/api/mailboxes/connect/microsoft${shared ? '?shared=1' : ''}` : undefined);
 
+  /**
+   * What a sync actually did.
+   *
+   * This said "0 new emails" and stopped, while the response carried a
+   * breakdown of everything it threw away and why — `{"no matching
+   * client": 3}`, `{"internal only": 12}`. Zero and zero-because are
+   * different answers, and only one of them tells somebody what to change:
+   * a personal mailbox keeps client mail only, so "no matching client"
+   * means connect it as shared, and "internal only" means the message
+   * never left the building.
+   */
+  function syncResult(x) {
+    const stored = Number(x.data.stored || 0);
+    const skipped = Object.entries(x.data.skipped || {}).filter(([, n]) => n > 0);
+    const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;
+    if (!skipped.length) return head;
+    return `${head} · skipped ${skipped.map(([why, n]) => `${n} ${why}`).join(', ')}`;
+  }
+
   /** What the "Synced" column says, which is mostly about whether it is still running. */
   function syncedLine(row) {
     if (row.status === 'needs_reconnect') {
@@ -242,7 +261,7 @@ export default function Mailboxes() {
                         size="sm"
                         className={ROW_BUTTON}
                         disabled={busy === row.id}
-                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), (x) => `${number(x.data.stored)} new emails`)}
+                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult)}
                       >
                         Sync now
                       </Button>
