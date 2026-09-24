@@ -7,6 +7,26 @@ import { Button } from '@/components/ui/button.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { date } from '../lib/format.js';
+
+/**
+ * When something happened, written the way the rest of the app writes it.
+ *
+ * toLocaleString() gave "9/23/2026, 10:54:31 AM" — month-first, and to the
+ * second — on every message and every reply-by line, in a tracker that
+ * says "23 Sep 2026" everywhere else. Nobody needs the second an email
+ * arrived.
+ */
+function when(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return `today, ${time}`;
+  return `${date(d.toISOString())}, ${time}`;
+}
 
 /**
  * The shared sales inbox (#30): who owns each email, what is waiting on
@@ -68,6 +88,21 @@ function Tag({ tone = 'plain', mono = false, children }) {
  * second CRM, so a thread arrives already knowing its company and its
  * deal.
  */
+/**
+ * The one chip that says what a thread is, in the order somebody acts on
+ * it: a thread that looks like a new enquiry is that before it is anything
+ * else, and one nobody could match to a company is that before it is a
+ * reference number.
+ */
+function stateTag(row) {
+  if (row.looks_new) return <Tag tone="waiting">New enquiry</Tag>;
+  if (row.for_finance) return <Tag tone="settled">Payment · for finance</Tag>;
+  if (!row.company_name) return <Tag>no company match</Tag>;
+  if (row.enquiry_no) return <Tag tone="settled" mono>{row.enquiry_no}</Tag>;
+  if (row.entity_id) return <Tag mono>{row.entity_id}</Tag>;
+  return null;
+}
+
 const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
   // An option in a listbox rather than a button, so a screen reader says
   // "2 of 4, selected" and the arrow keys mean what they look like they
@@ -105,7 +140,17 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             {row.company_name || row.from_email}
             {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
-          <span className="shrink-0 text-[11.5px] text-muted-foreground">{since(row.last_message_at)}</span>
+          {/* Overdue is carried by the timestamp, not by a chip of its own.
+              It is a fact about *when*, and on a quiet week every thread in
+              the list is overdue — four red badges say nothing, four red
+              timestamps say the same thing without displacing the chips
+              that differ from row to row. */}
+          <span
+            className={cn('shrink-0 text-[11.5px]', row.overdue ? 'font-medium text-late' : 'text-muted-foreground')}
+            title={row.overdue ? 'Nobody has replied to this yet' : undefined}
+          >
+            {since(row.last_message_at)}
+          </span>
         </span>
         {/* Truncation has to be recoverable: the subject is the thing you
             are scanning for, and a clipped one with no way to read it is
@@ -113,14 +158,12 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
         <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text" title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
         </span>
+        {/* Two chips at most: what this thread is, and whose it is. The
+            row had up to six, all the same size, so the one that differed
+            between rows was the hardest to find. */}
         <span className="mt-1.5 flex flex-wrap gap-1.5">
-          {row.overdue && <Tag tone="late">Reply overdue</Tag>}
-          {row.looks_new && <Tag tone="waiting">New enquiry</Tag>}
-          {row.for_finance && <Tag tone="settled">Payment · for finance</Tag>}
-          {row.enquiry_no && <Tag tone="settled" mono>{row.enquiry_no}</Tag>}
-          {row.entity_id && <Tag mono>{row.entity_id}</Tag>}
+          {stateTag(row)}
           {row.assignee ? <Tag>{row.assignee}</Tag> : <Tag>no owner</Tag>}
-          {!row.company_name && <Tag>no company match</Tag>}
         </span>
       </span>
     </div>
@@ -313,7 +356,7 @@ function Conversation({ id, onBack, onChanged }) {
           {c.from_name || c.from_email} &lt;{c.from_email}&gt;
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
           {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
-          {c.response_due_at && c.status === 'open' && <> · reply due {new Date(c.response_due_at).toLocaleString()}</>}
+          {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
         </p>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -368,7 +411,7 @@ function Conversation({ id, onBack, onChanged }) {
       <div className="stack" style={{ padding: 14 }}>
         {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m) => (
           <div key={m.id} className={`mail mail--${m.direction}`}>
-            <div className="mail__head"><span className="strong">{m.from_name || m.from_email}</span>{m.sent_from_tracker_by && <Badge tone="info">by {m.sent_from_tracker_by}</Badge>}<span className="small muted mail__when">{new Date(m.sent_at).toLocaleString()}</span></div>
+            <div className="mail__head"><span className="strong">{m.from_name || m.from_email}</span>{m.sent_from_tracker_by && <Badge tone="info">by {m.sent_from_tracker_by}</Badge>}<span className="small muted mail__when">{when(m.sent_at)}</span></div>
             {m.body_html ? <iframe className="mail__body" title={`email ${m.id}`} sandbox="" srcDoc={`<style>body{font:13px system-ui,sans-serif;margin:8px;color:#0f172a}img{max-width:100%}</style>${m.body_html}`} /> : <div className="mail__snippet">{m.snippet}</div>}
           </div>
         ))}
