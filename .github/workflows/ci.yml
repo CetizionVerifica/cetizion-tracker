@@ -125,6 +125,10 @@ jobs:
         working-directory: web
         run: npm ci
 
+      - name: Tests
+        working-directory: web
+        run: npm test
+
       - name: Build
         working-directory: web
         run: npm run build
