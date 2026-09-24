@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, EyeOff, TriangleAlert } from 'lucide-react';
+import { Check, TriangleAlert } from 'lucide-react';
 
 import { useAuth } from '../lib/auth.jsx';
 import { ApiError } from '../lib/api.js';
@@ -11,17 +11,29 @@ import { Label } from '../components/ui/label.tsx';
 import { Separator } from '../components/ui/separator.tsx';
 
 /**
- * Sign in (C18).
+ * Sign in (C18), drawn as the design draws it.
  *
  * The form asks for whatever the API signs people in with: a username while
  * the tracker is on the shared password, an email once it is on the users
- * table. The server tells us which — see /auth/config — so the
- * deployment's choice is not copied into the build.
+ * table. The server says which — see /auth/config — so the deployment's
+ * choice is not copied into the build. The same endpoint says which
+ * providers are configured, and an unconfigured one is not drawn: a
+ * "Continue with Google" that 404s is worse than no button.
  *
- * The same endpoint says which providers are configured. An unconfigured
- * one is not drawn: a "Continue with Google" button that returns 404 is
- * worse than no button, and on a deployment that has never set up either,
- * the page is exactly what it was before.
+ * Two places this departs from the mock, both because the mock is drawing
+ * a future the code does not have yet:
+ *
+ *   The design names the product "Attest" (C17 proposes three marks). The
+ *   app is called Cetizion Tracker in the sidebar, the page titles and the
+ *   emails it sends, so renaming it is a decision for a person, not
+ *   something to slip in through the sign-in page.
+ *
+ *   "Forgot it?" is drawn as a link. There is no reset flow — C11 proposes
+ *   one, nobody has built it — so this says who to ask instead. A link that
+ *   goes nowhere teaches people the page is lying to them.
+ *
+ * The staging band the design mentions is already handled: EnvironmentBanner
+ * renders it above every page, this one included.
  */
 const FIELD = {
   shared: { label: 'Username', type: 'text', autoComplete: 'username', name: 'username' },
@@ -31,15 +43,15 @@ const FIELD = {
 /** Provider marks, drawn rather than fetched: a sign-in page loads nothing third-party. */
 const MARK = {
   microsoft: (
-    <svg viewBox="0 0 16 16" className="size-4" aria-hidden="true">
-      <rect x="0" y="0" width="7" height="7" fill="#f25022" />
-      <rect x="9" y="0" width="7" height="7" fill="#7fba00" />
-      <rect x="0" y="9" width="7" height="7" fill="#00a4ef" />
-      <rect x="9" y="9" width="7" height="7" fill="#ffb900" />
-    </svg>
+    <span className="grid size-4 shrink-0 grid-cols-2 gap-[2px]" aria-hidden="true">
+      <span className="bg-[#f25022]" />
+      <span className="bg-[#7fba00]" />
+      <span className="bg-[#00a4ef]" />
+      <span className="bg-[#ffb900]" />
+    </span>
   ),
   google: (
-    <svg viewBox="0 0 18 18" className="size-4" aria-hidden="true">
+    <svg viewBox="0 0 18 18" className="size-4 shrink-0" aria-hidden="true">
       <path fill="#4285f4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.5z" />
       <path fill="#34a853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.3A9 9 0 0 0 9 18z" />
       <path fill="#fbbc05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H.9a9 9 0 0 0 0 8l3-2.3z" />
@@ -48,12 +60,23 @@ const MARK = {
   ),
 };
 
+/**
+ * Microsoft's button is light and Google's is dark, which is not a whim:
+ * both brands publish button guidance, and a Microsoft mark on a dark
+ * button is the arrangement their own guidelines rule out.
+ */
+const PROVIDER_CLASS = {
+  microsoft: 'h-11 w-full justify-center gap-3 bg-[#f4f4f6] text-[14px] font-semibold text-[#0a0a0c] hover:bg-[#e6e6ea]',
+  google: 'h-11 w-full justify-center gap-3 border border-[#33333a] bg-secondary text-[14px] font-semibold text-foreground hover:bg-accent',
+};
+
 export default function Login() {
   const { signIn, mode, providers = [] } = useAuth();
   const field = FIELD[mode] ?? FIELD.shared;
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState(null);
-  const [warning, setWarning] = useState(null);
+  const [attemptsLeft, setAttemptsLeft] = useState(null);
+  const [lockoutMinutes, setLockoutMinutes] = useState(null);
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -70,13 +93,11 @@ export default function Login() {
     } catch (err) {
       setError(err.message);
       // The server counts the failures and only mentions them at the end,
-      // so a typo is not alarming. When it does, say what "locked" means
-      // and for how long, because the next person to try will be locked
-      // out by somebody else's mistake and deserves to know why.
-      const left = err instanceof ApiError ? err.details?.attempts_left : null;
-      setWarning(left
-        ? `${left} attempt${left === 1 ? '' : 's'} left before this account is locked from here for ${err.details.lockout_minutes} minutes.`
-        : null);
+      // so an ordinary typo is not alarming and the number is not a running
+      // commentary for whoever is guessing.
+      const details = err instanceof ApiError ? err.details : null;
+      setAttemptsLeft(details?.attempts_left ?? null);
+      setLockoutMinutes(details?.lockout_minutes ?? null);
       setForm((prev) => ({ ...prev, password: '' }));
       setBusy(false);
     }
@@ -84,119 +105,139 @@ export default function Login() {
 
   return (
     <div className="grid min-h-dvh place-items-center bg-background px-4 py-10">
-      <div className="w-full max-w-[380px]">
-        <div className="flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-[10px] bg-primary text-[15px] font-bold text-primary-foreground">C</span>
-          <div>
-            <h1 className="text-[16px] font-semibold text-foreground">Cetizion Tracker</h1>
-            <p className="text-[12.5px] text-muted-foreground">Sales · Projects · Payments · Travel</p>
+      <Card className="w-full max-w-[480px] gap-0 rounded-[14px] py-0">
+        <CardContent className="flex flex-col justify-center gap-7 px-6 py-10 sm:px-10 sm:py-12">
+          <div className="flex items-center gap-3">
+            <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-primary">
+              <Check className="size-[18px] text-primary-foreground" strokeWidth={3.4} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-[16px] font-semibold tracking-[-0.01em] text-foreground">Cetizion Tracker</div>
+              <div className="text-[12px] text-muted-foreground">Cetizion Verifica</div>
+            </div>
           </div>
-        </div>
 
-        <Card className="mt-5 gap-0 rounded-[12px] py-0">
-          <CardContent className="px-6 py-6">
-            <h2 className="text-[15px] font-semibold text-foreground">Sign in</h2>
-            <p className="mt-1 text-[12.5px] text-secondary-text">
+          <div>
+            <h1 className="text-[24px]/[1.25] font-semibold tracking-[-0.022em] text-foreground">Sign in</h1>
+            <p className="mt-1.5 text-[13px]/[1.6] text-secondary-text">
               {providers.length
                 ? 'Use the work account you read email with. Sessions last 12 hours.'
                 : 'Sessions last 12 hours.'}
             </p>
+          </div>
 
-            {providers.length > 0 && (
-              <>
-                <div className="mt-5 grid gap-2">
-                  {providers.map((p) => (
-                    <Button key={p.id} variant="secondary" className="w-full justify-center" asChild>
-                      {/* A real link, not a fetch: the browser has to leave
-                          for the provider and come back with a cookie, and
-                          XHR cannot do that. */}
-                      <a href={`/api/auth/oauth/${p.id}/start`}>
-                        {MARK[p.id]} Continue with {p.label}
-                      </a>
-                    </Button>
-                  ))}
-                </div>
-                <div className="my-5 flex items-center gap-3">
-                  <Separator className="flex-1" />
-                  <span className="text-[11.5px] text-muted-foreground">or with a password</span>
-                  <Separator className="flex-1" />
-                </div>
-              </>
-            )}
-
-            <form className={providers.length ? '' : 'mt-5'} onSubmit={submit}>
-              {error && (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              <div className="grid gap-1.5">
-                <Label htmlFor="signin-id">{field.label}</Label>
-                <Input
-                  id="signin-id"
-                  key={field.name}
-                  name={field.name}
-                  type={field.type}
-                  autoComplete={field.autoComplete}
-                  autoFocus
-                  required
-                  value={form.username}
-                  onChange={set('username')}
-                  disabled={busy}
-                />
-              </div>
-
-              <div className="mt-4 grid gap-1.5">
-                <Label htmlFor="signin-password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="signin-password"
-                    name="password"
-                    type={show ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    required
-                    value={form.password}
-                    onChange={set('password')}
-                    disabled={busy}
-                    className="pr-10"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setShow((s) => !s)}
-                    /* Deliberately not "Show the password": that phrase
-                       contains the field's own label, so every accessible
-                       lookup for "Password" — a screen reader's, a test's —
-                       matches the button as well as the box. */
-                    aria-label={show ? 'Hide what I typed' : 'Show what I typed'}
-                    aria-pressed={show}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground"
-                  >
-                    {show ? <EyeOff className="size-4" strokeWidth={1.75} aria-hidden="true" /> : <Eye className="size-4" strokeWidth={1.75} aria-hidden="true" />}
+          {providers.length > 0 && (
+            <>
+              <div className="flex flex-col gap-2.5">
+                {providers.map((p) => (
+                  <Button key={p.id} variant="ghost" className={PROVIDER_CLASS[p.id]} asChild>
+                    {/* A real link, not a fetch: the browser has to leave for
+                        the provider and come back holding a cookie, which
+                        XHR cannot do. */}
+                    <a href={`/api/auth/oauth/${p.id}/start`}>
+                      {MARK[p.id]} Continue with {p.label}
+                    </a>
                   </Button>
-                </div>
+                ))}
               </div>
 
-              <Button type="submit" className="mt-5 w-full" disabled={busy}>
-                {busy ? 'Signing in…' : 'Sign in'}
-              </Button>
-            </form>
+              <div className="flex items-center gap-3">
+                <Separator className="flex-1" />
+                <span className="text-[12px] text-muted-foreground">or with a password</span>
+                <Separator className="flex-1" />
+              </div>
+            </>
+          )}
 
-            {warning && (
-              <p className="mt-4 flex items-start gap-2 text-[12px]/[1.5] text-waiting">
-                <TriangleAlert className="mt-px size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-                <span role="status">{warning}</span>
-              </p>
+          <form className="flex flex-col gap-4" onSubmit={submit}>
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
-          </CardContent>
-        </Card>
 
-        <p className="mt-4 text-[12px]/[1.6] text-muted-foreground">
-          There is no sign-up. Accounts are created by an admin under Settings → Users.
-        </p>
-      </div>
+            <div>
+              <Label htmlFor="signin-id" className="mb-2 text-[12.5px] font-medium text-secondary-text">
+                {field.label}
+              </Label>
+              <Input
+                id="signin-id"
+                key={field.name}
+                name={field.name}
+                type={field.type}
+                autoComplete={field.autoComplete}
+                autoFocus
+                required
+                value={form.username}
+                onChange={set('username')}
+                disabled={busy}
+                className="h-10 text-[13.5px]"
+              />
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-baseline justify-between gap-3">
+                <Label htmlFor="signin-password" className="text-[12.5px] font-medium text-secondary-text">
+                  Password
+                </Label>
+                {/* Not a link. There is no reset flow to send anybody to. */}
+                <span className="text-[12px] text-muted-foreground">Forgotten it? An admin resets it</span>
+              </div>
+              <div className="relative">
+                <Input
+                  id="signin-password"
+                  name="password"
+                  type={show ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
+                  value={form.password}
+                  onChange={set('password')}
+                  disabled={busy}
+                  className="h-10 pr-16 text-[13.5px]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShow((s) => !s)}
+                  aria-pressed={show}
+                  /* Deliberately not "Show the password": that phrase
+                     contains the field's own label, so every accessible
+                     lookup for "Password" — a screen reader's, a test's —
+                     would match this button as well as the box. */
+                  aria-label={show ? 'Hide what I typed' : 'Show what I typed'}
+                  className="absolute inset-y-0 right-0 rounded-r-md px-3 text-[12px] font-medium text-muted-foreground hover:text-foreground"
+                >
+                  {show ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+
+            <Button type="submit" className="h-10 w-full text-[14px] font-semibold" disabled={busy}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
+
+          {/* The rule is stated before anybody trips it, because the person
+              it inconveniences most is usually not the one who typed the
+              wrong password — a shared address can be locked by somebody
+              else entirely. The count appears only once it is nearly up. */}
+          <div className="flex items-start gap-2.5 rounded-[10px] border border-border bg-secondary px-3.5 py-3">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-waiting" strokeWidth={2.2} aria-hidden="true" />
+            <p className="text-[12.5px]/[1.6] text-secondary-text">
+              Ten wrong attempts in fifteen minutes lock sign-in for everyone until the window passes.
+              {attemptsLeft != null && (
+                <span role="status" className="text-waiting">
+                  {' '}{attemptsLeft} attempt{attemptsLeft === 1 ? '' : 's'} left
+                  {lockoutMinutes ? `, then ${lockoutMinutes} minutes` : ''}.
+                </span>
+              )}
+            </p>
+          </div>
+
+          <p className="text-[11.5px]/[1.6] text-muted-foreground">
+            There is no sign-up. An admin creates accounts under Settings → Users &amp; roles.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
