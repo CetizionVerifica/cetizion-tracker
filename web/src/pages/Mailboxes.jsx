@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
@@ -62,8 +62,8 @@ function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
 
 export default function Mailboxes() {
   const toast = useToast();
-  const [params] = useSearchParams();
-  const { data, refetch } = useFetch(() => api.raw('/mailboxes'));
+  const [params, setParams] = useSearchParams();
+  const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
   const block = useFetch(() => api.raw('/mailboxes/blocklist'));
   const [pattern, setPattern] = useState('');
   const [busy, setBusy] = useState(null);
@@ -81,7 +81,42 @@ export default function Mailboxes() {
   }
   const patch = (id, body) => run(id, () => api.raw(`/mailboxes/${id}`, { method: 'PATCH', body }), () => 'Saved');
 
+  // Fires once, then clears the parameter so a refresh does not re-announce
+  // a connection made ten minutes ago.
+  const connected = params.get('connected');
+  // Guarded by a ref, not by the parameter: StrictMode mounts the effect
+  // twice and both runs read the parameter before either has cleared it,
+  // so the announcement arrived in duplicate.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (!connected || announced.current) return;
+    announced.current = true;
+    toast(`Connected ${connected}. The first sync is running.`, 'success');
+    const next = new URLSearchParams(params);
+    next.delete('connected');
+    setParams(next, { replace: true });
+  }, [connected]);
+
   const connectUrl = (shared) => (cfg?.microsoft ? `/api/mailboxes/connect/microsoft${shared ? '?shared=1' : ''}` : undefined);
+
+  /**
+   * What a sync actually did.
+   *
+   * This said "0 new emails" and stopped, while the response carried a
+   * breakdown of everything it threw away and why — `{"no matching
+   * client": 3}`, `{"internal only": 12}`. Zero and zero-because are
+   * different answers, and only one of them tells somebody what to change:
+   * a personal mailbox keeps client mail only, so "no matching client"
+   * means connect it as shared, and "internal only" means the message
+   * never left the building.
+   */
+  function syncResult(x) {
+    const stored = Number(x.data.stored || 0);
+    const skipped = Object.entries(x.data.skipped || {}).filter(([, n]) => n > 0);
+    const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;
+    if (!skipped.length) return head;
+    return `${head} · skipped ${skipped.map(([why, n]) => `${n} ${why}`).join(', ')}`;
+  }
 
   /** What the "Synced" column says, which is mostly about whether it is still running. */
   function syncedLine(row) {
@@ -90,8 +125,21 @@ export default function Mailboxes() {
       return <span className="text-late">{when ? `stopped ${when}` : 'stopped'}</span>;
     }
     if (row.status === 'disconnected') return <span className="text-muted-foreground">disconnected</span>;
-    if (cfg?.webhook) return 'live, via webhook';
-    return ago(row.last_synced_at) ?? 'never synced';
+    // The mechanism and the outcome are different facts, and this used to
+    // report only the first: with a webhook configured it always said
+    // "live, via webhook" and never whether a sync had actually run, so a
+    // mailbox that had never fetched anything looked identical to one
+    // fetching happily. "never synced" was unreachable.
+    const when = ago(row.last_synced_at);
+    if (cfg?.webhook) {
+      return (
+        <>
+          live, via webhook
+          <span className="text-muted-foreground"> · {when ? `synced ${when}` : 'never synced'}</span>
+        </>
+      );
+    }
+    return when ?? 'never synced';
   }
 
   return (
@@ -118,7 +166,9 @@ export default function Mailboxes() {
           )}
         </>}
       >
-        {params.get('connected') && <Alert tone="success"><span>Connected {params.get('connected')}. The first sync is running.</span></Alert>}
+        {/* Success is a toast and failure is a banner, because they are read
+            differently: "it worked" only needs to be noticed, while a reason
+            it did not needs to sit there until somebody has acted on it. */}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
 
         {/* Both Connect buttons are dead until the server is set up, and a
@@ -149,7 +199,12 @@ export default function Mailboxes() {
             <span>Mailbox</span><span>Status</span><span>Team sees</span><span>Synced</span><span />
           </div>
 
-          {rows.length === 0 ? (
+          {/* The wait and the answer are different things. Without this the
+              "nothing connected" sentence rendered first and was replaced a
+              moment later, so a slow request looked exactly like a mailbox
+              nobody had set up. */}
+          {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
+          : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
               No mailbox is connected. Connect your Microsoft 365 mailbox to see client email on the records it belongs to.
             </p>
@@ -165,7 +220,15 @@ export default function Mailboxes() {
                       {row.provider === 'test' && <Chip>test</Chip>}
                     </div>
                     <div className="text-[12px] text-muted-foreground">
-                      {row.is_shared ? 'Feeds the Inbox' : (row.display_name || row.username)}
+                      {/* "Feeds the Inbox" used to be printed for any
+                          shared mailbox, true or not — it tested is_shared
+                          rather than whether an inbox exists. A shared
+                          mailbox with no inboxes row stores every thread
+                          and routes none of them, while the page said it
+                          was feeding the Inbox. */}
+                      {!row.is_shared ? (row.display_name || row.username)
+                        : row.feeds_inbox ? 'Feeds the Inbox'
+                        : <span className="text-waiting">Shared · no Inbox set up for it yet</span>}
                       {' · '}{row.provider === 'test' ? 'Test' : 'Microsoft 365'}
                       {row.import_days ? ` · ${number(row.import_days)} days of history` : ''}
                     </div>
@@ -206,7 +269,7 @@ export default function Mailboxes() {
                         size="sm"
                         className={ROW_BUTTON}
                         disabled={busy === row.id}
-                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), (x) => `${number(x.data.stored)} new emails`)}
+                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult)}
                       >
                         Sync now
                       </Button>
@@ -229,12 +292,20 @@ export default function Mailboxes() {
                 </div>
 
                 {/* The reason lives under the row it belongs to, because a
-                    status word on its own never told anybody what to do. */}
-                {broken && (
+                    status word on its own never told anybody what to do.
+                    Shown for any failure, not only an expired sign-in: a
+                    sync that fails on a missing permission or a bad
+                    response records last_error and leaves the status
+                    'active', so the mailbox looked healthy while quietly
+                    fetching nothing, and the one sentence explaining it was
+                    stored and rendered to nobody. */}
+                {(broken || row.last_error) && (
                   <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text @3xl:max-w-[80ch]">
-                    <strong className="font-semibold text-foreground">Why:</strong>{' '}
+                    <strong className={cn('font-semibold', broken ? 'text-foreground' : 'text-waiting')}>
+                      {broken ? 'Why:' : 'Last sync failed:'}
+                    </strong>{' '}
                     {row.last_error || 'Microsoft stopped accepting the saved sign-in, which usually means the password changed or the permission was withdrawn.'}
-                    {' '}Reconnecting takes one sign-in; nothing already synced is lost.
+                    {broken && ' Reconnecting takes one sign-in; nothing already synced is lost.'}
                   </p>
                 )}
               </div>

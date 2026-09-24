@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from '
 
 import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
+import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
@@ -441,6 +442,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/data-quality" element={<DataQuality />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
@@ -475,11 +477,11 @@ export default function App() {
               their old routes as redirects, so a bookmark still lands
               somewhere rather than on the not-found page. */}
           <Route path="/settings/*" element={<SettingsArea />} />
-          <Route path="/mailboxes" element={<Navigate to="/settings/mailboxes" replace />} />
-          <Route path="/webhooks" element={<Navigate to="/settings/webhooks" replace />} />
-          <Route path="/templates" element={<Navigate to="/settings/templates" replace />} />
-          <Route path="/emails" element={<Navigate to="/settings/emails" replace />} />
-          <Route path="/import" element={<Navigate to="/settings/import" replace />} />
+          <Route path="/mailboxes" element={<LegacyRedirect to="/settings/mailboxes" />} />
+          <Route path="/webhooks" element={<LegacyRedirect to="/settings/webhooks" />} />
+          <Route path="/templates" element={<LegacyRedirect to="/settings/templates" />} />
+          <Route path="/emails" element={<LegacyRedirect to="/settings/emails" />} />
+          <Route path="/import" element={<LegacyRedirect to="/settings/import" />} />
           {/* A batch in progress is its own screen, not a settings pane. */}
           <Route path="/import/:id" element={<ImportReviewPage />} />
           <Route path="*" element={<NotFound />} />
@@ -491,6 +493,20 @@ export default function App() {
 }
 
 /** Shared page chrome so every screen has the same header rhythm. */
+/**
+ * An old path that moved, keeping its query string.
+ *
+ * `<Navigate to="/settings/mailboxes">` takes a bare path and drops
+ * whatever came with it. The mailbox OAuth callback returns to this app as
+ * `?connected=…` or `?error=…`, so the bare version swallowed both — a
+ * finished connection and a failed one looked identical, which is to say
+ * like nothing had happened.
+ */
+function LegacyRedirect({ to }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
+
 export function PageHeader({ title, subtitle, actions }) {
   const { hidden, toggle } = useContext(SidebarContext);
   // On a phone the actions go under the title rather than beside it.
