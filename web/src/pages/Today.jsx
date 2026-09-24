@@ -23,6 +23,37 @@ import { money } from '../lib/format.js';
  */
 
 const CARD = 'rounded-[10px] border border-border bg-card';
+
+/**
+ * The shape of the day, before the day is known.
+ *
+ * Deliberately the same geometry as what replaces it — one wide card for
+ * "Start here", then a run of 44px queue rows — so the page settles rather
+ * than rearranges when the data lands.
+ */
+function TodaySkeleton() {
+  return (
+    <div className="flex min-w-0 flex-col gap-6" aria-hidden="true">
+      <div className={`${CARD} p-5`}>
+        <div className="skeleton h-3 w-24 rounded" />
+        <div className="skeleton mt-3 h-6 w-2/3 rounded" />
+        <div className="skeleton mt-3 h-9 w-40 rounded" />
+      </div>
+      <section className="flex min-w-0 flex-col gap-3">
+        <div className="skeleton h-3 w-28 rounded" />
+        <div className={`${CARD} overflow-hidden`}>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="flex h-11 items-center gap-3 border-b border-border px-5 last:border-b-0">
+              <div className="skeleton size-4 shrink-0 rounded-full" />
+              <div className="skeleton h-3 flex-1 rounded" />
+              <div className="skeleton h-3 w-20 shrink-0 rounded" />
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
 const EYEBROW = 'text-[11px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 
 /** "Tuesday, 22 September" — the date is the title, because the page is a day. */
@@ -292,9 +323,16 @@ export default function Today() {
 
       <div className="grid items-start gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-6">
-          {overdue.length > 0 && <StartHere overdue={overdue} />}
+          {/* While the day is being worked out, the column shows the shape it
+              is about to have. It used to render nothing at all — every
+              branch below is gated on data, so the busiest page in the app
+              looked empty rather than busy on a slow connection, and the
+              only sign of life was one line of header text. */}
+          {loading && <TodaySkeleton />}
 
-          {list.length > 0 && (
+          {!loading && overdue.length > 0 && <StartHere overdue={overdue} />}
+
+          {!loading && list.length > 0 && (
             <section className="flex min-w-0 flex-col gap-3">
               <div className={EYEBROW}>{overdue.length ? 'Then, in order' : 'Waiting on somebody'}</div>
               <div className={`${CARD} overflow-hidden`}>

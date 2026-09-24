@@ -132,7 +132,11 @@ mailboxRouter.get('/connect/microsoft', (req, res) => {
 });
 
 mailboxRouter.get('/oauth/microsoft', async (req, res) => {
-  const back = (msg) => res.redirect(`/mailboxes?${new URLSearchParams(msg)}`);
+  // /settings/mailboxes, not /mailboxes: the page moved into the Settings
+  // area in the redesign. The old path still redirects, but a redirect
+  // that drops the query string turned every outcome of this flow —
+  // success and failure alike — into a silent return to the page.
+  const back = (msg) => res.redirect(`/settings/mailboxes?${new URLSearchParams(msg)}`);
   const state = readState(req.query.state);
   if (!state || state.u !== who(req)) return back({ error: 'The sign-in could not be verified. Please try again.' });
   if (req.query.error) return back({ error: String(req.query.error_description || req.query.error).slice(0, 200) });

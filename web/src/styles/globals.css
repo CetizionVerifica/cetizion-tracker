@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* The enter/exit keyframes every Radix overlay in components/ui asks for
+   by class — animate-in, fade-in-0, zoom-in-95, slide-in-from-*. Without
+   this import those classes compile to nothing, which is why dialogs,
+   dropdowns, selects and the mobile sidebar appeared instantly and left
+   the same way. Its durations sit inside the design's 120-180ms. */
+@import "tw-animate-css";
 
 /**
  * Cetizion, from the v2 redesign (design project "Cetizion Tracker UI Mockups").
@@ -149,6 +155,18 @@
 }
 
 @layer base {
+  /* Motion is 120-180ms by the design's own rule at the top of this file;
+     tw-animate-css ships a 200ms default. These are every overlay that
+     animates, brought back inside the band. The overlay behind a dialog is
+     slower on purpose — a scrim that matches the panel reads as one object
+     rather than as something arriving behind it. */
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="popover-content"],
+  [data-slot="select-content"],
+  [data-slot="tooltip-content"] {
+    animation-duration: 150ms;
+  }
   * {
     border-color: var(--border);
   }
@@ -245,9 +263,14 @@
     color: var(--secondary-foreground);
     font: 500 13px/1 var(--font-sans);
     cursor: pointer;
-    transition: background-color 150ms, border-color 150ms, color 150ms;
+    /* Transform included so the press below actually eases. A scale does
+       not affect layout, so nothing around the button moves. */
+    transition: background-color 150ms, border-color 150ms, color 150ms, transform 120ms;
   }
   .btn:hover:not(:disabled) { background: var(--accent); border-color: var(--muted-foreground); }
+  /* The press, on the 39 pages still using this class, so a click is
+     acknowledged there too rather than only on the shadcn Button. */
+  .btn:active:not(:disabled) { transform: scale(0.97); }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn--primary {
     background: var(--primary);
