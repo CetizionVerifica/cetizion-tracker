@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
 import { PanelLeft, Reply } from 'lucide-react';
-import { Badge, Card, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue,
