@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 import { revenueReport } from '../lib/revenueReport.js';
+import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 
 export const dashboardRouter = Router();
@@ -183,6 +184,14 @@ dashboardRouter.get('/sales-report', async (req, res) => {
 dashboardRouter.get('/revenue-report', async (req, res) => {
   const period = reportPeriod(req.query);
   res.json({ data: { period, ...(await revenueReport(period)) } });
+});
+
+/**
+ * What is missing, and where to fix it (#74): one count per check, each
+ * with a link to the list filtered to exactly those records. Read-only.
+ */
+dashboardRouter.get('/data-quality', async (req, res) => {
+  res.json({ data: { checks: await dataQuality() } });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

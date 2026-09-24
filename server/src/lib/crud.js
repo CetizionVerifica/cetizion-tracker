@@ -44,6 +44,12 @@ export function buildWhere(def, reqQuery, params) {
       clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NULL` : `${ident(col)} IS NULL`);
       continue;
     }
+    // The other half of __none__: any value at all. The data-quality page
+    // needs it to say "invoiced" (?invoice_no=__any__) without a status list.
+    if (values.length === 1 && values[0] === '__any__') {
+      clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NOT NULL` : `${ident(col)} IS NOT NULL`);
+      continue;
+    }
     if (normalized) {
       params.push(values.map(normalizeName));
       clauses.push(`${nameKey(ident(col))} = ANY($${params.length})`);

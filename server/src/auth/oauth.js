@@ -275,11 +275,34 @@ oauthRouter.get('/:provider/callback', async (req, res) => {
   // here?" to whoever asked.
   if (!user || !user.active) return refuse(res, next, `no active account for ${email}`);
 
-  await query(
+  // Two unique indexes guard this table — (provider, subject) so one
+  // provider account signs in one person, and (user_id, provider) so a
+  // person has at most one identity per provider. The upsert handled only
+  // the first, so a *new* subject arriving for somebody who already had an
+  // identity for that provider hit the second and threw a raw constraint
+  // error at them.
+  //
+  // That is not an edge case: `sub` is issued per application, so moving
+  // the app registration to another tenant changes it for everyone who
+  // had already linked. Re-linking is the normal path after that, and it
+  // is what this now does.
+  if (linked && linked.user_id !== user.id) {
+    return refuse(res, next, `${provider.id} account ${subject} is already linked to another person`);
+  }
+  try {
+    await query(
     `INSERT INTO auth_identities (user_id, provider, subject, email, last_used_at)
      VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (provider, subject) DO UPDATE SET email = EXCLUDED.email, last_used_at = now()`,
-    [user.id, provider.id, subject, email]);
+     ON CONFLICT (user_id, provider) DO UPDATE
+       SET subject = EXCLUDED.subject, email = EXCLUDED.email, last_used_at = now()`,
+      [user.id, provider.id, subject, email]);
+  } catch (err) {
+    // Anything unexpected here used to escape to the error middleware and
+    // reach the person as raw JSON — "user id, provider \"6, microsoft\"
+    // is already in use" — on what is, to them, a sign-in page. A failure
+    // in the last step of a sign-in belongs back on that page, worded.
+    return refuse(res, next, `could not link the ${provider.id} account: ${err.message}`);
+  }
 
   await recordLogin(user.id);
   await query('INSERT INTO auth_events (username, ip, ok, reason) VALUES ($1,$2,true,$3)',

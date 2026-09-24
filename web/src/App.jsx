@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from '
 
 import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
+import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
@@ -441,6 +442,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
+          <Route path="/data-quality" element={<DataQuality />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />

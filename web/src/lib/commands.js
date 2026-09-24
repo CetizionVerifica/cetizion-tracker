@@ -206,6 +206,7 @@ export const JUMPS = [
   { id: 'go-today', verb: 'Today', to: '/', icon: 'today', keywords: 'home dashboard overview start' },
   { id: 'go-inbox', verb: 'Inbox', to: '/inbox', icon: 'inbox', keywords: 'email mail shared conversations' },
   { id: 'go-worklist', verb: 'Action list', to: '/worklist', icon: 'today', keywords: 'worklist queue waiting everything' },
+  { id: 'go-data-quality', verb: 'Data quality', to: '/data-quality', icon: 'waiting', adminOnly: true, keywords: 'data quality missing blank gaps incomplete fix' },
   { id: 'go-deals', verb: 'Deals', to: '/quotations', icon: 'deal', keywords: 'quotations quotes deals' },
   { id: 'go-enquiries', verb: 'Enquiries', to: '/enquiries', icon: 'deal', keywords: 'enquiries leads' },
   { id: 'go-pipeline', verb: 'Pipeline board', to: '/pipeline', icon: 'deal', keywords: 'pipeline board kanban stages drag' },

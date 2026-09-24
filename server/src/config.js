@@ -5,7 +5,12 @@ import dotenv from 'dotenv';
 // Resolved against this file rather than the working directory, so
 // `node server/src/index.js` from the repo root reads server/.env too.
 // Starting with the wrong credentials is not a failure you want to be quiet.
-dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), quiet: true });
+// A test that asserts what happens when a variable is unset cannot do so
+// while .env quietly supplies one. This is the opt-out those tests use;
+// nothing else sets it, so ordinary runs load .env exactly as before.
+if (process.env.SKIP_DOTENV !== '1') {
+  dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), quiet: true });
+}
 
 const dbName = process.env.PGDATABASE || 'cetizion_tracker';
 

@@ -99,6 +99,25 @@ export default function Mailboxes() {
 
   const connectUrl = (shared) => (cfg?.microsoft ? `/api/mailboxes/connect/microsoft${shared ? '?shared=1' : ''}` : undefined);
 
+  /**
+   * What a sync actually did.
+   *
+   * This said "0 new emails" and stopped, while the response carried a
+   * breakdown of everything it threw away and why — `{"no matching
+   * client": 3}`, `{"internal only": 12}`. Zero and zero-because are
+   * different answers, and only one of them tells somebody what to change:
+   * a personal mailbox keeps client mail only, so "no matching client"
+   * means connect it as shared, and "internal only" means the message
+   * never left the building.
+   */
+  function syncResult(x) {
+    const stored = Number(x.data.stored || 0);
+    const skipped = Object.entries(x.data.skipped || {}).filter(([, n]) => n > 0);
+    const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;
+    if (!skipped.length) return head;
+    return `${head} · skipped ${skipped.map(([why, n]) => `${n} ${why}`).join(', ')}`;
+  }
+
   /** What the "Synced" column says, which is mostly about whether it is still running. */
   function syncedLine(row) {
     if (row.status === 'needs_reconnect') {
@@ -201,7 +220,15 @@ export default function Mailboxes() {
                       {row.provider === 'test' && <Chip>test</Chip>}
                     </div>
                     <div className="text-[12px] text-muted-foreground">
-                      {row.is_shared ? 'Feeds the Inbox' : (row.display_name || row.username)}
+                      {/* "Feeds the Inbox" used to be printed for any
+                          shared mailbox, true or not — it tested is_shared
+                          rather than whether an inbox exists. A shared
+                          mailbox with no inboxes row stores every thread
+                          and routes none of them, while the page said it
+                          was feeding the Inbox. */}
+                      {!row.is_shared ? (row.display_name || row.username)
+                        : row.feeds_inbox ? 'Feeds the Inbox'
+                        : <span className="text-waiting">Shared · no Inbox set up for it yet</span>}
                       {' · '}{row.provider === 'test' ? 'Test' : 'Microsoft 365'}
                       {row.import_days ? ` · ${number(row.import_days)} days of history` : ''}
                     </div>
@@ -242,7 +269,7 @@ export default function Mailboxes() {
                         size="sm"
                         className={ROW_BUTTON}
                         disabled={busy === row.id}
-                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), (x) => `${number(x.data.stored)} new emails`)}
+                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult)}
                       >
                         Sync now
                       </Button>

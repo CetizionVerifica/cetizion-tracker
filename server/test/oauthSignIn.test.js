@@ -17,7 +17,14 @@ process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
 process.env.GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
 process.env.GOOGLE_CLIENT_SECRET = 'test-client-secret';
 process.env.GOOGLE_REDIRECT_URI = 'https://tracker.example.com/api/auth/oauth/google/callback';
-// Microsoft is deliberately left unconfigured.
+// Microsoft is deliberately left unconfigured — and pinned empty rather
+// than merely unset, because dotenv loads server/.env into every test
+// process. Once a developer configures Microsoft locally, "unconfigured"
+// stops being true and these cases assert an absence they do not control.
+process.env.MS_TENANT_ID = '';
+process.env.MS_CLIENT_ID = '';
+process.env.MS_CLIENT_SECRET = '';
+process.env.MS_SIGNIN_REDIRECT_URI = '';
 
 const { default: app } = await import('../src/app.js');
 const { verifySession } = await import('../src/auth/session.js');
