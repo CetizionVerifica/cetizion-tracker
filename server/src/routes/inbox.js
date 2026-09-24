@@ -43,7 +43,8 @@ const inboxSchema = z.object({
 inboxRouter.get('/inboxes', async (req, res) => {
   const { rows } = await query(
     `SELECT i.*, a.email, a.status AS mailbox_status,
-            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id AND c.status = 'open') AS open
+            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id AND c.status = 'open') AS open,
+            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id) AS conversations
        FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id ORDER BY i.name`);
   const { rows: shared } = await query(`SELECT id, email FROM connected_accounts WHERE is_shared AND status <> 'disconnected' AND id NOT IN (SELECT account_id FROM inboxes) ORDER BY email`);
   res.json({ data: rows, available_mailboxes: shared });
@@ -70,6 +71,29 @@ inboxRouter.patch('/inboxes/:id', requireAdmin, async (req, res) => {
   const { rows: [i] } = await query(`UPDATE inboxes SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!i) throw new ApiError(404, 'Inbox not found');
   res.json({ data: i });
+});
+
+/**
+ * Delete an inbox.
+ *
+ * inbox_conversations.inbox_id cascades, and that table is the triage: the
+ * status, the owner, the labels, the reply clock and the link to an enquiry.
+ * The mail itself lives in email_threads and stays — the mailbox keeps every
+ * message either way — but the work done on top of it does not come back.
+ *
+ * So a delete that would discard any of it refuses once and says how much.
+ * ?discard=yes is the caller saying it read that sentence.
+ */
+inboxRouter.delete('/inboxes/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows: [i] } = await query('SELECT id, name FROM inboxes WHERE id = $1', [id]);
+  if (!i) throw new ApiError(404, 'Inbox not found');
+  const { rows: [{ count }] } = await query('SELECT COUNT(*)::int AS count FROM inbox_conversations WHERE inbox_id = $1', [id]);
+  if (count > 0 && req.query.discard !== 'yes') {
+    throw new ApiError(409, `${i.name} has ${count} conversation${count === 1 ? '' : 's'}. Deleting it discards their status, owner and reply clock. The emails themselves stay under the mailbox.`, { conversations: count });
+  }
+  await query('DELETE FROM inboxes WHERE id = $1', [id]);
+  res.json({ data: { deleted: i.name, conversations: count } });
 });
 
 // ------------------------------------------------------------ canned responses

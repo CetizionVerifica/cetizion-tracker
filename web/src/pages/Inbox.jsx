@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
 import { PanelLeft, Reply } from 'lucide-react';
-import { Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -599,8 +599,28 @@ function InboxSetup() {
   const canned = useFetch(() => api.raw('/inbox/canned'));
   const [form, setForm] = useState(null);
   const [cannedForm, setCannedForm] = useState(null);
+  const [removing, setRemoving] = useState(null);
+  const [busy, setBusy] = useState(false);
   const rows = inboxes.data?.data ?? [];
   const avail = inboxes.data?.available_mailboxes ?? [];
+
+  /**
+   * The row already knows how many conversations it would take with it, so
+   * the dialog says the number rather than making the server refuse once to
+   * find out. ?discard=yes stands for having read it; the API still refuses
+   * a delete that arrives without it, for callers with no dialog.
+   */
+  async function deleteInbox() {
+    setBusy(true);
+    try {
+      await api.raw(`/inbox/inboxes/${removing.id}?discard=yes`, { method: 'DELETE' });
+      toast(`${removing.name} deleted`, 'success');
+      setRemoving(null);
+      inboxes.refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally { setBusy(false); }
+  }
 
   async function saveInbox() {
     try {
@@ -627,7 +647,14 @@ function InboxSetup() {
           { key: 'members', header: 'Round robin', render: (r) => r.members.join(', ') || '—' },
           { key: 'first_response_hours', header: 'Reply within', render: (r) => (r.first_response_hours ? `${r.first_response_hours} h` : 'Settings default') },
           { key: 'open', header: 'Open', align: 'right' },
-          { key: 'act', header: '', align: 'right', render: (r) => <button type="button" className="btn btn--sm btn--ghost" onClick={() => setForm({ ...r, members: r.members.join(', '), first_response_hours: r.first_response_hours || '', signature: r.signature || '' })}>Edit</button> },
+          {
+            key: 'act', header: '', align: 'right', render: (r) => (
+              <div className="table__actions">
+                <Button variant="ghost" size="sm" onClick={() => setForm({ ...r, members: r.members.join(', '), first_response_hours: r.first_response_hours || '', signature: r.signature || '' })}>Edit</Button>
+                <Button variant="ghost" size="sm" aria-label={`Delete ${r.name}`} onClick={() => setRemoving(r)}>Delete</Button>
+              </div>
+            ),
+          },
         ]} />
       </Card>
       <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>+ Response</button>}>
@@ -648,6 +675,18 @@ function InboxSetup() {
             <div className="span-all"><Field label="Signature"><Textarea rows={3} value={form.signature} onChange={set('signature')} /></Field></div>
           </div>
         </Modal>
+      )}
+      {removing && (
+        <ConfirmDialog
+          title={`Delete ${removing.name}?`}
+          message={removing.conversations
+            ? `Its ${removing.conversations} conversation${removing.conversations === 1 ? '' : 's'} lose their status, owner and reply clock. The emails themselves stay under the mailbox, and new mail to ${removing.email} stops reaching the inbox.`
+            : `Nothing has been routed to it yet. New mail to ${removing.email} stops reaching the inbox.`}
+          confirmLabel="Delete"
+          busy={busy}
+          onConfirm={deleteInbox}
+          onClose={() => setRemoving(null)}
+        />
       )}
       {cannedForm && (
         <Modal title={cannedForm.id ? 'Edit response' : 'New response'} onClose={() => setCannedForm(null)} footer={<><button type="button" className="btn" onClick={() => setCannedForm(null)}>Cancel</button><button type="button" className="btn btn--primary" disabled={!cannedForm.name.trim() || !cannedForm.body.trim()} onClick={saveCanned}>Save</button></>}>
