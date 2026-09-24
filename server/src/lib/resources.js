@@ -857,6 +857,25 @@ export const resources = {
       note: str(300),
     }),
   },
+
+  holidays: {
+    // The days nobody works (#73), which the working-day helpers in
+    // businessDate.ts skip. Read by everybody, because the figures sales
+    // and finance see count them; kept by an admin, like the rates above.
+    adminOnlyWrites: true,
+    table: 'holidays',
+    view: null,
+    label: 'Holiday',
+    defaultSort: 'holiday_on',
+    search: ['name'],
+    filters: [],
+    dateFilter: 'holiday_on',
+    columns: ['holiday_on', 'name'],
+    schema: z.object({
+      holiday_on: requiredDate(),
+      name: requiredStr(120),
+    }),
+  },
 };
 
 // The standard project lifecycle from the workbook's Onboarding sheet,

@@ -240,6 +240,7 @@ export const JUMPS = [
   // types — not "settings".
   { id: 'go-rates', verb: 'Exchange rates', to: '/settings/rates', icon: 'money', keywords: 'exchange rates currency fx usd eur conversion' },
   { id: 'go-assumptions', verb: 'Assumptions', to: '/settings/assumptions', icon: 'waiting', keywords: 'assumptions settings defaults terms thresholds' },
+  { id: 'go-holidays', verb: 'Holidays', to: '/settings/holidays', icon: 'waiting', keywords: 'holidays calendar working days closed off gazetted' },
   { id: 'go-users', verb: 'Users & roles', to: '/settings/users', icon: 'company', adminOnly: true, keywords: 'users people roles accounts passwords access' },
   { id: 'go-sign-in', verb: 'Sign-in methods', to: '/settings/sign-in', icon: 'company', adminOnly: true, keywords: 'sign in sso oauth microsoft google single sign on login providers' },
   { id: 'go-tokens', verb: 'API tokens', to: '/settings/tokens', icon: 'waiting', adminOnly: true, keywords: 'api tokens mcp claude assistant access' },

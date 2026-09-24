@@ -3,7 +3,7 @@ import { PageHeader } from '../App.jsx';
 import { PaneRail } from '../components/PaneRail.jsx';
 import { useAuth } from '../lib/auth.jsx';
 
-import { Assumptions, Catalogue, ExchangeRates, CATALOGUES } from './Settings.jsx';
+import { Assumptions, Catalogue, ExchangeRates, Holidays, CATALOGUES } from './Settings.jsx';
 import { CompanyProfile } from './CompanyProfile.jsx';
 import { ApiTokens } from '../components/ApiTokens.jsx';
 import { SignInMethods } from './SignInMethods.jsx';
@@ -69,6 +69,7 @@ const GROUPS = [
     label: 'Organisation',
     items: [
       { to: 'company', label: 'Company profile', element: <CompanyProfile />, adminOnly: true },
+      { to: 'holidays', label: 'Holidays', element: <Holidays /> },
     ],
   },
   {

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 import { revenueReport } from '../lib/revenueReport.js';
+import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 
 export const dashboardRouter = Router();
 
@@ -101,7 +102,7 @@ dashboardRouter.get('/overview', async (req, res) => {
  * To Invoice". Everything anyone has to act on today, in one place.
  */
 dashboardRouter.get('/worklist', async (req, res) => {
-  const [stages, vendors, claims, deliveries, gaps] = await Promise.all([
+  const [stages, vendors, claims, deliveries, gaps, holidays] = await Promise.all([
     query(`
       SELECT id, po_number, project_id, client_name, stage_no, stage_name,
              stage_amount, currency, invoice_no, invoice_date, document_id, document_name,
@@ -139,12 +140,22 @@ dashboardRouter.get('/worklist', async (req, res) => {
       FROM v_quotations
       WHERE status = 'Won - PO Received' AND project_id IS NULL
       ORDER BY quotation_date DESC NULLS LAST`),
+    query(`SELECT holiday_on FROM holidays`),
   ]);
+
+  // Days overdue stay calendar days, as every reminder counts them; this is
+  // the same lateness in the days somebody could have acted on it (#73).
+  const today = businessToday();
+  const off = new Set(holidays.rows.map((row) => row.holiday_on));
+  const withWorkingDays = (due) => (row) => ({
+    ...row,
+    working_days_overdue: row.days_overdue > 0 && row[due] ? workingDaysBetween(row[due], today, off) : null,
+  });
 
   res.json({
     data: {
-      payment_stages: stages.rows,
-      vendor_invoices: vendors.rows,
+      payment_stages: stages.rows.map(withWorkingDays('invoice_due_date')),
+      vendor_invoices: vendors.rows.map(withWorkingDays('pay_by')),
       expense_claims: claims.rows,
       late_deliveries: deliveries.rows,
       won_without_project: gaps.rows,
