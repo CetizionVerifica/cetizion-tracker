@@ -61,7 +61,7 @@ function PoCount({ row }) {
 
 const ORDER_COLUMNS = [
   { key: 'label', header: 'Month', className: 'strong' },
-  { key: 'orders_won', header: 'Orders won', align: 'right' },
+  { key: 'orders_won', header: 'Quotations won', align: 'right' },
   { key: 'order_intake_inr', header: 'Order intake (INR)', align: 'right', render: (row) => <Intake row={row} /> },
   { key: 'average_deal_inr', header: 'Average deal (INR)', align: 'right', render: (row) => inr(row.average_deal_inr, row.rate_details) },
 ];
@@ -87,10 +87,13 @@ const totalRow = (columns, total) =>
   ));
 
 /**
- * Revenue for the period chosen above the page: order intake from won
- * quotations, and invoicing, collections and payment status from purchase
- * orders — matching the Purchase orders list. Uses the same period as every
- * other section on the page, and the same period the PDF download covers.
+ * Revenue for the period chosen above the page: quotations won, by
+ * quotation date; invoicing, collections and payment status from purchase
+ * orders — matching the Purchase orders list, by their own PO date. The two
+ * are read from different tables and can disagree: a deal can be marked won
+ * with no PO registered yet, or its PO can land in a different month. Uses
+ * the same period as every other section on the page, and the same period
+ * the PDF download covers.
  */
 export function RevenueReport({ period }) {
   const qs = new URLSearchParams(Object.fromEntries(Object.entries(period).filter(([, v]) => v))).toString();
@@ -142,8 +145,8 @@ export function RevenueReport({ period }) {
           )}
 
           <Card
-            title={`Order intake by month · ${label}`}
-            hint="Quotations marked Won - PO Received, by quotation date · converted at the rate in force on the quotation date · Average deal = order intake ÷ orders with a value"
+            title={`Quotations won by month · ${label}`}
+            hint="Quotations marked Won - PO Received, by quotation date — not the same as the POs registered below, which can land in a different month · converted at the rate in force on the quotation date · Average deal = order intake ÷ orders with a value"
             flush
             actions={<CsvButton report="orders" params={period} disabled={!report.orders.total.orders_won} />}
           >

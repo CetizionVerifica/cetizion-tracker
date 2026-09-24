@@ -189,7 +189,7 @@ export default function SalesReport() {
 
             <Card
               title="Sector-wise POs"
-              hint="Enquiries by enquiry date, the rest by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
+              hint="Enquiries by enquiry date, POs won by PO date, lost and pipeline by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
               flush
               actions={<CsvButton report="sectors" params={params} disabled={!sectors.rows.length} />}
             >
@@ -226,7 +226,7 @@ export default function SalesReport() {
               />
             </Card>
 
-            <Card title="POs by sector" hint="Won quotations, grouped by the sector entered on them">
+            <Card title="POs by sector" hint="Registered purchase orders, grouped by the sector of the quotation they fulfil">
               <BarList
                 items={sectors.rows.filter((row) => row.pos > 0).map((row) => ({ label: row.sector, value: row.pos, extra: row }))}
                 valueFormat={(v, item) =>
@@ -237,13 +237,13 @@ export default function SalesReport() {
 
             <Card
               title="FX deals"
-              hint="Won POs billed in a currency other than INR · INR value = won value × the rate in force on the quotation date"
+              hint="Registered POs billed in a currency other than INR · INR value = won value × the rate in force on the PO date"
               flush
               actions={<CsvButton report="fx" params={params} disabled={!fx.rows.length} />}
             >
               <DataTable
                 columns={[
-                  { key: 'customer', header: 'Client', className: 'strong', render: (row) => <>{row.customer}<div className="small muted mono">{row.quotation_nos}</div></> },
+                  { key: 'customer', header: 'Client', className: 'strong', render: (row) => <>{row.customer}<div className="small muted mono">{row.po_numbers}</div></> },
                   {
                     key: 'sector',
                     header: 'Sector',
@@ -306,7 +306,7 @@ export default function SalesReport() {
 
             <Card
               title="Repeat clients"
-              hint="2 or more won POs up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the rate in force on each quotation date · Repeat orders = won POs after the first"
+              hint="2 or more POs registered up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the rate in force on each PO date · Repeat orders = POs after the first"
               flush
               actions={<CsvButton report="customers" params={params} disabled={!customers.rows.length} />}
             >

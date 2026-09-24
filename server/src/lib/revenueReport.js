@@ -304,7 +304,7 @@ const moneyColumns = (row) => ({
 export function ordersCsvRows({ orders }) {
   return [...orders.months, { label: 'Total', ...orders.total }].map((row) => ({
     Month: row.label,
-    'Orders won': row.orders_won,
+    'Quotations won': row.orders_won,
     'Order intake (INR)': row.order_intake_inr,
     'Average deal (INR)': row.average_deal_inr ?? '',
     'Orders with no value entered': row.orders_without_value,

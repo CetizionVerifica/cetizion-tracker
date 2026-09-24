@@ -84,7 +84,7 @@ function fixture(overrides = {}) {
       summary: { enquiries: 1, pos: 2, lost: 1, pipeline: 2, fx_deals: 1, win_rate: 2 / 3, sectors: 1, pos_without_sector: 1, amounts: [{ currency: 'INR', amount: 100000 }, { currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1281601 },
     },
     fx: {
-      rows: [{ customer: 'Midal Cables', sector: 'Not set', not_set: true, currency: 'EUR', deals: 1, deals_without_value: 0, amount: 10700, rate: 110.43, amount_inr: 1181601, quotation_nos: 'CTZ/QT/2026/045' }],
+      rows: [{ customer: 'Midal Cables', sector: 'Not set', not_set: true, currency: 'EUR', deals: 1, deals_without_value: 0, amount: 10700, rate: 110.43, amount_inr: 1181601, po_numbers: 'PO-2' }],
       summary: { deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], amount_inr: 1181601, missing_rates: [] },
     },
     customers: {
@@ -270,7 +270,7 @@ test('revenue follows the same period as the rest of the report, not a separate 
   const september = fixture({ period: narrowed, revenue: revenueFrom(ORDERS, POS, narrowed) });
   const text = textOf(salesReportDocDefinition(september));
   assert.ok(text.includes('Period: 01 Sep 2026 – 14 Sep 2026'));
-  assert.ok(text.includes('Order intake by month (INR), 01 Sep 2026 – 14 Sep 2026'));
+  assert.ok(text.includes('Quotations won by month (INR), 01 Sep 2026 – 14 Sep 2026'));
   assert.ok(text.includes('Every section covers 01 Sep 2026 – 14 Sep 2026: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.'));
   assert.ok(!text.includes('PLEASE NOTE'), 'no more "revenue covers a different period" disclaimer');
 });
