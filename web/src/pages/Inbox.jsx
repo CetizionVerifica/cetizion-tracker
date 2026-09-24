@@ -10,6 +10,7 @@ import {
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { useAuth } from '../lib/auth.jsx';
 import { date } from '../lib/format.js';
 
 /**
@@ -231,6 +232,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
 export default function Inbox() {
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'all';
+  const { isAdmin } = useAuth();
   const selected = params.get('c');
   const [q, setQ] = useState('');
   const sidebar = useContext(SidebarContext);
@@ -323,6 +325,23 @@ export default function Inbox() {
                   {v.label}
                 </button>
               ))}
+              {/* The setup screen existed at ?view=setup and nothing linked
+                  to it, so the only way to create an inbox — without which
+                  a shared mailbox routes nothing — was to type the URL.
+                  Admin-only, because only an admin can act on it. */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
+                  aria-label="Set up inboxes and canned responses"
+                  className={cn(
+                    'ml-auto rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Set up
+                </button>
+              )}
             </div>
           </div>
 
