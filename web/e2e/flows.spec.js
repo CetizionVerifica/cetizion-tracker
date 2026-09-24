@@ -14,14 +14,34 @@ const env = (() => {
   try { return Object.fromEntries(readFileSync(join(here, '..', '..', 'server', '.env'), 'utf8').split('\n').filter((l) => l.includes('=') && !l.startsWith('#')).map((l) => l.split('=').map((s) => s.trim()))); }
   catch { return {}; }
 })();
-const PASSWORD = process.env.E2E_PASSWORD || process.env.AUTH_PASSWORD || env.AUTH_PASSWORD || 'cetizion-dev';
-const USER = process.env.E2E_USERNAME || env.AUTH_USERNAME || 'admin';
 const stamp = Date.now().toString(36);
 
+/**
+ * Sign in the way the form does: by asking the server which question it
+ * will be asked.
+ *
+ * The deployment decides. `shared` mode wants the username and password
+ * from the environment; `database` mode wants an email and that account's
+ * password, and the form's first field is labelled differently in each. A
+ * test that hard-coded "Username" passed for a year and then failed on
+ * every case at once the day local dev moved to per-person sign-in — which
+ * is the same brittleness the form itself was written to avoid.
+ */
 async function signIn(page) {
+  const mode = (await (await page.request.get('/api/auth/config')).json()).data.mode;
+  const [label, who, password] = mode === 'database'
+    ? ['Email',
+      process.env.E2E_EMAIL || env.BOOTSTRAP_ADMIN_EMAIL,
+      process.env.E2E_PASSWORD || env.BOOTSTRAP_ADMIN_PASSWORD]
+    : ['Username',
+      process.env.E2E_USERNAME || env.AUTH_USERNAME || 'admin',
+      process.env.E2E_PASSWORD || process.env.AUTH_PASSWORD || env.AUTH_PASSWORD || 'cetizion-dev'];
+
+  expect(who, `no account to sign in with in ${mode} mode — set E2E_EMAIL and E2E_PASSWORD`).toBeTruthy();
+
   await page.goto('/');
-  await page.getByLabel('Username').fill(USER);
-  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByLabel(label, { exact: true }).fill(who);
+  await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   // The home page is a day, so its heading is today's date.
   await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
@@ -75,7 +95,14 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
 
 test('a wrong password is refused', async ({ page }) => {
   await page.goto('/');
-  await page.getByLabel('Username').fill(USER);
+  // Whichever field this deployment asks for, filled with something real,
+  // so what is being refused is the password and not the name.
+  const mode = (await (await page.request.get('/api/auth/config')).json()).data.mode;
+  const label = mode === 'database' ? 'Email' : 'Username';
+  const who = mode === 'database'
+    ? (process.env.E2E_EMAIL || env.BOOTSTRAP_ADMIN_EMAIL)
+    : (process.env.E2E_USERNAME || env.AUTH_USERNAME || 'admin');
+  await page.getByLabel(label, { exact: true }).fill(who);
   await page.getByLabel('Password').fill('not-the-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
   // A real alert, announced, not a div with a class on it.

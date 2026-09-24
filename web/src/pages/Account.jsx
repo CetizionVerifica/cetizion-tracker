@@ -218,8 +218,9 @@ export default function Account() {
           <div className="divide-y divide-border">
             {providers.length === 0 && identities.length === 0 && (
               <p className="px-5 py-4 text-[12.5px] text-muted-foreground">
-                This deployment signs in with a password only. An admin can connect Microsoft 365 or Google
-                in the environment; see <code className="text-secondary-text">.env.example</code>.
+                This deployment signs in with a password only. Connecting Microsoft 365 or Google is an
+                admin job, and <Link to="/settings/sign-in">Settings → Sign-in methods</Link> says exactly
+                what each one still needs.
               </p>
             )}
 
