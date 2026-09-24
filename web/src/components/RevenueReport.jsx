@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { Alert, Badge, Card, DataTable, ErrorState } from './ui.jsx';
+import { cn } from 'cn';
+import { Alert, Badge, Card, DataTable, Empty, ErrorState } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money, number, percent, periodLabel } from '../lib/format.js';
@@ -47,6 +48,29 @@ function GainLoss({ row }) {
   );
 }
 
+/** An INR amount, or the native currency with a "rate not set" note when it could not be converted. */
+function OverdueAmount({ inrValue, amount, currency }) {
+  if (inrValue !== null && inrValue !== undefined) return <span>{money(inrValue, 'INR')}</span>;
+  return (
+    <>
+      <span style={warn}>{money(amount, currency)}</span>
+      <div className="small muted">rate not set</div>
+    </>
+  );
+}
+
+/** The Total row's version: a summary already carries its own converted total plus what was left out. */
+function OverdueTotalAmount({ totalInr, unconverted }) {
+  return (
+    <>
+      {money(totalInr, 'INR')}
+      {unconverted.length > 0 && (
+        <div className="small" style={warn}>+ {unconverted.map((a) => money(a.amount, a.currency)).join(' · ')} (rate not set)</div>
+      )}
+    </>
+  );
+}
+
 function PoCount({ row }) {
   return (
     <>
@@ -78,10 +102,40 @@ const PO_MONEY_COLUMNS = [
 
 const INVOICING_COLUMNS = [{ key: 'label', header: 'Month', className: 'strong' }, ...PO_MONEY_COLUMNS];
 
+const OVERDUE_COLUMNS = [
+  { key: 'client', header: 'Client', className: 'strong' },
+  {
+    key: 'po_number',
+    header: 'PO',
+    render: (row) => (row.po_number
+      ? <Link className="mono" to={`/purchase-orders/${encodeURIComponent(row.po_number)}`}>{row.po_number}</Link>
+      : ''),
+  },
+  { key: 'invoice_no', header: 'Invoice', className: 'mono' },
+  { key: 'due_date', header: 'Due date' },
+  { key: 'days_overdue', header: 'Days overdue', align: 'right', render: (row) => (row.days_overdue != null ? number(row.days_overdue) : '') },
+  {
+    key: 'received_inr',
+    header: 'Received (INR)',
+    align: 'right',
+    render: (row) => ('due_now_amount' in row
+      ? <OverdueAmount inrValue={row.received_inr} amount={row.amount_received} currency={row.currency} />
+      : <OverdueTotalAmount totalInr={row.received_inr} unconverted={row.received_unconverted} />),
+  },
+  {
+    key: 'due_inr',
+    header: 'Due (INR)',
+    align: 'right',
+    render: (row) => ('due_now_amount' in row
+      ? <OverdueAmount inrValue={row.due_inr} amount={row.due_now_amount} currency={row.currency} />
+      : <OverdueTotalAmount totalInr={row.due_inr} unconverted={row.due_unconverted} />),
+  },
+];
+
 /** A Total row that renders each cell exactly like the column above it. */
 const totalRow = (columns, total) =>
   columns.map((col, i) => (
-    <td key={col.key} className={col.align === 'right' ? 'num' : ''}>
+    <td key={col.key} className={cn('px-3 py-2 align-top text-[13px]', col.align === 'right' && 'num text-right')}>
       {i === 0 ? 'Total' : col.render ? col.render(total) : number(total[col.key])}
     </td>
   ));
@@ -102,7 +156,11 @@ export function RevenueReport({ period }) {
   const report = data?.data;
   const label = periodLabel(period);
   const missingRates = report
-    ? [...new Set([...report.orders.total.order_unconverted.map((a) => a.currency), ...report.invoicing.total.missing_rates])].sort()
+    ? [...new Set([
+        ...report.orders.total.order_unconverted.map((a) => a.currency),
+        ...report.invoicing.total.missing_rates,
+        ...report.overdue_by_client.total.missing_rates,
+      ])].sort()
     : [];
   const poListUrl = (status) => `/purchase-orders?${new URLSearchParams({ payment_status: status, ...period })}`;
 
@@ -195,6 +253,20 @@ export function RevenueReport({ period }) {
               columns={statusColumns}
               rows={report.payment_status.rows.map((row) => ({ ...row, id: row.status }))}
               footer={totalRow(statusColumns, report.payment_status.total)}
+            />
+          </Card>
+
+          <Card
+            title={`Overdue by client · ${label}`}
+            hint="Every invoice overdue today, on a purchase order dated in the period · Due = invoiced − received on that invoice"
+            flush
+            actions={<CsvButton report="overdue" params={period} disabled={!report.overdue_by_client.total.invoices} />}
+          >
+            <DataTable
+              columns={OVERDUE_COLUMNS}
+              rows={report.overdue_by_client.rows.map((row, i) => ({ ...row, id: `${row.po_number}-${row.invoice_no ?? i}` }))}
+              footer={totalRow(OVERDUE_COLUMNS, report.overdue_by_client.total)}
+              empty={<Empty title="Nothing overdue in this period" />}
             />
           </Card>
         </>

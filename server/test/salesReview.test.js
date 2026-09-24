@@ -50,14 +50,20 @@ test('free-text services map to service lines, bundles to each line', () => {
   assert.deepEqual(serviceLinesFor('  '), [NO_SERVICE]);
 });
 
-test('service totals count each quotation once', () => {
+test('service totals count each quotation once, and "won" is a PO, not a status', () => {
   const report = serviceRows(
     [
       { service: 'EcoVadis, ISO 37001', status: 'Won - PO Received', quotation_value: 1000, currency: 'INR', rate: 1 },
       { service: 'ISO 27001', status: 'Lost', quotation_value: 500, currency: 'INR', rate: 1 },
       { service: 'LME Certification', status: 'Won - PO Received', quotation_value: 100, currency: 'USD', rate: null },
     ],
-    [{ service: 'ISO 9001' }]
+    [{ service: 'ISO 9001' }],
+    [
+      // "Won" is matched from these — the actual POs — by their own service
+      // text, not from the quotations' status above.
+      { po_number: 'PO-1', service: 'EcoVadis, ISO 37001', po_value: 1000, currency: 'INR', rate: 1 },
+      { po_number: 'PO-2', service: 'LME Certification', po_value: 100, currency: 'USD', rate: null },
+    ]
   );
   const iso = report.rows.find((row) => row.service.startsWith('ISO'));
   assert.deepEqual([iso.enquiries, iso.quotations, iso.won, iso.lost, iso.win_rate, iso.won_value_inr], [1, 2, 1, 1, 0.5, 1000]);

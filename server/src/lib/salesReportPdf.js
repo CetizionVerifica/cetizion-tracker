@@ -746,28 +746,28 @@ export function salesReportDocDefinition(data) {
   ];
 
   // ------------------------------------------------ 4. service-wise
-  // "Won" here is a quotation marked Won, by quotation date — not the
-  // registered-PO count Sector-wise and Client analysis use, since a PO
-  // carries no service breakdown of its own to match against a service line.
+  // "Won" is an actual PO (see serviceRows in salesReviewData.js), matched
+  // to a line by its own quotation's service text — the same PO-based
+  // definition Sector-wise and Client analysis use.
   const serviceBars = services.rows
     .filter((row) => row.won > 0)
     .sort((a, b) => a.other - b.other || b.won_value_inr - a.won_value_inr)
     .map((row) => ({
       label: row.service,
       value: row.won_value_inr,
-      valueLabel: `${row.won_value_inr ? compactInr(row.won_value_inr) : '—'}   (${plural(row.won, 'quotation')})`,
+      valueLabel: `${row.won_value_inr ? compactInr(row.won_value_inr) : '—'}   (${plural(row.won, 'PO')})`,
       color: row.other ? COLORS.pale : undefined,
     }));
   const serviceSection = [
     section(4, 'Service-wise sales', vA.lead, [
-      figure(5, 'Won value by service line (INR)', horizontalBars({ items: serviceBars, width: W, labelWidth: 170, valueWidth: 105, formatAxis: compactInr }), 'No quotations were won in this period.'),
+      figure(5, 'Won value by service line (INR)', horizontalBars({ items: serviceBars, width: W, labelWidth: 170, valueWidth: 105, formatAxis: compactInr }), 'No POs were won in this period.'),
     ]),
     reportTable({
       columns: [
         { header: 'Service line', value: (r) => r.service, totalLabel: 'Total (each quotation once)' },
         { header: 'Enquiries', value: (r) => number(r.enquiries), total: (s) => number(s.enquiries), align: 'right', width: 42 },
         { header: 'Quotations', value: (r) => number(r.quotations), total: (s) => number(s.quotations), align: 'right', width: 48 },
-        { header: 'Quotations won', value: (r) => number(r.won), total: (s) => number(s.won), align: 'right', width: 44 },
+        { header: 'POs won', value: (r) => number(r.won), total: (s) => number(s.won), align: 'right', width: 38 },
         { header: 'Lost', value: (r) => number(r.lost), total: (s) => number(s.lost), align: 'right', width: 28 },
         { header: 'Win %', value: (r) => percent(r.win_rate), total: (s) => percent(s.win_rate), align: 'right', width: 32 },
         {
@@ -993,6 +993,42 @@ export function salesReportDocDefinition(data) {
       }),
       revenue.payment_status.rows.length + 1
     ),
+    subsection(
+      'Overdue by client',
+      'Every invoice overdue today, on a purchase order dated in the period · Due = invoiced − received on that invoice',
+      reportTable({
+        columns: [
+          { header: 'Client', value: (r) => r.client },
+          { header: 'PO', value: (r) => r.po_number, width: 62 },
+          { header: 'Invoice', value: (r) => r.invoice_no || '—', width: 58 },
+          { header: 'Due date', value: (r) => dateLabel(r.due_date), width: 58 },
+          { header: 'Days overdue', value: (r) => number(r.days_overdue), align: 'right', width: 54 },
+          {
+            header: 'Received (INR)',
+            value: (r) => (r.received_rate !== null
+              ? money(r.received_inr)
+              : lines(money(r.amount_received, r.currency), note('rate not set', 'warnNote'))),
+            total: (s) => lines(money(s.received_inr), s.received_unconverted.length ? note(`+ ${amounts(s.received_unconverted)} (rate not set)`, 'warnNote') : null),
+            align: 'right',
+            width: 76,
+          },
+          {
+            header: 'Due (INR)',
+            value: (r) => (r.due_rate !== null
+              ? money(r.due_inr)
+              : lines(money(r.due_now_amount, r.currency), note('rate not set', 'warnNote'))),
+            total: (s) => lines(money(s.due_inr), s.due_unconverted.length ? note(`+ ${amounts(s.due_unconverted)} (rate not set)`, 'warnNote') : null),
+            align: 'right',
+            width: 76,
+          },
+        ],
+        rows: revenue.overdue_by_client.rows,
+        total: revenue.overdue_by_client.total,
+        empty: 'Nothing overdue in this period.',
+        compact: true,
+      }),
+      revenue.overdue_by_client.rows.length + 1
+    ),
   ];
 
   // ------------------------------------------------ 7. what to fix
@@ -1051,13 +1087,14 @@ export function salesReportDocDefinition(data) {
         `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
         'Enquiries are the rows on the Enquiries page, counted by their status there: open (New, Contacted, Qualified or Nurture), Unqualified, or Converted ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
-        `A PO won (Sector-wise performance, Client analysis, FX deals) is an actual purchase order registered in the Purchase Orders register, dated by its own PO date — not simply a quotation marked "${WON}": a quotation can be marked won with nothing registered yet, and one won quotation can carry more than one PO. "Quotations won" (Service-wise sales, Quotations won by month) counts the quotation itself, by quotation date, and can differ from the PO count for the same reason. Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
+        `A PO won (Sector-wise performance, Service-wise sales, Client analysis, FX deals) is an actual purchase order registered in the Purchase Orders register, dated by its own PO date — not simply a quotation marked "${WON}": a quotation can be marked won with nothing registered yet, and one won quotation can carry more than one PO. Service-wise sales matches each PO to a line by its own quotation's service text. "Quotations won" (Quotations won by month, in Revenue and collections) is the one exception: it counts the quotation itself, by quotation date, and can differ from the PO count for the same reason. Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
         'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',
         'Won value (INR) converts each quotation or PO at the exchange rate set in Settings, on its own date. An amount in a currency with no rate is shown separately, never guessed.',
         'Service lines are matched from the service text by keywords. A quotation naming several services counts in each of its lines; the Total row counts it once. "Other services" is text that matches no line.',
         'Clients and sectors are grouped by spelling: capital letters and extra spaces are ignored, any other difference is a separate name.',
-        'Repeat client = 2 or more POs registered up to the end of the period; every other client is a single enquiry client. Repeat orders = POs after a client\'s first.',
+        'Repeat client = 2 or more POs registered up to the end of the period; every other client is a single enquiry client. Repeat orders = POs after a client\'s first. A client with only a quotation lost in the period is not listed — a quotation still open (Submitted, Under Negotiation or On Hold) is, since it can still become a PO.',
         'Quotations won = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received on invoices that have been raised; work that is due to be billed but has no invoice yet is shown separately as To bill. Collection rate = received against invoices ÷ invoiced. Every amount is converted at the rate in force on its own date, so the INR Due now differs from invoiced − received by the realised FX movement, reported as FX gain / loss.',
+        'Overdue by client lists every invoice past its due date today, one row per invoice, for a PO dated in the period — the same invoices the Payment status Overdue row counts, broken out by client. Received and Due convert at the rate on the payment date and the invoice date respectively.',
         'The written analysis is produced from these figures by fixed rules, so the same data always reads the same way: a rate of 60% or more reads as strong and under 40% as weak; one sector with half of won value, or two clients with 35%, is flagged as concentration; under 50% of PO value invoiced, or under 70% of invoices collected, is named as the priority. No AI or outside service is used.',
       ],
       style: 'body',

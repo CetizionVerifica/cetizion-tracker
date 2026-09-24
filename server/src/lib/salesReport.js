@@ -327,8 +327,11 @@ export async function fxReport({ from, to }) {
 export const CLIENT_TYPES = { repeat: 'Repeat client', single: 'Single enquiry client' };
 
 /**
- * Every client with an enquiry or a quotation in the period, listed once
- * however many of each they have.
+ * Every client with an enquiry, a live quotation or a PO in the period,
+ * listed once however many of each they have. A quotation lost in the
+ * period does not by itself put a client on this report — see the clients
+ * CTE below — though its count still shows for a client who qualifies
+ * another way.
  *
  * Enquiries are the rows on the Enquiries page; an enquiry that became a
  * quotation is still one enquiry, and its quotation counts only under lost
@@ -361,10 +364,14 @@ export async function customerReport({ from, to }) {
         WHERE ${inPeriod('enquiry_date')}
      ),
      clients AS (
+       -- A quotation lost in the period does not, on its own, put a client
+       -- on this report: it is not a PO and it is not a chance still open.
+       -- A quotation still open (Submitted, Under Negotiation, On Hold) does
+       -- — there is still a chance it becomes a PO — same as a won one does.
        SELECT client_key, mode() WITHIN GROUP (ORDER BY client_name) AS client
          FROM (SELECT client_key, client_name FROM po WHERE in_period
                UNION ALL
-               SELECT client_key, client_name FROM q WHERE in_period
+               SELECT client_key, client_name FROM q WHERE in_period AND NOT is_lost
                UNION ALL
                SELECT client_key, client_name FROM e) names
         GROUP BY client_key

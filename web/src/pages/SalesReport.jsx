@@ -67,12 +67,12 @@ const CLIENT_COLUMNS = [
 function ClientTotals({ label, s }) {
   return (
     <>
-      <td>{label}</td>
-      <td className="num">{number(s.enquiries)}</td>
-      <td className="num">{number(s.pos)}</td>
-      <td className="num">{percent(s.win_rate)}</td>
-      <td className="num"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} rateDetails={s.rate_details} /></td>
-      <td className="num">{number(s.repeat_orders)}</td>
+      <td className="px-3 py-2 align-top text-[13px]">{label}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.enquiries)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.pos)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(s.win_rate)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} rateDetails={s.rate_details} /></td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.repeat_orders)}</td>
     </>
   );
 }
@@ -212,14 +212,14 @@ export default function SalesReport() {
                 rows={sectors.rows}
                 footer={
                   <>
-                    <td>Total</td>
-                    <td className="num">{number(sectors.summary.enquiries)}</td>
-                    <td className="num">{number(sectors.summary.pos)}</td>
-                    <td className="num">{number(sectors.summary.lost)}</td>
-                    <td className="num">{number(sectors.summary.pipeline)}</td>
-                    <td className="num">{percent(sectors.summary.win_rate)}</td>
-                    <td className="num"><Amounts list={sectors.summary.amounts} /></td>
-                    <td className="num">{number(sectors.summary.fx_deals)}</td>
+                    <td className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.enquiries)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.pos)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.lost)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.pipeline)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(sectors.summary.win_rate)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right"><Amounts list={sectors.summary.amounts} /></td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.fx_deals)}</td>
                   </>
                 }
                 empty={<Empty title="No enquiries or quotations in this period" />}
@@ -288,11 +288,11 @@ export default function SalesReport() {
                 rows={fx.rows}
                 footer={
                   <>
-                    <td colSpan={3}>Total</td>
-                    <td className="num">{number(fx.summary.deals)}</td>
-                    <td className="num"><Amounts list={fx.summary.amounts} /></td>
-                    <td />
-                    <td className="num">
+                    <td colSpan={3} className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(fx.summary.deals)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right"><Amounts list={fx.summary.amounts} /></td>
+                    <td className="px-3 py-2 align-top text-[13px]" />
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">
                       {money(fx.summary.amount_inr, 'INR')}
                       {fx.summary.missing_rates.length > 0 && (
                         <div className="small" style={{ color: 'var(--warn-fg)' }}>excludes {fx.summary.missing_rates.join(', ')}</div>
@@ -348,19 +348,19 @@ export default function SalesReport() {
                 ]}
                 footer={
                   <>
-                    <td>Total</td>
-                    <td className="num">{number(customers.summary.total.clients)}</td>
-                    <td className="num">{number(customers.summary.total.enquiries)}</td>
-                    <td className="num">{number(customers.summary.total.pos)}</td>
-                    <td className="num">{percent(customers.summary.total.win_rate)}</td>
-                    <td className="num">
+                    <td className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.clients)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.enquiries)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.pos)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(customers.summary.total.win_rate)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">
                       <InrValue
                         value={customers.summary.total.won_value_inr}
                         unconverted={customers.summary.total.unconverted}
                         withoutValue={customers.summary.total.pos_without_value}
                       />
                     </td>
-                    <td className="num">{number(customers.summary.total.repeat_orders)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.repeat_orders)}</td>
                   </>
                 }
               />

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { money, reportTimeZone, salesReportDocDefinition, salesReportPdf } from '../src/lib/salesReportPdf.js';
-import { monthRows, paymentStatusRows, summariseOrders, summarisePurchaseOrders } from '../src/lib/revenueReport.js';
+import {
+  monthRows, paymentStatusRows, summariseOrders, summariseOverdue, summarisePurchaseOrders,
+} from '../src/lib/revenueReport.js';
 import { contractPipeline, enquirySummary, quotationStatusSummary, serviceRows } from '../src/lib/salesReviewData.js';
 
 // Report data in the exact shapes the report modules return; the revenue,
@@ -11,12 +13,13 @@ const group = (extra) => ({
   pos_without_value: 0, unconverted: [], ...extra,
 });
 
-function revenueFrom(orders, pos, period = { from: '2026-01-01', to: '2026-12-31' }) {
+function revenueFrom(orders, pos, period = { from: '2026-01-01', to: '2026-12-31' }, overdue = []) {
   const poTotal = summarisePurchaseOrders(pos);
   return {
     orders: { months: monthRows(orders, period, summariseOrders), total: summariseOrders(orders) },
     invoicing: { months: monthRows(pos, period, summarisePurchaseOrders), total: poTotal },
     payment_status: { rows: paymentStatusRows(pos), total: poTotal },
+    overdue_by_client: { rows: overdue, total: summariseOverdue(overdue) },
     years: [2026],
     rates: [{ currency: 'EUR', rate: 110.43 }],
   };
@@ -101,7 +104,7 @@ function fixture(overrides = {}) {
     revenue: revenueFrom(ORDERS, POS),
     enquiries: enquirySummary(ENQUIRIES, period),
     quotationStatus: quotationStatusSummary(QUOTE_STATUS, period),
-    services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }]),
+    services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }], CONTRACT_POS),
     contracts: contractPipeline(CONTRACT_POS),
     gaps: GAPS,
     ...overrides,

@@ -287,7 +287,7 @@ export async function salesReviewSections(period) {
   return {
     enquiries: enquirySummary(enquiries.rows, period),
     quotationStatus: quotationStatusSummary(quotations.rows, period),
-    services: serviceRows(quotations.rows, enquiries.rows),
+    services: serviceRows(quotations.rows, enquiries.rows, purchaseOrders.rows),
     contracts: contractPipeline(purchaseOrders.rows),
   };
 }
@@ -296,8 +296,20 @@ export async function enquiryReport(period) {
   return enquirySummary((await enquiryRows(period)).rows, period);
 }
 
-/** Quotations and enquiries per service line, named lines first by won value. */
-export function serviceRows(quotations, enquiries) {
+/**
+ * Quotations, enquiries and won POs per service line, named lines first by
+ * won value.
+ *
+ * "Won" is an actual purchase order (purchaseOrderRows — see PO_RESOLVED's
+ * reasoning in salesReport.js), matched to a line by its own quotation's
+ * service text — the same text "quotations" is bucketed by, so a PO never
+ * lands somewhere its own quotation would not. Pipeline is read straight
+ * off matched quotations that are neither lost nor won, not by subtracting
+ * won from quotations: a line's PO count and its quotation count are two
+ * different tallies (one quotation can spawn more than one PO, or none
+ * yet), so that arithmetic would not hold.
+ */
+export function serviceRows(quotations, enquiries, purchaseOrders = []) {
   // Each quotation is classified three times below (bucketing, bundled,
   // unmatched) and service texts repeat, so match each distinct text once.
   // The arrays are shared between rows and must not be modified.
@@ -309,39 +321,42 @@ export function serviceRows(quotations, enquiries) {
   };
 
   const names = [...SERVICE_LINES.map((line) => line.name), OTHER_SERVICE, NO_SERVICE];
-  const lines = new Map(names.map((name) => [name, { service: name, enquiries: 0, list: [] }]));
+  const lines = new Map(names.map((name) => [name, { service: name, enquiries: 0, list: [], pos: [] }]));
   for (const e of enquiries) for (const name of linesOf(e.service)) lines.get(name).enquiries += 1;
   for (const q of quotations) for (const name of linesOf(q.service)) lines.get(name).list.push(q);
+  for (const p of purchaseOrders) for (const name of linesOf(p.service)) lines.get(name).pos.push(p);
 
-  const summarise = (list) => {
-    const won = list.filter((q) => q.status === WON);
-    const lost = list.filter((q) => q.status === LOST).length;
-    return {
-      quotations: list.length,
-      won: won.length,
-      lost,
-      pipeline: list.length - won.length - lost,
-      win_rate: share(won.length, won.length + lost),
-      ...wonValue(won),
-    };
-  };
+  const summariseQuotations = (list) => ({
+    quotations: list.length,
+    lost: list.filter((q) => q.status === LOST).length,
+    pipeline: list.filter((q) => q.status !== WON && q.status !== LOST).length,
+  });
+  const summarisePos = (pos) => ({
+    won: pos.length,
+    ...wonValue(pos.map((p) => ({ quotation_value: p.po_value, currency: p.currency, rate: p.rate }))),
+  });
   const unmatched = (q) => linesOf(q.service).some((name) => name === OTHER_SERVICE || name === NO_SERVICE);
 
   const rows = [...lines.values()]
-    .filter((line) => line.enquiries || line.list.length)
-    .map(({ list, ...line }) => ({
-      ...line,
-      other: line.service === OTHER_SERVICE || line.service === NO_SERVICE,
-      ...summarise(list),
-    }))
+    .filter((line) => line.enquiries || line.list.length || line.pos.length)
+    .map(({ list, pos, ...line }) => {
+      const merged = {
+        ...line,
+        other: line.service === OTHER_SERVICE || line.service === NO_SERVICE,
+        ...summariseQuotations(list),
+        ...summarisePos(pos),
+      };
+      return { ...merged, win_rate: share(merged.won, merged.won + merged.lost) };
+    })
     .sort((a, b) => a.other - b.other || b.won_value_inr - a.won_value_inr || b.quotations - a.quotations || b.enquiries - a.enquiries);
 
+  const summaryBase = { enquiries: enquiries.length, ...summariseQuotations(quotations), ...summarisePos(purchaseOrders) };
   return {
     rows,
-    // Totals count each quotation once, however many lines it is in.
+    // Totals count each quotation (or PO) once, however many lines it is in.
     summary: {
-      enquiries: enquiries.length,
-      ...summarise(quotations),
+      ...summaryBase,
+      win_rate: share(summaryBase.won, summaryBase.won + summaryBase.lost),
       bundled: quotations.filter((q) => linesOf(q.service).length > 1).length,
       unmatched: quotations.filter(unmatched).length,
     },
@@ -349,8 +364,10 @@ export function serviceRows(quotations, enquiries) {
 }
 
 export async function serviceReport(period) {
-  const [quotations, enquiries] = await Promise.all([quotationRows(period), enquiryRows(period)]);
-  return serviceRows(quotations.rows, enquiries.rows);
+  const [quotations, enquiries, purchaseOrders] = await Promise.all([
+    quotationRows(period), enquiryRows(period), purchaseOrderRows(period),
+  ]);
+  return serviceRows(quotations.rows, enquiries.rows, purchaseOrders.rows);
 }
 
 /** Quotation statuses as they read: still open first, then the outcome. */

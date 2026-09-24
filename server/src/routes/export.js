@@ -7,7 +7,7 @@ import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
 import {
-  invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
+  invoicingCsvRows, ordersCsvRows, overdueCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
@@ -42,10 +42,12 @@ const SALES_REPORTS = {
   orders: { build: revenueReport, toRows: ordersCsvRows },
   invoicing: { build: revenueReport, toRows: invoicingCsvRows },
   'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
+  overdue: { build: revenueReport, toRows: overdueCsvRows },
 };
 
-// Report builders started at once for the PDF. Two of them fan out into
-// several queries each, so at most 5 of the pool's 10 connections are in use.
+// Report builders started at once for the PDF. The two that fan out the
+// most are revenueReport (4 queries) and salesReviewSections (3), so at
+// most 7 of the pool's 10 connections are in use at a time.
 const REPORT_CONCURRENCY = 2;
 
 /**
