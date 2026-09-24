@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -64,7 +64,10 @@ CREATE INDEX exchange_rates_lookup_idx
 -- already present, so a seeded or imported database numbers on from there.
 CREATE TABLE sequence_counters (
   kind       text NOT NULL,
-  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$'),
+  -- A calendar year for five of the six series, and a financial year â€”
+  -- '26-27' â€” for the invoice series, which runs April to March the way a
+  -- GST invoice series has to.
+  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$' OR year ~ '^[0-9]{2}-[0-9]{2}$'),
   last_n     int  NOT NULL DEFAULT 0 CHECK (last_n >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (kind, year)
@@ -570,6 +573,16 @@ CREATE TABLE payment_stages (
 
 CREATE INDEX ON payment_stages (po_number);
 
+-- A GST invoice series has to be unbroken and unrepeated for the company,
+-- not merely unique within one order. Stages not yet invoiced hold NULL,
+-- and NULLs do not collide.
+--
+-- Migration 046 adds this to an existing database only when its data
+-- already satisfies it, because a number typed in by hand years ago may
+-- be duplicated and a migration that throws stops the container.
+CREATE UNIQUE INDEX payment_stages_invoice_no_key
+  ON payment_stages (invoice_no) WHERE invoice_no IS NOT NULL;
+
 -- ---------------------------------------------------------------------
 -- Engagements: what a client holds and when it renews (#28)
 -- ---------------------------------------------------------------------
@@ -610,8 +623,8 @@ CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, servic
 CREATE TABLE payments (
   id           serial PRIMARY KEY,
   stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
-  -- A receipt is positive. An adjustment — someone correcting a total that
-  -- was typed too high — is a negative row, so the ledger still adds up to
+  -- A receipt is positive. An adjustment ï¿½ someone correcting a total that
+  -- was typed too high ï¿½ is a negative row, so the ledger still adds up to
   -- the figure on the stage. Writing the figure by hand instead left the
   -- correction to be undone by the next receipt.
   amount       numeric(16,2) NOT NULL,
@@ -997,7 +1010,7 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, it repeats at the interval below.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies
@@ -1330,6 +1343,14 @@ CREATE TABLE IF NOT EXISTS users (
   -- It only ever goes up, so reactivating an account never hands its old
   -- cookies back. See migrations/016_session_version.sql.
   session_version integer NOT NULL DEFAULT 1,
+  -- What a person may change about themselves (C20, 049). Role, email and
+  -- active are facts about their job and stay on the admin screens.
+  phone          text,
+  signature      text,
+  time_zone      text,
+  -- Which emails they want. {} means the defaults, so nobody is silently
+  -- unsubscribed from everything by the column arriving.
+  notify         jsonb NOT NULL DEFAULT '{}'::jsonb,
   last_login_at  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
@@ -1355,6 +1376,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Sign in with Microsoft 365 or Google (C18, 048). One person, several ways
+-- in. Nothing here creates a person: an identity attaches to a users row an
+-- admin has already added. users_active_needs_login above is deliberately
+-- unchanged, so a linked provider is an extra door rather than the only one.
+CREATE TABLE IF NOT EXISTS auth_identities (
+  id            serial PRIMARY KEY,
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider      text NOT NULL CHECK (provider IN ('microsoft', 'google')),
+  -- The provider's immutable id for the person. Email can change; this
+  -- cannot, so it is what a returning sign-in is matched on.
+  subject       text NOT NULL CHECK (btrim(subject) <> ''),
+  email         text,
+  linked_at     timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_subject_idx ON auth_identities (provider, subject);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_user_provider_idx ON auth_identities (user_id, provider);
+
+-- Sessions you can see and end (C20, 049). The cookie still proves who
+-- somebody is; this row is what can be taken away, which is what makes
+-- "sign out that phone" a real button rather than a list nobody can act on.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  via           text NOT NULL DEFAULT 'password' CHECK (via IN ('password', 'microsoft', 'google')),
+  user_agent    text,
+  ip            text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions (user_id, last_seen_at DESC);
 
 -- ---------------------------------------------------------------------
 -- Notifications (#44)
@@ -2249,5 +2303,53 @@ CREATE TABLE IF NOT EXISTS activity_log (
 CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_id, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
+
+-- ---------------------------------------------------------------------
+-- Saved views: the pinned list in the sidebar, and every report.
+--
+-- A view is a resource, a set of filters and a name. That is enough to be
+-- three things at once â€” a sidebar entry with the count behind it, a
+-- preset on a list page, and, with `chart` set, a report, because a report
+-- here is a filtered list with a summary above it.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS saved_views (
+  id          serial PRIMARY KEY,
+  -- The resource key the API already knows, e.g. 'payment-stages'. Checked
+  -- against the resource registry on write: that registry is the one true
+  -- list and it lives in the code.
+  resource    text NOT NULL,
+  name        text NOT NULL,
+  -- The query the list endpoint would have been given. Re-validated
+  -- against the resource's declared filters on every read, so a filter
+  -- dropped from a resource stops being applied rather than erroring.
+  filters     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Null is everybody's; a username makes it one person's.
+  owner       text,
+  pinned      boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0,
+  -- What the count means, so the sidebar can colour it.
+  tone        text CHECK (tone IN ('late', 'waiting', 'settled', 'info')),
+  chart       text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Two views both called "Mine" on the same list is a bug reported later.
+CREATE UNIQUE INDEX IF NOT EXISTS saved_views_name_key
+  ON saved_views (resource, lower(name), COALESCE(owner, ''));
+CREATE INDEX IF NOT EXISTS saved_views_pinned_idx
+  ON saved_views (pinned, sort_order) WHERE pinned;
+
+-- The three the sidebar starts with. Rows, not code, so they can be
+-- renamed, reordered or unpinned without a deploy. Seeded only into an
+-- empty table, so a site that has made its own is left alone.
+INSERT INTO saved_views (resource, name, filters, pinned, sort_order, tone, chart)
+SELECT * FROM (VALUES
+  ('payment-stages', 'Overdue money', '{"stage_status":"Overdue"}'::jsonb, true, 1, 'late', 'ageing'),
+  ('payment-stages', 'To invoice',    '{"stage_status":"To Invoice"}'::jsonb, true, 2, 'waiting', NULL),
+  ('quotations',     'Open deals',    '{"status":"Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
+) AS seed(resource, name, filters, pinned, sort_order, tone, chart)
+WHERE NOT EXISTS (SELECT 1 FROM saved_views);
 
 COMMIT;

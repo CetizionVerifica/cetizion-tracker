@@ -1,23 +1,37 @@
 import { useState } from 'react';
+import { Check, MoreHorizontal } from 'lucide-react';
+import { cn } from 'cn';
 
+import { SettingsPane } from '../pages/SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { date } from '../lib/format.js';
-import { Badge, Card, DataTable, Empty, ErrorState, Field, Input, Modal, Select, useToast } from './ui.jsx';
+import { ago } from '../lib/format.js';
+import { ErrorState, Field, Input, Modal, Select as LegacySelect, useToast } from './ui.jsx';
+import { initialsOf } from './record.jsx';
+import { Button } from './ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 /**
- * Who may sign in (#18).
+ * Who may sign in (#18), on C11's shape.
  *
- * Deliberately built out of the same pieces as every other screen — Card,
- * DataTable, Modal, Field — because Issue #17 replaces this front end
- * wholesale and anything clever here would only be thrown away twice.
+ * Two kinds of row land in this table and the design is careful to draw
+ * them differently. People who sign in have an email and a password.
+ * Names carried over from the workbook's free-text "sales person" column
+ * have neither — they exist so the records they are attached to keep
+ * making sense — and they get a dashed mark and an invitation rather than
+ * being dressed up as accounts nobody can use.
  *
- * Two kinds of row show up in this table. People who sign in have an email
- * and a password; names carried over from the old free-text "sales person"
- * column have neither, and are shown as what they are rather than dressed
- * up as accounts nobody can use.
+ * **Two roles, not four.** C11 proposes Admin, Sales, Finance and
+ * Delivery, and says so itself: "the code has two roles". It stays at two
+ * here. `users.role` carries `CHECK (role = ANY (ARRAY['admin','sales']))`
+ * and `requireRole` exists but is mounted nowhere except as
+ * `requireAdmin`, so a Finance option would be a control implying a
+ * permission model that neither the database nor the routes have. The
+ * four sidebar preview cards C11 draws beside this table are part of that
+ * same proposal and are left undrawn for the same reason.
  *
- * Hiding this tab from a sales user is a courtesy, not the lock: every
+ * Hiding this pane from a sales user is a courtesy, not the lock: every
  * route it calls is behind requireAdmin on the server.
  */
 
@@ -25,6 +39,9 @@ const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'sales', label: 'Sales' },
 ];
+
+const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';
+const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 
 /** Server-side field errors, shown against the field that caused them. */
 const fieldErrors = (err) => err?.fields ?? {};
@@ -34,82 +51,141 @@ export function UsersAdmin() {
   const { data, loading, error, refetch } = useFetch(() => api.users.list());
   const [editing, setEditing] = useState(null); // user | 'new' | null
   const [resetting, setResetting] = useState(null);
+  const [busy, setBusy] = useState(null);
 
   const users = data?.data ?? [];
   const minPassword = data?.limits?.min_password_length ?? 12;
 
-  async function toggleActive(user) {
+  async function update(user, body, message) {
+    setBusy(user.id);
     try {
-      await api.users.update(user.id, { active: !user.active });
-      toast(user.active ? `${user.name} can no longer sign in` : `${user.name} can sign in again`, 'success');
+      await api.users.update(user.id, body);
+      toast(message, 'success');
       refetch();
     } catch (err) {
       toast(err.message, 'danger');
+    } finally {
+      setBusy(null);
     }
   }
 
-  const columns = [
-    {
-      key: 'name',
-      header: 'Name',
-      className: 'strong',
-      render: (u) => (
-        <>
-          {u.name}
-          <div className="small muted">
-            {u.email ?? <em>no email — kept for attribution only</em>}
-          </div>
-        </>
-      ),
-    },
-    { key: 'role', header: 'Role', render: (u) => <Badge tone={u.role === 'admin' ? 'info' : 'neutral'}>{u.role}</Badge> },
-    {
-      key: 'active',
-      header: 'Signs in',
-      render: (u) => <Badge tone={u.active ? 'success' : 'neutral'}>{u.active ? 'Yes' : 'No'}</Badge>,
-    },
-    {
-      key: 'last_login_at',
-      header: 'Last signed in',
-      render: (u) => (u.last_login_at ? date(u.last_login_at) : <span className="muted">Never</span>),
-    },
-    {
-      key: 'act',
-      header: '',
-      align: 'right',
-      render: (u) => (
-        <div className="table__actions">
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(u)}>Edit</button>
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => setResetting(u)}>Password</button>
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggleActive(u)}>
-            {u.active ? 'Deactivate' : 'Activate'}
-          </button>
-        </div>
-      ),
-    },
-  ];
+  const toggleActive = (user) => update(
+    user,
+    { active: !user.active },
+    user.active ? `${user.name} can no longer sign in` : `${user.name} can sign in again`
+  );
 
   return (
     <>
-      <Card
-        flush
-        title="Users"
-        hint="Who may sign in, and what they may do. Deactivating somebody ends their session on their next request — there is no deleting, so the records they are attached to keep making sense."
-        actions={
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => setEditing('new')}>+ User</button>
-        }
+      <SettingsPane
+        title="Users & roles"
+        description="Who can sign in and what they see. Names carried over from the workbook’s “sales person” column have no login and are kept for attribution only."
+        actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Invite someone</Button>}
       >
+
         {error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
-          <DataTable
-            loading={loading}
-            columns={columns}
-            rows={users}
-            empty={<Empty title="No users yet" text="Add the first one, then switch AUTH_MODE to database." />}
-          />
+          <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+            <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
+              <span>Person</span><span>Role</span><span>Signs in</span><span>Last seen</span><span />
+            </div>
+
+            {loading && !users.length ? (
+              <div className="skeleton" style={{ height: 120, margin: 18 }} />
+            ) : users.length === 0 ? (
+              <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
+                Nobody yet. Add the first one, then switch AUTH_MODE to database.
+              </p>
+            ) : users.map((user, i) => {
+              const attributionOnly = !user.email;
+              return (
+                <div
+                  key={user.id}
+                  className={cn('grid gap-3 px-5 py-3 @3xl:items-center @3xl:gap-4', GRID, i < users.length - 1 && 'border-b border-border')}
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className={cn(
+                      'grid size-7 flex-none place-items-center rounded-full text-[10.5px] font-semibold',
+                      attributionOnly ? 'border border-dashed border-[#3a3a42] bg-secondary text-muted-foreground' : 'bg-accent text-primary'
+                    )}>
+                      {initialsOf(user.name)}
+                    </span>
+                    <div className="min-w-0">
+                      <div className={cn('truncate text-[13px] font-medium', attributionOnly ? 'text-secondary-text' : 'text-foreground')}>
+                        {user.name}
+                      </div>
+                      <div className="text-[12px] break-words text-muted-foreground">
+                        {user.email ?? <em>no email — attribution only, from the workbook</em>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {attributionOnly ? (
+                      <span className="text-[12.5px] text-muted-foreground">—</span>
+                    ) : (
+                      <Select
+                        value={user.role}
+                        disabled={busy === user.id}
+                        onValueChange={(role) => update(user, { role }, `${user.name} is now ${role}`)}
+                      >
+                        <SelectTrigger size="sm" className="h-7 w-full text-[12.5px]" aria-label={`Role for ${user.name}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ROLES.map((r) => <SelectItem key={r.value} value={r.value} className="text-[12.5px]">{r.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+
+                  <div className="text-[12.5px]">
+                    {user.active ? (
+                      <span className="inline-flex items-center gap-1.5 font-medium text-settled">
+                        <Check className="size-3" strokeWidth={2.6} aria-hidden="true" />Yes
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">No</span>
+                    )}
+                  </div>
+
+                  <div className="text-[12.5px] text-secondary-text">
+                    {ago(user.last_login_at) ?? <span className="text-muted-foreground">never</span>}
+                  </div>
+
+                  <div className="flex items-center gap-1 @3xl:justify-end">
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" onClick={() => setEditing(user)}>
+                      {attributionOnly ? 'Invite' : 'Edit'}
+                    </Button>
+                    {!attributionOnly && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`More actions for ${user.name}`}>
+                            <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem className="text-[13px]" onSelect={() => setResetting(user)}>Set a new password</DropdownMenuItem>
+                          <DropdownMenuItem className="text-[13px]" onSelect={() => toggleActive(user)}>
+                            {user.active ? 'Stop them signing in' : 'Let them sign in again'}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
-      </Card>
+
+        <p className="max-w-[70ch] text-[12px]/[1.6] text-muted-foreground">
+          Hiding a screen from a role is a courtesy; every route stays behind <code className="mono">requireAdmin</code> on
+          the server. Passwords are {minPassword}+ characters. Deactivating somebody ends their session on their next
+          request — there is no deleting, so the records they are attached to keep making sense.
+        </p>
+      </SettingsPane>
 
       {editing && (
         <UserForm
@@ -140,7 +216,6 @@ export function UsersAdmin() {
   );
 }
 
-/** Create a user, or change a name, email and role. Never a password. */
 function UserForm({ user, minPassword, onClose, onSaved }) {
   const isNew = !user;
   const [form, setForm] = useState({
@@ -217,7 +292,7 @@ function UserForm({ user, minPassword, onClose, onSaved }) {
         </Field>
 
         <Field label="Role" required error={errors.role}>
-          <Select value={form.role} onChange={set('role')} options={ROLES} placeholder={null} error={errors.role} disabled={busy} />
+          <LegacySelect value={form.role} onChange={set('role')} options={ROLES} placeholder={null} error={errors.role} disabled={busy} />
         </Field>
 
         {isNew && (

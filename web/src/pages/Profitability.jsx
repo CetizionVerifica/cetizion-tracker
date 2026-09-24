@@ -56,7 +56,7 @@ export default function Profitability() {
           <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} title="POs to" />
         </>} />
       <div className="page stack">
-        <div className="grid grid--stats">
+        <div className="auto-grid--stats">
           <Stat label="Revenue" value={money(revenue)} />
           <Stat label="Cost" value={money(sum('total_cost'))} meta={`${money(sum('cost_committed'))} committed`} />
           <Stat label="Margin" value={money(margin)} meta={revenue > 0 ? `${((100 * margin) / revenue).toFixed(1)}%` : ''} tone={margin < 0 ? 'danger' : ''} />

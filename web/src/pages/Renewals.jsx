@@ -39,7 +39,7 @@ export default function Renewals() {
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {t && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label="Active" value={t.active} meta="tracked engagements" />
             <Stat label="Due in 30 days" value={t.due_30} tone={t.due_30 > 0 ? 'warn' : ''} />
             <Stat label="Due in 90 days" value={t.due_90} />

@@ -27,7 +27,7 @@ export default function TravelDashboard() {
 
         {d && (
           <>
-            <div className="grid grid--stats">
+            <div className="auto-grid--stats">
               <Stat label="Trips logged" value={number(d.snapshot.trips)} tone="brand" />
               <Stat label="Total travel cost" value={money(d.snapshot.total_cost)} meta="Vendor bills plus employee claims" />
               <Stat label="Vendor invoiced" value={money(d.snapshot.vendor_cost)} meta={`${money(d.snapshot.vendor_paid)} paid`} />
@@ -44,7 +44,7 @@ export default function TravelDashboard() {
               />
             </div>
 
-            <div className="grid grid--2">
+            <div className="auto-grid grid--2">
               <Card title="Spend by travel vendor" hint="Total trip cost booked through each vendor">
                 <BarList items={d.by_vendor} valueFormat={(v, item) => `${money(v)} · ${item.count} trip(s)`} />
               </Card>

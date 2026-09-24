@@ -1,5 +1,6 @@
 import { ApiError } from '../middleware/error.js';
 import { findUserById } from '../lib/users.js';
+import { sessionIsLive } from '../lib/sessions.js';
 import { authConfig } from './config.js';
 import { sessionSubject, verifySession } from './session.js';
 
@@ -63,6 +64,7 @@ export async function currentUser(req) {
   //                                   stayed there — reactivating never
   //                                   lowers it, so the old cookie is
   //                                   dead for good
+  //   signed out from another device  the user_sessions row is revoked
   //
   // requireAuth turns every one of them into the same "your session has
   // ended" 401. Telling them apart would answer, to whoever still holds a
@@ -73,10 +75,15 @@ export async function currentUser(req) {
   // still switched off.
   if (!row || !row.active) return null;
   if (row.session_version !== subject.sv) return null;
+  // One more read, and it is the one that makes "sign out that phone" mean
+  // anything: a revoked row ends this request even though the signature is
+  // still perfectly good.
+  if (!(await sessionIsLive(subject.sid, row.id))) return null;
 
   return {
     mode: 'database',
     id: row.id,
+    sessionId: subject.sid,
     // Same key the older routes read, so they keep recording who acted.
     username: row.email,
     name: row.name,

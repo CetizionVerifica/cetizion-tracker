@@ -57,7 +57,7 @@ export default function Pipeline() {
       <div className="page stack">
         {error && <Card><span style={{ color: 'var(--danger-fg)' }}>{error}</span></Card>}
         {board && (
-          <div className="grid grid--3">
+          <div className="auto-grid grid--3">
             <Card title="Open pipeline" hint="INR quotations in open stages">
               <div className="stat__value">{money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.value, 0))}</div>
               <div className="small muted">weighted {money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.weighted, 0))} · {board.cards.filter((c) => c.stale).length} stale</div>

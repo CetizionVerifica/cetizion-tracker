@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
-import { claimNextId } from '../lib/sequences.js';
+import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
+import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
 
 export const projectRouter = Router();
 export const poRouter = Router();
@@ -65,13 +66,27 @@ projectRouter.get('/:projectId/full', async (req, res) => {
     query('SELECT * FROM v_quotations WHERE project_id = $1 ORDER BY quotation_date', [id]),
   ]);
 
+  // The checklist steps that another record owns answer for themselves,
+  // and they are worked out here rather than in the client: a derived
+  // figure belongs next to the rows it is derived from, like every other
+  // rollup in this codebase.
+  const context = {
+    project: project.rows[0],
+    purchase_orders: pos.rows,
+    services: services.rows,
+    payment_stages: stages.rows,
+    travel: travel.rows,
+  };
+  const checklist = withDerivedSteps(onboarding.rows, context);
+
   res.json({
     data: {
       project: project.rows[0],
       purchase_orders: pos.rows,
       services: services.rows,
       payment_stages: stages.rows,
-      onboarding: onboarding.rows,
+      onboarding: checklist,
+      onboarding_progress: onboardingProgress(checklist),
       travel: travel.rows,
       quotations: quotations.rows,
     },
@@ -365,8 +380,22 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
 // Finance actions — the two things finance actually does to a stage
 // ---------------------------------------------------------------------
 
+/**
+ * `invoice_no` is optional, and leaving it out is the better path.
+ *
+ * A GST invoice series has to be unbroken and unrepeated, and a number the
+ * client read a moment ago is not that: two people raising invoices at the
+ * same time both preview the same next number and both send it back.
+ * Omitted, the number is claimed inside the transaction below — the same
+ * guarantee quotation numbers have had since #14 — and two concurrent
+ * callers queue for it rather than colliding.
+ *
+ * It stays accepted because an invoice raised outside the tracker, or one
+ * being recorded after the fact, has a number of its own that must be
+ * kept.
+ */
 const invoiceSchema = z.object({
-  invoice_no: z.preprocess(blank, z.string().trim().min(1, 'Invoice number is required').max(60)),
+  invoice_no: z.preprocess(blank, z.string().trim().min(1).max(60).nullable().optional()),
   invoice_date: z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')),
   document_id: z.number().int().positive().nullable().optional(),
 });
@@ -386,9 +415,17 @@ stageRouter.post('/:id/invoice', async (req, res) => {
       current: stage.document_id,
       requested: body.document_id,
     });
+
+    // Claimed here, inside the transaction, so concurrent callers queue for
+    // the number instead of being handed the same one. The financial year
+    // comes from the invoice's own date, not from today: an invoice dated
+    // 28 March belongs to the year that is ending, whenever it is entered.
+    const invoiceNo = body.invoice_no
+      ?? await claimNextId('invoice', client, financialYear(body.invoice_date));
+
     await client.query(
       'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
-      [body.invoice_no, body.invoice_date, documentId, stage.id]
+      [invoiceNo, body.invoice_date, documentId, stage.id]
     );
     return { id: stage.id, replaced };
   });

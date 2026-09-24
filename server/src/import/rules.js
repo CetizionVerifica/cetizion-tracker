@@ -28,6 +28,7 @@
 import { parseMoney } from './parse.js';
 import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.ts';
+import { financialYear } from '../lib/sequences.js';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
@@ -68,17 +69,24 @@ function plusMonths(iso, n) {
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 
-/** Indian financial year for a date: 2026-03-07 -> "2025-26", 2026-07-08 -> "2026-27". */
-export function financialYear(iso) {
-  const [y, m] = iso.split('-').map(Number);
-  const start = m >= 4 ? y : y - 1;
-  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
-}
+/**
+ * Re-exported so callers of this module keep working, but there is only
+ * one implementation now.
+ *
+ * There used to be two, and they disagreed: this one wrote 2026-27 and
+ * the series wrote 26-27, so one company's GST invoice series was being
+ * numbered in two shapes at once — and the counter, which matches on the
+ * prefix, could not see the imported half. It would have handed out a
+ * number already in the books.
+ */
+export { financialYear };
 
 export function invoiceNumber(raw, date, prefix) {
   const s = String(raw).trim();
   if (new RegExp(`^${prefix}/`, 'i').test(s)) return s;          // already in full form
-  if (/^\d{4}-\d{2}\//.test(s)) return `${prefix}/${s}`;         // "2026-27/PI-003" carries its own year
+  // A sheet may carry its own year in either shape, and a number that
+  // arrives whole is kept whole: these are invoices that already exist.
+  if (/^\d{4}-\d{2}\//.test(s) || /^\d{2}-\d{2}\//.test(s)) return `${prefix}/${s}`;
   return `${prefix}/${financialYear(date)}/${s}`;
 }
 
