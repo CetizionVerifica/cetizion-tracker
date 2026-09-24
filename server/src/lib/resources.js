@@ -106,7 +106,7 @@ export const resources = {
     label: 'Company',
     defaultSort: 'name',
     search: ['name', 'sector', 'city', 'gstin'],
-    filters: ['sector', 'city'],
+    filters: ['sector', 'city', 'contacts'],
     normalizedFilters: ['sector', 'city'],
     columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
     schema: z.object({
@@ -211,7 +211,7 @@ export const resources = {
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -361,7 +361,7 @@ export const resources = {
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
-    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name'],
+    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id'],
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',

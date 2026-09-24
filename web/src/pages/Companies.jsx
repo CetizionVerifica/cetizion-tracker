@@ -73,7 +73,10 @@ export default function Companies() {
         onRowClick={(row) => navigate(`/companies/${row.id}`)}
         refreshToken={refresh}
         onSaved={() => { invalidateLookups(); setRefresh((n) => n + 1); }}
-        filters={[{ name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] }]}
+        filters={[
+          { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
+          { name: 'contacts', label: 'Contacts', options: [{ value: '0', label: 'None' }] },
+        ]}
         banner={pairs.length > 0 && (
           <Alert tone="warning">
             <strong>{pairs.length} pair{pairs.length === 1 ? '' : 's'} look like one client spelt twice.</strong> Merging moves every record and contact to the first name and deletes the second.
