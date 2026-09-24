@@ -12,3 +12,11 @@ server/import/
 .DS_Store
 .mcp.json
 Issue-18-ANALYSIS.md
+
+# Local one-off pages written for Shyam, kept out of the repo.
+/cetizion-on-twenty.html
+/twenty-workspace-update.html
+/twenty-workspace-update.pdf
+
+# Design handoff bundles from claude.ai/design: local reference, not source.
+*-handoff.zip

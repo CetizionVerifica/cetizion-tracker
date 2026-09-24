@@ -144,6 +144,10 @@ function clientView(q, a) {
     quotation: {
       quotation_no: q.quotation_no, revision: q.revision, quotation_date: q.quotation_date, valid_until: q.valid_until,
       client_name: q.client_name, contact_name: q.contact?.name || q.contact_person || null, service_quoted: q.service_quoted,
+      // Who prepared it. Already signed at the bottom of the email that
+      // carried this link, so the page is not telling the client anything
+      // new — it is telling them who to reply to.
+      sales_person: q.sales_person || null,
       currency: q.currency, subtotal: q.subtotal, tax_total: q.tax_total, total: q.total ?? q.quotation_value, terms: q.terms,
       lines: q.lines.map((l) => ({ description: l.description || l.service_name, qty: l.qty, unit: l.unit, rate: l.rate, discount_percent: l.discount_percent, gst_rate: l.gst_rate, amount: l.amount })),
     },

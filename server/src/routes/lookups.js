@@ -4,7 +4,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
-import { isSequence, nextId } from '../lib/sequences.js';
+import { isSequence, nextId, yearFor } from '../lib/sequences.js';
 
 export const lookupRouter = Router();
 
@@ -146,10 +146,22 @@ settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
  * Suggest the next reference in a series (CTZ/QT/2026/063, PRJ-2026-008).
  * Only a suggestion — the field stays editable, and uniqueness is still
  * enforced by the database.
+ *
+ * `?on=YYYY-MM-DD` asks for the number the record's own date would take,
+ * rather than today's. It matters for the invoice series, which counts by
+ * financial year: an invoice dated 28 March belongs to the year that is
+ * ending, so a preview taken on 2 April would otherwise show a number the
+ * save will not use. Without it, today's year is assumed, which is right
+ * for every other series and for most of the year in this one.
  */
 lookupRouter.get('/next-id/:kind', async (req, res) => {
-  if (!isSequence(req.params.kind)) {
+  const { kind } = req.params;
+  if (!isSequence(kind)) {
     return res.status(404).json({ error: { message: 'Unknown id series' } });
   }
-  res.json({ data: { next: await nextId(req.params.kind) } });
+  const on = req.query.on ? String(req.query.on) : null;
+  if (on && !/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+    return res.status(422).json({ error: { message: 'Use YYYY-MM-DD for `on`', fields: { on: 'A date, as YYYY-MM-DD' } } });
+  }
+  res.json({ data: { next: await nextId(kind, undefined, yearFor(kind, on)) } });
 });

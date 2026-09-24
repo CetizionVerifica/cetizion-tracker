@@ -97,8 +97,15 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
 
     assert.deepEqual(Object.keys(byName).sort(), [
       'active', 'created_at', 'email', 'id', 'last_login_at',
-      'name', 'password_hash', 'role', 'session_version', 'updated_at',
+      'name', 'notify', 'password_hash', 'phone', 'role', 'session_version',
+      'signature', 'time_zone', 'updated_at',
     ]);
+    // The four a person owns about themselves (C20). All optional: an
+    // account created before the column existed is not made invalid by it.
+    for (const own of ['phone', 'signature', 'time_zone']) {
+      assert.equal(byName[own].is_nullable, 'YES', own);
+    }
+    assert.equal(byName.notify.is_nullable, 'NO', 'notify defaults to {} rather than null');
     assert.equal(byName.name.is_nullable, 'NO');
     assert.equal(byName.role.is_nullable, 'NO');
     assert.equal(byName.active.is_nullable, 'NO');
@@ -251,12 +258,22 @@ describe('users', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => 
   test('updated_at follows an edit, the way every other table does', async () => {
     await clean();
     const { rows } = await insertRow(login('touch@example.com'));
-    const before = await scalar('SELECT updated_at FROM users WHERE id = $1', [rows[0].id]);
+
+    // Compared in Postgres, and carried as text between the two reads.
+    // timestamptz keeps microseconds; a JavaScript Date keeps
+    // milliseconds, so reading both into JS and comparing them failed
+    // whenever the insert and the update landed in the same millisecond —
+    // which on a fast machine is most of the time. The trigger was always
+    // firing; the assertion was losing the difference.
+    const before = await scalar('SELECT updated_at::text FROM users WHERE id = $1', [rows[0].id]);
 
     await db.query(`UPDATE users SET name = 'Renamed' WHERE id = $1`, [rows[0].id]);
 
-    const after = await scalar('SELECT updated_at FROM users WHERE id = $1', [rows[0].id]);
-    assert.ok(after > before, 'updated_at moved');
+    const moved = await scalar(
+      'SELECT updated_at > $2::timestamptz FROM users WHERE id = $1',
+      [rows[0].id, before]
+    );
+    assert.ok(moved, 'updated_at moved');
   });
 
   // -------------------------------------------------------- the data layer

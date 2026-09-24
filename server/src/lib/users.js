@@ -23,7 +23,11 @@ import { hashPassword } from './passwords.js';
 
 export const ROLES = ['admin', 'sales'];
 
-const COLUMNS = 'id, name, email, password_hash, role, active, session_version, last_login_at, created_at, updated_at';
+// The profile columns (C20) are here so findUserById answers the account
+// page in one read. withoutSecrets still strips the hash, which is the only
+// column on this table that must never leave it.
+const COLUMNS = 'id, name, email, password_hash, role, active, session_version, '
+  + 'phone, signature, time_zone, notify, last_login_at, created_at, updated_at';
 
 /** Trimmed as typed, or null when there is nothing there. Case is kept: it is the reader's, not the index's. */
 export function normalizeEmail(email) {

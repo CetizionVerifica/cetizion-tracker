@@ -53,6 +53,22 @@ export function periodLabel({ from, to } = {}) {
   return 'All time';
 }
 
+const MINUTE = 60_000;
+
+/** "12 min ago", "2 hours ago", "3 days ago" — or null when never. */
+export function ago(value) {
+  if (!value) return null;
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) return null;
+  const mins = Math.floor((Date.now() - then.getTime()) / MINUTE);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 export function today() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(

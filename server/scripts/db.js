@@ -67,9 +67,43 @@ async function createDatabase() {
   }
 }
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '']);
+const ESCAPE_HATCH = 'ALLOW_REMOTE_REBUILD';
+
+/**
+ * `migrate` drops every table and rebuilds from schema.sql.
+ *
+ * In Rails, Django, Prisma, Knex, Alembic and Laravel, "migrate" means
+ * "apply what has not run yet and keep my data". Here it means the
+ * opposite, and `db:upgrade` — the longer, less obvious name — is the safe
+ * one. README, DOCUMENTS.md and docs/SALES-REPORTS.md all warn about it in
+ * prose, and prose did not stop the author of this guard from emptying the
+ * shared dev database while checking that a migration had applied.
+ *
+ * So: it refuses any host that is not this machine, names the host and the
+ * database it refused, and points at the command that was meant. A genuine
+ * remote rebuild sets ALLOW_REMOTE_REBUILD=yes, which cannot happen by
+ * reflex. `reset` inherits this, which is right — `reset` is destructive by
+ * contract and its name says so.
+ */
+function refuseRemoteRebuild() {
+  const { host, database } = parse(config.databaseUrl);
+  if (LOCAL_HOSTS.has(host) || process.env[ESCAPE_HATCH] === 'yes') {
+    console.log(`• about to DROP and rebuild every table in "${database}" on ${host || 'localhost'}`);
+    return;
+  }
+  console.error(
+    `✗ refusing to rebuild "${database}" on ${host}: this command drops every table, and that host is not this machine.\n` +
+    '  To apply pending migrations and keep the data, run:  npm run db:upgrade\n' +
+    `  To rebuild a remote database on purpose, run:        ${ESCAPE_HATCH}=yes npm run migrate`
+  );
+  process.exit(1);
+}
+
 const commands = {
   create: createDatabase,
   migrate: async () => {
+    refuseRemoteRebuild();
     await run('schema.sql');
     await run('views.sql');
     // schema.sql already holds every migration, so none may run on top of it.

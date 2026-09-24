@@ -1,0 +1,745 @@
+@import "tailwindcss";
+
+/**
+ * Cetizion, from the v2 redesign (design project "Cetizion Tracker UI Mockups").
+ *
+ * The design is dark and only dark, so its palette is the root palette and
+ * `.dark` repeats it rather than inverting: a stray `dark` class cannot make
+ * the app light, and neither can a user's system setting.
+ *
+ * Its own rules, kept here because they are the thing that makes the screens
+ * look like one product:
+ *
+ *   Radius   6px chips and inputs · 10px cards · 14px overlays. Three values.
+ *   Heights  32 control · 36 table row · 44 touch. Three values.
+ *   Spacing  a 4px grid; gaps are 8, 12, 16, 24, 32 — never 7, 9, 11.
+ *   Type     24/600 page title · 15/600 section · 13/400 body and cells.
+ *   Money    mono and tabular, always.
+ *   Status   never hue alone; every state carries a word or an icon too.
+ *   Motion   120-180ms, and nothing at all under prefers-reduced-motion.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* The design's third text tone, at 9.8:1. Without this line the raw
+     `--secondary-text` var exists but `text-secondary-text` is not a
+     utility Tailwind knows, so every use of it compiled to nothing and
+     the text quietly inherited whatever was above it. */
+  --color-secondary-text: var(--secondary-text);
+
+  /* The four states the tracker actually has. Named for what they mean,
+     not for their hue, because the hue is the least of what says it. */
+  --color-late: var(--late);
+  --color-late-foreground: var(--late-foreground);
+  --color-waiting: var(--waiting);
+  --color-waiting-foreground: var(--waiting-foreground);
+  --color-settled: var(--settled);
+  --color-settled-foreground: var(--settled-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-forecast: var(--forecast);
+  --color-forecast-foreground: var(--forecast-foreground);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Three radii, the design's own. --radius is the card. */
+  --radius-sm: 6px;
+  --radius-md: 6px;
+  --radius-lg: var(--radius);
+  --radius-xl: 14px;
+
+  --font-sans: "Geist", "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Three heights, the design's own. */
+  --spacing-control: 32px;
+  --spacing-row: 36px;
+  --spacing-touch: 44px;
+}
+
+:root {
+  --radius: 10px;
+
+  --background: #050506;         /* ground */
+  --foreground: #f4f4f6;
+  --card: #141417;               /* card */
+  --card-foreground: #f4f4f6;
+  --popover: #141417;
+  --popover-foreground: #f4f4f6;
+
+  --primary: #2ee0b8;            /* accent */
+  --primary-foreground: #06120f; /* ink, for text on the accent */
+
+  --secondary: #191920;
+  --secondary-foreground: #f4f4f6;
+
+  --muted: #0e0e10;              /* canvas */
+  --muted-foreground: #8e8e99;   /* meta, 5.4:1 — never load-bearing */
+
+  --accent: #1d1d21;             /* hover surface, not the brand accent */
+  --accent-foreground: #f4f4f6;
+
+  --destructive: #ff8095;
+  --destructive-foreground: #06120f;
+
+  --border: #26262b;             /* line */
+  --input: #26262b;
+  --ring: #2ee0b8;
+
+  --late: #ff8095;
+  --late-foreground: #06120f;
+  --waiting: #f0b45e;
+  --waiting-foreground: #06120f;
+  --settled: #4fd8b6;
+  --settled-foreground: #06120f;
+  --info: #7db6ff;
+  --info-foreground: #06120f;
+
+  /* A forecast band on a chart: the quietest thing that is still a thing.
+     The design names #2a2a32, which is a step and a half above the card and
+     disappears at a glance; this is the same intent at 3:1 against it, so a
+     bar you are asked to compare can actually be seen. */
+  --forecast: #4c4c58;
+  --forecast-foreground: #f4f4f6;
+
+  /* Secondary text: #b9b9c2 at 9.8:1. Not muted — muted is the meta line. */
+  --secondary-text: #b9b9c2;
+
+  --sidebar: #0e0e10;
+  --sidebar-foreground: #b9b9c2;
+  --sidebar-primary: #2ee0b8;
+  --sidebar-primary-foreground: #06120f;
+  --sidebar-accent: #1d1d21;
+  --sidebar-accent-foreground: #f4f4f6;
+  --sidebar-border: #26262b;
+  --sidebar-ring: #2ee0b8;
+}
+
+/* Dark is the only mode, so the class changes nothing. */
+.dark {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv01";
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A reference number or an amount is read by its shape, so it is mono and
+     tabular wherever it appears. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus is visible and generous: a 3px ring, offset by 2, on everything
+     that takes focus — the design asks for this by name. */
+  :focus-visible {
+    outline: 3px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Prose caps at 68ch; table cells wrap rather than truncate. */
+  .measure {
+    max-width: 68ch;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * The classes the pages already use.
+ *
+ * 39 pages say `btn`, `muted`, `small`, `page`, `stack`. Restyling those
+ * against the design's tokens moves every page at once; rewriting them to
+ * Tailwind classes one by one would take weeks and change nothing a user
+ * can see. They go when a page is converted for another reason, not before.
+ * --------------------------------------------------------------------- */
+@layer components {
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+  }
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  /* Named for what they are, so neither can collide with a Tailwind
+     utility the way a bare `.grid` did. */
+  /* One minimum for every band of tiles, so a page that stacks an alert
+     row above a stat row gets the same column count in both and the tiles
+     line up down the page. Two minimums 20px apart gave 4 columns then 5,
+     which read as two grids that had nothing to do with each other. */
+  .auto-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .auto-grid--stats { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  /* The old modifiers, kept so the pages using them still lay out. */
+  .grid--stats { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .grid--2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .grid--3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .span-all { grid-column: 1 / -1; }
+
+  .muted { color: var(--muted-foreground); }
+  .small { font-size: 12px; }
+  .strong { font-weight: 600; color: var(--foreground); }
+  .num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* Four button kinds, the design's own: primary, secondary, ghost,
+     destructive. Height 32, radius 6, and a focus ring that is visible. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    font: 500 13px/1 var(--font-sans);
+    cursor: pointer;
+    transition: background-color 150ms, border-color 150ms, color 150ms;
+  }
+  .btn:hover:not(:disabled) { background: var(--accent); border-color: var(--muted-foreground); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn--primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+  }
+  .btn--primary:hover:not(:disabled) { background: #4fd8b6; border-color: #4fd8b6; }
+  .btn--ghost { background: transparent; border-color: transparent; color: var(--secondary-text); }
+  .btn--ghost:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+  .btn--danger {
+    background: transparent;
+    border-color: color-mix(in oklab, var(--late) 40%, transparent);
+    color: var(--late);
+  }
+  .btn--danger:hover:not(:disabled) { background: color-mix(in oklab, var(--late) 12%, transparent); }
+  .btn--sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+  .input, .select, .textarea {
+    width: 100%;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--input);
+    border-radius: 6px;
+    background: var(--secondary);
+    color: var(--foreground);
+    font: 400 13px/1 var(--font-sans);
+  }
+  .textarea { height: auto; min-height: 80px; padding: 8px 10px; line-height: 1.5; }
+  .input::placeholder, .textarea::placeholder { color: var(--muted-foreground); }
+  .has-error { border-color: var(--late); }
+
+  .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .table__actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .skeleton {
+    background: linear-gradient(90deg, var(--secondary), var(--accent), var(--secondary));
+    background-size: 200% 100%;
+    border-radius: 6px;
+    animation: cetizion-shimmer 1.4s infinite;
+  }
+  @keyframes cetizion-shimmer {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
+  }
+}
+
+/* The rest of what the pages still name. The client-facing acceptance and
+   portal pages keep their own small set, because they are seen by people
+   outside the company and are worth leaving alone until last. */
+@layer components {
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar .input, .toolbar .select { width: auto; min-width: 180px; }
+  /* A filter in the page header sizes to itself. Left at the `width: 100%`
+     a form field wants, each one claims the whole actions column and the
+     row becomes a stack — which is what the Schedule filters were doing. */
+  .page-actions .input, .page-actions .select { width: auto; min-width: 150px; }
+  .spacer { flex: 1; }
+  .nowrap { white-space: nowrap; }
+  .card__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .table-wrap { width: 100%; overflow-x: auto; }
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th {
+    height: 36px;
+    padding: 0 12px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .table tbody tr:hover { background: var(--accent); }
+
+  .kv__k { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+  .kv__v { font-size: 13px; color: var(--foreground); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--secondary);
+    font-size: 12px;
+    color: var(--secondary-foreground);
+  }
+  .chart-label { font-size: 12px; color: var(--muted-foreground); }
+  .contact-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .portal__row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .portal__item { display: flex; flex-direction: column; gap: 2px; }
+
+  /* The client-facing acceptance page: its own light-touch rules, on the
+     same tokens so it reads as the same product. */
+  .accept { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; display: flex; flex-direction: column; gap: 16px; }
+  .accept__card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 20px; }
+  .accept__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  .accept__seller { font-size: 12px; color: var(--muted-foreground); }
+  .accept__muted { color: var(--muted-foreground); font-size: 12.5px; }
+  .accept__form { display: flex; flex-direction: column; gap: 12px; }
+  .accept__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .accept__done { border-radius: 10px; border: 1px solid var(--border); padding: 20px; text-align: center; }
+  .accept__done--ok { border-color: color-mix(in oklab, var(--settled) 40%, transparent); color: var(--settled); }
+  .accept__error { color: var(--late); }
+}
+
+@layer components {
+  /* A row already on the site, in the import review. The tint is a hint;
+     the row also says so in words. */
+  .tr--dup { background: color-mix(in oklab, var(--waiting) 10%, transparent); }
+  .tr--dup:hover { background: color-mix(in oklab, var(--waiting) 16%, transparent); }
+}
+
+/* ---------------------------------------------------------------------
+ * A filter in a header sizes to itself, and this rule is deliberately
+ * unlayered.
+ *
+ * The kit's fields are `w-full`, because they are built for forms. In a
+ * header that makes each one claim the whole row, which on a phone pushed
+ * the page past the viewport. `w-full` is a Tailwind utility, and the
+ * utilities layer beats the components layer whatever the specificity —
+ * so a rule that overrides it has to sit outside the layers altogether.
+ *
+ * Scoped to the two containers that hold header filters, so it cannot
+ * reach a field in a form.
+ * --------------------------------------------------------------------- */
+.card__actions > select,
+.card__actions > input,
+.page-actions > select,
+.page-actions > input {
+  width: auto;
+  min-width: 8rem;
+  max-width: 100%;
+}
+.card__actions { min-width: 0; }
+
+/* ---------------------------------------------------------------------
+ * The screens that are more than a card and a table.
+ *
+ * Seven features draw something of their own — a board, a calendar, a
+ * chart, a timeline, a two-pane inbox, a sign-in, a client page — and each
+ * had its own rules before. Restated here on the v2 tokens, because a
+ * feature with no rules at all does not degrade to plain: it degrades to
+ * text running together, which is what the board and the cash-flow chart
+ * were doing.
+ * --------------------------------------------------------------------- */
+@layer components {
+  /* --------------------------------------------------------- sign-in */
+
+  /* One card on the ground colour, with the accent only as a wash behind
+     it — the sign-in is the first thing anyone sees and the design asks
+     for calm here, not for the brand shouting. */
+  .auth {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background:
+      radial-gradient(60ch 40ch at 50% 0%, color-mix(in oklab, var(--primary) 7%, transparent), transparent 70%),
+      var(--background);
+  }
+  .auth__checking { color: var(--muted-foreground); font-size: 13px; }
+  .auth__card {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 28px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+  }
+  .auth__brand { display: flex; align-items: center; gap: 12px; }
+  .auth__logo {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .auth__title { font-size: 17px; font-weight: 600; }
+  .auth__tagline { font-size: 12px; color: var(--muted-foreground); }
+  .btn--block { width: 100%; }
+
+  /* ------------------------------------------------------- the board */
+
+  /* Columns scroll sideways and cards are grabbable, so both need to look
+     it: the column is a well in the canvas colour, the card sits on the
+     card colour above it. */
+  .kanban { display: flex; align-items: flex-start; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+  .kanban__col {
+    flex: 0 0 264px;
+    max-width: 100%;
+    min-height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--muted);
+  }
+  .kanban__col.is-over { border-color: var(--primary); background: color-mix(in oklab, var(--primary) 8%, var(--muted)); }
+  .kanban__col--lost { background: color-mix(in oklab, var(--late) 6%, var(--muted)); }
+  .kanban__head {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 10px 10px 0 0;
+    background: var(--card);
+  }
+  .kanban__cards { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+  .kanban__card {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    cursor: grab;
+    transition: border-color 140ms ease;
+  }
+  .kanban__card:hover { border-color: var(--primary); }
+  /* Stale and dragging both say so in the card's own text as well. */
+  .kanban__card.is-stale { border-left: 3px solid var(--late); }
+  .kanban__card.is-dragging { opacity: 0.5; cursor: grabbing; }
+  .stat__value { margin-top: 6px; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  @media (max-width: 600px) { .kanban__col { flex-basis: 220px; } }
+
+  /* ---------------------------------------------------- the timeline */
+
+  /* #22's activity feed. The icon is tinted by what happened, and the kind
+     is also written in the line beside it. */
+  .timeline { list-style: none; margin: 0; padding: 8px 0 4px; }
+  .timeline__item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .timeline__item:last-child { border-bottom: none; }
+  .timeline__icon {
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--secondary);
+    color: var(--secondary-text);
+    font-size: 11px;
+  }
+  .timeline__item--note .timeline__icon { background: color-mix(in oklab, var(--waiting) 18%, transparent); color: var(--waiting); }
+  .timeline__item--task .timeline__icon { background: color-mix(in oklab, var(--info) 18%, transparent); color: var(--info); }
+  .timeline__item--email .timeline__icon { background: color-mix(in oklab, var(--primary) 18%, transparent); color: var(--primary); }
+  .timeline__item--file .timeline__icon { background: color-mix(in oklab, var(--settled) 18%, transparent); color: var(--settled); }
+  .timeline__body { flex: 1; min-width: 0; }
+  .timeline__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .timeline__when { margin-left: auto; white-space: nowrap; font-size: 12px; color: var(--muted-foreground); }
+  .timeline__detail { margin-top: 4px; white-space: pre-wrap; font-size: 13px; color: var(--secondary-text); }
+  .timeline__actions { display: flex; gap: 4px; margin-top: 4px; }
+
+  /* ------------------------------------------------ cash-flow (#40) */
+
+  /* Money in solid, pipeline on top in a lighter accent, money out in the
+     late colour. Three bands, and the numbers repeat all three. */
+  .cashflow { display: flex; flex-direction: column; gap: 6px; }
+  .cashflow__row {
+    display: grid;
+    grid-template-columns: 110px 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .cashflow__row:hover,
+  .cashflow__row.is-open { background: var(--accent); }
+  .cashflow__label { font-size: 13px; font-weight: 600; }
+  .cashflow__bars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .cashflow__bar { display: flex; height: 10px; overflow: hidden; border-radius: 999px; background: var(--secondary); }
+  .cashflow__in { display: block; height: 100%; background: var(--primary); }
+  .cashflow__pipe { display: block; height: 100%; background: color-mix(in oklab, var(--primary) 40%, var(--secondary)); }
+  .cashflow__out { display: block; height: 100%; background: var(--late); }
+  .cashflow__nums { display: flex; gap: 12px; white-space: nowrap; font-size: 12px; color: var(--secondary-text); }
+  @media (max-width: 700px) {
+    .cashflow__row { grid-template-columns: 1fr; gap: 4px; }
+    .cashflow__nums { flex-wrap: wrap; gap: 8px; }
+  }
+
+  /* -------------------------------------------- synced email (#29/#30) */
+
+  .inbox { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+  .inbox__list tr { cursor: pointer; }
+  .inbox__list tr.is-selected { background: color-mix(in oklab, var(--primary) 10%, transparent); }
+  @media (max-width: 1000px) { .inbox { grid-template-columns: minmax(0, 1fr); } }
+
+  .mail { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .mail--outbound { border-left: 3px solid var(--primary); }
+  .mail__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: var(--muted); }
+  .mail__when { margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
+  .mail__snippet { padding: 8px 12px; color: var(--secondary-text); }
+  /* The message itself is somebody else's HTML, written for a white page.
+     Rendering it on the dark ground turns dark text invisible, so the frame
+     stays white and reads as a quoted document. The height here is only the
+     starting point — MailBody measures the document and sets the real one,
+     so a one-line email is one line tall. */
+  .mail__body { display: block; width: 100%; height: 120px; border: 0; background: #ffffff; }
+
+  /* -------------------------------------------- visit schedule (#42) */
+
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--border); }
+  .cal__head {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .cal__day {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 92px;
+    min-width: 0;
+    padding: 4px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .cal__day.is-blank { background: var(--muted); }
+  .cal__num { align-self: flex-start; font-size: 11px; color: var(--muted-foreground); }
+  .cal__day.is-today .cal__num {
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-weight: 600;
+  }
+  .cal__visit {
+    all: unset;
+    cursor: pointer;
+    overflow: hidden;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--info) 16%, transparent);
+    color: var(--info);
+    font-size: 11px;
+    line-height: 1.35;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .cal__visit--confirmed { background: color-mix(in oklab, var(--settled) 16%, transparent); color: var(--settled); }
+  .cal__visit--done { background: var(--secondary); color: var(--muted-foreground); text-decoration: line-through; }
+  .cal__visit--cancelled,
+  .cal__visit--rescheduled { background: color-mix(in oklab, var(--late) 16%, transparent); color: var(--late); text-decoration: line-through; }
+  @media (max-width: 700px) {
+    .cal__day { min-height: 60px; }
+    .cal__visit { font-size: 10px; }
+  }
+
+  /* ------------------------------------------- client portal (#47) */
+
+  .portal { max-width: 980px; }
+  .portal__tabs { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .portal__tab {
+    all: unset;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--secondary-text);
+  }
+  .portal__tab:hover { background: var(--accent); }
+  .portal__tab.is-on { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
+  .portal__item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+
+  /* The portal writes `badge` directly rather than going through the kit. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--secondary);
+    color: var(--secondary-text);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge--danger { background: color-mix(in oklab, var(--late) 14%, transparent); border-color: color-mix(in oklab, var(--late) 36%, transparent); color: var(--late); }
+  .badge--warning { background: color-mix(in oklab, var(--waiting) 14%, transparent); border-color: color-mix(in oklab, var(--waiting) 36%, transparent); color: var(--waiting); }
+  .badge--success { background: color-mix(in oklab, var(--settled) 14%, transparent); border-color: color-mix(in oklab, var(--settled) 36%, transparent); color: var(--settled); }
+  .badge--info { background: color-mix(in oklab, var(--info) 14%, transparent); border-color: color-mix(in oklab, var(--info) 36%, transparent); color: var(--info); }
+  .badge--brand { background: color-mix(in oklab, var(--primary) 14%, transparent); border-color: color-mix(in oklab, var(--primary) 36%, transparent); color: var(--primary); }
+  .badge__dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+  /* ------------------------------------- acceptance page, the rest */
+
+  .accept__totals { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .accept__totals > div { display: flex; justify-content: space-between; gap: 24px; min-width: 240px; }
+  .accept__total { padding-top: 4px; border-top: 1px solid var(--border); font-size: 16px; font-weight: 700; }
+  .accept__terms summary { cursor: pointer; font-weight: 600; }
+  .accept__tick { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 400; }
+  .accept__foot { padding-top: 12px; border-top: 1px solid var(--border); }
+
+  /* --------------------------------------------- the smaller pieces */
+
+  /* Tabs, where a page rolls its own rather than using the kit's. */
+  .tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); }
+  .tab {
+    margin-bottom: -1px;
+    padding: 9px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--foreground); }
+  .tab.is-active { color: var(--foreground); border-bottom-color: var(--primary); }
+  .tab__count { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--secondary); font-size: 11px; color: var(--secondary-text); }
+  .tab.is-active .tab__count { background: color-mix(in oklab, var(--primary) 16%, transparent); color: var(--primary); }
+  .import-nav .btn { max-width: 100%; white-space: normal; text-align: center; }
+
+  /* A card that draws its own header rather than using the kit's Card. */
+  .card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .card__lead { flex: 1 1 260px; min-width: 0; }
+  .card__title { font-size: 15px; font-weight: 600; }
+  .card__hint { margin-top: 2px; font-size: 12px; color: var(--muted-foreground); }
+  .card__body { padding: 18px; }
+  .card__body--flush { padding: 0; }
+
+  /* The search box on a list page: the icon sits inside the field. */
+  .search { position: relative; flex: 0 1 320px; min-width: 180px; }
+  .search .input { padding-left: 30px; }
+  .search__icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted-foreground);
+    font-size: 12px;
+    pointer-events: none;
+  }
+
+  /* A form field's supporting lines. The error is not colour alone — the
+     field is also marked `has-error` and the text says what is wrong. */
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field__label { font-size: 12px; font-weight: 600; color: var(--secondary-text); }
+  .field__label .req { margin-left: 2px; color: var(--late); }
+  .field__hint { font-size: 11.5px; color: var(--muted-foreground); }
+  .field__error { font-size: 11.5px; font-weight: 500; color: var(--late); }
+
+  /* The exchange-rate sparkline in Settings. */
+  .rate-chart { border-bottom: 1px solid var(--border); }
+  .rate-chart__head { display: flex; align-items: center; gap: 12px; padding: 12px 18px 8px; }
+  .rate-chart__head strong { font-size: 13px; font-weight: 600; }
+  .rate-chart__head .small { display: block; margin-top: 2px; }
+  .rate-chart__head .select { width: auto; min-width: 92px; }
+  .rate-chart__svg { display: block; width: 100%; height: auto; padding: 2px 18px 10px; }
+  .rate-chart .chart-label { fill: var(--muted-foreground); font-family: var(--font-sans); font-size: 10px; font-weight: 500; }
+
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 20px; }
+  .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .chip__lead { all: unset; cursor: pointer; color: var(--waiting); }
+  /* A cell that holds a sentence rather than a value. */
+  .table .wrap { min-width: 220px; }
+
+  /* Staging says so across the top of every page, in a stripe nobody
+     mistakes for production. */
+  .env-banner {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 10000;
+    height: 22px;
+    background: repeating-linear-gradient(45deg, #7a4a12, #7a4a12 12px, #5c3708 12px, #5c3708 24px);
+    color: #fff;
+    font: 600 12px/22px var(--font-sans);
+    letter-spacing: 0.04em;
+    text-align: center;
+  }
+  body.is-staging { padding-top: 22px; }
+}
