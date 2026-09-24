@@ -557,8 +557,10 @@
   .mail__snippet { padding: 8px 12px; color: var(--secondary-text); }
   /* The message itself is somebody else's HTML, written for a white page.
      Rendering it on the dark ground turns dark text invisible, so the frame
-     stays white and reads as a quoted document. */
-  .mail__body { display: block; width: 100%; height: 220px; border: 0; background: #ffffff; }
+     stays white and reads as a quoted document. The height here is only the
+     starting point — MailBody measures the document and sets the real one,
+     so a one-line email is one line tall. */
+  .mail__body { display: block; width: 100%; height: 120px; border: 0; background: #ffffff; }
 
   /* -------------------------------------------- visit schedule (#42) */
 

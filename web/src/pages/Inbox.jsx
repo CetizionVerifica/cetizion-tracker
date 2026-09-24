@@ -1,9 +1,12 @@
 import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { PanelLeft } from 'lucide-react';
+import { PanelLeft, Reply } from 'lucide-react';
 import { Badge, Card, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
+import {
+  Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
@@ -101,6 +104,61 @@ function stateTag(row) {
   if (row.enquiry_no) return <Tag tone="settled" mono>{row.enquiry_no}</Tag>;
   if (row.entity_id) return <Tag mono>{row.entity_id}</Tag>;
   return null;
+}
+
+/** Small enough not to crop a one-line email, large enough to stop a newsletter owning the page. */
+const MAIL_MIN = 64;
+const MAIL_MAX = 720;
+
+/**
+ * Somebody else's HTML, rendered at its own height.
+ *
+ * It stays in an iframe because an email is written for a white page and
+ * rendering it inline on the dark ground turns dark text invisible — and
+ * because it is untrusted markup either way.
+ *
+ * It was pinned at 220px, which cropped long messages and left three
+ * inches of white under short ones. `sandbox="allow-same-origin"` without
+ * `allow-scripts` is what fixes that: the email still cannot run a single
+ * line of script, and *this* document can reach in and measure it. The
+ * ResizeObserver catches images that arrive after load and change the
+ * height under us.
+ */
+function MailBody({ id, html }) {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(null);
+
+  // The body, not documentElement: documentElement.scrollHeight never
+  // reports less than the frame's own viewport, so measuring it just reads
+  // back the height we set and the frame never shrinks.
+  const measure = useCallback(() => {
+    const body = ref.current?.contentDocument?.body;
+    if (!body) return;
+    setHeight(Math.min(Math.max(body.scrollHeight, MAIL_MIN), MAIL_MAX));
+  }, []);
+
+  const onLoad = useCallback(() => {
+    measure();
+    const body = ref.current?.contentDocument?.body;
+    if (!body || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    ref.current._observer = observer;
+  }, [measure]);
+
+  useEffect(() => () => ref.current?._observer?.disconnect(), []);
+
+  return (
+    <iframe
+      ref={ref}
+      className="mail__body"
+      style={height ? { height } : undefined}
+      title={`email ${id}`}
+      sandbox="allow-same-origin"
+      onLoad={onLoad}
+      srcDoc={`<style>html,body{margin:0}body{font:13px system-ui,sans-serif;padding:10px 12px;color:#0f172a}img{max-width:100%}</style>${html}`}
+    />
+  );
 }
 
 const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
@@ -322,9 +380,14 @@ function Conversation({ id, onBack, onChanged }) {
   const thread = useFetch(() => (c ? api.raw(`/mail/threads/${c.thread_id}`) : Promise.resolve(null)), [c?.thread_id, c?.message_count]);
   const canned = useFetch(() => api.raw('/inbox/canned'));
   const [body, setBody] = useState('');
+  // Closed on arrival, and closed again whenever the thread changes: a
+  // draft belongs to the conversation it was started in.
+  const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [converting, setConverting] = useState(false);
   const [snoozing, setSnoozing] = useState(false);
+
+  useEffect(() => { setComposing(false); setBody(''); }, [id]);
 
   async function update(patch, ok) {
     setBusy(true);
@@ -334,7 +397,7 @@ function Conversation({ id, onBack, onChanged }) {
   }
   async function reply(close) {
     setBusy(true);
-    try { await api.action(`/inbox/${id}/reply`, { body, close }); toast('Reply sent', 'success'); setBody(''); conv.refetch(); thread.refetch(); onChanged(); }
+    try { await api.action(`/inbox/${id}/reply`, { body, close }); toast('Reply sent', 'success'); setBody(''); setComposing(false); conv.refetch(); thread.refetch(); onChanged(); }
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
   }
@@ -408,21 +471,58 @@ function Conversation({ id, onBack, onChanged }) {
         </div>
       )}
 
-      <div className="stack" style={{ padding: 14 }}>
+      <div className="flex flex-col gap-3 px-6 py-4">
         {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m) => (
           <div key={m.id} className={`mail mail--${m.direction}`}>
             <div className="mail__head"><span className="strong">{m.from_name || m.from_email}</span>{m.sent_from_tracker_by && <Badge tone="info">by {m.sent_from_tracker_by}</Badge>}<span className="small muted mail__when">{when(m.sent_at)}</span></div>
-            {m.body_html ? <iframe className="mail__body" title={`email ${m.id}`} sandbox="" srcDoc={`<style>body{font:13px system-ui,sans-serif;margin:8px;color:#0f172a}img{max-width:100%}</style>${m.body_html}`} /> : <div className="mail__snippet">{m.snippet}</div>}
+            {m.body_html ? <MailBody id={m.id} html={m.body_html} /> : <div className="mail__snippet">{m.snippet}</div>}
           </div>
         ))}
-        <Field label="Reply from the shared address">
-          <Select value="" placeholder="Insert a canned response…" options={(canned.data?.data ?? []).map((x) => ({ value: String(x.id), label: x.name }))} onChange={(e) => { const x = canned.data.data.find((y) => String(y.id) === e.target.value); if (x) setBody(x.body.replace(/\{\{\s*contact_name\s*\}\}/g, c.contact_name || c.from_name || 'Sir/Madam')); }} />
-          <Textarea rows={5} value={body} onChange={(e) => setBody(e.target.value)} placeholder="{{my_name}} is replaced with your name; the inbox signature is added." />
-        </Field>
-        <div className="card__actions">
-          <button type="button" className="btn btn--primary" disabled={busy || !body.trim()} onClick={() => reply(false)}>Send</button>
-          <button type="button" className="btn" disabled={busy || !body.trim()} onClick={() => reply(true)}>Send and close</button>
-        </div>
+
+        {/* Reading is the common case and replying is the occasional one,
+            so the composer is a button until it is wanted. Open, it took a
+            third of the pane on every thread somebody only glanced at. */}
+        {!composing ? (
+          <div>
+            <Button variant="secondary" size="sm" onClick={() => setComposing(true)}>
+              <Reply className="size-3.5" strokeWidth={1.75} aria-hidden="true" /> Reply
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-[10px] border border-border p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[12.5px] font-medium text-foreground">Reply from the shared address</span>
+              <div className="flex-1" />
+              <ShadSelect
+                onValueChange={(value) => {
+                  const x = (canned.data?.data ?? []).find((y) => String(y.id) === value);
+                  if (x) setBody(x.body.replace(/\{\{\s*contact_name\s*\}\}/g, c.contact_name || c.from_name || 'Sir/Madam'));
+                }}
+              >
+                <SelectTrigger size="sm" className="w-56" aria-label="Insert a canned response">
+                  <SelectValue placeholder="Insert a canned response…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(canned.data?.data ?? []).map((x) => (
+                    <SelectItem key={x.id} value={String(x.id)}>{x.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </ShadSelect>
+            </div>
+            <Textarea
+              autoFocus
+              rows={6}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="{{my_name}} is replaced with your name; the inbox signature is added."
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" disabled={busy || !body.trim()} onClick={() => reply(false)}>Send</Button>
+              <Button variant="secondary" size="sm" disabled={busy || !body.trim()} onClick={() => reply(true)}>Send and close</Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setComposing(false); setBody(''); }}>Cancel</Button>
+            </div>
+          </div>
+        )}
       </div>
       {converting && <ConvertDialog c={c} people={lookups.sales_people} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
       {snoozing && <SnoozeDialog onClose={() => setSnoozing(false)} onSnooze={(until) => { setSnoozing(false); update({ status: 'snoozed', snoozed_until: until }, 'Snoozed'); }} />}
