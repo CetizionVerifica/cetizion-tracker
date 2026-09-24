@@ -38,9 +38,19 @@ import { Separator } from './ui/separator';
 /** A card that keeps the design's 10px radius and its own padding. */
 const PANEL = 'gap-0 rounded-[10px] border-border py-0 shadow-none';
 
-/** Two letters, for the mark beside the title. */
+/**
+ * Two letters, for the mark beside the title.
+ *
+ * Punctuation is stripped before the letters are taken, not after: a
+ * person called "Hayyan (Google)" or a company called "·Midal" otherwise
+ * gets an initial of "(" or "·", which is how the account page came to
+ * show "H(" beside a name it had rendered correctly two inches away.
+ */
 export function initialsOf(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  const parts = String(name || '')
+    .split(/\s+/)
+    .map((part) => part.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(Boolean);
   if (!parts.length) return '—';
   return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 }

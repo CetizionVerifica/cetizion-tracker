@@ -228,7 +228,7 @@ export const JUMPS = [
   { id: 'go-sales-report', verb: 'Sales reports', to: '/sales-report', icon: 'today', keywords: 'reports sales funnel analysis' },
   { id: 'go-profitability', verb: 'Profitability', to: '/profitability', icon: 'money', adminOnly: true, keywords: 'margin profit cost' },
   { id: 'go-accounting', verb: 'Accounting', to: '/accounting', icon: 'money', adminOnly: true, keywords: 'books zoho tally reconcile' },
-  { id: 'go-account', verb: 'My account', to: '/account', icon: 'company', personalOnly: true, keywords: 'account profile password sessions devices signature linked microsoft google sign out everywhere' },
+  { id: 'go-account', verb: 'My account', to: '/account/profile', icon: 'company', personalOnly: true, keywords: 'account profile password sessions devices signature linked microsoft google sign out everywhere' },
   { id: 'go-settings', verb: 'Settings', to: '/settings', icon: 'waiting', keywords: 'settings preferences rates services users' },
   { id: 'go-import', verb: 'Bulk import', to: '/settings/import', icon: 'today', keywords: 'import upload sheet excel csv' },
   { id: 'go-templates', verb: 'Templates', to: '/settings/templates', icon: 'done', adminOnly: true, keywords: 'templates payment terms onboarding checklist' },

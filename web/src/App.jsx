@@ -21,7 +21,7 @@ import PurchaseOrderDetail from './pages/PurchaseOrderDetail.jsx';
 import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
-import Account from './pages/Account.jsx';
+import Account from './pages/account/index.jsx';
 // Reports is the only page that draws charts, and Recharts is a third of
 // the bundle. Loaded when someone asks for it, so every other page is not
 // paying for it on first visit.
@@ -459,7 +459,7 @@ export default function App() {
           <Route path="/payment-stages" element={<PaymentStages />} />
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
-          <Route path="/account" element={<Account />} />
+          <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<Accounting />} />

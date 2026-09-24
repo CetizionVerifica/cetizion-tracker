@@ -1,8 +1,7 @@
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
-import { ScrollArea } from '@/components/ui/scroll-area.tsx';
+import { PaneRail } from '../components/PaneRail.jsx';
 import { useAuth } from '../lib/auth.jsx';
-import { cn } from 'cn';
 
 import { Assumptions, Catalogue, ExchangeRates, CATALOGUES } from './Settings.jsx';
 import { CompanyProfile } from './CompanyProfile.jsx';
@@ -127,31 +126,7 @@ export default function SettingsArea() {
       />
 
       <div className="flex flex-col gap-6 p-4 sm:p-6 lg:flex-row">
-        {/* Horizontal on a phone, a rail beside the page above lg. */}
-        <ScrollArea className="lg:w-56 lg:shrink-0">
-          <nav className="flex gap-1 pb-2 lg:flex-col lg:gap-0 lg:pb-0">
-            {groups.map((group) => (
-              <div key={group.label} className="contents lg:block lg:pb-3">
-                <div className="hidden px-2.5 pt-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.1em] text-muted-foreground uppercase lg:block">
-                  {group.label}
-                </div>
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={`/settings/${item.to}`}
-                    className={({ isActive }) => cn(
-                      'flex h-control shrink-0 items-center rounded-[6px] px-2.5 text-[13px] font-medium whitespace-nowrap',
-                      'text-secondary-text transition-colors duration-150 hover:bg-accent hover:text-foreground',
-                      isActive && 'bg-primary/12 font-semibold text-primary'
-                    )}
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </div>
-            ))}
-          </nav>
-        </ScrollArea>
+        <PaneRail base="/settings" groups={groups} />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <Routes>
