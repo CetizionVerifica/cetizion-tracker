@@ -12,9 +12,9 @@ import { verifyPasswordOrDummy } from '../lib/passwords.js';
 import { findUserByEmail, recordLogin } from '../lib/users.js';
 import { startSession } from '../lib/sessions.js';
 import { authConfig } from './config.js';
-import { currentUser } from './middleware.js';
+import { currentUser, requireAdmin, requireAuth } from './middleware.js';
 import { constantTimeEqual, databasePayload, sharedPayload, signSession } from './session.js';
-import { enabledProviders, oauthRouter } from './oauth.js';
+import { enabledProviders, oauthRouter, providerSetup } from './oauth.js';
 import { accountRouter } from './account.js';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -244,6 +244,17 @@ authRouter.get('/config', (req, res) => {
   // bootstrap address, the password policy, or whether a given account
   // exists.
   res.json({ data: { mode: authConfig.mode, providers: enabledProviders() } });
+});
+
+/**
+ * How far each provider is from working, for the admin setting one up.
+ *
+ * Admin-only, and it never returns a value — only which variable names are
+ * still blank, plus the redirect this server expects, which is the string
+ * that has to match the provider's console to the character.
+ */
+authRouter.get('/providers', requireAuth, requireAdmin, (req, res) => {
+  res.json({ data: { mode: authConfig.mode, providers: providerSetup() } });
 });
 
 authRouter.use('/oauth', oauthRouter);

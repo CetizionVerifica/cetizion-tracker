@@ -46,6 +46,11 @@ const google = {
   clientId: () => config.google?.clientId || '',
   clientSecret: () => config.google?.clientSecret || '',
   redirectUri: () => config.google?.redirectUri || '',
+  requires: () => [
+    ['GOOGLE_CLIENT_ID', config.google?.clientId],
+    ['GOOGLE_CLIENT_SECRET', config.google?.clientSecret],
+    ['GOOGLE_REDIRECT_URI', config.google?.redirectUri],
+  ],
   /**
    * Google says outright whether it has verified the address, and an
    * unverified one is worth nothing: anybody can put any string in a
@@ -68,6 +73,16 @@ const microsoft = {
   // registration, a different journey, and mixing them would let a consent
   // meant for reading mail come back as a sign-in.
   redirectUri: () => config.microsoft.signInRedirectUri || '',
+  // The tenant id is in this list because the authorize URL is built from
+  // it. Without it the URL is still a URL — login.microsoftonline.com//… —
+  // so the button would appear, send somebody to Microsoft, and fail there
+  // rather than here.
+  requires: () => [
+    ['MS_TENANT_ID', config.microsoft.tenantId],
+    ['MS_CLIENT_ID', config.microsoft.clientId],
+    ['MS_CLIENT_SECRET', config.microsoft.clientSecret],
+    ['MS_SIGNIN_REDIRECT_URI', config.microsoft.signInRedirectUri],
+  ],
   /**
    * Entra has no `email_verified`. What it has instead is `tid`: an
    * account inside our tenant is one our own directory administers, which
@@ -81,14 +96,40 @@ const microsoft = {
     : 'That account is not in this organisation.'),
 };
 
-const PROVIDERS = { google, microsoft };
+// Microsoft first everywhere it is listed: it reuses the Entra app the
+// mailbox sync already needs, so it is the shorter of the two jobs.
+const PROVIDERS = { microsoft, google };
+
+/** Which of a provider's environment variables are still blank. */
+const missingFor = (p) => p.requires().filter(([, value]) => !String(value || '').trim()).map(([name]) => name);
 
 /** A provider is offered only when it is completely configured. */
 export function providerEnabled(provider) {
   const p = PROVIDERS[provider];
   if (!p || authConfig.mode !== 'database') return false;
-  return Boolean(p.clientId() && p.clientSecret() && p.redirectUri());
+  return missingFor(p).length === 0;
 }
+
+/**
+ * What an admin needs to finish setting one up.
+ *
+ * Until this existed, a typo in one variable meant a button that simply
+ * never appeared, with nothing anywhere to say why — the only way to tell
+ * a missing secret from a wrong redirect was to read the source. It never
+ * returns a value, only whether each name is blank: an admin screen has no
+ * business printing a client secret back at anybody.
+ */
+export const providerSetup = () => Object.values(PROVIDERS).map((p) => ({
+  id: p.id,
+  label: p.label,
+  enabled: providerEnabled(p.id),
+  missing: missingFor(p),
+  // The exact string to paste into the provider's console. A redirect that
+  // does not match to the character is the most common way this fails, and
+  // the error it produces names neither side.
+  redirect_uri: p.redirectUri() || null,
+  callback_path: `/api/auth/oauth/${p.id}/callback`,
+}));
 
 /** What the sign-in form is allowed to know: which buttons to draw. */
 export const enabledProviders = () =>

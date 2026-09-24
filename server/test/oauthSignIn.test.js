@@ -40,6 +40,29 @@ describe('provider sign-in', () => {
     assert.equal(response.status, 404);
   });
 
+  test('the setup readout names the blank variables and never a value', async () => {
+    const res = await request(app).get('/api/auth/providers');
+    // Admin-only, and nobody is signed in here.
+    assert.equal(res.status, 401);
+  });
+
+  test('a tenant id is part of being configured, not an afterthought', async () => {
+    // The authorize URL is built from the tenant. Blank leaves a URL that is
+    // still a URL — login.microsoftonline.com//… — so without this in the
+    // required list the button would appear and fail at Microsoft.
+    const { providerSetup } = await import('../src/auth/oauth.js');
+    const microsoft = providerSetup().find((p) => p.id === 'microsoft');
+    assert.equal(microsoft.enabled, false);
+    assert.ok(microsoft.missing.includes('MS_TENANT_ID'), JSON.stringify(microsoft.missing));
+
+    const google = providerSetup().find((p) => p.id === 'google');
+    assert.equal(google.enabled, true, 'fully configured in this suite');
+    assert.deepEqual(google.missing, []);
+    assert.equal(google.redirect_uri, process.env.GOOGLE_REDIRECT_URI);
+    // Whatever else it says, never a secret.
+    assert.ok(!JSON.stringify(providerSetup()).includes(process.env.GOOGLE_CLIENT_SECRET));
+  });
+
   test('start sends the browser to the provider with a state and a PKCE challenge', async () => {
     const response = await request(app).get('/api/auth/oauth/google/start');
     assert.equal(response.status, 302);

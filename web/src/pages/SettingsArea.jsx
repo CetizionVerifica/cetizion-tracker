@@ -7,6 +7,7 @@ import { cn } from 'cn';
 import { Assumptions, Catalogue, ExchangeRates, CATALOGUES } from './Settings.jsx';
 import { CompanyProfile } from './CompanyProfile.jsx';
 import { ApiTokens } from '../components/ApiTokens.jsx';
+import { SignInMethods } from './SignInMethods.jsx';
 import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import Mailboxes from './Mailboxes.jsx';
 import Webhooks from './Webhooks.jsx';
@@ -91,6 +92,7 @@ const GROUPS = [
     label: 'People & access',
     items: [
       { to: 'users', label: 'Users & roles', element: <UsersAdmin />, adminOnly: true },
+      { to: 'sign-in', label: 'Sign-in methods', element: <SignInMethods />, adminOnly: true },
       { to: 'tokens', label: 'API tokens', element: <ApiTokens />, adminOnly: true },
     ],
   },
