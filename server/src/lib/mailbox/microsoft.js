@@ -9,7 +9,32 @@
 import { config } from '../../config.js';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
-const SCOPES = ['offline_access', 'User.Read', 'Mail.ReadWrite', 'Mail.Send'];
+/**
+ * The shared pair matter for a shared mailbox, which is the case the
+ * Inbox is built around.
+ *
+ * Every folder read goes to `/users/{email}/...` — somebody else's mailbox
+ * whenever the account is shared — and plain Mail.ReadWrite covers only
+ * the signed-in user's own. Graph refuses the rest with "The requested
+ * user 'x' is invalid", which reads like the address is wrong rather than
+ * like a missing permission, and cost an afternoon to recognise.
+ *
+ * Mail.ReadWrite.Shared explicitly does not include sending, so
+ * Mail.Send.Shared is listed separately — without it, replying as the
+ * shared address fails on its own.
+ *
+ * Both still require the connecting person to have been granted access to
+ * that mailbox in Exchange. A scope is permission for the app to act as
+ * them; it is not permission they did not already have.
+ */
+const SCOPES = [
+  'offline_access',
+  'User.Read',
+  'Mail.ReadWrite',
+  'Mail.ReadWrite.Shared',
+  'Mail.Send',
+  'Mail.Send.Shared',
+];
 const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft';
 
 const ms = () => config.microsoft;
