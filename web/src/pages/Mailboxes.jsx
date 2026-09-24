@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
@@ -62,7 +62,7 @@ function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
 
 export default function Mailboxes() {
   const toast = useToast();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
   const block = useFetch(() => api.raw('/mailboxes/blocklist'));
   const [pattern, setPattern] = useState('');
@@ -80,6 +80,22 @@ export default function Mailboxes() {
     finally { setBusy(null); }
   }
   const patch = (id, body) => run(id, () => api.raw(`/mailboxes/${id}`, { method: 'PATCH', body }), () => 'Saved');
+
+  // Fires once, then clears the parameter so a refresh does not re-announce
+  // a connection made ten minutes ago.
+  const connected = params.get('connected');
+  // Guarded by a ref, not by the parameter: StrictMode mounts the effect
+  // twice and both runs read the parameter before either has cleared it,
+  // so the announcement arrived in duplicate.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (!connected || announced.current) return;
+    announced.current = true;
+    toast(`Connected ${connected}. The first sync is running.`, 'success');
+    const next = new URLSearchParams(params);
+    next.delete('connected');
+    setParams(next, { replace: true });
+  }, [connected]);
 
   const connectUrl = (shared) => (cfg?.microsoft ? `/api/mailboxes/connect/microsoft${shared ? '?shared=1' : ''}` : undefined);
 
@@ -118,7 +134,9 @@ export default function Mailboxes() {
           )}
         </>}
       >
-        {params.get('connected') && <Alert tone="success"><span>Connected {params.get('connected')}. The first sync is running.</span></Alert>}
+        {/* Success is a toast and failure is a banner, because they are read
+            differently: "it worked" only needs to be noticed, while a reason
+            it did not needs to sit there until somebody has acted on it. */}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
 
         {/* Both Connect buttons are dead until the server is set up, and a
