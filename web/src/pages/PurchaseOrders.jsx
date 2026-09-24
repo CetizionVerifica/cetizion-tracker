@@ -81,6 +81,7 @@ export default function PurchaseOrders() {
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
         { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'quotation_no', label: 'Quotation', options: [{ value: '__none__', label: 'Not linked' }, { value: '__any__', label: 'Linked' }] },
       ]}
       banner={
         lookups.projects.length === 0 ? (
