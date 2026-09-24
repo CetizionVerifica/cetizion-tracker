@@ -220,7 +220,15 @@ export default function Mailboxes() {
                       {row.provider === 'test' && <Chip>test</Chip>}
                     </div>
                     <div className="text-[12px] text-muted-foreground">
-                      {row.is_shared ? 'Feeds the Inbox' : (row.display_name || row.username)}
+                      {/* "Feeds the Inbox" used to be printed for any
+                          shared mailbox, true or not — it tested is_shared
+                          rather than whether an inbox exists. A shared
+                          mailbox with no inboxes row stores every thread
+                          and routes none of them, while the page said it
+                          was feeding the Inbox. */}
+                      {!row.is_shared ? (row.display_name || row.username)
+                        : row.feeds_inbox ? 'Feeds the Inbox'
+                        : <span className="text-waiting">Shared · no Inbox set up for it yet</span>}
                       {' · '}{row.provider === 'test' ? 'Test' : 'Microsoft 365'}
                       {row.import_days ? ` · ${number(row.import_days)} days of history` : ''}
                     </div>

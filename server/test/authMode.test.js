@@ -26,7 +26,7 @@ function loadConfigWith(env) {
     const out = execFileSync(
       process.execPath,
       ['-e', "import('./src/auth/config.js').then(m => console.log(m.authConfig.mode))"],
-      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', SKIP_DOTENV: '1', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
     return { ok: true, mode: out.trim().split('\n').at(-1) };
   } catch (err) {

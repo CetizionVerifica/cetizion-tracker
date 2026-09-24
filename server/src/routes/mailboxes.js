@@ -119,6 +119,11 @@ mailboxRouter.get('/', async (req, res) => {
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
             a.auto_create_contacts, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             (SELECT COUNT(*)::int FROM email_threads t WHERE t.account_id = a.id) AS threads,
+            -- Whether mail from this mailbox actually reaches the Inbox.
+            -- Being shared is not enough: routing needs an active inboxes
+            -- row, and without one a shared mailbox stores threads that
+            -- nobody ever sees on the Inbox page.
+            EXISTS (SELECT 1 FROM inboxes i WHERE i.account_id = a.id AND i.active) AS feeds_inbox,
             (SELECT COUNT(*)::int FROM email_messages m WHERE m.account_id = a.id) AS messages,
             (SELECT json_agg(json_build_object('folder', f.folder, 'subscribed_until', f.subscription_expires_at, 'synced', f.delta_link IS NOT NULL)) FROM mail_folders f WHERE f.account_id = a.id) AS folders
        FROM connected_accounts a WHERE ${listScope.clause} ORDER BY a.status = 'disconnected', a.email`, listScope.params);
