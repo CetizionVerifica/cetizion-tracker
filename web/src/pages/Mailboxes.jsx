@@ -252,12 +252,20 @@ export default function Mailboxes() {
                 </div>
 
                 {/* The reason lives under the row it belongs to, because a
-                    status word on its own never told anybody what to do. */}
-                {broken && (
+                    status word on its own never told anybody what to do.
+                    Shown for any failure, not only an expired sign-in: a
+                    sync that fails on a missing permission or a bad
+                    response records last_error and leaves the status
+                    'active', so the mailbox looked healthy while quietly
+                    fetching nothing, and the one sentence explaining it was
+                    stored and rendered to nobody. */}
+                {(broken || row.last_error) && (
                   <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text @3xl:max-w-[80ch]">
-                    <strong className="font-semibold text-foreground">Why:</strong>{' '}
+                    <strong className={cn('font-semibold', broken ? 'text-foreground' : 'text-waiting')}>
+                      {broken ? 'Why:' : 'Last sync failed:'}
+                    </strong>{' '}
                     {row.last_error || 'Microsoft stopped accepting the saved sign-in, which usually means the password changed or the permission was withdrawn.'}
-                    {' '}Reconnecting takes one sign-in; nothing already synced is lost.
+                    {broken && ' Reconnecting takes one sign-in; nothing already synced is lost.'}
                   </p>
                 )}
               </div>
