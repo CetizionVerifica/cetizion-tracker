@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Check, TriangleAlert } from 'lucide-react';
 
 import { useAuth } from '../lib/auth.jsx';
@@ -79,6 +80,13 @@ export default function Login() {
   const [lockoutMinutes, setLockoutMinutes] = useState(null);
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The provider callback sends people back here with ?sso=refused when it
+  // turns them away. It was writing that and nobody was reading it, so a
+  // refused sign-in looked exactly like never having pressed the button.
+  // One wording for every reason it refuses — which reason it was belongs
+  // in the server log, not on a page anyone can reach unauthenticated.
+  const [params] = useSearchParams();
+  const refused = params.get('sso') === 'refused';
 
   const set = (key) => (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
 
@@ -150,6 +158,14 @@ export default function Login() {
           )}
 
           <form className="flex flex-col gap-4" onSubmit={submit}>
+            {refused && !error && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  That account cannot sign in here. Ask an admin to add it under Users &amp; roles,
+                  or sign in with a password.
+                </AlertDescription>
+              </Alert>
+            )}
             {error && (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
