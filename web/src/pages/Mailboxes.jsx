@@ -106,8 +106,21 @@ export default function Mailboxes() {
       return <span className="text-late">{when ? `stopped ${when}` : 'stopped'}</span>;
     }
     if (row.status === 'disconnected') return <span className="text-muted-foreground">disconnected</span>;
-    if (cfg?.webhook) return 'live, via webhook';
-    return ago(row.last_synced_at) ?? 'never synced';
+    // The mechanism and the outcome are different facts, and this used to
+    // report only the first: with a webhook configured it always said
+    // "live, via webhook" and never whether a sync had actually run, so a
+    // mailbox that had never fetched anything looked identical to one
+    // fetching happily. "never synced" was unreachable.
+    const when = ago(row.last_synced_at);
+    if (cfg?.webhook) {
+      return (
+        <>
+          live, via webhook
+          <span className="text-muted-foreground"> · {when ? `synced ${when}` : 'never synced'}</span>
+        </>
+      );
+    }
+    return when ?? 'never synced';
   }
 
   return (
