@@ -235,7 +235,14 @@ function TemplateSet({ title, hint, resource, lineResource, lineColumns, lineFie
         hint={hint}
         action={<Button size="sm" className={ROW_BUTTON} onClick={() => setEditing('new')}>Add template</Button>}
       >
-        {rows.length === 0 ? <Empty title="No templates" /> : rows.map((t, i) => {
+        {templates.loading && !templates.data ? <div className="skeleton" style={{ height: 120, margin: 16 }} />
+          : rows.length === 0 ? (
+            <Empty
+              title="No templates yet"
+              text="A template is a named set of lines reused every time — the payment split on a new order, or the checklist on a new project. Add one and it is offered wherever it applies."
+              action={<Button size="sm" className={ROW_BUTTON} onClick={() => setEditing('new')}>Add template</Button>}
+            />
+          ) : rows.map((t, i) => {
           const tl = linesOf(t);
           const problem = lineCheck ? lineCheck(tl) : null;
           const isOpen = open === t.id;

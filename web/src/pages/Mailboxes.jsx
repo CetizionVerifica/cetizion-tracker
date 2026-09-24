@@ -63,7 +63,7 @@ function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
 export default function Mailboxes() {
   const toast = useToast();
   const [params] = useSearchParams();
-  const { data, refetch } = useFetch(() => api.raw('/mailboxes'));
+  const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
   const block = useFetch(() => api.raw('/mailboxes/blocklist'));
   const [pattern, setPattern] = useState('');
   const [busy, setBusy] = useState(null);
@@ -149,7 +149,12 @@ export default function Mailboxes() {
             <span>Mailbox</span><span>Status</span><span>Team sees</span><span>Synced</span><span />
           </div>
 
-          {rows.length === 0 ? (
+          {/* The wait and the answer are different things. Without this the
+              "nothing connected" sentence rendered first and was replaced a
+              moment later, so a slow request looked exactly like a mailbox
+              nobody had set up. */}
+          {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
+          : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
               No mailbox is connected. Connect your Microsoft 365 mailbox to see client email on the records it belongs to.
             </p>

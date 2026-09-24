@@ -37,7 +37,7 @@ function health(endpoint) {
 
 export default function Webhooks() {
   const toast = useToast();
-  const { data, refetch } = useFetch(() => api.raw('/webhooks'));
+  const { data, loading, refetch } = useFetch(() => api.raw('/webhooks'));
   const [endpoint, setEndpoint] = useState('');
   const [status, setStatus] = useState('');
   const deliveries = useFetch(
@@ -85,7 +85,8 @@ export default function Webhooks() {
       >
 
         <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-          {rows.length === 0 ? (
+          {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
+          : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
               No endpoints yet. Add an n8n webhook URL and choose the events it should receive.
             </p>
