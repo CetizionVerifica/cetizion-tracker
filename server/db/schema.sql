@@ -1717,6 +1717,13 @@ CREATE TABLE IF NOT EXISTS inbox_conversations (
   snoozed_until      timestamptz,
   closed_at          timestamptz,
   enquiry_no         text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  -- Whether anybody has opened it yet, and who first did. Recorded once
+  -- for the team rather than per person: in a shared inbox the cost being
+  -- avoided is two people answering the same client, so what matters is
+  -- that somebody has seen it. "No owner" is a different fact — a thread
+  -- can be read and left deliberately unassigned.
+  first_opened_at    timestamptz,
+  first_opened_by    text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
