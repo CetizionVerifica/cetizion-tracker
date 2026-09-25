@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/select.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
+import { frameDoc, hasRemoteImage } from '../lib/mailFrame.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
 import { date } from '../lib/format.js';
@@ -124,10 +125,17 @@ const MAIL_MAX = 720;
  * line of script, and *this* document can reach in and measure it. The
  * ResizeObserver catches images that arrive after load and change the
  * height under us.
+ *
+ * The popup permissions are what make a link in an email behave. Without
+ * them `<base target="_blank">` is refused and the client's website loads
+ * *inside* the message, which looks like the tracker and is not; with them
+ * it opens as an ordinary tab, outside the sandbox where it belongs.
  */
 function MailBody({ id, html }) {
   const ref = useRef(null);
   const [height, setHeight] = useState(null);
+  const [showImages, setShowImages] = useState(false);
+  const blocked = !showImages && hasRemoteImage(html);
 
   // The body, not documentElement: documentElement.scrollHeight never
   // reports less than the frame's own viewport, so measuring it just reads
@@ -139,6 +147,10 @@ function MailBody({ id, html }) {
   }, []);
 
   const onLoad = useCallback(() => {
+    // Showing the images rewrites srcDoc, so this runs again on a frame
+    // that already has an observer. Without the disconnect the old one
+    // keeps measuring a document that is gone.
+    ref.current?._observer?.disconnect();
     measure();
     const body = ref.current?.contentDocument?.body;
     if (!body || typeof ResizeObserver === 'undefined') return;
@@ -150,15 +162,28 @@ function MailBody({ id, html }) {
   useEffect(() => () => ref.current?._observer?.disconnect(), []);
 
   return (
-    <iframe
-      ref={ref}
-      className="mail__body"
-      style={height ? { height } : undefined}
-      title={`email ${id}`}
-      sandbox="allow-same-origin"
-      onLoad={onLoad}
-      srcDoc={`<style>html,body{margin:0}body{font:13px system-ui,sans-serif;padding:10px 12px;color:#0f172a}img{max-width:100%}</style>${html}`}
-    />
+    <>
+      {blocked && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-[8px] border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
+          <span className="text-[12.5px] text-secondary-text">
+            Images are not loaded. Loading them tells the sender you opened this.
+          </span>
+          <Button variant="secondary" size="sm" className="ml-auto" onClick={() => setShowImages(true)}>
+            Show images
+          </Button>
+        </div>
+      )}
+      <iframe
+        ref={ref}
+        className="mail__body"
+        style={height ? { height } : undefined}
+        title={`email ${id}`}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        onLoad={onLoad}
+        srcDoc={frameDoc(html, showImages)}
+      />
+    </>
   );
 }
 
