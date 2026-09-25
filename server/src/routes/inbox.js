@@ -20,6 +20,7 @@ import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { replyToThread } from '../lib/mailbox/sync.js';
+import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate } from '../lib/inbox.js';
 
 export const inboxRouter = Router();
@@ -234,7 +235,11 @@ inboxRouter.get('/', async (req, res) => {
   params.push(...scope.params);
   const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY (c.status = 'open') DESC, c.response_due_at NULLS LAST, t.last_message_at DESC LIMIT 500`, params);
-  res.json({ data: rows });
+  // The preview is a column written at ingest, so mail synced before the
+  // quoted history was split out still carries it — which is every thread
+  // in the inbox today. Cutting it here fixes the backlog without dropping
+  // a sync cursor and re-reading a year of mail to rewrite one text field.
+  res.json({ data: rows.map((r) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })) });
 });
 
 async function loadConversation(id, req) {
