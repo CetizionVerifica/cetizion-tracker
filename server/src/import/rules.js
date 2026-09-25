@@ -25,7 +25,8 @@
  *   invoice        PO number + stage (an invoice already on that stage)
  *   receipt        PO number + stage (money already recorded on that stage)
  */
-import { parseMoney } from './parse.js';
+import { findDate, parseMoney, readCurrency, splitReference } from './parse.js';
+import { classifyStage, readsAsItself, stageKey } from './stages.js';
 import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.ts';
 import { financialYear } from '../lib/sequences.js';
@@ -50,13 +51,9 @@ export const DEFAULT_RULES = {
 const ISO = /\bISO\b/i;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/** The quotation status a sheet's deal stage reads as, or null. See stages.js. */
 export function mapStage(raw) {
-  const s = String(raw || '').toLowerCase();
-  if (s.includes('won')) return 'Won - PO Received';
-  if (s.includes('lost')) return 'Lost';
-  if (s.includes('hold')) return 'On Hold';
-  if (s.includes('submit') || s.includes('negotiat') || s.includes('pending')) return 'Under Negotiation';
-  return null;
+  return classifyStage(raw).stage;
 }
 
 function plusDays(iso, n) {
@@ -90,8 +87,13 @@ export function invoiceNumber(raw, date, prefix) {
   return `${prefix}/${financialYear(date)}/${s}`;
 }
 
-/** Pull the mapped fields out of one raw sheet row. */
-export function extractRow(raw, mapping) {
+/**
+ * Pull the mapped fields out of one raw sheet row.
+ *
+ * stageMap is the admin's own reading of a stage wording, keyed by
+ * stageKey(), as chosen on the review screen.
+ */
+export function extractRow(raw, mapping, { stageMap = null } = {}) {
   const get = (f) => (mapping[f] ? raw[mapping[f]] : null);
   const po = parseMoney(get('po_amount'));
   const quoted = parseMoney(get('quoted_price'));
@@ -100,25 +102,58 @@ export function extractRow(raw, mapping) {
   const invAmt = parseMoney(get('invoice_amount'));
   const snoRaw = get('sno');
   const sno = Number.isFinite(Number(snoRaw)) && snoRaw !== null ? Number(snoRaw) : raw.__row;
+
+  // The deal stage; a sheet with a separate "status detail" column is read
+  // from it when the stage column says nothing this importer understands.
+  const stageRaw = str(get('stage'));
+  const detailRaw = str(get('stage_detail'));
+  let reading = classifyStage(stageRaw, stageMap);
+  let stageText = stageRaw;
+  if ((reading.kind === 'blank' || reading.kind === 'unknown') && detailRaw) {
+    const fromDetail = classifyStage(detailRaw, stageMap);
+    if (fromDetail.kind !== 'blank' && fromDetail.kind !== 'unknown') { reading = fromDetail; stageText = detailRaw; }
+  }
+
+  // "4501234567 (dtd 22.09.2026)": the number, and the date from its note.
+  const poRef = splitReference(get('po_number'));
+  const invRef = splitReference(get('invoice_number'));
+  // A quotation number is an identifier; a sentence in that column is a note.
+  const qRaw = str(get('quotation_no'));
+  const qIsNumber = qRaw && qRaw.length <= 40 && /\d/.test(qRaw) && qRaw.split(/\s+/).length <= 4;
+
+  const amountCurrency = po.currency || quoted.currency || received.currency || invAmt.currency || pending.currency || null;
+  const columnCurrency = readCurrency(get('currency'));
   return {
     sno,
+    ref: str(snoRaw),
     row: raw.__row,
     client: str(get('client')),
     industry: str(get('industry')),
     contact: str(get('contact')),
     lead_type: str(get('lead_type')),
-    stage_raw: str(get('stage')),
-    stage: mapStage(get('stage')),
+    stage_raw: stageText,
+    stage_column: stageRaw,
+    stage_detail: detailRaw,
+    stage: reading.stage,
+    stage_kind: reading.kind,
+    stage_by: reading.by,
     service: str(get('service')),
-    proposal_date: dateOrNull(get('proposal_date')),
-    quotation_no: str(get('quotation_no')),
+    proposal_date: findDate(get('proposal_date')),
+    quotation_no: qIsNumber ? qRaw : null,
+    quotation_note: qRaw && !qIsNumber ? qRaw : null,
     quoted_price: quoted.amount,
-    po_date: dateOrNull(get('po_date')),
-    po_number: str(get('po_number')),
+    quoted_reinterpreted: quoted.reinterpreted || null,
+    po_date: findDate(get('po_date')),
+    po_date_from_note: poRef.date,
+    po_number: poRef.number,
+    po_note: poRef.note,
     po_amount: po.amount,
     po_amount_reinterpreted: po.reinterpreted,
-    currency: po.currency || quoted.currency || received.currency || null,
-    invoice_number: str(get('invoice_number')),
+    currency: amountCurrency || columnCurrency || null,
+    currency_conflict: amountCurrency && columnCurrency && amountCurrency !== columnCurrency ? `${columnCurrency} column, ${amountCurrency} amount` : null,
+    invoice_number: invRef.number,
+    invoice_date: invRef.date,
+    invoice_note: invRef.note,
     invoice_amount: invAmt.amount,
     received: received.amount,
     pending: pending.amount,
@@ -128,7 +163,9 @@ export function extractRow(raw, mapping) {
   };
 }
 const str = (v) => (v === null || v === undefined ? null : String(v).trim() || null);
-const dateOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** A "Total" or "Grand total" line at the foot of a sheet is not a deal. */
+const TOTAL_ROW = /^(?:grand\s*|sub\s*-?\s*)?totals?\b/i;
 
 /**
  * Build the plan.
@@ -162,9 +199,22 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
   for (const s of live.stages || []) stageCount[norm(s.po_number)] = (stageCount[norm(s.po_number)] || 0) + 1;
   const liveInvoiceNos = new Map((live.stages || []).filter((s) => s.invoice_no).map((s) => [norm(s.invoice_no), s]));
 
+  const readOpts = { stageMap: rules.stage_map || null };
+
   // PO numbers that appear on more than one row of the sheet.
   const poCounts = {};
-  for (const raw of rows) { const r = extractRow(raw, mapping); if (r.po_number) poCounts[norm(r.po_number)] = (poCounts[norm(r.po_number)] || 0) + 1; }
+  for (const raw of rows) { const r = extractRow(raw, mapping, readOpts); if (r.po_number) poCounts[norm(r.po_number)] = (poCounts[norm(r.po_number)] || 0) + 1; }
+
+  // Every distinct stage wording in the sheet and how it was read, so the
+  // reviewer can see it and change the reading of any one of them.
+  const stageValues = new Map();
+  const noteStage = (r) => {
+    if (!r.stage_raw) return;
+    const key = stageKey(r.stage_raw);
+    const seen = stageValues.get(key) || { value: r.stage_raw, key, reading: r.stage || r.stage_kind, by: r.stage_by, rows: 0 };
+    seen.rows += 1;
+    stageValues.set(key, seen);
+  };
 
   const push = (item) => { seq += 1; items.push({ seq, included: true, action: 'create', flags: [], assumptions: [], ...item }); return items[items.length - 1]; };
   const nextQuotationNo = () => { let n; do { n = `CTZ/QT/${live.year}/${String(qNo++).padStart(3, '0')}`; } while (usedQ.has(n)); usedQ.add(n); return n; };
@@ -179,19 +229,26 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
   let lastProposalDate = null;   // nearest earlier row's date, for rows with none
 
   for (const raw of rows) {
-    const r = extractRow(raw, mapping);
+    const r = extractRow(raw, mapping, readOpts);
     const hint = hints[r.sno] || { advance_percent: null, flags: [] };
-    const tag = `S.No ${r.sno}`;
+    const tag = `S.No ${r.ref || r.sno}`;
     const dateBasis = r.proposal_date || lastProposalDate;
     const dateBasisNote = r.proposal_date ? 'proposal date' : `previous row's proposal date (${lastProposalDate})`;
     if (r.proposal_date) lastProposalDate = r.proposal_date;
 
-    if (!r.client || !r.stage) { skipped.push({ sno: r.sno, client: r.client, reason: r.client ? 'unrecognised deal stage' : 'no client name' }); continue; }
-    if (rules.exclude_iso && ISO.test(r.service || '')) { skipped.push({ sno: r.sno, client: r.client, reason: 'ISO proposal' }); continue; }
+    const leaveOut = (reason) => skipped.push({ sno: r.sno, ref: r.ref, client: r.client, stage: r.stage_raw, reason });
+    if (TOTAL_ROW.test(r.client || '') || TOTAL_ROW.test(r.ref || '')) { leaveOut('total row'); continue; }
+    if (!r.client) { leaveOut('no client name'); continue; }
+    noteStage(r);
+    if (r.stage_kind === 'blank') { leaveOut('no deal stage'); continue; }
+    if (r.stage_kind === 'lead') { leaveOut('early lead, no proposal yet — add it as an enquiry'); continue; }
+    if (r.stage_kind === 'skip') { leaveOut('left out by your stage reading'); continue; }
+    if (!r.stage) { leaveOut('unrecognised deal stage'); continue; }
+    if (rules.exclude_iso && ISO.test(r.service || '')) { leaveOut('ISO proposal'); continue; }
     const won = r.stage === 'Won - PO Received';
-    if (won && rules.won_requires_po && !r.po_number) { skipped.push({ sno: r.sno, client: r.client, reason: 'won but no PO number' }); continue; }
-    if (r.stage === 'Lost' && !rules.include_lost) { skipped.push({ sno: r.sno, client: r.client, reason: 'lost deals excluded by rule' }); continue; }
-    if (!won && r.stage !== 'Lost' && !rules.include_pending) { skipped.push({ sno: r.sno, client: r.client, reason: 'pending deals excluded by rule' }); continue; }
+    if (won && rules.won_requires_po && !r.po_number) { leaveOut(r.po_note ? `won but no PO number yet ("${r.po_note}")` : 'won but no PO number'); continue; }
+    if (r.stage === 'Lost' && !rules.include_lost) { leaveOut('lost deals excluded by rule'); continue; }
+    if (!won && r.stage !== 'Lost' && !rules.include_pending) { leaveOut('pending deals excluded by rule'); continue; }
 
     // ---- is this row already on the site? ------------------------------
     const poExisting = won && r.po_number ? livePO.get(norm(r.po_number)) : null;
@@ -213,7 +270,12 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
 
     // ---- quotation -------------------------------------------------
-    const remarks = [r.follow_up, r.remarks, `Imported from ${tag}`].filter(Boolean).join(' | ');
+    const remarks = [
+      r.stage_detail && r.stage_detail !== r.stage_raw ? `Status: ${r.stage_detail}` : null,
+      r.follow_up, r.remarks,
+      r.quotation_note ? `Quotation ref in sheet: ${r.quotation_note}` : null,
+      `Imported from ${tag}`,
+    ].filter(Boolean).join(' | ');
     const qItem = push({
       step: 'quotation', source_row: r.sno,
       payload: {
@@ -232,6 +294,11 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       },
     });
     for (const f of hint.flags) qItem.flags.push(f);
+    if (!readsAsItself(r.stage_raw, r.stage)) {
+      qItem.flags.push({ level: 'info', code: 'stage_read_as', message: `Sheet says "${r.stage_raw}"; read as ${r.stage}${r.stage_by === 'admin' ? ' (your reading)' : ''}`, by: r.stage_by === 'admin' ? 'admin' : 'rule' });
+    }
+    if (r.currency_conflict) qItem.flags.push({ level: 'warn', code: 'currency_conflict', message: `The currency column and the amount disagree (${r.currency_conflict}); read as ${r.currency}`, by: 'rule' });
+    if (r.quoted_reinterpreted && r.po_amount === null) qItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.quoted_reinterpreted}"; read as ${r.quoted_price}. Confirm with sales`, by: 'rule' });
     if (!r.proposal_date) qItem.flags.push({ level: 'info', code: 'no_date', message: 'No proposal date in the sheet', by: 'rule' });
     if (!r.contact) qItem.flags.push({ level: 'info', code: 'no_contact', message: 'No contact person in the sheet', by: 'rule' });
     if (existing) {
@@ -257,6 +324,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
 
     let poDate = r.po_date;
     const poAssumptions = [];
+    if (!poDate && r.po_date_from_note) { poDate = r.po_date_from_note; poAssumptions.push(`PO date taken from the note on the PO number ("${r.po_note}")`); }
     if (!poDate && dateBasis) { poDate = plusDays(dateBasis, rules.po_date_offset_days); poAssumptions.push(`PO date assumed as ${dateBasisNote} + ${rules.po_date_offset_days} days (${poDate})`); }
     let delivery = null;
     if (poDate) {
@@ -271,7 +339,9 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
         po_number: r.po_number, project_id: projectId, po_date: poDate, po_value: r.po_amount,
         currency: r.currency || rules.default_currency, payment_terms_days: rules.default_terms_days,
         actual_delivery_date: delivery,
-        remarks: [`Imported from ${tag}`, ...poAssumptions, fullOnCompletion ? 'Client terms: 100% after completion' : null].filter(Boolean).join(' | '),
+        remarks: [`Imported from ${tag}`, r.po_note ? `PO in sheet: ${r.po_note}` : null,
+          r.invoice_note && !r.invoice_number ? `Invoice in sheet: ${r.invoice_note}` : null,
+          ...poAssumptions, fullOnCompletion ? 'Client terms: 100% after completion' : null].filter(Boolean).join(' | '),
       },
     });
     if (poExisting) {
@@ -327,11 +397,11 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     // ---- invoice + receipt on the first stage -------------------------
     const liveFirst = poExisting ? liveStages.get(`${norm(r.po_number)}#1`) : null;
     if (r.invoice_number) {
-      const invDate = poDate ? plusDays(poDate, rules.invoice_date_offset_days) : null;
+      const invDate = r.invoice_date || (poDate ? plusDays(poDate, rules.invoice_date_offset_days) : null);
       const invoiceNo = invDate ? invoiceNumber(r.invoice_number, invDate, rules.invoice_prefix) : String(r.invoice_number);
       const inv = push({
         step: 'invoice', source_row: r.sno, parent_seq: stageItems[0].seq,
-        assumptions: invDate ? [`Invoice date assumed as PO date + ${rules.invoice_date_offset_days} day (${invDate})`] : [],
+        assumptions: r.invoice_date ? [] : invDate ? [`Invoice date assumed as PO date + ${rules.invoice_date_offset_days} day (${invDate})`] : [],
         payload: { po_number: r.po_number, stage_no: 1, invoice_no: invoiceNo, invoice_date: invDate },
       });
       if (liveFirst?.invoice_no) duplicate(inv, `invoice ${liveFirst.invoice_no} on ${r.po_number} stage 1`, 'PO number and stage');
@@ -356,11 +426,16 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       }
     } else if (r.received) {
       poItem.flags.push({ level: 'warn', code: 'receipt_without_invoice', message: `Sheet shows ${r.received} received but no invoice number; receipt not planned`, by: 'rule' });
+    } else if (r.invoice_note) {
+      poItem.flags.push({ level: 'info', code: 'invoice_without_number', message: `Sheet says "${r.invoice_note}" but gives no invoice number; no invoice planned, the note is kept in the PO's remarks`, by: 'rule' });
     }
   }
 
   for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
-  const summary = summarise(items, skipped);
+  const summary = {
+    ...summarise(items, skipped),
+    stage_values: [...stageValues.values()].sort((a, b) => b.rows - a.rows || a.value.localeCompare(b.value)),
+  };
   return { items, skipped, summary, rules };
 }
 

@@ -29,7 +29,7 @@ const ACCEPT = '.xlsx,.xls,.csv';
 
 /** How many rows the importer thinks already exist on the site. */
 function duplicates(summary) {
-  return Object.values(summary?.steps ?? {}).reduce((n, step) => n + (step.duplicate || 0), 0);
+  return Object.values(summary?.steps ?? {}).reduce((n, step) => n + (step.duplicates || 0), 0);
 }
 
 function planned(summary) {
@@ -175,9 +175,12 @@ export default function BulkImport() {
         </div>
 
         <p className="max-w-[80ch] text-[11.5px]/[1.6] text-muted-foreground">
-          Duplicates are matched on the reference number, then on client and date. A row that already exists is shown
-          beside its match, never silently skipped. ISO proposals are left out, a won deal needs a PO number, a missing
-          PO date becomes the proposal plus seven days, and a missing invoice date the PO plus one.
+          Any sales sheet works: the header row, the tab and the columns are found by their names, and deal stages are
+          read the way people write them ("PO received – 50% advance invoiced" is won). Duplicates are matched on the
+          reference number, then on client and date. A row that already exists is shown beside its match, never silently
+          skipped. ISO proposals are left out, a won deal needs a PO number, a missing PO date becomes the proposal plus
+          seven days, and a missing invoice date the PO plus one. The review shows every stage reading and both rules,
+          and lets you change them.
         </p>
       </SettingsPane>
 

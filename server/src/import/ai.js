@@ -81,43 +81,10 @@ async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000 } =
 /* 1. Column mapping                                                    */
 /* ------------------------------------------------------------------ */
 
-/** The fields the importer understands, with the header names seen so far. */
-export const FIELDS = {
-  sno:            ['s.no', 'sno', 'sr no', 'sr.no', 'serial', '#'],
-  client:         ['client name', 'client', 'customer', 'company'],
-  industry:       ['industry type', 'industry', 'sector'],
-  contact:        ['lead name', 'contact person', 'contact', 'lead'],
-  lead_type:      ['lead type', 'new/existing'],
-  stage:          ['deal stage', 'stage', 'status'],
-  service:        ['proposal name', 'service', 'service quoted', 'proposal', 'scope'],
-  proposal_date:  ['proposal sent date', 'proposal date', 'quotation date', 'sent date'],
-  quoted_price:   ['quoted price', 'quotation value', 'quote value', 'proposal value'],
-  po_date:        ['po received on', 'po date', 'po received'],
-  po_number:      ['po number', 'po no', 'po #', 'purchase order'],
-  quotation_no:   ['quotation no', 'quotation number', 'quote no', 'quote number', 'quotation ref', 'ctz no'],
-  po_amount:      ['po amount', 'po value', 'contract amount', 'order value'],
-  invoice_number: ['invoice number', 'invoice no', 'invoice #'],
-  invoice_amount: ['invoice amount', 'invoiced'],
-  received:       ['ammount received', 'amount received', 'received', 'payment received'],
-  pending:        ['pending', 'balance', 'outstanding'],
-  follow_up:      ['follow up comments', 'follow-up comments', 'comments', 'notes'],
-  remarks:        ['remarks', 'remark'],
-  sales_person:   ['sales person', 'owner', 'salesperson', 'sales owner'],
-};
-
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9#]/g, ' ').replace(/\s+/g, ' ').trim();
-
-/** Heuristic mapping: exact or near-exact header matches. */
-export function heuristicMapping(headers) {
-  const mapping = {};
-  const used = new Set();
-  for (const [field, names] of Object.entries(FIELDS)) {
-    const wanted = names.map(norm);
-    const hit = headers.find((h) => !used.has(h) && wanted.includes(norm(h)));
-    if (hit) { mapping[field] = hit; used.add(hit); }
-  }
-  return mapping;
-}
+// The fields and the header matcher live in fields.js, shared with the
+// reader (which uses them to find the header row and pick the sheet).
+export { FIELDS, heuristicMapping } from './fields.js';
+import { FIELDS, heuristicMapping } from './fields.js';
 
 /**
  * Ask the model only for the fields the heuristic could not place. Returns
@@ -127,7 +94,8 @@ export async function mapColumns(headers, sampleRows) {
   const mapping = heuristicMapping(headers);
   const missing = Object.keys(FIELDS).filter((f) => !mapping[f]);
   const essential = ['client', 'stage', 'service'];
-  const needAI = aiConfig.enabled && (missing.some((f) => essential.includes(f)) || missing.length > 8);
+  // Only when the headers leave an essential field, or most of the sheet, unplaced.
+  const needAI = aiConfig.enabled && (missing.some((f) => essential.includes(f)) || Object.keys(mapping).length < 6);
   if (!needAI) return { mapping, source: 'heuristic' };
 
   const system = `You map spreadsheet columns to fields for a sales tracker. Reply with JSON only:

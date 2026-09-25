@@ -125,6 +125,17 @@ export default function ImportReview() {
     }
   }
 
+  /** Re-read the sheet with a changed stage reading or rule; the upload stays as it was. */
+  async function replan(rules, sheet) {
+    try {
+      await api.action(`/import/batches/${id}/replan`, sheet ? { rules, sheet } : { rules });
+      toast('Sheet read again with your choices', 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
   async function commit() {
     setBusy(true); setCommitError(null);
     try {
@@ -178,6 +189,15 @@ export default function ImportReview() {
         {batch.error && !committed && <Alert tone="danger">{batch.error}</Alert>}
         {commitError && <Alert tone="danger">{commitError}</Alert>}
         {batch.mapping?.ai_errors?.length > 0 && <Alert tone="warning">AI review partly unavailable: {batch.mapping.ai_errors.join('; ')}. Rule-based flags still apply.</Alert>}
+        {!committed && batch.summary?.skipped > 0 && current.key !== 'summary' && (
+          <Alert tone="info">
+            <span>
+              {batch.summary.skipped} of {batch.row_count} rows were left out.{' '}
+              <button type="button" className="underline" onClick={() => setStep(STEPS.length - 1)}>See why on the Summary step</button>,
+              where you can also change how any deal stage in the sheet is read.
+            </span>
+          </Alert>
+        )}
         {totalDuplicates > 0 && !committed && (
           <Alert tone="warning">
             {totalDuplicates} record{totalDuplicates === 1 ? ' is' : 's are'} already on the site and shown in yellow. Each one keeps the original unless you choose "Replace with sheet". A choice made on a purchase order carries to its stages, invoice and receipt.
@@ -195,7 +215,7 @@ export default function ImportReview() {
         </div>
 
         {current.key === 'summary' ? (
-          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} />
+          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} />
         ) : (
           <>
             <StepTable {...tableProps(current.key)} />
@@ -411,7 +431,7 @@ function Flags({ flags }) {
 
 /* ------------------------------------------------------------ summary */
 
-function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack }) {
+function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan }) {
   const steps = STEPS.filter((s) => s.key !== 'summary' && s.key !== 'money').map((s) => s.key).concat(['service', 'invoice', 'receipt']);
   const count = (key, pred) => items.filter((it) => it.step === key && pred(it)).length;
   const assumptions = items.filter(effectiveIncluded).flatMap((it) => it.assumptions.map((a) => `S.No ${it.source_row}: ${a}`));
@@ -453,12 +473,19 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
         </Card>
       )}
 
-      <Card title={`Rows left out by the rules · ${skipped.length}`} hint="These never became records. Change the rules and re-upload if any should have.">
+      <SheetReading
+        key={JSON.stringify([batch.sheet_name, batch.rules?.stage_map, batch.rules?.won_requires_po, batch.rules?.exclude_iso, batch.summary?.stage_values])}
+        batch={batch}
+        committed={committed}
+        onReplan={onReplan}
+      />
+
+      <Card title={`Rows left out · ${skipped.length}`} hint="These never became records. Change a stage reading or a rule above to bring any of them in.">
         {skipped.length ? (
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>S.No</th><th>Client</th><th>Reason</th></tr></thead>
-              <tbody>{skipped.map((s, i) => <tr key={i}><td className="mono small">{s.sno}</td><td>{s.client}</td><td className="small">{s.reason}</td></tr>)}</tbody>
+              <thead><tr><th>S.No</th><th>Client</th><th>Deal stage in the sheet</th><th>Reason</th></tr></thead>
+              <tbody>{skipped.map((s, i) => <tr key={i}><td className="mono small">{s.ref || s.sno}</td><td>{s.client}</td><td className="small">{s.stage}</td><td className="small">{s.reason}</td></tr>)}</tbody>
             </table>
           </div>
         ) : <span className="muted">None</span>}
@@ -475,6 +502,117 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------ sheet reading */
+
+// What a stage wording can be read as. The first five are quotation
+// statuses; the last two leave the row out.
+const STAGE_CHOICES = [
+  { value: 'Won - PO Received', label: 'Won - PO Received' },
+  { value: 'Under Negotiation', label: 'Under Negotiation' },
+  { value: 'Submitted', label: 'Submitted' },
+  { value: 'On Hold', label: 'On Hold' },
+  { value: 'Lost', label: 'Lost' },
+  { value: 'lead', label: 'Early lead: leave out' },
+  { value: 'skip', label: 'Leave out' },
+];
+const isChoice = (v) => STAGE_CHOICES.some((c) => c.value === v);
+
+/**
+ * Every deal-stage wording in the sheet, what it was read as, and a way to
+ * read it differently — plus the two agreed rules that leave rows out, as
+ * switches. "Read again" re-plans the same upload with the choices.
+ */
+function SheetReading({ batch, committed, onReplan }) {
+  const values = batch.summary?.stage_values || [];
+  const rules = batch.rules || {};
+  const dropped = batch.mapping?.dropped_columns || [];
+  const [choice, setChoice] = useState(() => Object.fromEntries(values.map((v) => [v.key, isChoice(v.reading) ? v.reading : ''])));
+  const [wonNeedsPo, setWonNeedsPo] = useState(rules.won_requires_po !== false);
+  const [excludeIso, setExcludeIso] = useState(rules.exclude_iso !== false);
+  const sheets = batch.mapping?.sheets || [];
+  const [sheet, setSheet] = useState(batch.sheet_name);
+  const [busy, setBusy] = useState(false);
+
+  const changed = values.filter((v) => choice[v.key] && choice[v.key] !== v.reading);
+  const rulesChanged = wonNeedsPo !== (rules.won_requires_po !== false) || excludeIso !== (rules.exclude_iso !== false);
+  const sheetChanged = sheet !== batch.sheet_name;
+  const unread = values.filter((v) => !isChoice(v.reading)).length;
+
+  async function apply() {
+    setBusy(true);
+    const stageMap = { ...(rules.stage_map || {}) };
+    for (const v of changed) stageMap[v.key] = choice[v.key];
+    await onReplan({ stage_map: stageMap, won_requires_po: wonNeedsPo, exclude_iso: excludeIso }, sheetChanged ? sheet : null);
+    setBusy(false);
+  }
+
+  const readingLabel = (v) => (v.reading === 'unknown' ? 'Not understood' : STAGE_CHOICES.find((c) => c.value === v.reading)?.label || v.reading);
+
+  return (
+    <Card
+      title={`How the sheet's deal stages were read · ${values.length}`}
+      hint={committed ? 'How the sheet was read when it was committed.' : 'Every wording in the deal-stage column. Change any reading and read the sheet again; nothing is written until you commit.'}
+    >
+      <div className="stack">
+        {unread > 0 && !committed && <Alert tone="warning">{unread} wording{unread === 1 ? ' was' : 's were'} not understood. Choose a reading for {unread === 1 ? 'it' : 'each'}, or its rows stay out.</Alert>}
+        {dropped.length > 0 && <Alert tone="info">Left out of the upload entirely, because they hold sign-in details: {dropped.join(', ')}. They were not stored or sent anywhere.</Alert>}
+        {sheets.length > 1 && (
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>Read from the tab</span>
+            <span style={{ minWidth: 220 }}>
+              <Select aria-label="Tab to read" value={sheet} placeholder={null} options={sheets} disabled={committed} onChange={(e) => setSheet(e.target.value)} />
+            </span>
+            <span className="muted">The tab whose headers look most like a sales sheet was chosen.</span>
+          </label>
+        )}
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>In the sheet</th><th className="num">Rows</th><th>Read as</th></tr></thead>
+            <tbody>
+              {values.map((v) => (
+                <tr key={v.key}>
+                  <td>{v.value}{v.by === 'admin' && <span className="muted small"> · your reading</span>}</td>
+                  <td className="num">{v.rows}</td>
+                  <td style={{ minWidth: 220 }}>
+                    {committed
+                      ? readingLabel(v)
+                      : (
+                        <Select
+                          aria-label={`Read "${v.value}" as`}
+                          value={choice[v.key] || ''}
+                          placeholder="Not understood: choose"
+                          options={STAGE_CHOICES}
+                          onChange={(e) => setChoice((s) => ({ ...s, [v.key]: e.target.value }))}
+                        />
+                      )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="stack" style={{ gap: 6 }}>
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={wonNeedsPo} disabled={committed} onChange={(e) => setWonNeedsPo(e.target.checked)} />
+            A won deal needs a PO number to be imported (the rule agreed with the sales lead)
+          </label>
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={excludeIso} disabled={committed} onChange={(e) => setExcludeIso(e.target.checked)} />
+            Leave out ISO proposals
+          </label>
+        </div>
+        {!committed && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn--primary" disabled={busy || (!changed.length && !rulesChanged && !sheetChanged)} onClick={apply}>
+              {busy ? 'Reading again…' : `Apply and read again${changed.length ? ` (${changed.length} change${changed.length === 1 ? '' : 's'})` : ''}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

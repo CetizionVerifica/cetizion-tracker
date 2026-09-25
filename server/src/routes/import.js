@@ -58,9 +58,15 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
   resetUsage();
   const { mapping, source: mapSource, ai_error: mapErr } = await mapColumns(wb.headers, wb.rows.slice(0, 5));
   if (!mapping.client || !mapping.stage) {
-    throw new ApiError(422, `Could not find the client and deal-stage columns. Headers seen: ${wb.headers.join(', ')}`);
+    throw new ApiError(422, `Could not find the client and deal-stage columns on sheet "${wb.sheet}". Headers seen: ${wb.headers.join(', ')}`);
   }
-  const extracted = wb.rows.map((r) => extractRow(r, mapping));
+  // A project status report or a contact list has a client and a status but
+  // nothing about a deal: importing it would invent quotations.
+  const DEAL_FIELDS = ['proposal_date', 'quotation_no', 'quoted_price', 'po_number', 'po_amount', 'po_date', 'invoice_number'];
+  if (!DEAL_FIELDS.some((f) => mapping[f])) {
+    throw new ApiError(422, `Sheet "${wb.sheet}" does not look like a sales sheet: it has no proposal date, quotation number, quoted value, PO number or PO amount column, so there is nothing to import as a deal. Headers seen: ${wb.headers.join(', ')}`);
+  }
+  const extracted = wb.rows.map((r) => extractRow(r, mapping, { stageMap: rules?.stage_map || null }));
   const { hints, source: reviewSource, ai_error: reviewErr, ai_rows, ai_sent, ai_ms } = await reviewRows(extracted.filter((r) => r.client && r.stage));
   const live = await liveSnapshot();
   const plan = buildPlan({ rows: wb.rows, mapping, live, hints, rules });
@@ -76,7 +82,7 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
     }
     await client.query(
       `UPDATE import_batches SET sheet_name = $2, row_count = $3, mapping = $4, rules = $5, summary = $6, ai_model = $7, error = NULL WHERE id = $1`,
-      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, ai_errors: [mapErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
+      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, dropped_columns: wb.dropped_columns, ai_errors: [mapErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
         JSON.stringify(plan.rules), JSON.stringify({ ...plan.summary, skipped_rows: plan.skipped }), aiConfig.enabled ? aiConfig.model : 'no AI key: rules only']
     );
   });
