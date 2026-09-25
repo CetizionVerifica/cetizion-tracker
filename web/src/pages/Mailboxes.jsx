@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
-import { Alert, ConfirmDialog, useToast } from '../components/ui.jsx';
+import { Alert, ConfirmDialog, Field, Modal, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -68,6 +68,7 @@ export default function Mailboxes() {
   const [pattern, setPattern] = useState('');
   const [busy, setBusy] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  const [tuning, setTuning] = useState(null);
 
   const rows = data?.data ?? [];
   const cfg = data?.configured;
@@ -282,6 +283,9 @@ export default function Mailboxes() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem className="text-[13px]" onSelect={() => setTuning(row)}>
+                            What this mailbox syncs…
+                          </DropdownMenuItem>
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setDisconnecting(row)}>
                             Disconnect this mailbox
                           </DropdownMenuItem>
@@ -370,6 +374,14 @@ export default function Mailboxes() {
         </div>
       </SettingsPane>
 
+      {tuning && (
+        <SyncSettingsDialog
+          row={tuning}
+          onClose={() => setTuning(null)}
+          onSaved={(message) => { setTuning(null); toast(message, 'success'); refetch(); }}
+        />
+      )}
+
       {disconnecting && (
         <ConfirmDialog
           title={`Disconnect ${disconnecting.email}?`}
@@ -388,5 +400,89 @@ export default function Mailboxes() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * What this mailbox actually pulls in.
+ *
+ * All three of these have been columns on connected_accounts and fields on
+ * the PATCH route since #29, and none of them had a control anywhere — so
+ * the two commonest complaints about the inbox ("I can't see mail from my
+ * own colleagues", "it only goes back a month") were settings the person
+ * complaining had no way to reach.
+ *
+ * They live behind the ⋯ rather than on the row because C10 keeps the row
+ * to the one privacy decision a sales user makes for themselves. These are
+ * the rarer, duller kind: set once when the mailbox is connected, and
+ * almost never again.
+ */
+function SyncSettingsDialog({ row, onClose, onSaved }) {
+  const toast = useToast();
+  const [days, setDays] = useState(String(row.import_days ?? 30));
+  const [internal, setInternal] = useState(!row.exclude_internal);
+  const [contacts, setContacts] = useState(Boolean(row.auto_create_contacts));
+  const [busy, setBusy] = useState(false);
+  const daysChanged = Number(days) !== Number(row.import_days ?? 30);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.raw(`/mailboxes/${row.id}`, {
+        method: 'PATCH',
+        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts },
+      });
+      // Changing the window drops the sync cursor, so the older mail only
+      // appears on the next pass. Saying "Saved" and leaving an unchanged
+      // list on screen reads as a broken setting.
+      onSaved(daysChanged ? 'Saved — run Sync now to fetch the older mail' : 'Saved');
+    } catch (err) {
+      toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`What ${row.email} syncs`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button size="sm" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field
+          label="Days of history"
+          hint={daysChanged
+            ? 'Changed: the next sync reads the whole window again. Nothing is stored twice.'
+            : 'How far back the first pass reads. After that it follows Microsoft’s cursor.'}
+        >
+          <Input type="number" min="0" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
+        </Field>
+
+        <label className="flex items-start gap-2 text-[13px]">
+          <input type="checkbox" className="mt-0.5" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+          <span>
+            Keep email between colleagues
+            <span className="block text-[12px] text-muted-foreground">
+              Off by default: a thread where everybody is on our own domain is skipped, so internal chatter stays out of the client record.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2 text-[13px]">
+          <input type="checkbox" className="mt-0.5" checked={contacts} onChange={(e) => setContacts(e.target.checked)} />
+          <span>
+            Create contacts for new senders
+            <span className="block text-[12px] text-muted-foreground">
+              Adds the person to the company on file the first time they write.
+            </span>
+          </span>
+        </label>
+      </div>
+    </Modal>
   );
 }
