@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitQuoted } from '../src/lib/mailbox/quotes.js';
+import { splitQuoted, trimQuotedPreview } from '../src/lib/mailbox/quotes.js';
 import { cleanHtml, snippet } from '../src/lib/mailbox/rules.js';
 
 /**
@@ -91,6 +91,30 @@ test('an empty body does not throw', () => {
 test('the preview is the reply, not the thread it is replying to', () => {
   assert.equal(snippet(cleanHtml(gmail)), 'Yes, the 14th works for us.');
   assert.equal(snippet(cleanHtml(outlook)), 'Approved, please proceed.');
+});
+
+/**
+ * The generator runs at ingest and its result is a column, so fixing it
+ * fixes nothing already synced — which, the day this ships, is every
+ * thread in the inbox. These hold the read-time repair.
+ */
+test('a preview stored before the split still gets cut on the way out', () => {
+  const stored = 'Yes, the 14th works for us. On Mon, 22 Sep 2026 at 09:12, R. Iyer <r.iyer@tatasteel.com> wrote: Could you confirm the audit window?';
+  assert.equal(trimQuotedPreview(stored), 'Yes, the 14th works for us.');
+});
+
+test('a preview with nothing quoted is passed through unchanged', () => {
+  const clean = 'We would like a quotation for ISO 45001 covering two sites.';
+  assert.equal(trimQuotedPreview(clean), clean);
+});
+
+test('a preview that is nothing but history is shown rather than blanked', () => {
+  const forwarded = 'On Mon, 22 Sep 2026 at 09:12, R. Iyer wrote: Could you confirm the audit window?';
+  assert.equal(trimQuotedPreview(forwarded), forwarded, 'an empty row says less than a quoted one');
+});
+
+test('an absent preview stays absent', () => {
+  for (const empty of [null, undefined, '']) assert.equal(trimQuotedPreview(empty), empty ?? '');
 });
 
 test('a preview still gets truncated when the new writing itself is long', () => {

@@ -47,26 +47,45 @@ const MARKER = new RegExp(
  * a date or an address before it on the same line, or Outlook's own
  * separator and header block.
  */
-const ATTRIBUTION = [
+/**
+ * The forms, written once against a placeholder for "any character that
+ * may sit inside the line".
+ *
+ * That placeholder is the whole reason this is built rather than listed.
+ * In markup the gap must not cross `<`, or a pattern runs straight
+ * through a tag and matches text three elements away. In a stored
+ * preview the entities are already decoded, so the sender's address is a
+ * literal `<r.iyer@…>` sitting in the middle of the line — and excluding
+ * `<` there means the commonest attribution line of all never matches.
+ *
+ * One rule, two inputs, two compilations.
+ */
+const FORMS = [
   // "On Mon, 22 Sep 2026 at 09:12, R. Iyer <r.iyer@x.com> wrote:"
-  /\bOn\b[^\n<]{6,120}?\bwrote:/i,
+  (gap) => `\\bOn\\b${gap}{6,160}?\\bwrote:`,
   // "-----Original Message-----"
-  /-{2,}\s*Original Message\s*-{2,}/i,
+  () => '-{2,}\\s*Original Message\\s*-{2,}',
   // Outlook's header block, which starts with From: and a Sent:/Date: line.
-  /\bFrom:[^\n<]{0,120}\n?\s*(?:Sent|Date):/i,
+  (gap) => `\\bFrom:${gap}{0,140}\\n?\\s*(?:Sent|Date):`,
   // Clients localise this line, and a client who writes in Spanish or
   // German is not a reason for the preview to give up.
   //
   // No \b after "escribió": \b is defined against [A-Za-z0-9_], and "ó"
   // is not one of those, so a boundary between it and the colon never
   // matches and the whole pattern silently never fires.
-  //
+  (gap) => `\\bEl\\b${gap}{6,160}?\\bescribió${gap}{0,60}:`,
   // German puts the writer's name between the verb and the colon —
   // "Am <date> schrieb <name>:" — so unlike the English and Spanish
   // forms the colon cannot sit against the verb.
-  /\bEl\b[^\n<]{6,120}?\bescribió[^\n<]{0,60}:/i,
-  /\bAm\b[^\n<]{6,120}?\bschrieb\b[^\n<]{0,60}:/i,
+  (gap) => `\\bAm\\b${gap}{6,160}?\\bschrieb\\b${gap}{0,60}:`,
 ];
+
+const compile = (gap) => FORMS.map((form) => new RegExp(form(gap), 'i'));
+
+/** Inside markup: never cross a tag boundary. */
+const ATTRIBUTION_HTML = compile('[^\\n<]');
+/** Inside an already-flattened preview: `<` is part of an address. */
+const ATTRIBUTION_TEXT = compile('[^\\n]');
 
 /**
  * Split stored HTML into what this message says and what it quotes.
@@ -80,14 +99,14 @@ const ATTRIBUTION = [
  * preview (it is flattened to text straight after) and is why the web
  * copy parses instead of slicing.
  */
-export function splitQuoted(html) {
+export function splitQuoted(html, { patterns = ATTRIBUTION_HTML, markers = true } = {}) {
   const source = String(html || '');
   let at = -1;
 
-  const marker = source.match(MARKER);
+  const marker = markers ? source.match(MARKER) : null;
   if (marker) at = marker.index;
 
-  for (const pattern of ATTRIBUTION) {
+  for (const pattern of patterns) {
     const found = source.match(pattern);
     if (!found) continue;
     // The earliest boundary wins: a message can carry both, and the
@@ -97,4 +116,27 @@ export function splitQuoted(html) {
 
   if (at <= 0) return { main: source, quoted: '', hasQuoted: false };
   return { main: source.slice(0, at), quoted: source.slice(at), hasQuoted: true };
+}
+
+/**
+ * The same cut, on a preview that was stored before this existed.
+ *
+ * snippet() runs at ingest and the result is a column, so fixing the
+ * generator only fixes mail that arrives from now on — every message
+ * already synced keeps the preview it was given, quoted history and all.
+ * Re-syncing to repair it would mean dropping the cursor on every
+ * mailbox, and the text is right here.
+ *
+ * Plain text rather than markup, so only the attribution line can match;
+ * the class markers never survived into a snippet in the first place.
+ */
+export function trimQuotedPreview(text) {
+  const value = String(text || '');
+  if (!value) return value;
+  const { main, hasQuoted } = splitQuoted(value, { patterns: ATTRIBUTION_TEXT, markers: false });
+  if (!hasQuoted) return value;
+  const cut = main.trim();
+  // A preview that is nothing but quoted history — a bare forward — is
+  // better shown as it was than blanked.
+  return cut || value;
 }
