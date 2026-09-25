@@ -1,7 +1,7 @@
-import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { PanelLeft, Reply } from 'lucide-react';
+import { MoreHorizontal, PanelLeft, Reply } from 'lucide-react';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -10,6 +10,7 @@ import {
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { frameDoc, hasRemoteImage } from '../lib/mailFrame.js';
+import { splitQuotedReply } from '../lib/quotedReply.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
 import { date } from '../lib/format.js';
@@ -135,7 +136,18 @@ function MailBody({ id, html }) {
   const ref = useRef(null);
   const [height, setHeight] = useState(null);
   const [showImages, setShowImages] = useState(false);
-  const blocked = !showImages && hasRemoteImage(html);
+  const [showQuoted, setShowQuoted] = useState(false);
+
+  /**
+   * A reply is mostly the email it is replying to. Showing the whole thing
+   * meant every message in a thread repeated all the ones above it, so a
+   * four-exchange thread rendered the first message four times and the
+   * pane scrolled for pages. The history is still here, one click away —
+   * it is the thing you occasionally need and never want by default.
+   */
+  const parts = useMemo(() => splitQuotedReply(html), [html]);
+  const shown = parts.hasQuoted && !showQuoted ? parts.main : html;
+  const blocked = !showImages && hasRemoteImage(shown);
 
   // The body, not documentElement: documentElement.scrollHeight never
   // reports less than the frame's own viewport, so measuring it just reads
@@ -181,8 +193,19 @@ function MailBody({ id, html }) {
         sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
         onLoad={onLoad}
-        srcDoc={frameDoc(html, showImages)}
+        srcDoc={frameDoc(shown, showImages)}
       />
+      {parts.hasQuoted && (
+        <button
+          type="button"
+          onClick={() => setShowQuoted((v) => !v)}
+          aria-expanded={showQuoted}
+          className="mt-1.5 inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
+        >
+          <MoreHorizontal className="size-3.5" strokeWidth={2} aria-hidden="true" />
+          {showQuoted ? 'Hide the earlier replies' : 'Show the earlier replies'}
+        </button>
+      )}
     </>
   );
 }
