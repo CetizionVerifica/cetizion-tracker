@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { PanelLeft, Reply } from 'lucide-react';
+import { PanelLeft, Paperclip, Reply } from 'lucide-react';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -192,6 +192,13 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
+          {/* Nobody has opened it yet. A dot rather than bolding the row:
+              weight would reflow the line the moment somebody read it, and
+              the name is already semibold on every row. It sits in a fixed
+              gutter so a read row lines up with an unread one. */}
+          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
+            {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
+          </span>
           <span
             className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
             title={[row.company_name || row.from_email, row.from_name].filter(Boolean).join(' · ')}
@@ -199,6 +206,9 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             {row.company_name || row.from_email}
             {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
+          {row.has_attachments && (
+            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
+          )}
           {/* Overdue is carried by the timestamp, not by a chip of its own.
               It is a fact about *when*, and on a quiet week every thread in
               the list is overdue — four red badges say nothing, four red
@@ -214,9 +224,26 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
         {/* Truncation has to be recoverable: the subject is the thing you
             are scanning for, and a clipped one with no way to read it is
             worse than a wrapped one. */}
-        <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text" title={row.subject || '(no subject)'}>
+        <span className={cn(
+          'mt-0.5 block truncate text-[12.5px]',
+          row.unread ? 'font-medium text-foreground' : 'text-secondary-text'
+        )} title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
         </span>
+        {/* Two lines of the newest message. This is the band C13 does not
+            have, added deliberately: the subject alone does not say whether
+            a "Re: Quotation …" is a question, an approval or a complaint,
+            and opening a thread to find out is the thing the list exists to
+            avoid. Clamped rather than truncated because one line of an
+            email is rarely a sentence.
+
+            A mailbox set to metadata-only stores no snippet, so the band
+            simply does not appear for it rather than showing a blank line. */}
+        {row.snippet && (
+          <span className="mt-1 block line-clamp-2 text-[12px]/[1.45] text-muted-foreground">
+            {row.snippet}
+          </span>
+        )}
         {/* Two chips at most: what this thread is, and whose it is. The
             row had up to six, all the same size, so the one that differed
             between rows was the hardest to find. */}
@@ -407,6 +434,21 @@ function Conversation({ id, onBack, onChanged }) {
   const [snoozing, setSnoozing] = useState(false);
 
   useEffect(() => { setComposing(false); setBody(''); }, [id]);
+
+  /**
+   * Opening a thread is what marks it read, and the server does that as a
+   * side effect of the fetch above — so the row in the list keeps its dot
+   * until somebody tells it. This is that telling: once per thread, and
+   * only for one that was actually unread, so reading down the list does
+   * not refetch it on every arrow key.
+   */
+  const announced = useRef(null);
+  useEffect(() => {
+    if (c?.unread && announced.current !== id) {
+      announced.current = id;
+      onChanged();
+    }
+  }, [c?.unread, id, onChanged]);
 
   async function update(patch, ok) {
     setBusy(true);
