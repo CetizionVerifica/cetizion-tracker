@@ -25,8 +25,9 @@
  *   invoice        PO number + stage (an invoice already on that stage)
  *   receipt        PO number + stage (money already recorded on that stage)
  */
-import { findDate, parseMoney, readCurrency, splitReference } from './parse.js';
+import { findDate, looksLikeReference, parseMoney, readCurrency, splitReference } from './parse.js';
 import { classifyStage, readsAsItself, stageKey } from './stages.js';
+import { unitOf } from './fields.js';
 import { resources } from '../lib/resources.js';
 import { sameService, similarName } from '../lib/names.ts';
 import { financialYear } from '../lib/sequences.js';
@@ -93,13 +94,23 @@ export function invoiceNumber(raw, date, prefix) {
  * stageMap is the admin's own reading of a stage wording, keyed by
  * stageKey(), as chosen on the review screen.
  */
-export function extractRow(raw, mapping, { stageMap = null } = {}) {
+export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } = {}) {
   const get = (f) => (mapping[f] ? raw[mapping[f]] : null);
-  const po = parseMoney(get('po_amount'));
-  const quoted = parseMoney(get('quoted_price'));
-  const received = parseMoney(get('received'));
-  const pending = parseMoney(get('pending'));
-  const invAmt = parseMoney(get('invoice_amount'));
+  // An amount in a column headed "(INR Lakhs)" or "(₹ Cr)" is counted in that unit.
+  const money = (f) => {
+    const v = get(f);
+    const m = parseMoney(v);
+    const unit = unitOf(mapping[f]);
+    const ownUnit = typeof v === 'string' && /\b(?:crores?|cr|lakhs?|lacs?|lac|l|k|mn|million|thousand)\b/i.test(v);
+    // Lakhs and crores count rupees: a dollar or euro amount keeps its own figure.
+    const foreign = m.currency && m.currency !== 'INR';
+    return unit === 1 || m.amount === null || ownUnit || foreign ? m : { ...m, amount: Math.round(m.amount * unit * 100) / 100, unit };
+  };
+  const po = money('po_amount');
+  const quoted = money('quoted_price');
+  const received = money('received');
+  const pending = money('pending');
+  const invAmt = money('invoice_amount');
   const snoRaw = get('sno');
   const sno = Number.isFinite(Number(snoRaw)) && snoRaw !== null ? Number(snoRaw) : raw.__row;
 
@@ -113,16 +124,23 @@ export function extractRow(raw, mapping, { stageMap = null } = {}) {
     const fromDetail = classifyStage(detailRaw, stageMap);
     if (fromDetail.kind !== 'blank' && fromDetail.kind !== 'unknown') { reading = fromDetail; stageText = detailRaw; }
   }
+  // A wording the rules read nothing in, or that points two ways, takes the
+  // model's reading when there is one; the admin's own reading stays.
+  if (aiStageMap && reading.by === 'rule' && reading.kind !== 'blank') reading = classifyStage(stageText, stageMap, aiStageMap);
 
   // "4501234567 (dtd 22.09.2026)": the number, and the date from its note.
   const poRef = splitReference(get('po_number'));
   const invRef = splitReference(get('invoice_number'));
-  // A quotation number is an identifier; a sentence in that column is a note.
+  // A quotation number is an identifier; a sentence in that column is a note
+  // ("Revised 22-Sep (5% disc.)", "Proposal dtd 09-Sep-2026 – ₹24,80,000").
+  // It matters: the number is how a duplicate is recognised.
   const qRaw = str(get('quotation_no'));
-  const qIsNumber = qRaw && qRaw.length <= 40 && /\d/.test(qRaw) && qRaw.split(/\s+/).length <= 4;
+  const qIsNumber = Boolean(qRaw) && looksLikeReference(qRaw) && !/%|[₹$€£]|\b(?:revised|proposal|quotation|quote|dtd|dated|disc|discount|offer|annexure|auction|breakup|lumpsum)\b/i.test(qRaw);
 
   const amountCurrency = po.currency || quoted.currency || received.currency || invAmt.currency || pending.currency || null;
-  const columnCurrency = readCurrency(get('currency'));
+  // With no amount and no currency column, the quotation note may still say
+  // it: "Proposal dtd 01-Sep-2026 – USD 7,500 + travel" is a dollar deal.
+  const columnCurrency = readCurrency(get('currency')) || (qRaw && !qIsNumber ? readCurrency(qRaw) : null);
   return {
     sno,
     ref: str(snoRaw),
@@ -149,6 +167,7 @@ export function extractRow(raw, mapping, { stageMap = null } = {}) {
     po_note: poRef.note,
     po_amount: po.amount,
     po_amount_reinterpreted: po.reinterpreted,
+    amount_unit: po.unit || quoted.unit || received.unit || null,
     currency: amountCurrency || columnCurrency || null,
     currency_conflict: amountCurrency && columnCurrency && amountCurrency !== columnCurrency ? `${columnCurrency} column, ${amountCurrency} amount` : null,
     invoice_number: invRef.number,
@@ -199,7 +218,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
   for (const s of live.stages || []) stageCount[norm(s.po_number)] = (stageCount[norm(s.po_number)] || 0) + 1;
   const liveInvoiceNos = new Map((live.stages || []).filter((s) => s.invoice_no).map((s) => [norm(s.invoice_no), s]));
 
-  const readOpts = { stageMap: rules.stage_map || null };
+  const readOpts = { stageMap: rules.stage_map || null, aiStageMap: rules.ai_stage_map || null };
 
   // PO numbers that appear on more than one row of the sheet.
   const poCounts = {};
@@ -295,8 +314,9 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     });
     for (const f of hint.flags) qItem.flags.push(f);
     if (!readsAsItself(r.stage_raw, r.stage)) {
-      qItem.flags.push({ level: 'info', code: 'stage_read_as', message: `Sheet says "${r.stage_raw}"; read as ${r.stage}${r.stage_by === 'admin' ? ' (your reading)' : ''}`, by: r.stage_by === 'admin' ? 'admin' : 'rule' });
+      qItem.flags.push({ level: 'info', code: 'stage_read_as', message: `Sheet says "${r.stage_raw}"; read as ${r.stage}${r.stage_by === 'admin' ? ' (your reading)' : r.stage_by === 'ai' ? " (the AI's reading: check it)" : ''}`, by: r.stage_by === 'admin' || r.stage_by === 'ai' ? r.stage_by : 'rule' });
     }
+    if (r.amount_unit) qItem.flags.push({ level: 'info', code: 'amount_unit', message: `Amounts read in ${r.amount_unit === 1e5 ? 'lakhs' : r.amount_unit === 1e7 ? 'crores' : r.amount_unit === 1e6 ? 'millions' : 'thousands'}, as the column header says`, by: 'rule' });
     if (r.currency_conflict) qItem.flags.push({ level: 'warn', code: 'currency_conflict', message: `The currency column and the amount disagree (${r.currency_conflict}); read as ${r.currency}`, by: 'rule' });
     if (r.quoted_reinterpreted && r.po_amount === null) qItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.quoted_reinterpreted}"; read as ${r.quoted_price}. Confirm with sales`, by: 'rule' });
     if (!r.proposal_date) qItem.flags.push({ level: 'info', code: 'no_date', message: 'No proposal date in the sheet', by: 'rule' });

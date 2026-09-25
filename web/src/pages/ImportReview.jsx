@@ -540,6 +540,7 @@ function SheetReading({ batch, committed, onReplan }) {
   const rulesChanged = wonNeedsPo !== (rules.won_requires_po !== false) || excludeIso !== (rules.exclude_iso !== false);
   const sheetChanged = sheet !== batch.sheet_name;
   const unread = values.filter((v) => !isChoice(v.reading)).length;
+  const byAi = values.filter((v) => v.by === 'ai').length;
 
   async function apply() {
     setBusy(true);
@@ -558,6 +559,7 @@ function SheetReading({ batch, committed, onReplan }) {
     >
       <div className="stack">
         {unread > 0 && !committed && <Alert tone="warning">{unread} wording{unread === 1 ? ' was' : 's were'} not understood. Choose a reading for {unread === 1 ? 'it' : 'each'}, or its rows stay out.</Alert>}
+        {byAi > 0 && !committed && <Alert tone="info">{byAi} wording{byAi === 1 ? ' was' : 's were'} read by the AI (marked ✦), because the rules were unsure of {byAi === 1 ? 'it' : 'them'}. Check {byAi === 1 ? 'it' : 'them'} before you commit.</Alert>}
         {dropped.length > 0 && <Alert tone="info">Left out of the upload entirely, because they hold sign-in details: {dropped.join(', ')}. They were not stored or sent anywhere.</Alert>}
         {sheets.length > 1 && (
           <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -574,7 +576,11 @@ function SheetReading({ batch, committed, onReplan }) {
             <tbody>
               {values.map((v) => (
                 <tr key={v.key}>
-                  <td>{v.value}{v.by === 'admin' && <span className="muted small"> · your reading</span>}</td>
+                  <td>
+                    {v.value}
+                    {v.by === 'admin' && <span className="muted small"> · your reading</span>}
+                    {v.by === 'ai' && <span className="muted small"> · ✦ read by the AI</span>}
+                  </td>
                   <td className="num">{v.rows}</td>
                   <td style={{ minWidth: 220 }}>
                     {committed

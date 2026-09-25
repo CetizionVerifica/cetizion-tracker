@@ -18,8 +18,9 @@ import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
-import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
+import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
 import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
+import { stageKey, needsReading } from '../import/stages.js';
 import { commitBatch } from '../import/commit.js';
 import { businessYear } from '../lib/businessDate.ts';
 
@@ -66,7 +67,17 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
   if (!DEAL_FIELDS.some((f) => mapping[f])) {
     throw new ApiError(422, `Sheet "${wb.sheet}" does not look like a sales sheet: it has no proposal date, quotation number, quoted value, PO number or PO amount column, so there is nothing to import as a deal. Headers seen: ${wb.headers.join(', ')}`);
   }
-  const extracted = wb.rows.map((r) => extractRow(r, mapping, { stageMap: rules?.stage_map || null }));
+  // Stage wordings the rules are unsure of go to the model once; its readings are
+  // kept with the batch's rules, so reading the sheet again does not ask twice.
+  const stageMap = rules?.stage_map || null;
+  const known = rules?.ai_stage_map || {};
+  const unread = wb.rows.map((r) => extractRow(r, mapping, { stageMap }))
+    .filter((r) => r.stage_by === 'rule' && needsReading(r.stage_raw) && !(stageKey(r.stage_raw) in known)).map((r) => r.stage_raw);
+  const { map: aiStages, ai_error: stageErr } = await readStages(unread);
+  // A wording the model could not read either is remembered as such (null).
+  const asked = stageErr || !aiConfig.enabled ? {} : Object.fromEntries(unread.map((w) => [stageKey(w), null]));
+  rules = { ...(rules || {}), ai_stage_map: { ...known, ...asked, ...aiStages } };
+  const extracted = wb.rows.map((r) => extractRow(r, mapping, { stageMap, aiStageMap: rules.ai_stage_map }));
   const { hints, source: reviewSource, ai_error: reviewErr, ai_rows, ai_sent, ai_ms } = await reviewRows(extracted.filter((r) => r.client && r.stage));
   const live = await liveSnapshot();
   const plan = buildPlan({ rows: wb.rows, mapping, live, hints, rules });
@@ -82,7 +93,7 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
     }
     await client.query(
       `UPDATE import_batches SET sheet_name = $2, row_count = $3, mapping = $4, rules = $5, summary = $6, ai_model = $7, error = NULL WHERE id = $1`,
-      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, dropped_columns: wb.dropped_columns, ai_errors: [mapErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
+      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, dropped_columns: wb.dropped_columns, ai_errors: [mapErr, stageErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
         JSON.stringify(plan.rules), JSON.stringify({ ...plan.summary, skipped_rows: plan.skipped }), aiConfig.enabled ? aiConfig.model : 'no AI key: rules only']
     );
   });

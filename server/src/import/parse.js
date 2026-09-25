@@ -16,7 +16,7 @@ import { headerRowScore, SECRET_HEADER, normHeader } from './fields.js';
 
 /** Pick the sheet whose header row looks most like a sales sheet. */
 export function readWorkbook(buffer, preferredSheet) {
-  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: false, cellNF: true });
+  const wb = openWorkbook(buffer);
   const candidates = wb.SheetNames.map((name) => {
     const grid = sheetToGrid(wb.Sheets[name]);
     const { index, score } = findHeaderRow(grid);
@@ -38,12 +38,15 @@ export function readWorkbook(buffer, preferredSheet) {
 
   const rows = [];
   const headerKeys = named.map(normHeader);
+  const body = pick.grid.slice(pick.headerIdx + 1);
+  const monthFirst = named.map((_, i) => monthFirstColumn(body.map((row) => row?.[i])));
   for (let r = pick.headerIdx + 1; r < pick.grid.length; r++) {
     const raw = pick.grid[r];
     if (!raw || raw.every((v) => v === null || v === '')) continue;
     if (repeatsHeader(raw, headerKeys)) continue;
-    const row = { __row: r + 1 };
-    named.forEach((h, i) => { if (keep[i]) row[h] = normaliseCell(raw[i]); });
+    // The Excel row number, even when the sheet starts below row 1.
+    const row = { __row: r + 1 + (pick.grid.firstRow || 0) };
+    named.forEach((h, i) => { if (keep[i]) row[h] = normaliseCell(raw[i], monthFirst[i]); });
     rows.push(row);
   }
 
@@ -54,6 +57,42 @@ export function readWorkbook(buffer, preferredSheet) {
     dropped_columns: dropped,
     rows,
   };
+}
+
+/**
+ * An Excel workbook as it is; a CSV as the text people typed. A CSV is
+ * decoded as UTF-8 (with or without the byte-order mark Excel adds), or as
+ * Windows-1252 when it is not valid UTF-8 — Excel's plain "CSV" save — so
+ * "Northwind – Kochi" keeps its dash. Its cells stay text: left to
+ * itself the reader would turn 03/04/2026 into 4 March, the US way.
+ */
+function openWorkbook(buffer) {
+  const zip = buffer[0] === 0x50 && buffer[1] === 0x4b;
+  const ole = buffer[0] === 0xd0 && buffer[1] === 0xcf;
+  if (zip || ole || looksBinary(buffer)) return XLSX.read(buffer, { type: 'buffer', cellDates: false, cellNF: true });
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { text = new TextDecoder('windows-1252').decode(buffer); }
+  return XLSX.read(text.replace(/^﻿/, ''), { type: 'string', raw: true, cellNF: true });
+}
+const looksBinary = (buffer) => buffer.subarray(0, 512).some((b) => b === 0);
+
+/**
+ * Which of a column's typed date styles write the month first (1/20/26),
+ * judged separately per separator: one column can hold Excel's US display
+ * "3/12/26" beside a typed Indian "24.02.2026". Month first only shows when
+ * some day is over 12; without that evidence dates are read day first, the
+ * Indian way. Returns the separators that are month first, e.g. ['/'].
+ */
+function monthFirstColumn(values) {
+  const seen = {};
+  for (const v of values) {
+    const m = typeof v === 'string' ? /^\s*(\d{1,2})([./-])(\d{1,2})\2(\d{2}|\d{4})\s*$/.exec(v) : null;
+    if (!m) continue;
+    const s = (seen[m[2]] ||= { dayFirst: false, monthFirst: false });
+    if (Number(m[1]) > 12) s.dayFirst = true;
+    if (Number(m[3]) > 12) s.monthFirst = true;
+  }
+  return Object.entries(seen).filter(([, s]) => s.monthFirst && !s.dayFirst).map(([sep]) => sep);
 }
 
 /**
@@ -80,14 +119,16 @@ function sheetToGrid(ws) {
         row.push(d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : null);
         continue;
       }
-      if (cell.t === 'n' && cell.z) {
-        const code = formatCurrency(cell.z);
+      if (cell.t === 'n' && (cell.z || cell.w)) {
+        // The format says it, or — for a CSV "$9600" read as a number — the text shown.
+        const code = formatCurrency(cell.z) || (!cell.z && /[$€£]|[A-Z]{3}/.test(String(cell.w)) ? readCurrency(cell.w) : null);
         if (code && code !== 'INR') { row.push(`${code} ${cell.v}`); continue; }
       }
       row.push(cell.t === 'd' && cell.v instanceof Date ? toISODate(cell.v) : cell.v);
     }
     grid.push(row);
   }
+  grid.firstRow = range.s.r;
   return grid;
 }
 
@@ -148,14 +189,17 @@ function repeatsHeader(raw, headerKeys) {
   return same / cells.length >= 0.6;
 }
 
-function normaliseCell(v) {
+function normaliseCell(v, monthFirstSeparators = []) {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return isNaN(v) ? null : toISODate(v);
   if (typeof v === 'number') return v;
   const s = String(v).replace(/\s+/g, ' ').trim();
   if (s === '' || /^(n\/?a|na|-+|—|–|not sent|nil|none|tbc|tbd)$/i.test(s)) return null;
-  const d = parseDate(s);
+  const sep = /^\d{1,2}([./-])\d{1,2}\1\d{2,4}$/.exec(s)?.[1];
+  const d = parseDate(s, { monthFirst: Boolean(sep && monthFirstSeparators.includes(sep)) });
   if (d) return d;
+  // A CSV keeps every cell as text; a plain number is still a number.
+  if (/^-?\d+(\.\d+)?$/.test(s) && s.length <= 15 && !/^0\d/.test(s)) return Number(s);
   return s;
 }
 
@@ -178,19 +222,22 @@ const DATE_PATTERNS = [
   [String.raw`(\d{4})-(\d{1,2})-(\d{1,2})`, (g) => [g[1], g[2], g[3]]],
   // 22.09.2026, 22/09/2026, 22-09-2026, 22.09.26
   [String.raw`(\d{1,2})[./-](\d{1,2})[./-](\d{4}|\d{2})`, (g) => [g[3], g[2], g[1], 'dm']],
+  // Two days of one month, "14/15-Sep-2026", "10 & 12-Aug-2026": the first one.
+  [String.raw`(\d{1,2})(?:st|nd|rd|th)?\s*(?:/|&|and|,|to|–|-)\s*\d{1,2}(?:st|nd|rd|th)?[\s.-]*${MON}[\s.,-]*('?\d{4}|'?\d{2})(?!\d)`, (g) => [g[3], g[2], g[1]]],
   // 22-Sep-2026, 22 Sep 2026, 22nd September, 2026, 22-Sep-26
   [String.raw`(\d{1,2})(?:st|nd|rd|th)?[\s.-]*${MON}[\s.,-]*('?\d{4}|'?\d{2})(?!\d)`, (g) => [g[3], g[2], g[1]]],
   // Sep 22, 2026 / September 22 2026
   [String.raw`${MON}[\s.-]*(\d{1,2})(?:st|nd|rd|th)?[\s,]+(\d{4})`, (g) => [g[3], g[1], g[2]]],
 ];
 
-function toISO(y, m, d, order) {
+function toISO(y, m, d, order, monthFirst = false) {
   let year = Number(String(y).replace("'", ''));
   if (year < 100) year += 2000;
   let month = /^\d+$/.test(String(m)) ? Number(m) : MONTHS[String(m).toLowerCase().slice(0, 4)] ?? MONTHS[String(m).toLowerCase().slice(0, 3)];
   let day = Number(d);
-  // Day first (the Indian way) unless that cannot be a date: 1/20/26 is 20 Jan.
-  if (order === 'dm' && month > 12 && day <= 12) [month, day] = [day, month];
+  // Day first (the Indian way) unless the column writes months first, or the
+  // date cannot be read day first: 1/20/26 is 20 Jan.
+  if (order === 'dm' && (monthFirst || (month > 12 && day <= 12))) [month, day] = [day, month];
   if (!month || month > 12 || !day || year < 1990 || year > 2100) return null;
   const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   const check = new Date(`${iso}T00:00:00Z`);
@@ -202,11 +249,11 @@ function toISO(y, m, d, order) {
  * counts: this runs on every cell, and a PO number with a date in its note
  * must stay a PO number.
  */
-export function parseDate(s) {
+export function parseDate(s, { monthFirst = false } = {}) {
   const text = String(s ?? '').trim();
   for (const [src, read] of DATE_PATTERNS) {
     const m = new RegExp(`^${src}$`, 'i').exec(text);
-    if (m) { const [y, mo, d, order] = read(m); const iso = toISO(y, mo, d, order); if (iso) return iso; }
+    if (m) { const [y, mo, d, order] = read(m); const iso = toISO(y, mo, d, order, monthFirst); if (iso) return iso; }
   }
   // An ISO timestamp from a CSV export.
   const stamp = /^(\d{4})-(\d{2})-(\d{2})T/.exec(text);
@@ -275,6 +322,8 @@ export function parseMoney(v) {
   // digits is a mistyped comma (Indian grouping), not a decimal point.
   let reinterpreted = null;
   if (/\d,\d{2}\.\d{3}\b/.test(s)) { reinterpreted = s; s = s.replace(/(\d,\d{2})\.(\d{3})\b/, '$1,$2'); }
+  // "5.26,750/-": the same slip one group earlier, a dot for the first comma.
+  if (/^\D*\d{1,2}\.\d{2},\d{3}\b/.test(s)) { reinterpreted = s; s = s.replace(/(\d{1,2})\.(\d{2},\d{3})\b/, '$1,$2'); }
   const plain = s.replace(/\/-/g, '').replace(/[$€£₹,]/g, '').replace(new RegExp(`\\b(${CODES})\\b`, 'gi'), '')
     .replace(/\brs\.?/gi, '').trim();
   const whole = Number(plain);

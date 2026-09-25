@@ -142,7 +142,8 @@ test('a header that says it is something else is not taken for a field', () => {
   assert.equal(m.po_amount, 'PO Value');
   assert.equal(m.po_date, 'PO Received On');
   assert.equal(m.received, undefined);
-  assert.equal(m.quoted_price, undefined);
+  // A value in lakhs is read, and counted in lakhs (below), rather than left out.
+  assert.equal(m.quoted_price, 'Quoted Value (₹ L)');
   assert.equal(Object.values(m).includes('Payment Status'), false);
   // "Status" alone is the stage, but only as the whole header.
   assert.equal(heuristicMapping(['Client', 'Status']).stage, 'Status');
@@ -225,14 +226,15 @@ test('end to end: a messy sheet becomes a plan with every row accounted for', ()
   const reasons = Object.fromEntries(plan.skipped.map((s) => [s.client, s.reason]));
   assert.deepEqual(reasons, {
     'Gamma Labs': 'early lead, no proposal yet — add it as an enquiry',
-    'Delta Steel': 'won but no PO number yet ("Awaited")',
     Epsilon: 'unrecognised deal stage',
     'Zeta ISO': 'ISO proposal',
     Total: 'total row',
   });
 
+  // "Won – confirmed by email (PO awaited)" is a negotiation until the PO comes: an open deal, imported.
   const q = plan.items.filter((i) => i.step === 'quotation').map((i) => [i.payload.client_name, i.payload.status, i.payload.quotation_date]);
-  assert.deepEqual(q, [['Acme Pharma', 'Won - PO Received', '2026-08-25'], ['Beta Metals', 'Under Negotiation', '2026-09-01']]);
+  assert.deepEqual(q, [['Acme Pharma', 'Won - PO Received', '2026-08-25'], ['Beta Metals', 'Under Negotiation', '2026-09-01'],
+    ['Delta Steel', 'Under Negotiation', '2026-09-02']]);
 
   const po = plan.items.find((i) => i.step === 'purchase_order').payload;
   assert.deepEqual([po.po_number, po.po_date, po.po_value, po.currency], ['4500012345', '2026-09-02', 196000, 'INR']);
@@ -244,9 +246,71 @@ test('end to end: a messy sheet becomes a plan with every row accounted for', ()
   assert.equal(readings.Xyzzy, 'unknown');
   assert.equal(readings['Lead – intro sent'], 'lead');
 
-  // The reviewer reads the unknown wording as On Hold and switches the PO rule off.
-  const again = buildPlan({ rows: wb.rows, mapping, live, rules: { stage_map: { xyzzy: 'On Hold' }, won_requires_po: false } });
+  // The reviewer reads the unknown wording as On Hold, calls the email confirmation won, and switches the PO rule off.
+  const again = buildPlan({ rows: wb.rows, mapping, live, rules: {
+    stage_map: { xyzzy: 'On Hold', 'won confirmed by email po awaited': 'Won - PO Received' }, won_requires_po: false,
+  } });
   const statuses = Object.fromEntries(again.items.filter((i) => i.step === 'quotation').map((i) => [i.payload.client_name, i.payload.status]));
   assert.equal(statuses.Epsilon, 'On Hold');
   assert.equal(statuses['Delta Steel'], 'Won - PO Received');
+});
+
+/* ------------------------------------------- found by the accuracy run */
+
+test('two days of one month read as the first', () => {
+  assert.equal(findDate('Revised 14/15-Sep-2026'), '2026-09-14');
+  assert.equal(findDate('17/18-Jul-2026'), '2026-07-17');
+  assert.equal(findDate('25% advance invoices sent 10 & 12-Aug-2026'), '2026-08-10');
+});
+
+test('a dot typed for the first comma of an Indian amount is read as the comma, and said so', () => {
+  assert.deepEqual(parseMoney('5.26,750/-'), { amount: 526750, currency: null, reinterpreted: '5.26,750/-' });
+  assert.equal(parseMoney('12.50').amount, 12.5);
+});
+
+test('headers written with the usual abbreviations match', () => {
+  const m = heuristicMapping(['Client', 'Status (Won/Lost/Hold)', 'Qtn Dt', 'PO Amt (Rs.)', 'P.O. Date', 'Inv. No.', 'Amt Recd', 'O/S Amount', 'INR/USD', 'KAM']);
+  assert.deepEqual(m, { client: 'Client', stage: 'Status (Won/Lost/Hold)', proposal_date: 'Qtn Dt', po_amount: 'PO Amt (Rs.)',
+    po_date: 'P.O. Date', invoice_number: 'Inv. No.', received: 'Amt Recd', pending: 'O/S Amount', currency: 'INR/USD', sales_person: 'KAM' });
+});
+
+test('an amount in a column headed in lakhs or crores is counted in that unit, once', () => {
+  const mapping = { client: 'Client', stage: 'Stage', po_amount: 'Order Value (INR Lakhs)', quoted_price: 'Quoted (Rs. Cr)', received: 'Recd' };
+  const r = extractRow({ __row: 2, Client: 'Acme', Stage: 'Won', 'Order Value (INR Lakhs)': 12.5, 'Quoted (Rs. Cr)': '1.2', Recd: 5000 }, mapping);
+  assert.deepEqual([r.po_amount, r.quoted_price, r.received, r.amount_unit], [1250000, 12000000, 5000, 1e5]);
+  // A cell that carries its own unit is not multiplied again.
+  assert.equal(extractRow({ __row: 2, Client: 'Acme', Stage: 'Won', 'Order Value (INR Lakhs)': '20 lakh' }, mapping).po_amount, 2000000);
+});
+
+test('a sentence in the quotation-number column is a note, and its currency still counts', () => {
+  const mapping = { client: 'Client', stage: 'Stage', quotation_no: 'Quotation No' };
+  const row = (q) => extractRow({ __row: 2, Client: 'Acme', Stage: 'Proposal sent', 'Quotation No': q }, mapping);
+  assert.equal(row('Revised 22-Sep (5% disc.)').quotation_no, null);
+  assert.equal(row('Proposal dtd 01-Sep-2026 – USD 7,500 + travel').currency, 'USD');
+  assert.equal(row('CTZ/QT/2026/045').quotation_no, 'CTZ/QT/2026/045');
+});
+
+test('row numbers are the Excel rows, even when the sheet starts lower down', () => {
+  const ws = XLSX.utils.aoa_to_sheet([['S.No', 'Client Name', 'Deal Stage', 'PO Number'], [1, 'Acme', 'Won', '4500000001']], { origin: 'B2' });
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Sales');
+  const read = readWorkbook(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), null);
+  assert.equal(read.rows[0].__row, 3);
+});
+
+test('a CSV keeps its dashes, whether saved as UTF-8 or the Windows way, and its dates are not read the US way', () => {
+  const text = 'Client,Deal Stage,Proposal Date,PO Amount\nNorthwind – Kochi,Won,03/04/2026,"$9,600"\n';
+  const utf8 = readWorkbook(Buffer.from(`﻿${text}`, 'utf8'), null);
+  assert.equal(utf8.rows[0].Client, 'Northwind – Kochi');
+  assert.equal(utf8.rows[0]['Proposal Date'], '2026-04-03');
+  assert.equal(parseMoney(utf8.rows[0]['PO Amount']).currency, 'USD');
+  const ansi = readWorkbook(Buffer.from(text.replace('–', '\u0096'), 'latin1'), null);
+  assert.equal(ansi.rows[0].Client, 'Northwind – Kochi');
+});
+
+test('a column written month first is read month first, judged per way of writing it', () => {
+  const text = 'Client,Deal Stage,Proposal Date,PO Date\nA,Won,1/20/26,24.02.2026\nB,Won,3/4/26,3/12/26\nC,Lost,2/13/26,\n';
+  const rows = readWorkbook(Buffer.from(text, 'utf8'), null).rows;
+  assert.deepEqual(rows.map((r) => r['Proposal Date']), ['2026-01-20', '2026-03-04', '2026-02-13']);
+  // "24.02.2026" is day first; the slashes in the same column are not decided by it.
+  assert.deepEqual(rows.map((r) => r['PO Date']), ['2026-02-24', '2026-12-03', null]);
 });
