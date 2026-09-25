@@ -139,6 +139,21 @@ export const FIELDS = {
     names: ['follow up comments', 'follow-up comments', 'followup comments', 'follow up remarks', 'follow up notes',
       'next steps', 'next step', 'comments', 'comment'],
     exact: ['comment'],
+    avoid: /\bdate\b|\blast\b/,
+  },
+  // When the client was last followed up, and when the next follow-up is
+  // due: the first sets the deal's last contact, the second a reminder.
+  last_follow_up: {
+    names: ['last follow up', 'last followup', 'last follow up date', 'last follow up on', 'last followed up', 'last followed up on',
+      'followed up on', 'date of last follow up', 'last contacted', 'last contacted on', 'last contact', 'last contact date',
+      'last call', 'last call date', 'last interaction', 'last meeting', 'last touch'],
+    avoid: /comment|remark|note|status|\bby\b/,
+  },
+  next_follow_up: {
+    names: ['next follow up', 'next followup', 'next follow up date', 'next follow up on', 'follow up date', 'followup date',
+      'follow up on', 'date of next follow up', 'next contact date', 'next call date', 'next meeting date', 'next action date',
+      'reminder date', 'next reminder', 'next reminder date', 'revisit date', 'call back date', 'callback date'],
+    avoid: /comment|remark|note|status|\blast\b/,
   },
   remarks: {
     names: ['remarks / source', 'remarks', 'remark', 'notes', 'note', 'latest update', 'observations', 'feedback', 'next action',

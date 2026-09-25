@@ -19,10 +19,10 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES } from '../import/rules.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR } from '../import/rules.js';
 import { stageKey, needsReading } from '../import/stages.js';
 import { commitBatch } from '../import/commit.js';
-import { businessYear } from '../lib/businessDate.ts';
+import { businessToday, businessYear } from '../lib/businessDate.ts';
 
 export const importRouter = Router();
 
@@ -36,20 +36,36 @@ importRouter.use(requireAdmin);
 
 /** What the plan needs to know about the live data, in one round trip. */
 async function liveSnapshot() {
-  const [q, po, pr, sv, st, nq, np] = await Promise.all([
-    query('SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person FROM quotations'),
+  const [q, po, pr, sv, st, nq, np, trail, tasks, notes] = await Promise.all([
+    query(`SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person,
+      sales_person, currency, remarks, next_step, last_contacted_at::date::text AS last_contacted_at FROM quotations`),
     query('SELECT po_number, project_id, po_date::text AS po_date, po_value, currency FROM purchase_orders'),
     query('SELECT project_id, client_name, primary_service FROM projects'),
     query('SELECT po_number, service, service_value FROM po_services ORDER BY id'),
     query('SELECT po_number, stage_no, stage_name, stage_percent, invoice_no, invoice_date::text AS invoice_date, amount_received FROM payment_stages'),
     query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(quotation_no, '^.*/', ''), '')::int), 0) AS n FROM quotations WHERE quotation_no ~ '^CTZ/QT/\\d{4}/\\d+$'`),
     query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(project_id, '^.*-', ''), '')::int), 0) AS n FROM projects WHERE project_id ~ '^PRJ-\\d{4}-\\d+$'`),
+    // What the last committed upload said about each deal, to tell what is new.
+    query(`SELECT DISTINCT ON (ref) ref, payload FROM (
+        SELECT substring(i.committed_ref from '.*: (.*)$') AS ref, i.payload, b.committed_at
+          FROM import_items i JOIN import_batches b ON b.id = i.batch_id
+         WHERE b.status = 'committed' AND i.step = 'quotation' AND i.included AND i.committed_ref IS NOT NULL) x
+      WHERE ref IS NOT NULL ORDER BY ref, committed_at DESC`),
+    query(`SELECT DISTINCT ON (entity_id) entity_id, id, due_at::text AS due_at FROM tasks
+      WHERE entity = 'quotation' AND type = 'follow_up' AND created_by = $1 AND status <> 'done' ORDER BY entity_id, due_at`, [IMPORT_AUTHOR]),
+    query(`SELECT entity_id, body FROM notes WHERE entity = 'quotation' AND author = $1`, [IMPORT_AUTHOR]),
   ]);
+  const sheetNotes = {};
+  for (const n of notes.rows) (sheetNotes[n.entity_id] ||= []).push(n.body);
   return {
     quotations: q.rows, purchase_orders: po.rows, projects: pr.rows, services: sv.rows, stages: st.rows,
     next_quotation_no: Number(nq.rows[0].n) + 1,
     next_project_no: Number(np.rows[0].n) + 1,
     year: businessYear(),
+    today: businessToday(),
+    trail: Object.fromEntries(trail.rows.map((t) => [t.ref, { ...(t.payload.tracking?.sheet || {}), legacy: t.payload.remarks || null, remarks_field: t.payload.remarks || null }])),
+    follow_up_tasks: Object.fromEntries(tasks.rows.map((t) => [t.entity_id, { id: t.id, due_at: t.due_at }])),
+    sheet_notes: sheetNotes,
   };
 }
 

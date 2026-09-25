@@ -111,7 +111,9 @@ const MEANING = {
   invoice_amount: 'amount invoiced / billed so far',
   received: 'money received / collected so far',
   pending: 'amount still to be received / outstanding',
-  follow_up: 'next follow-up date or next action',
+  follow_up: 'follow-up comments: what was done or is to be done next (text)',
+  last_follow_up: 'date of the last follow-up / last contact with the client',
+  next_follow_up: 'date the next follow-up is due',
   remarks: 'free-text remarks or comments',
   sales_person: 'our salesperson or owner of the deal',
 };

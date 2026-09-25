@@ -14,8 +14,10 @@ import { money, date } from '../lib/format.js';
  * "Complete and commit" on the last step.
  *
  * A yellow row is a duplicate: the record is already on the site. Each one
- * carries a choice, keep the original (default) or replace it with the
- * sheet's values. Choosing on a PO carries to everything under it.
+ * carries a choice, keep the original or update it from the sheet (the
+ * default for a deal recognised for certain that changed in the sheet).
+ * Choosing on a PO carries to everything under it. Either way, a deal's new
+ * remarks, follow-ups and next follow-up date are added to its history.
  */
 const STEPS = [
   { key: 'quotation', label: 'Quotations' },
@@ -26,7 +28,7 @@ const STEPS = [
   { key: 'summary', label: 'Summary' },
 ];
 
-const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Replace with sheet' }];
+const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Update from sheet' }];
 // Only for a quotation matched by client and service alone: it may be a different deal.
 const NEW_CHOICE = { value: 'create', label: 'Import as new' };
 
@@ -118,7 +120,7 @@ export default function ImportReview() {
   async function decideAll(stepKey, action) {
     try {
       await api.action(`/import/batches/${id}/duplicates`, { step: stepKey, action });
-      toast(action === 'skip' ? 'Originals kept for every duplicate in this step' : 'Every duplicate in this step will be replaced with the sheet', 'success');
+      toast(action === 'skip' ? 'Originals kept for every duplicate in this step' : 'Every duplicate in this step will be updated from the sheet', 'success');
       refetch();
     } catch (err) {
       toast(err.message, 'danger');
@@ -200,7 +202,7 @@ export default function ImportReview() {
         )}
         {totalDuplicates > 0 && !committed && (
           <Alert tone="warning">
-            {totalDuplicates} record{totalDuplicates === 1 ? ' is' : 's are'} already on the site and shown in yellow. Each one keeps the original unless you choose "Replace with sheet". A choice made on a purchase order carries to its stages, invoice and receipt.
+            {totalDuplicates} record{totalDuplicates === 1 ? ' is' : 's are'} already on the site and shown in yellow. A deal recognised for certain whose stage, value or dates changed in the sheet is updated from it; any other keeps the original. You can change either on each row. A choice made on a purchase order carries to its stages, invoice and receipt. New remarks and follow-ups go to each deal's timeline either way.
           </Alert>
         )}
 
@@ -237,7 +239,7 @@ export default function ImportReview() {
       {confirm && (
         <ConfirmDialog
           title="Commit this import?"
-          message={`${toCreate} new record${toCreate === 1 ? '' : 's'} will be written${toReplace ? `, ${toReplace} existing record${toReplace === 1 ? '' : 's'} replaced with the sheet's values` : ''}${toKeep ? `, ${toKeep} duplicate${toKeep === 1 ? '' : 's'} kept as ${toKeep === 1 ? 'it is' : 'they are'}` : ''}. One transaction: if any one fails, nothing is written.`}
+          message={`${toCreate} new record${toCreate === 1 ? '' : 's'} will be written${toReplace ? `, ${toReplace} existing record${toReplace === 1 ? '' : 's'} updated from the sheet` : ''}${toKeep ? `, ${toKeep} duplicate${toKeep === 1 ? '' : 's'} kept as ${toKeep === 1 ? 'it is' : 'they are'}` : ''}. One transaction: if any one fails, nothing is written.`}
           confirmLabel={busy ? 'Committing…' : 'Complete and commit'}
           busy={busy}
           onConfirm={commit}
@@ -297,7 +299,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
         if (!it.existing_ref) return <Badge tone="success">new</Badge>;
         if (committed) {
           if (it.action === 'create') return <Badge tone="success">imported as new</Badge>;
-          return <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'replaced' : 'kept original'}</Badge>;
+          return <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'updated from sheet' : 'kept original'}</Badge>;
         }
         // A project follows its quotation's choice.
         if (it.action === 'create' && it.step !== 'quotation') return <Badge tone="success">new, with its quotation</Badge>;
@@ -377,7 +379,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
           {dups > 0 && !committed && (
             <>
               <button type="button" className="btn btn--sm" onClick={() => onDecideAll('skip')} title="Every duplicate in this step keeps the site's record">Keep all originals</button>
-              <button type="button" className="btn btn--sm" onClick={() => onDecideAll('update')} title="Every duplicate in this step is overwritten with the sheet's values">Replace all with sheet</button>
+              <button type="button" className="btn btn--sm" onClick={() => onDecideAll('update')} title="Every duplicate in this step takes the sheet's values">Update all from sheet</button>
             </>
           )}
           <span className="small muted">{rows.length} of {items.length}{dups ? ` · ${dups} duplicate${dups === 1 ? '' : 's'}` : ''}</span>
@@ -438,6 +440,14 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
   const skipped = batch.summary?.skipped_rows || [];
   const errors = items.filter((it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error'));
   const replacing = items.filter((it) => effectiveIncluded(it) && it.action === 'update');
+  const tracked = items.filter((it) => it.step === 'quotation' && effectiveIncluded(it) && it.payload?.tracking).map((it) => it.payload.tracking);
+  const history = {
+    notes: tracked.reduce((n, t) => n + (t.notes?.length || 0), 0),
+    deals: tracked.filter((t) => t.notes?.length).length,
+    reminders: tracked.filter((t) => t.follow_up).length,
+    contacts: tracked.filter((t) => t.last_contacted).length,
+    closed: tracked.filter((t) => t.close_follow_up).length,
+  };
   const label = { quotation: 'Quotations', project: 'Projects', purchase_order: 'Purchase orders', service: 'Service lines', stage: 'Payment stages', invoice: 'Invoices', receipt: 'Receipts' };
   const stepLabel = { quotation: 'quotation', project: 'project', purchase_order: 'PO', service: 'service line', stage: 'stage', invoice: 'invoice', receipt: 'receipt' };
 
@@ -446,10 +456,10 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
       {hasErrors && !committed && (
         <Alert tone="danger">{errors.length} included item(s) still have errors (for example an invoice with no date). Fix them on the earlier steps, or untick them, before committing.</Alert>
       )}
-      <Card title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to replace.'}>
+      <Card title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to update from the sheet.'}>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Record</th><th className="num">New</th><th className="num">Keep original</th><th className="num">Replace with sheet</th><th className="num">Unticked</th></tr></thead>
+            <thead><tr><th>Record</th><th className="num">New</th><th className="num">Keep original</th><th className="num">Update from sheet</th><th className="num">Unticked</th></tr></thead>
             <tbody>
               {steps.map((k) => (
                 <tr key={k}>
@@ -466,15 +476,29 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
       </Card>
 
       {replacing.length > 0 && !committed && (
-        <Card title={`Existing records that will be overwritten · ${replacing.length}`} hint="The sheet's values replace the site's. Fields the sheet leaves blank are not touched.">
+        <Card title={`Existing records updated from the sheet · ${replacing.length}`} hint="The sheet's values replace the tracker's; fields the sheet leaves blank are not touched. Remarks written in the tracker itself are kept on the deal's timeline.">
           <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
-            {replacing.map((it) => <li key={it.id}>S.No {it.source_row}: {stepLabel[it.step]} <span className="mono">{it.existing_ref}</span></li>)}
+            {replacing.map((it) => {
+              const changed = it.flags.find((f) => f.code === 'sheet_changes');
+              return <li key={it.id}>S.No {it.source_row}: {stepLabel[it.step]} <span className="mono">{it.existing_ref}</span>{changed ? ` · ${changed.message.replace(/^Updated from the sheet: /, '')}` : ''}</li>;
+            })}
+          </ul>
+        </Card>
+      )}
+
+      {history.notes + history.reminders + history.contacts + history.closed > 0 && (
+        <Card title="Added to the deals' history" hint={committed ? 'What the sheet added' : "From the sheet's remarks and follow-up columns. Text already on a deal is not added again."}>
+          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+            {history.notes > 0 && <li>{history.notes} note{history.notes === 1 ? '' : 's'} on {history.deals} deal timeline{history.deals === 1 ? '' : 's'} (remarks and follow-up comments)</li>}
+            {history.reminders > 0 && <li>{history.reminders} follow-up reminder{history.reminders === 1 ? '' : 's'} for the salespeople, from the next follow-up dates</li>}
+            {history.contacts > 0 && <li>{history.contacts} deal{history.contacts === 1 ? '' : 's'} with a newer last-contact date, from the last follow-up dates</li>}
+            {history.closed > 0 && <li>{history.closed} reminder{history.closed === 1 ? '' : 's'} closed because the deal was lost</li>}
           </ul>
         </Card>
       )}
 
       <SheetReading
-        key={JSON.stringify([batch.sheet_name, batch.rules?.stage_map, batch.rules?.won_requires_po, batch.rules?.exclude_iso, batch.summary?.stage_values])}
+        key={JSON.stringify([batch.sheet_name, batch.rules?.stage_map, batch.rules?.won_requires_po, batch.rules?.exclude_iso, batch.rules?.update_from_sheet, batch.summary?.stage_values])}
         batch={batch}
         committed={committed}
         onReplan={onReplan}
@@ -532,12 +556,14 @@ function SheetReading({ batch, committed, onReplan }) {
   const [choice, setChoice] = useState(() => Object.fromEntries(values.map((v) => [v.key, isChoice(v.reading) ? v.reading : ''])));
   const [wonNeedsPo, setWonNeedsPo] = useState(rules.won_requires_po !== false);
   const [excludeIso, setExcludeIso] = useState(rules.exclude_iso !== false);
+  const [updateFromSheet, setUpdateFromSheet] = useState(rules.update_from_sheet !== false);
   const sheets = batch.mapping?.sheets || [];
   const [sheet, setSheet] = useState(batch.sheet_name);
   const [busy, setBusy] = useState(false);
 
   const changed = values.filter((v) => choice[v.key] && choice[v.key] !== v.reading);
-  const rulesChanged = wonNeedsPo !== (rules.won_requires_po !== false) || excludeIso !== (rules.exclude_iso !== false);
+  const rulesChanged = wonNeedsPo !== (rules.won_requires_po !== false) || excludeIso !== (rules.exclude_iso !== false)
+    || updateFromSheet !== (rules.update_from_sheet !== false);
   const sheetChanged = sheet !== batch.sheet_name;
   const unread = values.filter((v) => !isChoice(v.reading)).length;
   const byAi = values.filter((v) => v.by === 'ai').length;
@@ -546,7 +572,7 @@ function SheetReading({ batch, committed, onReplan }) {
     setBusy(true);
     const stageMap = { ...(rules.stage_map || {}) };
     for (const v of changed) stageMap[v.key] = choice[v.key];
-    await onReplan({ stage_map: stageMap, won_requires_po: wonNeedsPo, exclude_iso: excludeIso }, sheetChanged ? sheet : null);
+    await onReplan({ stage_map: stageMap, won_requires_po: wonNeedsPo, exclude_iso: excludeIso, update_from_sheet: updateFromSheet }, sheetChanged ? sheet : null);
     setBusy(false);
   }
 
@@ -608,6 +634,10 @@ function SheetReading({ batch, committed, onReplan }) {
           <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" checked={excludeIso} disabled={committed} onChange={(e) => setExcludeIso(e.target.checked)} />
             Leave out ISO proposals
+          </label>
+          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" checked={updateFromSheet} disabled={committed} onChange={(e) => setUpdateFromSheet(e.target.checked)} />
+            Deals already in the tracker take what changed in the sheet (stage, value, dates), when they are recognised for certain. A won deal is never moved back.
           </label>
         </div>
         {!committed && (

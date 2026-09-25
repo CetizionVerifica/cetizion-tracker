@@ -173,6 +173,61 @@ describe('bulk import of any reasonable sales sheet', { skip: !ADMIN_URL && 'set
     ]);
   });
 
+  test('the weekly sheet uploaded again updates its deals and keeps their remarks and follow-ups as history', async () => {
+    const H = ['S.No', 'Client Name', 'Deal Stage', 'Proposal Name', 'Proposal Sent Date', 'Quoted Price', 'Sales Person',
+      'Last Follow up', 'Next Follow up', 'Follow up Comments', 'Remarks'];
+    const week = (stage, value, last, next, comment) => book([['Sales', [H,
+      [1, 'Suite Weekly', stage, 'GHG inventory', '01-Sep-2026', value, 'Rohan', last, next, comment, 'Client wants a call'],
+    ]]]);
+    const upload = async (file) => {
+      const batch = (await agent.post('/api/import/batches').attach('file', file, 'weekly.xlsx').expect(201)).body.data;
+      const item = batch.items.find((i) => i.step === 'quotation');
+      const committed = (await agent.post(`/api/import/batches/${batch.id}/commit`).expect(200)).body.data;
+      assert.equal(committed.status, 'committed');
+      return item;
+    };
+    const state = async () => ({
+      q: (await db.query(`SELECT quotation_no, status, quotation_value::float AS value, remarks, next_step, (last_contacted_at AT TIME ZONE 'UTC')::date::text AS last_contact FROM quotations WHERE client_name = 'Suite Weekly'`)).rows,
+      notes: (await db.query(`SELECT body FROM notes WHERE entity = 'quotation' AND author = 'Bulk import' AND entity_id = (SELECT quotation_no FROM quotations WHERE client_name = 'Suite Weekly') ORDER BY id`)).rows.map((n) => n.body),
+      tasks: (await db.query(`SELECT due_at::text AS due, assignee, status FROM tasks WHERE type = 'follow_up' AND created_by = 'Bulk import' AND entity_id = (SELECT quotation_no FROM quotations WHERE client_name = 'Suite Weekly') ORDER BY id`)).rows,
+    });
+
+    // Week 1: a new deal, its history and a reminder.
+    const first = await upload(week('Proposal sent', 450000, '10-Sep-2026', '15-Jan-2099', 'Reminder sent'));
+    assert.equal(first.action, 'create');
+    let s = await state();
+    assert.equal(s.q.length, 1);
+    assert.deepEqual([s.q[0].status, s.q[0].next_step, s.q[0].last_contact], ['Submitted', 'Reminder sent', '2026-09-10']);
+    assert.deepEqual(s.notes, ['Remarks: Client wants a call', 'Follow-up: Reminder sent']);
+    assert.deepEqual(s.tasks, [{ due: '2099-01-15', assignee: 'Rohan', status: 'todo' }]);
+
+    // Someone writes a remark in the tracker itself during the week.
+    await db.query(`UPDATE quotations SET remarks = 'Typed in the tracker' WHERE client_name = 'Suite Weekly'`);
+
+    // Week 2: the team moved the deal on and wrote after the old comment.
+    const second = await upload(week('Negotiation', 420000, '18-Sep-2026', '22-Jan-2099', 'Reminder sent | 18-Sep: asked for 5% discount'));
+    assert.equal(second.existing_ref, s.q[0].quotation_no);
+    assert.equal(second.action, 'update');
+    s = await state();
+    assert.equal(s.q.length, 1, 'the same deal, not a second one');
+    assert.deepEqual([s.q[0].status, s.q[0].value, s.q[0].last_contact], ['Under Negotiation', 420000, '2026-09-18']);
+    assert.deepEqual(s.notes, ['Remarks: Client wants a call', 'Follow-up: Reminder sent', 'Remarks before this upload: Typed in the tracker',
+      'Follow-up: 18-Sep: asked for 5% discount']);
+    assert.deepEqual(s.tasks, [{ due: '2099-01-22', assignee: 'Rohan', status: 'todo' }], 'the reminder moved, not doubled');
+
+    // Week 3: nothing changed, so nothing is added.
+    const third = await upload(week('Negotiation', 420000, '18-Sep-2026', '22-Jan-2099', 'Reminder sent | 18-Sep: asked for 5% discount'));
+    assert.equal(third.action, 'skip');
+    const after = await state();
+    assert.deepEqual([after.notes, after.tasks], [s.notes, s.tasks]);
+
+    // Lost: its reminder is closed.
+    await upload(week('Lost', 420000, '18-Sep-2026', '22-Jan-2099', 'Went with a competitor'));
+    const lost = await state();
+    assert.equal(lost.q[0].status, 'Lost');
+    assert.deepEqual(lost.tasks.map((t) => t.status), ['done']);
+  });
+
   test('a project status report is refused with a reason, not turned into invented deals', async () => {
     const report = book([['Current Projects', [
       ['Target Projects for 2026', null, null, 25, 'Completed Projects for 2026', 7],

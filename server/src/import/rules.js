@@ -47,8 +47,50 @@ export const DEFAULT_RULES = {
   invoice_prefix: 'CVPL',
   apply_onboarding_template: true,
   overwrite_existing: false,
+  // A deal already in the tracker, recognised for certain, takes what
+  // changed in the sheet (stage, value, dates...). A won deal is never
+  // moved back by a sheet.
+  update_from_sheet: true,
 };
 
+/** Who writes the sheet's remarks and reminders: how they are found again. */
+export const IMPORT_AUTHOR = 'Bulk import';
+const NOTE_LABEL = { status: 'Status', remarks: 'Remarks', follow_up: 'Follow-up', next: 'Next follow-up' };
+const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/**
+ * What a sheet cell says that the tracker has not heard yet: nothing when
+ * the text was seen before, and only the added part when the team wrote on
+ * after it ("Reminder sent" → "Reminder sent | 25-Sep: asked for revision").
+ */
+export function newText(text, before, heard = []) {
+  if (!text) return null;
+  const t = squash(text);
+  if (heard.some((h) => h.includes(t))) return null;
+  const plain = String(text).replace(/\s+/g, ' ').trim();
+  const prev = String(before || '').replace(/\s+/g, ' ').trim();
+  const at = prev ? plain.toLowerCase().indexOf(prev.toLowerCase()) : -1;
+  if (at < 0) return plain;
+  const rest = `${plain.slice(0, at)} ${plain.slice(at + prev.length)}`.replace(/^[\s|;,.\-–—]+|[\s|;,\-–—]+$/g, '').replace(/\s+/g, ' ').trim();
+  return rest || null;
+}
+
+/** The fields a re-upload may change on a quotation, and how they read. */
+const CHANGEABLE = [['status', 'stage'], ['quotation_value', 'value'], ['currency', 'currency'], ['quotation_date', 'proposal date'],
+  ['contact_person', 'contact'], ['sales_person', 'sales person'], ['service_quoted', 'service']];
+function sheetChanges(existing, payload) {
+  const out = [];
+  for (const [col, label] of CHANGEABLE) {
+    const to = payload[col];
+    const from = existing[col] ?? null;
+    if (to === null || to === undefined || to === '') continue;
+    const same = typeof to === 'number' ? from !== null && Math.abs(Number(from) - to) < 0.01 : squash(from) === squash(to);
+    if (!same) out.push({ field: col, label, from, to });
+  }
+  return out;
+}
+
+const WON_STATUS = 'Won - PO Received';
 const ISO = /\bISO\b/i;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -141,6 +183,7 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
   // With no amount and no currency column, the quotation note may still say
   // it: "Proposal dtd 01-Sep-2026 – USD 7,500 + travel" is a dollar deal.
   const columnCurrency = readCurrency(get('currency')) || (qRaw && !qIsNumber ? readCurrency(qRaw) : null);
+  const nextDate = findDate(get('next_follow_up'));
   return {
     sno,
     ref: str(snoRaw),
@@ -178,6 +221,10 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
     pending: pending.amount,
     follow_up: str(get('follow_up')),
     remarks: str(get('remarks')),
+    last_follow_up: findDate(get('last_follow_up')),
+    next_follow_up: nextDate,
+    // "Next week", "after Diwali": no date to remind on, but worth keeping.
+    next_follow_up_note: nextDate ? null : str(get('next_follow_up')),
     sales_person: str(get('sales_person')),
   };
 }
@@ -245,6 +292,46 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     item.flags.push({ level: 'warn', code: 'duplicate', message: `${certain ? 'Already' : 'Possibly already'} on the site as ${ref} · matched by ${how}`, by: 'rule', match: how, certain });
   };
 
+  /**
+   * What the row adds to the deal's history: its remarks and follow-up
+   * comments as timeline notes (only what is new since the last upload),
+   * the last follow-up as the deal's last contact, and the next follow-up
+   * as a reminder for the salesperson. Flags say what will happen.
+   */
+  const asOf = live.today || today();
+  const tracking = (r, existing, item) => {
+    const ref = existing?.quotation_no;
+    const before = (ref && live.trail?.[ref]) || {};
+    const heard = [...(ref && live.sheet_notes?.[ref]) || [], before.legacy, existing?.remarks].filter(Boolean).map(squash);
+    const t = { notes: [], last_contacted: null, next_step: null, follow_up: null, close_follow_up: false, prior_remarks: before.remarks_field ?? null,
+      sheet: { status: r.stage_detail !== r.stage_raw ? r.stage_detail : null, remarks: r.remarks, follow_up: r.follow_up, next: r.next_follow_up_note } };
+    for (const kind of ['status', 'remarks', 'follow_up', 'next']) {
+      const part = newText(t.sheet[kind], before[kind], heard);
+      if (part) t.notes.push(`${NOTE_LABEL[kind]}: ${part}`);
+    }
+    if (t.notes.length) {
+      const one = t.notes.length === 1 ? `: "${t.notes[0].length > 90 ? `${t.notes[0].slice(0, 87)}...` : t.notes[0]}"` : '';
+      item.flags.push({ level: 'info', code: 'timeline', message: `${t.notes.length} ${existing ? 'new ' : ''}note${t.notes.length === 1 ? '' : 's'} for the deal's timeline${one}`, by: 'rule' });
+    }
+    if (r.last_follow_up && r.last_follow_up <= asOf && (!existing?.last_contacted_at || r.last_follow_up > existing.last_contacted_at)) t.last_contacted = r.last_follow_up;
+    if (r.follow_up && squash(r.follow_up) !== squash(existing?.next_step)) t.next_step = r.follow_up;
+
+    const open = ref ? live.follow_up_tasks?.[ref] : null;
+    const who = r.sales_person || existing?.sales_person || null;
+    if (r.stage === 'Lost') {
+      if (open) {
+        t.close_follow_up = true;
+        item.flags.push({ level: 'info', code: 'follow_up_closed', message: `Deal lost: its follow-up reminder for ${open.due_at} will be closed`, by: 'rule' });
+      }
+    } else if (r.next_follow_up && r.next_follow_up < asOf) {
+      if (!open) item.flags.push({ level: 'info', code: 'follow_up_past', message: `Next follow-up ${r.next_follow_up} has already passed; no reminder set`, by: 'rule' });
+    } else if (r.next_follow_up && open?.due_at !== r.next_follow_up) {
+      t.follow_up = { due: r.next_follow_up, title: `Follow up ${r.client}${r.service ? ` – ${r.service}` : ''}`, description: r.follow_up || null, assignee: who };
+      item.flags.push({ level: 'info', code: 'follow_up', message: open ? `Follow-up reminder moves from ${open.due_at} to ${r.next_follow_up}` : `Follow-up reminder on ${r.next_follow_up}${who ? ` for ${who}` : ''}`, by: 'rule' });
+    }
+    return t;
+  };
+
   let lastProposalDate = null;   // nearest earlier row's date, for rows with none
 
   for (const raw of rows) {
@@ -264,7 +351,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     if (r.stage_kind === 'skip') { leaveOut('left out by your stage reading'); continue; }
     if (!r.stage) { leaveOut('unrecognised deal stage'); continue; }
     if (rules.exclude_iso && ISO.test(r.service || '')) { leaveOut('ISO proposal'); continue; }
-    const won = r.stage === 'Won - PO Received';
+    const won = r.stage === WON_STATUS;
     if (won && rules.won_requires_po && !r.po_number) { leaveOut(r.po_note ? `won but no PO number yet ("${r.po_note}")` : 'won but no PO number'); continue; }
     if (r.stage === 'Lost' && !rules.include_lost) { leaveOut('lost deals excluded by rule'); continue; }
     if (!won && r.stage !== 'Lost' && !rules.include_pending) { leaveOut('pending deals excluded by rule'); continue; }
@@ -285,6 +372,9 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
         existing = cands.find((q) => r.proposal_date && String(q.quotation_date).slice(0, 10) === r.proposal_date) || cands[0];
         qHow = r.proposal_date && String(existing.quotation_date || '').slice(0, 10) === r.proposal_date ? 'client, service and date' : 'client and service';
         qCertain = false;
+        // A deal an earlier upload wrote, with the same client and service,
+        // is the same row come round again: the weekly sheet re-uploaded.
+        if (live.trail?.[existing.quotation_no]) { qHow = `${qHow}, from an earlier upload`; qCertain = true; }
       }
     }
 
@@ -324,8 +414,18 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     if (existing) {
       duplicate(qItem, `${existing.quotation_no} (${existing.status})`, qHow, qCertain);
       qItem.existing_ref = existing.quotation_no;
-      if (existing.status !== r.stage) qItem.flags.push({ level: 'warn', code: 'status_differs', message: `Site says ${existing.status}, sheet says ${r.stage}`, by: 'rule' });
+      const changed = sheetChanges(existing, qItem.payload);
+      const says = changed.map((c) => `${c.label} ${c.from ?? '(blank)'} → ${c.to}`).join('; ');
+      if (existing.status === WON_STATUS && r.stage !== WON_STATUS) {
+        qItem.flags.push({ level: 'warn', code: 'status_differs', message: `The tracker has this deal as won; the sheet says ${r.stage}. Kept as won`, by: 'rule' });
+      } else if (changed.length && qCertain && rules.update_from_sheet && !rules.overwrite_existing) {
+        qItem.action = 'update';
+        qItem.flags.push({ level: 'info', code: 'sheet_changes', message: `Updated from the sheet: ${says}`, by: 'rule', changes: changed });
+      } else if (changed.length) {
+        qItem.flags.push({ level: 'warn', code: 'status_differs', message: `Changed in the sheet, not applied while kept: ${says}`, by: 'rule', changes: changed });
+      }
     }
+    qItem.payload.tracking = tracking(r, existing, qItem);
 
     if (!won) continue;
 

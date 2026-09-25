@@ -182,6 +182,12 @@ export default function BulkImport() {
           seven days, and a missing invoice date the PO plus one. The review shows every stage reading and both rules,
           and lets you change them.
         </p>
+        <p className="max-w-[80ch] text-[11.5px]/[1.6] text-muted-foreground">
+          Upload the same sheet again whenever the team updates it. Deals it wrote before are recognised and take what
+          changed (stage, value, dates). New remarks and follow-up comments go onto each deal's timeline, without
+          repeating what is already there. The last follow-up date becomes the deal's last contact, and the next
+          follow-up date a reminder for its salesperson.
+        </p>
       </SettingsPane>
 
       {deleting && (
