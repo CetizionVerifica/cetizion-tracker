@@ -443,8 +443,8 @@ const receiptSchema = z.object({
   mode: z.enum(['set', 'add']).optional().default('set'),
   tds_amount: z.preprocess(blank, z.coerce.number().min(0).optional()),
   payment_mode: z.preprocess(blank, z.enum(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).optional()),
-  reference: z.preprocess(blank, z.string().trim().max(120).optional()),
-  notes: z.preprocess(blank, z.string().trim().max(1000).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
+  notes: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
 });
 
 stageRouter.post('/:id/payment', async (req, res) => {
