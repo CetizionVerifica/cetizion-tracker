@@ -429,6 +429,7 @@ refuses to overwrite it.
 | [docs/staging.md](docs/staging.md) | The staging environment: what it is for, how it is deployed and refreshed |
 | [docs/mcp.md](docs/mcp.md) | Asking Claude about live tracker data |
 | [docs/webhooks-n8n.md](docs/webhooks-n8n.md) | Webhooks, signatures and two n8n recipes |
+| [docs/bulk-import.md](docs/bulk-import.md) | Importing a sales sheet, the review, weekly re-uploads, and how the importer and its AI work |
 
 ## Notes before production use
 
