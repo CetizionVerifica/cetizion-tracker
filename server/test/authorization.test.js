@@ -698,6 +698,16 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       const res = await as(sales.cookie)('post', '/api/inbox/inboxes').send({ name: 'Mine now', account_id: 1 });
       assert.equal(res.status, 403, JSON.stringify(res.body));
     });
+
+    /**
+     * Deleting one is the same call pointed the other way, and worse:
+     * inbox_conversations cascades, so it discards the whole team's triage
+     * and quietly stops the shared address reaching anybody.
+     */
+    test('and so is deleting one', async () => {
+      const res = await as(sales.cookie)('delete', '/api/inbox/inboxes/1?discard=yes');
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
   });
   // ------------------------------------------------ batch 5's new surfaces
 
