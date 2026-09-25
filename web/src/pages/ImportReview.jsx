@@ -173,6 +173,14 @@ export default function ImportReview() {
   const toReplace = items.filter((it) => effectiveIncluded(it) && it.action === 'update').length;
   const toKeep = items.filter((it) => effectiveIncluded(it) && it.action === 'skip').length;
 
+  /** From the summary to the first step with a row in error, showing only those. */
+  const showErrors = () => {
+    const first = items.find((it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error'));
+    const at = first ? STEPS.findIndex((s) => (s.key === 'money' ? ['invoice', 'receipt'].includes(first.step) : s.key === first.step || (s.key === 'purchase_order' && first.step === 'service'))) : -1;
+    setFilters({ status: '', flagged: false, action: 'errors' });
+    if (at >= 0) setStep(at);
+  };
+
   const tableProps = (key) => ({
     stepKey: key,
     items: stepItems(key),
@@ -223,7 +231,7 @@ export default function ImportReview() {
         />
 
         {current.key === 'summary' ? (
-          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} />
+          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} onShowErrors={showErrors} />
         ) : (
           <>
             <StepTable {...tableProps(current.key)} />
@@ -231,12 +239,12 @@ export default function ImportReview() {
           </>
         )}
 
-        <div className="flex flex-wrap justify-between gap-3">
-          <Button variant="secondary" disabled={step === 0} onClick={() => setStep(step - 1)}>← Back</Button>
-          {step < STEPS.length - 1
-            ? <Button onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label} →</Button>
-            : !committed && <Button disabled={hasErrors || busy} onClick={() => setConfirm(true)}>Complete and commit</Button>}
-        </div>
+        {current.key !== 'summary' && (
+          <div className="flex flex-wrap justify-between gap-3">
+            <Button variant="secondary" disabled={step === 0} onClick={() => setStep(step - 1)}>← Back</Button>
+            <Button onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label} →</Button>
+          </div>
+        )}
       </div>
 
       {editing && (
@@ -263,6 +271,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     if (filters.flagged && !it.flags.some((f) => f.code !== 'duplicate')) return false;
     if (filters.action === 'create' && it.existing_ref) return false;
     if (filters.action === 'dup' && !it.existing_ref) return false;
+    if (filters.action === 'errors' && !it.flags.some((f) => f.level === 'error')) return false;
     if (stepKey === 'quotation' && filters.status && it.payload.status !== filters.status) return false;
     return true;
   });
@@ -384,7 +393,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
           {stepKey === 'quotation' && (
             <Select value={filters.status} placeholder="Status: all" options={['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold']} onChange={(e) => setFilters({ ...filters, status: e.target.value })} />
           )}
-          <Select value={filters.action} placeholder="Show: all" options={[{ value: 'create', label: 'New only' }, { value: 'dup', label: 'Duplicates only' }]} onChange={(e) => setFilters({ ...filters, action: e.target.value })} />
+          <Select value={filters.action} placeholder="Show: all" options={[{ value: 'create', label: 'New only' }, { value: 'dup', label: 'Duplicates only' }, { value: 'errors', label: 'Errors only' }]} onChange={(e) => setFilters({ ...filters, action: e.target.value })} />
           <div className="flex items-center gap-2">
             <Checkbox id={`flagged-${stepKey}`} checked={filters.flagged} onCheckedChange={(on) => setFilters({ ...filters, flagged: on === true })} />
             <Label htmlFor={`flagged-${stepKey}`} className="text-[13px] font-normal text-secondary-text">Flagged only</Label>
@@ -449,7 +458,7 @@ function Flags({ flags }) {
 
 /* ------------------------------------------------------------ summary */
 
-function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan }) {
+function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan, onShowErrors }) {
   const steps = STEPS.filter((s) => s.key !== 'summary' && s.key !== 'money').map((s) => s.key).concat(['service', 'invoice', 'receipt']);
   const count = (key, pred) => items.filter((it) => it.step === key && pred(it)).length;
   const assumptions = items.filter(effectiveIncluded).flatMap((it) => it.assumptions.map((a) => `S.No ${it.source_row}: ${a}`));
@@ -472,7 +481,22 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
   return (
     <div className="flex flex-col gap-4">
       {hasErrors && !committed && (
-        <Alert tone="danger">{errors.length} included item(s) still have errors (for example an invoice with no date). Fix them on the earlier steps, or untick them, before committing.</Alert>
+        <Alert tone="danger">
+          <div className="flex flex-col gap-2">
+            <span>
+              Commit is off until {errors.length === 1 ? 'this row is' : `these ${errors.length} rows are`} fixed with Edit or unticked:
+            </span>
+            <ul className="m-0 list-disc space-y-1 pl-5">
+              {errors.slice(0, 5).map((it) => (
+                <li key={it.id}>
+                  S.No {it.source_row}, {it.step.replace('_', ' ')}{it.payload.client_name ? ` for ${it.payload.client_name}` : ''}: {it.flags.filter((f) => f.level === 'error').map((f) => f.message).join('; ')}
+                </li>
+              ))}
+              {errors.length > 5 && <li>and {errors.length - 5} more</li>}
+            </ul>
+            <div><Button variant="secondary" size="sm" onClick={onShowErrors}>Show {errors.length === 1 ? 'it' : 'them'}</Button></div>
+          </div>
+        </Alert>
       )}
       <Card flush title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to update from the sheet.'}>
         <DataTable
@@ -536,7 +560,8 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
       </Card>
 
       {!committed && (
-        <div className="flex flex-wrap justify-end gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {hasErrors && <span className="text-[13px] text-late">Fix or untick the {errors.length === 1 ? 'row' : `${errors.length} rows`} with an error to commit</span>}
           <Button variant="secondary" onClick={onBack}>Back to review</Button>
           <Button disabled={hasErrors} onClick={onCommit}>Complete and commit</Button>
         </div>

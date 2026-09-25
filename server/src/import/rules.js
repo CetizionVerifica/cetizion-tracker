@@ -576,8 +576,16 @@ export function reviewFlags(step, payload, flags = []) {
     const present = Object.fromEntries(Object.entries(payload).filter(([k, v]) => v !== null && v !== undefined && v !== '' && !(AMOUNT_FIELDS.includes(k) && bad.includes(k))));
     const parsed = resource.schema.partial().safeParse(present);
     if (!parsed.success) {
-      const issues = parsed.error.issues.map((x) => `${String(x.path[0]).replace(/_/g, ' ')}: ${x.message}`).join('; ');
-      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Correct it or untick the row`, by: 'rule' });
+      // In words: "currency CAD is not one the tracker keeps (INR, EUR, …)",
+      // not the validator's "Invalid option: expected one of …".
+      const issues = parsed.error.issues.map((x) => {
+        const field = String(x.path[0]);
+        const allowed = x.values || x.options;
+        return Array.isArray(allowed) && present[field] !== undefined
+          ? `${field.replace(/_/g, ' ')} ${present[field]} is not one the tracker keeps (${allowed.join(', ')})`
+          : `${field.replace(/_/g, ' ')}: ${x.message}`;
+      }).join('; ');
+      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Change it with Edit, or untick the row`, by: 'rule' });
     }
   }
   return kept;
