@@ -1198,6 +1198,30 @@ CREATE TABLE notes (
 
 CREATE INDEX notes_entity_idx ON notes (entity, entity_id, created_at DESC);
 
+-- Every record a task is on (#22); the task's own entity is its main one,
+-- kept here by the trigger below.
+CREATE TABLE task_targets (
+  task_id    integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  entity     text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id  text NOT NULL,
+  PRIMARY KEY (task_id, entity, entity_id)
+);
+
+CREATE INDEX task_targets_entity_idx ON task_targets (entity, entity_id);
+
+CREATE OR REPLACE FUNCTION task_main_target() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND (OLD.entity, OLD.entity_id) IS DISTINCT FROM (NEW.entity, NEW.entity_id) THEN
+    DELETE FROM task_targets WHERE task_id = NEW.id AND entity = OLD.entity AND entity_id = OLD.entity_id;
+  END IF;
+  INSERT INTO task_targets (task_id, entity, entity_id) VALUES (NEW.id, NEW.entity, NEW.entity_id)
+    ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_main_target AFTER INSERT OR UPDATE OF entity, entity_id ON tasks
+  FOR EACH ROW EXECUTE FUNCTION task_main_target();
+
 -- Many files per record, beside the single document field some records carry.
 CREATE TABLE attachments (
   id           serial PRIMARY KEY,

@@ -3,6 +3,7 @@ import { quoteWonEnquiry } from './enquiries.js';
 import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
+import { mayWriteOnRecords, onRecordVisibleSql } from './scope.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -568,6 +569,20 @@ export const resources = {
     stampActor: 'created_by',
     view: null,
     label: 'Task',
+    // A sales user sees the tasks on their own records, and any task that is
+    // theirs to do or that they set, wherever it sits (#22).
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'tasks', params, { ownColumns: ['assignee', 'created_by'], taskTargets: true }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
+    // The other records the task is on, besides its own (#22). Sent as the
+    // whole list: what is not in it is taken off.
+    onSave: async (client, { after, input }) => {
+      if (!Array.isArray(input.targets)) return undefined;
+      await client.query('DELETE FROM task_targets WHERE task_id = $1 AND NOT (entity = $2 AND entity_id = $3)', [after.id, after.entity, after.entity_id]);
+      for (const t of input.targets) {
+        await client.query('INSERT INTO task_targets (task_id, entity, entity_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [after.id, t.entity, String(t.entity_id)]);
+      }
+      return undefined;
+    },
     defaultSort: 'due_at NULLS LAST, id',
     search: ['title', 'description', 'entity_id', 'assignee'],
     filters: ['entity', 'entity_id', 'status', 'assignee', 'priority', 'type'],
@@ -583,6 +598,7 @@ export const resources = {
       type: enumOf(['call', 'email', 'meeting', 'follow_up', 'document', 'other']).default('follow_up'),
       assignee: str(120),
       created_by: str(120),
+      targets: z.array(z.object({ entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']), entity_id: requiredStr(120) })).max(20).optional(),
     }),
   },
 
@@ -591,6 +607,8 @@ export const resources = {
     stampActor: 'author',
     view: null,
     label: 'Note',
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'notes', params, { ownColumns: ['author'] }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
     defaultSort: 'pinned DESC, created_at DESC',
     search: ['body'],
     filters: ['entity', 'entity_id'],
@@ -642,6 +660,8 @@ export const resources = {
     filters: ['entity', 'entity_id'],
     columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
     stampActor: 'uploaded_by',
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'attachments', params, { ownColumns: ['uploaded_by'] }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
       entity_id: requiredStr(120),

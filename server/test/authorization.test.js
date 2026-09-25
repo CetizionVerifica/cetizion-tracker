@@ -684,6 +684,9 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     });
 
     test('a task records who made it, the way a note and a file already do', async () => {
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ('CTZ/QT/2026/001', 'Signed Copy Ltd', '2026-09-01', 50000, 'Submitted', $1) ON CONFLICT DO NOTHING`, [sales.user.name]);
       const made = await as(sales.cookie)('post', '/api/tasks')
         .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'Chase the signed copy' });
       assert.equal(made.status, 201, JSON.stringify(made.body));
@@ -798,6 +801,101 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     test('an unauthenticated caller is turned away first', async () => {
       const res = await as(null)('get', '/api/api-tokens');
       assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
+
+  // ------------------------------------------------ #22: who sees the history
+
+  describe('tasks, notes, files and timelines are scoped to the person (#22)', () => {
+    const MINE = 'CTZ/QT/2026/701';
+    const THEIRS = 'CTZ/QT/2026/702';
+
+    before(async () => {
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Own Deal Ltd', '2026-09-01', 10000, 'Submitted', $3), ($2, 'Other Deal Ltd', '2026-09-01', 20000, 'Submitted', 'Somebody Else')
+         ON CONFLICT DO NOTHING`, [MINE, THEIRS, sales.user.name]);
+      await db.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, 'A colleague''s note', 'Somebody Else')`, [THEIRS]);
+      await db.query(`INSERT INTO tasks (entity, entity_id, title, created_by) VALUES ('quotation', $1, 'A colleague''s task', 'Somebody Else')`, [THEIRS]);
+    });
+
+    test("a sales user reads their own record's timeline and not a colleague's", async () => {
+      const own = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(MINE)}`);
+      assert.equal(own.status, 200, JSON.stringify(own.body));
+      const other = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(THEIRS)}`);
+      assert.equal(other.status, 404, 'a colleague\'s deal is not confirmed to exist');
+      const asAdmin = await as(admin.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(THEIRS)}`);
+      assert.equal(asAdmin.status, 200);
+    });
+
+    test('the task, note and file lists hold only what the person may see', async () => {
+      const notes = await as(sales.cookie)('get', '/api/notes?limit=500');
+      assert.equal(notes.status, 200);
+      assert.equal(notes.body.data.some((n) => n.entity_id === THEIRS), false, 'a colleague\'s note is not listed');
+      const tasks = await as(sales.cookie)('get', '/api/tasks?limit=500');
+      assert.equal(tasks.body.data.some((t) => t.entity_id === THEIRS), false, 'a colleague\'s task is not listed');
+      const all = await as(admin.cookie)('get', '/api/tasks?limit=500');
+      assert.ok(all.body.data.some((t) => t.entity_id === THEIRS), 'an admin sees everything');
+
+      const { rows: [n] } = await db.query('SELECT id FROM notes WHERE entity_id = $1', [THEIRS]);
+      assert.equal((await as(sales.cookie)('get', `/api/notes/${n.id}`)).status, 404);
+      assert.equal((await as(sales.cookie)('patch', `/api/notes/${n.id}`).send({ body: 'Rewritten' })).status, 404);
+      assert.equal((await as(sales.cookie)('delete', `/api/notes/${n.id}`)).status, 404);
+
+      const summary = await as(sales.cookie)('get', '/api/tasks/summary');
+      const everyone = await as(admin.cookie)('get', '/api/tasks/summary');
+      assert.ok(summary.body.data.open < everyone.body.data.open, 'the counts are the person\'s too');
+    });
+
+    test("nothing is hung on a colleague's record, and nobody signs as someone else", async () => {
+      const onTheirs = await as(sales.cookie)('post', '/api/notes').send({ entity: 'quotation', entity_id: THEIRS, body: 'Hello' });
+      assert.equal(onTheirs.status, 404, JSON.stringify(onTheirs.body));
+
+      const signed = await as(sales.cookie)('post', '/api/notes').send({ entity: 'quotation', entity_id: MINE, body: 'Mine', author: 'The Boss' });
+      assert.equal(signed.status, 201, JSON.stringify(signed.body));
+      assert.equal(signed.body.data.author, sales.user.name, 'the session names the author, not the request');
+      const edited = await as(sales.cookie)('patch', `/api/notes/${signed.body.data.id}`).send({ body: 'Mine, edited', author: 'The Boss' });
+      assert.equal(edited.status, 200, JSON.stringify(edited.body));
+      assert.equal(edited.body.data.author, sales.user.name);
+    });
+
+    test('a task on several records shows on each of their timelines', async () => {
+      const { rows: [co] } = await db.query('SELECT company_id FROM quotations WHERE quotation_no = $1', [MINE]);
+      assert.ok(co.company_id, 'the quotation is linked to its company');
+      const made = await as(sales.cookie)('post', '/api/tasks').send({
+        entity: 'quotation', entity_id: MINE, title: 'Send the revised scope',
+        targets: [{ entity: 'company', entity_id: String(co.company_id) }],
+      });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      const onCompany = await as(sales.cookie)('get', `/api/timeline?entity=company&id=${co.company_id}`);
+      assert.equal(onCompany.status, 200, JSON.stringify(onCompany.body));
+      const task = onCompany.body.data.find((i) => i.kind === 'task' && i.id === made.body.data.id);
+      assert.ok(task, 'the task is on the company\'s timeline too');
+      assert.deepEqual(task.record.targets, [{ entity: 'company', entity_id: String(co.company_id) }]);
+
+      const sneaky = await as(sales.cookie)('patch', `/api/tasks/${made.body.data.id}`)
+        .send({ targets: [{ entity: 'quotation', entity_id: THEIRS }] });
+      assert.equal(sneaky.status, 404, 'a task is not put on a record its maker may not see');
+
+      const off = await as(sales.cookie)('patch', `/api/tasks/${made.body.data.id}`).send({ targets: [] });
+      assert.equal(off.status, 200, JSON.stringify(off.body));
+      const { rows } = await db.query('SELECT entity FROM task_targets WHERE task_id = $1', [made.body.data.id]);
+      assert.deepEqual(rows.map((r) => r.entity), ['quotation'], 'only its own record is left');
+    });
+
+    test('the old remarks become the first, pinned note, once', async () => {
+      const { readFileSync } = await import('node:fs');
+      const { join, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+      await db.query(`UPDATE quotations SET remarks = 'Client wants a site visit first' WHERE quotation_no = $1`, [MINE]);
+      const migration = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations', '051_task_targets_first_notes.sql'), 'utf8');
+      await db.query(migration);
+      await db.query(migration);
+      const { rows } = await db.query(`SELECT author, pinned FROM notes WHERE entity = 'quotation' AND entity_id = $1 AND body = 'Client wants a site visit first'`, [MINE]);
+      assert.deepEqual(rows, [{ author: 'Moved from remarks', pinned: true }]);
+
+      const timeline = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(MINE)}`);
+      assert.equal(timeline.body.data[0].pinned, true, 'a pinned note heads the history');
     });
   });
 });

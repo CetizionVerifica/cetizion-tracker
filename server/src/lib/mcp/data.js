@@ -190,7 +190,8 @@ export async function listActivity(scope, entity, id, limit = 50) {
   const { rows } = await query(
     `SELECT * FROM (
        SELECT 'note' AS kind, created_at AS at, body AS text, author AS by FROM notes WHERE entity = $1 AND entity_id = $2
-       UNION ALL SELECT 'task', created_at, concat_ws(' · ', title, status, 'due ' || due_at), created_by FROM tasks WHERE entity = $1 AND entity_id = $2
+       UNION ALL SELECT 'task', t.created_at, concat_ws(' · ', t.title, t.status, 'due ' || t.due_at), t.created_by FROM tasks t
+         WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $1 AND tt.entity_id = $2)
        UNION ALL SELECT 'touch', started_at, concat_ws(' · ', channel, outcome, summary), username FROM communications WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
        UNION ALL SELECT 'email', last_message_at, concat_ws(' · ', subject, message_count || ' messages'), NULL FROM email_threads WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
      ) x ORDER BY at DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 50, 200)}`, [entity, String(id)]);
