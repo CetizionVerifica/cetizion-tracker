@@ -114,7 +114,7 @@ export default function QuotationDetail() {
   if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton" style={{ height: 240 }} /></div></>;
 
   const cur = q.currency;
-  const open = ['Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
+  const open = ['Draft', 'Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
   const won = q.status === 'Won - PO Received';
   const approvalBlocked = q.approval_status === 'pending' || q.approval_status === 'rejected';
   const total = q.line_count ? q.total : q.quotation_value;

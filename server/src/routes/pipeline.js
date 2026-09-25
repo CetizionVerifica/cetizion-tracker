@@ -30,7 +30,8 @@ pipelineRouter.get('/', async (req, res) => {
   // Forecast: weighted INR value of open quotations by expected close month; undated ones in their own bucket.
   const forecast = {};
   for (const c of cards.rows) {
-    if (c.currency !== 'INR' || !c.quotation_value) continue;
+    // A draft has not gone to the client: it is not forecast (#24).
+    if (c.status === 'Draft' || c.currency !== 'INR' || !c.quotation_value) continue;
     const key = c.expected_close_date ? String(c.expected_close_date).slice(0, 7) : 'undated';
     forecast[key] ??= { month: key, count: 0, value: 0, weighted: 0 };
     forecast[key].count += 1; forecast[key].value += Number(c.quotation_value); forecast[key].weighted += Number(c.weighted_value || 0);
@@ -39,7 +40,7 @@ pipelineRouter.get('/', async (req, res) => {
   for (const c of cards.rows) {
     const t = perStage[c.stage_id]; if (!t) continue;
     t.count += 1;
-    if (c.currency === 'INR') { t.value += Number(c.quotation_value || 0); t.weighted += Number(c.weighted_value || 0); }
+    if (c.currency === 'INR') { t.value += Number(c.quotation_value || 0); if (c.status !== 'Draft') t.weighted += Number(c.weighted_value || 0); }
     if (c.stale) t.stale += 1;
   }
   res.json({ data: { stages: stages.rows.map((s) => ({ ...s, ...perStage[s.id] })), cards: cards.rows, forecast: Object.values(forecast).sort((a, b) => a.month.localeCompare(b.month)), closed_90_days: closed.rows } });

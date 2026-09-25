@@ -226,7 +226,7 @@ CREATE TABLE pipeline_stages (
 );
 
 INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order, color, rotting_days) VALUES
-  ('Draft',                   10, 'open',   'Submitted',         1, '#94a3b8', 14),
+  ('Draft',                   10, 'open',   'Draft',             1, '#94a3b8', 14),
   ('Sent',                    40, 'open',   'Submitted',         2, '#38bdf8', 21),
   ('Negotiation',             60, 'open',   'Under Negotiation', 3, '#f59e0b', 21),
   ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
@@ -342,7 +342,8 @@ CREATE TABLE quotations (
   quotation_value    numeric(16,2),
   currency           text NOT NULL DEFAULT 'INR',
   status             text NOT NULL DEFAULT 'Submitted'
-                       CHECK (status IN ('Submitted','Under Negotiation',
+                       CONSTRAINT quotations_status_check
+                       CHECK (status IN ('Draft','Submitted','Under Negotiation',
                                          'Won - PO Received','Lost','On Hold')),
   po_received        boolean NOT NULL DEFAULT false,
   project_id         text REFERENCES projects(project_id)
@@ -943,13 +944,13 @@ BEGIN
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     END IF;
   END IF;
 
@@ -2379,7 +2380,7 @@ INSERT INTO saved_views (resource, name, filters, pinned, sort_order, tone, char
 SELECT * FROM (VALUES
   ('payment-stages', 'Overdue money', '{"stage_status":"Overdue"}'::jsonb, true, 1, 'late', 'ageing'),
   ('payment-stages', 'To invoice',    '{"stage_status":"To Invoice"}'::jsonb, true, 2, 'waiting', NULL),
-  ('quotations',     'Open deals',    '{"status":"Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
+  ('quotations',     'Open deals',    '{"status":"Draft,Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
 ) AS seed(resource, name, filters, pinned, sort_order, tone, chart)
 WHERE NOT EXISTS (SELECT 1 FROM saved_views);
 

@@ -189,7 +189,7 @@ export default function SalesReport() {
 
             <Card
               title="Sector-wise POs"
-              hint="Enquiries by enquiry date, the rest by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
+              hint="Enquiries by enquiry date, the rest by quotation date · Pipeline = Draft, Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
               flush
               actions={<CsvButton report="sectors" params={params} disabled={!sectors.rows.length} />}
             >

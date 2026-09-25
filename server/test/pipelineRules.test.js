@@ -96,6 +96,36 @@ describe('quotation rules in the database', { skip: !ADMIN_URL && 'TEST_DATABASE
     assert.equal(row.probability, 10);
   });
 
+  test('a draft sits in Draft, and sending it makes it Submitted and Sent (#24)', async () => {
+    const q = await quotation('T-DRAFT-1', { status: 'Draft' });
+    assert.equal(q.stage_id, await stageId('Draft'));
+    await db.query('UPDATE quotations SET sent_at = now() WHERE id = $1', [q.id]);
+    const sent = await one('SELECT status, stage_id FROM quotations WHERE id = $1', [q.id]);
+    assert.deepEqual([sent.status, sent.stage_id], ['Submitted', await stageId('Sent')]);
+    await db.query('UPDATE quotations SET sent_at = NULL WHERE id = $1', [q.id]);
+    const revised = await one('SELECT status, stage_id FROM quotations WHERE id = $1', [q.id]);
+    assert.deepEqual([revised.status, revised.stage_id], ['Draft', await stageId('Draft')], 'a revision is a draft again');
+    const typed = await quotation('T-DRAFT-2');
+    assert.equal(typed.stage_id, await stageId('Sent'), 'a quotation typed in as Submitted was sent');
+  });
+
+  test('the Draft migration moves sent quotations out of the Draft column, quietly (#24)', async () => {
+    const q = await quotation('T-DRAFT-3');
+    await db.query('ALTER TABLE quotations DISABLE TRIGGER USER');
+    await db.query(`UPDATE pipeline_stages SET maps_to_status = 'Submitted' WHERE name = 'Draft'`);
+    await db.query('UPDATE quotations SET stage_id = $2, probability = 10 WHERE id = $1', [q.id, await stageId('Draft')]);
+    await db.query('ALTER TABLE quotations ENABLE TRIGGER USER');
+    const events = async () => Number((await one('SELECT COUNT(*) AS n FROM webhook_events')).n);
+    const before = await events();
+    const migration = readFileSync(new URL('../db/migrations/053_quotation_draft.sql', import.meta.url), 'utf8');
+    await db.query(migration);
+    await db.query(migration);
+    const row = await one('SELECT status, stage_id, probability FROM quotations WHERE id = $1', [q.id]);
+    assert.deepEqual([row.status, row.stage_id, row.probability], ['Submitted', await stageId('Sent'), 40]);
+    assert.equal((await one(`SELECT maps_to_status FROM pipeline_stages WHERE name = 'Draft'`)).maps_to_status, 'Draft');
+    assert.equal(await events(), before, 'no webhook for a move nobody made');
+  });
+
   test('reopening a lost card clears the competitor with the reason', async () => {
     const q = await quotation('T-STAGE-3');
     const reason = await one(`SELECT id FROM lost_reasons WHERE name = 'Price'`);

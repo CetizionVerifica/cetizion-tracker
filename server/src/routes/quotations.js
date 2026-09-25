@@ -89,7 +89,7 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
     const { rows: [updated] } = await client.query(
       `UPDATE quotations SET revision = revision + 1, quotation_date = $2, valid_until = ($2::date + ($3::int || ' days')::interval)::date,
               sent_at = NULL, accepted_at = NULL, accepted_by_name = NULL,
-              status = CASE WHEN status = 'Lost' THEN 'Submitted' ELSE status END,
+              status = CASE WHEN status = 'Lost' THEN 'Draft' ELSE status END,
               -- a new version is a new approval round
               approval_status = 'not_needed', approval_reason = NULL, approval_requested_at = NULL,
               approval_requested_by = NULL, approval_decided_at = NULL, approved_by = NULL,
@@ -152,7 +152,7 @@ quotationDocRouter.post('/:key/accept', async (req, res) => {
   const q = await loadQuotation(req.params.key);
   const { rows: [updated] } = await query(
     `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
-            status = CASE WHEN status IN ('Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
+            status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
       WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
     [q.id, parsed.data.accepted_by_name]
   );

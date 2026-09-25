@@ -495,6 +495,7 @@ export function salesReportDocDefinition(data) {
       withoutValue ? note(`${withoutValue} with no value`) : null
     );
   const STATUS_STYLE = {
+    [QUOTATION_STATUS.draft]: { label: 'Draft (not yet sent)', color: '#cbd5e1', field: 'draft' },
     [QUOTATION_STATUS.submitted]: { label: 'Submitted', color: SKY, field: 'submitted' },
     [QUOTATION_STATUS.negotiating]: { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
     [QUOTATION_STATUS.onHold]: { label: 'On hold', color: '#9ca3af', field: 'on_hold' },

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { quoteWonEnquiry } from './enquiries.js';
+import { saveEnquiry } from './enquiries.js';
 import { linkProjectQuotation } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
@@ -197,7 +197,7 @@ export const resources = {
       services_interested: str(500),
       notes: str(2000),
     }),
-    onSave: quoteWonEnquiry,
+    onSave: saveEnquiry,
   },
 
   quotations: {

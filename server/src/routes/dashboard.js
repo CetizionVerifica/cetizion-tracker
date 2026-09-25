@@ -16,7 +16,7 @@ dashboardRouter.get('/overview', async (req, res) => {
       SELECT
         COUNT(*)::int                                              AS quotations,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received')::int  AS won,
-        COUNT(*) FILTER (WHERE status IN ('Submitted','Under Negotiation'))::int AS open,
+        COUNT(*) FILTER (WHERE status IN ('Draft','Submitted','Under Negotiation'))::int AS open,
         COUNT(*) FILTER (WHERE status = 'Lost')::int               AS lost,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value_inr,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'

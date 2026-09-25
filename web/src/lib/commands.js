@@ -151,7 +151,8 @@ export const STEPS = [
     hint: 'stamps it as sent, and emails it if you ask',
     icon: 'deal',
     keywords: 'send quotation quote email client',
-    picks: { type: 'deal', resource: 'quotations', params: { status: 'Submitted' }, label: 'Which quotation?' },
+    // A draft is what is waiting to go; a Submitted one may be sent again.
+    picks: { type: 'deal', resource: 'quotations', params: { status: 'Draft,Submitted' }, label: 'Which quotation?' },
     key: 'quotation_no',
     fields: [
       f.text('to', 'Send to', { type: 'email', hint: 'Leave blank to record it as sent without emailing' }),
