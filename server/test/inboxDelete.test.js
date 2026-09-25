@@ -112,6 +112,22 @@ describe('deleting an inbox', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.equal(sales.open, 1);
   });
 
+  /**
+   * Which of our own addresses a thread arrived at. C13 prints it as
+   * "to sales@", and with two shared mailboxes connected the reading pane
+   * read identically whichever one the client had written to — while the
+   * reply goes out from whichever it was.
+   */
+  test('a conversation says which shared address it came to', async () => {
+    const list = await request(app).get('/api/inbox').set('Cookie', staff);
+    const [conversation] = list.body.data;
+    assert.equal(conversation.inbox_email, 'sales@cetizionverifica.com');
+
+    const one = await request(app).get(`/api/inbox/${conversation.id}`).set('Cookie', staff);
+    assert.equal(one.status, 200, JSON.stringify(one.body));
+    assert.equal(one.body.data.inbox_email, 'sales@cetizionverifica.com', 'the reading pane reads it from the detail route');
+  });
+
   test('discard=yes deletes the inbox and its triage, and leaves the mail', async () => {
     const list = await request(app).get('/api/inbox/inboxes').set('Cookie', staff);
     const id = list.body.data.find((i) => i.name === 'Sales').id;

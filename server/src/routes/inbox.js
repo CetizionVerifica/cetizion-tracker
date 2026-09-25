@@ -152,7 +152,8 @@ const inboxScope = (req, from) => (isAdmin(req)
   : { clause: `(i.members = '{}' OR i.members && ARRAY[$${from}, $${from + 1}]::text[] OR c.assignee IS NULL OR lower(c.assignee) IN (lower($${from}), lower($${from + 1})))`, params: identities(req) });
 
 const LIST = `
-  SELECT c.*, i.name AS inbox_name, t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
+  SELECT c.*, i.name AS inbox_name, ia.email AS inbox_email,
+         t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
          co.name AS company_name, ct.name AS contact_name,
          (c.status = 'open' AND c.response_due_at IS NOT NULL AND c.response_due_at < now()) AS overdue,
          -- Two things the list has to say about a thread without anybody
@@ -170,6 +171,11 @@ const LIST = `
          COALESCE(t.entity = 'payment_stage', false) AS for_finance
     FROM inbox_conversations c
     JOIN inboxes i ON i.id = c.inbox_id
+    -- Which shared address the thread actually arrived at. With more than
+    -- one inbox the reading pane otherwise cannot say whether a client
+    -- wrote to sales@ or to somebody's own mailbox, and the reply goes out
+    -- from whichever it was.
+    JOIN connected_accounts ia ON ia.id = i.account_id
     JOIN email_threads t ON t.id = c.thread_id
     LEFT JOIN companies co ON co.id = c.company_id
     LEFT JOIN contacts ct ON ct.id = c.contact_id`;
