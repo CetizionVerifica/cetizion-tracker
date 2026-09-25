@@ -433,9 +433,14 @@ function Conversation({ id, onBack, onChanged }) {
         >
           ← All conversations
         </button>
-        <h2 className="text-[17px]/[1.4] font-semibold text-foreground">{c.subject || '(no subject)'}</h2>
+        <h2 className="text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
         <p className="mt-1 wrap-anywhere text-[12.5px] text-secondary-text">
           {c.from_name || c.from_email} &lt;{c.from_email}&gt;
+          {/* Which of our addresses it came to. C13 writes this as "to
+              sales@", and it is the fact that decides who the reply is
+              from — with two shared mailboxes connected, the pane read
+              identically whichever one the client had written to. */}
+          {c.inbox_email && <> · to <span className="text-foreground">{c.inbox_email.split('@')[0]}@</span></>}
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
           {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
           {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
