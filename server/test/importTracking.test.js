@@ -100,3 +100,13 @@ test('a sheet never moves a won deal back, and an unchanged row changes nothing'
   assert.equal(unchanged.action, 'skip');
   assert.equal(unchanged.flags.some((f) => f.code === 'sheet_changes' || f.code === 'status_differs'), false);
 });
+
+test('an ISO proposal is left out however it is written, and a word starting ISO- is not one (#23)', () => {
+  const plan = buildPlan({ rows: [
+    row(1, [1, 'Iso One', 'Proposal sent', 'ISO9001 certification', '01-Sep-2026', 100000, 'Rohan']),
+    row(2, [2, 'Iso Two', 'Proposal sent', 'iso 14001', '01-Sep-2026', 100000, 'Rohan']),
+    row(3, [3, 'Not Iso', 'Proposal sent', 'Isokinetic sampling', '01-Sep-2026', 100000, 'Rohan']),
+  ], mapping, live: empty() });
+  assert.deepEqual(plan.skipped.map((s) => [s.client, s.reason]), [['Iso One', 'ISO proposal'], ['Iso Two', 'ISO proposal']]);
+  assert.ok(quote(plan, 'Not Iso'));
+});
