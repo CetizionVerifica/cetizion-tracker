@@ -13,6 +13,7 @@ import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
+import { money } from '../lib/format.js';
 
 export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
@@ -483,6 +484,12 @@ export function Catalogue({ resource, label, title, hint }) {
           rows={rows}
           columns={[
             { key: 'name', header: 'Name', className: 'strong' },
+            // The catalogue a quotation line is filled from (#23): what picking the service prefills.
+            ...(resource === 'services' ? [
+              { key: 'default_rate', header: 'Default rate', align: 'right', render: (r) => (r.default_rate == null ? '—' : money(r.default_rate, r.currency)) },
+              { key: 'gst_rate', header: 'GST', align: 'right', render: (r) => `${Number(r.gst_rate)}%` },
+              { key: 'sac_code', header: 'SAC', className: 'mono', render: (r) => r.sac_code || '—' },
+            ] : []),
             { key: 'active', header: 'Status', render: (r) => <Badge tone={r.active ? 'success' : 'neutral'}>{r.active ? 'Active' : 'Hidden'}</Badge> },
             {
               key: 'act',
@@ -490,7 +497,7 @@ export function Catalogue({ resource, label, title, hint }) {
               align: 'right',
               render: (r) => (
                 <div className="table__actions">
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Rename</button>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' ? 'Edit' : 'Rename'}</button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
                     {r.active ? 'Hide' : 'Restore'}
                   </button>
@@ -514,7 +521,16 @@ export function Catalogue({ resource, label, title, hint }) {
           }}
           fields={[
             { name: 'name', label: 'Name', required: true, span: 'all' },
-            ...(resource === 'services' ? [{ name: 'sort_order', label: 'Sort order', type: 'number', default: '0' }] : []),
+            ...(resource === 'services' ? [
+              { name: 'default_rate', label: 'Default rate', type: 'money', hint: 'Filled in when the service is picked on a quotation line' },
+              { name: 'currency', label: 'Currency', type: 'select', options: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'], default: 'INR' },
+              { name: 'gst_rate', label: 'GST %', type: 'number', step: '0.01', default: '18' },
+              { name: 'unit', label: 'Unit', type: 'combo', options: ['engagement', 'site', 'day', 'audit', 'report', 'year'], default: 'engagement' },
+              { name: 'sac_code', label: 'SAC code', hint: 'Printed on the quotation line' },
+              { name: 'code', label: 'Internal code' },
+              { name: 'description', label: 'Default line description', type: 'textarea', span: 'all' },
+              { name: 'sort_order', label: 'Sort order', type: 'number', default: '0' },
+            ] : []),
             { name: 'active', label: 'Visible in dropdowns', type: 'boolean', default: 'true' },
           ]}
         />

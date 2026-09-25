@@ -41,7 +41,8 @@ export function quotationDocument(q) {
     })(), money(q.tax_total, cur)]];
   const lineRows = (q.lines || []).map((l, i) => [
     { text: String(i + 1), color: MUTED },
-    { stack: [{ text: l.description }, l.service_name && l.service_name !== l.description ? { text: l.service_name, color: MUTED, fontSize: 8 } : null].filter(Boolean) },
+    { stack: [{ text: l.description }, l.service_name && l.service_name !== l.description ? { text: l.service_name, color: MUTED, fontSize: 8 } : null,
+      l.sac_code ? { text: `SAC ${l.sac_code}`, color: MUTED, fontSize: 8 } : null].filter(Boolean) },
     { text: `${Number(l.qty)} ${l.unit || ''}`.trim(), alignment: 'right' },
     { text: money(l.rate, cur), alignment: 'right' },
     { text: Number(l.discount_percent) ? `${Number(l.discount_percent)}%` : '', alignment: 'right', color: MUTED },

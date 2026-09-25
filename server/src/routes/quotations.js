@@ -17,6 +17,7 @@ import { ApiError } from '../middleware/error.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { sendMail } from '../lib/mail.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
+import { documentStorageReady, uploadDocument } from '../lib/documents.js';
 import { checkGstin, gstBreakdown } from '../lib/accounting/gst.js';
 
 export const quotationDocRouter = Router();
@@ -30,7 +31,7 @@ async function loadQuotation(key, client = { query }) {
 export async function fullQuotation(key) {
   const q = await loadQuotation(key);
   const [lines, revisions, company, contact, enquiry, project, pos, settings] = await Promise.all([
-    query('SELECT ql.*, s.name AS service_name FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),
+    query('SELECT ql.*, s.name AS service_name, s.sac_code FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),
     query('SELECT id, revision, note, created_by, created_at, snapshot FROM quotation_revisions WHERE quotation_id = $1 ORDER BY revision DESC', [q.id]),
     q.company_id ? query('SELECT * FROM companies WHERE id = $1', [q.company_id]) : { rows: [] },
     q.contact_id ? query('SELECT * FROM contacts WHERE id = $1', [q.contact_id]) : { rows: [] },
@@ -115,10 +116,11 @@ quotationDocRouter.post('/:key/send', async (req, res) => {
   if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
   if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
   let email = null;
+  const to = body.email ? body.to || q.contact?.email : null;
+  if (body.email && !to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
+  // The PDF that goes out is the one kept on the quotation (#23), emailed or not.
+  const pdf = await quotationPdf(q);
   if (body.email) {
-    const to = body.to || q.contact?.email;
-    if (!to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
-    const pdf = await quotationPdf(q);
     const subject = `Quotation ${q.quotation_no}${q.revision ? ` (rev ${q.revision})` : ''} from Cetizion Verifica`;
     const text = `Dear ${q.contact?.name || q.client_name},\n\n${body.message || `Please find attached our quotation ${q.quotation_no} for ${q.service_quoted || 'the services discussed'}.`}${q.valid_until ? `\n\nThis quotation is valid until ${q.valid_until}.` : ''}\n\nRegards,\n${q.sales_person || 'Cetizion Verifica'}`;
     email = await sendMail({
@@ -126,8 +128,20 @@ quotationDocRouter.post('/:key/send', async (req, res) => {
       sentBy: req.user?.username || 'admin', attachments: [{ filename: `${q.quotation_no.replace(/\//g, '-')}.pdf`, content: pdf, contentType: 'application/pdf' }],
     });
   }
-  const { rows: [updated] } = await query(`UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1 RETURNING sent_at`, [q.id]);
-  res.json({ data: { sent_at: updated.sent_at, email } });
+  const fileName = `${q.quotation_no.replace(/\//g, '-')}${q.revision ? `-R${q.revision}` : ''}-sent.pdf`;
+  const doc = documentStorageReady
+    ? await uploadDocument({ buffer: pdf, fileName, contentType: 'application/pdf', owner: 'attachments' }).catch(() => null)
+    : null;
+  const updated = await transaction(async (db) => {
+    const { rows: [u] } = await db.query(`UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1 RETURNING sent_at`, [q.id]);
+    if (doc) {
+      // Kept on the quotation, on its timeline as a file; the client copy slot stays theirs.
+      await db.query(`INSERT INTO attachments (entity, entity_id, document_id, label, uploaded_by) VALUES ('quotation', $1, $2, $3, $4)`,
+        [q.quotation_no, doc.id, `Quotation as sent${q.revision ? ` (rev ${q.revision})` : ''}${to ? ` to ${to}` : ''}`, req.user?.name || req.user?.username || null]);
+    }
+    return u;
+  });
+  res.json({ data: { sent_at: updated.sent_at, email, document_id: doc?.id ?? null } });
 });
 
 const acceptSchema = z.object({ accepted_by_name: z.string().trim().min(1, 'Who accepted it?').max(160) });
