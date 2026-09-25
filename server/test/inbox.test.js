@@ -21,7 +21,7 @@ import request from 'supertest';
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
-const NAME = `inbox_delete_test_${process.pid}`;
+const NAME = `inbox_test_${process.pid}`;
 const USERNAME = 'tester';
 const PASSWORD = 'a-good-long-test-password';
 
@@ -36,10 +36,16 @@ async function seedFixtures(client) {
     INSERT INTO email_threads (id, account_id, conversation_id, subject, last_message_at)
       VALUES (6001, 5001, 't-1', 'Enquiry: pressure vessel', now()),
              (6002, 5001, 't-2', 'Re: calibration', now());
+    -- Two messages on thread 6001 so the list has to pick the newer one,
+    -- and one on 6002 carrying an attachment.
+    INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, snippet, has_attachments, sent_at)
+      VALUES (5001, 6001, 'm-1', 'inbound', 'asha@hetero.example', 'The older message nobody should see in the list.', false, now() - interval '2 hours'),
+             (5001, 6001, 'm-2', 'inbound', 'asha@hetero.example', 'Could you quote stage 1 and stage 2 for a single site?', false, now()),
+             (5001, 6002, 'm-3', 'inbound', 'bina@hetero.example', 'Payment advice attached.', true, now());
   `);
 }
 
-describe('deleting an inbox', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }, () => {
+describe('the shared inbox', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }, () => {
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
     await admin.connect();
@@ -118,6 +124,44 @@ describe('deleting an inbox', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
    * read identically whichever one the client had written to — while the
    * reply goes out from whichever it was.
    */
+  /**
+   * The band C13 does not have. The subject alone does not say whether a
+   * "Re: Quotation …" is a question, an approval or a complaint.
+   */
+  test('the list carries the newest message, not the first', async () => {
+    const list = await request(app).get('/api/inbox').set('Cookie', staff);
+    const open = list.body.data.find((c) => c.thread_id === 6001);
+    assert.equal(open.snippet, 'Could you quote stage 1 and stage 2 for a single site?');
+    assert.equal(open.has_attachments, false);
+  });
+
+  test('a thread nobody has opened is unread, and opening it is what changes that', async () => {
+    const before = await request(app).get('/api/inbox').set('Cookie', staff);
+    const conversation = before.body.data.find((c) => c.thread_id === 6001);
+    assert.equal(conversation.unread, true, 'nothing has opened it yet');
+
+    // The fetch is the gesture; there is no separate "mark read" call.
+    const opened = await request(app).get(`/api/inbox/${conversation.id}`).set('Cookie', staff);
+    assert.equal(opened.status, 200, JSON.stringify(opened.body));
+
+    const after = await request(app).get('/api/inbox').set('Cookie', staff);
+    assert.equal(after.body.data.find((c) => c.id === conversation.id).unread, false);
+
+    const { rows } = await pool.query('SELECT first_opened_by FROM inbox_conversations WHERE id = $1', [conversation.id]);
+    assert.equal(rows[0].first_opened_by, USERNAME, 'and it records who looked first');
+  });
+
+  test('a second reader does not overwrite who saw it first', async () => {
+    const list = await request(app).get('/api/inbox').set('Cookie', staff);
+    const conversation = list.body.data.find((c) => c.thread_id === 6001);
+    await pool.query(`UPDATE inbox_conversations SET first_opened_by = 'Someone Else' WHERE id = $1`, [conversation.id]);
+
+    await request(app).get(`/api/inbox/${conversation.id}`).set('Cookie', staff);
+
+    const { rows } = await pool.query('SELECT first_opened_by FROM inbox_conversations WHERE id = $1', [conversation.id]);
+    assert.equal(rows[0].first_opened_by, 'Someone Else', 're-reading is a no-op, not a write');
+  });
+
   test('a conversation says which shared address it came to', async () => {
     const list = await request(app).get('/api/inbox').set('Cookie', staff);
     const [conversation] = list.body.data;
