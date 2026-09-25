@@ -221,6 +221,7 @@ export const JUMPS = [
   { id: 'go-renewals', verb: 'Renewals', to: '/renewals', icon: 'waiting', keywords: 'renewals expiring recurring' },
   { id: 'go-trips', verb: 'Trips', to: '/travel', icon: 'trip', keywords: 'travel trips journeys' },
   { id: 'go-vendor-invoices', verb: 'Vendor invoices', to: '/vendor-invoices', icon: 'trip', keywords: 'vendor bills travel agent' },
+  { id: 'go-payables', verb: 'Payables', to: '/payables', icon: 'money', keywords: 'payables owe vendors ageing overdue bills creditors travel agent pay' },
   { id: 'go-claims', verb: 'Expense claims', to: '/expense-claims', icon: 'money', keywords: 'expenses claims reimburse' },
   { id: 'go-travel-spend', verb: 'Travel spend', to: '/travel-dashboard', icon: 'trip', keywords: 'travel spend cost dashboard' },
   { id: 'go-schedule', verb: 'Schedule', to: '/schedule', icon: 'waiting', keywords: 'calendar visits audits diary schedule' },

@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 import { revenueReport } from '../lib/revenueReport.js';
 import { dataQuality } from '../lib/dataQuality.js';
+import { payables } from '../lib/payables.js';
 
 export const dashboardRouter = Router();
 
@@ -181,6 +182,14 @@ dashboardRouter.get('/revenue-report', async (req, res) => {
  */
 dashboardRouter.get('/data-quality', async (req, res) => {
   res.json({ data: { checks: await dataQuality() } });
+});
+
+/**
+ * What we owe travel vendors, aged (#76): every bill still owed, its
+ * bucket, and a count and outstanding total per bucket. In rupees.
+ */
+dashboardRouter.get('/payables', async (req, res) => {
+  res.json({ data: await payables() });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

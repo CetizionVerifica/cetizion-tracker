@@ -34,6 +34,7 @@ import TravelLogs from './pages/TravelLogs.jsx';
 import TripDetail from './pages/TripDetail.jsx';
 import InvoiceRun from './pages/InvoiceRun.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
+import Payables from './pages/Payables.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
 import SettingsArea from './pages/SettingsArea.jsx';
@@ -471,6 +472,7 @@ export default function App() {
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
+          <Route path="/payables" element={<Payables />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
           {/* One Settings area. The five admin pages it absorbed keep
