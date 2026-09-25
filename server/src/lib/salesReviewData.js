@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
 import { NO_SERVICE, OTHER_SERVICE, SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
 import { r2, share } from './reportMath.ts';
@@ -96,7 +96,7 @@ export function countBy(rows, field) {
 /**
  * Where enquiries in the period end up, and how long the ones that got there
  * took: a contract is a PO on the enquiry's linked quotation (enquiryRows
- * fetches contract_date, the earliest such PO's date, for this). TAT is the
+ * fetches contract_date for this — see contractDateOf). TAT is the
  * whole enquiry-to-contract span, not just a first reply.
  */
 export function enquiryPipeline(rows) {
@@ -139,11 +139,26 @@ export function enquiryPipeline(rows) {
 // ---------------------------------------------------------------------
 
 /**
+ * The date the quotation `quotationNo` (a SQL expression) became a contract,
+ * or NULL. POs are matched to it by poQuotationNo — the rule the won counts
+ * use — and it only counts while one of them still counts as a sale (not
+ * every one cancelled or replaced). The date is the earliest PO that was not
+ * cancelled: a revision does not move the day the contract was first won.
+ * The enquiry and the quotation figures both use this, so an enquiry is
+ * contracted exactly when its quotation is.
+ */
+const contractDateOf = (quotationNo) => `CASE
+      WHEN EXISTS (SELECT 1 FROM purchase_orders po
+                    WHERE ${poQuotationNo('po')} = ${quotationNo} AND ${poCountsAsSale('po')})
+      THEN (SELECT MIN(po.po_date)
+              FROM purchase_orders po
+             WHERE ${poQuotationNo('po')} = ${quotationNo} AND NOT po.cancelled)
+    END`;
+
+/**
  * Enquiries in the period. Oldest first: the month rows and the oldest open
- * enquiry read that order. contract_date is the earliest PO date on the
- * enquiry's linked quotation — a quotation's PO is matched by quotation_no,
- * or by project_id when the PO was raised against the project instead, the
- * same rule the revenue figures use.
+ * enquiry read that order. contract_date is when the enquiry's linked
+ * quotation became a contract (contractDateOf above).
  */
 const enquiryRows = ({ from, to }) =>
   query(
@@ -156,18 +171,7 @@ const enquiryRows = ({ from, to }) =>
             e.source,
             e.sector,
             e.country,
-            to_char(
-              (SELECT MIN(po.po_date)
-                 FROM purchase_orders po
-                WHERE po.quotation_no = e.quotation_no
-                   OR (po.quotation_no IS NULL AND EXISTS (
-                        SELECT 1 FROM quotations q
-                         WHERE q.quotation_no = e.quotation_no
-                           AND q.project_id IS NOT NULL
-                           AND po.project_id = q.project_id
-                      ))),
-              'YYYY-MM-DD'
-            ) AS contract_date
+            to_char(${contractDateOf('e.quotation_no')}, 'YYYY-MM-DD') AS contract_date
        FROM enquiries e
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
@@ -176,9 +180,9 @@ const enquiryRows = ({ from, to }) =>
 
 /**
  * Quotations in the period with the INR rate for their currency, oldest
- * first. contract_date is the earliest PO date matched to this quotation —
- * by quotation_no, or by project_id when the PO was raised against the
- * project instead — the same rule enquiryRows and the revenue figures use.
+ * first. contract_date is when it became a contract (contractDateOf above),
+ * so a quotation is "contracted" here exactly when a PO is credited to it
+ * in the won counts.
  */
 const quotationRows = ({ from, to }) =>
   query(
@@ -194,13 +198,7 @@ const quotationRows = ({ from, to }) =>
             q.service_quoted                      AS service,
             q.sector,
             q.country,
-            to_char(
-              (SELECT MIN(po.po_date)
-                 FROM purchase_orders po
-                WHERE po.quotation_no = q.quotation_no
-                   OR (po.quotation_no IS NULL AND q.project_id IS NOT NULL AND po.project_id = q.project_id)),
-              'YYYY-MM-DD'
-            ) AS contract_date
+            to_char(${contractDateOf('q.quotation_no')}, 'YYYY-MM-DD') AS contract_date
        FROM quotations q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${IN_PERIOD}
@@ -209,30 +207,28 @@ const quotationRows = ({ from, to }) =>
   );
 
 /**
- * Purchase orders (contracts) received in the period, by their own PO date —
+ * Purchase orders (contracts) received in the period that count as a sale
+ * (poCountsAsSale: not cancelled, not replaced), by their own PO date —
  * not the date of the quotation they fulfil. service/sector/country come
- * from the linked quotation, since a PO carries none of its own: its own
- * quotation_no when the PO names one, otherwise the first quotation on its
- * project (the same fallback contract_date above uses), so each PO resolves
- * to at most one quotation and is never counted twice.
+ * from the linked quotation, since a PO carries none of its own, resolved
+ * by poQuotationNo (the same rule contract_date above uses), so each PO
+ * resolves to at most one quotation and is never counted twice.
  */
 const purchaseOrderRows = ({ from, to }) =>
   query(
     `WITH ${RATES},
      po_quote AS (
        SELECT po.id AS po_id,
-              COALESCE(
-                po.quotation_no,
-                (SELECT q.quotation_no FROM quotations q
-                  WHERE q.project_id = po.project_id
-                  ORDER BY q.quotation_no LIMIT 1)
-              ) AS quotation_no
+              ${poQuotationNo('po')} AS quotation_no
          FROM purchase_orders po
      )
      SELECT po.po_number,
+            q.quotation_no,
             to_char(po.po_date, 'YYYY-MM-DD') AS po_date,
             to_char(po.po_date, 'YYYY-MM')    AS month,
-            po.po_value,
+            -- 0 is the column default, so it means "no value entered", the
+            -- same as PO_RESOLVED in salesReport.js: never a ₹0 order.
+            NULLIF(po.po_value, 0)            AS po_value,
             po.currency,
             r.rate,
             btrim(q.client_name)              AS client,
@@ -243,7 +239,7 @@ const purchaseOrderRows = ({ from, to }) =>
        JOIN po_quote pq ON pq.po_id = po.id
        LEFT JOIN quotations q ON q.quotation_no = pq.quotation_no
        ${rateOn('r', 'po.currency', 'po.po_date')}
-      WHERE ${inPeriod('po.po_date')}
+      WHERE ${inPeriod('po.po_date')} AND ${poCountsAsSale('po')}
       ORDER BY po.po_date NULLS LAST, po.po_number`,
     [from, to]
   );
@@ -331,8 +327,12 @@ export function serviceRows(quotations, enquiries, purchaseOrders = []) {
     lost: list.filter((q) => q.status === LOST).length,
     pipeline: list.filter((q) => q.status !== WON && q.status !== LOST).length,
   });
+  // won counts POs; won_deals counts the quotations they fulfil (a PO with
+  // none counts as its own deal), so phase POs on one quotation are one win.
+  // Win % uses won_deals: lost is a count of quotations, and so is this.
   const summarisePos = (pos) => ({
     won: pos.length,
+    won_deals: new Set(pos.map((p) => p.quotation_no ?? p.po_number)).size,
     ...wonValue(pos.map((p) => ({ quotation_value: p.po_value, currency: p.currency, rate: p.rate }))),
   });
   const unmatched = (q) => linesOf(q.service).some((name) => name === OTHER_SERVICE || name === NO_SERVICE);
@@ -346,7 +346,7 @@ export function serviceRows(quotations, enquiries, purchaseOrders = []) {
         ...summariseQuotations(list),
         ...summarisePos(pos),
       };
-      return { ...merged, win_rate: share(merged.won, merged.won + merged.lost) };
+      return { ...merged, win_rate: share(merged.won_deals, merged.won_deals + merged.lost) };
     })
     .sort((a, b) => a.other - b.other || b.won_value_inr - a.won_value_inr || b.quotations - a.quotations || b.enquiries - a.enquiries);
 
@@ -356,7 +356,7 @@ export function serviceRows(quotations, enquiries, purchaseOrders = []) {
     // Totals count each quotation (or PO) once, however many lines it is in.
     summary: {
       ...summaryBase,
-      win_rate: share(summaryBase.won, summaryBase.won + summaryBase.lost),
+      win_rate: share(summaryBase.won_deals, summaryBase.won_deals + summaryBase.lost),
       bundled: quotations.filter((q) => linesOf(q.service).length > 1).length,
       unmatched: quotations.filter(unmatched).length,
     },
@@ -497,11 +497,13 @@ export async function dataGaps({ from, to }) {
      SELECT (SELECT COUNT(*) FROM q)::int                                              AS quotations,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL)::int                AS quotations_without_value,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL AND status = '${WON}')::int AS won_without_value,
+            -- The same PO-to-quotation rule as the won figures: a PO credited
+            -- to another quotation on the project does not cover this one.
             (SELECT COUNT(*) FROM q
               WHERE status = '${WON}'
                 AND NOT EXISTS (SELECT 1 FROM purchase_orders p
-                                 WHERE p.quotation_no = q.quotation_no
-                                    OR (q.project_id IS NOT NULL AND p.project_id = q.project_id)))::int AS won_without_po,
+                                 WHERE ${poQuotationNo('p')} = q.quotation_no
+                                   AND ${poCountsAsSale('p')}))::int AS won_without_po,
             (SELECT COUNT(*) FROM q WHERE NULLIF(btrim(sector), '') IS NULL)::int       AS quotations_without_sector,
             (SELECT COUNT(*) FROM q WHERE NULLIF(btrim(sales_person), '') IS NULL)::int AS quotations_without_sales_person,
             (SELECT COUNT(*) FROM e)::int                                              AS enquiries,

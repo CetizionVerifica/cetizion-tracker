@@ -97,8 +97,9 @@ export default function SalesReport() {
   const sectors = d?.sectors;
   const customers = d?.customers;
   const fx = d?.fx;
-  const repeatRows = customers ? customers.rows.filter((row) => row.pos_to_date >= 2) : [];
-  const singleRows = customers ? customers.rows.filter((row) => row.pos_to_date < 2) : [];
+  // The server decides the type (salesReport.js customerReport), so the page never disagrees with it.
+  const repeatRows = customers ? customers.rows.filter((row) => row.client_type === 'Repeat client') : [];
+  const singleRows = customers ? customers.rows.filter((row) => row.client_type !== 'Repeat client') : [];
 
   return (
     <>
@@ -164,6 +165,49 @@ export default function SalesReport() {
                 <Link to="/settings">Add the rate in Settings</Link> (INR for 1 unit, from the date it applied).
               </Alert>
             )}
+            {sectors.summary.undated_pos.length > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.undated_pos.length} purchase order{sectors.summary.undated_pos.length === 1 ? ' has' : 's have'} no PO date
+                </strong>
+                , so {sectors.summary.undated_pos.length === 1 ? 'it is' : 'they are'} left out of every PO figure on this page for the
+                period chosen — sector-wise, FX deals, clients and revenue:{' '}
+                {sectors.summary.undated_pos.map((po, i) => (
+                  <span key={po}>
+                    {i > 0 && ', '}
+                    <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po)}`}>{po}</Link>
+                  </span>
+                ))}
+                . Add the PO date on the PO to include {sectors.summary.undated_pos.length === 1 ? 'it' : 'them'}.
+              </Alert>
+            )}
+            {sectors.summary.currency_mismatch_pos.length > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.currency_mismatch_pos.length} purchase order{sectors.summary.currency_mismatch_pos.length === 1 ? ' is' : 's are'} in
+                  a different currency from {sectors.summary.currency_mismatch_pos.length === 1 ? 'its' : 'their'} quotation
+                </strong>
+                , so the value may be read in the wrong currency:{' '}
+                {sectors.summary.currency_mismatch_pos.map((po, i) => (
+                  <span key={po.po_number}>
+                    {i > 0 && ', '}
+                    <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po.po_number)}`}>{po.po_number}</Link>
+                    {` (${po.currency}; quotation in ${po.quotation_currency})`}
+                  </span>
+                ))}
+                . Open the PO and check its currency.
+              </Alert>
+            )}
+            {sectors.summary.won_without_po > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.won_without_po} quotation{sectors.summary.won_without_po === 1 ? ' is' : 's are'} marked won with no
+                  purchase order registered
+                </strong>
+                , so {sectors.summary.won_without_po === 1 ? 'it is' : 'they are'} not counted as won, lost or pipeline below.{' '}
+                <Link to={quotationsUrl({ status: 'Won - PO Received' })}>Register the purchase order</Link> to count it.
+              </Alert>
+            )}
 
             <div className="auto-grid--stats">
               <Stat
@@ -189,7 +233,7 @@ export default function SalesReport() {
 
             <Card
               title="Sector-wise POs"
-              hint="Enquiries by enquiry date, POs won by PO date, lost and pipeline by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
+              hint="Enquiries by enquiry date, POs won by PO date, lost and pipeline by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = deals won ÷ (deals won + lost), several POs on one quotation counting as one deal · FX deals = won POs not in INR · Values stay in their own currency"
               flush
               actions={<CsvButton report="sectors" params={params} disabled={!sectors.rows.length} />}
             >
@@ -306,7 +350,7 @@ export default function SalesReport() {
 
             <Card
               title="Repeat clients"
-              hint="2 or more POs registered up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the rate in force on each PO date · Repeat orders = POs after the first"
+              hint="2 or more deals won up to the end of the period — a deal is a quotation with a PO, so phase POs on one quotation are one deal · Enquiries = rows on the Enquiries page · Win % = deals won ÷ (deals won + lost), several POs on one quotation counting as one deal · Won value (INR) includes FX deals at the rate in force on each PO date · Repeat orders = deals after the first"
               flush
               actions={<CsvButton report="customers" params={params} disabled={!customers.rows.length} />}
             >

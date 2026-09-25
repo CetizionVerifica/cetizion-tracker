@@ -2,7 +2,7 @@ import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2, share as ratio } from './reportMath.ts';
-import { QUOTATION_STATUS } from './statuses.js';
+import { QUOTATION_STATUS, STAGE_STATUS } from './statuses.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
@@ -266,9 +266,10 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
         ORDER BY p.po_date NULLS LAST, p.po_number`,
       [from, to]
     ),
-    // Every stage that is Overdue today, for a PO dated in the period — the
-    // same bucket Payment status already counts, broken out to the invoice
-    // it actually is, per client. Received converts at the payment date's
+    // Every stage that is Overdue today, for a PO dated in the period, one
+    // row per invoice. Payment status counts whole POs instead: a PO with one
+    // overdue invoice is Overdue there, with every unpaid invoice it has in
+    // its Due now — so this total can be lower. Received converts at the payment date's
     // rate (falling back to the invoice date with nothing received yet), due
     // at the invoice date's rate — the same two rates the tables above use.
     query(
@@ -288,7 +289,7 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
          FROM v_payment_stages s
          ${rateOn('rr', 's.currency', 'COALESCE(s.payment_received_date, s.invoice_date)')}
          ${rateOn('dr', 's.currency', 's.invoice_date')}
-        WHERE s.stage_status = 'Overdue' AND ${inPeriod('s.po_date')}
+        WHERE s.stage_status = '${STAGE_STATUS.overdue}' AND ${inPeriod('s.po_date')}
         ORDER BY s.client_name, s.days_overdue DESC`,
       [from, to]
     ),

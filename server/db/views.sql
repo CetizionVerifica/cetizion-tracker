@@ -364,6 +364,11 @@ SELECT
   po.remarks,
   po.document_id,
   doc.file_name                                       AS document_name,
+  -- Revised or cancelled: out of the sales figures, still billed as usual.
+  po.replaces_po_number,
+  po.cancelled,
+  (SELECT r.po_number FROM purchase_orders r
+    WHERE r.replaces_po_number = po.po_number)        AS replaced_by_po_number,
   sv.service_count,
   sv.service_value_total,
   st.stage_count,

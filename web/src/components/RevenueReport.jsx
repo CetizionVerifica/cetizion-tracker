@@ -186,21 +186,8 @@ export function RevenueReport({ period }) {
               INR figures. <Link to="/settings">Add the rate in Settings</Link>, dated from when it applied.
             </Alert>
           )}
-          {report.undated_pos.length > 0 && (
-            <Alert tone="warning">
-              <strong>
-                {report.undated_pos.length} purchase order{report.undated_pos.length === 1 ? ' has' : 's have'} no PO date
-              </strong>
-              , so {report.undated_pos.length === 1 ? 'it is' : 'they are'} not in the invoicing or payment status figures:{' '}
-              {report.undated_pos.map((po, i) => (
-                <span key={po}>
-                  {i > 0 && ', '}
-                  <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po)}`}>{po}</Link>
-                </span>
-              ))}
-              . Add the PO date on the PO to include {report.undated_pos.length === 1 ? 'it' : 'them'}.
-            </Alert>
-          )}
+          {/* POs with no PO date are named once, at the top of the Sales report page:
+              they are missing from every PO figure there, not only these. */}
 
           <Card
             title={`Quotations won by month · ${label}`}
@@ -245,7 +232,7 @@ export function RevenueReport({ period }) {
 
           <Card
             title={`Payment status · ${label}`}
-            hint="Purchase orders dated in the period, by their status on the Purchase orders page · Pending = invoiced, not yet overdue · Click a status to open those POs"
+            hint="Purchase orders dated in the period, by their status on the Purchase orders page · Overdue = at least one invoice past its due date, with every unpaid invoice on those POs in Due now · Pending = invoiced, not yet overdue · Click a status to open those POs"
             flush
             actions={<CsvButton report="payment-status" params={period} disabled={!report.payment_status.total.pos} />}
           >
@@ -258,7 +245,7 @@ export function RevenueReport({ period }) {
 
           <Card
             title={`Overdue by client · ${label}`}
-            hint="Every invoice overdue today, on a purchase order dated in the period · Due = invoiced − received on that invoice"
+            hint="Every invoice overdue today, on a purchase order dated in the period · Due = invoiced − received on that invoice · Only the overdue invoices, so the total can be lower than Due now in the Payment status Overdue row"
             flush
             actions={<CsvButton report="overdue" params={period} disabled={!report.overdue_by_client.total.invoices} />}
           >

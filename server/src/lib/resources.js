@@ -311,6 +311,8 @@ export const resources = {
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
       'payment_terms_days', 'actual_initiation_date', 'actual_delivery_date',
       'project_manager_email', 'remarks', 'document_id',
+      // Revised or cancelled — out of the sales figures (linkPurchaseOrder checks the link).
+      'replaces_po_number', 'cancelled',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -325,6 +327,10 @@ export const resources = {
       remarks: str(1000),
       document_id: int({ min: 1 }),
       quotation_no: str(60),
+      replaces_po_number: str(60),
+      // NOT NULL in the table: blank means "not cancelled". An edit that does
+      // not send it leaves it alone (crud writes only the fields sent).
+      cancelled: bool().transform((v) => v ?? false),
     }),
     onSave: linkPurchaseOrder,
   },

@@ -71,6 +71,43 @@ test('service totals count each quotation once, and "won" is a PO, not a status'
   assert.deepEqual(report.summary.won_unconverted, [{ currency: 'USD', amount: 100 }]);
 });
 
+// The fixture above gives the same answer whether "won" is read from the
+// status or from the POs. These three rows do not — each one fails under
+// the status-based rule — so "won" really is proved to come from the POs.
+test('service lines: won follows the POs, and Win % counts deals, not phase POs', () => {
+  const quotation = (quotation_no, service, status) => ({ quotation_no, service, status, quotation_value: 1000, currency: 'INR', rate: 1 });
+  const po = (po_number, quotation_no, service) => ({ po_number, quotation_no, service, po_value: 500, currency: 'INR', rate: 1 });
+  const report = serviceRows(
+    [
+      quotation('Q-1', 'ISO 9001', 'Won - PO Received'), // marked won, no PO registered
+      quotation('Q-2', 'EcoVadis', 'Won - PO Received'), // one deal, two phase POs
+      quotation('Q-3', 'EcoVadis', 'Lost'),
+      quotation('Q-4', 'LME Certification', 'Submitted'), // PO registered, status never updated
+    ],
+    [],
+    [po('PO-1', 'Q-2', 'EcoVadis'), po('PO-2', 'Q-2', 'EcoVadis'), po('PO-3', 'Q-4', 'LME Certification')]
+  );
+  const line = (prefix) => report.rows.find((row) => row.service.startsWith(prefix));
+
+  const iso = line('ISO');
+  assert.deepEqual([iso.won, iso.won_deals, iso.pipeline, iso.win_rate], [0, 0, 0, null]);
+
+  // Two POs, one deal: 1 won and 1 lost is 50%, not 2 ÷ 3.
+  const eco = line('EcoVadis');
+  assert.deepEqual([eco.won, eco.won_deals, eco.lost, eco.win_rate, eco.won_value_inr], [2, 1, 1, 0.5, 1000]);
+
+  const lme = line('ASI');
+  assert.deepEqual([lme.won, lme.won_deals, lme.pipeline], [1, 1, 1]);
+
+  assert.deepEqual([report.summary.won, report.summary.won_deals, report.summary.lost, report.summary.win_rate], [3, 2, 1, 2 / 3]);
+});
+
+// A PO that resolves to no quotation is still a deal of its own.
+test('service lines: a PO with no quotation counts as its own deal', () => {
+  const report = serviceRows([], [], [{ po_number: 'PO-9', quotation_no: null, service: null, po_value: 100, currency: 'INR', rate: 1 }]);
+  assert.deepEqual([report.summary.won, report.summary.won_deals], [1, 1]);
+});
+
 // The outcome of the quotations these enquiries led to belongs to the
 // quotation section, so the enquiry figures are only about status here.
 test('enquiries split by status', () => {
@@ -111,7 +148,7 @@ test('compact rupees read in lakh and crore', () => {
 });
 
 test('concentration is flagged only when it is real', () => {
-  const sector = (name, pos, lost, value) => ({ sector: name, not_set: false, pos, lost, pipeline: 0, win_rate: pos / (pos + lost), won_value_inr: value });
+  const sector = (name, pos, lost, value) => ({ sector: name, not_set: false, pos, won_deals: pos, lost, pipeline: 0, win_rate: pos / (pos + lost), won_value_inr: value });
   const rows = [sector('Pharma', 6, 1, 800), sector('Metals', 3, 3, 200)];
   const a = sectorAnalysis({ summary: { pos: 9, pos_without_sector: 0 } }, rows);
   assert.equal(a.insights[0].tag, 'RISK');
