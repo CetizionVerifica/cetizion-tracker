@@ -2,11 +2,15 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import {
-  Card, DataTable, Badge, Empty, Alert, ErrorState, Modal, Field, Input, Select, Textarea, ConfirmDialog, useToast,
+  Card, DataTable, Badge, Empty, Alert, ErrorState, Modal, Field, Input, Select, Tabs, Textarea, ConfirmDialog, useToast,
 } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
+import { Button } from '../components/ui/button';
+import { Checkbox } from '../components/ui/checkbox.tsx';
+import { Label } from '../components/ui/label.tsx';
+import { Skeleton } from '../components/ui/skeleton.tsx';
 
 /**
  * Step-by-step review of one import batch. Each step is one record type,
@@ -156,7 +160,7 @@ export default function ImportReview() {
   }
 
   if (error) return <><PageHeader title="Bulk import" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !batch) return <><PageHeader title="Bulk import" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !batch) return <><PageHeader title="Bulk import" /><div className="page"><Skeleton className="h-[200px] w-full" /></div></>;
 
   const current = STEPS[step];
   const stepItems = (key) => items.filter((it) => (key === 'money' ? it.step === 'invoice' || it.step === 'receipt' : it.step === key));
@@ -184,7 +188,7 @@ export default function ImportReview() {
       <PageHeader
         title={`Import #${batch.id} · ${batch.filename}`}
         subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${plannedWith(batch.ai_model)}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
-        actions={<Link className="btn" to="/import">All imports</Link>}
+        actions={<Button variant="secondary" asChild><Link to="/import">All imports</Link></Button>}
       />
       <div className="page stack">
         {committed && <Alert tone="success">This batch has been committed. Everything below is read-only; the "Written as" column shows what was created.</Alert>}
@@ -195,7 +199,7 @@ export default function ImportReview() {
           <Alert tone="info">
             <span>
               {batch.summary.skipped} of {batch.row_count} rows were left out.{' '}
-              <button type="button" className="underline" onClick={() => setStep(STEPS.length - 1)}>See why on the Summary step</button>,
+              <button type="button" className="font-medium underline underline-offset-2" onClick={() => setStep(STEPS.length - 1)}>See why on the Summary step</button>,
               where you can also change how any deal stage in the sheet is read.
             </span>
           </Alert>
@@ -206,15 +210,17 @@ export default function ImportReview() {
           </Alert>
         )}
 
-        <div className="tabs">
-          {STEPS.map((s, i) => (
-            <button key={s.key} type="button" className={`tab ${i === step ? 'is-active' : ''}`} onClick={() => setStep(i)}>
-              {i + 1}. {s.label}
-              {counts[s.key] !== undefined && <span className="tab__count">{counts[s.key]}</span>}
-              {dupCounts[s.key] > 0 && <span className="tab__count" style={{ background: 'var(--warn-bg)', color: 'var(--warn-fg)' }} title="duplicates">{dupCounts[s.key]} dup</span>}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          active={String(step)}
+          onChange={(k) => setStep(Number(k))}
+          tabs={STEPS.map((s, i) => ({
+            key: String(i),
+            label: `${i + 1}. ${s.label}`,
+            count: counts[s.key],
+            warning: dupCounts[s.key] > 0 ? `${dupCounts[s.key]} on site` : null,
+            warningTitle: 'Records already on the site (duplicates)',
+          }))}
+        />
 
         {current.key === 'summary' ? (
           <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} />
@@ -225,11 +231,11 @@ export default function ImportReview() {
           </>
         )}
 
-        <div className="import-nav" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <button type="button" className="btn" disabled={step === 0} onClick={() => setStep(step - 1)}>← Back</button>
+        <div className="flex flex-wrap justify-between gap-3">
+          <Button variant="secondary" disabled={step === 0} onClick={() => setStep(step - 1)}>← Back</Button>
           {step < STEPS.length - 1
-            ? <button type="button" className="btn btn--primary" onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label} →</button>
-            : !committed && <button type="button" className="btn btn--primary" disabled={hasErrors || busy} onClick={() => setConfirm(true)}>Complete and commit</button>}
+            ? <Button onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label} →</Button>
+            : !committed && <Button disabled={hasErrors || busy} onClick={() => setConfirm(true)}>Complete and commit</Button>}
         </div>
       </div>
 
@@ -270,29 +276,35 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     {
       key: 'inc', header: '', width: 36,
       render: (it) => (
-        <input type="checkbox" checked={it.included} disabled={committed || !it.parent_included} title={!it.parent_included ? 'Its parent is unticked' : 'Include in the commit'} onChange={() => onToggle(it)} />
+        <Checkbox
+          checked={it.included}
+          disabled={committed || !it.parent_included}
+          aria-label={`Include S.No ${it.source_row} in the commit`}
+          title={!it.parent_included ? 'Its parent is unticked' : 'Include in the commit'}
+          onCheckedChange={() => onToggle(it)}
+        />
       ),
     },
-    { key: 'source_row', header: 'S.No', width: 60, className: 'mono small' },
+    { key: 'source_row', header: 'S.No', width: 60, className: 'num text-[12px] text-muted-foreground' },
   ];
   const tail = [
     {
       key: 'dup', header: 'Duplicate', className: 'wrap',
       render: (it) => {
         const f = dupFlag(it);
-        if (!f) return <span className="muted">—</span>;
+        if (!f) return <span className="text-muted-foreground">—</span>;
         return (
-          <div>
+          <div className="flex flex-col items-start gap-0.5 text-[12px]">
             <Badge tone="warning">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Badge>
-            <div className="small" style={{ marginTop: 2 }}>on site as <span className="mono">{it.existing_ref}</span></div>
-            <div className="small muted">matched by {f.match}</div>
-            {f.certain === false && <div className="small" style={{ color: 'var(--warn-fg)' }}>Not certain: confirm it is the same deal</div>}
+            <div className="mt-0.5 text-secondary-text">on site as <span className="num text-foreground">{it.existing_ref}</span></div>
+            <div className="text-muted-foreground">matched by {f.match}</div>
+            {f.certain === false && <div className="text-waiting">Not certain: confirm it is the same deal</div>}
           </div>
         );
       },
     },
     { key: 'flags', header: 'Flags', className: 'wrap', render: (it) => <Flags flags={it.flags.filter((f) => f.code !== 'duplicate')} /> },
-    { key: 'assumptions', header: 'Assumed', className: 'wrap small muted', render: (it) => it.assumptions.length ? it.assumptions.join(' · ') : '' },
+    { key: 'assumptions', header: 'Assumed', className: 'wrap text-[12px] text-muted-foreground', render: (it) => it.assumptions.length ? it.assumptions.join(' · ') : '' },
     {
       key: 'action', header: 'Action',
       render: (it) => {
@@ -304,46 +316,46 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
         // A project follows its quotation's choice.
         if (it.action === 'create' && it.step !== 'quotation') return <Badge tone="success">new, with its quotation</Badge>;
         const uncertain = it.step === 'quotation' && dupFlag(it)?.certain === false;
-        return <Select value={it.action} placeholder={null} options={uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />;
+        return <Select aria-label={`What to do with ${it.existing_ref}`} className="min-w-[170px]" value={it.action} placeholder={null} options={uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />;
       },
     },
     committed
-      ? { key: 'committed_ref', header: 'Written as', className: 'mono small' }
-      : { key: 'edit', header: '', align: 'right', render: (it) => <button type="button" className="btn btn--sm btn--ghost" onClick={() => onEdit(it)}>Edit</button> },
+      ? { key: 'committed_ref', header: 'Written as', className: 'wrap text-[12px] text-secondary-text' }
+      : { key: 'edit', header: '', align: 'right', render: (it) => <Button variant="ghost" size="sm" onClick={() => onEdit(it)}>Edit</Button> },
   ];
 
   const middle = {
     quotation: [
-      { key: 'no', header: 'Number', className: 'mono', render: (it) => it.payload.quotation_no },
+      { key: 'no', header: 'Number', className: 'num', render: (it) => it.payload.quotation_no },
       { key: 'date', header: 'Date', render: (it) => date(it.payload.quotation_date) },
-      { key: 'client', header: 'Client', className: 'strong', render: (it) => <>{it.payload.client_name}<div className="small muted">{it.payload.contact_person}</div></> },
+      { key: 'client', header: 'Client', className: 'font-medium text-foreground', render: (it) => <>{it.payload.client_name}<div className="text-[12px] font-normal text-muted-foreground">{it.payload.contact_person}</div></> },
       { key: 'service', header: 'Service', className: 'wrap', render: (it) => it.payload.service_quoted },
       { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.quotation_value, it.payload.currency) },
       { key: 'status', header: 'Status', render: (it) => <Badge>{it.payload.status}</Badge> },
     ],
     project: [
-      { key: 'pid', header: 'Project ID', className: 'mono', render: (it) => it.payload.project_id },
-      { key: 'client', header: 'Client', className: 'strong', render: clientOf },
+      { key: 'pid', header: 'Project ID', className: 'num', render: (it) => it.payload.project_id },
+      { key: 'client', header: 'Client', className: 'font-medium text-foreground', render: clientOf },
       { key: 'service', header: 'Primary service', className: 'wrap', render: (it) => it.payload.primary_service },
-      { key: 'from', header: 'From quotation', className: 'mono small', render: (it) => parentOf(it)?.payload.quotation_no },
+      { key: 'from', header: 'From quotation', className: 'num text-[12px] text-secondary-text', render: (it) => parentOf(it)?.payload.quotation_no },
       { key: 'chk', header: 'Checklist', render: (it) => (it.payload.apply_onboarding_template ? '11 steps' : 'none') },
     ],
     purchase_order: [
-      { key: 'po', header: 'PO number', className: 'mono strong', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', className: 'num font-medium text-foreground', render: (it) => it.payload.po_number },
       { key: 'client', header: 'Client', render: clientOf },
-      { key: 'pid', header: 'Project', className: 'mono small', render: (it) => it.payload.project_id },
+      { key: 'pid', header: 'Project', className: 'num text-[12px] text-secondary-text', render: (it) => it.payload.project_id },
       { key: 'date', header: 'PO date', render: (it) => date(it.payload.po_date) },
       { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.po_value, it.payload.currency) },
       { key: 'terms', header: 'Terms', align: 'right', render: (it) => `${it.payload.payment_terms_days} d` },
       { key: 'deliv', header: 'Delivery', render: (it) => date(it.payload.actual_delivery_date) },
     ],
     service: [
-      { key: 'po', header: 'PO number', className: 'mono', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
       { key: 'service', header: 'Service line', className: 'wrap', render: (it) => it.payload.service },
       { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.service_value) },
     ],
     stage: [
-      { key: 'po', header: 'PO number', className: 'mono', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
       { key: 'client', header: 'Client', render: clientOf },
       { key: 'n', header: '#', align: 'right', render: (it) => it.payload.stage_no },
       { key: 'name', header: 'Stage', render: (it) => it.payload.stage_name },
@@ -353,10 +365,10 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     ],
     money: [
       { key: 'kind', header: 'Type', render: (it) => <Badge tone={it.step === 'invoice' ? 'info' : 'success'}>{it.step}</Badge> },
-      { key: 'po', header: 'PO number', className: 'mono', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
       { key: 'client', header: 'Client', render: clientOf },
       { key: 'stage', header: 'Stage', render: (it) => parentOf(it)?.payload.stage_name || `stage ${it.payload.stage_no}` },
-      { key: 'detail', header: 'Detail', className: 'mono', render: (it) => (it.step === 'invoice' ? it.payload.invoice_no : money(it.payload.amount_received)) },
+      { key: 'detail', header: 'Detail', className: 'num', render: (it) => (it.step === 'invoice' ? it.payload.invoice_no : money(it.payload.amount_received)) },
       { key: 'date', header: 'Date', render: (it) => date(it.step === 'invoice' ? it.payload.invoice_date : it.payload.payment_received_date) },
     ],
   }[stepKey];
@@ -370,24 +382,25 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
       actions={
         <div className="card__actions">
           {stepKey === 'quotation' && (
-            <Select value={filters.status} placeholder="Status: all" options={['Won - PO Received', 'Under Negotiation', 'Lost', 'On Hold']} onChange={(e) => setFilters({ ...filters, status: e.target.value })} />
+            <Select value={filters.status} placeholder="Status: all" options={['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold']} onChange={(e) => setFilters({ ...filters, status: e.target.value })} />
           )}
           <Select value={filters.action} placeholder="Show: all" options={[{ value: 'create', label: 'New only' }, { value: 'dup', label: 'Duplicates only' }]} onChange={(e) => setFilters({ ...filters, action: e.target.value })} />
-          <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="checkbox" checked={filters.flagged} onChange={(e) => setFilters({ ...filters, flagged: e.target.checked })} /> Flagged only
-          </label>
+          <div className="flex items-center gap-2">
+            <Checkbox id={`flagged-${stepKey}`} checked={filters.flagged} onCheckedChange={(on) => setFilters({ ...filters, flagged: on === true })} />
+            <Label htmlFor={`flagged-${stepKey}`} className="text-[13px] font-normal text-secondary-text">Flagged only</Label>
+          </div>
           {dups > 0 && !committed && (
             <>
-              <button type="button" className="btn btn--sm" onClick={() => onDecideAll('skip')} title="Every duplicate in this step keeps the site's record">Keep all originals</button>
-              <button type="button" className="btn btn--sm" onClick={() => onDecideAll('update')} title="Every duplicate in this step takes the sheet's values">Update all from sheet</button>
+              <Button variant="secondary" size="sm" onClick={() => onDecideAll('skip')} title="Every duplicate in this step keeps the site's record">Keep all originals</Button>
+              <Button variant="secondary" size="sm" onClick={() => onDecideAll('update')} title="Every duplicate in this step takes the sheet's values">Update all from sheet</Button>
             </>
           )}
-          <span className="small muted">{rows.length} of {items.length}{dups ? ` · ${dups} duplicate${dups === 1 ? '' : 's'}` : ''}</span>
+          <span className="num text-[12px] text-muted-foreground">{rows.length} of {items.length}{dups ? ` · ${dups} duplicate${dups === 1 ? '' : 's'}` : ''}</span>
         </div>
       }
     >
       {possible > 0 && (
-        <div style={{ padding: '10px 14px 0' }}>
+        <div className="px-4 pt-3">
           <Alert tone="warning">
             {possible} possible duplicate{possible === 1 ? ' was' : 's were'} matched only by client name and service
             (and the proposal date, when the sheet has one). This is how Lost, Under Negotiation and On Hold deals are
@@ -399,7 +412,8 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
       )}
       <DataTable
         rows={rows}
-        columns={[...base, ...middle, ...tail]}
+        // A column nothing in this step fills only widens the table.
+        columns={[...base, ...middle, ...tail].filter((c) => c.key !== 'assumptions' || items.some((it) => it.assumptions.length))}
         rowClassName={(it) => (it.existing_ref ? 'tr--dup' : '')}
         empty={<Empty title="Nothing in this step" text={items.length ? 'Nothing matches the filters.' : 'The sheet produced no records of this kind.'} />}
       />
@@ -419,12 +433,14 @@ function hint(stepKey) {
 }
 
 function Flags({ flags }) {
-  if (!flags.length) return <span className="muted">—</span>;
+  if (!flags.length) return <span className="text-muted-foreground">—</span>;
+  // A flag is a sentence: it wraps inside a bounded column, so a long one
+  // neither widens the table past the screen nor squeezes the action box.
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 260, maxWidth: 440 }}>
       {flags.map((f, i) => (
-        <span key={i} title={`${f.message}${f.by === 'ai' ? ' (AI)' : ''}`}>
-          <Badge tone={f.level === 'error' ? 'danger' : f.level === 'warn' ? 'warning' : 'info'}>{f.by === 'ai' ? '✦ ' : ''}{f.message}</Badge>
+        <span key={i} title={`${f.message}${f.by === 'ai' ? ' (AI)' : ''}`} style={{ maxWidth: '100%' }}>
+          <Badge className="h-auto max-w-full justify-start whitespace-normal text-left" tone={f.level === 'error' ? 'danger' : f.level === 'warn' ? 'warning' : 'info'}>{f.by === 'ai' ? '✦ ' : ''}{f.message}</Badge>
         </span>
       ))}
     </div>
@@ -450,37 +466,34 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
   };
   const label = { quotation: 'Quotations', project: 'Projects', purchase_order: 'Purchase orders', service: 'Service lines', stage: 'Payment stages', invoice: 'Invoices', receipt: 'Receipts' };
   const stepLabel = { quotation: 'quotation', project: 'project', purchase_order: 'PO', service: 'service line', stage: 'stage', invoice: 'invoice', receipt: 'receipt' };
+  const n = (x) => <span className="num">{x}</span>;
+  const list = 'm-0 list-disc space-y-1 pl-5 text-[13px] text-secondary-text';
 
   return (
-    <div className="stack">
+    <div className="flex flex-col gap-4">
       {hasErrors && !committed && (
         <Alert tone="danger">{errors.length} included item(s) still have errors (for example an invoice with no date). Fix them on the earlier steps, or untick them, before committing.</Alert>
       )}
-      <Card title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to update from the sheet.'}>
-        <div className="table-wrap">
-          <table className="table">
-            <thead><tr><th>Record</th><th className="num">New</th><th className="num">Keep original</th><th className="num">Update from sheet</th><th className="num">Unticked</th></tr></thead>
-            <tbody>
-              {steps.map((k) => (
-                <tr key={k}>
-                  <td>{label[k]}</td>
-                  <td className="num">{count(k, (it) => effectiveIncluded(it) && it.action === 'create')}</td>
-                  <td className="num">{count(k, (it) => effectiveIncluded(it) && it.action === 'skip')}</td>
-                  <td className="num" style={{ color: 'var(--warn-fg)' }}>{count(k, (it) => effectiveIncluded(it) && it.action === 'update')}</td>
-                  <td className="num muted">{count(k, (it) => !effectiveIncluded(it))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Card flush title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to update from the sheet.'}>
+        <DataTable
+          label="What will be written"
+          rows={steps.map((k) => ({ id: k, k }))}
+          columns={[
+            { key: 'record', header: 'Record', className: 'font-medium', render: (r) => label[r.k] },
+            { key: 'new', header: 'New', align: 'right', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'create')) },
+            { key: 'keep', header: 'Keep original', align: 'right', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'skip')) },
+            { key: 'update', header: 'Update from sheet', align: 'right', className: 'text-waiting', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'update')) },
+            { key: 'off', header: 'Unticked', align: 'right', className: 'text-muted-foreground', render: (r) => n(count(r.k, (it) => !effectiveIncluded(it))) },
+          ]}
+        />
       </Card>
 
       {replacing.length > 0 && !committed && (
         <Card title={`Existing records updated from the sheet · ${replacing.length}`} hint="The sheet's values replace the tracker's; fields the sheet leaves blank are not touched. Remarks written in the tracker itself are kept on the deal's timeline.">
-          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+          <ul className={list}>
             {replacing.map((it) => {
               const changed = it.flags.find((f) => f.code === 'sheet_changes');
-              return <li key={it.id}>S.No {it.source_row}: {stepLabel[it.step]} <span className="mono">{it.existing_ref}</span>{changed ? ` · ${changed.message.replace(/^Updated from the sheet: /, '')}` : ''}</li>;
+              return <li key={it.id}>S.No {it.source_row}: {stepLabel[it.step]} <span className="num text-foreground">{it.existing_ref}</span>{changed ? ` · ${changed.message.replace(/^Updated from the sheet: /, '')}` : ''}</li>;
             })}
           </ul>
         </Card>
@@ -488,7 +501,7 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
 
       {history.notes + history.reminders + history.contacts + history.closed > 0 && (
         <Card title="Added to the deals' history" hint={committed ? 'What the sheet added' : "From the sheet's remarks and follow-up columns. Text already on a deal is not added again."}>
-          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+          <ul className={list}>
             {history.notes > 0 && <li>{history.notes} note{history.notes === 1 ? '' : 's'} on {history.deals} deal timeline{history.deals === 1 ? '' : 's'} (remarks and follow-up comments)</li>}
             {history.reminders > 0 && <li>{history.reminders} follow-up reminder{history.reminders === 1 ? '' : 's'} for the salespeople, from the next follow-up dates</li>}
             {history.contacts > 0 && <li>{history.contacts} deal{history.contacts === 1 ? '' : 's'} with a newer last-contact date, from the last follow-up dates</li>}
@@ -504,25 +517,28 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
         onReplan={onReplan}
       />
 
-      <Card title={`Rows left out · ${skipped.length}`} hint="These never became records. Change a stage reading or a rule above to bring any of them in.">
-        {skipped.length ? (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr><th>S.No</th><th>Client</th><th>Deal stage in the sheet</th><th>Reason</th></tr></thead>
-              <tbody>{skipped.map((s, i) => <tr key={i}><td className="mono small">{s.ref || s.sno}</td><td>{s.client}</td><td className="small">{s.stage}</td><td className="small">{s.reason}</td></tr>)}</tbody>
-            </table>
-          </div>
-        ) : <span className="muted">None</span>}
+      <Card flush title={`Rows left out · ${skipped.length}`} hint="These never became records. Change a stage reading or a rule above to bring any of them in.">
+        <DataTable
+          label="Rows left out"
+          rows={skipped.map((s, i) => ({ ...s, id: i }))}
+          empty={<p className="px-4 py-3 text-[13px] text-muted-foreground">None</p>}
+          columns={[
+            { key: 'sno', header: 'S.No', className: 'num whitespace-nowrap text-[12px] text-muted-foreground', render: (s) => s.ref || s.sno },
+            { key: 'client', header: 'Client', className: 'font-medium', render: (s) => s.client },
+            { key: 'stage', header: 'Deal stage in the sheet', className: 'wrap text-[12px] text-secondary-text', render: (s) => s.stage },
+            { key: 'reason', header: 'Reason', className: 'wrap text-[12px] text-secondary-text', render: (s) => s.reason },
+          ]}
+        />
       </Card>
 
       <Card title={`Assumptions · ${assumptions.length}`} hint="Every assumed value is also written into the record's Remarks.">
-        {assumptions.length ? <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul> : <span className="muted">None</span>}
+        {assumptions.length ? <ul className={list}>{assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul> : <p className="text-[13px] text-muted-foreground">None</p>}
       </Card>
 
       {!committed && (
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-          <button type="button" className="btn" onClick={onBack}>Back to review</button>
-          <button type="button" className="btn btn--primary" disabled={hasErrors} onClick={onCommit}>Complete and commit</button>
+        <div className="flex flex-wrap justify-end gap-3">
+          <Button variant="secondary" onClick={onBack}>Back to review</Button>
+          <Button disabled={hasErrors} onClick={onCommit}>Complete and commit</Button>
         </div>
       )}
     </div>
@@ -583,68 +599,68 @@ function SheetReading({ batch, committed, onReplan }) {
       title={`How the sheet's deal stages were read · ${values.length}`}
       hint={committed ? 'How the sheet was read when it was committed.' : 'Every wording in the deal-stage column. Change any reading and read the sheet again; nothing is written until you commit.'}
     >
-      <div className="stack">
+      <div className="flex flex-col gap-4">
         {unread > 0 && !committed && <Alert tone="warning">{unread} wording{unread === 1 ? ' was' : 's were'} not understood. Choose a reading for {unread === 1 ? 'it' : 'each'}, or its rows stay out.</Alert>}
         {byAi > 0 && !committed && <Alert tone="info">{byAi} wording{byAi === 1 ? ' was' : 's were'} read by the AI (marked ✦), because the rules were unsure of {byAi === 1 ? 'it' : 'them'}. Check {byAi === 1 ? 'it' : 'them'} before you commit.</Alert>}
         {dropped.length > 0 && <Alert tone="info">Left out of the upload entirely, because they hold sign-in details: {dropped.join(', ')}. They were not stored or sent anywhere.</Alert>}
         {sheets.length > 1 && (
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span>Read from the tab</span>
-            <span style={{ minWidth: 220 }}>
-              <Select aria-label="Tab to read" value={sheet} placeholder={null} options={sheets} disabled={committed} onChange={(e) => setSheet(e.target.value)} />
-            </span>
-            <span className="muted">The tab whose headers look most like a sales sheet was chosen.</span>
-          </label>
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <Label htmlFor="sheet-tab" className="font-normal text-secondary-text">Read from the tab</Label>
+            <div className="min-w-[220px]">
+              <Select id="sheet-tab" value={sheet} placeholder={null} options={sheets} disabled={committed} onChange={(e) => setSheet(e.target.value)} />
+            </div>
+            <span className="text-[12px] text-muted-foreground">The tab whose headers look most like a sales sheet was chosen.</span>
+          </div>
         )}
-        <div className="table-wrap">
-          <table className="table">
-            <thead><tr><th>In the sheet</th><th className="num">Rows</th><th>Read as</th></tr></thead>
-            <tbody>
-              {values.map((v) => (
-                <tr key={v.key}>
-                  <td>
+        <div className="-mx-4 border-y border-border">
+          <DataTable
+            label="Deal stage readings"
+            rows={values.map((v) => ({ ...v, id: v.key }))}
+            columns={[
+              {
+                key: 'value', header: 'In the sheet', className: 'wrap',
+                render: (v) => (
+                  <>
                     {v.value}
-                    {v.by === 'admin' && <span className="muted small"> · your reading</span>}
-                    {v.by === 'ai' && <span className="muted small"> · ✦ read by the AI</span>}
-                  </td>
-                  <td className="num">{v.rows}</td>
-                  <td style={{ minWidth: 220 }}>
-                    {committed
-                      ? readingLabel(v)
-                      : (
-                        <Select
-                          aria-label={`Read "${v.value}" as`}
-                          value={choice[v.key] || ''}
-                          placeholder="Not understood: choose"
-                          options={STAGE_CHOICES}
-                          onChange={(e) => setChoice((s) => ({ ...s, [v.key]: e.target.value }))}
-                        />
-                      )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    {v.by === 'admin' && <span className="text-[12px] text-muted-foreground"> · your reading</span>}
+                    {v.by === 'ai' && <span className="text-[12px] text-muted-foreground"> · ✦ read by the AI</span>}
+                  </>
+                ),
+              },
+              { key: 'rows', header: 'Rows', align: 'right', render: (v) => <span className="num">{v.rows}</span> },
+              {
+                key: 'reading', header: 'Read as',
+                render: (v) => (committed ? readingLabel(v) : (
+                  <Select
+                    className="min-w-[220px]"
+                    aria-label={`Read "${v.value}" as`}
+                    value={choice[v.key] || ''}
+                    placeholder="Not understood: choose"
+                    options={STAGE_CHOICES}
+                    onChange={(e) => setChoice((s) => ({ ...s, [v.key]: e.target.value }))}
+                  />
+                )),
+              },
+            ]}
+          />
         </div>
-        <div className="stack" style={{ gap: 6 }}>
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="checkbox" checked={wonNeedsPo} disabled={committed} onChange={(e) => setWonNeedsPo(e.target.checked)} />
-            A won deal needs a PO number to be imported (the rule agreed with the sales lead)
-          </label>
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="checkbox" checked={excludeIso} disabled={committed} onChange={(e) => setExcludeIso(e.target.checked)} />
-            Leave out ISO proposals
-          </label>
-          <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="checkbox" checked={updateFromSheet} disabled={committed} onChange={(e) => setUpdateFromSheet(e.target.checked)} />
-            Deals already in the tracker take what changed in the sheet (stage, value, dates), when they are recognised for certain. A won deal is never moved back.
-          </label>
+        <div className="flex flex-col gap-3">
+          {[
+            ['rule-won-po', wonNeedsPo, setWonNeedsPo, 'A won deal needs a PO number to be imported (the rule agreed with the sales lead)'],
+            ['rule-iso', excludeIso, setExcludeIso, 'Leave out ISO proposals'],
+            ['rule-update', updateFromSheet, setUpdateFromSheet, 'Deals already in the tracker take what changed in the sheet (stage, value, dates), when they are recognised for certain. A won deal is never moved back.'],
+          ].map(([id, on, set, text]) => (
+            <div key={id} className="flex items-start gap-3">
+              <Checkbox id={id} checked={on} disabled={committed} onCheckedChange={(v) => set(v === true)} className="mt-0.5" />
+              <Label htmlFor={id} className="text-[13px]/[1.5] font-normal text-secondary-text">{text}</Label>
+            </div>
+          ))}
         </div>
         {!committed && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn--primary" disabled={busy || (!changed.length && !rulesChanged && !sheetChanged)} onClick={apply}>
+          <div className="flex justify-end">
+            <Button disabled={busy || (!changed.length && !rulesChanged && !sheetChanged)} onClick={apply}>
               {busy ? 'Reading again…' : `Apply and read again${changed.length ? ` (${changed.length} change${changed.length === 1 ? '' : 's'})` : ''}`}
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -679,7 +695,7 @@ function EditItem({ item, fields, onClose, onSave }) {
       title={`Edit ${item.step.replace('_', ' ')}`}
       subtitle={`S.No ${item.source_row}${item.existing_ref ? ' · duplicate of ' + item.existing_ref : ''}${item.assumptions.length ? ' · assumed: ' + item.assumptions.join('; ') : ''}`}
       onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="edit-item" className="btn btn--primary" disabled={busy}>Save</button></>}
+      footer={<><Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button><Button type="submit" form="edit-item" disabled={busy}>Save</Button></>}
     >
       <form id="edit-item" onSubmit={submit} className="form-grid">
         {fields.map((f) => (
