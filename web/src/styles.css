@@ -558,6 +558,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .kanban__card:hover { border-color: var(--brand-600); }
 .kanban__card.is-stale { border-left: 3px solid var(--danger-fg); }
 .kanban__card.is-dragging { opacity: .5; }
+.kanban__card:focus-visible { outline: 2px solid var(--brand-600); outline-offset: 2px; }
+/* Shown on hover and whenever the card or the menu has the keyboard's focus. */
+.kanban__move { display: block; width: 100%; margin-top: 8px; font-size: 12px; opacity: 0; transition: opacity .12s; }
+.kanban__card:hover .kanban__move, .kanban__card:focus-within .kanban__move { opacity: 1; }
+@media (hover: none) { .kanban__move { opacity: 1; } }
 @media (max-width: 600px) { .kanban__col { flex-basis: 220px; } }
 
 /* ---------------------------------------------------------------- timeline (#22) */

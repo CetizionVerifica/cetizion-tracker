@@ -806,6 +806,25 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
 
   // ------------------------------------------------ #22: who sees the history
 
+  describe('the pipeline counts every currency (#25)', () => {
+    test('a USD quotation is converted at the rate on its date, and one with no rate is counted as left out', async () => {
+      await db.query(`INSERT INTO exchange_rates (from_currency, to_currency, rate, effective_from, source) VALUES ('USD', 'INR', 80, '2026-08-31', 'manual') ON CONFLICT DO NOTHING`);
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, currency, status, sales_person)
+         VALUES ('CTZ/QT/2026/881', 'Dollar Deal Inc', '2026-09-01', 1000, 'USD', 'Submitted', 'FX Person'),
+                ('CTZ/QT/2026/882', 'Dirham Deal LLC', '2026-09-01', 500, 'AED', 'Submitted', 'FX Person')`);
+      const res = await as(admin.cookie)('get', '/api/pipeline?sales_person=FX%20Person');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const sent = res.body.data.stages.find((s) => s.name === 'Sent');
+      assert.equal(sent.value, 80000, 'USD 1,000 at 80 is ₹80,000 in the column total');
+      assert.equal(sent.without_rate, 1, 'the AED one has no rate and is said to be left out');
+      assert.equal(res.body.data.without_rate, 1);
+      const card = res.body.data.cards.find((c) => c.quotation_no === 'CTZ/QT/2026/881');
+      assert.equal(Number(card.value_inr), 80000);
+      assert.equal(Number(card.quotation_value), 1000, 'the card still shows its own currency');
+    });
+  });
+
   describe('tasks, notes, files and timelines are scoped to the person (#22)', () => {
     const MINE = 'CTZ/QT/2026/701';
     const THEIRS = 'CTZ/QT/2026/702';

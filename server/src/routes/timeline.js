@@ -29,6 +29,16 @@ async function recordEvents(entity, id) {
     push(q.approval_requested_at, 'Sent for approval', q.approval_reason || (q.discount_percent ? `${Number(q.discount_percent)}% discount` : null));
     push(q.approval_decided_at, `Discount ${q.approval_status}`, q.approval_note);
     push(q.closed_at, q.status === 'Lost' ? `Lost${q.lost_reason ? `: ${q.lost_reason}` : ''}` : `Won${q.project_id ? ` · project ${q.project_id}` : ''}`, q.lost_notes);
+    // A reopened loss, with what it had been lost for (#25): the quotation no longer holds it.
+    const { rows: reopened } = await query(
+      `SELECT h.changed_at, f.name AS from_stage, t.name AS to_stage, lr.name AS reason, h.lost_notes, h.competitor
+         FROM quotation_stage_history h JOIN pipeline_stages f ON f.id = h.from_stage_id JOIN pipeline_stages t ON t.id = h.to_stage_id
+         LEFT JOIN lost_reasons lr ON lr.id = h.lost_reason_id
+        WHERE h.quotation_id = $1 AND f.type = 'lost' AND t.type <> 'lost'`, [q.id]);
+    for (const r of reopened) {
+      push(r.changed_at, `Reopened from ${r.from_stage} to ${r.to_stage}`,
+        ['had been lost', r.reason ? `for ${r.reason}` : null, r.competitor ? `to ${r.competitor}` : null, r.lost_notes].filter(Boolean).join(' · '));
+    }
     const { rows: revs } = await query('SELECT revision, note, created_by, created_at FROM quotation_revisions WHERE quotation_id = $1', [q.id]);
     for (const r of revs) push(r.created_at, `Revision ${r.revision + 1}`, r.note || (r.created_by ? `by ${r.created_by}` : null));
     const { rows: links } = await query('SELECT * FROM quotation_acceptances WHERE quotation_id = $1', [q.id]);

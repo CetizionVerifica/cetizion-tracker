@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS quotation_stage_history, task_targets, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -232,7 +232,8 @@ INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order
   ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
   ('On Hold',                 20, 'paused', 'On Hold',           5, '#a3a3a3', NULL),
   ('Won, PO received',       100, 'won',    'Won - PO Received', 6, '#16a34a', NULL),
-  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL)
+  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL),
+  ('Expired',                  0, 'lost',   'Lost',              8, '#9ca3af', NULL)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE lost_reasons (
@@ -905,6 +906,20 @@ CREATE TRIGGER quotation_defaults BEFORE INSERT ON quotations
 -- given with the move. Changing the status (the form, the importer, a
 -- conversion) picks the default stage for it; sending a draft moves it to
 -- Sent, and an acceptance moves an open one to Verbal yes.
+-- Every stage move, with the loss it leaves or enters (#25).
+CREATE TABLE quotation_stage_history (
+  id              bigserial PRIMARY KEY,
+  quotation_id    int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  from_stage_id   int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  to_stage_id     int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  lost_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  lost_notes      text,
+  competitor      text,
+  changed_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_stage_history_quotation_idx ON quotation_stage_history (quotation_id, changed_at);
+
 CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
 DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
 BEGIN
@@ -956,12 +971,22 @@ BEGIN
 
   IF TG_OP = 'INSERT' OR NEW.stage_id IS DISTINCT FROM OLD.stage_id THEN
     NEW.stage_changed_at := now();
+    -- Every move is kept (#25), with the loss it leaves or enters: a
+    -- reopening clears the reason, notes and competitor from the quotation,
+    -- and this is where they stay.
+    IF TG_OP = 'UPDATE' THEN
+      INSERT INTO quotation_stage_history (quotation_id, from_stage_id, to_stage_id, lost_reason_id, lost_notes, competitor)
+      VALUES (NEW.id, OLD.stage_id, NEW.stage_id,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_reason_id ELSE OLD.lost_reason_id END,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_notes ELSE OLD.lost_notes END,
+              CASE WHEN st.type = 'lost' THEN NEW.competitor ELSE OLD.competitor END);
+    END IF;
     IF st.type IN ('won', 'lost') THEN
       NEW.closed_at := COALESCE(NEW.closed_at, now());
     ELSE
       NEW.closed_at := NULL;
     END IF;
-    -- Reopened: the reason it was lost no longer applies.
+    -- Reopened: the reason it was lost no longer applies to it; the history keeps it.
     IF st.type <> 'lost' THEN
       NEW.lost_reason_id := NULL;
       NEW.lost_notes := NULL;

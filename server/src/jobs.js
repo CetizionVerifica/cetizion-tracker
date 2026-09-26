@@ -19,8 +19,9 @@ import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while sync
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
- * period ago are marked lost as expired. Only sent ones: anything typed in
- * or imported without a send is left for a person to decide.
+ * period ago move to the Expired stage (#25), which counts as lost. Only sent
+ * ones: anything typed in or imported without a send is left for a person to
+ * decide. Without an Expired stage (renamed or retired) they are marked Lost.
  */
 async function expireQuotations() {
   const { rows: [{ value: grace }] } = await query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'quotation_expiry_grace_days'), '14') AS value`);
@@ -28,7 +29,8 @@ async function expireQuotations() {
     `UPDATE quotations q
         SET lost_reason_id = (SELECT id FROM lost_reasons WHERE name = 'Quotation expired'),
             lost_notes = 'Validity date ' || q.valid_until || ' passed',
-            status = 'Lost'
+            stage_id = COALESCE((SELECT id FROM pipeline_stages WHERE name = 'Expired' AND active), q.stage_id),
+            status = CASE WHEN EXISTS (SELECT 1 FROM pipeline_stages WHERE name = 'Expired' AND active) THEN q.status ELSE 'Lost' END
       WHERE q.status IN ('Submitted', 'Under Negotiation') AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL
         AND q.valid_until IS NOT NULL AND q.valid_until + ($1::int) < CURRENT_DATE
       RETURNING q.quotation_no, q.client_name, q.valid_until`,

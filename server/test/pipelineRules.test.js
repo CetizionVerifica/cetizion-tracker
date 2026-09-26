@@ -120,20 +120,41 @@ describe('quotation rules in the database', { skip: !ADMIN_URL && 'TEST_DATABASE
     const migration = readFileSync(new URL('../db/migrations/053_quotation_draft.sql', import.meta.url), 'utf8');
     await db.query(migration);
     await db.query(migration);
+    // 053 carries its own copy of the stage trigger; the later migrations bring it up to date, as on an upgrade.
+    await db.query(readFileSync(new URL('../db/migrations/054_stage_history_expired.sql', import.meta.url), 'utf8'));
     const row = await one('SELECT status, stage_id, probability FROM quotations WHERE id = $1', [q.id]);
     assert.deepEqual([row.status, row.stage_id, row.probability], ['Submitted', await stageId('Sent'), 40]);
     assert.equal((await one(`SELECT maps_to_status FROM pipeline_stages WHERE name = 'Draft'`)).maps_to_status, 'Draft');
     assert.equal(await events(), before, 'no webhook for a move nobody made');
   });
 
-  test('reopening a lost card clears the competitor with the reason', async () => {
+  test('reopening a lost card clears the reason from the quotation and keeps it in the history (#25)', async () => {
     const q = await quotation('T-STAGE-3');
     const reason = await one(`SELECT id FROM lost_reasons WHERE name = 'Price'`);
-    await db.query('UPDATE quotations SET stage_id = $2, lost_reason_id = $3, competitor = $4 WHERE id = $1', [q.id, await stageId('Lost'), reason.id, 'Rival Ltd']);
+    await db.query('UPDATE quotations SET stage_id = $2, lost_reason_id = $3, competitor = $4, lost_notes = $5 WHERE id = $1',
+      [q.id, await stageId('Lost'), reason.id, 'Rival Ltd', 'They were 20% cheaper']);
     await db.query('UPDATE quotations SET stage_id = $2 WHERE id = $1', [q.id, await stageId('Negotiation')]);
     const row = await one('SELECT lost_reason_id, competitor FROM quotations WHERE id = $1', [q.id]);
     assert.equal(row.lost_reason_id, null);
     assert.equal(row.competitor, null);
+    const history = (await db.query(
+      `SELECT f.name AS from_stage, t.name AS to_stage, h.lost_reason_id, h.competitor, h.lost_notes
+         FROM quotation_stage_history h JOIN pipeline_stages f ON f.id = h.from_stage_id JOIN pipeline_stages t ON t.id = h.to_stage_id
+        WHERE h.quotation_id = $1 ORDER BY h.id`, [q.id])).rows;
+    assert.deepEqual(history.at(-1), { from_stage: 'Lost', to_stage: 'Negotiation', lost_reason_id: reason.id, competitor: 'Rival Ltd', lost_notes: 'They were 20% cheaper' });
+    assert.equal(history.at(-2).to_stage, 'Lost', 'the loss itself is in the history too, with its reason');
+    assert.equal(history.at(-2).lost_reason_id, reason.id);
+  });
+
+  test('an expired quotation is lost, in its own stage, with its reason (#25)', async () => {
+    const q = await quotation('T-STAGE-4');
+    const expired = await stageId('Expired');
+    await db.query('UPDATE quotations SET stage_id = $2, lost_notes = $3 WHERE id = $1', [q.id, expired, 'Validity date passed']);
+    const row = await one('SELECT status, stage_id, closed_at, lost_notes FROM quotations WHERE id = $1', [q.id]);
+    assert.deepEqual([row.status, row.stage_id, row.lost_notes], ['Lost', expired, 'Validity date passed']);
+    assert.ok(row.closed_at);
+    const byStatus = await quotation('T-STAGE-5', { status: 'Lost' });
+    assert.equal(byStatus.stage_id, await stageId('Lost'), 'a plain status change to Lost still lands on Lost');
   });
 
   test('the stage backfill keeps the history instead of stamping today', async () => {
