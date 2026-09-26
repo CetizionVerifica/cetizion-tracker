@@ -12,6 +12,8 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { collectNotifications } from '../lib/notify.js';
+import { config } from '../config.js';
+import { hiddenKinds, inQuietHours } from '../lib/notificationPrefs.js';
 
 export const notificationsRouter = Router();
 
@@ -29,16 +31,33 @@ const MINE = '(n.username IS NULL OR lower(n.username) = lower($1) OR lower(n.us
 // Read state belongs to the reader: a row addressed to nobody is everyone's,
 // and one read_at on it would let the first person to look clear the bell
 // for the whole team.
-const READ = 'EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id = n.id AND lower(r.reader) = lower($1))';
+//
+// A notification whose thing was done (resolved_at, #44) is read for
+// everybody: nobody has to be told about a task that is ticked.
+const READ = '(n.resolved_at IS NOT NULL OR EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id = n.id AND lower(r.reader) = lower($1)))';
+
+/** The reader's own settings (#44); none for the shared sign-in. */
+async function prefsOf(req) {
+  if (!req.user?.id) return { notify: {}, timeZone: config.businessTimeZone };
+  const { rows: [u] } = await query('SELECT notify, time_zone FROM users WHERE id = $1', [req.user.id]);
+  return { notify: u?.notify || {}, timeZone: u?.time_zone || config.businessTimeZone };
+}
 
 notificationsRouter.get('/summary', async (req, res) => {
-  const { rows: [r] } = await query(`SELECT COUNT(*) FILTER (WHERE NOT ${READ})::int AS unread, COUNT(*)::int AS total FROM notifications n WHERE ${MINE}`, audience(req));
-  res.json({ data: r });
+  const prefs = await prefsOf(req);
+  const { rows: [r] } = await query(
+    `SELECT COUNT(*) FILTER (WHERE NOT ${READ})::int AS unread, COUNT(*)::int AS total, max(n.created_at) AS latest
+       FROM notifications n WHERE ${MINE} AND NOT (n.kind = ANY($3::text[]))`, [...audience(req), hiddenKinds(prefs.notify)]);
+  // In quiet hours the page shows the count but pops nothing up.
+  res.json({ data: { ...r, quiet: inQuietHours(prefs.notify, { timeZone: prefs.timeZone }) } });
 });
 
 notificationsRouter.get('/', async (req, res) => {
-  const params = audience(req); const where = [MINE];
+  const prefs = await prefsOf(req);
+  const params = [...audience(req), hiddenKinds(prefs.notify)]; const where = [MINE, 'NOT (n.kind = ANY($3::text[]))'];
   if (req.query.unread) where.push(`NOT ${READ}`);
+  // What arrived since the page last looked, for the pop-up (#44).
+  if (req.query.since) { params.push(String(req.query.since)); where.push(`n.created_at > $${params.length}::timestamptz`); }
   if (req.query.kind) { params.push(String(req.query.kind)); where.push(`n.kind = $${params.length}`); }
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
   const { rows } = await query(

@@ -13,7 +13,9 @@
 import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
 import { sendMail } from './mail.js';
-import { dailyDigest } from './emailTemplates.js';
+import { dailyDigest, notificationEmail, weeklyDigest } from './emailTemplates.js';
+import { config } from '../config.js';
+import { hiddenKinds, inQuietHours, wantsDigest, wantsEmail, wantsWeekly } from './notificationPrefs.js';
 import { costAlerts } from '../routes/profitability.js';
 import { emit } from './webhooks.js';
 
@@ -120,9 +122,115 @@ export async function collectNotifications({ today = businessToday(), db = { que
   return { today, raised, counts: { tasks: tasks.length, follow_ups: followups.length, approvals: approvals.length, newly_overdue: overdue.length, renewals: renewals.length, expiring: expiring.length, unopened_links: unseen.length, inbox_overdue: late.length, cost_alerts: costs.length } };
 }
 
-/** The daily job: the sweep, then one digest email with everything still unread. */
+/** The people with an account and an address: who gets a digest of their own (#44). */
+async function people(db = { query }) {
+  const { rows } = await db.query(`SELECT id, name, email, role, notify, time_zone FROM users WHERE active AND email IS NOT NULL ORDER BY id`);
+  return rows;
+}
+
+/**
+ * What is waiting for one person: addressed to them (by the email they sign
+ * in with or the name on their account) or to everybody, not read by them,
+ * not dealt with, and of a kind they have not switched off.
+ */
+async function waitingFor(u, db = { query }) {
+  const { rows } = await db.query(
+    `SELECT n.* FROM notifications n
+      WHERE (n.username IS NULL OR lower(n.username) = lower($1) OR lower(n.username) = lower($2))
+        AND n.resolved_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id = n.id AND (lower(r.reader) = lower($1) OR lower(r.reader) = lower($2)))
+        AND NOT (n.kind = ANY($3::text[]))
+      ORDER BY n.created_at DESC LIMIT 100`,
+    [u.email, u.name, Object.entries(u.notify?.kinds || {}).filter(([, c]) => c === 'off').flatMap(([g]) => hiddenKinds({ kinds: { [g]: 'off' } }))]);
+  return rows;
+}
+
+/**
+ * The 08:30 digest on working days (#44): one email per person with what is
+ * waiting for them, unless they switched it off. Without any accounts (the
+ * shared sign-in) it goes, as before, to the digest address in Settings.
+ */
+export async function runDigests({ today = businessToday() } = {}) {
+  const everyone = await people();
+  if (!everyone.length) return { today, ...(await sharedDigest(today)) };
+  const sent = [];
+  for (const u of everyone) {
+    if (!wantsDigest(u.notify)) continue;
+    const items = await waitingFor(u);
+    if (!items.length) continue;
+    const email = await sendMail({ ...dailyDigest({ today, items }), to: u.email, template: 'daily_digest', entity: 'digest', entityId: `notifications:${today}:${u.id}`, sentBy: 'schedule' });
+    sent.push({ to: u.email, items: items.length, status: email?.status });
+  }
+  return { today, digests: sent };
+}
+
+/**
+ * Mondays, for admins (#44): what the week raised, by kind, what is still
+ * open, and the oldest open items.
+ */
+export async function runWeeklyDigest({ today = businessToday() } = {}) {
+  const admins = (await people()).filter((u) => u.role === 'admin' && wantsWeekly(u.notify));
+  if (!admins.length) return { today, weekly: 'no admin wants it' };
+  const { rows: raised } = await query(`SELECT kind, COUNT(*)::int AS n FROM notifications WHERE created_at >= $1::date - 7 GROUP BY kind ORDER BY n DESC`, [today]);
+  const { rows: open } = await query(`SELECT kind, COUNT(*)::int AS n FROM notifications WHERE resolved_at IS NULL AND read_at IS NULL GROUP BY kind ORDER BY n DESC`);
+  const { rows: items } = await query(`SELECT * FROM notifications WHERE resolved_at IS NULL AND read_at IS NULL ORDER BY created_at LIMIT 15`);
+  const sent = [];
+  for (const u of admins) {
+    const email = await sendMail({ ...weeklyDigest({ today, raised, open, items }), to: u.email, template: 'weekly_digest', entity: 'digest', entityId: `weekly:${today}:${u.id}`, sentBy: 'schedule' });
+    sent.push({ to: u.email, status: email?.status });
+  }
+  return { today, weekly: sent };
+}
+
+/**
+ * Every few minutes: the notifications people asked to get by email (#44).
+ * Sent after the write that raised them has committed, once each, outside
+ * the person's quiet hours — held until they end, for up to two days.
+ */
+export async function sendNotificationEmails({ now = new Date() } = {}) {
+  const everyone = await people();
+  const { rows: pending } = await query(
+    `SELECT * FROM notifications WHERE emailed_at IS NULL AND resolved_at IS NULL AND username IS NOT NULL
+        AND created_at > now() - interval '2 days' ORDER BY id LIMIT 200`);
+  // Links in the email point at the site, the address acceptance links use.
+  const { rows: [site] } = await query(`SELECT value FROM settings WHERE key = 'public_app_url'`);
+  const appUrl = (site?.value || '').trim().replace(/\/+$/, '');
+  const sent = [];
+  for (const n of pending) {
+    const who = everyone.filter((u) => [u.email, u.name].some((x) => x && x.toLowerCase() === n.username.toLowerCase()));
+    const wanting = who.filter((u) => wantsEmail(u.notify, n.kind));
+    const quiet = wanting.filter((u) => inQuietHours(u.notify, { now, timeZone: u.time_zone || config.businessTimeZone }));
+    if (quiet.length) continue;
+    for (const u of wanting) {
+      const email = await sendMail({ ...notificationEmail({ item: n, appUrl }), to: u.email, template: 'notification', entity: n.entity || 'notification', entityId: n.entity_id || String(n.id), sentBy: 'schedule' });
+      sent.push({ id: n.id, to: u.email, status: email?.status });
+    }
+    await query('UPDATE notifications SET emailed_at = now() WHERE id = $1', [n.id]);
+  }
+  return { checked: pending.length, sent };
+}
+
+/** The shared sign-in's digest: one email to the address in Settings, as before #44. */
+async function sharedDigest(today) {
+  const { rows: unread } = await query(`SELECT * FROM notifications WHERE read_at IS NULL AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 100`);
+  const { rows: s } = await query(`SELECT key, value FROM settings WHERE key IN ('digest_email', 'finance_email')`);
+  const settings = Object.fromEntries(s.map((r) => [r.key, r.value]));
+  const to = settings.digest_email || settings.finance_email || null;
+  let email = null;
+  if (to && unread.length) {
+    email = await sendMail({ ...dailyDigest({ today, items: unread }), to, template: 'daily_digest', entity: 'digest', entityId: `notifications:${today}`, sentBy: 'schedule' });
+  }
+  return { unread: unread.length, digest: email ? { to, status: email.status, reason: email.reason } : 'nothing to send' };
+}
+
+/**
+ * The daily job at 08:00: the sweep. The digests follow at 08:30 on working
+ * days (#44); a deployment with no accounts still gets its single digest
+ * here, as before.
+ */
 export async function runNotifications({ today = businessToday() } = {}) {
   const sweep = await collectNotifications({ today });
+  if ((await people()).length) return { ...sweep, raised: sweep.raised.length, digest: 'per person at 08:30 on working days' };
   const { rows: unread } = await query(`SELECT * FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT 100`);
   const { rows: s } = await query(`SELECT key, value FROM settings WHERE key IN ('digest_email', 'finance_email')`);
   const settings = Object.fromEntries(s.map((r) => [r.key, r.value]));

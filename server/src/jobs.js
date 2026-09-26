@@ -7,7 +7,7 @@ import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
 import { runRenewals } from './lib/renewals.js';
-import { runNotifications } from './lib/notify.js';
+import { runDigests, runNotifications, runWeeklyDigest, sendNotificationEmails } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
 import { runVisitReminders } from './lib/visits.js';
@@ -92,9 +92,25 @@ export const JOBS = {
     run: () => runDeliverableReminders(),
   },
   'notifications.daily': {
-    description: 'Raise notifications for tasks, follow-ups, approvals, new overdue invoices, renewals and expiring quotations; email the digest',
+    description: 'Raise notifications for tasks, follow-ups, approvals, new overdue invoices, renewals and expiring quotations',
     cron: '0 8 * * *',
     run: (opts) => runNotifications(opts),
+  },
+  // #44: working days are Monday to Friday until the holiday calendar (#73) lands.
+  'notifications.digest': {
+    description: 'Each person their own digest of what is waiting for them, unless they switched it off',
+    cron: '30 8 * * 1-5',
+    run: (opts) => runDigests(opts),
+  },
+  'notifications.weekly': {
+    description: 'Monday digest for admins: the week in notifications, and what is still open',
+    cron: '0 9 * * 1',
+    run: (opts) => runWeeklyDigest(opts),
+  },
+  'notifications.email': {
+    description: 'Email the notifications people asked to get by email, outside their quiet hours',
+    cron: '*/10 * * * *',
+    run: (opts) => sendNotificationEmails(opts),
   },
   'finance.digest': {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',

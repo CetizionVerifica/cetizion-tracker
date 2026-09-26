@@ -98,6 +98,36 @@ ${items.map((n) => `- ${n.title}${n.body ? ` (${n.body})` : ''}`).join('\n')}
   return { subject, text, html };
 }
 
+/** One notification, for someone who asked to get that kind by email (#44). */
+export function notificationEmail({ item, appUrl = '' }) {
+  const link = item.link ? `${appUrl}${item.link}` : null;
+  const subject = item.title;
+  const text = `${item.title}${item.body ? `\n\n${item.body}` : ''}${link ? `\n\n${link}` : ''}\n\nChange what you are emailed about under Account, Notifications.`;
+  const html = layout(item.title, `${item.body ? `<p>${esc(item.body)}</p>` : ''}${link ? `<p><a href="${esc(link)}">Open it in the tracker</a></p>` : ''}<p style="color:#6b7280;font-size:12px">Change what you are emailed about under Account, Notifications.</p>`);
+  return { subject, text, html };
+}
+
+/** The Monday digest for admins (#44): the week in counts, and what is still open. */
+export function weeklyDigest({ today, raised, open, items }) {
+  const total = raised.reduce((n, r) => n + r.n, 0);
+  const subject = `Tracker week to ${date(today)}: ${total} notification${total === 1 ? '' : 's'}, ${open.reduce((n, r) => n + r.n, 0)} still open`;
+  const text = `The week to ${date(today)}
+
+Raised this week:
+${raised.map((r) => `- ${r.kind}: ${r.n}`).join('\n') || '- nothing'}
+
+Still open:
+${open.map((r) => `- ${r.kind}: ${r.n}`).join('\n') || '- nothing'}
+
+${items.map((n) => `- ${n.title}${n.body ? ` (${n.body})` : ''}`).join('\n')}
+`;
+  const html = layout(`The week to ${date(today)}`,
+    table(['Kind', 'Raised this week', 'Still open'], [...new Set([...raised, ...open].map((r) => r.kind))].map((k) => [
+      k, String(raised.find((r) => r.kind === k)?.n || 0), String(open.find((r) => r.kind === k)?.n || 0),
+    ])) + (items.length ? table(['Oldest still open', 'Details'], items.map((n) => [n.title, n.body || ''])) : ''));
+  return { subject, text, html };
+}
+
 export function testEmail({ to, mode }) {
   const subject = 'Cetizion Tracker: test email';
   const text = `This is a test email from the Cetizion Tracker to ${to}. Delivery mode: ${mode}. If you are reading this, sending works.`;
