@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS quotation_stage_history, task_targets, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS project_milestones, quotation_stage_history, task_targets, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1234,6 +1234,39 @@ CREATE TABLE task_targets (
 );
 
 CREATE INDEX task_targets_entity_idx ON task_targets (entity, entity_id);
+
+-- A project's milestones, and the stages they trigger (#26).
+CREATE TABLE project_milestones (
+  id          serial PRIMARY KEY,
+  project_id  text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  name        text NOT NULL,
+  target_date date,
+  reached_on  date,
+  sort_order  int NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX project_milestones_name_idx ON project_milestones (project_id, lower(name));
+
+ALTER TABLE payment_stages ADD COLUMN IF NOT EXISTS milestone_id int REFERENCES project_milestones(id) ON DELETE SET NULL;
+
+CREATE INDEX payment_stages_milestone_idx ON payment_stages (milestone_id) WHERE milestone_id IS NOT NULL;
+
+-- Reaching a milestone (or taking it back) is recorded once, on the
+-- milestone, and every stage it triggers takes the date.
+CREATE OR REPLACE FUNCTION milestone_reached() RETURNS trigger AS $$
+BEGIN
+  UPDATE payment_stages SET milestone_reached_on = NEW.reached_on
+   WHERE milestone_id = NEW.id AND milestone_reached_on IS DISTINCT FROM NEW.reached_on;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER milestone_reached AFTER UPDATE OF reached_on ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION milestone_reached();
+
+CREATE TRIGGER project_milestones_set_updated_at BEFORE UPDATE ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE OR REPLACE FUNCTION task_main_target() RETURNS trigger AS $$
 BEGIN

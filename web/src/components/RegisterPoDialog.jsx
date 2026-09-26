@@ -33,6 +33,11 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const set = (k, val) => { setV((s) => ({ ...s, [k]: val })); setErrors((e) => ({ ...e, [k]: undefined })); };
   const template = templates.find((t) => String(t.id) === v.payment_terms_template_id);
+  // A PO for a different amount than was quoted is worth a second look (#26).
+  const quoted = Number(quotation.total ?? quotation.quotation_value);
+  const poValue = v.po_value === '' ? quoted : Number(v.po_value);
+  const differs = Number.isFinite(quoted) && quoted > 0 && Number.isFinite(poValue) && Math.abs(poValue - quoted) > 0.005;
+  const gap = differs ? ((poValue - quoted) / quoted) * 100 : 0;
 
   async function submit(e) {
     e.preventDefault(); setBusy(true); setError(null); setErrors({});
@@ -49,7 +54,7 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
         payload.document_id = data.id;
       }
       const { data } = await api.action(`/quotations/${encodeURIComponent(quotation.quotation_no)}/register`, payload);
-      toast(`${data.po_number} registered under ${data.project_id}: ${data.stages.length} stages, ${data.checklist_steps} checklist steps`, 'success');
+      toast(`${data.po_number} registered under ${data.project_id}: ${data.stages.length} stages, ${data.checklist_steps} checklist steps${data.po_value_differs ? '. The PO differs from the quotation' : ''}`, data.po_value_differs ? 'warning' : 'success');
       invalidateLookups();
       onDone?.(data);
       onClose();
@@ -76,6 +81,15 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
           <Field label="PO date" error={errors.po_date}><Input type="date" value={v.po_date} onChange={(e) => set('po_date', e.target.value)} /></Field>
           <Field label="PO value" error={errors.po_value} hint="Blank: the quotation total"><Input type="number" step="0.01" min="0" value={v.po_value} onChange={(e) => set('po_value', e.target.value)} /></Field>
           <Field label="Currency"><Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} /></Field>
+          {(differs || v.currency !== (quotation.currency || 'INR')) && (
+            <div className="span-all">
+              <Alert tone="warning">
+                {differs
+                  ? `The PO is ${money(poValue, v.currency)} against ${money(quoted, quotation.currency)} quoted (${gap > 0 ? '+' : ''}${gap.toFixed(1)}%). The service lines will be scaled to the PO; check the number before you register it.`
+                  : `The PO is in ${v.currency}, the quotation in ${quotation.currency || 'INR'}. Check the currency before you register it.`}
+              </Alert>
+            </div>
+          )}
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
           <Field label="PO document" hint="The client's PO, if you have the file"><input type="file" className="input" onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
 

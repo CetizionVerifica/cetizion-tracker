@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
-import { ClipboardList, FileText, FolderKanban, Plane } from 'lucide-react';
+import { ClipboardList, FileText, Flag, FolderKanban, Plane } from 'lucide-react';
+import { cn } from 'cn';
 import {
   Chip, RailPerson, RecordFlow, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat, flowSteps,
 } from '../components/record.jsx';
@@ -69,7 +70,7 @@ export default function ProjectDetail() {
 
   const {
     project: p, purchase_orders: pos, payment_stages: stages,
-    onboarding, onboarding_progress: progress, travel, quotations,
+    onboarding, onboarding_progress: progress, travel, quotations, milestones = [],
   } = data.data;
 
   // One currency across every PO on the project, or null when they differ.
@@ -102,6 +103,17 @@ export default function ProjectDetail() {
         status: next,
         completed_date: next === 'Done' ? new Date().toISOString().slice(0, 10) : null,
       });
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
+  /** Reaching a milestone makes the stages it triggers billable (#26). */
+  async function markMilestone(m, reached) {
+    try {
+      await api.update('project-milestones', m.id, { reached_on: reached ? new Date().toISOString().slice(0, 10) : null });
+      toast(reached ? `${m.name} reached${m.stages.length ? ': its stages can be invoiced' : ''}` : `${m.name} marked not reached`, 'success');
       refetch();
     } catch (err) {
       toast(err.message, 'danger');
@@ -277,6 +289,39 @@ export default function ProjectDetail() {
         </RecordSection>
 
         <RecordSection
+          title="Milestones"
+          hint={milestones.length ? 'Reaching one makes the payment stages it triggers billable' : undefined}
+          action={<Button variant="secondary" size="sm" onClick={() => setDialog({ type: 'milestone' })}>Add a milestone</Button>}
+        >
+          {milestones.length === 0 ? (
+            <p className="px-5 py-6 text-[13px] text-muted-foreground">
+              No milestones. A payment stage triggered On Milestone gets its milestone when the PO is registered; add any other here.
+            </p>
+          ) : milestones.map((m, i) => {
+            const waiting = m.stages.filter((s) => !s.invoice_no).reduce((n, s) => n + Number(s.stage_amount || 0), 0);
+            return (
+              <div key={m.id} className={cn('flex flex-wrap items-center gap-3 px-5 py-3', i < milestones.length - 1 && 'border-b border-border')}>
+                <Flag className="size-4 shrink-0 text-secondary-text" strokeWidth={1.75} aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-foreground">{m.name}</div>
+                  <div className="text-[12px] text-muted-foreground">
+                    {[m.target_date && `Target ${date(m.target_date)}`,
+                      m.stages.length ? `Triggers ${m.stages.map((s) => `${s.stage_name} on ${s.po_number}`).join(', ')}` : 'No payment stage waits on it'].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {m.reached_on
+                  ? <Chip tone="settled">Reached {date(m.reached_on)}</Chip>
+                  : waiting > 0 ? <Chip tone="waiting">{amount(waiting)} waiting on it</Chip> : null}
+                <Button variant={m.reached_on ? 'ghost' : 'secondary'} size="sm" onClick={() => markMilestone(m, !m.reached_on)}>
+                  {m.reached_on ? 'Not reached' : 'Mark reached'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setDialog({ type: 'milestone', row: m })}>Edit</Button>
+              </div>
+            );
+          })}
+        </RecordSection>
+
+        <RecordSection
           title="Purchase orders"
           hint={pos.length ? 'Stages, invoices and payments live on the order' : undefined}
           action={<Button variant="secondary" size="sm" onClick={() => setDialog({ type: 'newPo' })}>Add an order</Button>}
@@ -312,6 +357,23 @@ export default function ProjectDetail() {
         <ProjectProfit projectId={projectId} />
         <Timeline entity="project" id={projectId} />
       </RecordPage>
+
+      {dialog?.type === 'milestone' && (
+        <RecordForm
+          title={dialog.row ? 'Edit milestone' : 'Add a milestone'}
+          subtitle={`For ${p.project_id} — ${p.client_name}`}
+          resource="project-milestones"
+          record={dialog.row || { project_id: p.project_id, sort_order: milestones.length }}
+          onClose={close}
+          onSaved={refetch}
+          fields={[
+            { name: 'project_id', type: 'hidden' },
+            { name: 'name', label: 'Milestone', required: true, span: 2, placeholder: 'Stage 1 audit complete' },
+            { name: 'target_date', label: 'Target date', type: 'date' },
+            { name: 'reached_on', label: 'Reached on', type: 'date', hint: 'Blank until it happens' },
+          ]}
+        />
+      )}
 
       {dialog?.type === 'newStep' && (
         <RecordForm

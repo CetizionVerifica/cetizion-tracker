@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { saveEnquiry } from './enquiries.js';
-import { linkProjectQuotation } from './projects.js';
+import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { mayWriteOnRecords, onRecordVisibleSql } from './scope.js';
@@ -286,8 +286,30 @@ export const resources = {
       // is written by linkProjectQuotation. Declared here so it survives
       // validation and reaches onSave.
       quotation_no: str(60),
+      // Not a column either: delivery is recorded on the project's POs, which
+      // is where the on-delivery stages read it (#26). v_projects reports it back.
+      actual_delivery_date: date(),
     }),
-    onSave: linkProjectQuotation,
+    onSave: saveProject,
+  },
+
+  'project-milestones': {
+    // What a project has to reach before an On Milestone stage can be
+    // invoiced (#26). Reaching one stamps its date on every stage it triggers.
+    table: 'project_milestones',
+    view: null,
+    label: 'Milestone',
+    defaultSort: 'sort_order, target_date NULLS LAST, id',
+    search: ['name', 'project_id'],
+    filters: ['project_id'],
+    columns: ['project_id', 'name', 'target_date', 'reached_on', 'sort_order'],
+    schema: z.object({
+      project_id: requiredStr(40),
+      name: requiredStr(160),
+      target_date: date(),
+      reached_on: date(),
+      sort_order: int({ min: 0 }).default(0),
+    }),
   },
 
   'purchase-orders': {
@@ -366,7 +388,7 @@ export const resources = {
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
-      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
+      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on', 'milestone_id',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -384,6 +406,7 @@ export const resources = {
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
       milestone_reached_on: date(),
+      milestone_id: int({ min: 1 }),
     }),
   },
 
