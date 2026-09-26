@@ -10,11 +10,11 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS project_milestones, quotation_stage_history, task_targets, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
-  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents CASCADE;
+  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents, project_milestones, quotation_stage_history, task_targets CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)

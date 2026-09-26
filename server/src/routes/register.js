@@ -52,6 +52,8 @@ registerRouter.post('/:key/register', async (req, res) => {
     throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.') || '_', i.message])) });
   }
   const b = parsed.data;
+  // What the registration found worth saying, added to the response (#26).
+  const checked = {};
 
   const data = await transaction(async (client) => {
     const key = decodeURIComponent(req.params.key);
@@ -166,6 +168,29 @@ registerRouter.post('/:key/register', async (req, res) => {
       }
     }
 
+    // The PO against what was quoted (#26): the dialog warns before, this says after.
+    const quoted = q.total ?? q.quotation_value;
+    const poDiffers = quoted != null && Math.abs(Number(poValue) - Number(quoted)) > 0.005;
+
+    // The deal's owner and the project manager hear of it (#26): by email
+    // when it is known (the sign-in the bell matches), else by name.
+    const { rows: [pr] } = await client.query('SELECT project_manager, project_manager_email, sales_person FROM projects WHERE project_id = $1', [projectId]);
+    const people = [
+      pr?.project_manager_email || pr?.project_manager,
+      q.sales_person_email || pr?.sales_person || q.sales_person,
+    ].map((p) => (p ? String(p).trim() : '')).filter(Boolean);
+    for (const who of [...new Set(people.map((p) => p.toLowerCase()))]) {
+      await notify({
+        username: people.find((p) => p.toLowerCase() === who), kind: 'po_registered',
+        title: `PO ${po.po_number} registered · ${projectId}`,
+        body: `${q.client_name}: ${currency} ${poValue}${poDiffers ? ` (quoted ${q.currency || currency} ${quoted})` : ''}${stages.length ? `, ${stages.length} payment stage${stages.length === 1 ? '' : 's'}` : ''}.`,
+        entity: 'project', entityId: projectId, link: `/projects/${encodeURIComponent(projectId)}`,
+        dedupeKey: `po-registered:${po.po_number}:${who}`,
+      }, client);
+    }
+
+    Object.assign(checked, { quoted_total: quoted ?? null, po_value_differs: poDiffers });
+
     // ---- onboarding checklist from the template
     let checklist = 0;
     if (b.onboarding_template_id !== 0) {
@@ -192,30 +217,8 @@ registerRouter.post('/:key/register', async (req, res) => {
       }
     }
 
-    // The PO against what was quoted (#26): the dialog warns before, this says after.
-    const quoted = q.total ?? q.quotation_value;
-    const poDiffers = quoted != null && Math.abs(Number(poValue) - Number(quoted)) > 0.005;
-
-    // The deal's owner and the project manager hear of it (#26): by email
-    // when it is known (the sign-in the bell matches), else by name.
-    const { rows: [pr] } = await client.query('SELECT project_manager, project_manager_email, sales_person FROM projects WHERE project_id = $1', [projectId]);
-    const people = [
-      pr?.project_manager_email || pr?.project_manager,
-      q.sales_person_email || pr?.sales_person || q.sales_person,
-    ].map((p) => (p ? String(p).trim() : '')).filter(Boolean);
-    for (const who of [...new Set(people.map((p) => p.toLowerCase()))]) {
-      await notify({
-        username: people.find((p) => p.toLowerCase() === who), kind: 'po_registered',
-        title: `PO ${po.po_number} registered · ${projectId}`,
-        body: `${q.client_name}: ${currency} ${poValue}${poDiffers ? ` (quoted ${q.currency || currency} ${quoted})` : ''}${stages.length ? `, ${stages.length} payment stage${stages.length === 1 ? '' : 's'}` : ''}.`,
-        entity: 'project', entityId: projectId, link: `/projects/${encodeURIComponent(projectId)}`,
-        dedupeKey: `po-registered:${po.po_number}:${who}`,
-      }, client);
-    }
-
-    return { quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency, stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null,
-      quoted_total: quoted ?? null, po_value_differs: poDiffers };
+    return { quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency, stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null };
   });
 
-  res.status(201).json({ data });
+  res.status(201).json({ data: { ...data, ...checked } });
 });

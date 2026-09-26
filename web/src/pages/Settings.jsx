@@ -8,12 +8,12 @@ import { Chip, RecordSection } from '../components/record.jsx';
 import { cn } from 'cn';
 import { Card, DataTable, Tabs, Badge, Alert, Empty, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { money } from '../lib/format.js';
 import { ApiTokens } from '../components/ApiTokens.jsx';
 import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
-import { money } from '../lib/format.js';
 
 export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
