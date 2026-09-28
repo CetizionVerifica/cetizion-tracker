@@ -5,7 +5,7 @@ import { Alert, Badge, BarList, Card, DataTable, Empty, ErrorState, Stat } from 
 import { RevenueReport } from '../components/RevenueReport.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, number, percent, today } from '../lib/format.js';
+import { date, money, number, percent, today } from '../lib/format.js';
 
 /** Quick ranges on the quotation date. Reports run on the calendar year (Jan–Dec). */
 function ranges() {
@@ -23,9 +23,13 @@ function Amounts({ list }) {
   return list.map((a) => money(a.amount, a.currency)).join(' · ');
 }
 
-/** Which rate, and the date it took effect, behind a converted figure. */
+/**
+ * Which rate converted a figure, and whose day it is. Each PO converts at the
+ * rate of its own PO date — not today's, and not "unchanged since": a weekend
+ * or holiday, when the ECB publishes nothing, uses the last working day's.
+ */
 const rateTitle = (details = []) => (details.length
-  ? ['Converted at:', ...details.map((d) => `${d.currency}: ₹${d.rate} from ${d.effective_from}`)].join('\n')
+  ? ["Converted at the rate of each PO's own date:", ...details.map((d) => `${d.currency}: ₹${d.rate} — rate of ${date(d.effective_from)}`)].join('\n')
   : undefined);
 
 /** INR value, flagging anything left out of it so the total is never quietly short. */
@@ -325,7 +329,7 @@ export default function SalesReport() {
                         : (
                           <>
                             ₹{row.rate} / {row.currency}
-                            <div className="small muted">from {row.rate_effective_from}</div>
+                            <div className="small muted">rate of {date(row.rate_effective_from)}</div>
                           </>
                         ),
                   },
@@ -423,7 +427,8 @@ export default function SalesReport() {
         )}
 
         {/* Mounted regardless of the sales data above, so a failed load there does not also hide revenue. */}
-        {!backwards && <RevenueReport period={params} showStaleNotice={false} />}
+        {/* The banner at the top names the FX deals' stale rates; revenue adds any other currency it converts. */}
+        {!backwards && <RevenueReport period={params} staleShownAbove={(fx?.summary.stale_rates ?? []).map((r) => r.currency)} />}
       </div>
     </>
   );

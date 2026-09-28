@@ -313,7 +313,7 @@ export function headline({ enquiries, sectors, customers, revenue, revenueLabel,
 }
 
 // ------------------------------------------------------- 7. what to fix
-export function managementFixes({ gaps, sectors, services, revenue, missingRates }) {
+export function managementFixes({ gaps, sectors, services, revenue, missingRates, staleRates = [] }) {
   const fixes = [];
   const add = (title, detail) => fixes.push({ title, detail });
   const ofQuotations = (n) => `${number(n)} of ${plural(gaps.quotations, 'quotation')} in the period ${has(n)}`;
@@ -360,6 +360,13 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
   }
   if (missingRates.length) {
     add('Set the exchange rates', `No rate covers the dates of the ${missingRates.join(', ')} amounts in this report, so they are left out of every INR figure and shown separately. Add each one under Settings -> Exchange rates, dated from when it applied.`);
+  }
+  // The newest rate a currency has is itself old, so recent figures convert
+  // at a number from before (lib/fx.ts). The daily ECB job keeps these current.
+  if (staleRates.length) {
+    add('Bring the exchange rates up to date',
+      `The newest rate held for ${joinNames(staleRates.map((r) => r.currency))} is not from this week, so recent figures convert at an older number: ` +
+      `${staleRates.map((r) => r.note).join('; ')}. The daily exchange-rate job updates these; check that it is running.`);
   }
   if (gaps.undated_quotations || gaps.undated_enquiries) {
     const parts = [

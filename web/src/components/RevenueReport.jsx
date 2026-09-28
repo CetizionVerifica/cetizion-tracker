@@ -3,10 +3,12 @@ import { cn } from 'cn';
 import { Alert, Badge, Card, DataTable, Empty, ErrorState } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, number, percent, periodLabel } from '../lib/format.js';
+import { date, money, number, percent, periodLabel } from '../lib/format.js';
 
+// Each amount converts at the rate of its own date (PO, invoice or payment);
+// a weekend or holiday uses the last working day's.
 const rateTitle = (details = []) => details.length
-  ? details.map((item) => `${item.currency}: ₹${item.rate} from ${item.effective_from}`).join('\n')
+  ? ["Converted at the rate of each amount's own date:", ...details.map((item) => `${item.currency}: ₹${item.rate} — rate of ${date(item.effective_from)}`)].join('\n')
   : undefined;
 const inr = (value, details) => (value === null || value === undefined
   ? <span className="muted">—</span>
@@ -149,9 +151,11 @@ const totalRow = (columns, total) =>
  * the same period as every other section on the page, and the same period
  * the PDF download covers.
  */
-// `showStaleNotice` is off where this sits inside another page that carries
-// the notice itself: one banner about the exchange rates, not two.
-export function RevenueReport({ period, showStaleNotice = true }) {
+// `staleShownAbove` names the currencies a page around this one has already
+// warned about, so each stale rate is named once. Any other currency this
+// section converts — one only in quotations won, say — is still warned about
+// here, rather than hidden because the page above had a banner of its own.
+export function RevenueReport({ period, staleShownAbove = [] }) {
   const qs = new URLSearchParams(Object.fromEntries(Object.entries(period).filter(([, v]) => v))).toString();
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/dashboard/revenue-report?${qs}`), [qs]);
 
@@ -164,6 +168,7 @@ export function RevenueReport({ period, showStaleNotice = true }) {
         ...report.overdue_by_client.total.missing_rates,
       ])].sort()
     : [];
+  const staleRates = (report?.stale_rates ?? []).filter((r) => !staleShownAbove.includes(r.currency));
   const poListUrl = (status) => `/purchase-orders?${new URLSearchParams({ payment_status: status, ...period })}`;
 
   const statusColumns = [
@@ -182,10 +187,10 @@ export function RevenueReport({ period, showStaleNotice = true }) {
 
       {report && (
         <>
-          {showStaleNotice && report.stale_rates?.length > 0 && (
+          {staleRates.length > 0 && (
             <Alert tone="warning">
-              The newest exchange rate held for <strong>{report.stale_rates.map((r) => r.currency).join(', ')}</strong> is not
-              from this week, so recent figures convert at an older number: {report.stale_rates.map((r) => r.note).join('; ')}.{' '}
+              The newest exchange rate held for <strong>{staleRates.map((r) => r.currency).join(', ')}</strong> is not
+              from this week, so recent figures convert at an older number: {staleRates.map((r) => r.note).join('; ')}.{' '}
               <Link to="/settings">Check the rates in Settings</Link>.
             </Alert>
           )}
@@ -241,7 +246,7 @@ export function RevenueReport({ period, showStaleNotice = true }) {
 
           <Card
             title={`Payment status · ${label}`}
-            hint="Purchase orders dated in the period, by their status on the Purchase orders page · Overdue = at least one invoice past its due date, with every unpaid invoice on those POs in Due now · Pending = invoiced, not yet overdue · Click a status to open those POs"
+            hint="Purchase orders dated in the period, by their status on the Purchase orders page · Overdue = at least one invoice past its due date, with every unpaid invoice on those POs in Due now · Pending = invoiced, not yet overdue · Counts every PO, including revised and cancelled ones, which are still billed; Won POs above leaves those out · Click a status to open those POs"
             flush
             actions={<CsvButton report="payment-status" params={period} disabled={!report.payment_status.total.pos} />}
           >

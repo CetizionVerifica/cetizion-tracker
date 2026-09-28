@@ -243,19 +243,41 @@ test('a rate dated in the future does not pass for the newest one in force', asy
   assert.deepEqual(stale.map((s) => s.note), ['USD converted at the rate of 1 Jan 2026']);
 });
 
-test('a report of a period already past says nothing about this week\'s rates', async () => {
-  let asked = false;
-  const db = { async query() { asked = true; return { rows: [] }; } };
+// The table answers with whatever newest rate it holds on or before the date
+// asked; `asked` records that date, so a test can see which day was judged.
+const ratesTable = (newest) => {
+  const asked = [];
+  return {
+    asked,
+    db: { async query(_sql, params) { asked.push(params[0]); return { rows: newest.filter((r) => r.effective_from <= params[0]) }; } },
+  };
+};
+
+test('a past period is judged as of its own last day, not this week', async () => {
   const used = [{ currency: 'USD' }];
-  assert.deepEqual(await staleAmong(used, { today: '2026-09-22', period: { from: '2024-01-01', to: '2024-12-31' } }), []);
-  assert.equal(asked, false, 'nothing on that page converts at today\'s rate');
+  const q3 = { from: '2026-07-01', to: '2026-09-30' };
+
+  // Run on 1 October: September's deals went through at January's rate. Said.
+  const stuck = ratesTable([{ currency: 'USD', effective_from: '2026-01-01' }]);
+  const late = await staleAmong(used, { today: '2026-10-01', period: q3, db: stuck.db });
+  assert.deepEqual(stuck.asked, ['2026-09-30'], 'judged at the period\'s last day');
+  assert.deepEqual(late.map((s) => s.note), ['USD converted at the rate of 1 Jan 2026']);
+
+  // The rates were current when the period ended: nothing to say, whatever today is.
+  const kept = ratesTable([{ currency: 'USD', effective_from: '2026-09-29' }]);
+  assert.deepEqual(await staleAmong(used, { today: '2026-12-15', period: q3, db: kept.db }), []);
+  assert.deepEqual(kept.asked, ['2026-09-30']);
+
+  // A period still running is judged as of today.
+  const now = ratesTable([{ currency: 'USD', effective_from: '2026-09-21' }]);
+  await staleAmong(used, { today: '2026-09-22', period: { from: '2026-01-01', to: '2026-12-31' }, db: now.db });
+  assert.deepEqual(now.asked, ['2026-09-22']);
 });
 
 test('a report with no foreign currency on it asks the table nothing', async () => {
-  let asked = false;
-  const db = { async query() { asked = true; return { rows: [] }; } };
-  assert.deepEqual(await staleAmong([{ currency: 'INR' }], { today: '2026-09-22' }), []);
-  assert.equal(asked, false, 'no query for a report that converted nothing');
+  const table = ratesTable([{ currency: 'USD', effective_from: '2026-01-01' }]);
+  assert.deepEqual(await staleAmong([{ currency: 'INR' }], { today: '2026-09-22', db: table.db }), []);
+  assert.deepEqual(table.asked, [], 'no query for a report that converted nothing');
 });
 
 test('fetchEcb refuses a body it cannot read rather than returning nothing useful', async () => {

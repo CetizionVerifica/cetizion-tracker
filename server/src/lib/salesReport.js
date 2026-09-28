@@ -175,15 +175,18 @@ export const rateOn = (alias, currency, date) => `LEFT JOIN LATERAL (
  * them (lib/fx.ts).
  *
  * Only the currencies the page actually shows are named.
+ *
+ * A period that has already ended is judged as of its own last day, not
+ * today: were the rates current when its last figures were converted? So a
+ * July–September report run on 1 October still says if September's deals went
+ * through at January's rate, while a report of last year whose rates were
+ * current at the time says nothing about this week.
  */
-export async function staleAmong(used, { today = businessToday(), maxPublishingDays = 4, period = {} } = {}) {
-  // A report of last year says nothing about today's rates: every figure on it
-  // converts at a rate from its own time, which is right, and a notice about
-  // this week would be about deals that are not on the page.
-  if (period.to && period.to < today) return [];
+export async function staleAmong(used, { today = businessToday(), maxPublishingDays = 4, period = {}, db } = {}) {
   const currencies = [...new Set(used.map((u) => u && u.currency).filter((c) => c && c !== 'INR'))];
   if (!currencies.length) return [];
-  return staleRates({ currencies, today, maxPublishingDays });
+  const asOf = period.to && period.to < today ? period.to : today;
+  return staleRates({ currencies, today: asOf, maxPublishingDays, ...(db && { db }) });
 }
 
 /** Won value per currency as [{ currency, amount }] — never summed across currencies. */
