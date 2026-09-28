@@ -21,9 +21,11 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
+import { duplicateCompanies } from '../lib/companies.js';
 import * as imports from '../lib/mcp/imports.js';
 import * as agg from '../lib/mcp/aggregate.js';
 import * as money from '../lib/mcp/money.js';
+import * as records from '../lib/mcp/records.js';
 
 export const mcpRouter = Router();
 export const apiTokenRouter = Router();
@@ -277,6 +279,55 @@ function buildServer(token) {
     { out: { today: str, currency: z.string(), reads: z.string(),
       months: z.array(row({ month: z.string(), received: num, invoiced: num, scheduled: num, pipeline: num, inflow: num, outflow: num, net: num, lines: z.number().int() })),
       foreign: z.array(row({})) } });
+  // ---- feeding any kind of record (#138) ---------------------------
+  //
+  // The sheet importer above understands one shape. These two take plain
+  // rows into any resource the app has a form for, through that form's own
+  // schema and save hooks. dry_run is the default and writes nothing.
+  tool('describe_entity', 'What can be imported, and what fields each kind of record takes. Call with no arguments for the list of entities, or name one to see its fields and which of them are required.',
+    { entity: z.string().max(60).optional().describe('e.g. companies, contacts, enquiries, travel-logs') },
+    async (a) => json(await records.describeEntity(scope, a)),
+    { write: true, admin: true, out: { entities: z.array(row({ name: z.string(), label: str, key: str })).optional(),
+      not_bulk: z.array(z.string()).optional(), note: str,
+      entity: str, label: str, match_on: str,
+      fields: z.array(row({ name: z.string(), required: z.boolean(), says: str })).optional() } });
+  tool('import_records', `Feed rows into any importable kind of record — companies, contacts, enquiries, quotations, projects, travel logs, vendor invoices and more. Up to ${records.MAX_ROWS} rows a call, validated by the same rules the app's own forms use. Reports what it would do and writes nothing unless dry_run is false. A row whose key already exists updates that record rather than adding a second one.`,
+    { entity: z.string().max(60).describe('From describe_entity'),
+      rows: z.array(z.record(z.string(), z.unknown())).min(1).describe("One object per record, keyed by field name e.g. {name: 'Aurora Chemicals', sector: 'Chemicals'}"),
+      dry_run: z.boolean().optional().describe('Default true. Nothing is written until this is false'),
+      match_on: z.string().max(60).nullable().optional().describe('Field that decides a record is already here. Defaults to the natural key; null to always create'),
+      update_existing: z.boolean().optional().describe('Default true. False leaves existing records alone and reports them as skipped') },
+    async (a) => json(await records.importRecords(scope, token, a)),
+    { write: true, admin: true, out: { entity: z.string(), matched_on: str, rows_sent: z.number().int(),
+      created: z.number().int(), updated: z.number().int(), rejected: z.number().int(), dry_run: z.boolean(),
+      rows: z.array(row({ at: z.number().int(), action: z.string(), key: z.unknown().optional(), id: num, why: z.unknown().optional() })),
+      rows_shown: z.number().int(), next: z.string() } });
+  // Reading duplicates, and deliberately not merging them. A merge rewrites
+  // the client name on every quotation, enquiry and project of one company
+  // and then deletes it, with no undo — the most destructive thing this API
+  // does. Finding them is the useful half and costs nothing; acting on one
+  // belongs on the Companies screen, where whoever does it can see the
+  // records that are about to move.
+  tool('list_duplicate_companies', 'Groups of companies that look like one client spelt more than once. A group means the names share a brand, not that they are the same company — a plant or a subsidiary is its own client. Read-only: merging is done on the Companies screen.',
+    { limit: z.number().int().min(1).max(100).optional().describe('Groups to return, default 25') },
+    async ({ limit }) => {
+      const groups = await duplicateCompanies();
+      const n = Math.min(Math.max(Number(limit) || 25, 1), 100);
+      return json({
+        groups: groups.slice(0, n).map((g) => ({
+          names: g.members.map((m) => ({ id: m.id, name: m.name, records: m.records })),
+          size: g.size,
+          records: g.records,
+          confidence: g.confidence,
+          certain: g.certain,
+        })),
+        total: groups.length,
+        certain_groups: groups.filter((g) => g.certain).length,
+        merge_at: '/companies',
+      });
+    },
+    { out: { groups: z.array(row({ names: z.array(row({ id: z.number().int(), name: z.string(), records: num })), size: z.number().int(), records: z.number().int(), confidence: z.string(), certain: z.boolean() })),
+      total: z.number().int(), certain_groups: z.number().int(), merge_at: z.string() } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));
