@@ -42,7 +42,7 @@ async function authenticate(req) {
 function buildServer(token) {
   const scope = { role: token.role, person: token.person };
   const server = new McpServer({ name: 'cetizion-tracker', version: '1.0.0' }, {
-    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`} ${token.can_write ? 'It may add notes and tasks, and mark a task done.' : 'It may read only: nothing it does changes a record.'} The shared inbox is readable as subjects and status only, never message bodies. Vendor payables are in rupees.`,
+    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person} — with two deliberate exceptions, the same two the web app makes: a task assigned to it or raised by it is readable wherever it sits, and an unassigned inbox conversation is anyone's to pick up.`} ${token.can_write ? 'It may add notes and tasks, and mark a task done.' : 'It may read only: nothing it does changes a record.'} The shared inbox is readable as subjects and status only, never message bodies. Vendor payables are in rupees.`,
   });
   /**
    * The result, twice: once as text for a client that only reads content,

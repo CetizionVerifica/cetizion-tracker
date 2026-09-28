@@ -41,11 +41,27 @@ async function fixtures(client) {
   await client.query(`
     INSERT INTO connected_accounts (id, username, provider, email, is_shared, visibility)
       VALUES (900, 'tester', 'test', 'sales@cetizion.test', true, 'subject');
-    INSERT INTO inboxes (id, name, account_id, members) VALUES (900, 'Sales', 900, '{asha}');
+    INSERT INTO inboxes (id, name, account_id, members) VALUES (900, 'Sales', 900, '{"Asha"}');
     INSERT INTO email_threads (id, account_id, conversation_id, subject, company_id, last_message_at, message_count, last_direction)
       VALUES (900, 900, 'thread-900', 'Quote for the July audit', 1001, now() - interval '3 days', 2, 'inbound');
     INSERT INTO inbox_conversations (inbox_id, thread_id, company_id, from_name, from_email, status, assignee, last_inbound_at, response_due_at)
-      VALUES (900, 900, 1001, 'Asha Buyer', 'buyer@asha.test', 'open', 'Asha', now() - interval '3 days', now() - interval '2 days');
+      VALUES (900, 900, 1001, 'Asha Buyer', 'buyer@asha.test', 'open', 'Priya Menon', now() - interval '3 days', now() - interval '2 days');
+  `);
+  // A mailbox whose owner shares only metadata: its subject is nulled when
+  // the message arrives, and list_inbox leans on that being true.
+  await client.query(`
+    INSERT INTO connected_accounts (id, username, provider, email, is_shared, visibility)
+      VALUES (901, 'tester', 'test', 'quiet@cetizion.test', true, 'metadata');
+    INSERT INTO inboxes (id, name, account_id, members) VALUES (901, 'Quiet', 901, '{}');
+    INSERT INTO email_threads (id, account_id, conversation_id, subject, last_message_at, message_count, last_direction)
+      VALUES (901, 901, 'thread-901', NULL, now() - interval '1 day', 1, 'inbound');
+    INSERT INTO inbox_conversations (inbox_id, thread_id, from_name, from_email, status, last_inbound_at, response_due_at)
+      VALUES (901, 901, 'Quiet Client', 'someone@quiet.test', 'open', now() - interval '1 day', now() + interval '1 day');
+    -- Snoozed until yesterday: nothing but a list request brings it back.
+    INSERT INTO email_threads (id, account_id, conversation_id, subject, last_message_at, message_count, last_direction)
+      VALUES (902, 900, 'thread-902', 'Overdue and asleep', now() - interval '9 days', 3, 'inbound');
+    INSERT INTO inbox_conversations (inbox_id, thread_id, from_name, from_email, status, assignee, snoozed_until, last_inbound_at, response_due_at)
+      VALUES (900, 902, 'Sleepy Client', 'sleepy@asha.test', 'snoozed', 'Asha', now() - interval '1 day', now() - interval '9 days', now() - interval '8 days');
   `);
 }
 
@@ -196,18 +212,41 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const asha = (await token({ name: 'Asha reads', role: 'sales', person: 'asha', can_write: true })).token;
     const ravi = (await token({ name: 'Ravi reads', role: 'sales', person: 'ravi', can_write: true })).token;
 
-    // The fixture inbox lists asha as a member and the thread is hers.
+    // The Sales inbox lists her as "Asha", capitalised, which is how a
+    // person types a name into a field headed "Names, comma separated";
+    // her token's person is "asha". The thread is assigned to somebody
+    // else entirely, so membership is the only thing that can bring it in
+    // — and a case-sensitive membership test brings in nothing.
     const hers = JSON.parse((await call(asha, 'list_inbox', {})).text);
-    assert.equal(hers.total, 1, 'her own inbox thread');
-    assert.match(hers.items[0].subject, /July audit/);
-    assert.equal(JSON.parse((await call(ravi, 'list_inbox', {})).text).total, 0, 'not his inbox, not his thread');
+    const subjects = hers.items.map((i) => i.subject);
+    assert.ok(subjects.includes('Quote for the July audit'), `a member of Sales sees its threads: ${JSON.stringify(subjects)}`);
 
-    // unanswered_only is the whole point of the tool: the fixture thread's
-    // last message came from the client.
-    assert.equal(JSON.parse((await call(asha, 'list_inbox', { unanswered_only: true })).text).total, 1);
+    // A conversation snoozed until yesterday is awake, late, and on the
+    // list. Nothing but a list request brings it back.
+    assert.ok(subjects.includes('Overdue and asleep'), 'an expired snooze is woken, not left out');
+    const woken = hers.items.find((i) => i.subject === 'Overdue and asleep');
+    assert.equal(woken.status, 'open');
+    assert.equal(woken.overdue, true, 'and it reports as late, which it is by eight days');
+
+    // The unassigned thread in the metadata-only mailbox: its subject was
+    // nulled when the message arrived, and that is the whole basis for this
+    // tool returning subjects at all.
+    const quiet = hers.items.find((i) => i.from_email === 'someone@quiet.test');
+    assert.ok(quiet, 'an unassigned conversation is anyone\'s to pick up');
+    assert.equal(quiet.subject, null, 'a metadata-only mailbox shares no subject, and list_inbox invents none');
+
+    // unanswered_only is the whole point of the tool.
+    const waiting = JSON.parse((await call(asha, 'list_inbox', { unanswered_only: true })).text);
+    assert.ok(waiting.items.every((i) => i.last_direction !== 'outbound'));
+    assert.ok(waiting.total >= 1);
+
+    // Ravi is a member of nothing. He still sees the unassigned one — the
+    // Inbox page's rule, carried here on purpose — but not Asha's threads.
+    const his = JSON.parse((await call(ravi, 'list_inbox', {})).text).items.map((i) => i.subject);
+    assert.ok(!his.includes('Quote for the July audit'), 'not his inbox, not his thread');
 
     // No message bodies, whatever the mailbox's visibility says.
-    assert.doesNotMatch(JSON.stringify(hers), /body|html|snippet/i, 'list_inbox returns subjects and status, never bodies');
+    assert.doesNotMatch(JSON.stringify(hers), /body|html|snippet|preview|excerpt/i, 'list_inbox returns subjects and status, never bodies');
 
     // A vendor bill belongs to the company, not to a salesperson, which is
     // what the Payables page does too. Both tokens see the same debt.
@@ -259,6 +298,30 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
 
     // And a closed task drops off the open list.
     assert.doesNotMatch((await call(ravi, 'list_tasks', {})).text, /Ravi to chase/);
+
+    // A task she raised on her own quotation and handed to a colleague.
+    // create_task allows it (the record is hers), so list_tasks has to show
+    // it back: it is assigned to neither of the two names she is matched on,
+    // and without the record itself counting she would never see it again.
+    const handed = await call(asha, 'create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'Ravi to co-sign the Asha scope', assignee: 'ravi' });
+    assert.equal(handed.error, false, handed.text);
+    const handedId = JSON.parse(handed.text).id;
+    assert.match((await call(asha, 'list_tasks', {})).text, /Ravi to co-sign/,
+      'a task on her own record is hers to see, whoever is doing it');
+    assert.equal((await call(asha, 'complete_task', { task_id: handedId })).error, false,
+      'and hers to close');
+
+    // The stamp writes say where they came from, and it must not hide a
+    // task from the person who raised it.
+    const { rows: [stamped] } = await pool.query('SELECT created_by FROM tasks WHERE id = $1', [handedId]);
+    assert.match(stamped.created_by, /via MCP/, 'the write is still marked');
+
+    // It stays scoped: Ravi's quotation is not hers, so a task on it is not
+    // hers either, however it was raised.
+    const onHis = await pool.query(
+      `INSERT INTO tasks (entity, entity_id, title, assignee, created_by) VALUES ('quotation','QT-RAVI','Chase the Ravi client','ravi','admin') RETURNING id`);
+    assert.doesNotMatch((await call(asha, 'list_tasks', {})).text, /Chase the Ravi client/);
+    assert.equal((await call(asha, 'complete_task', { task_id: onHis.rows[0].id })).error, true);
   });
 
   /**
