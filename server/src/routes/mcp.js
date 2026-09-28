@@ -16,7 +16,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { rateLimit } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
@@ -41,7 +41,7 @@ async function authenticate(req) {
 function buildServer(token) {
   const scope = { role: token.role, person: token.person };
   const server = new McpServer({ name: 'cetizion-tracker', version: '1.0.0' }, {
-    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`} ${token.can_write ? 'It may add notes and tasks.' : 'It may read only: nothing it does changes a record.'}`,
+    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`} ${token.can_write ? 'It may add notes and tasks, and mark a task done.' : 'It may read only: nothing it does changes a record.'} The shared inbox is readable as subjects and status only, never message bodies. Vendor payables are in rupees.`,
   });
   /**
    * The result, twice: once as text for a client that only reads content,
@@ -148,6 +148,27 @@ function buildServer(token) {
     async ({ entity, id, limit, offset }) => { const r = await data.listActivity(scope, entity, id, { limit, offset }); return r ? json(r) : notFound(`${entity} ${id}`); },
     { out: pageOf(row({ kind: str, at: str, text: str, by: str })) });
 
+  tool('list_inbox', 'Client emails in the shared inbox: who wrote, about what, whose it is and whether the reply is late. Subjects only, never message bodies. Use unanswered_only for threads where the client wrote last and nobody has answered.',
+    { status: z.enum(['open', 'pending_client', 'snoozed', 'closed']).optional().describe('Default: open and pending_client together'), unanswered_only: z.boolean().optional().describe('Only threads whose last message came from the client'), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async (a) => json(await data.listInbox(scope, a)),
+    { out: pageOf(row({ id: z.number().int(), subject: str, from_name: str, from_email: str, company: str, assignee: str, status: str, last_message_at: str, last_direction: str, overdue: z.boolean().nullable().optional() })) });
+  tool('list_payables', 'What we owe travel vendors, longest overdue first, with the total outstanding and the count and sum in every ageing bucket. Rupees.',
+    { bucket: z.enum(data.PAYABLE_BUCKETS).optional().describe('Only bills in one ageing bucket'), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async (a) => json(await data.listPayables(scope, a)),
+    { out: { ...pageOf(row({ vendor_invoice_no: str, travel_vendor: str, client_name: str, outstanding: num, pay_by: str, days_overdue: num, bucket: str })),
+      buckets: z.array(row({ bucket: z.string(), invoices: z.number().int(), outstanding: num })),
+      total_outstanding: z.number().describe('Every bucket, not just this page'),
+      amount_missing: z.number().int().describe('Bills with no amount recorded, so not in the total'),
+      currency: z.string() } });
+  tool('list_data_gaps', 'What is missing across the tracker and what it is blocking — quotations with no value, purchase orders with no quotation, invoiced stages with no invoice — with a count per gap and the page that lists those rows.',
+    {},
+    async () => json(await data.listDataGaps()),
+    { out: { gaps: z.array(row({ key: z.string(), label: z.string(), count: z.number().int(), fix_at: str })), total_gaps: z.number().int(), checks_run: z.number().int(), all_clear: z.boolean() } });
+  tool('list_tasks', 'Open tasks, soonest due first, with what record each is on. Admin tokens may name an assignee; a sales token gets its own.',
+    { assignee: z.string().max(120).optional().describe('Admin tokens only; ignored otherwise'), overdue_only: z.boolean().optional().describe('Only tasks past their due date'), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async (a) => json(await data.listTasks(scope, a)),
+    { out: pageOf(row({ id: z.number().int(), title: str, status: str, priority: str, assignee: str, due_on: str, overdue: z.boolean().nullable().optional(), entity: str, entity_id: str })) });
+
   tool('create_task', 'Add a follow-up task to a record. Marked as made through MCP.',
     { entity: ENTITY, id: z.string(), title: z.string().min(3).max(300), due_on: DAY.optional(), assignee: z.string().max(120).optional() },
     async (a) => { const r = await data.createTask(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); },
@@ -164,6 +185,10 @@ function buildServer(token) {
     { quotation_no: z.string(), next_step: z.string().min(2).max(500), expected_close_date: DAY.optional() },
     async (a) => { const r = await data.updateNextStep(scope, token, a); return r ? json(r) : notFound(`Quotation ${a.quotation_no}`); },
     { write: true, out: { quotation_no: str, next_step: str, expected_close_date: str } });
+  tool('complete_task', 'Mark a task done. Calling it twice is calling it once: a task already done reports already_done rather than failing.',
+    { task_id: z.number().int().describe('Task id, from list_tasks or create_task') },
+    async (a) => { const r = await data.completeTask(scope, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
+    { write: true, out: { id: num, title: str, status: str, completed_at: str, already_done: z.boolean(), entity: str, entity_id: str } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));
@@ -187,7 +212,9 @@ mcpRouter.use(rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => {
     const bearer = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
-    return bearer ? `token:${hash(bearer)}` : `ip:${req.ip}`;
+    // ipKeyGenerator, not req.ip: one IPv6 caller holds a whole /64 and
+    // could otherwise take a fresh budget per address it made up.
+    return bearer ? `token:${hash(bearer)}` : `ip:${ipKeyGenerator(req.ip)}`;
   },
 }));
 

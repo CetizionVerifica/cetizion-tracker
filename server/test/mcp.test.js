@@ -27,6 +27,26 @@ async function fixtures(client) {
     INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, invoice_no, invoice_date)
       VALUES ('PO-ASHA', 1, 'Advance', 'On PO Registration', 1, 'INV-ASHA', '2026-06-02'), ('PO-RAVI', 1, 'Advance', 'On PO Registration', 1, 'INV-RAVI', '2026-06-02');
   `);
+  // A travel bill still owed, so list_payables has a row to check its
+  // schema against. An empty page validates against anything.
+  await client.query(`
+    INSERT INTO travel_logs (travel_id, po_number, employee_name, arranged_by, travel_start_date)
+      VALUES ('TRV-ASHA', 'PO-ASHA', 'Asha', 'Yatra Travels', '2026-05-01');
+    INSERT INTO travel_vendor_invoices (vendor_invoice_id, travel_id, vendor_invoice_no, invoice_date, invoice_amount, amount_paid)
+      VALUES ('VI-1', 'TRV-ASHA', 'YT/2026/1', '2026-05-31', 40000, 5000);
+  `);
+  // A shared inbox with one unanswered thread, likewise. 'subject' is the
+  // visibility that lets the subject through, which is what list_inbox
+  // reads; 'metadata' would null it and prove nothing about the column.
+  await client.query(`
+    INSERT INTO connected_accounts (id, username, provider, email, is_shared, visibility)
+      VALUES (900, 'tester', 'test', 'sales@cetizion.test', true, 'subject');
+    INSERT INTO inboxes (id, name, account_id, members) VALUES (900, 'Sales', 900, '{asha}');
+    INSERT INTO email_threads (id, account_id, conversation_id, subject, company_id, last_message_at, message_count, last_direction)
+      VALUES (900, 900, 'thread-900', 'Quote for the July audit', 1001, now() - interval '3 days', 2, 'inbound');
+    INSERT INTO inbox_conversations (inbox_id, thread_id, company_id, from_name, from_email, status, assignee, last_inbound_at, response_due_at)
+      VALUES (900, 900, 1001, 'Asha Buyer', 'buyer@asha.test', 'open', 'Asha', now() - interval '3 days', now() - interval '2 days');
+  `);
 }
 
 describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }, () => {
@@ -42,7 +62,10 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     for (const f of ['schema.sql', 'views.sql', 'seed.sql']) await client.query(readFileSync(join(DB_DIR, f), 'utf8'));
     await fixtures(client);
     await client.end();
-    Object.assign(process.env, { NODE_ENV: 'test', DATABASE_URL: url.toString(), AUTH_USERNAME: 'tester', AUTH_PASSWORD: 'a-good-long-test-password', SESSION_SECRET: 'test-secret-that-is-long-enough-to-pass' });
+    // SKIP_DOTENV, or a developer's own .env supplies AUTH_MODE=database and
+    // the shared-password sign-in below is answered with "email required".
+    // CI has no .env, so without this the suite passes there and only there.
+    Object.assign(process.env, { SKIP_DOTENV: '1', NODE_ENV: 'test', DATABASE_URL: url.toString(), AUTH_USERNAME: 'tester', AUTH_PASSWORD: 'a-good-long-test-password', SESSION_SECRET: 'test-secret-that-is-long-enough-to-pass' });
     ({ default: app } = await import('../src/app.js'));
     ({ pool } = await import('../src/db.js'));
     const signIn = await request(app).post('/api/auth/login').send({ username: 'tester', password: 'a-good-long-test-password' });
@@ -93,6 +116,10 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       ['add_note', { entity: 'quotation', id: 'QT-ASHA', text: 'A note from the schema check' }],
       ['log_touch', { entity: 'quotation', id: 'QT-ASHA', channel: 'call', outcome: 'connected' }],
       ['update_next_step', { quotation_no: 'QT-ASHA', next_step: 'Send the revised scope' }],
+      ['list_inbox', {}],
+      ['list_payables', {}],
+      ['list_data_gaps', {}],
+      ['list_tasks', {}],
     ];
     for (const [name, args] of calls) {
       const r = await call(t, name, args);
@@ -100,6 +127,13 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       assert.equal(r.error, false, `${name} -> ${r.text}`);
       assert.ok(r.structured !== undefined, `${name} returned no structuredContent, so its schema is never checked`);
     }
+    // complete_task needs an id that exists, so it runs on one the loop
+    // above just made rather than on a number written here.
+    const open = JSON.parse((await call(t, 'list_tasks', {})).text);
+    assert.ok(open.items.length >= 1, 'create_task ran above, so there is an open task to close');
+    const closed = await call(t, 'complete_task', { task_id: open.items[0].id });
+    assert.equal(closed.error, false, closed.text);
+    assert.ok(closed.structured !== undefined, 'complete_task declares a schema, so it must return one');
   });
 
   test('a list says how much it did not return, and the next page differs', async () => {
@@ -151,6 +185,89 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     assert.equal(kpis.quotations_issued, 1);
     assert.equal((await call(asha, 'list_activity', { entity: 'quotation', id: 'QT-RAVI' })).error, true);
     assert.equal((await call(asha, 'add_note', { entity: 'quotation', id: 'QT-RAVI', text: 'should not land' })).error, true);
+  });
+
+  /**
+   * The four reading tools added for the inbox, payables, gaps and tasks.
+   * Two of them are scoped by person and two are not, and which is which is
+   * a decision rather than an oversight, so it is written down here.
+   */
+  test('the inbox and tasks are scoped by person; payables and gaps are not', async () => {
+    const asha = (await token({ name: 'Asha reads', role: 'sales', person: 'asha', can_write: true })).token;
+    const ravi = (await token({ name: 'Ravi reads', role: 'sales', person: 'ravi', can_write: true })).token;
+
+    // The fixture inbox lists asha as a member and the thread is hers.
+    const hers = JSON.parse((await call(asha, 'list_inbox', {})).text);
+    assert.equal(hers.total, 1, 'her own inbox thread');
+    assert.match(hers.items[0].subject, /July audit/);
+    assert.equal(JSON.parse((await call(ravi, 'list_inbox', {})).text).total, 0, 'not his inbox, not his thread');
+
+    // unanswered_only is the whole point of the tool: the fixture thread's
+    // last message came from the client.
+    assert.equal(JSON.parse((await call(asha, 'list_inbox', { unanswered_only: true })).text).total, 1);
+
+    // No message bodies, whatever the mailbox's visibility says.
+    assert.doesNotMatch(JSON.stringify(hers), /body|html|snippet/i, 'list_inbox returns subjects and status, never bodies');
+
+    // A vendor bill belongs to the company, not to a salesperson, which is
+    // what the Payables page does too. Both tokens see the same debt.
+    const ap = JSON.parse((await call(asha, 'list_payables', { limit: 100 })).text);
+    assert.equal(ap.currency, 'INR');
+    const bill = ap.items.find((r) => r.vendor_invoice_no === 'YT/2026/1');
+    assert.ok(bill, 'the fixture bill is in the list');
+    assert.equal(Number(bill.outstanding), 35000, '40,000 billed less 5,000 paid');
+    assert.equal(bill.bucket, '90+', 'a May bill is well past a September pay-by');
+    assert.equal(JSON.parse((await call(ravi, 'list_payables', { limit: 100 })).text).total, ap.total,
+      'a vendor bill has no salesperson, so both tokens see the same debt');
+    // The summary is of every bucket, so narrowing the rows must not move it.
+    const notDue = JSON.parse((await call(asha, 'list_payables', { bucket: 'not due' })).text);
+    assert.ok(notDue.total < ap.total, 'one bucket is fewer rows than all of them');
+    assert.equal(notDue.total_outstanding, ap.total_outstanding,
+      'total_outstanding is the whole debt, not the filtered page of it');
+    assert.equal(ap.total_outstanding,
+      Math.round(ap.buckets.reduce((n, b) => n + (b.outstanding ?? 0), 0) * 100) / 100,
+      'the total is the sum of the buckets it reports beside it');
+    assert.equal(ap.buckets.length, 7, 'every bucket has a card, zero rows included');
+
+    // Gaps are counts of missing fields, so there is nothing in them to scope.
+    const gaps = JSON.parse((await call(asha, 'list_data_gaps', {})).text);
+    assert.ok(gaps.checks_run > 0, 'the checks ran');
+    assert.deepEqual(gaps.gaps.map((g) => g.count).filter((c) => c <= 0), [], 'only gaps that found something are listed');
+
+    // Tasks: each sees her or his own, and cannot close the other's.
+    await call(asha, 'create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'Asha to send the scope', assignee: 'asha' });
+    const ravis = await call(ravi, 'create_task', { entity: 'quotation', id: 'QT-RAVI', title: 'Ravi to chase the PO', assignee: 'ravi' });
+    assert.equal(ravis.error, false, ravis.text);
+    const ravisId = JSON.parse(ravis.text).id;
+
+    const ahers = JSON.parse((await call(asha, 'list_tasks', {})).text);
+    assert.ok(ahers.items.every((t) => !/Ravi to chase/.test(t.title)), 'his task is not on her list');
+    assert.ok(ahers.items.some((t) => /Asha to send/.test(t.title)), 'hers is');
+    // Naming somebody else is an admin's to do; asking anyway gets her own.
+    assert.doesNotMatch((await call(asha, 'list_tasks', { assignee: 'ravi' })).text, /Ravi to chase/);
+
+    assert.equal((await call(asha, 'complete_task', { task_id: ravisId })).error, true, 'she cannot close his task');
+    const stillOpen = await pool.query('SELECT status FROM tasks WHERE id = $1', [ravisId]);
+    assert.equal(stillOpen.rows[0].status, 'todo', 'and the refusal left it alone');
+
+    // Closing twice is closing once.
+    const first = JSON.parse((await call(ravi, 'complete_task', { task_id: ravisId })).text);
+    assert.equal(first.status, 'done');
+    assert.equal(first.already_done, false);
+    const again = JSON.parse((await call(ravi, 'complete_task', { task_id: ravisId })).text);
+    assert.equal(again.already_done, true, 'the second call reports, it does not fail');
+
+    // And a closed task drops off the open list.
+    assert.doesNotMatch((await call(ravi, 'list_tasks', {})).text, /Ravi to chase/);
+  });
+
+  test('a reading token is not offered complete_task', async () => {
+    const t = (await token({ name: 'Reader', role: 'admin' })).token;
+    const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 9001, method: 'tools/list', params: {} });
+    const names = res.body.result.tools.map((x) => x.name);
+    assert.ok(names.includes('list_tasks'), 'it may read tasks');
+    assert.ok(!names.includes('complete_task'), 'a tool it would be refused is worse than no tool');
   });
 
   test('an admin token sees everything', async () => {
@@ -246,8 +363,15 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const t = await token({ name: 'Short lived', role: 'admin', can_write: true });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });
     const names = tools.body.result.tools.map((x) => x.name);
-    assert.ok(names.length >= 13);
-    for (const n of names) assert.doesNotMatch(n, /delete|remove|status|pay|stage_move|send/);
+    assert.ok(names.length >= 18, `only ${names.length} tools are offered`);
+    // Every name is verb_noun, so the verb is what decides whether the tool
+    // could do damage. Matching anywhere in the name read 'pay' inside
+    // list_payables and called a read destructive, which is the kind of
+    // false alarm that gets a guard deleted.
+    for (const n of names) {
+      assert.doesNotMatch(n, /^(delete|remove|drop|void|cancel|pay|send|reassign|set)_/, `${n} names something this server must not be able to do`);
+      assert.match(n, /^(get|list|search|add|create|log|update|complete)_/, `${n} is a verb this server has not agreed to`);
+    }
     await request(app).post(`/api/api-tokens/${t.id}/revoke`).set('Cookie', staff).expect(200);
     assert.equal((await call(t.token, 'list_pipeline')).status, 401);
     assert.equal((await call('ctz_not-a-real-token-at-all-000000000000', 'list_pipeline')).status, 401);
