@@ -26,7 +26,7 @@ function loadConfigWith(env) {
     const out = execFileSync(
       process.execPath,
       ['-e', "import('./src/auth/config.js').then(m => console.log(m.authConfig.mode))"],
-      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', SKIP_DOTENV: '1', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
     return { ok: true, mode: out.trim().split('\n').at(-1) };
   } catch (err) {
@@ -60,9 +60,49 @@ describe('AUTH_MODE', () => {
   });
 });
 
+describe('the shared password, in production', () => {
+  /**
+   * 22 Sep 2026: production ran database sign-in with the old short shared
+   * password still in the environment as the rollback. A guard added for
+   * #34 refused to start over it — before migrations, so the container
+   * exited, the site went to 502 and the deploy had to be rolled back.
+   *
+   * A credential that nothing accepts cannot be a weakness worth an outage.
+   * In shared mode it is the only lock on the door and the rule stands.
+   */
+  const production = { NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(48) };
+
+  test('a short one does not stop the start when sign-in is by account', () => {
+    const result = loadConfigWith({ ...production, AUTH_MODE: 'database', AUTH_PASSWORD: 'short-one' });
+    assert.equal(result.ok, true, result.message);
+    assert.equal(result.mode, 'database');
+  });
+
+  test('nor does an absent one', () => {
+    const result = loadConfigWith({ ...production, AUTH_MODE: 'database', AUTH_PASSWORD: '' });
+    assert.equal(result.ok, true, result.message);
+  });
+
+  test('but in shared mode it is the lock, and a weak one is refused', () => {
+    const short = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: 'short-one' });
+    assert.equal(short.ok, false, 'a short shared password should stop the start');
+    assert.match(short.message, /at least 14 characters/);
+
+    const missing = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: '' });
+    assert.equal(missing.ok, false, 'no shared password at all should stop the start');
+    assert.match(missing.message, /AUTH_PASSWORD is not set/);
+
+    const good = loadConfigWith({ ...production, AUTH_MODE: 'shared', AUTH_PASSWORD: 'a-long-enough-password' });
+    assert.equal(good.ok, true, good.message);
+  });
+});
+
 describe('sessionSubject', () => {
   const shared = sharedPayload('admin', Date.now() + 1000);
-  const database = databasePayload(7, 1, Date.now() + 1000);
+  // v3 carries the session row this cookie belongs to; without it there is
+  // nothing for "sign out that phone" to end.
+  const SESSION_ID = '11111111-2222-3333-4444-555555555555';
+  const database = databasePayload(7, 1, Date.now() + 1000, SESSION_ID);
 
   test('reads a shared cookie only in shared mode', () => {
     assert.deepEqual(sessionSubject(shared, 'shared'), { kind: 'shared', username: 'admin' });
@@ -70,12 +110,12 @@ describe('sessionSubject', () => {
   });
 
   test('reads a database cookie only in database mode', () => {
-    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7, sv: 1 });
+    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7, sv: 1, sid: SESSION_ID });
     assert.equal(sessionSubject(database, 'shared'), null, 'a database cookie is not a way into shared mode');
   });
 
   test('the database payload carries an id and nothing that can go stale', () => {
-    assert.deepEqual(Object.keys(database).sort(), ['exp', 'sv', 'uid', 'v']);
+    assert.deepEqual(Object.keys(database).sort(), ['exp', 'sid', 'sv', 'uid', 'v']);
     assert.equal(database.v, DATABASE_SESSION_VERSION);
     assert.ok(!('role' in database), 'the role is never signed into the cookie');
     assert.ok(!('active' in database), 'nor whether the account is switched on');

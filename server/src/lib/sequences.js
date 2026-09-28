@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 
 const SEQUENCES = {
   enquiry: { table: 'enquiries', column: 'enquiry_no', pattern: 'CTZ/ENQ/{year}/{n:3}' },
@@ -12,7 +12,31 @@ const SEQUENCES = {
     column: 'vendor_invoice_id',
     pattern: 'VINV-{year}-{n:3}',
   },
+  // The one series numbered by financial year rather than calendar year.
+  // A GST invoice series runs April to March and is written as the two
+  // years it spans, so an invoice raised in September 2026 is 26-27.
+  // Four digits, because a company issuing more than 999 invoices in a
+  // year should not have its numbering break.
+  invoice: {
+    table: 'payment_stages',
+    column: 'invoice_no',
+    pattern: 'CVPL/{fy}/{n:4}',
+  },
 };
+
+/**
+ * The Indian financial year a date falls in, as the two years it spans.
+ *
+ * April starts it, so 2026-09-22 is 26-27 and 2026-02-11 is 25-26. Taken
+ * from the business date rather than the server clock, for the same
+ * reason every other date here is: before 05:30 IST on 1 April the
+ * server's UTC clock still says March.
+ */
+export function financialYear(businessDate = businessToday()) {
+  const [year, month] = businessDate.split('-').map(Number);
+  const startYear = month >= 4 ? year : year - 1;
+  return `${String(startYear % 100).padStart(2, '0')}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
 
 export const isSequence = (kind) => Object.hasOwn(SEQUENCES, kind);
 
@@ -30,7 +54,7 @@ export const sequenceColumn = (kind) => SEQUENCES[kind].column;
  */
 export async function claimNextId(kind, client, year) {
   const spec = SEQUENCES[kind];
-  const { prefix, width, resolvedYear } = seriesFor(kind, year);
+  const { prefix, altPrefixes, width, resolvedYear } = seriesFor(kind, year);
 
   // The counter only ever goes up, so a reference that has been issued is
   // never handed out again, even once its record is deleted.
@@ -43,33 +67,77 @@ export async function claimNextId(kind, client, year) {
      ON CONFLICT (kind, year) DO UPDATE
         SET last_n = GREATEST(sequence_counters.last_n, EXCLUDED.last_n - 1) + 1
       RETURNING last_n`,
-    [kind, resolvedYear, await highestExisting(spec, prefix, client)]
+    [kind, resolvedYear, await highestExisting(spec, [prefix, ...altPrefixes], client)]
   );
   return `${prefix}${String(counter.last_n).padStart(width, '0')}`;
+}
+
+/**
+ * Which year of its series a record dated `isoDate` belongs to.
+ *
+ * A financial-year series answers '25-26' for 28 March and '26-27' for 1
+ * April; every other series answers the calendar year. This is what lets a
+ * preview ask for the year a save will actually use, rather than assuming
+ * today's — the two differ for the first and last days of the financial
+ * year, which is exactly when somebody is entering a late invoice.
+ */
+export function yearFor(kind, isoDate) {
+  if (!isoDate) return undefined;
+  return SEQUENCES[kind].pattern.includes('{fy}') ? financialYear(isoDate) : isoDate.slice(0, 4);
 }
 
 /** The prefix, number width and year a series uses for a given year. */
 function seriesFor(kind, year) {
   const spec = SEQUENCES[kind];
+  // A financial-year series counts by financial year, so its counter row
+  // is keyed by one too: '26-27' rather than '2026'. Both shapes are
+  // allowed by sequence_counters (migration 046).
+  const byFinancialYear = spec.pattern.includes('{fy}');
   // Use the explicitly requested year, or fall back to the business's current
   // year. On 1 January before 05:30 IST the server's UTC clock still says last
   // year, so businessToday() is always used rather than new Date().
-  const resolvedYear = year ?? businessToday().slice(0, 4);
+  const resolvedYear = year ?? (byFinancialYear ? financialYear() : businessToday().slice(0, 4));
+  const prefix = spec.pattern
+    .replace('{year}', resolvedYear)
+    .replace('{fy}', resolvedYear)
+    .replace(/\{n:\d+\}$/, '');
   return {
     resolvedYear,
-    prefix: spec.pattern.replace('{year}', resolvedYear).replace(/\{n:\d+\}$/, ''),
+    prefix,
+    /**
+     * Other ways the same year has been written into this column.
+     *
+     * The bulk importer expands a sheet's "77" into a full invoice number
+     * using a four-digit financial year — CVPL/2026-27/77 — where the
+     * series issues CVPL/26-27/0013. Both are this company's invoice
+     * series, and a counter that cannot see one of them will hand out a
+     * number that is already in the books. So the highest-so-far is read
+     * across every spelling, whatever the series goes on to issue.
+     */
+    altPrefixes: byFinancialYear && /^\d{2}-\d{2}$/.test(resolvedYear)
+      ? [prefix.replace(resolvedYear, `20${resolvedYear}`)]
+      : [],
     width: Number(/\{n:(\d+)\}/.exec(spec.pattern)?.[1] || 3),
   };
 }
 
-/** The highest number the series has actually reached in its table. */
-async function highestExisting(spec, prefix, client) {
+/**
+ * The highest number the series has actually reached in its table.
+ *
+ * Read across every spelling of the year this column holds, not just the
+ * one the series issues: a number already in the books must never be
+ * handed out again, however it was written.
+ */
+async function highestExisting(spec, prefixes, client) {
+  const all = [prefixes].flat();
   const { rows } = await client.query(
-    `SELECT ${spec.column} AS value FROM ${spec.table} WHERE ${spec.column} LIKE $1`,
-    [`${prefix}%`]
+    `SELECT ${spec.column} AS value FROM ${spec.table} WHERE ${spec.column} LIKE ANY ($1::text[])`,
+    [all.map((p) => `${p}%`)]
   );
   return rows.reduce((max, r) => {
-    const tail = String(r.value).slice(prefix.length);
+    const value = String(r.value);
+    const matched = all.find((p) => value.startsWith(p));
+    const tail = matched ? value.slice(matched.length) : '';
     const n = /^\d+$/.test(tail) ? Number(tail) : 0;
     return Math.max(max, n);
   }, 0);
@@ -84,7 +152,7 @@ async function highestExisting(spec, prefix, client) {
  */
 export async function nextId(kind, client = { query }, year) {
   const spec = SEQUENCES[kind];
-  const { prefix, width, resolvedYear } = seriesFor(kind, year);
+  const { prefix, altPrefixes, width, resolvedYear } = seriesFor(kind, year);
 
   // A preview for the form ("leave blank to assign CTZ/QT/2026/064"), so it
   // reads the counter without moving it. Whichever is higher wins, the same
@@ -93,6 +161,6 @@ export async function nextId(kind, client = { query }, year) {
     'SELECT last_n FROM sequence_counters WHERE kind = $1 AND year = $2',
     [kind, resolvedYear]
   );
-  const highest = Math.max(counter?.last_n ?? 0, await highestExisting(spec, prefix, client));
+  const highest = Math.max(counter?.last_n ?? 0, await highestExisting(spec, [prefix, ...altPrefixes], client));
   return `${prefix}${String(highest + 1).padStart(width, '0')}`;
 }

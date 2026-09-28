@@ -1,4 +1,4 @@
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { claimNextId } from './sequences.js';
 import { ENQUIRY_STATUS } from './statuses.js';
 
@@ -40,14 +40,15 @@ export async function quoteWonEnquiry(client, { before, after }) {
     // has a verified originating salesperson.
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
                              sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks, owner_user_id,
+                             status, remarks, quotation_value, currency, owner_user_id,
                              originating_user_id, originating_user_snapshot_id, originating_user_name)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10,$11,$12,$13)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Submitted',$9,$10,$11,$12,$13,$14,$15)`,
     [
-      quotationNo, after.client_name, after.contact_person, after.service,
+      quotationNo, after.client_name, after.contact_person, after.service || after.services_interested,
       after.sector, after.sales_person, after.sales_person_email,
       quotationDate,
       `From enquiry ${after.enquiry_no}`,
+      after.estimated_value ?? null, after.currency || 'INR',
       after.owner_user_id ?? null,
       after.originating_user_id ?? null,
       after.originating_user_id ? (after.originating_user_snapshot_id ?? after.originating_user_id) : null,

@@ -1,14 +1,195 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Clock } from 'lucide-react';
+import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
-import {
-  Card, Stat, Badge, DataTable, KeyValues, ErrorState, Empty, Alert, DocumentLink, useToast,
-} from '../components/ui.jsx';
+import { Alert, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
+import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
+
+/**
+ * One purchase order, as C6 draws it.
+ *
+ * The ten-column stage table this replaces never said why a stage was
+ * locked — it showed "Not Due" and left you to work out that the missing
+ * delivery date was the reason. Here every rung explains itself in a
+ * sentence, and only the rung you can actually act on carries buttons.
+ * The four money figures sit in one strip at the foot of the ladder so
+ * that "due now" is never read as "to bill": they are different numbers
+ * and the old layout put them in separate boxes as though they were the
+ * same kind of thing.
+ *
+ * The header keeps one overflow menu and no primary button, because the
+ * primary button belongs to the flow panel, next to the sentence that
+ * explains why it is the thing to press.
+ */
+
+const MS_PER_DAY = 86_400_000;
+
+/** The design's two button heights: 32px in the flow, 28px in a row. */
+const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
+const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
+
+/** Stages that are waiting on money rather than on an invoice. */
+const CHASEABLE = ['Overdue', 'Due', 'Partially Paid'];
+
+const TRIGGER_WORDS = {
+  'On PO Registration': 'triggered on PO registration',
+  'On Delivery': 'triggered on delivery',
+  'On Milestone': 'triggered on a milestone',
+  Manual: 'raised by hand',
+};
+
+function plural(n, word) {
+  return `${number(n)} ${word}${Number(n) === 1 ? '' : 's'}`;
+}
+
+function daysSince(value) {
+  if (!value) return null;
+  const then = new Date(String(value).slice(0, 10));
+  if (Number.isNaN(then.getTime())) return null;
+  return Math.max(0, Math.floor((Date.now() - then.getTime()) / MS_PER_DAY));
+}
+
+/**
+ * The day a stage became billable — which is the day its trigger fired.
+ *
+ * The view decides `due_to_invoice` from exactly these three dates
+ * (`db/views.sql`), so reading the same ones back is the date the server
+ * already used, not a second opinion about when a stage went live.
+ */
+function billableSince(stage) {
+  if (stage.trigger_event === 'On PO Registration') return stage.po_date;
+  if (stage.trigger_event === 'On Delivery') return stage.delivery_date;
+  if (stage.trigger_event === 'On Milestone') return stage.milestone_reached_on;
+  return null;
+}
+
+/** Why this stage is where it is, in one sentence. */
+function explain(stage) {
+  const since = billableSince(stage);
+  const days = daysSince(since);
+
+  switch (stage.stage_status) {
+    case 'Not Due':
+      if (stage.trigger_event === 'On Delivery') {
+        return 'Not due. Recording the delivery date on this order is the only thing that makes it billable.';
+      }
+      if (stage.trigger_event === 'On Milestone') {
+        return stage.milestone_name
+          ? `Not due until ${stage.milestone_name} is marked as reached.`
+          : 'Not due until its milestone is marked as reached.';
+      }
+      if (stage.trigger_event === 'On PO Registration') {
+        return 'Not due. The PO date is not recorded, so this order does not count as registered yet.';
+      }
+      return 'Not due yet.';
+    case 'To Invoice':
+      return since
+        ? `Billable since ${date(since)}. No invoice raised — ${plural(days, 'day')}.`
+        : 'Billable now. No invoice has been raised.';
+    case 'Overdue':
+      return `Invoice ${stage.invoice_no} was due ${date(stage.invoice_due_date)} — ${plural(stage.days_overdue, 'day')} overdue.`;
+    case 'Partially Paid':
+      return `${money(stage.amount_received, stage.currency)} of ${money(stage.stage_amount, stage.currency)} received against ${stage.invoice_no}.`;
+    case 'Paid':
+      return `Paid${stage.payment_received_date ? ` on ${date(stage.payment_received_date)}` : ''} against ${stage.invoice_no}.`;
+    case 'Due':
+      return `Invoiced as ${stage.invoice_no}, due ${date(stage.invoice_due_date)}.`;
+    default:
+      return null;
+  }
+}
+
+/** The order's state, for the chip in the header. */
+function poTone(status) {
+  if (/overdue/i.test(status)) return 'late';
+  if (/to invoice|pending|partly|partially/i.test(status)) return 'waiting';
+  if (/up to date|paid/i.test(status)) return 'settled';
+  return 'plain';
+}
+
+/**
+ * One rung of the ladder.
+ *
+ * `action` is only ever passed for the stage that can actually be moved,
+ * which is what stops a column of ten identical buttons from hiding the
+ * one that matters.
+ */
+function StageRung({ stage, action, last }) {
+  // Amber is "you can bill this and have not"; red is "this is late".
+  // The header chip uses the same two, so a rung never disagrees with it.
+  const tone = stage.stage_status === 'Overdue' ? 'late'
+    : stage.stage_status === 'To Invoice' ? 'waiting'
+    : null;
+  const dim = stage.stage_status === 'Not Due';
+
+  return (
+    <div className={cn(
+      'flex gap-4 p-5',
+      !last && 'border-b border-border',
+      stage.stage_status === 'To Invoice' && 'bg-settled/[0.04]'
+    )}>
+      <span className={cn(
+        'mono grid size-7 flex-none place-items-center rounded-full text-[12px] font-semibold',
+        tone === 'late' ? 'border border-late/30 bg-late/12 text-late'
+          : tone === 'waiting' ? 'border border-waiting/30 bg-waiting/12 text-waiting'
+          : 'border border-[#33333a] bg-secondary text-muted-foreground'
+      )}>
+        {stage.stage_no}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <span className={cn('text-[14px] font-semibold', dim ? 'text-secondary-text' : 'text-foreground')}>
+            {stage.stage_name}
+          </span>
+          <span className={cn('text-[12.5px]', dim ? 'text-muted-foreground' : 'text-secondary-text')}>
+            {percent(stage.stage_percent)} · {TRIGGER_WORDS[stage.trigger_event] || stage.trigger_event}
+          </span>
+          <span className={cn('mono ml-auto text-[16px] font-semibold', dim ? 'text-secondary-text' : 'text-foreground')}>
+            {money(stage.stage_amount, stage.currency)}
+          </span>
+        </div>
+
+        <p className={cn(
+          'mt-2 max-w-[64ch] text-[12.5px]/[1.6]',
+          tone === 'late' ? 'text-late' : tone === 'waiting' ? 'text-waiting' : 'text-secondary-text'
+        )}>
+          {explain(stage)}
+        </p>
+
+        {action && <div className="mt-3 flex gap-2">{action}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** A label and its value, in the rail. */
+function Fact({ label, value, tone }) {
+  return (
+    <div className="flex justify-between gap-3 text-[12.5px] text-secondary-text">
+      {label}
+      <span className={cn('min-w-0 text-right', tone === 'waiting' ? 'text-waiting' : 'text-foreground')}>{value}</span>
+    </div>
+  );
+}
+
+/** A card in the rail: a small caps label over a short list. */
+function RailCard({ title, children }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{title}</div>
+      {children}
+    </div>
+  );
+}
 
 export default function PurchaseOrderDetail() {
   const { poNumber } = useParams();
@@ -41,8 +222,74 @@ export default function PurchaseOrderDetail() {
   const { purchase_order: po, services, payment_stages: stages, travel } = data.data;
   const close = () => setDialog(null);
   const done = () => { close(); refetch(); };
+
   const stagesOff = po.stage_count > 0 && Math.abs(Number(po.stages_percent_total) - 1) > 0.0001;
   const serviceTotal = services.reduce((sum, s) => sum + Number(s.service_value || 0), 0);
+  const amount = (v) => money(v, po.currency);
+
+  const toRaise = stages.find((s) => s.stage_status === 'To Invoice');
+  const toChase = stages.find((s) => CHASEABLE.includes(s.stage_status));
+  const lockedOnDelivery = stages.find((s) => s.stage_status === 'Not Due' && s.trigger_event === 'On Delivery');
+
+  // Each rung's state is worked out here and handed to the flow, because
+  // what "current" means is the order's business, not the component's.
+  const reached = [
+    { label: 'Registered', done: Boolean(po.po_date) },
+    { label: 'Split set', done: po.stage_count > 0 && !stagesOff },
+    {
+      label: stages.some((s) => s.trigger_event === 'On PO Registration') ? 'Advance billable' : 'Billable',
+      done: stages.some((s) => s.invoice_no),
+    },
+    { label: 'Delivered', done: Boolean(po.actual_delivery_date) },
+    { label: 'Fully paid', done: po.stage_count > 0 && stages.every((s) => s.stage_status === 'Paid') },
+  ];
+  const steps = flowSteps(reached);
+
+  function verdict() {
+    if (!stages.length) return 'No payment stages are set, so nothing on this order can be invoiced.';
+    if (stagesOff) {
+      return `The stages on this order total ${percent(po.stages_percent_total, 1)} rather than 100%, so what can be billed does not add up to the order.`;
+    }
+
+    const said = [];
+    if (toRaise) {
+      const since = billableSince(toRaise);
+      const days = daysSince(since);
+      said.push(since
+        ? `Stage ${toRaise.stage_no} became billable on ${date(since)}, ${plural(days, 'day')} ago, and no invoice has been raised.`
+        : `Stage ${toRaise.stage_no} is billable and no invoice has been raised.`);
+    } else if (toChase) {
+      said.push(toChase.stage_status === 'Overdue'
+        ? `Invoice ${toChase.invoice_no} is ${plural(toChase.days_overdue, 'day')} overdue.`
+        : `${amount(po.balance_due_now)} is invoiced and waiting to be paid.`);
+    }
+    if (lockedOnDelivery && !po.actual_delivery_date) {
+      said.push(`The delivery date is not recorded, so stage ${lockedOnDelivery.stage_no} is still locked.`);
+    }
+    if (!said.length) said.push('Every stage on this order is invoiced and paid.');
+    return said.join(' ');
+  }
+
+  /** One move, chosen in the order money actually gets stuck. */
+  function primary() {
+    if (!stages.length) {
+      return <Button size="sm" className={FLOW_BUTTON} onClick={() => setDialog({ type: 'split' })}>Set payment stages</Button>;
+    }
+    if (toRaise) {
+      return (
+        <Button size="sm" className={FLOW_BUTTON} onClick={() => setDialog({ type: 'invoice', row: toRaise })}>
+          Raise the {toRaise.stage_name.toLowerCase()} invoice
+        </Button>
+      );
+    }
+    if (toChase) {
+      return <Button size="sm" className={FLOW_BUTTON} onClick={() => setDialog({ type: 'payment', row: toChase })}>Record a payment</Button>;
+    }
+    if (lockedOnDelivery && !po.actual_delivery_date) {
+      return <Button size="sm" className={FLOW_BUTTON} onClick={() => setDialog({ type: 'edit' })}>Record the delivery date</Button>;
+    }
+    return null;
+  }
 
   async function deleteService(row) {
     try {
@@ -54,173 +301,158 @@ export default function PurchaseOrderDetail() {
     }
   }
 
+  /** Buttons belong to the one rung that can be moved, and to no other. */
+  function actionsFor(stage) {
+    if (stage.stage_status === 'To Invoice') {
+      return (
+        <>
+          <Button size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'invoice', row: stage })}>Raise invoice</Button>
+          <Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'editStage', row: stage })}>Edit stage</Button>
+        </>
+      );
+    }
+    if (CHASEABLE.includes(stage.stage_status)) {
+      return <Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'payment', row: stage })}>Record payment</Button>;
+    }
+    return null;
+  }
+
   return (
     <>
-      <PageHeader
+      <RecordPage
+        parent="Orders"
+        parentTo="/purchase-orders"
         title={`${po.po_number} · ${po.client_name}`}
-        subtitle={<>Project <Link to={`/projects/${po.project_id}`} className="mono">{po.project_id}</Link> · {po.payment_terms_days}-day terms</>}
-        actions={
+        mark={false}
+        facts={[
+          <Link to={`/projects/${po.project_id}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.project_id}</Link>,
+          <span className="mono text-[12.5px] text-foreground">{amount(po.po_value)}</span>,
+          `${po.payment_terms_days}-day terms`,
+          po.quotation_no && (
+            <Link to={`/quotations?q=${encodeURIComponent(po.quotation_no)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.quotation_no}</Link>
+          ),
+          <Chip tone={poTone(po.payment_status)} icon={/overdue|to invoice/i.test(po.payment_status) ? Clock : undefined}>
+            {po.payment_status}
+          </Chip>,
+        ]}
+        menu={
           <>
-            <Link className="btn" to="/purchase-orders">All POs</Link>
-            <button type="button" className="btn" onClick={() => setDialog({ type: 'edit' })}>Edit PO</button>
-            <button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'split' })}>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'edit' })}>Edit the purchase order</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'split' })}>
               {po.stage_count ? 'Reset payment stages' : 'Set payment stages'}
-            </button>
+            </RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'newStage' })}>Add a payment stage</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'newService' })}>Add a service line</RecordMenuItem>
           </>
         }
-      />
+        flow={
+          <RecordFlow
+            steps={steps}
+            verdict={verdict()}
+            actions={primary()}
+          />
+        }
+        rail={
+          <>
+            <RailCard title="Order facts">
+              <Fact label="PO date" value={po.po_date ? date(po.po_date) : 'not recorded'} tone={po.po_date ? undefined : 'waiting'} />
+              <Fact label="Terms" value={`${po.payment_terms_days} days`} />
+              <Fact label="Initiated" value={po.actual_initiation_date ? date(po.actual_initiation_date) : '—'} />
+              <Fact
+                label="Delivered"
+                value={po.actual_delivery_date ? date(po.actual_delivery_date) : 'not recorded'}
+                tone={po.actual_delivery_date ? undefined : 'waiting'}
+              />
+              <Fact label="Manager" value={po.project_manager_email || '—'} />
+              <Fact label="Document" value={<DocumentLink id={po.document_id} name={po.document_name} />} />
+            </RailCard>
 
-      <div className="page stack">
-        {po.follow_up_action && (
-          <Alert tone={po.payment_status === 'Overdue' ? 'danger' : 'warning'}>{po.follow_up_action}</Alert>
-        )}
-        {po.stage_count === 0 && (
-          <Alert tone="warning">
-            No payment stages set. Nothing can be invoiced against this PO until they exist.
-          </Alert>
-        )}
+            {travel.length > 0 && (
+              <RailCard title="Travel billed here">
+                {travel.map((trip) => (
+                  <div key={trip.travel_id} className="flex justify-between gap-3 text-[12.5px] text-secondary-text">
+                    <Link to={`/travel/${encodeURIComponent(trip.travel_id)}`} className="mono text-[12px] text-foreground no-underline hover:text-primary">
+                      {trip.travel_id}
+                    </Link>
+                    <span className="min-w-0 truncate">{trip.employee_name} · {money(trip.total_travel_cost)}</span>
+                  </div>
+                ))}
+                {/* The ratio is the point of this card: travel is the cost
+                    that quietly eats a project's margin. */}
+                {Number(po.po_value) > 0 && (
+                  <p className="text-[11.5px]/[1.6] text-muted-foreground">
+                    {money(po.total_travel_cost)} of travel against {amount(po.po_value)} of work — {percent(Number(po.total_travel_cost) / Number(po.po_value), 1)}.
+                  </p>
+                )}
+              </RailCard>
+            )}
+          </>
+        }
+      >
         {stagesOff && (
           <Alert tone="danger">
             The stages on this PO total {percent(po.stages_percent_total, 1)} — they should total 100%.
           </Alert>
         )}
-        {!po.po_date && (
-          <Alert tone="warning">
-            No PO date recorded, so advance stages are not yet due to invoice. Add it on Edit PO.
-          </Alert>
-        )}
 
-        <div className="grid grid--stats">
-          <Stat label="PO value" value={money(po.po_value, po.currency)} meta={`${number(po.service_count)} service line(s)`} tone="brand" />
-          <Stat label="Invoiced" value={money(po.total_invoiced, po.currency)} meta={`${money(po.total_received, po.currency)} received`} />
-          <Stat label="Due now" value={money(po.balance_due_now, po.currency)} tone={po.balance_due_now > 0 ? 'warn' : 'ok'} meta={po.payment_status} />
-          <Stat label="To bill" value={money(po.balance_to_bill, po.currency)} tone={po.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
-          <Stat label="Overdue stages" value={number(po.overdue_stages)} tone={po.overdue_stages > 0 ? 'danger' : 'ok'} meta={`${po.stages_to_invoice} to invoice`} />
-          <Stat label="Travel cost" value={money(po.total_travel_cost)} meta={`${travel.length} trip(s)`} />
-        </div>
-
-        <Card title="Purchase order details">
-          <KeyValues
-            items={[
-              {
-                label: 'Won quotation',
-                value: po.quotation_no
-                  ? <Link className="mono" to={`/quotations?q=${encodeURIComponent(po.quotation_no)}`}>{po.quotation_no}</Link>
-                  : <span className="muted">Not linked — revenue does not count this PO</span>,
-              },
-              { label: 'PO date', value: date(po.po_date) },
-              { label: 'Payment terms', value: `${po.payment_terms_days} days` },
-              { label: 'Actual initiation', value: date(po.actual_initiation_date) },
-              { label: 'Actual delivery', value: date(po.actual_delivery_date) },
-              { label: 'Manager email', value: po.project_manager_email },
-              { label: 'Payment status', value: <Badge>{po.payment_status}</Badge> },
-              { label: 'PO document', value: <DocumentLink id={po.document_id} name={po.document_name} /> },
-              po.remarks && { label: 'Remarks', value: po.remarks },
-            ]}
-          />
-        </Card>
-
-        <Card
-          flush
+        <RecordSection
           title="Payment stages"
-          hint="Advance stages become invoiceable on PO registration; delivery stages when the delivery date is set"
-          actions={<button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'newStage' })}>+ Stage</button>}
+          hint={stages.length
+            ? `${stages.map((s) => Math.round(Number(s.stage_percent) * 100)).join(' / ')} — totals ${percent(po.stages_percent_total)}`
+            : 'none set'}
+          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newStage' })}>+ Stage</Button>}
         >
-          <DataTable
-            rows={stages}
-            columns={[
-              { key: 'stage_no', header: '#', align: 'right', width: 50 },
-              { key: 'stage_name', header: 'Stage', className: 'strong' },
-              { key: 'trigger_event', header: 'Trigger', className: 'small' },
-              { key: 'stage_percent', header: '%', align: 'right', render: (r) => percent(r.stage_percent) },
-              { key: 'stage_amount', header: 'Value', align: 'right', render: (r) => money(r.stage_amount, r.currency) },
-              { key: 'invoice_no', header: 'Invoice', className: 'mono small', render: (r) => (r.invoice_no ? <>{r.invoice_no}<div className="muted">{date(r.invoice_date)}</div></> : <span className="muted">—</span>) },
-              { key: 'invoice_due_date', header: 'Due', render: (r) => date(r.invoice_due_date) },
-              { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
-              { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
-              {
-                key: 'act', header: '', align: 'right',
-                render: (r) => (
-                  <div className="table__actions">
-                    {r.stage_status === 'To Invoice' && <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>}
-                    {['Overdue', 'Due', 'Partially Paid'].includes(r.stage_status) && <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'payment', row: r })}>Payment</button>}
-                    {r.stage_status === 'Not Due' && <span className="muted small nowrap">waiting on trigger</span>}
-                  </div>
-                ),
-              },
-            ]}
-            footer={
-              stages.length ? (
-                <>
-                  <td colSpan={3}>Total</td>
-                  <td className="num">{percent(po.stages_percent_total)}</td>
-                  <td className="num">{money(po.po_value, po.currency)}</td>
-                  <td colSpan={2} />
-                  <td className="num">{money(po.total_received, po.currency)}</td>
-                  <td colSpan={2} />
-                </>
-              ) : null
-            }
-            empty={
-              <Empty
-                title="No payment stages"
-                text="Set the split agreed on this PO — 50/50, 30/70, or anything else."
-                action={<button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'split' })}>Set payment stages</button>}
-              />
-            }
-          />
-        </Card>
+          {stages.length === 0 ? (
+            <p className="px-5 py-4 text-[12.5px] text-muted-foreground">
+              Nothing can be invoiced against this order until its stages exist. Set the split that was agreed — 50/50, 30/70, or anything else.
+            </p>
+          ) : (
+            stages.map((stage, i) => (
+              <StageRung key={stage.id} stage={stage} action={actionsFor(stage)} last={i === stages.length - 1} />
+            ))
+          )}
 
-        <Card
-          flush
-          title="Services on this PO"
-          hint="A PO can cover several services — list them one per row"
-          actions={<button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'newService' })}>+ Service</button>}
+          {/* Four figures in one strip, because they are four different
+              questions and separate boxes made them look interchangeable. */}
+          {stages.length > 0 && (
+            <div className="flex h-11 flex-wrap items-center gap-6 border-t border-border bg-secondary px-5 text-[12.5px] text-secondary-text">
+              <span>Invoiced <strong className="mono font-medium text-foreground">{amount(po.total_invoiced)}</strong></span>
+              <span>Received <strong className="mono font-medium text-foreground">{amount(po.total_received)}</strong></span>
+              <span>To bill now <strong className={cn('mono font-medium', Number(po.balance_to_bill) > 0 ? 'text-waiting' : 'text-foreground')}>{amount(po.balance_to_bill)}</strong></span>
+              <span>Outstanding <strong className="mono font-medium text-foreground">{amount(Number(po.po_value) - Number(po.total_received))}</strong></span>
+            </div>
+          )}
+        </RecordSection>
+
+        <RecordSection
+          title="What this order covers"
+          hint={serviceTotal && Math.abs(serviceTotal - Number(po.po_value)) > 0.5
+            ? `${amount(serviceTotal)} of lines against ${amount(po.po_value)} ordered`
+            : undefined}
+          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newService' })}>Add service</Button>}
         >
-          <DataTable
-            rows={services}
-            columns={[
-              { key: 'service', header: 'Service', className: 'strong wrap' },
-              { key: 'service_value', header: 'Value', align: 'right', render: (r) => money(r.service_value, po.currency) },
-              { key: 'remarks', header: 'Remarks', className: 'wrap small' },
-              {
-                key: 'act', header: '', align: 'right',
-                render: (r) => (
-                  <div className="table__actions">
-                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ type: 'editService', row: r })}>Edit</button>
-                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => deleteService(r)}>✕</button>
-                  </div>
-                ),
-              },
-            ]}
-            footer={
-              services.length ? (
-                <>
-                  <td>Total{Math.abs(serviceTotal - Number(po.po_value)) > 0.5 && <span className="small muted"> — differs from the PO value</span>}</td>
-                  <td className="num">{money(serviceTotal, po.currency)}</td>
-                  <td colSpan={2} />
-                </>
-              ) : null
-            }
-            empty={<Empty title="No service lines yet" text="Add what this PO actually covers." />}
-          />
-        </Card>
+          {services.length === 0 ? (
+            <p className="px-5 py-4 text-[12.5px] text-muted-foreground">No service lines yet. Add what this order actually covers.</p>
+          ) : (
+            services.map((row, i) => (
+              /* The design draws a bare row; edit and remove stay on it
+                 because nothing else in the app can reach a service line. */
+              <div
+                key={row.id}
+                className={cn('flex h-9 items-center gap-4 px-5 text-[13px] text-foreground', i < services.length - 1 && 'border-b border-border')}
+              >
+                <span className="min-w-0 flex-1 truncate">{row.service}</span>
+                {row.remarks && <span className="min-w-0 max-w-[30%] truncate text-[12px] text-muted-foreground">{row.remarks}</span>}
+                <span className="mono">{money(row.service_value, po.currency)}</span>
+                <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'editService', row })}>Edit</Button>
+                <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`Remove ${row.service}`} onClick={() => deleteService(row)}>✕</Button>
+              </div>
+            ))
+          )}
+        </RecordSection>
 
-        {travel.length > 0 && (
-          <Card flush title="Travel billed to this PO">
-            <DataTable
-              rows={travel}
-              columns={[
-                { key: 'travel_id', header: 'Trip', className: 'mono' },
-                { key: 'employee_name', header: 'Employee', className: 'strong' },
-                { key: 'destination', header: 'Destination' },
-                { key: 'total_travel_cost', header: 'Cost', align: 'right', render: (r) => money(r.total_travel_cost) },
-                { key: 'vendor_invoice_status', header: 'Vendor invoice', render: (r) => <Badge>{r.vendor_invoice_status}</Badge> },
-              ]}
-            />
-          </Card>
-        )}
-      </div>
+        <Timeline entity="purchase_order" id={po.po_number} />
+      </RecordPage>
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}
@@ -289,11 +521,13 @@ export default function PurchaseOrderDetail() {
         />
       )}
 
-      {dialog?.type === 'newStage' && (
+      {(dialog?.type === 'newStage' || dialog?.type === 'editStage') && (
         <RecordForm
-          title="Add a payment stage"
+          title={dialog.type === 'newStage' ? 'Add a payment stage' : 'Edit payment stage'}
           resource="payment-stages"
-          record={{ po_number: po.po_number, stage_no: po.stage_count + 1, trigger_event: 'On Delivery', amount_received: 0 }}
+          record={dialog.type === 'newStage'
+            ? { po_number: po.po_number, stage_no: po.stage_count + 1, trigger_event: 'On Delivery', amount_received: 0 }
+            : dialog.row}
           onClose={close}
           onSaved={refetch}
           fields={[

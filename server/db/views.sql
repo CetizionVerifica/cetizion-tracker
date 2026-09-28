@@ -12,7 +12,7 @@
 
 BEGIN;
 
-DROP VIEW IF EXISTS v_companies, v_quotations, v_projects, v_purchase_orders,
+DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
@@ -39,7 +39,14 @@ SELECT
   pr.client_name,
   po.po_value,
   po.currency,
-  po.payment_terms_days                                  AS terms_days,
+  COALESCE(ps.credit_days, po.payment_terms_days)        AS terms_days,
+  ps.credit_days,
+  ps.milestone_name,
+  ps.milestone_reached_on,
+  ps.on_hold,
+  ps.hold_reason,
+  ps.promise_to_pay_date,
+  ps.reminder_level,
   po.po_date,
   po.actual_delivery_date                                AS delivery_date,
   ps.stage_no,
@@ -91,9 +98,10 @@ CROSS JOIN LATERAL (
          CASE ps.trigger_event
            WHEN 'On PO Registration' THEN po.po_date IS NOT NULL
            WHEN 'On Delivery'        THEN po.actual_delivery_date IS NOT NULL
+           WHEN 'On Milestone'       THEN ps.milestone_reached_on IS NOT NULL
            ELSE true
          END,
-         ps.invoice_date + po.payment_terms_days
+         ps.invoice_date + COALESCE(ps.credit_days, po.payment_terms_days)
 ) b(amount, due_to_invoice, invoice_due_date)
 CROSS JOIN LATERAL (
   SELECT CASE
@@ -345,6 +353,7 @@ SELECT
   po.quotation_no,
   pr.client_name,
   pr.company_id,
+  po.created_at,
   po.po_date,
   po.po_value,
   po.currency,
@@ -422,6 +431,7 @@ SELECT
   p.project_id,
   p.client_name,
   p.company_id,
+  p.created_at,
   -- The salesperson responsible (#18 Phase 2C). Exposed here because the
   -- generic CRUD router reads this view, and row-level scoping has to be a
   -- predicate in SQL rather than a filter applied after LIMIT.
@@ -434,6 +444,7 @@ SELECT
   p.planned_delivery_date,
   p.percent_complete,
   p.remarks,
+  p.estimated_cost,
   po.po_count,
   po.total_contract_value,
   po.total_invoiced,
@@ -535,6 +546,7 @@ SELECT
   q.contact_id,
   q.service_quoted,
   q.sector,
+  q.country,
   q.sales_person,
   q.sales_person_email,
   q.quotation_date,
@@ -546,6 +558,47 @@ SELECT
   q.remarks,
   q.document_id,
   doc.file_name                               AS document_name,
+  q.created_at,
+  q.valid_until,
+  q.revision,
+  q.terms,
+  q.place_of_supply_state,
+  q.subtotal,
+  q.tax_total,
+  q.total,
+  q.sent_at,
+  q.accepted_at,
+  q.accepted_by_name,
+  (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  q.stage_id,
+  st.name                                     AS stage,
+  st.type                                     AS stage_type,
+  st.sort_order                               AS stage_order,
+  st.color                                    AS stage_color,
+  q.probability,
+  ROUND(COALESCE(q.quotation_value, 0) * COALESCE(q.probability, 0) / 100.0, 2) AS weighted_value,
+  q.expected_close_date,
+  q.next_step,
+  q.stage_changed_at,
+  q.last_contacted_at,
+  GREATEST(0, (CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date))::int AS days_in_stage,
+  (st.rotting_days IS NOT NULL AND st.type = 'open'
+     AND CURRENT_DATE - COALESCE(q.stage_changed_at, q.created_at)::date > st.rotting_days) AS stale,
+  q.lost_reason_id,
+  lr.name                                     AS lost_reason,
+  q.lost_notes,
+  q.competitor,
+  q.closed_at,
+  q.discount_percent,
+  q.approval_status,
+  q.approval_reason,
+  q.approval_requested_at,
+  q.approval_requested_by,
+  q.approval_decided_at,
+  q.approved_by,
+  q.approval_note,
+  CASE WHEN q.valid_until IS NOT NULL AND q.valid_until < CURRENT_DATE
+        AND q.status IN ('Submitted','Under Negotiation') THEN true ELSE false END AS expired,
   r.invoiced,
   r.received,
   r.outstanding,
@@ -565,6 +618,8 @@ SELECT
   END                                         AS payment_note
 FROM quotations q
 LEFT JOIN documents doc ON doc.id = q.document_id
+LEFT JOIN pipeline_stages st ON st.id = q.stage_id
+LEFT JOIN lost_reasons lr ON lr.id = q.lost_reason_id
 LEFT JOIN LATERAL (
   SELECT COALESCE(SUM(total_invoiced), 0),
          COALESCE(SUM(total_received), 0),
@@ -585,6 +640,7 @@ SELECT
   c.name_key,
   c.sector,
   c.gstin,
+  c.last_contacted_at,
   c.website,
   c.address,
   c.city,
@@ -608,4 +664,110 @@ SELECT
    ) x)                                                                                    AS last_activity
 FROM companies c;
 
+-- ---------------------------------------------------------------------
+-- Project profitability (#39): revenue against delivery cost, in INR.
+-- Paid cost is money gone; committed is billed or claimed but not yet
+-- paid. A cost or PO with no amount or no exchange rate is counted in
+-- gaps and left out of the sums, never taken as zero silently.
+-- ---------------------------------------------------------------------
+CREATE VIEW v_project_profitability AS
+-- The rate in force on the PO's own date, from the exchange_rates table
+-- the sales reports read. The fx_rate_% settings this used to read were
+-- retired by migration 013 and can no longer hold a value: every foreign
+-- PO converted to NULL, so the project showed real costs against no
+-- revenue and reported a loss it had not made.
+WITH fx AS (
+  SELECT 'INR'::text AS currency, 1::numeric AS rate, '0001-01-01'::date AS effective_from
+  UNION ALL
+  SELECT from_currency, rate, effective_from FROM exchange_rates WHERE to_currency = 'INR'
+),
+po AS (
+  SELECT v.project_id,
+         SUM(v.po_value * r.rate)        AS revenue,
+         SUM(v.total_invoiced * r.rate)  AS invoiced,
+         SUM(v.total_received * r.rate)  AS received,
+         COUNT(*) FILTER (WHERE r.rate IS NULL) AS revenue_gaps,
+         MIN(v.po_date)                  AS first_po_date
+    FROM v_purchase_orders v
+    LEFT JOIN LATERAL (
+      SELECT fx.rate FROM fx
+       WHERE fx.currency = v.currency
+         AND fx.effective_from <= COALESCE(v.po_date, CURRENT_DATE)
+       ORDER BY fx.effective_from DESC
+       LIMIT 1
+    ) r ON true
+   GROUP BY v.project_id
+),
+trips AS (
+  SELECT t.travel_id, p.project_id FROM travel_logs t JOIN purchase_orders p ON p.po_number = t.po_number
+),
+vendors AS (
+  SELECT tr.project_id,
+         SUM(vi.amount_paid) AS paid,
+         SUM(GREATEST(COALESCE(vi.invoice_amount, vi.amount_paid) - vi.amount_paid, 0)) AS committed,
+         COUNT(*) FILTER (WHERE vi.invoice_amount IS NULL) AS gaps
+    FROM travel_vendor_invoices vi JOIN trips tr ON tr.travel_id = vi.travel_id
+   GROUP BY tr.project_id
+),
+claims AS (
+  SELECT tr.project_id,
+         SUM(c.amount_reimbursed) AS paid,
+         SUM(GREATEST(c.amount_claimed - c.amount_reimbursed, 0)) FILTER (WHERE c.approval_status <> 'Rejected') AS committed
+    FROM employee_expense_claims c JOIN trips tr ON tr.travel_id = c.travel_id
+   GROUP BY tr.project_id
+),
+manual AS (
+  SELECT pc.project_id,
+         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'paid')      AS paid,
+         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'committed') AS committed,
+         COUNT(*) FILTER (WHERE pc.amount IS NULL OR fx.rate IS NULL)    AS gaps
+    FROM project_costs pc LEFT JOIN fx ON fx.currency = pc.currency
+   GROUP BY pc.project_id
+),
+totals AS (
+  SELECT p.project_id,
+         COALESCE(po.revenue, 0) AS revenue,
+         COALESCE(po.invoiced, 0) AS invoiced,
+         COALESCE(po.received, 0) AS received,
+         COALESCE(v.paid, 0) AS travel_vendor_paid,
+         COALESCE(v.committed, 0) AS travel_vendor_committed,
+         COALESCE(c.paid, 0) AS claims_paid,
+         COALESCE(c.committed, 0) AS claims_committed,
+         COALESCE(m.paid, 0) AS other_paid,
+         COALESCE(m.committed, 0) AS other_committed,
+         COALESCE(po.revenue_gaps, 0) AS revenue_gaps,
+         COALESCE(v.gaps, 0) + COALESCE(m.gaps, 0) AS cost_gaps,
+         po.first_po_date
+    FROM projects p
+    LEFT JOIN po ON po.project_id = p.project_id
+    LEFT JOIN vendors v ON v.project_id = p.project_id
+    LEFT JOIN claims c ON c.project_id = p.project_id
+    LEFT JOIN manual m ON m.project_id = p.project_id
+)
+SELECT
+  p.project_id, p.client_name, p.company_id, p.primary_service, p.sales_person, p.project_manager,
+  p.estimated_cost, p.created_at, t.first_po_date,
+  round(t.revenue, 2) AS revenue,
+  round(t.invoiced, 2) AS invoiced,
+  round(t.received, 2) AS received,
+  t.travel_vendor_paid, t.travel_vendor_committed, t.claims_paid, t.claims_committed,
+  round(t.other_paid, 2) AS other_paid, round(t.other_committed, 2) AS other_committed,
+  round(t.travel_vendor_paid + t.claims_paid + t.other_paid, 2) AS cost_paid,
+  round(t.travel_vendor_committed + t.claims_committed + t.other_committed, 2) AS cost_committed,
+  round(t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed, 2) AS total_cost,
+  round(t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed), 2) AS margin,
+  CASE WHEN t.revenue > 0 THEN round(100 * (t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed)) / t.revenue, 1) END AS margin_percent,
+  CASE WHEN p.estimated_cost IS NOT NULL
+       THEN round((t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed) - p.estimated_cost, 2) END AS cost_variance,
+  t.revenue_gaps::int AS revenue_gaps, t.cost_gaps::int AS cost_gaps,
+  (t.revenue > 0 AND round(100 * (t.revenue - (t.travel_vendor_paid + t.claims_paid + t.other_paid + t.travel_vendor_committed + t.claims_committed + t.other_committed)) / t.revenue, 1) < setting_num('margin_alert_percent', 20)) AS low_margin
+FROM projects p JOIN totals t ON t.project_id = p.project_id;
+
+-- The COMMIT belongs at the end of the file, not in the middle of it.
+-- rebuildViews runs this as one multi-statement query: with the commit
+-- where it used to be, v_project_profitability was created outside the
+-- transaction, so every redeploy had a window in which the view did not
+-- exist - the profitability page and the cost-alert job answering
+-- "relation does not exist" - and a failure in it left the earlier views
+-- committed with the file itself unrecorded.
 COMMIT;

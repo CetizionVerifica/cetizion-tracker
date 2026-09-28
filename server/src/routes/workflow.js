@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
-import { claimNextId } from '../lib/sequences.js';
+import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
-import { normalizeName } from '../lib/names.js';
+import { normalizeName } from '../lib/names.ts';
+import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
 
 export const projectRouter = Router();
 export const poRouter = Router();
@@ -40,10 +41,10 @@ const toNumber = (v) => {
 };
 
 const dateStr = z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').nullable().optional());
-const money = z.preprocess(toNumber, z.number({ invalid_type_error: 'Enter an amount' }).min(0).nullable().optional());
+const money = z.preprocess(toNumber, z.number({ error: 'Enter an amount' }).min(0).nullable().optional());
 const requiredMoney = z.preprocess(
   toNumber,
-  z.number({ required_error: 'Enter an amount', invalid_type_error: 'Enter an amount' }).min(0)
+  z.number({ error: 'Enter an amount' }).min(0)
 );
 
 // ---------------------------------------------------------------------
@@ -83,13 +84,27 @@ projectRouter.get('/:projectId/full', async (req, res) => {
             ORDER BY q.quotation_date`, qParams),
   ]);
 
+  // The checklist steps that another record owns answer for themselves,
+  // and they are worked out here rather than in the client: a derived
+  // figure belongs next to the rows it is derived from, like every other
+  // rollup in this codebase.
+  const context = {
+    project: project.rows[0],
+    purchase_orders: pos.rows,
+    services: services.rows,
+    payment_stages: stages.rows,
+    travel: travel.rows,
+  };
+  const checklist = withDerivedSteps(onboarding.rows, context);
+
   res.json({
     data: {
       project: project.rows[0],
       purchase_orders: pos.rows,
       services: services.rows,
       payment_stages: stages.rows,
-      onboarding: onboarding.rows,
+      onboarding: checklist,
+      onboarding_progress: onboardingProgress(checklist),
       travel: travel.rows,
       quotations: quotations.rows,
     },
@@ -338,8 +353,10 @@ const splitSchema = z.object({
     .array(
       z.object({
         stage_name: z.string().trim().min(1),
-        trigger_event: z.enum(['On PO Registration', 'On Delivery', 'Manual']),
+        trigger_event: z.enum(['On PO Registration', 'On Delivery', 'On Milestone', 'Manual']),
         stage_percent: z.number().min(0.0001).max(1),
+        credit_days: z.number().int().min(0).max(365).nullable().optional(),
+        milestone_name: z.string().trim().max(200).nullable().optional(),
       })
     )
     .min(1, 'Add at least one stage'),
@@ -406,9 +423,9 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     for (const stage of body.stages) {
       n += 1;
       const { rows: r } = await client.query(
-        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [po, n, stage.stage_name, stage.trigger_event, stage.stage_percent]
+        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days, milestone_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [po, n, stage.stage_name, stage.trigger_event, stage.stage_percent, stage.credit_days ?? null, stage.milestone_name || null]
       );
       created.push(r[0].id);
     }
@@ -429,8 +446,22 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
 // Finance actions — the two things finance actually does to a stage
 // ---------------------------------------------------------------------
 
+/**
+ * `invoice_no` is optional, and leaving it out is the better path.
+ *
+ * A GST invoice series has to be unbroken and unrepeated, and a number the
+ * client read a moment ago is not that: two people raising invoices at the
+ * same time both preview the same next number and both send it back.
+ * Omitted, the number is claimed inside the transaction below — the same
+ * guarantee quotation numbers have had since #14 — and two concurrent
+ * callers queue for it rather than colliding.
+ *
+ * It stays accepted because an invoice raised outside the tracker, or one
+ * being recorded after the fact, has a number of its own that must be
+ * kept.
+ */
 const invoiceSchema = z.object({
-  invoice_no: z.preprocess(blank, z.string().trim().min(1, 'Invoice number is required').max(60)),
+  invoice_no: z.preprocess(blank, z.string().trim().min(1).max(60).nullable().optional()),
   invoice_date: z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')),
   document_id: z.number().int().positive().nullable().optional(),
 });
@@ -456,9 +487,17 @@ stageRouter.post('/:id/invoice', async (req, res) => {
       current: stage.document_id,
       requested: body.document_id,
     });
+
+    // Claimed here, inside the transaction, so concurrent callers queue for
+    // the number instead of being handed the same one. The financial year
+    // comes from the invoice's own date, not from today: an invoice dated
+    // 28 March belongs to the year that is ending, whenever it is entered.
+    const invoiceNo = body.invoice_no
+      ?? await claimNextId('invoice', client, financialYear(body.invoice_date));
+
     await client.query(
       'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
-      [body.invoice_no, body.invoice_date, documentId, stage.id]
+      [invoiceNo, body.invoice_date, documentId, stage.id]
     );
     return { id: stage.id, replaced };
   });
@@ -474,24 +513,50 @@ const receiptSchema = z.object({
   amount_received: requiredMoney,
   payment_received_date: dateStr,
   mode: z.enum(['set', 'add']).optional().default('set'),
+  tds_amount: z.preprocess(blank, z.coerce.number().min(0).optional()),
+  payment_mode: z.preprocess(blank, z.enum(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
+  notes: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
 });
 
 stageRouter.post('/:id/payment', async (req, res) => {
   const body = parse(receiptSchema, req.body || {});
-  // The predicate rides in the UPDATE itself rather than in a read before
-  // it, so there is no window in which the stage could change hands
-  // (#18 Phase 2C).
-  const params = [body.amount_received, body.payment_received_date ?? null, body.mode, req.params.id];
-  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'payment_stages' });
-  const { rows } = await query(
-    `UPDATE payment_stages
-        SET amount_received = CASE WHEN $3 = 'add'
-                                   THEN amount_received + $1 ELSE $1 END,
-            payment_received_date = COALESCE($2, payment_received_date)
-      WHERE id = $4 ${mine ? `AND ${mine}` : ''} RETURNING id`,
+  // Since #27 every receipt is its own row; the stage total follows by trigger.
+  // mode 'add' (or a receipt object) records a delta; 'set' records what brings the total to the figure.
+  //
+  // A payment stage has no owner of its own: it belongs to whoever owns the
+  // quotation or the project above the purchase order it sits under (#18
+  // Phase 2C). The predicate rides in this read, and every insert below
+  // takes its stage_id from the row it returned — so a stage this caller
+  // cannot reach is indistinguishable from one that does not exist, and
+  // nothing is ever written against it.
+  const params = [req.params.id];
+  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+  const { rows: [stage] } = await query(
+    `SELECT ps.id, ps.amount_received FROM payment_stages ps
+      WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}`,
     params
   );
-  if (!rows.length) throw new ApiError(404, 'Payment stage not found');
+  if (!stage) throw new ApiError(404, 'Payment stage not found');
+  const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
+  if (delta > 0 || Number(body.tds_amount || 0) > 0) {
+    await query(
+      `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
+       VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
+      [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
+    );
+  } else if (body.mode === 'set' && delta !== 0) {
+    // Bringing the total down is a negative row in the ledger, not a figure
+    // written over the top of it: the stage total is computed from the rows,
+    // so anything written by hand is undone by the next receipt.
+    await query(
+      `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
+       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
+      [stage.id, delta, body.payment_received_date ?? null,
+        `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
+    );
+  }
+  const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
   res.json({ data: full[0] });
 });

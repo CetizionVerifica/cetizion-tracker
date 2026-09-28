@@ -45,6 +45,30 @@ export function date(value) {
   return `${d} ${months[Number(m) - 1]} ${y}`;
 }
 
+/** "14 Sep 2026 – 21 Sep 2026", "From 1 Jan 2026", "Up to 21 Sep 2026", or "All time". */
+export function periodLabel({ from, to } = {}) {
+  if (from && to) return `${date(from)} – ${date(to)}`;
+  if (from) return `From ${date(from)}`;
+  if (to) return `Up to ${date(to)}`;
+  return 'All time';
+}
+
+const MINUTE = 60_000;
+
+/** "12 min ago", "2 hours ago", "3 days ago" — or null when never. */
+export function ago(value) {
+  if (!value) return null;
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) return null;
+  const mins = Math.floor((Date.now() - then.getTime()) / MINUTE);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 export function today() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(

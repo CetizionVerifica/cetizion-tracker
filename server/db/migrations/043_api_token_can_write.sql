@@ -1,0 +1,12 @@
+-- 043: a token that may only read (#50, review of batch 6)
+--
+-- role says WHOSE records a token sees; it never said whether the token may
+-- change any of them. Both roles reached create_task, add_note, log_touch
+-- and update_next_step, so a token issued to let an assistant answer
+-- questions could also write notes and tasks on everything it could see.
+--
+-- Off by default, because a token asked for without saying otherwise is a
+-- reading token. Existing rows keep what they had: nothing in production
+-- has issued one yet, and any that exist on a staging copy are read-only
+-- from here, which is the safe direction to be wrong in.
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS can_write boolean NOT NULL DEFAULT false;

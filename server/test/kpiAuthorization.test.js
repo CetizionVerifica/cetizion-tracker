@@ -333,10 +333,17 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
     assert.equal(qDb.originating_user_snapshot_id, salesA.user.id);
     assert.equal(qDb.originating_user_name, 'Sam Sales');
 
-    // 2. Enquiry originated by Sales A but reassigned to Sales B
+    // 2. Enquiry originated by Sales A but reassigned to Sales B.
+    //
+    // 'Contacted', not 'In Progress': #24 renamed the open statuses and
+    // migration 042 narrowed the CHECK to the new vocabulary, mapping
+    // 'In Progress' to exactly this value. The two fixtures above go through
+    // the API, whose schema still accepts the old word and aliases it
+    // (LEGACY_ENQUIRY_STATUS); this one writes to the table directly, so it
+    // has to use what the table accepts. Same enquiry, same open state.
     const { rows: [reassignedEnq] } = await db.query(`
       INSERT INTO enquiries (enquiry_no, client_name, service, status, owner_user_id, originating_user_id, originating_user_snapshot_id, originating_user_name)
-      VALUES ('CTZ/ENQ/2026/002', 'Reassigned Client', 'Consulting', 'In Progress', $1, $2, $2, 'Sam Sales')
+      VALUES ('CTZ/ENQ/2026/002', 'Reassigned Client', 'Consulting', 'Contacted', $1, $2, $2, 'Sam Sales')
       RETURNING id
     `, [salesB.user.id, salesA.user.id]);
 

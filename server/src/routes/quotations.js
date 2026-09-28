@@ -1,0 +1,157 @@
+/**
+ * A quotation as a document (#23):
+ *
+ *   GET  /api/quotations/:key/full      quotation, lines, revisions, company, contact, enquiry, project, POs
+ *   GET  /api/quotations/:key/pdf       the quotation as a PDF
+ *   POST /api/quotations/:key/revise    { note } snapshot the current version, bump the revision, reopen validity
+ *   POST /api/quotations/:key/send      { to?, message? } stamp sent_at; email the PDF to the contact when asked
+ *   POST /api/quotations/:key/accept    { accepted_by_name } the client said yes
+ *
+ * :key is the quotation number or the internal id. Mounted before the
+ * workflow router so these paths win.
+ */
+import { Router } from 'express';
+import { z } from 'zod';
+import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
+import { query, transaction } from '../db.js';
+import { ApiError } from '../middleware/error.js';
+import { businessToday } from '../lib/businessDate.ts';
+import { sendMail } from '../lib/mail.js';
+import { quotationPdf } from '../lib/quotationPdf.js';
+
+export const quotationDocRouter = Router();
+
+/**
+ * `scope` defaults to unrestricted on purpose. Two callers have no signed-in
+ * user at all and must keep working exactly as they do: the public
+ * acceptance link (routes/acceptance.js) and the client portal
+ * (routes/portal.js), both of which authorise by token and show one
+ * quotation. Every signed-in caller passes scopeOf(req) instead, so a sales
+ * user reaches only their own (#18 Phase 2C).
+ *
+ * The key predicate is parenthesised before the ownership one is ANDed to
+ * it: it is `quotation_no = $1 OR (id = $1 …)`, and an AND against the tail
+ * of that OR would have scoped the id lookup and left the number lookup
+ * open.
+ */
+async function loadQuotation(key, client = { query }, scope = UNRESTRICTED) {
+  const params = [decodeURIComponent(key)];
+  const mine = ownerClause(scope, params, { alias: 'q' });
+  const { rows } = await client.query(
+    `SELECT q.* FROM v_quotations q
+      WHERE (q.quotation_no = $1 OR (q.id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)))
+        ${mine ? `AND ${mine}` : ''}`,
+    params
+  );
+  if (!rows.length) throw new ApiError(404, 'Quotation not found');
+  return rows[0];
+}
+
+export async function fullQuotation(key, scope = UNRESTRICTED) {
+  const q = await loadQuotation(key, { query }, scope);
+  const [lines, revisions, company, contact, enquiry, project, pos, settings] = await Promise.all([
+    query('SELECT ql.*, s.name AS service_name FROM quotation_lines ql LEFT JOIN services s ON s.id = ql.service_id WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]),
+    query('SELECT id, revision, note, created_by, created_at, snapshot FROM quotation_revisions WHERE quotation_id = $1 ORDER BY revision DESC', [q.id]),
+    q.company_id ? query('SELECT * FROM companies WHERE id = $1', [q.company_id]) : { rows: [] },
+    q.contact_id ? query('SELECT * FROM contacts WHERE id = $1', [q.contact_id]) : { rows: [] },
+    query('SELECT enquiry_no, enquiry_date, status FROM enquiries WHERE quotation_no = $1', [q.quotation_no]),
+    q.project_id ? query('SELECT * FROM v_projects WHERE project_id = $1', [q.project_id]) : { rows: [] },
+    query('SELECT * FROM v_purchase_orders WHERE quotation_no = $1 ORDER BY po_date', [q.quotation_no]),
+    query(`SELECT key, value FROM settings WHERE key IN ('company_name','company_address','company_gstin','quotation_validity_days','gst_rate_default','quotation_terms_default','discount_approval_threshold_percent')`),
+  ]);
+  return {
+    ...q, lines: lines.rows, revisions: revisions.rows, company: company.rows[0] || null, contact: contact.rows[0] || null,
+    enquiry: enquiry.rows[0] || null, project: project.rows[0] || null, purchase_orders: pos.rows,
+    settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
+  };
+}
+
+quotationDocRouter.get('/:key/full', async (req, res) => {
+  res.json({ data: await fullQuotation(req.params.key, scopeOf(req)) });
+});
+
+quotationDocRouter.get('/:key/pdf', async (req, res) => {
+  const q = await fullQuotation(req.params.key, scopeOf(req));
+  const pdf = await quotationPdf(q);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${req.query.inline ? 'inline' : 'attachment'}; filename="${q.quotation_no.replace(/\//g, '-')}${q.revision ? `-R${q.revision}` : ''}.pdf"`);
+  res.send(pdf);
+});
+
+const reviseSchema = z.object({ note: z.string().trim().max(1000).optional().default('') });
+
+quotationDocRouter.post('/:key/revise', async (req, res) => {
+  const body = reviseSchema.parse(req.body || {});
+  const scope = scopeOf(req);
+  const data = await transaction(async (client) => {
+    // Lock first, then read: two clicks must not both snapshot the same revision.
+    // Both reads are scoped, so the id every statement below works from came
+    // from a row this caller may reach (#18 Phase 2C).
+    const { id } = await loadQuotation(req.params.key, client, scope);
+    await client.query('SELECT 1 FROM quotations WHERE id = $1 FOR UPDATE', [id]);
+    const q = await loadQuotation(String(id), client, scope);
+    if (q.status === 'Won - PO Received') throw new ApiError(422, 'A won quotation is not revised; raise a new quotation for extra scope');
+    const { rows: lines } = await client.query('SELECT * FROM quotation_lines WHERE quotation_id = $1 ORDER BY sort_order, id', [q.id]);
+    const snapshot = { quotation_no: q.quotation_no, revision: q.revision, quotation_date: q.quotation_date, valid_until: q.valid_until, quotation_value: q.quotation_value, subtotal: q.subtotal, tax_total: q.tax_total, total: q.total, currency: q.currency, terms: q.terms, sent_at: q.sent_at, lines };
+    await client.query('INSERT INTO quotation_revisions (quotation_id, revision, snapshot, note, created_by) VALUES ($1,$2,$3,$4,$5)', [q.id, q.revision, JSON.stringify(snapshot), body.note || null, req.user?.username || null]);
+    const { rows: [{ value: days }] } = await client.query(`SELECT value FROM settings WHERE key = 'quotation_validity_days'`).then((r) => ({ rows: r.rows.length ? r.rows : [{ value: '30' }] }));
+    const today = businessToday();
+    const { rows: [updated] } = await client.query(
+      `UPDATE quotations SET revision = revision + 1, quotation_date = $2, valid_until = ($2::date + ($3::int || ' days')::interval)::date,
+              sent_at = NULL, accepted_at = NULL, accepted_by_name = NULL,
+              status = CASE WHEN status = 'Lost' THEN 'Submitted' ELSE status END,
+              -- a new version is a new approval round
+              approval_status = 'not_needed', approval_reason = NULL, approval_requested_at = NULL,
+              approval_requested_by = NULL, approval_decided_at = NULL, approved_by = NULL,
+              approval_note = NULL, approved_discount_percent = NULL
+        WHERE id = $1 RETURNING revision, valid_until, quotation_date`,
+      [q.id, today, Number(days) || 30]
+    );
+    // The discount check runs again on the new version.
+    await client.query('SELECT quotation_totals($1)', [q.id]);
+    return updated;
+  });
+  res.json({ data });
+});
+
+const sendSchema = z.object({
+  to: z.string().trim().email().optional(),
+  message: z.string().trim().max(2000).optional().default(''),
+  email: z.boolean().optional().default(false),
+});
+
+quotationDocRouter.post('/:key/send', async (req, res) => {
+  const body = sendSchema.parse(req.body || {});
+  const q = await fullQuotation(req.params.key, scopeOf(req));
+  if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
+  if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
+  let email = null;
+  if (body.email) {
+    const to = body.to || q.contact?.email;
+    if (!to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
+    const pdf = await quotationPdf(q);
+    const subject = `Quotation ${q.quotation_no}${q.revision ? ` (rev ${q.revision})` : ''} from Cetizion Verifica`;
+    const text = `Dear ${q.contact?.name || q.client_name},\n\n${body.message || `Please find attached our quotation ${q.quotation_no} for ${q.service_quoted || 'the services discussed'}.`}${q.valid_until ? `\n\nThis quotation is valid until ${q.valid_until}.` : ''}\n\nRegards,\n${q.sales_person || 'Cetizion Verifica'}`;
+    email = await sendMail({
+      to, subject, text, html: `<p>${text.replace(/\n/g, '<br>')}</p>`, template: 'quotation', entity: 'quotation', entityId: q.quotation_no,
+      sentBy: req.user?.username || 'admin', attachments: [{ filename: `${q.quotation_no.replace(/\//g, '-')}.pdf`, content: pdf, contentType: 'application/pdf' }],
+    });
+  }
+  const { rows: [updated] } = await query(`UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1 RETURNING sent_at`, [q.id]);
+  res.json({ data: { sent_at: updated.sent_at, email } });
+});
+
+const acceptSchema = z.object({ accepted_by_name: z.string().trim().min(1, 'Who accepted it?').max(160) });
+
+quotationDocRouter.post('/:key/accept', async (req, res) => {
+  const parsed = acceptSchema.safeParse(req.body || {});
+  if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: { accepted_by_name: parsed.error.issues[0].message } });
+  const q = await loadQuotation(req.params.key, { query }, scopeOf(req));
+  const { rows: [updated] } = await query(
+    `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
+            status = CASE WHEN status IN ('Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
+      WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
+    [q.id, parsed.data.accepted_by_name]
+  );
+  res.json({ data: updated });
+});

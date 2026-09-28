@@ -26,7 +26,9 @@
  *   receipt        PO number + stage (money already recorded on that stage)
  */
 import { parseMoney } from './parse.js';
-import { sameService, similarName } from '../lib/names.js';
+import { resources } from '../lib/resources.js';
+import { sameService, similarName } from '../lib/names.ts';
+import { financialYear } from '../lib/sequences.js';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
@@ -67,17 +69,24 @@ function plusMonths(iso, n) {
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 
-/** Indian financial year for a date: 2026-03-07 -> "2025-26", 2026-07-08 -> "2026-27". */
-export function financialYear(iso) {
-  const [y, m] = iso.split('-').map(Number);
-  const start = m >= 4 ? y : y - 1;
-  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
-}
+/**
+ * Re-exported so callers of this module keep working, but there is only
+ * one implementation now.
+ *
+ * There used to be two, and they disagreed: this one wrote 2026-27 and
+ * the series wrote 26-27, so one company's GST invoice series was being
+ * numbered in two shapes at once — and the counter, which matches on the
+ * prefix, could not see the imported half. It would have handed out a
+ * number already in the books.
+ */
+export { financialYear };
 
 export function invoiceNumber(raw, date, prefix) {
   const s = String(raw).trim();
   if (new RegExp(`^${prefix}/`, 'i').test(s)) return s;          // already in full form
-  if (/^\d{4}-\d{2}\//.test(s)) return `${prefix}/${s}`;         // "2026-27/PI-003" carries its own year
+  // A sheet may carry its own year in either shape, and a number that
+  // arrives whole is kept whole: these are invoices that already exist.
+  if (/^\d{4}-\d{2}\//.test(s) || /^\d{2}-\d{2}\//.test(s)) return `${prefix}/${s}`;
   return `${prefix}/${financialYear(date)}/${s}`;
 }
 
@@ -350,8 +359,33 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
   }
 
+  for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
   const summary = summarise(items, skipped);
   return { items, skipped, summary, rules };
+}
+
+const AMOUNT_FIELDS = ['quotation_value', 'po_value', 'service_value', 'amount_received'];
+const SCHEMAS = { quotation: 'quotations', project: 'projects' };
+
+/**
+ * What would stop the commit, shown at review time instead: a negative
+ * amount, or a value the record's own form would refuse (too long, wrong
+ * type). Checks only the fields present, since ids are filled at commit.
+ */
+export function reviewFlags(step, payload, flags = []) {
+  const kept = flags.filter((f) => f.code !== 'negative_amount' && f.code !== 'invalid_value');
+  const bad = AMOUNT_FIELDS.filter((k) => payload?.[k] !== null && payload?.[k] !== undefined && payload[k] !== '' && Number(payload[k]) < 0);
+  if (bad.length) kept.push({ level: 'error', code: 'negative_amount', message: `Negative amount in ${bad.map((k) => k.replace(/_/g, ' ')).join(', ')}: correct it or untick the row`, by: 'rule' });
+  const resource = resources[SCHEMAS[step]];
+  if (resource && payload) {
+    const present = Object.fromEntries(Object.entries(payload).filter(([k, v]) => v !== null && v !== undefined && v !== '' && !(AMOUNT_FIELDS.includes(k) && bad.includes(k))));
+    const parsed = resource.schema.partial().safeParse(present);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((x) => `${String(x.path[0]).replace(/_/g, ' ')}: ${x.message}`).join('; ');
+      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Correct it or untick the row`, by: 'rule' });
+    }
+  }
+  return kept;
 }
 
 export function summarise(items, skipped = []) {

@@ -341,6 +341,59 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
     assert.equal(conflict.resolution_status, 'unresolved_conflict');
   });
 
+  /**
+   * An enquiry is open in four statuses since #24 — New, Contacted,
+   * Qualified and Nurture — so ENQUIRY_STATUS.open is a list, and the KPI
+   * has to count every one of them.
+   *
+   * The failure this guards against is silent: interpolating the list into
+   * the SQL gives `status = 'New,Contacted,Qualified,Nurture'`, which equals
+   * no status at all, so open_enquiries reads 0 for everybody and looks like
+   * a quiet week rather than a bug.
+   */
+  test('open_enquiries counts every open status, not just one', async () => {
+    await setUp();
+
+    const OPEN = ['New', 'Contacted', 'Qualified', 'Nurture'];
+    let n = 0;
+    for (const status of OPEN) {
+      n += 1;
+      await db.query(
+        `INSERT INTO enquiries (enquiry_no, client_name, enquiry_date, status, owner_user_id)
+         VALUES ($1, $2, '2026-03-01', $3, $4)`,
+        [`CTZ/ENQ/2026/${String(n).padStart(3, '0')}`, `Open ${status}`, status, salesA.user.id]
+      );
+    }
+    // Closed states, and another user's open one: neither counts.
+    await db.query(
+      `INSERT INTO enquiries (enquiry_no, client_name, enquiry_date, status, owner_user_id)
+       VALUES ('CTZ/ENQ/2026/090', 'Converted co', '2026-03-01', 'Converted',   $1),
+              ('CTZ/ENQ/2026/091', 'Unqualified co', '2026-03-01', 'Unqualified', $1),
+              ('CTZ/ENQ/2026/092', 'Bea open', '2026-03-01', 'Qualified', $2)`,
+      [salesA.user.id, salesB.user.id]
+    );
+
+    const res = await request(app).get('/api/kpis/me?year=2026').set('Cookie', salesA.cookie);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(
+      res.body.data.current_workload.open_enquiries, OPEN.length,
+      'all four open statuses, and only this owner\'s'
+    );
+
+    // And one at a time, so a list that silently collapsed to its first
+    // element would still be caught.
+    for (const status of OPEN) {
+      await db.query(`DELETE FROM enquiries`);
+      await db.query(
+        `INSERT INTO enquiries (enquiry_no, client_name, enquiry_date, status, owner_user_id)
+         VALUES ('CTZ/ENQ/2026/100', 'Only one', '2026-03-01', $1, $2)`,
+        [status, salesA.user.id]
+      );
+      const one = await request(app).get('/api/kpis/me?year=2026').set('Cookie', salesA.cookie);
+      assert.equal(one.body.data.current_workload.open_enquiries, 1, `status ${status} counts as open`);
+    }
+  });
+
   test('collections KPI is reported as unavailable with explicit data integrity notice', async () => {
     await setUp();
 

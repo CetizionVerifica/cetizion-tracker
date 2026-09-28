@@ -60,10 +60,17 @@ export async function getSalespersonKpis({ userId, year }) {
     targets
   ] = await Promise.all([
     // Category A: Current Workload Snapshots (owner_user_id)
+    //
+    // An enquiry is open in any of several statuses since #24 (New,
+    // Contacted, Qualified, Nurture), so ENQUIRY_STATUS.open is a list.
+    // Passed as a parameter and matched with = ANY rather than interpolated
+    // into the SQL: interpolating a list yields the one string
+    // "New,Contacted,Qualified,Nurture", which equals no status at all and
+    // would report every salesperson's open enquiries as zero.
     query(
       `SELECT
          (SELECT COUNT(*)::int FROM enquiries
-           WHERE owner_user_id = $1 AND status = '${ENQUIRY_STATUS.open}') AS open_enquiries_count,
+           WHERE owner_user_id = $1 AND status = ANY($2::text[])) AS open_enquiries_count,
          (SELECT COUNT(*)::int FROM quotations
            WHERE owner_user_id = $1 AND status NOT IN ('${WON_QUOTATION}', '${LOST_QUOTATION}')) AS open_quotations_count,
          (SELECT COUNT(*)::int FROM projects
@@ -72,7 +79,7 @@ export async function getSalespersonKpis({ userId, year }) {
            WHERE owner_user_id = $1 AND percent_complete < 1) AS active_projects_count,
          (SELECT COUNT(*)::int FROM projects
            WHERE owner_user_id = $1 AND percent_complete >= 1) AS completed_projects_count`,
-      [uid]
+      [uid, ENQUIRY_STATUS.open]
     ),
 
     // Category A: Current Pipeline Value (owner_user_id)

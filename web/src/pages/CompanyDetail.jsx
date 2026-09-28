@@ -1,22 +1,73 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { AlertTriangle, BadgeCheck, FileText, FolderKanban, MessageSquare, Receipt } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
-import { Badge, Card, ConfirmDialog, DataTable, Empty, ErrorState, KeyValues, Modal, Select, Stat, Tabs, useToast } from '../components/ui.jsx';
+import { ConfirmDialog, ErrorState, Modal, Select, useToast } from '../components/ui.jsx';
+import { Chip, RailPerson, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { Timeline } from '../components/Timeline.jsx';
+import { DeliverablesTable } from '../components/Deliverables.jsx';
+import { PortalSettings } from '../components/PortalSettings.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
+import { useAuth } from '../lib/auth.jsx';
 
-/** One client, everything the tracker knows about it, and its people. */
+/**
+ * One client, on one page.
+ *
+ * This was eight tabs, which meant the answer to "what is going on with
+ * Hindalco?" was in whichever of eight places you thought to look. The
+ * design puts the four figures somebody asks before they pick up the
+ * phone in one row — what they owe us, what we have won, what is open,
+ * when we last spoke — and merges deals and orders into a single list,
+ * because the client thinks of them as one relationship.
+ */
+
+const OPEN_STATUSES = new Set(['Submitted', 'Under Negotiation', 'On Hold']);
+
+/** The status of a deal or order, as a word with a colour behind it. */
+function toneFor(status) {
+  if (/overdue|lost/i.test(status)) return 'late';
+  if (/to invoice|negotiation|submitted|hold|pending/i.test(status)) return 'waiting';
+  if (/paid|won|valid|complete/i.test(status)) return 'settled';
+  return 'plain';
+}
+
+/** Deals, enquiries and orders in one list, newest first. */
+function relationship(c) {
+  const rows = [
+    ...c.enquiries.map((e) => ({
+      key: `e${e.id}`, when: e.enquiry_date, icon: MessageSquare,
+      title: e.service || 'Enquiry', status: e.status, amount: null,
+      to: '/enquiries', muted: /lost|closed/i.test(e.status || ''),
+    })),
+    ...c.quotations.map((q) => ({
+      key: `q${q.id}`, when: q.quotation_date, icon: FileText,
+      title: q.service_quoted || q.quotation_no, status: q.status,
+      amount: money(q.quotation_value, q.currency, { compact: true }),
+      to: `/quotations/${encodeURIComponent(q.quotation_no)}`,
+      muted: /lost/i.test(q.status || ''),
+    })),
+    ...c.purchase_orders.map((p) => ({
+      key: `p${p.id}`, when: p.po_date, icon: Receipt,
+      title: <><span className="num text-[12px]">{p.po_number}</span>{p.project_id ? ` · ${p.project_id}` : ''}</>,
+      status: p.payment_status, amount: money(p.po_value, p.currency, { compact: true }),
+      to: `/purchase-orders/${encodeURIComponent(p.po_number)}`,
+    })),
+  ];
+  return rows.sort((a, b) => String(b.when || '').localeCompare(String(a.when || '')));
+}
+
 export default function CompanyDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
   const lookups = useLookups();
-  const [tab, setTab] = useState('contacts');
-  const [editing, setEditing] = useState(null);      // company form
-  const [contact, setContact] = useState(null);      // contact form: 'new' | record
-  const [removing, setRemoving] = useState(null);    // contact to delete
+  const { isAdmin } = useAuth();
+  const [editing, setEditing] = useState(null);
+  const [contact, setContact] = useState(null);
+  const [removing, setRemoving] = useState(null);
   const [merge, setMerge] = useState(false);
   const [into, setInto] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,20 +95,18 @@ export default function CompanyDetail() {
   if (error) return <><PageHeader title="Company" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
   if (loading || !c) return <><PageHeader title="Company" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
 
-  const tabs = [
-    { key: 'contacts', label: `Contacts (${c.contacts.length})` },
-    { key: 'enquiries', label: `Enquiries (${c.enquiries.length})` },
-    { key: 'quotations', label: `Quotations (${c.quotations.length})` },
-    { key: 'projects', label: `Projects (${c.projects.length})` },
-    { key: 'pos', label: `Purchase orders (${c.purchase_orders.length})` },
-  ];
-
   const contactFields = [
     { name: 'company_id', type: 'hidden', default: c.id },
     { name: 'name', label: 'Name', required: true },
     { name: 'role', label: 'Role' },
     { name: 'email', label: 'Email', type: 'email' },
     { name: 'phone', label: 'Phone' },
+    { name: 'whatsapp_number', label: 'WhatsApp number', hint: 'If different from the phone' },
+    { name: 'preferred_channel', label: 'Prefers', type: 'select', options: ['email', 'call', 'whatsapp', 'meeting'] },
+    { name: 'best_time_to_call', label: 'Best time to call' },
+    { name: 'do_not_contact', label: 'Contact from the app', type: 'boolean', trueLabel: 'Do not contact', falseLabel: 'Allowed', default: 'false' },
+    { name: 'whatsapp_opt_in_at', label: 'WhatsApp opt-in on', type: 'date' },
+    { name: 'whatsapp_opt_in_source', label: 'Opt-in source', hint: 'e.g. email reply, signed form' },
     { name: 'is_billing', label: 'Billing contact', type: 'boolean', hint: 'Receives payment reminders', default: 'false' },
     { name: 'opt_out_reminders', label: 'Automatic reminders', type: 'boolean', trueLabel: 'Never send', falseLabel: 'Allowed', default: 'false' },
     { name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
@@ -72,131 +121,203 @@ export default function CompanyDetail() {
     { name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
   ];
 
+  const won = c.quotations.filter((q) => /won/i.test(q.status || ''));
+  const open = c.quotations.filter((q) => OPEN_STATUSES.has(q.status));
+  const total = (rows, key) => rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+  const rows = relationship(c);
+
   return (
     <>
-      <PageHeader
+      <RecordPage
+        parent="Companies"
+        parentTo="/companies"
         title={c.name}
-        subtitle={[c.sector, c.city, c.gstin && `GSTIN ${c.gstin}`].filter(Boolean).join(' · ') || 'No sector or city yet'}
-        actions={
+        facts={[
+          c.sector,
+          c.city,
+          c.gstin && <span className="num text-[12px]">GSTIN {c.gstin}</span>,
+          c.website && (
+            <a href={/^https?:/.test(c.website) ? c.website : `https://${c.website}`} target="_blank" rel="noopener noreferrer">
+              {c.website}
+            </a>
+          ),
+        ]}
+        action={
+          <button type="button" className="btn btn--primary" onClick={() => setEditing(c)}>Edit</button>
+        }
+        menu={
           <>
-            <Link className="btn" to="/companies">All companies</Link>
-            <button type="button" className="btn" onClick={() => setMerge(true)}>Merge into…</button>
-            <button type="button" className="btn btn--primary" onClick={() => setEditing(c)}>Edit</button>
+            <RecordMenuItem onSelect={() => navigate('/quotations')}>New deal for this client</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setContact('new')}>Add a contact</RecordMenuItem>
+            {isAdmin && <RecordMenuItem onSelect={() => setMerge(true)}>Merge into another company…</RecordMenuItem>}
           </>
         }
-      />
-      <div className="page stack">
-        <div className="grid grid--stats">
-          <Stat label="Enquiries" value={c.enquiries.length} />
-          <Stat label="Quotations" value={c.quotations.length} meta={`${c.won_quotations} won`} />
-          <Stat label="Projects" value={c.projects.length} />
-          <Stat label="PO value (INR)" value={money(c.po_value_inr)} />
-          <Stat label="Outstanding" value={money(c.outstanding)} tone={c.outstanding > 0 ? 'warn' : ''} />
-        </div>
-
-        {(c.website || c.address || c.notes) && (
-          <Card title="Details">
-            <KeyValues items={[
-              c.website && { label: 'Website', value: <a href={/^https?:/.test(c.website) ? c.website : `https://${c.website}`} target="_blank" rel="noopener noreferrer">{c.website}</a> },
-              c.address && { label: 'Address', value: c.address },
-              c.notes && { label: 'Notes', value: c.notes },
-            ].filter(Boolean)} />
-          </Card>
-        )}
-
-        <Tabs tabs={tabs} active={tab} onChange={setTab} />
-
-        {tab === 'contacts' && (
-          <Card flush title="Contacts" hint="The people at this client. A contact is created whenever a name is typed on a quotation or enquiry." actions={<button type="button" className="btn btn--primary btn--sm" onClick={() => setContact('new')}>+ Contact</button>}>
-            <DataTable
-              rows={c.contacts}
-              columns={[
-                { key: 'name', header: 'Name', className: 'strong', render: (r) => <>{r.name}{r.role && <div className="small muted">{r.role}</div>}</> },
-                { key: 'email', header: 'Email', render: (r) => r.email ? <a href={`mailto:${r.email}`}>{r.email}</a> : <span className="muted">—</span> },
-                { key: 'phone', header: 'Phone', render: (r) => r.phone || <span className="muted">—</span> },
-                { key: 'flags', header: '', render: (r) => <>{r.is_billing && <Badge tone="info">billing</Badge>} {r.opt_out_reminders && <Badge tone="warning">no reminders</Badge>}</> },
-                { key: 'notes', header: 'Notes', className: 'wrap small muted' },
-                { key: 'act', header: '', align: 'right', render: (r) => <div className="table__actions"><button type="button" className="btn btn--sm btn--ghost" onClick={() => setContact(r)}>Edit</button><button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(r)}>✕</button></div> },
-              ]}
-              empty={<Empty title="No contacts yet" text="Add the people you deal with here, with their email and phone." action={<button type="button" className="btn btn--primary" onClick={() => setContact('new')}>+ Contact</button>} />}
+        stats={
+          <>
+            <RecordStat
+              label="Owed to us"
+              value={money(c.outstanding, 'INR', { compact: true })}
+              tone={Number(c.outstanding) > 0 ? 'late' : undefined}
+              detail={Number(c.outstanding) > 0 ? 'Invoiced and not yet received' : 'Nothing outstanding'}
             />
-          </Card>
+            <RecordStat
+              label="Won"
+              value={money(total(won, 'quotation_value_inr') || total(won, 'quotation_value'), 'INR', { compact: true })}
+              detail={`${won.length} deal${won.length === 1 ? '' : 's'} · ${c.purchase_orders.length} order${c.purchase_orders.length === 1 ? '' : 's'}`}
+            />
+            <RecordStat
+              label="Open pipeline"
+              value={money(total(open, 'quotation_value_inr') || total(open, 'quotation_value'), 'INR', { compact: true })}
+              detail={open.length ? `${open.length} deal${open.length === 1 ? '' : 's'} still live` : 'Nothing open'}
+            />
+            <RecordStat
+              label="Last contact"
+              value={c.last_contacted_at ? date(c.last_contacted_at) : 'Never'}
+              tone={c.last_contacted_at ? undefined : 'waiting'}
+              detail={c.last_activity ? date(c.last_activity) === date(c.last_contacted_at) ? 'Logged on this record' : `Last change ${date(c.last_activity)}` : 'Nobody has logged a call or a meeting'}
+            />
+          </>
+        }
+        rail={
+          <>
+            <RecordSection
+              title="People"
+              action={<button type="button" className="text-[12.5px] font-medium text-primary" onClick={() => setContact('new')}>Add</button>}
+            >
+              {c.contacts.length === 0 ? (
+                <p className="px-5 py-4 text-[12.5px] text-muted-foreground">
+                  Nobody yet. A contact is created whenever a name is typed on a quotation or an enquiry.
+                </p>
+              ) : c.contacts.map((person, i) => (
+                <button
+                  key={person.id}
+                  type="button"
+                  onClick={() => setContact(person)}
+                  className="block w-full text-left"
+                >
+                  <RailPerson
+                    name={person.name}
+                    detail={[person.role, person.is_billing && 'billing contact', person.do_not_contact && 'do not contact']
+                      .filter(Boolean).join(' · ')}
+                    last={i === c.contacts.length - 1}
+                  />
+                </button>
+              ))}
+            </RecordSection>
+
+          </>
+        }
+      >
+        <RecordSection title="Deals and orders" hint="newest first">
+          {rows.length === 0 ? (
+            <p className="px-5 py-4 text-[12.5px] text-muted-foreground">Nothing quoted or ordered yet.</p>
+          ) : rows.map((row, i) => (
+            <RecordRow
+              key={row.key}
+              icon={row.icon}
+              to={row.to}
+              title={row.title}
+              muted={row.muted}
+              last={i === rows.length - 1}
+              amount={row.amount ?? '—'}
+              chip={row.status ? (
+                <Chip tone={toneFor(row.status)} icon={/overdue/i.test(row.status) ? AlertTriangle : undefined}>
+                  {row.status}
+                </Chip>
+              ) : null}
+            />
+          ))}
+        </RecordSection>
+
+        {c.projects.length > 0 && (
+          <RecordSection title="Projects" hint="delivery, not sales">
+            {c.projects.map((project, i) => (
+              <RecordRow
+                key={project.id}
+                icon={FolderKanban}
+                to={`/projects/${encodeURIComponent(project.project_id)}`}
+                title={<><span className="num text-[12px]">{project.project_id}</span> · {project.primary_service || 'No service named'}</>}
+                last={i === c.projects.length - 1}
+                amount={project.percent_complete != null ? `${project.percent_complete}%` : '—'}
+                chip={project.project_stage ? <Chip tone={toneFor(project.project_stage)}>{project.project_stage}</Chip> : null}
+              />
+            ))}
+          </RecordSection>
         )}
-        {tab === 'enquiries' && (
-          <Card flush title="Enquiries">
-            <DataTable rows={c.enquiries} onRowClick={(r) => navigate(`/enquiries?q=${encodeURIComponent(r.enquiry_no)}`)} columns={[
-              { key: 'enquiry_no', header: 'Enquiry', className: 'mono' },
-              { key: 'enquiry_date', header: 'Date', render: (r) => date(r.enquiry_date) },
-              { key: 'service', header: 'Service', className: 'wrap' },
-              { key: 'sales_person', header: 'Sales person' },
-              { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
-              { key: 'quotation_no', header: 'Quotation', className: 'mono' },
-            ]} empty={<Empty title="No enquiries" />} />
-          </Card>
-        )}
-        {tab === 'quotations' && (
-          <Card flush title="Quotations">
-            <DataTable rows={c.quotations} onRowClick={(r) => navigate(`/quotations?q=${encodeURIComponent(r.quotation_no)}`)} columns={[
-              { key: 'quotation_no', header: 'Quotation', className: 'mono' },
-              { key: 'quotation_date', header: 'Date', render: (r) => date(r.quotation_date) },
-              { key: 'service_quoted', header: 'Service', className: 'wrap' },
-              { key: 'contact_person', header: 'Contact' },
-              { key: 'quotation_value', header: 'Value', align: 'right', render: (r) => money(r.quotation_value, r.currency) },
-              { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
-              { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },
-            ]} empty={<Empty title="No quotations" />} />
-          </Card>
-        )}
-        {tab === 'projects' && (
-          <Card flush title="Projects">
-            <DataTable rows={c.projects} onRowClick={(r) => navigate(`/projects/${encodeURIComponent(r.project_id)}`)} columns={[
-              { key: 'project_id', header: 'Project', className: 'mono' },
-              { key: 'primary_service', header: 'Service', className: 'wrap' },
-              { key: 'project_manager', header: 'Manager' },
-              { key: 'project_stage', header: 'Stage', render: (r) => <Badge>{r.project_stage}</Badge> },
-              { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },
-            ]} empty={<Empty title="No projects" />} />
-          </Card>
-        )}
-        {tab === 'pos' && (
-          <Card flush title="Purchase orders">
-            <DataTable rows={c.purchase_orders} onRowClick={(r) => navigate(`/purchase-orders/${encodeURIComponent(r.po_number)}`)} columns={[
-              { key: 'po_number', header: 'PO', className: 'mono' },
-              { key: 'project_id', header: 'Project', className: 'mono small' },
-              { key: 'po_date', header: 'Date', render: (r) => date(r.po_date) },
-              { key: 'po_value', header: 'Value', align: 'right', render: (r) => money(r.po_value, r.currency) },
-              { key: 'total_received', header: 'Received', align: 'right', render: (r) => money(r.total_received, r.currency) },
-              { key: 'payment_status', header: 'Payment', render: (r) => <Badge>{r.payment_status}</Badge> },
-            ]} empty={<Empty title="No purchase orders" />} />
-          </Card>
-        )}
-      </div>
+
+        <DeliverablesTable
+          params={{ company_id: c.id }}
+          preset={{ company_id: String(c.id) }}
+          compact
+          title="Certificates"
+          hint="What this client holds. A renewal deal is created 90 days before expiry."
+        />
+
+        {/* The one place activity lives.
+            The mock puts a read-only "Recent" card in the rail, because the
+            mock had nowhere else for it. This app has the full timeline
+            from #22 — notes, tasks, files, logged calls — and showing the
+            same events twice on one page is the kind of thing this
+            redesign exists to remove. */}
+        <Timeline entity="company" id={id} />
+
+        {isAdmin && <PortalSettings companyId={c.id} />}
+      </RecordPage>
 
       {editing && (
-        <RecordForm title="Edit company" resource="companies" fields={companyFields} record={editing} onClose={() => setEditing(null)} onSaved={() => { invalidateLookups(); refetch(); }} />
+        <RecordForm
+          title="Edit company"
+          resource="companies"
+          record={editing}
+          fields={companyFields}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); invalidateLookups(); refetch(); }}
+        />
       )}
       {contact && (
         <RecordForm
           title={contact === 'new' ? 'New contact' : 'Edit contact'}
-          subtitle={c.name}
           resource="contacts"
-          fields={contactFields}
           record={contact === 'new' ? null : contact}
+          fields={contactFields}
           onClose={() => setContact(null)}
-          onSaved={() => refetch()}
+          onSaved={() => { setContact(null); refetch(); }}
+          onDelete={contact !== 'new' ? () => { setRemoving(contact); setContact(null); } : undefined}
         />
       )}
       {removing && (
-        <ConfirmDialog title={`Remove ${removing.name}?`} message="Quotations and enquiries that named this person keep the name as text." onConfirm={deleteContact} onClose={() => setRemoving(null)} busy={busy} confirmLabel="Remove" />
+        <ConfirmDialog
+          title="Remove this contact?"
+          message={`${removing.name} will no longer be offered on this client's records.`}
+          confirmLabel="Remove"
+          busy={busy}
+          onCancel={() => setRemoving(null)}
+          onConfirm={deleteContact}
+        />
       )}
       {merge && (
         <Modal
-          title={`Merge ${c.name} into another company`}
-          subtitle="Everything here moves to the company you pick and takes its name; this one is deleted."
+          size="sm"
+          title="Merge into another company"
           onClose={() => setMerge(false)}
-          footer={<><button type="button" className="btn" onClick={() => setMerge(false)}>Cancel</button><button type="button" className="btn btn--primary" disabled={!into || busy} onClick={doMerge}>{busy ? 'Merging…' : 'Merge'}</button></>}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setMerge(false)}>Cancel</button>
+              <button type="button" className="btn btn--danger" disabled={!into || busy} onClick={doMerge}>Merge</button>
+            </>
+          }
         >
-          <Select value={into} placeholder="Pick the company that stays" options={lookups.companies.filter((o) => o.id !== c.id).map((o) => ({ value: String(o.id), label: o.name }))} onChange={(e) => setInto(e.target.value)} />
+          <div className="stack">
+            <p className="small muted">
+              Every record naming <strong>{c.name}</strong> moves to the company you pick, and this one is deleted. It cannot be undone.
+            </p>
+            <Select
+              value={into}
+              onChange={(e) => setInto(e.target.value)}
+              placeholder="Pick the company to keep"
+              options={(lookups.companies || []).filter((x) => String(x.id) !== String(id)).map((x) => ({ value: String(x.id), label: x.name }))}
+            />
+          </div>
         </Modal>
       )}
     </>

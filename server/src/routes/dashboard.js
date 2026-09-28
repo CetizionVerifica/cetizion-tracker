@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { scopedSources, scopeOf } from '../auth/ownership.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 import { revenueReport } from '../lib/revenueReport.js';
+import { dataQuality } from '../lib/dataQuality.js';
 
 export const dashboardRouter = Router();
 
@@ -15,6 +16,11 @@ dashboardRouter.get('/overview', async (req, res) => {
   // rows it is computed from narrows (#18 Phase 2C). A sales user's totals,
   // counts and lists cover their own records, an admin's cover everything.
   const ownerParams = [];
+  // Every relation below is aliased. For an admin scopedSources hands back a
+  // bare view name, where an alias is optional; for a sales user it hands
+  // back a parenthesised SELECT, and Postgres refuses a subquery in FROM
+  // that has no alias. Unaliased, these queries worked for an admin and
+  // failed with a 500 for exactly the people the scoping is for.
   const src = scopedSources(scopeOf(req), ownerParams);
   const [sales, finance, portfolio, travel, byStage, byService, pipeline] = await Promise.all([
     query(`
@@ -28,7 +34,7 @@ dashboardRouter.get('/overview', async (req, res) => {
                  AND status = 'Won - PO Received'), 0)             AS won_value_inr,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received'
                  AND project_id IS NULL)::int                      AS won_without_project
-      FROM ${src.vQuotations}`, ownerParams),
+      FROM ${src.vQuotations} q`, ownerParams),
     query(`
       -- Every amount here is labelled in rupees on the Overview, so only INR
       -- stages are summed — the same rule the quotation figures above use.
@@ -45,7 +51,7 @@ dashboardRouter.get('/overview', async (req, res) => {
         COUNT(*) FILTER (WHERE stage_status = 'Overdue')::int       AS overdue,
         COALESCE(SUM(due_now_amount) FILTER (WHERE stage_status = 'Overdue' AND currency = 'INR'), 0) AS overdue_amount,
         COALESCE(SUM(stage_amount) FILTER (WHERE stage_status = 'To Invoice' AND currency = 'INR'), 0) AS to_invoice_amount
-      FROM ${src.vPaymentStages}`, ownerParams),
+      FROM ${src.vPaymentStages} s`, ownerParams),
     query(`
       SELECT
         COUNT(*)::int                                              AS projects,
@@ -57,7 +63,7 @@ dashboardRouter.get('/overview', async (req, res) => {
         COALESCE(AVG(onboarding_percent) FILTER (WHERE onboarding_total > 0), 0) AS avg_onboarding,
         COUNT(*) FILTER (WHERE payment_status = 'Overdue')::int    AS projects_overdue,
         COUNT(*) FILTER (WHERE follow_up_action LIKE 'Delivery overdue%')::int AS delivery_overdue
-      FROM ${src.vProjects}`, ownerParams),
+      FROM ${src.vProjects} p`, ownerParams),
     query(`
       SELECT
         (SELECT COUNT(*)::int FROM travel_logs)                    AS trips,
@@ -75,18 +81,18 @@ dashboardRouter.get('/overview', async (req, res) => {
     query(`
       SELECT project_stage AS label, COUNT(*)::int AS count,
              COALESCE(SUM(total_contract_value) FILTER (WHERE currency = 'INR'), 0) AS value
-      FROM ${src.vProjects} GROUP BY 1 ORDER BY 1`, ownerParams),
+      FROM ${src.vProjects} p GROUP BY 1 ORDER BY 1`, ownerParams),
     query(`
       SELECT service_quoted AS label, COUNT(*)::int AS count,
              COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value,
              COUNT(*) FILTER (WHERE status = 'Won - PO Received')::int AS won
-      FROM ${src.vQuotations}
+      FROM ${src.vQuotations} q
       WHERE service_quoted IS NOT NULL
       GROUP BY 1 ORDER BY count DESC, label LIMIT 12`, ownerParams),
     query(`
       SELECT status AS label, COUNT(*)::int AS count,
              COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value
-      FROM ${src.vQuotations} GROUP BY 1`, ownerParams),
+      FROM ${src.vQuotations} q GROUP BY 1`, ownerParams),
   ]);
 
   res.json({
@@ -118,7 +124,7 @@ dashboardRouter.get('/worklist', async (req, res) => {
              stage_amount, currency, invoice_no, invoice_date, document_id, document_name,
              terms_days, invoice_due_date, stage_status,
              days_overdue, follow_up_action, due_now_amount
-      FROM ${src.vPaymentStages}
+      FROM ${src.vPaymentStages} s
       WHERE stage_status IN ('To Invoice','Overdue','Partially Paid')
       ORDER BY CASE stage_status WHEN 'Overdue' THEN 0 WHEN 'To Invoice' THEN 1 ELSE 2 END,
                days_overdue DESC, po_number, stage_no`, ownerParams),
@@ -140,14 +146,14 @@ dashboardRouter.get('/worklist', async (req, res) => {
       SELECT project_id, client_name, primary_service, project_manager,
              planned_delivery_date, project_stage,
              CURRENT_DATE - planned_delivery_date AS days_late
-      FROM ${src.vProjects}
+      FROM ${src.vProjects} p
       WHERE actual_delivery_date IS NULL
         AND planned_delivery_date IS NOT NULL
         AND CURRENT_DATE > planned_delivery_date
       ORDER BY planned_delivery_date`, ownerParams),
     query(`
       SELECT id, quotation_no, client_name, service_quoted, quotation_value, currency
-      FROM ${src.vQuotations}
+      FROM ${src.vQuotations} q
       WHERE status = 'Won - PO Received' AND project_id IS NULL
       ORDER BY quotation_date DESC NULLS LAST`, ownerParams),
   ]);
@@ -184,6 +190,14 @@ dashboardRouter.get('/sales-report', async (req, res) => {
 dashboardRouter.get('/revenue-report', async (req, res) => {
   const period = reportPeriod(req.query);
   res.json({ data: { period, ...(await revenueReport(period, { scope: scopeOf(req) })) } });
+});
+
+/**
+ * What is missing, and where to fix it (#74): one count per check, each
+ * with a link to the list filtered to exactly those records. Read-only.
+ */
+dashboardRouter.get('/data-quality', async (req, res) => {
+  res.json({ data: { checks: await dataQuality() } });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

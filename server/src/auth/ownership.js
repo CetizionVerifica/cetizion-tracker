@@ -24,6 +24,7 @@
  *
  * Every predicate here is parameterised. No id is ever interpolated.
  */
+import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
 /** The column carrying ownership, on all three scoped tables. */
@@ -31,6 +32,35 @@ export const OWNER_COLUMN = 'owner_user_id';
 
 /** The tables this applies to. Nothing else is scoped by ownership. */
 export const OWNER_SCOPED_TABLES = ['enquiries', 'quotations', 'projects'];
+
+/**
+ * How a record is named when one table points at another by (entity, id)
+ * text instead of by a foreign key — the timeline, the touch log and the
+ * notes/tasks/attachments tables all address records that way.
+ *
+ * The convention is not invented here. It is the one main's own code
+ * already reads: resolveParties() in routes/communications.js and
+ * recordEvents() in routes/timeline.js both look a record up by its natural
+ * key where it has one (enquiry_no, quotation_no, project_id, po_number)
+ * and by its serial id where it does not. This table says the same thing
+ * once, so a caller does not have to know it.
+ *
+ *   shared        master data nobody owns. A client's name and sector are
+ *                 not one salesperson's secret — /api/companies is open to
+ *                 anybody signed in, and a gate here that disagreed with it
+ *                 would only be inconsistent, not safer.
+ *   parent 'own'  the table carries owner_user_id itself.
+ *   parent <kind> ownership comes from the record above; see parentClause.
+ */
+export const ENTITY_RECORDS = {
+  company: { shared: true },
+  contact: { shared: true },
+  enquiry: { relation: 'enquiries', key: 'enquiry_no', parent: 'own', label: 'Enquiry' },
+  quotation: { relation: 'quotations', key: 'quotation_no', parent: 'own', label: 'Quotation' },
+  project: { relation: 'projects', key: 'project_id', parent: 'own', label: 'Project' },
+  purchase_order: { relation: 'purchase_orders', key: 'po_number', parent: 'purchase_order', label: 'Purchase order' },
+  payment_stage: { relation: 'payment_stages', key: 'id', parent: 'via_po', label: 'Payment stage' },
+};
 
 /**
  * Does this request see everything?
@@ -137,8 +167,21 @@ export function purchaseOrderClause(scope, params, { alias = 'po' } = {}) {
  *
  * A document has no owner and no uploader — the table records the file and
  * nothing about who put it there. Visibility is therefore derived from
- * whatever points at it: a quotation, a purchase order, or a payment stage.
- * You may read the file if you may read the record it belongs to.
+ * whatever points at it: a quotation, a purchase order, a payment stage, a
+ * quotation acceptance, a project cost or a deliverable. You may read the
+ * file if you may read the record it belongs to.
+ *
+ * The last three arrived after this rule was first written: a quotation's
+ * acceptance PDF, a cost receipt, a project's issued deliverable. Each
+ * reaches its owner through a declared foreign key, so leaving them out kept
+ * nothing safe — it made a salesperson's own file unreadable to them and
+ * readable only to an admin.
+ *
+ * `attachments` names its parent as (entity, entity_id) text rather than by
+ * a foreign key. That is not a guess: ENTITY_RECORDS above writes down the
+ * convention main's own resolveParties() and recordEvents() already read, so
+ * a file attached that way reaches its owner the same way every other row
+ * addressed that way does.
  *
  * A document nothing references is **not** readable by a sales user. "No
  * parent" means ownership is unknown, and the rule for unknown ownership is
@@ -172,6 +215,24 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
                                WHERE pq2.quotation_no = spo.quotation_no AND pq2.${OWNER_COLUMN} = $${n})
                    OR EXISTS (SELECT 1 FROM projects pp2
                                WHERE pp2.project_id = spo.project_id AND pp2.${OWNER_COLUMN} = $${n})))
+    OR EXISTS (SELECT 1 FROM quotation_acceptances dqa
+                JOIN quotations aq ON aq.id = dqa.quotation_id
+               WHERE dqa.pdf_document_id = ${alias}.id AND aq.${OWNER_COLUMN} = $${n})
+    OR EXISTS (SELECT 1 FROM project_costs dpc
+                JOIN projects cp ON cp.project_id = dpc.project_id
+               WHERE dpc.document_id = ${alias}.id AND cp.${OWNER_COLUMN} = $${n})
+    OR EXISTS (SELECT 1 FROM attachments dat
+               WHERE dat.document_id = ${alias}.id AND ${entityCase('dat', n)})
+    OR EXISTS (SELECT 1 FROM deliverables ddl
+               WHERE ddl.document_id = ${alias}.id
+                 AND (EXISTS (SELECT 1 FROM projects dp
+                               WHERE dp.project_id = ddl.project_id AND dp.${OWNER_COLUMN} = $${n})
+                   OR EXISTS (SELECT 1 FROM purchase_orders dpo2
+                               WHERE dpo2.po_number = ddl.po_number
+                                 AND (EXISTS (SELECT 1 FROM quotations pq3
+                                               WHERE pq3.quotation_no = dpo2.quotation_no AND pq3.${OWNER_COLUMN} = $${n})
+                                   OR EXISTS (SELECT 1 FROM projects pp3
+                                               WHERE pp3.project_id = dpo2.project_id AND pp3.${OWNER_COLUMN} = $${n})))))
   )`;
 }
 
@@ -185,7 +246,61 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
  * clause serves a read from the view and a write to the table. `via_po`
  * reads po_number, which payment_stages, po_services and both of their
  * views all carry.
+ *
+ * The others each read one declared foreign key: `quotation` reads
+ * quotation_id (quotation_lines), `project` reads project_id
+ * (project_costs), `via_stage` reads stage_id (payments). Every one of them
+ * is a real column with a real reference, which is why they are here and
+ * why the polymorphic entity/entity_id tables — tasks, notes, attachments —
+ * are not: their parent is named in text, by a convention this module would
+ * have to guess at.
  */
+/**
+ * The predicate for a row that names its parent as (entity, entity_id) text
+ * rather than by a foreign key — a task, a note, an attachment.
+ *
+ * Built from ENTITY_RECORDS, so the rule lives in one place and a kind added
+ * there is covered here without anybody remembering to. Only the entity
+ * *names* are written into the SQL and they are this module's own constants,
+ * never anything a client sent; every id stays a parameter.
+ *
+ * `ELSE false` is the important line. A row whose entity is none of the
+ * known kinds has an ownership this module cannot work out, and the rule for
+ * ownership it cannot work out is admin-only — the same answer an unassigned
+ * record gets. The CHECK constraint on those tables makes it unreachable
+ * today; it is here so that stays true if the constraint ever widens.
+ *
+ * Takes the parameter index rather than pushing, so a caller that already
+ * pushed the owner id (documentClause) references the same one.
+ */
+function entityCase(alias, n) {
+  const poOwned = (po) => `(EXISTS (SELECT 1 FROM quotations eq
+                                     WHERE eq.quotation_no = ${po}.quotation_no AND eq.${OWNER_COLUMN} = $${n})
+                         OR EXISTS (SELECT 1 FROM projects ep
+                                     WHERE ep.project_id = ${po}.project_id AND ep.${OWNER_COLUMN} = $${n}))`;
+  const branches = Object.entries(ENTITY_RECORDS).map(([entity, def]) => {
+    // Master data is everybody's: a note on a company is not one
+    // salesperson's, the same as the company itself is not.
+    if (def.shared) return `WHEN '${entity}' THEN true`;
+    const match = `x.${def.key}${def.key === 'id' ? '::text' : ''} = ${alias}.entity_id`;
+    if (def.parent === 'own') {
+      return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
+                WHERE ${match} AND x.${OWNER_COLUMN} = $${n})`;
+    }
+    if (def.parent === 'purchase_order') {
+      return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
+                WHERE ${match} AND ${poOwned('x')})`;
+    }
+    return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
+              JOIN purchase_orders epo ON epo.po_number = x.po_number
+             WHERE ${match} AND ${poOwned('epo')})`;
+  });
+  return `CASE ${alias}.entity
+  ${branches.join('\n  ')}
+  ELSE false
+END`;
+}
+
 export function parentClause(scope, params, { kind, alias }) {
   if (scope.unrestricted) return '';
   params.push(scope.ownerId);
@@ -199,6 +314,30 @@ export function parentClause(scope, params, { kind, alias }) {
     return `EXISTS (SELECT 1 FROM purchase_orders ppo
                      WHERE ppo.po_number = ${alias}.po_number AND ${poOwned('ppo')})`;
   }
+  // A quotation's own priced lines (#23). quotation_id is a declared foreign
+  // key, so there is nothing to infer: the line belongs to whoever owns the
+  // quotation it prices, and the rate and discount on it are exactly the
+  // commercial detail row-level access exists to keep to one salesperson.
+  if (kind === 'quotation') {
+    return `EXISTS (SELECT 1 FROM quotations lq
+                     WHERE lq.id = ${alias}.quotation_id AND lq.${OWNER_COLUMN} = $${n})`;
+  }
+  // A cost booked against a project (#33): project_id is a foreign key to
+  // projects, which carries the owner.
+  if (kind === 'project') {
+    return `EXISTS (SELECT 1 FROM projects cp
+                     WHERE cp.project_id = ${alias}.project_id AND cp.${OWNER_COLUMN} = $${n})`;
+  }
+  // A receipt in the payments ledger (#27). One link further down than
+  // via_po: a payment hangs off a payment stage, which hangs off the
+  // purchase order that carries the ownership.
+  if (kind === 'via_stage') {
+    return `EXISTS (SELECT 1 FROM payment_stages rps
+                      JOIN purchase_orders rpo ON rpo.po_number = rps.po_number
+                     WHERE rps.id = ${alias}.stage_id AND ${poOwned('rpo')})`;
+  }
+  // A row that names its parent in text: tasks, notes, attachments.
+  if (kind === 'entity') return entityCase(alias, n);
   throw new Error(`Unknown ownership parent: ${kind}`);
 }
 
@@ -283,6 +422,47 @@ export function scopedSources(scope, params) {
     vPaymentStages: stages,
     purchaseOrders: viaParent('purchase_orders', 'bpo'),
   };
+}
+
+/**
+ * The statement that answers "may this request reach this record?", or null
+ * when the question does not arise — an admin, or shared master data.
+ *
+ * Separate from the assertion below so the SQL can be read and tested
+ * without a database, the same as every other predicate in this module.
+ */
+export function recordReachableSql(scope, entity, id) {
+  const def = ENTITY_RECORDS[entity];
+  if (!def) throw new Error(`Unknown record kind: ${entity}`);
+  if (def.shared || scope.unrestricted) return null;
+  const params = [String(id)];
+  const mine = def.parent === 'own'
+    ? ownerClause(scope, params, { alias: 'r' })
+    : parentClause(scope, params, { kind: def.parent, alias: 'r' });
+  return {
+    label: def.label,
+    params,
+    sql: `SELECT 1 FROM ${def.relation} r WHERE r.${def.key}::text = $1 AND ${mine}`,
+  };
+}
+
+/**
+ * Refuse a record this request may not reach, whichever table it is in.
+ *
+ * One gate in front of a composite response is worth more than a predicate
+ * on each of its parts: the timeline reads seven tables about one record,
+ * and a rule applied in six of them is not a rule. Gate the record, and
+ * everything hanging off it follows.
+ *
+ * 404, like every other ownership refusal, so asking about a record does
+ * not confirm that it exists.
+ */
+export async function assertRecordReachable(scope, entity, id, db = null) {
+  const probe = recordReachableSql(scope, entity, id);
+  if (!probe) return;
+  const run = db?.query ? (text, values) => db.query(text, values) : query;
+  const { rowCount } = await run(probe.sql, probe.params);
+  if (!rowCount) throw new ApiError(404, `${probe.label} not found`);
 }
 
 /** Fold a clause into a list of others, skipping the empty admin case. */

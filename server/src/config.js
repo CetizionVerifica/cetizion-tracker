@@ -5,7 +5,12 @@ import dotenv from 'dotenv';
 // Resolved against this file rather than the working directory, so
 // `node server/src/index.js` from the repo root reads server/.env too.
 // Starting with the wrong credentials is not a failure you want to be quiet.
-dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env') });
+// A test that asserts what happens when a variable is unset cannot do so
+// while .env quietly supplies one. This is the opt-out those tests use;
+// nothing else sets it, so ordinary runs load .env exactly as before.
+if (process.env.SKIP_DOTENV !== '1') {
+  dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '..', '.env'), quiet: true });
+}
 
 const dbName = process.env.PGDATABASE || 'cetizion_tracker';
 
@@ -47,6 +52,28 @@ export const config = {
   },
   // Cloudinary's Free plan refuses files over 10 MB.
   documentMaxBytes: Math.round((Number(process.env.DOCUMENT_MAX_MB) || 10) * 1024 * 1024),
+  // Connected mailboxes (#29): a Microsoft Entra app registration.
+  microsoft: {
+    tenantId: process.env.MS_TENANT_ID || '',
+    clientId: process.env.MS_CLIENT_ID || '',
+    clientSecret: process.env.MS_CLIENT_SECRET || '',
+    redirectUri: process.env.MS_REDIRECT_URI || '',
+    appOnly: process.env.MS_APP_ONLY === 'true',
+    webhookUrl: process.env.MAIL_WEBHOOK_URL || '',
+    tokenKey: process.env.MAIL_TOKEN_KEY || '',
+    // Sign-in reuses the Entra app the mailbox sync already needs, but not
+    // its redirect: a consent granted for reading mail must not come back
+    // as a sign-in. Blank means "no Microsoft button".
+    signInRedirectUri: process.env.MS_SIGNIN_REDIRECT_URI || '',
+  },
+  // Sign in with Google (C18). A new OAuth client — nothing else here uses
+  // Google. All three blank is the normal state; the button only appears
+  // once all three are set.
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || '',
+  },
   // Outgoing email (#21). Mode defaults to log, so nothing leaves a server
   // until someone deliberately sets live (or sandbox with an allowlist).
   mail: {

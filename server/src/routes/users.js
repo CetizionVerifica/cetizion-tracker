@@ -182,6 +182,16 @@ function userEditMetadata(before, after) {
   const changed = before ? fields.filter((f) => before[f] !== after[f]) : fields;
   const metadata = { changed_fields: changed };
 
+  // What it changed from and to, not only that it changed. An admin
+  // repointing somebody's account at an address they control is the case
+  // this log exists for, and "an email changed on user 5 at 14:03" cannot
+  // be acted on without going to a backup for the old value.
+  for (const field of ['name', 'email']) {
+    if (before && changed.includes(field)) {
+      metadata[`old_${field}`] = before[field];
+      metadata[`new_${field}`] = after[field];
+    }
+  }
   if (before && changed.includes('role')) {
     metadata.old_role = before.role;
     metadata.new_role = after.role;

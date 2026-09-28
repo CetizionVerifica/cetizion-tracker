@@ -419,6 +419,17 @@ refuses to overwrite it.
 
 ---
 
+## Operations, security and integrations
+
+| Guide | What it covers |
+| --- | --- |
+| [docs/operations.md](docs/operations.md) | The incident note: where to look, how to roll back, who to tell; error tracking, uptime checks, alerts and metrics |
+| [docs/backups.md](docs/backups.md) | Off-site backups, the weekly restore check, and the restore runbook |
+| [docs/security.md](docs/security.md) | Closing the database port, where secrets live, rotating them, sign-in protection, access review |
+| [docs/staging.md](docs/staging.md) | The staging environment: what it is for, how it is deployed and refreshed |
+| [docs/mcp.md](docs/mcp.md) | Asking Claude about live tracker data |
+| [docs/webhooks-n8n.md](docs/webhooks-n8n.md) | Webhooks, signatures and two n8n recipes |
+
 ## Notes before production use
 
 Sign-in closes the front door. Still missing for wider use:

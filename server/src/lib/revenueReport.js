@@ -2,7 +2,7 @@ import { query } from '../db.js';
 import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
-import { r2, share as ratio } from './reportMath.js';
+import { r2, share as ratio } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**

@@ -1,9 +1,11 @@
+import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
 
 export default function TravelLogs() {
+  const navigate = useNavigate();
   const lookups = useLookups();
 
   const columns = [
@@ -42,6 +44,9 @@ export default function TravelLogs() {
       subtitle="HR logs each trip once — vendor bills and employee claims attach to the travel ID"
       resource="travel-logs"
       columns={columns}
+      // The trip is where its vendor bills and employee claims meet, so
+      // the row opens the trip rather than a form over the list.
+      onRowClick={(row) => navigate(`/travel/${encodeURIComponent(row.travel_id)}`)}
       fields={fields}
       newLabel="Trip"
       formTitle="trip"

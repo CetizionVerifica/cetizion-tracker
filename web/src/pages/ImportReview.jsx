@@ -27,6 +27,20 @@ const STEPS = [
 ];
 
 const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Replace with sheet' }];
+// Only for a quotation matched by client and service alone: it may be a different deal.
+const NEW_CHOICE = { value: 'create', label: 'Import as new' };
+
+/**
+ * How the batch was planned, in words rather than the model id the server
+ * stored. Which model read the sheet is an internal detail — it means
+ * nothing to whoever is importing, and it changes whenever the importer is
+ * retuned. The id stays on the batch row for the record.
+ *
+ * Without a key the server writes "no AI key: rules only"; anything else is
+ * a model that was actually used.
+ */
+const plannedWith = (aiModel) =>
+  aiModel && !aiModel.startsWith('no AI key') ? 'AI-assisted' : 'rules only';
 
 const FIELDS = {
   quotation: [
@@ -156,7 +170,7 @@ export default function ImportReview() {
     <>
       <PageHeader
         title={`Import #${batch.id} · ${batch.filename}`}
-        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${batch.ai_model}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
+        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${plannedWith(batch.ai_model)}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
         actions={<Link className="btn" to="/import">All imports</Link>}
       />
       <div className="page stack">
@@ -250,6 +264,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
             <Badge tone="warning">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Badge>
             <div className="small" style={{ marginTop: 2 }}>on site as <span className="mono">{it.existing_ref}</span></div>
             <div className="small muted">matched by {f.match}</div>
+            {f.certain === false && <div className="small" style={{ color: 'var(--warn-fg)' }}>Not certain: confirm it is the same deal</div>}
           </div>
         );
       },
@@ -258,11 +273,17 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     { key: 'assumptions', header: 'Assumed', className: 'wrap small muted', render: (it) => it.assumptions.length ? it.assumptions.join(' · ') : '' },
     {
       key: 'action', header: 'Action',
-      render: (it) => it.existing_ref
-        ? (committed
-          ? <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'replaced' : 'kept original'}</Badge>
-          : <Select value={it.action} placeholder={null} options={DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />)
-        : <Badge tone="success">new</Badge>,
+      render: (it) => {
+        if (!it.existing_ref) return <Badge tone="success">new</Badge>;
+        if (committed) {
+          if (it.action === 'create') return <Badge tone="success">imported as new</Badge>;
+          return <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'replaced' : 'kept original'}</Badge>;
+        }
+        // A project follows its quotation's choice.
+        if (it.action === 'create' && it.step !== 'quotation') return <Badge tone="success">new, with its quotation</Badge>;
+        const uncertain = it.step === 'quotation' && dupFlag(it)?.certain === false;
+        return <Select value={it.action} placeholder={null} options={uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />;
+      },
     },
     committed
       ? { key: 'committed_ref', header: 'Written as', className: 'mono small' }
@@ -318,6 +339,7 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     ],
   }[stepKey];
 
+  const possible = items.filter((it) => it.existing_ref && dupFlag(it)?.certain === false).length;
   return (
     <Card
       flush
@@ -342,6 +364,17 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
         </div>
       }
     >
+      {possible > 0 && (
+        <div style={{ padding: '10px 14px 0' }}>
+          <Alert tone="warning">
+            {possible} possible duplicate{possible === 1 ? ' was' : 's were'} matched only by client name and service
+            (and the proposal date, when the sheet has one). This is how Lost, Under Negotiation and On Hold deals are
+            matched, because they have no PO number; a quotation number in the sheet makes the match exact. The match
+            may be wrong: a client can have two proposals for the same service. Check each one before keeping the
+            original: if it is a different deal, choose "Import as new" and it is added with the next quotation number.
+          </Alert>
+        </div>
+      )}
       <DataTable
         rows={rows}
         columns={[...base, ...middle, ...tail]}

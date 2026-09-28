@@ -6,7 +6,7 @@ import {
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
-import { nameKey, normalizeName } from './names.js';
+import { nameKey, normalizeName } from './names.ts';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
 
@@ -37,13 +37,22 @@ export function buildWhere(def, reqQuery, params, extra = []) {
   for (const col of def.filters || []) {
     const raw = reqQuery[col];
     if (raw === undefined || raw === '') continue;
-    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean);
+    // Old names for a value (e.g. enquiry statuses renamed by #24) still
+    // filter, the same way the schema accepts them on a write.
+    const aliases = def.filterAliases?.[col] || {};
+    const values = String(raw).split(',').map((v) => v.trim()).filter(Boolean).map((v) => aliases[v] ?? v);
     if (!values.length) continue;
     // Free-text names match the way the sales reports group them: case and
     // extra spaces ignored, and a blank value counts as not set.
     const normalized = def.normalizedFilters?.includes(col);
     if (values.length === 1 && values[0] === '__none__') {
       clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NULL` : `${ident(col)} IS NULL`);
+      continue;
+    }
+    // The other half of __none__: any value at all. The data-quality page
+    // needs it to say "invoiced" (?invoice_no=__any__) without a status list.
+    if (values.length === 1 && values[0] === '__any__') {
+      clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NOT NULL` : `${ident(col)} IS NOT NULL`);
       continue;
     }
     if (normalized) {
@@ -114,21 +123,63 @@ function scopedIdPredicate(def, rawId, params, scope, relation) {
  * moment it existed. 404, like every other ownership refusal, so the attempt
  * does not confirm the parent exists.
  */
+
+// The columns each parent-derived kind reads off the row being written, with
+// the type the one-row relation below has to hand them so the predicate sees
+// the same shape it would on the real table.
+const PARENT_KEYS = {
+  purchase_order: [['quotation_no', 'text'], ['project_id', 'text']],
+  via_po: [['po_number', 'text']],
+  via_stage: [['stage_id', 'int']],
+  quotation: [['quotation_id', 'int']],
+  project: [['project_id', 'text']],
+  entity: [['entity', 'text'], ['entity_id', 'text']],
+};
+
 async function assertParentReachable(client, def, values, scope) {
-  if (!def.ownerScopedBy || scope.unrestricted) return;
-  const params = [];
-  let where;
-  if (def.ownerScopedBy === 'purchase_order') {
-    params.push(values.quotation_no ?? null, values.project_id ?? null);
-    where = parentClause(scope, params, { kind: 'purchase_order', alias: 'parent' });
-    where = `SELECT 1 FROM (SELECT $1::text AS quotation_no, $2::text AS project_id) parent WHERE ${where}`;
-  } else {
-    params.push(values.po_number ?? null);
-    where = parentClause(scope, params, { kind: 'via_po', alias: 'parent' });
-    where = `SELECT 1 FROM (SELECT $1::text AS po_number) parent WHERE ${where}`;
-  }
-  const { rowCount } = await client.query(where, params);
+  const kind = def.ownerScopedBy;
+  if (!kind || scope.unrestricted) return;
+  const keys = PARENT_KEYS[kind];
+  // A kind with no key list here would otherwise be checked against the
+  // wrong column, which reads as "reachable" — the one failure this whole
+  // function exists to prevent. Louder is safer.
+  if (!keys) throw new Error(`Unknown ownership parent: ${kind}`);
+
+  const params = keys.map(([col]) => values[col] ?? null);
+  const columns = keys.map(([col, type], i) => `$${i + 1}::${type} AS ${col}`).join(', ');
+  const where = parentClause(scope, params, { kind, alias: 'parent' });
+  const { rowCount } = await client.query(
+    `SELECT 1 FROM (SELECT ${columns}) parent WHERE ${where}`,
+    params
+  );
   if (!rowCount) throw new ApiError(404, `${def.label} not found`);
+}
+
+/**
+ * The same check for an update that moves a row from one parent to another.
+ *
+ * Reads only the parent keys, and reads them through the scoped predicate,
+ * so a row the caller cannot reach is "not found" here exactly as it is
+ * everywhere else. Locked, so the row cannot be moved out from under the
+ * check by a concurrent save — for the resources that run in a transaction;
+ * for the others the UPDATE's own predicate is still the thing that decides.
+ */
+async function assertDestinationReachable(client, def, id, values, scope) {
+  const kind = def.ownerScopedBy;
+  if (!kind || scope.unrestricted) return;
+  const keys = PARENT_KEYS[kind];
+  if (!keys) throw new Error(`Unknown ownership parent: ${kind}`);
+  if (!keys.some(([col]) => Object.hasOwn(values, col))) return;
+
+  const params = [];
+  const pred = scopedIdPredicate(def, id, params, scope, def.table);
+  const { rows: [current] } = await client.query(
+    `SELECT ${keys.map(([col]) => ident(col)).join(', ')} FROM ${ident(def.table)}
+      WHERE ${pred} FOR UPDATE`,
+    params
+  );
+  if (!current) throw new ApiError(404, `${def.label} not found`);
+  await assertParentReachable(client, def, { ...current, ...values }, scope);
 }
 
 function pickWritable(def, body) {
@@ -153,7 +204,12 @@ function validate(def, body, { partial }) {
   // input:  everything the schema accepted, including fields that belong to a
   //         related table — a project's won quotation lives on quotations, so
   //         onSave needs it even though projects has no such column.
-  return { values: pickWritable(def, parsed.data), input: parsed.data };
+  const values = pickWritable(def, parsed.data);
+  if (!partial) return { values, input: parsed.data };
+  // An update writes only what it was sent. zod 4 applies .default() inside
+  // .partial() too, so without this an edit to a PO's remarks resets its value to 0.
+  const sent = Object.fromEntries(Object.entries(values).filter(([col]) => Object.hasOwn(body, col)));
+  return { values: sent, input: parsed.data };
 }
 
 /**
@@ -191,7 +247,7 @@ export function idPredicate(def, id, params) {
  * purge cannot remove it underneath the record. Returns the document being
  * replaced, if any, so it can be removed once the record is committed.
  */
-async function claimDocument(client, def, values, id) {
+async function claimDocument(client, def, values, id, scope) {
   // Keeping the current document means not writing the column at all, so an
   // update that never mentions it cannot blank it.
   if (values.document_id === null || values.document_id === undefined) {
@@ -202,8 +258,15 @@ async function claimDocument(client, def, values, id) {
   let current = null;
   if (id !== undefined) {
     const params = [];
+    // Scoped like every other read of one row. Unscoped, this read ran
+    // before the UPDATE that carries the predicate and answered "found" or
+    // "not found" about a record the caller may not reach — and the file it
+    // named would be released for replacement on the way past.
+    const pred = scope
+      ? scopedIdPredicate(def, id, params, scope, def.table)
+      : idPredicate(def, id, params);
     const { rows } = await client.query(
-      `SELECT document_id FROM ${ident(def.table)} WHERE ${idPredicate(def, id, params)} FOR UPDATE`,
+      `SELECT document_id FROM ${ident(def.table)} WHERE ${pred} FOR UPDATE`,
       params
     );
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
@@ -284,6 +347,14 @@ export function crudRouter(name, def) {
 
   router.post('/', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: false });
+    // Who wrote it, taken from the session rather than the request body: a
+    // note or a file with nobody's name on it is the timeline saying an
+    // anonymous someone did this, which #22 asks it not to do. Only filled
+    // when the caller left it blank, so an import can still carry its own.
+    if (def.stampActor && !values[def.stampActor]) {
+      const actor = req.user?.name || req.user?.username;
+      if (actor) values[def.stampActor] = actor;
+    }
 
     // A sales user owns what they enter. Taken from the session, never from
     // the body — owner_user_id is in no resource's writable columns, so a
@@ -373,7 +444,16 @@ export function crudRouter(name, def) {
     }
 
     const { id, extra, replacedDocument } = await write(async (client) => {
-      const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id) : null;
+      // Re-pointing a row at another parent is a write into that parent's
+      // record — a task moved onto somebody else's quotation appears on
+      // their timeline. The UPDATE below carries the predicate for where the
+      // row is now; this is the other half, for where it is going. Only the
+      // keys actually sent are taken from the payload, so a partial move
+      // (entity_id without entity) is judged against the row as it will be,
+      // not against half of it.
+      await assertDestinationReachable(client, def, req.params.id, values, scopeOf(req));
+
+      const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id, scopeOf(req)) : null;
       const cols = Object.keys(values);
       // A resource may accept a field that lives on a related table (a
       // project's won quotation), so a save with no column of its own is still

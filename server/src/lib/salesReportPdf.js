@@ -1,12 +1,10 @@
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import pdfmake from 'pdfmake';
+import pdfmake from './pdf.js';
 import { MONTH_NAMES, amounts, compactInr, decimal, money, number, percent, plural } from './reportFormat.js';
-import { share } from './reportMath.js';
-import { QUOTATION_STATUS } from './statuses.js';
+import { share } from './reportMath.ts';
+import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 import { COLORS, donut, horizontalBars, stackedColumns } from './pdfCharts.js';
 import {
-  clientAnalysis, enquiryAnalysis, headline, managementFixes, quotationStatusAnalysis, revenueAnalysis,
+  clientAnalysis, daysBetween, enquiryAnalysis, headline, managementFixes, quotationStatusAnalysis, revenueAnalysis,
   sectorAnalysis, serviceAnalysis,
 } from './salesReviewAnalysis.js';
 
@@ -17,16 +15,6 @@ import {
  */
 
 export { money };
-
-const require = createRequire(import.meta.url);
-const ROBOTO = require('pdfmake/fonts/Roboto.js');
-const FONT_DIR = resolve(dirname(ROBOTO.Roboto.normal));
-
-pdfmake.setFonts(ROBOTO);
-// The report is built only from our own data: it may read the bundled fonts
-// and nothing else, and it never fetches a URL.
-pdfmake.setUrlAccessPolicy(() => false);
-pdfmake.setLocalAccessPolicy((path) => resolve(path).startsWith(FONT_DIR));
 
 const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
 const INK_900 = '#0f172a';
@@ -244,20 +232,18 @@ function tile(value, label, meta) {
 
 export function salesReportDocDefinition(data) {
   const {
-    period = {}, year, month = null, sectors, customers, fx, revenue, enquiries, quotationStatus, services, gaps,
-    rates = {}, generatedAt = new Date(), timeZone = 'UTC', revenuePeriod = { from: null, to: null },
+    period = {}, sectors, customers, fx, revenue, enquiries, quotationStatus, services, contracts, gaps,
+    rates = {}, generatedAt = new Date(), timeZone = 'UTC',
   } = data;
 
   const stamp = generatedStamp(generatedAt, timeZone);
   const today = dateIn(generatedAt, timeZone);
   const periodText = periodLabel(period);
-  // For use inside a sentence: "Sections 1–5 cover all dates."
-  const periodPhrase = period.from || period.to ? periodText : 'all dates';
-  // The revenue section covers a calendar year, or one month of it.
-  const revenueLabel = month ? `${MONTHS[Number(month) - 1]} ${year}` : String(year);
-  const revenueScope = month ? revenueLabel : `calendar year ${year}`;
-  // revenuePeriod is the range the revenue figures were fetched for, worked out once by the route.
-  const samePeriods = period.from === revenuePeriod.from && period.to === revenuePeriod.to;
+  // Every section, revenue included, covers the same period now — there is
+  // no separate year/month picker for revenue any more, and no second phrase
+  // for it either, so the report never reads "All time" in one place and
+  // "all dates" in another for the same thing.
+  const revenueLabel = periodText;
 
   // Sector won value in INR. Converted in SQL at the rate in force on each
   // quotation's own date, the same lookup every other figure here uses.
@@ -326,7 +312,7 @@ export function salesReportDocDefinition(data) {
           stack: [
             { text: 'CETIZION VERIFICA PRIVATE LIMITED', style: 'brandTag' },
             { text: 'Sales & Enquiry Performance Review', style: 'title' },
-            { text: `Sales period: ${periodText}     |     Revenue: ${month ? revenueLabel : `Calendar year ${year}`}`, style: 'subtitle' },
+            { text: `Period: ${periodText}`, style: 'subtitle' },
           ],
           fillColor: NAVY,
           margin: [18, 16, 18, 16],
@@ -346,7 +332,7 @@ export function salesReportDocDefinition(data) {
         widths: ['*', '*', '*'],
         body: [
           [
-            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} declined`),
+            tile(number(et.enquiries), 'Enquiries received', `${number(et.quoted)} quoted · ${number(et.declined)} unqualified`),
             tile(number(sectors.summary.pos), 'POs won', `Win rate ${percent(sectors.summary.win_rate)} on decided quotations`),
             tile(compactInr(ct.won_value_inr), 'Won value (INR)', ct.unconverted.length ? `+ ${amounts(ct.unconverted)} without a rate` : `${plural(ct.clients, 'client')}`),
           ],
@@ -371,13 +357,6 @@ export function salesReportDocDefinition(data) {
       margin: [0, 0, 0, 10],
     },
     callout(head),
-    samePeriods
-      ? null
-      : callout({
-          tag: 'PLEASE NOTE',
-          tone: 'note',
-          text: `Sections 1–5 cover ${periodPhrase}. Section 6 covers ${revenueScope}, the year and month chosen in the Revenue section of the Sales reports page.`,
-        }),
     { text: 'KEY FINDINGS', style: 'kicker' },
     findings.length
       ? {
@@ -402,7 +381,7 @@ export function salesReportDocDefinition(data) {
     { text: 'IN THIS REPORT', style: 'kicker' },
     {
       columns: [
-        { ol: ['Enquiry volume', 'Quotation status', 'Sector-wise performance', 'Service-wise sales'], style: 'small' },
+        { ol: ['Enquiry volume', 'Quotation status, and contracts received', 'Sector-wise performance', 'Service-wise sales'], style: 'small' },
         {
           stack: [
             { ol: ['Client analysis', 'Revenue and collections', 'What management needs to fix'], start: 5, style: 'small' },
@@ -422,7 +401,7 @@ export function salesReportDocDefinition(data) {
         series: [
           { name: 'Quotation sent', color: GREEN, values: months.map((m) => m.quoted) },
           { name: 'In progress', color: GOLD, values: months.map((m) => m.in_progress) },
-          { name: 'Declined', color: RED, values: months.map((m) => m.declined) },
+          { name: 'Unqualified', color: RED, values: months.map((m) => m.declined) },
         ],
         width: W,
         height: 190,
@@ -430,20 +409,82 @@ export function salesReportDocDefinition(data) {
         integer: true,
       })
     : null;
+  const pipeline = enquiries.pipeline;
   const volumeMeasures = [
     ['Enquiries received', number(et.enquiries)],
     ['Average per month', decimal(enquiries.average_per_month)],
     ['Busiest month', enquiries.busiest ? `${enquiries.busiest.label} — ${number(enquiries.busiest.enquiries)}` : '—'],
     ['Quotation sent', number(et.quoted)],
-    ['In progress', number(et.in_progress)],
-    ['Declined', number(et.declined)],
+    ['Reached a contract (PO)', number(pipeline.contracted)],
+    ['Quoted, no contract yet', number(Math.max(et.quoted - pipeline.contracted, 0))],
+    ['In progress (not yet quoted)', number(et.in_progress)],
+    ['Unqualified', number(et.declined)],
+    ['TAT — enquiry to contract (average)', pipeline.tat_count ? `${decimal(pipeline.average_tat_days)} days` : '— (none reached a contract yet)'],
+
     ...(gaps.undated_enquiries ? [['Enquiries with no date (not counted)', number(gaps.undated_enquiries)]] : []),
   ];
+  const mixColumn = (title, rows) => ({
+    width: '*',
+    stack: [
+      { text: title, bold: true, fontSize: 8.5, color: NAVY, margin: [0, 0, 0, 3] },
+      reportTable({
+        columns: [
+          { header: title, value: (r) => r.label },
+          { header: 'Enquiries', value: (r) => number(r.count), align: 'right', width: 40 },
+        ],
+        rows,
+        empty: 'Not recorded yet.',
+        compact: true,
+        fontSize: 7.5,
+      }),
+    ],
+  });
+  const mixSection = et.enquiries
+    ? subsection(
+        'Enquiry mix — source, sector and country',
+        'How this period’s enquiries break down, whatever became of them.',
+        { columns: [mixColumn('Source', pipeline.by_source), mixColumn('Sector', pipeline.by_sector), mixColumn('Country', pipeline.by_country)], columnGap: 12 },
+        Math.max(pipeline.by_source.length, pipeline.by_sector.length, pipeline.by_country.length) + 1
+      )
+    : null;
+  // A stage name plus how long it has taken: a final TAT once there is a
+  // contract, a running count ("so far") while the enquiry is still moving.
+  const enquiryStage = (row) => {
+    if (row.tat_days != null) return `Contract awarded — ${plural(row.tat_days, 'day')}`;
+    if (row.status === ENQUIRY_STATUS.declined) return 'Declined';
+    const label = row.status === ENQUIRY_STATUS.quoted ? 'Quotation sent' : 'In progress';
+    const soFar = row.enquiry_date ? daysBetween(row.enquiry_date, today) : null;
+    return soFar != null ? `${label} — ${plural(soFar, 'day')} so far` : label;
+  };
+  const detailSection = et.enquiries
+    ? subsection(
+        'Enquiry detail',
+        'Every enquiry in the period: source, service, sector, country and its stage, with the TAT (turnaround time) to a signed contract — running while it is still open, final once a contract is awarded.',
+        reportTable({
+          columns: [
+            { header: 'Enquiry', value: (r) => lines(r.enquiry_no, note(dateLabel(r.enquiry_date))), width: 68 },
+            { header: 'Client', value: (r) => r.client },
+            { header: 'Source', value: (r) => r.source || '—', width: 58 },
+            { header: 'Service', value: (r) => r.service || '—' },
+            { header: 'Sector', value: (r) => r.sector || '—', width: 58 },
+            { header: 'Country', value: (r) => r.country || '—', width: 58 },
+            { header: 'Stage (TAT)', value: enquiryStage, width: 96 },
+          ],
+          rows: pipeline.detail,
+          empty: 'No enquiries in this period.',
+          compact: true,
+          fontSize: 7,
+        }),
+        pipeline.detail.length + 1
+      )
+    : null;
   const volumeSection = [
     section(1, 'Enquiry volume', eA.lead, [figure(1, 'Enquiries by month and status', volumeChart, '')]),
     et.enquiries
       ? { columns: [{ width: 210, stack: [measureTable(volumeMeasures)] }, { width: '*', stack: eA.insights.map(callout) }], columnGap: 14, unbreakable: true }
       : insightsBlock(eA.insights),
+    mixSection,
+    detailSection,
   ];
 
   // ------------------------------------------------ 2. quotation status
@@ -516,6 +557,153 @@ export function salesReportDocDefinition(data) {
       empty: '',
     }),
   ];
+
+  const qPipeline = quotationStatus.pipeline;
+  // Always says how many quotations the average is built from, and names
+  // both reasons one can be left out: no value entered, or no exchange rate
+  // for its currency — so the count behind the figure is never a mystery.
+  const ticketExclusions = [
+    qPipeline.quotations_without_value ? `${plural(qPipeline.quotations_without_value, 'quotation')} with no value` : null,
+    qPipeline.quotations_without_rate ? `${plural(qPipeline.quotations_without_rate, 'quotation')} with no exchange rate` : null,
+  ].filter(Boolean);
+  const ticketDetail = `From ${plural(qPipeline.average_ticket_count, 'quotation')} of ${number(qPipeline.total)}` +
+    (ticketExclusions.length ? ` — ${ticketExclusions.join(', ')} excluded` : '');
+  const conversionMeasures = [
+    ['Conversion ratio (quotation → contract)', qPipeline.total ? percent(qPipeline.conversion_rate) : '—'],
+    [
+      'Average ticket size (INR)',
+      qPipeline.average_ticket_inr != null ? lines(compactInr(qPipeline.average_ticket_inr), note(ticketDetail)) : '—',
+    ],
+    ['TAT — quotation to contract (average)', qPipeline.tat_count ? `${decimal(qPipeline.average_tat_days)} days` : '— (none reached a contract yet)'],
+    // Status says won, but no PO is on record — a data gap, so named on its
+    // own rather than folded into "pending" (a decided deal is not pending).
+    ...(qPipeline.won_without_po
+      ? [['Won, but no PO registered yet', { text: `${plural(qPipeline.won_without_po, 'quotation')} — register its purchase order`, alignment: 'left' }]]
+      : []),
+  ];
+  const conversionSection = qt.quotations
+    ? {
+        columns: [
+          { width: 250, stack: [measureTable(conversionMeasures)] },
+          {
+            width: '*',
+            stack: [
+              { text: 'Quotations by country', bold: true, fontSize: 8.5, color: NAVY, margin: [0, 0, 0, 3] },
+              reportTable({
+                columns: [
+                  { header: 'Country', value: (r) => r.label },
+                  { header: 'Quotations', value: (r) => number(r.count), align: 'right', width: 60 },
+                ],
+                rows: qPipeline.by_country,
+                empty: 'Not recorded yet.',
+                compact: true,
+              }),
+            ],
+          },
+        ],
+        columnGap: 14,
+        unbreakable: true,
+        margin: [0, 4, 0, 0],
+      }
+    : null;
+
+  // A stage name plus how long it has taken: a final TAT once there is a
+  // contract, a running count ("so far") while the quotation is still open.
+  const quotationStage = (row) => {
+    if (row.tat_days != null) return `Contract awarded — ${plural(row.tat_days, 'day')}`;
+    if (row.status === QUOTATION_STATUS.lost) return 'Lost';
+    const label = STATUS_STYLE[row.status]?.label ?? row.status;
+    const soFar = row.quotation_date ? daysBetween(row.quotation_date, today) : null;
+    return soFar != null ? `${label} — ${plural(soFar, 'day')} so far` : label;
+  };
+  const quotationDetailSection = qt.quotations
+    ? subsection(
+        'Quotation detail',
+        'Every quotation in the period: service, sector, country, quoted value and its stage, with TAT (turnaround time) to a signed contract.',
+        reportTable({
+          columns: [
+            { header: 'Quotation', value: (r) => lines(r.quotation_no, note(dateLabel(r.quotation_date))), width: 70 },
+            { header: 'Client', value: (r) => r.client },
+            { header: 'Service', value: (r) => r.service || '—' },
+            { header: 'Sector', value: (r) => r.sector || '—', width: 58 },
+            { header: 'Country', value: (r) => r.country || '—', width: 58 },
+            { header: 'Quoted value', value: (r) => money(r.quotation_value, r.currency), align: 'right', width: 68 },
+            { header: 'Stage (TAT)', value: quotationStage, width: 96 },
+          ],
+          rows: qPipeline.detail,
+          empty: 'No quotations in this period.',
+          compact: true,
+          fontSize: 7,
+        }),
+        qPipeline.detail.length + 1
+      )
+    : null;
+  statusSection.push(conversionSection, quotationDetailSection);
+
+  // ---------------------------------- contracts (purchase orders) received
+  // By the PO's own date, not the quotation's — a contract can land in a
+  // different period than the quotation that won it. service/sector/country
+  // come from the linked quotation (purchaseOrderRows resolves that link).
+  const contractMeasures = [
+    ['Purchase orders received', number(contracts.total)],
+    [
+      'Total contract value (INR)',
+      contracts.total ? lines(
+        money(contracts.value_inr),
+        contracts.unconverted?.length ? note(`+ ${amounts(contracts.unconverted)} (no rate)`, 'warnNote') : null,
+        contracts.without_value ? note(`${plural(contracts.without_value, 'PO')} with no value`) : null
+      ) : '—',
+    ],
+  ];
+  const contractMixColumn = (title, rows) => ({
+    width: '*',
+    stack: [
+      { text: title, bold: true, fontSize: 8.5, color: NAVY, margin: [0, 0, 0, 3] },
+      reportTable({
+        columns: [
+          { header: title, value: (r) => r.label },
+          { header: 'POs', value: (r) => number(r.count), align: 'right', width: 36 },
+        ],
+        rows,
+        empty: 'Not recorded yet.',
+        compact: true,
+        fontSize: 7.5,
+      }),
+    ],
+  });
+  const contractIntro = subsection(
+    'Contracts (purchase orders) received',
+    contracts.total
+      ? `${plural(contracts.total, 'purchase order')} ${contracts.total === 1 ? 'was' : 'were'} received in the period, by the PO's own date.`
+      : 'No purchase orders were dated in this period.',
+    contracts.total ? measureTable(contractMeasures) : { text: '', margin: [0, 0, 0, 0] },
+    2
+  );
+  const contractMixRow = contracts.total
+    ? { columns: [contractMixColumn('Service', contracts.by_service), contractMixColumn('Sector', contracts.by_sector), contractMixColumn('Country', contracts.by_country)], columnGap: 12, margin: [0, 8, 0, 0] }
+    : null;
+  const contractDetailSection = contracts.total
+    ? subsection(
+        'Contract detail',
+        'Every purchase order received in the period: the service, sector and country of the quotation it fulfils, and its value.',
+        reportTable({
+          columns: [
+            { header: 'PO', value: (r) => lines(r.po_number, note(dateLabel(r.po_date))), width: 74 },
+            { header: 'Client', value: (r) => r.client || '—' },
+            { header: 'Service', value: (r) => r.service || '—' },
+            { header: 'Sector', value: (r) => r.sector || '—', width: 58 },
+            { header: 'Country', value: (r) => r.country || '—', width: 58 },
+            { header: 'PO value', value: (r) => money(r.po_value, r.currency), align: 'right', width: 74 },
+          ],
+          rows: contracts.detail,
+          empty: 'No purchase orders in this period.',
+          compact: true,
+          fontSize: 7,
+        }),
+        contracts.detail.length + 1
+      )
+    : null;
+  const contractSection = [contractIntro, contractMixRow, contractDetailSection].filter(Boolean);
 
   // ------------------------------------------------ 3. sector-wise
   const sectorBars = sectorRows
@@ -857,8 +1045,8 @@ export function salesReportDocDefinition(data) {
       singleRows.length),
     subsection('D.  Notes and definitions', null, {
       ul: [
-        `Sections 1–5 cover ${periodPhrase}: enquiries by enquiry date, quotations by quotation date. Section 6 covers ${revenueScope}.`,
-        'Enquiries are the rows on the Enquiries page, counted by their status there: In Progress, Declined, or Won - Quotation Sent ("quotation sent").',
+        `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
+        'Enquiries are the rows on the Enquiries page, counted by their status there: open (New, Contacted, Qualified or Nurture), Unqualified, or Converted ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
         `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
         'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',
@@ -880,7 +1068,7 @@ export function salesReportDocDefinition(data) {
     info: {
       title: `Cetizion Sales & Enquiry Performance Review — ${periodText}`,
       author: 'Cetizion Tracker',
-      subject: `Sales ${periodText}; revenue ${revenueLabel}`,
+      subject: `Period: ${periodText}`,
       creator: 'Cetizion Tracker',
     },
     defaultStyle: { font: 'Roboto', fontSize: 8, color: INK_900, lineHeight: 1.15 },
@@ -890,7 +1078,7 @@ export function salesReportDocDefinition(data) {
         : {
             columns: [
               { text: 'CETIZION  ·  SALES & ENQUIRY PERFORMANCE REVIEW', style: 'runningHead' },
-              { text: `Sales ${periodText}  ·  Revenue ${revenueLabel}`, style: 'runningHead', alignment: 'right' },
+              { text: periodText, style: 'runningHead', alignment: 'right' },
             ],
             margin: [MARGIN_X, 22, MARGIN_X, 0],
           },
@@ -906,6 +1094,7 @@ export function salesReportDocDefinition(data) {
       { text: '', pageBreak: 'after' },
       ...volumeSection,
       ...statusSection,
+      ...contractSection,
       ...sectorSection,
       ...serviceSection,
       ...clientSection,

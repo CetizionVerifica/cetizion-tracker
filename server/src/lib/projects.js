@@ -1,5 +1,5 @@
 import { ApiError } from '../middleware/error.js';
-import { normalizeName } from './names.js';
+import { normalizeName } from './names.ts';
 import { ownerClause } from '../auth/ownership.js';
 import { QUOTATION_STATUS } from './statuses.js';
 

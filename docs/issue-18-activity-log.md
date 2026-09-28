@@ -1,7 +1,6 @@
 # Issue #18 Phase 1.5 — activity / audit log foundation
 
-Branch `feature/issue-18-activity-log`, stacked on
-`feature/issue-18-auth-hardening` (Phase 1C), which is not yet on `main`.
+Branch `feature/issue-18-activity-log`, built on Phase 1C (#81), which is on `main`.
 
 ## Why
 
@@ -20,7 +19,7 @@ drill-downs when Phase 2 gives records an owner.
 
 ## The table
 
-`activity_log`, migration `017_activity_log.sql`, mirrored in
+`activity_log`, migration `044_activity_log.sql`, mirrored in
 `db/schema.sql`.
 
 | column | | |
@@ -174,8 +173,8 @@ than in a trigger.
 
 ## Migration validation, and the comparison base
 
-This branch is stacked on Phase 1C, whose migration `016_session_version.sql`
-is not on `main`. So a database built from `main`'s `schema.sql` is **not**
+Phase 1C's `016_session_version.sql` is on `main` now, but this test still
+states its own starting schema rather than reading one, so a database built from `main`'s `schema.sql` is **not**
 the database 017 will be applied to, and validating against it would be
 validating against a schema that no deployment will ever be in.
 

@@ -1,10 +1,11 @@
 const BASE = '/api';
 
 export class ApiError extends Error {
-  constructor(message, { status, fields } = {}) {
+  constructor(message, { status, fields, details } = {}) {
     super(message);
     this.status = status;
     this.fields = fields || null;
+    this.details = details || null;
   }
 }
 
@@ -51,6 +52,7 @@ async function request(path, { method = 'GET', body, file, signal } = {}) {
     throw new ApiError(payload?.error?.message || `Request failed (${response.status})`, {
       status: response.status,
       fields: payload?.error?.fields,
+      details: payload?.error,
     });
   }
   return payload;

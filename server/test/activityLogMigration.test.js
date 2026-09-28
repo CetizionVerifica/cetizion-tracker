@@ -27,7 +27,7 @@ import pg from 'pg';
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
-const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '017_activity_log.sql'), 'utf8');
+const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '044_activity_log.sql'), 'utf8');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 
 // All 017 asks of the schema before it. Phase 1A created this table and

@@ -18,6 +18,9 @@ export default function Worklist() {
   const { data, loading, error, refetch } = useFetch(() => api.raw('/dashboard/worklist'));
   const [tab, setTab] = useState('all');
   const [dialog, setDialog] = useState(null);
+  const quiet = useFetch(() => api.raw('/communications/no-contact'));
+  const q = quiet.data?.data;
+  const quietCount = q ? q.quotations.length + q.enquiries.length + q.invoices.length : undefined;
 
   const w = data?.data;
   const close = () => setDialog(null);
@@ -67,10 +70,11 @@ export default function Worklist() {
             { key: 'claims', label: 'Expense claims', count: counts.claims },
             { key: 'delivery', label: 'Late delivery', count: counts.delivery },
             { key: 'sales', label: 'Unregistered wins', count: counts.sales },
+            { key: 'quiet', label: 'No contact', count: quietCount },
           ]}
         />
 
-        {!loading && totalCount === 0 && (
+        {!loading && totalCount === 0 && tab !== 'quiet' && (
           <Card>
             <Empty
               icon="✓"
@@ -250,6 +254,26 @@ export default function Worklist() {
                     </div>
                   ),
                 },
+              ]}
+            />
+          </Card>
+        )}
+        {tab === 'quiet' && q && (
+          <Card flush title={`No contact in ${q.days} days`} hint="Open deals, leads and overdue invoices nobody has called, messaged or met lately. Log a touch on the record to clear it. The number of days is in Settings (no_contact_days).">
+            <DataTable
+              rows={[
+                ...q.quotations.map((r) => ({ ...r, kind: 'Quotation', to: `/quotations/${encodeURIComponent(r.ref)}` })),
+                ...q.enquiries.map((r) => ({ ...r, kind: 'Enquiry', to: `/enquiries?q=${encodeURIComponent(r.ref)}` })),
+                ...q.invoices.map((r) => ({ ...r, ref: r.invoice_no, status: `${r.days_overdue} days overdue`, kind: 'Overdue invoice', to: '/collections' })),
+              ]}
+              empty={<Empty icon="✓" title="Everyone has been contacted recently" />}
+              columns={[
+                { key: 'kind', header: 'What', render: (r) => <Badge tone={r.kind === 'Overdue invoice' ? 'danger' : 'info'}>{r.kind}</Badge> },
+                { key: 'ref', header: 'Reference', className: 'mono', render: (r) => <Link to={r.to}>{r.ref}</Link> },
+                { key: 'client_name', header: 'Client', className: 'strong' },
+                { key: 'owner', header: 'Owner' },
+                { key: 'status', header: 'Status' },
+                { key: 'last_touch', header: 'Last touch', render: (r) => (r.last_touch ? date(r.last_touch) : 'never') },
               ]}
             />
           </Card>

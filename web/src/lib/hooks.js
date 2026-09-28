@@ -55,7 +55,7 @@ export function useLookups() {
       })
       .catch(() => {});
   }, []);
-  return data || { services: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], enums: {}, limits: {} };
+  return data || { services: [], catalogue: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], pipeline_stages: [], lost_reasons: [], lead_sources: [], payment_terms_templates: [], onboarding_templates: [], enums: {}, limits: {} };
 }
 
 export function invalidateLookups() {
@@ -105,4 +105,28 @@ export function useDebounced(value, delay = 250) {
     return () => clearTimeout(timer);
   }, [value, delay]);
   return debounced;
+}
+
+/**
+ * A media query as state, so a component can render one thing or the
+ * other rather than rendering both and hiding one.
+ *
+ * Hiding with CSS is fine for a wrapper. It is not fine for a table: it
+ * puts every row in the document twice, doubles the work on every render,
+ * and leaves tests and screen readers picking whichever copy comes first
+ * in the DOM — which is the hidden one.
+ */
+export function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    try { return window.matchMedia(query).matches; } catch { return false; }
+  });
+  useEffect(() => {
+    let mq;
+    try { mq = window.matchMedia(query); } catch { return undefined; }
+    const onChange = (event) => setMatches(event.matches);
+    mq.addEventListener('change', onChange);
+    setMatches(mq.matches);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
 }

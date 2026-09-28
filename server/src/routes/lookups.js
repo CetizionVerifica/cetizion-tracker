@@ -5,7 +5,7 @@ import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js'
 import { query } from '../db.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
-import { isSequence, nextId } from '../lib/sequences.js';
+import { isSequence, nextId, yearFor } from '../lib/sequences.js';
 
 export const lookupRouter = Router();
 
@@ -60,9 +60,9 @@ lookupRouter.get('/', async (req, res) => {
   const cur = statement(); const curQ = only(cur.owner('q')); const curPo = only(cur.po('po'));
 
   const [services, vendors, categories, projects, pos, trips, people, clients, sectors, settings, quotations,
-         currenciesInUse] =
+         currenciesInUse, stages, lostReasons, leadSources, ptt, pttLines, obt] =
     await Promise.all([
-      query('SELECT name FROM services WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query(`SELECT p.project_id, p.client_name FROM projects p ${pjWhere}
@@ -103,17 +103,28 @@ lookupRouter.get('/', async (req, res) => {
              ) c
               WHERE currency IS NOT NULL AND currency <> 'INR'
               ORDER BY 1`, cur.params),
+      // Master lists below: pipeline stages, lost reasons, lead sources and
+      // the payment-terms / onboarding templates are configuration, not
+      // anybody's records, so ownership does not narrow them.
+      query('SELECT id, name, probability, type, maps_to_status, color FROM pipeline_stages WHERE active ORDER BY sort_order'),
+      query('SELECT id, name FROM lost_reasons WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name FROM lead_sources WHERE active ORDER BY sort_order, name'),
+      query('SELECT id, name, is_default FROM payment_terms_templates WHERE active ORDER BY sort_order, name'),
+      query('SELECT template_id, stage_name, percent, trigger_event, credit_days, milestone_name FROM payment_terms_template_lines ORDER BY template_id, sort_order, id'),
+      query('SELECT id, name, is_default FROM onboarding_templates WHERE active ORDER BY sort_order, name'),
     ]);
 
   res.json({
     data: {
       services: services.rows.map((r) => r.name),
+      catalogue: services.rows,
       travel_vendors: vendors.rows.map((r) => r.name),
       expense_categories: categories.rows.map((r) => r.name),
       projects: projects.rows,
       purchase_orders: pos.rows,
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
+      staff: (await query('SELECT id, name, role FROM staff WHERE active ORDER BY name')).rows,
       clients: clients.rows.map((r) => r.name),
       companies: clients.rows,
       sectors: sectorOptions(sectors.rows.map((r) => r.name)),
@@ -124,6 +135,11 @@ lookupRouter.get('/', async (req, res) => {
       // still claim. won_quotations is the opposite set: already registered,
       // for linking a PO to its project's order.
       unregistered_quotations: quotations.rows.filter((q) => q.status === 'Won - PO Received' && !q.project_id),
+      pipeline_stages: stages.rows,
+      lost_reasons: lostReasons.rows,
+      lead_sources: leadSources.rows,
+      payment_terms_templates: ptt.rows.map((t) => ({ ...t, lines: pttLines.rows.filter((l) => l.template_id === t.id) })),
+      onboarding_templates: obt.rows,
       enums: STATUS,
       currencies_in_use: currenciesInUse.rows.map((r) => r.currency),
       limits: { document_max_bytes: config.documentMaxBytes },
@@ -172,10 +188,22 @@ settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
  * Suggest the next reference in a series (CTZ/QT/2026/063, PRJ-2026-008).
  * Only a suggestion — the field stays editable, and uniqueness is still
  * enforced by the database.
+ *
+ * `?on=YYYY-MM-DD` asks for the number the record's own date would take,
+ * rather than today's. It matters for the invoice series, which counts by
+ * financial year: an invoice dated 28 March belongs to the year that is
+ * ending, so a preview taken on 2 April would otherwise show a number the
+ * save will not use. Without it, today's year is assumed, which is right
+ * for every other series and for most of the year in this one.
  */
 lookupRouter.get('/next-id/:kind', async (req, res) => {
-  if (!isSequence(req.params.kind)) {
+  const { kind } = req.params;
+  if (!isSequence(kind)) {
     return res.status(404).json({ error: { message: 'Unknown id series' } });
   }
-  res.json({ data: { next: await nextId(req.params.kind) } });
+  const on = req.query.on ? String(req.query.on) : null;
+  if (on && !/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+    return res.status(422).json({ error: { message: 'Use YYYY-MM-DD for `on`', fields: { on: 'A date, as YYYY-MM-DD' } } });
+  }
+  res.json({ data: { next: await nextId(kind, undefined, yearFor(kind, on)) } });
 });

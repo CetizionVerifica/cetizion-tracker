@@ -12,7 +12,6 @@ import {
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
-import { businessYear } from '../lib/businessDate.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -79,47 +78,27 @@ async function runWithLimit(tasks, limit) {
   return results;
 }
 
-/** Days in a month, leap years included (Date.UTC would misread years below 100). */
-function daysInMonth(year, month) {
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-}
-
-/**
- * The whole sales report as one PDF: ?from=&to= for the sales sections, and
- * ?year=&month= (01–12, optional) for the revenue section, exactly as on screen.
- */
+/** The whole sales report as one PDF: ?from=&to=, exactly as on screen — every section, revenue included, covers the same period. */
 exportRouter.get('/sales-report.pdf', async (req, res) => {
   const period = reportPeriod(req.query);
-  const rawYear = String(req.query.year ?? '').trim();
-  // Postgres has no year 0, so 0000 would fail as a date deep inside a query.
-  if (rawYear && !(/^\d{4}$/.test(rawYear) && Number(rawYear) >= 1)) {
-    throw new ApiError(422, 'Use a four-digit year from 0001');
-  }
-  const year = rawYear || String(businessYear());
-  const month = String(req.query.month ?? '').trim() || null;
-  if (month && !/^(0[1-9]|1[0-2])$/.test(month)) throw new ApiError(422, 'Use a month from 01 to 12');
-  const revenuePeriod = month
-    ? { from: `${year}-${month}-01`, to: `${year}-${month}-${String(daysInMonth(Number(year), Number(month))).padStart(2, '0')}` }
-    : { from: `${year}-01-01`, to: `${year}-12-31` };
 
   // The PDF is a report of whatever the reader may see (#18 Phase 2C): a
   // sales user's covers their own pipeline, an admin's covers everything.
   const scope = scopeOf(req);
-  const [sectors, customers, fx, revenueData, review, gaps, rates] = await runWithLimit([
+  const [sectors, customers, fx, revenue, review, gaps, rates] = await runWithLimit([
     () => sectorReport(period, scope),
     () => customerReport(period, scope),
     () => fxReport(period, scope),
     // The PDF has no year picker, so the query behind it is skipped.
-    () => revenueReport(revenuePeriod, { includeYears: false, scope }),
+    () => revenueReport(period, { includeYears: false, scope }),
     () => salesReviewSections(period, scope),
     () => dataGaps(period, scope),
     () => exchangeRates(),
   ], REPORT_CONCURRENCY);
   const pdf = await salesReportPdf({
-    period, year: Number(year), month, revenuePeriod,
-    sectors, customers, fx, revenue: revenueData, gaps, rates,
-    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services,
+    period,
+    sectors, customers, fx, revenue, gaps, rates,
+    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services, contracts: review.contracts,
     generatedAt: new Date(),
     timeZone: reportTimeZone(req.query.tz),
   });

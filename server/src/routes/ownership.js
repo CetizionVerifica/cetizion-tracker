@@ -13,21 +13,28 @@ import { ApiError } from '../middleware/error.js';
 
 export const ownershipRouter = Router();
 
+/**
+ * "Missing" and "the wrong type" are different mistakes and deserve
+ * different messages. zod 4 — which the rest of the app is on — replaced
+ * `required_error` / `invalid_type_error` with one `error`, and silently
+ * ignores the old pair: left as they were, every field here answered with
+ * zod's own "Invalid input: expected number, received undefined" instead.
+ * The function form keeps both messages: an absent value has no input.
+ */
+const missingOr = (field, kind) => (issue) => (
+  issue.input === undefined ? `${field} is required` : `${field} must be ${kind}`
+);
+
 // Validation schema for ownership change
 const updateOwnerSchema = z.object({
   expected_owner_user_id: z.union([z.number().int().positive(), z.null()], {
-    required_error: 'expected_owner_user_id is required',
-    invalid_type_error: 'expected_owner_user_id must be an integer or null',
+    error: missingOr('expected_owner_user_id', 'an integer or null'),
   }),
   new_owner_user_id: z.union([z.number().int().positive(), z.null()], {
-    required_error: 'new_owner_user_id is required',
-    invalid_type_error: 'new_owner_user_id must be an integer or null',
+    error: missingOr('new_owner_user_id', 'an integer or null'),
   }),
   reason: z
-    .string({
-      required_error: 'reason is required',
-      invalid_type_error: 'reason must be a string',
-    })
+    .string({ error: missingOr('reason', 'a string') })
     .trim()
     .min(1, 'A non-empty reason is required')
     .max(1000, 'Keep reason under 1000 characters'),

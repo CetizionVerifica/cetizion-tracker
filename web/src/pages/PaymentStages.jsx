@@ -71,6 +71,12 @@ export default function PaymentStages() {
     { name: 'stage_name', label: 'Stage name', required: true, hint: 'e.g. Advance (50%)' },
     { name: 'trigger_event', label: 'Trigger', type: 'select', options: lookups.enums?.trigger || [], default: 'On PO Registration', required: true },
     { name: 'stage_percent', label: 'Stage %', type: 'percent', required: true, hint: 'All stages on a PO should total 100' },
+    // A stage triggered by a milestone is due once that milestone is
+    // reached, and nothing else in the app writes the date. Without these
+    // two the trigger could be chosen and the stage could never be
+    // invoiced.
+    { name: 'milestone_name', label: 'Milestone', hint: 'Only for the On Milestone trigger, e.g. Stage 2 audit complete' },
+    { name: 'milestone_reached_on', label: 'Milestone reached on', type: 'date', hint: 'Fill this in when it happens: the stage becomes invoiceable' },
     { name: 'invoice_no', label: 'Invoice number' },
     { name: 'invoice_date', label: 'Invoice date', type: 'date' },
     { name: 'document_id', label: 'Invoice document', type: 'document', owner: 'payment-stages', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
@@ -95,6 +101,8 @@ export default function PaymentStages() {
         filters={[
           { name: 'stage_status', label: 'Status', options: ['To Invoice', 'Overdue', 'Due', 'Partially Paid', 'Paid', 'Not Due'] },
           { name: 'trigger_event', label: 'Trigger', options: lookups.enums?.trigger || [] },
+          { name: 'invoice_no', label: 'Invoice', options: [{ value: '__any__', label: 'Raised' }, { value: '__none__', label: 'Not raised' }] },
+          { name: 'document_id', label: 'Invoice document', options: [{ value: '__none__', label: 'Missing' }, { value: '__any__', label: 'Attached' }] },
         ]}
         banner={
           <Alert>

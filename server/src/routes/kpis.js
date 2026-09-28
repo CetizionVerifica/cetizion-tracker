@@ -3,7 +3,7 @@ import { requireAuth, requireAdmin } from '../auth/middleware.js';
 import { ApiError } from '../middleware/error.js';
 import { actorFrom } from '../lib/activity.js';
 import { transaction } from '../db.js';
-import { businessYear } from '../lib/businessDate.js';
+import { businessYear } from '../lib/businessDate.ts';
 import { isUnrestricted } from '../auth/ownership.js';
 import { getSalespersonKpis, getTeamSalesKpis } from '../lib/salesKpis.js';
 import { listSalesTargets, upsertSalesTarget } from '../lib/salesTargets.js';
