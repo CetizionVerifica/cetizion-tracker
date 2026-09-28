@@ -272,13 +272,26 @@ export function salesReportDocDefinition(data) {
     ...revenue.orders.total.order_unconverted.map((a) => a.currency),
     ...revenue.invoicing.total.missing_rates,
   ])].sort();
+  // Currencies whose newest rate is itself days old (lib/fx.ts), from both
+  // halves of the report, each named once: the web page's banner, in print.
+  const staleRates = [...new Map(
+    [...(fx.summary.stale_rates ?? []), ...(revenue.stale_rates ?? [])].map((r) => [r.currency, r])
+  ).values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  const staleCurrencies = new Set(staleRates.map((r) => r.currency));
+
   // Each figure is converted at the rate in force on its own date; this line
   // names the latest rate on record, so a stale one is visible at a glance.
   const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 });
+  const rateDay = (iso) => {
+    const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+    return `${d} ${MONTH_NAMES[m - 1]} ${y}`;
+  };
   const ratesText = used.size
     ? [...used].sort().map((currency) => {
         const r = rates[currency];
-        return r ? `1 ${currency} = ₹${inr.format(r.rate)} from ${r.effective_from}` : `${currency}: not set`;
+        if (!r) return `${currency}: not set`;
+        return `1 ${currency} = ₹${inr.format(r.rate)} (rate of ${rateDay(r.effective_from)}` +
+          `${staleCurrencies.has(currency) ? ', not updated since' : ''})`;
       }).join('   ·   ')
     : 'Not needed — every amount in this report is in INR';
 
@@ -290,7 +303,7 @@ export function salesReportDocDefinition(data) {
   const kA = clientAnalysis(customers);
   const rA = revenueAnalysis(revenue, revenueLabel);
   const head = headline({ enquiries, sectors, customers, revenue, revenueLabel, priority: rA.priority });
-  const fixes = managementFixes({ gaps, sectors, services, revenue, missingRates });
+  const fixes = managementFixes({ gaps, sectors, services, revenue, missingRates, staleRates });
 
   const et = enquiries.total;
   const ct = customers.summary.total;
@@ -1000,7 +1013,7 @@ export function salesReportDocDefinition(data) {
     ),
     subsection(
       'Payment status',
-      'Overdue = at least one invoice is past its due date, and Due now is every unpaid invoice on those POs, overdue or not · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
+      'Overdue = at least one invoice is past its due date, and Due now is every unpaid invoice on those POs, overdue or not · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid · Counts every PO, including revised and cancelled ones, which are still billed; POs won leaves those out',
       reportTable({
         columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
         rows: revenue.payment_status.rows,

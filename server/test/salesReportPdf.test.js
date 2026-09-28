@@ -268,6 +268,23 @@ test('problems in the data are called out, not hidden', () => {
   const undated = fixture();
   undated.revenue = { ...undated.revenue, undated_pos: ['PO-9'] };
   assert.ok(textOf(salesReportDocDefinition(undated)).includes('1 purchase order has no PO date, so it is left out of every PO figure for the period — sector-wise, service-wise, client analysis, FX deals and revenue: PO-9.'));
+
+  // A rate on record but months old: the web page's banner, in print, named once
+  // even when both the FX deals and the revenue half report it.
+  const stale = fixture();
+  const eurStale = { currency: 'EUR', effective_from: '2026-01-01', publishing_days: 185, stale: true, note: 'EUR converted at the rate of 1 Jan 2026' };
+  stale.fx = { ...stale.fx, summary: { ...stale.fx.summary, stale_rates: [eurStale] } };
+  stale.revenue = { ...stale.revenue, stale_rates: [eurStale] };
+  const staleText = textOf(salesReportDocDefinition(stale));
+  assert.ok(staleText.includes('Bring the exchange rates up to date'));
+  assert.ok(staleText.includes('The newest rate held for EUR is not from this week, so recent figures convert at an older number: EUR converted at the rate of 1 Jan 2026.'));
+  assert.ok(staleText.includes('1 EUR = ₹110.43 (rate of 1 Jan 2026, not updated since)'));
+  assert.equal(staleText.split('Bring the exchange rates up to date').length - 1, 1, 'named once');
+
+  // Current rates: the line says whose day the rate is, and nothing is flagged.
+  const current = textOf(salesReportDocDefinition(fixture()));
+  assert.ok(current.includes('1 EUR = ₹110.43 (rate of 1 Jan 2026)'));
+  assert.ok(!current.includes('Bring the exchange rates up to date'));
 });
 
 test('revenue follows the same period as the rest of the report, not a separate one', () => {

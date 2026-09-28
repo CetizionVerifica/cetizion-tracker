@@ -914,6 +914,17 @@ export const resources = {
       entered_by: str(120),
       note: str(300),
     }),
+    // A person correcting an ECB rate in Settings makes that rate theirs. The
+    // feed and the backfill only ever replace rows marked 'feed' (lib/fx.ts),
+    // and the form does not send `source`, so without this the correction
+    // stayed 'feed' and the next backfill silently put the ECB number back.
+    onSave: async (client, { before, after }) => {
+      if (!before || after.source !== 'feed') return;
+      const sameRate = Number(after.rate) === Number(before.rate);
+      const sameDay = String(after.effective_from).slice(0, 10) === String(before.effective_from).slice(0, 10);
+      if (sameRate && sameDay) return;
+      await client.query(`UPDATE exchange_rates SET source = 'manual' WHERE id = $1`, [after.id]);
+    },
   },
 
   holidays: {
