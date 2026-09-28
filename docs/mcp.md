@@ -53,6 +53,8 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `plan_sheet_import` | read up to 500 sheet rows and plan the import — writes nothing |
 | `get_import_plan`, `update_import_plan`, `replan_sheet_import` | read the plan, tick rows off, keep or replace duplicates, change the rules |
 | `commit_sheet_import` | write a planned import. Admin only, and needs `confirm: true` |
+| `describe_entity` | what can be fed in, and what fields each kind of record takes |
+| `import_records` | rows into any of 24 kinds of record — companies, contacts, enquiries, travel logs, vendor invoices and the rest. Admin only, `dry_run` by default |
 
 Resources: the pipeline stages, the service catalogue, and what each KPI means.
 
@@ -209,6 +211,36 @@ writes nothing:
 to replace; `commit_sheet_import` with `confirm: true` writes it. Committing
 is the only irreversible step and it is the only one that needs saying twice.
 
+### Feeding in anything else
+
+The sheet importer above understands one shape. `import_records` takes plain
+rows into any kind of record the app has a form for — 24 of them.
+
+> **"Here are 60 companies from the trade show list."**
+
+`describe_entity` first, to see what a company takes; then `import_records`,
+which reports and writes nothing:
+
+> 60 rows. 54 would be new. 5 are already here and would be updated —
+> Aurora Chemicals would gain a GSTIN, Northwind a city. One is refused:
+> row 34 has no name, and a company must be called something.
+> Nothing has been written.
+
+Fix row 34, send it again with `dry_run: false`, and it lands. Send the whole
+list again next month and it updates rather than duplicating: rows are matched
+on the record's own key — a company's name, a PO's number, a project's id.
+
+Two rules worth knowing. Every row is validated by **that record's own schema,
+the one behind the form**, so an import cannot slip in a value a person could
+not type. And **one bad row stops the batch** — nothing is written at all,
+because half an imported client list with no record of which half is worse
+than none of it.
+
+What it will not take: quotation lines, payment stages and template lines,
+which their parent writes and numbers; notes, tasks and attachments, which
+have their own tools that stamp the author and check the record first; and
+exchange rates, which come from the rate feed.
+
 ### Writing things down
 
 > **"Add a task on CTZ/QT/2026/062 to call them Friday, and note that legal
@@ -236,7 +268,8 @@ Not an oversight. These are the boundary:
 | Mark a project milestone reached | It makes a payment stage billable — a money action in delivery clothes |
 | Delete anything | — |
 | Send an email or a message | `log_touch` records a call that already happened. Nothing here contacts a client |
-| Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true` |
+| Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true`, and `import_records` is `dry_run` until told otherwise |
+| Write a record a form would refuse | Every imported row goes through that resource's own schema and save hooks — the same two functions the form posts through |
 | Read a client's email | `list_inbox` gives subjects and status. Whether the team may see more than that is the mailbox owner's decision, made once, in Settings |
 
 Bulk import is the other way in, and it keeps the same boundary by

@@ -22,6 +22,7 @@ import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
 import * as imports from '../lib/mcp/imports.js';
+import * as records from '../lib/mcp/records.js';
 
 export const mcpRouter = Router();
 export const apiTokenRouter = Router();
@@ -241,6 +242,30 @@ function buildServer(token) {
       left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
       committed: z.boolean(), next: z.string(), written_count: z.number().int(), written_by_action: z.record(z.string(), z.number()),
       written: z.array(row({ seq: z.number().int(), ref: str, action: str })), written_shown: z.number().int() } });
+
+  // ---- feeding any kind of record (#138) ---------------------------
+  //
+  // The sheet importer above understands one shape. These two take plain
+  // rows into any resource the app has a form for, through that form's own
+  // schema and save hooks. dry_run is the default and writes nothing.
+  tool('describe_entity', 'What can be imported, and what fields each kind of record takes. Call with no arguments for the list of entities, or name one to see its fields and which of them are required.',
+    { entity: z.string().max(60).optional().describe('e.g. companies, contacts, enquiries, travel-logs') },
+    async (a) => json(await records.describeEntity(scope, a)),
+    { write: true, admin: true, out: { entities: z.array(row({ name: z.string(), label: str, key: str })).optional(),
+      not_bulk: z.array(z.string()).optional(), note: str,
+      entity: str, label: str, match_on: str,
+      fields: z.array(row({ name: z.string(), required: z.boolean(), says: str })).optional() } });
+  tool('import_records', `Feed rows into any importable kind of record — companies, contacts, enquiries, quotations, projects, travel logs, vendor invoices and more. Up to ${records.MAX_ROWS} rows a call, validated by the same rules the app's own forms use. Reports what it would do and writes nothing unless dry_run is false. A row whose key already exists updates that record rather than adding a second one.`,
+    { entity: z.string().max(60).describe('From describe_entity'),
+      rows: z.array(z.record(z.string(), z.unknown())).min(1).describe("One object per record, keyed by field name e.g. {name: 'Aurora Chemicals', sector: 'Chemicals'}"),
+      dry_run: z.boolean().optional().describe('Default true. Nothing is written until this is false'),
+      match_on: z.string().max(60).nullable().optional().describe('Field that decides a record is already here. Defaults to the natural key; null to always create'),
+      update_existing: z.boolean().optional().describe('Default true. False leaves existing records alone and reports them as skipped') },
+    async (a) => json(await records.importRecords(scope, token, a)),
+    { write: true, admin: true, out: { entity: z.string(), matched_on: str, rows_sent: z.number().int(),
+      created: z.number().int(), updated: z.number().int(), rejected: z.number().int(), dry_run: z.boolean(),
+      rows: z.array(row({ at: z.number().int(), action: z.string(), key: z.unknown().optional(), id: num, why: z.unknown().optional() })),
+      rows_shown: z.number().int(), next: z.string() } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));
