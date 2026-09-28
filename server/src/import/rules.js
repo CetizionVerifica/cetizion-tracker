@@ -75,7 +75,11 @@ export const rulesSchema = z.object({
   invoice_date_offset_days: z.coerce.number().int().min(0).max(365),
   delivery_offset_months: z.coerce.number().int().min(0).max(120),
   delivery_only_if_past: z.boolean(),
-  default_split: z.array(z.coerce.number().min(0).max(100)).min(1).max(12),
+  // Every part is a payment stage, and a stage of 0% is refused by the
+  // database (stage_percent > 0); parts that do not add up to 100 make a PO
+  // whose stages do not total 100%.
+  default_split: z.array(z.coerce.number().gt(0).max(100)).min(1).max(12)
+    .refine((parts) => Math.abs(parts.reduce((a, b) => a + b, 0) - 100) < 0.001, 'default_split must add up to 100'),
   default_terms_days: z.coerce.number().int().min(0).max(365),
   default_currency: z.string().trim().length(3),
   // Letters, digits, dash and slash: enough for CVPL or CTZ/26, and
@@ -87,7 +91,36 @@ export const rulesSchema = z.object({
   // The model's readings, kept between plans; keys are arbitrary wordings.
   stage_map: z.record(z.string(), z.string().nullable()),
   ai_stage_map: z.record(z.string(), z.string().nullable()),
-}).partial();
+  // An unknown key is refused, so a typo fails loudly instead of the default
+  // quietly applying.
+}).partial().strict();
+
+/**
+ * Rules already stored on a batch, made safe to plan with again.
+ *
+ * A batch saved before the schema existed can hold anything, and a re-plan
+ * reads those rules back. Refusing them would leave an old draft impossible to
+ * re-plan through no fault of the person reviewing it, so each value is judged
+ * on its own: the good ones are kept, a bad or unknown one is dropped and the
+ * default takes its place. Rules arriving in a request are never treated this
+ * leniently — those are checked whole and refused outright.
+ *
+ * Returns the usable rules and the names of whatever was dropped, so the
+ * reason a re-plan differs can be shown rather than guessed at.
+ */
+export function sanitizeRules(stored) {
+  const kept = {};
+  const dropped = [];
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return { rules: kept, dropped };
+  for (const [key, value] of Object.entries(stored)) {
+    const field = rulesSchema.shape[key];
+    if (!field) { dropped.push(key); continue; }
+    const parsed = field.safeParse(value);
+    if (parsed.success) kept[key] = parsed.data;
+    else dropped.push(key);
+  }
+  return { rules: kept, dropped };
+}
 
 /** Who writes the sheet's remarks and reminders: how they are found again. */
 export const IMPORT_AUTHOR = 'Bulk import';
@@ -231,7 +264,12 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
   const pending = money('pending');
   const invAmt = money('invoice_amount');
   const snoRaw = get('sno');
-  const sno = Number.isFinite(Number(snoRaw)) && snoRaw !== null ? Number(snoRaw) : raw.__row;
+  // The sheet's own S.No when it has one, else the row's position. Two rows
+  // can end up with the same one — a blank S.No on row 12 next to a row
+  // numbered 12 — so it labels a row for a person, and never identifies it:
+  // `row` is the sheet position and is unique.
+  const snoGiven = str(snoRaw) !== null;
+  const sno = snoGiven && Number.isFinite(Number(snoRaw)) ? Number(snoRaw) : raw.__row;
 
   // The deal stage; a sheet with a separate "status detail" column is read
   // from it when the stage column says nothing this importer understands.
@@ -264,6 +302,7 @@ export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } 
   return {
     sno,
     ref: str(snoRaw),
+    sno_given: snoGiven,
     row: raw.__row,
     client: str(get('client')),
     industry: str(get('industry')),
@@ -344,9 +383,9 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
 
   const readOpts = { stageMap: rules.stage_map || null, aiStageMap: rules.ai_stage_map || null };
 
-  // PO numbers that appear on more than one row of the sheet.
-  const poCounts = {};
-  for (const raw of rows) { const r = extractRow(raw, mapping, readOpts); if (r.po_number) poCounts[norm(r.po_number)] = (poCounts[norm(r.po_number)] || 0) + 1; }
+  // S.No repeated on several rows, so a label can say which row it means.
+  const snoCounts = {};
+  for (const raw of rows) { const x = extractRow(raw, mapping, readOpts); if (x.sno_given) snoCounts[x.ref] = (snoCounts[x.ref] || 0) + 1; }
 
   // Every distinct stage wording in the sheet and how it was read, so the
   // reviewer can see it and change the reading of any one of them.
@@ -413,8 +452,12 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
 
   for (const raw of rows) {
     const r = extractRow(raw, mapping, readOpts);
-    const hint = hints[r.sno] || { advance_percent: null, flags: [] };
-    const tag = `S.No ${r.ref || r.sno}`;
+    // Keyed by the sheet position, as ai.js keys them: hints must never cross
+    // between two rows that happen to share an S.No.
+    const hint = hints[r.row] || { advance_percent: null, flags: [] };
+    const tag = !r.sno_given ? `sheet row ${r.row}`
+      : snoCounts[r.ref] > 1 ? `S.No ${r.ref} (sheet row ${r.row})`
+      : `S.No ${r.ref}`;
     const dateBasis = r.proposal_date || lastProposalDate;
     const dateBasisNote = r.proposal_date ? 'proposal date' : `previous row's proposal date (${lastProposalDate})`;
     if (r.proposal_date) lastProposalDate = r.proposal_date;
@@ -568,7 +611,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
     const fullOnCompletion = hint.flags.some((f) => f.code === 'full_payment_on_completion');
     const poItem = push({
-      step: 'purchase_order', source_row: r.sno, parent_seq: projItem.seq,
+      step: 'purchase_order', source_row: r.sno, source_label: tag, parent_seq: projItem.seq,
       assumptions: poAssumptions,
       payload: {
         po_number: r.po_number, project_id: projectId, po_date: poDate, po_value: r.po_amount,
@@ -585,7 +628,6 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       if (Number(poExisting.po_value) !== Number(r.po_amount)) poItem.flags.push({ level: 'info', code: 'value_differs', message: `Site has ${poExisting.currency || ''} ${poExisting.po_value}, sheet has ${r.po_amount}`, by: 'rule' });
     }
     if (!poDate) poItem.flags.push({ level: 'warn', code: 'no_po_date', message: 'No PO date and no proposal date to derive one', by: 'rule' });
-    if (poCounts[norm(r.po_number)] > 1) poItem.flags.push({ level: 'warn', code: 'duplicate_po_in_sheet', message: 'This PO number appears on more than one row of the sheet', by: 'rule' });
     if (r.received !== null && r.received > r.po_amount + 0.01) poItem.flags.push({ level: 'warn', code: 'received_exceeds_po', message: `Received ${r.received} is more than the PO value ${r.po_amount}: check the PO amount in the sheet`, by: 'rule' });
     if (r.po_amount_reinterpreted) poItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.po_amount_reinterpreted}"; read as ${r.po_amount} assuming a mistyped comma. Confirm with sales`, by: 'rule' });
 
@@ -666,6 +708,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
   }
 
+  flagRepeatedPoNumbers(items);
   for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
   const summary = {
     ...summarise(items, skipped),
@@ -682,6 +725,39 @@ const SCHEMAS = { quotation: 'quotations', project: 'projects' };
  * amount, or a value the record's own form would refuse (too long, wrong
  * type). Checks only the fields present, since ids are filled at commit.
  */
+/**
+ * Two rows carrying the same PO number each plan to create it, and the second
+ * insert breaks the unique constraint at commit time — after the quotations
+ * and projects before it have been written, so the whole batch rolls back and
+ * the review starts again. Settle it during review instead: the first row
+ * creates the PO, the others have to be unticked (or given their own number)
+ * before the commit is allowed.
+ *
+ * Rows whose PO is already on the site are left alone: those keep or update
+ * the existing one and never insert, so they cannot collide.
+ */
+export function flagRepeatedPoNumbers(items) {
+  const byNumber = new Map();
+  for (const it of items) {
+    if (it.step !== 'purchase_order' || it.action !== 'create') continue;
+    const key = norm(it.payload?.po_number);
+    if (!key) continue;
+    if (!byNumber.has(key)) byNumber.set(key, []);
+    byNumber.get(key).push(it);
+  }
+  for (const group of byNumber.values()) {
+    if (group.length < 2) continue;
+    const [first, ...rest] = group;
+    const label = (it) => it.source_label || `S.No ${it.source_row}`;
+    const where = group.map(label).join(', ');
+    first.flags.push({ level: 'warn', code: 'duplicate_po_in_sheet', message: `PO ${first.payload.po_number} is on ${group.length} rows of the sheet (${where}); this row creates it`, by: 'rule' });
+    for (const it of rest) {
+      it.flags.push({ level: 'error', code: 'duplicate_po_in_sheet', message: `PO ${it.payload.po_number} is already created by ${label(first)}. Untick this row, or correct its PO number`, by: 'rule' });
+    }
+  }
+  return items;
+}
+
 export function reviewFlags(step, payload, flags = []) {
   const kept = flags.filter((f) => f.code !== 'negative_amount' && f.code !== 'invalid_value');
   const bad = AMOUNT_FIELDS.filter((k) => payload?.[k] !== null && payload?.[k] !== undefined && payload[k] !== '' && Number(payload[k]) < 0);

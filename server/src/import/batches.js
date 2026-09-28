@@ -17,19 +17,28 @@ import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from 
 import { buildPlan, extractRow, summarise, IMPORT_AUTHOR, SHEET_FIELDS } from './rules.js';
 import { stageKey, needsReading } from './stages.js';
 import { businessToday, businessYear } from '../lib/businessDate.ts';
+import { nextId } from '../lib/sequences.js';
 
+
+/** The number off the end of a reference: CTZ/QT/2026/063 -> 63, PRJ-2026-008 -> 8. */
+const seriesNumber = (ref) => Number(/(\d+)$/.exec(String(ref))?.[1] ?? 1);
 
 /** What the plan needs to know about the live data, in one round trip. */
 export async function liveSnapshot() {
-  const [q, po, pr, sv, st, nq, np, trail, tasks, notes] = await Promise.all([
+  const [q, po, pr, sv, st, nextQuotation, nextProject, trail, tasks, notes] = await Promise.all([
     query(`SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person,
       sales_person, currency, remarks, next_step, last_contacted_at::date::text AS last_contacted_at FROM quotations`),
     query('SELECT po_number, project_id, po_date::text AS po_date, po_value, currency FROM purchase_orders'),
     query('SELECT project_id, client_name, primary_service FROM projects'),
     query('SELECT po_number, service, service_value FROM po_services ORDER BY id'),
     query('SELECT po_number, stage_no, stage_name, stage_percent, invoice_no, invoice_date::text AS invoice_date, amount_received FROM payment_stages'),
-    query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(quotation_no, '^.*/', ''), '')::int), 0) AS n FROM quotations WHERE quotation_no ~ '^CTZ/QT/\\d{4}/\\d+$'`),
-    query(`SELECT COALESCE(MAX(NULLIF(regexp_replace(project_id, '^.*-', ''), '')::int), 0) AS n FROM projects WHERE project_id ~ '^PRJ-\\d{4}-\\d+$'`),
+    // The same preview the forms show, so the numbers in the review are the
+    // ones a commit will actually take: this year's series only, and the
+    // counter as well as the records, exactly as claimNextId decides. Reading
+    // the highest number across every year handed out one already in use, and
+    // the commit then had to renumber the row it had shown.
+    nextId('quotation'),
+    nextId('project'),
     // What the last committed upload said about each deal, to tell what is new.
     query(`SELECT DISTINCT ON (ref) ref, payload FROM (
         SELECT substring(i.committed_ref from '.*: (.*)$') AS ref, i.payload, b.committed_at
@@ -44,8 +53,8 @@ export async function liveSnapshot() {
   for (const n of notes.rows) (sheetNotes[n.entity_id] ||= []).push(n.body);
   return {
     quotations: q.rows, purchase_orders: po.rows, projects: pr.rows, services: sv.rows, stages: st.rows,
-    next_quotation_no: Number(nq.rows[0].n) + 1,
-    next_project_no: Number(np.rows[0].n) + 1,
+    next_quotation_no: seriesNumber(nextQuotation),
+    next_project_no: seriesNumber(nextProject),
     year: businessYear(),
     today: businessToday(),
     // What the last committed upload said about each deal.
@@ -118,7 +127,7 @@ export async function planBatch({ batchId, buffer, sheet, rules }) {
       await client.query(
         `INSERT INTO import_items (batch_id, step, seq, source_row, parent_item_id, action, included, payload, flags, assumptions, existing_ref)
          VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,$10)`,
-        [batchId, it.step, it.seq, it.source_row, it.action, it.included, JSON.stringify({ ...it.payload, __parent_seq: it.parent_seq ?? null }), JSON.stringify(it.flags), JSON.stringify(it.assumptions), it.existing_ref || null]
+        [batchId, it.step, it.seq, it.source_row, it.action, it.included, JSON.stringify({ ...it.payload, __parent_seq: it.parent_seq ?? null, __source_label: it.source_label ?? null }), JSON.stringify(it.flags), JSON.stringify(it.assumptions), it.existing_ref || null]
       );
     }
     await client.query(
@@ -170,8 +179,8 @@ export async function loadBatch(id) {
   const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   const items = (await query('SELECT * FROM import_items WHERE batch_id = $1 ORDER BY seq', [id])).rows.map((it) => {
-    const { __parent_seq, ...payload } = it.payload;
-    return { ...it, payload, parent_seq: __parent_seq ?? null };
+    const { __parent_seq, __source_label, ...payload } = it.payload;
+    return { ...it, payload, parent_seq: __parent_seq ?? null, source_label: __source_label ?? null };
   });
   const bySeq = new Map(items.map((it) => [it.seq, it]));
   for (const it of items) {

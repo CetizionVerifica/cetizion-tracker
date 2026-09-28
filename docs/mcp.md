@@ -43,16 +43,23 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_pipeline` | open deals with stage, owner, value, probability, weighted value, last contact — paged |
 | `list_collections` | unpaid invoices, overdue first, with recent chasing — paged |
 | `get_kpis` | quotations issued, value, wins, losses, win rate, pipeline, days to win, touches |
+| `aggregate` | count or total anything, grouped by any column — and by month, quarter or year |
+| `describe_aggregate` | what can be counted, and by which columns |
+| `list_renewals` | engagements coming up for renewal, soonest first |
+| `get_cashflow` | cash expected in and out by month. Admin only |
 | `list_activity` | notes, tasks, logged calls and email threads on a record — paged |
 | `list_inbox` | client emails nobody has answered: who wrote, about what, whose it is, how late — paged |
 | `list_payables` | what we owe travel vendors, longest overdue first, with the total and every ageing bucket — paged |
 | `list_data_gaps` | what is missing and what it is blocking, with the page that lists those rows |
+| `list_duplicate_companies` | groups of companies that may be one client spelt more than once. Read-only |
 | `list_tasks` | open tasks, soonest due first, with the record each is on — paged |
 | `create_task`, `add_note`, `log_touch`, `update_next_step` | small writes, shown on the record as made "via MCP" |
 | `complete_task` | marks a task done. `tasks` has no column for who did it; the trace is in the token log |
 | `plan_sheet_import` | read up to 500 sheet rows and plan the import — writes nothing |
 | `get_import_plan`, `update_import_plan`, `replan_sheet_import` | read the plan, tick rows off, keep or replace duplicates, change the rules |
 | `commit_sheet_import` | write a planned import. Admin only, and needs `confirm: true` |
+| `describe_entity` | what can be fed in, and what fields each kind of record takes |
+| `import_records` | rows into any of 24 kinds of record — companies, contacts, enquiries, travel logs, vendor invoices and the rest. Admin only, `dry_run` by default |
 
 Resources: the pipeline stages, the service catalogue, and what each KPI means.
 
@@ -143,6 +150,46 @@ you and it agree.
 An admin token may name a person: *"How is Ramesh doing against last quarter?"*
 A sales token cannot — it only ever sees its own.
 
+### Anything countable
+
+> **"How many deals are we carrying per sector, and what are they worth?"**
+
+`aggregate` is one tool for the whole class of these. Group any records by any
+of their columns, count or total them:
+
+> Chemicals is the biggest book: 14 open deals worth ₹62,40,000. Pharma has
+> 9 at ₹38,10,000. Metals 6 at ₹51,90,000 — fewer deals, bigger ones.
+> 91 quotations have no sector at all, which is more than any single sector
+> has, so treat the split as indicative until those are filled in.
+
+A date column can be grouped by period — `by: "quotation_date:month"` — which
+is the shape most of these questions really take. Filters are the ones the
+list screens take, so a figure here and a filtered list agree.
+
+Two things it will not do. It will not read a column it was not given: the
+column, the measured field and every filter are checked against the real
+table first. And it will not let a sales token count what this server cannot
+say the ownership of — travel bills and expense claims have no salesperson on
+them, so those are admin-only rather than open.
+
+### The money questions
+
+> **"What's up for renewal in the next 60 days?"**
+
+`list_renewals`, scoped to your own engagements:
+
+> Four. **Kreative Organics** EcoVadis is due in 11 days and no renewal
+> quotation has been raised yet. **Cohance** is due in 28 days with a renewal
+> already out at ₹3,40,000. Two more in the fifties.
+> The Kreative one is the one to move on.
+
+> **"When is the money actually coming in?"**
+
+`get_cashflow` — billed and unpaid, scheduled but not yet billed, the weighted
+pipeline, and what we owe travel vendors and staff, by month. Admin only: it
+is the company's cash position and there is no salesperson on a forecast to
+scope it by.
+
 ### The inbox nobody has answered
 
 > **"What's in the inbox that nobody's answered?"**
@@ -209,6 +256,36 @@ writes nothing:
 to replace; `commit_sheet_import` with `confirm: true` writes it. Committing
 is the only irreversible step and it is the only one that needs saying twice.
 
+### Feeding in anything else
+
+The sheet importer above understands one shape. `import_records` takes plain
+rows into any kind of record the app has a form for — 24 of them.
+
+> **"Here are 60 companies from the trade show list."**
+
+`describe_entity` first, to see what a company takes; then `import_records`,
+which reports and writes nothing:
+
+> 60 rows. 54 would be new. 5 are already here and would be updated —
+> Aurora Chemicals would gain a GSTIN, Northwind a city. One is refused:
+> row 34 has no name, and a company must be called something.
+> Nothing has been written.
+
+Fix row 34, send it again with `dry_run: false`, and it lands. Send the whole
+list again next month and it updates rather than duplicating: rows are matched
+on the record's own key — a company's name, a PO's number, a project's id.
+
+Two rules worth knowing. Every row is validated by **that record's own schema,
+the one behind the form**, so an import cannot slip in a value a person could
+not type. And **one bad row stops the batch** — nothing is written at all,
+because half an imported client list with no record of which half is worse
+than none of it.
+
+What it will not take: quotation lines, payment stages and template lines,
+which their parent writes and numbers; notes, tasks and attachments, which
+have their own tools that stamp the author and check the record first; and
+exchange rates, which come from the rate feed.
+
 ### Writing things down
 
 > **"Add a task on CTZ/QT/2026/062 to call them Friday, and note that legal
@@ -236,7 +313,10 @@ Not an oversight. These are the boundary:
 | Mark a project milestone reached | It makes a payment stage billable — a money action in delivery clothes |
 | Delete anything | — |
 | Send an email or a message | `log_touch` records a call that already happened. Nothing here contacts a client |
+| Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true`, and `import_records` is `dry_run` until told otherwise |
+| Write a record a form would refuse | Every imported row goes through that resource's own schema and save hooks — the same two functions the form posts through |
 | Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true` |
+| Merge two companies | Finding look-alikes is the useful half and costs nothing. A merge rewrites the client name on every record of one company and deletes it, with no undo — that belongs on the Companies screen, where whoever does it can see the records about to move |
 | Read a client's email | `list_inbox` gives subjects and status. Whether the team may see more than that is the mailbox owner's decision, made once, in Settings |
 
 Bulk import is the other way in, and it keeps the same boundary by

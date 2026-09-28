@@ -439,6 +439,257 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     });
   });
 
+  /**
+   * One tool for the whole class of counted questions (#140), and the two
+   * money questions nothing answered. What matters here is that aggregate
+   * cannot be talked into reading a column it was not given, and that an
+   * entity whose ownership this server cannot state is admin-only rather
+   * than open.
+   */
+  describe('counting, renewals and cash', () => {
+    test('it counts and totals, and the total matches the groups', async () => {
+      const t = (await token({ name: 'Counting', role: 'admin' })).token;
+      const byStatus = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'status' })).text);
+      assert.equal(byStatus.measure, 'count');
+      assert.ok(byStatus.groups.length >= 1);
+      assert.equal(byStatus.total, byStatus.groups.reduce((n, g) => n + g.value, 0),
+        'the total is of the groups it returned');
+
+      const value = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'sales_person', measure: 'sum', of: 'quotation_value' })).text);
+      assert.equal(value.measure, 'sum of quotation_value');
+      const asha = value.groups.find((g) => (g.group || '').toLowerCase() === 'asha');
+      assert.equal(asha.value, 100000, 'her one fixture quotation');
+
+      // A date column grouped by period, which is the shape most of these
+      // questions actually take.
+      const byMonth = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'quotation_date:month' })).text);
+      assert.equal(byMonth.grouped_by, 'quotation_date by month');
+      assert.ok(byMonth.groups.every((g) => g.group === null || /^\d{4}-\d{2}$/.test(g.group)), JSON.stringify(byMonth.groups));
+    });
+
+    test('it will not read a column it was not given', async () => {
+      const t = (await token({ name: 'Injection', role: 'admin' })).token;
+      for (const by of ['nonexistent_column', 'name; DROP TABLE companies', '1', '(SELECT 1)']) {
+        const res = await call(t, 'aggregate', { entity: 'quotations', by });
+        assert.equal(res.error, true, `by: ${by} must be refused`);
+      }
+      // Same for the measured column and the filters.
+      assert.equal((await call(t, 'aggregate', { entity: 'quotations', by: 'status', measure: 'sum', of: 'client_name' })).error, true,
+        'a text column cannot be summed');
+      assert.equal((await call(t, 'aggregate', { entity: 'quotations', by: 'status', where: { nope: 1 } })).error, true);
+      // And the tables are all still there.
+      assert.ok(Number((await pool.query('SELECT count(*) AS n FROM companies')).rows[0].n) > 0);
+    });
+
+    test('a sales token counts only its own, and cannot count what has no owner', async () => {
+      const asha = (await token({ name: 'Asha counts', role: 'sales', person: 'asha' })).token;
+      const mine = JSON.parse((await call(asha, 'aggregate', { entity: 'quotations', by: 'sales_person' })).text);
+      assert.deepEqual(mine.groups.map((g) => (g.group || '').toLowerCase()), ['asha'],
+        'the scoping is applied before the grouping, so Ravi is not even a row');
+
+      // Travel bills and expense claims have no salesperson on them. The
+      // safe reading of "I cannot say whose this is" is not "everybody's".
+      for (const entity of ['vendor-invoices', 'expense-claims', 'travel-logs']) {
+        assert.equal((await call(asha, 'aggregate', { entity, by: 'id' })).error, true, `${entity} must be admin-only`);
+      }
+      const admin = (await token({ name: 'Admin counts', role: 'admin' })).token;
+      assert.equal((await call(admin, 'aggregate', { entity: 'vendor-invoices', by: 'travel_vendor' })).error, false);
+    });
+
+    test('renewals are scoped, and the cash forecast is an admin\'s', async () => {
+      const admin = (await token({ name: 'Money admin', role: 'admin' })).token;
+      const asha = (await token({ name: 'Money sales', role: 'sales', person: 'asha' })).token;
+
+      const r = await call(admin, 'list_renewals', {});
+      assert.equal(r.error, false, r.text);
+      const renewals = JSON.parse(r.text);
+      assert.ok(renewals.counts_all_engagements, 'the summary counts come back');
+
+      // Hers is scoped in SQL: an engagement owned by somebody else is not
+      // in her total, not merely absent from her page.
+      await pool.query(
+        `INSERT INTO engagements (company_id, client_name, service_name, next_due_on, status, owner)
+         VALUES (1001, 'Asha Client Ltd', 'EcoVadis', CURRENT_DATE + 10, 'active', 'asha'),
+                (1002, 'Ravi Client Ltd', 'EcoVadis', CURRENT_DATE + 10, 'active', 'ravi')`);
+      const hers = JSON.parse((await call(asha, 'list_renewals', {})).text);
+      assert.equal(hers.total, 1, `only her engagement: ${JSON.stringify(hers.items.map((i) => i.client))}`);
+      assert.equal(hers.items[0].client, 'Asha Client Ltd');
+      assert.equal(hers.items[0].days_to_due, 10);
+
+      // within_days narrows it, and a long window keeps it.
+      assert.equal(JSON.parse((await call(asha, 'list_renewals', { within_days: 5 })).text).total, 0);
+      assert.equal(JSON.parse((await call(asha, 'list_renewals', { within_days: 30 })).text).total, 1);
+
+      // The cash forecast is the company's position, so it is an admin's.
+      const cash = await call(admin, 'get_cashflow', { months: 3 });
+      assert.equal(cash.error, false, cash.text);
+      const f = JSON.parse(cash.text);
+      assert.equal(f.currency, 'INR');
+      assert.ok(f.months.length >= 3);
+      assert.ok(f.months.every((m) => typeof m.net === 'number'));
+      assert.doesNotMatch(JSON.stringify(f), /"items"/, 'item lines are off unless asked for');
+      assert.match(JSON.stringify(JSON.parse((await call(admin, 'get_cashflow', { months: 1, detail: true })).text)), /"items"/);
+
+      assert.equal((await call(asha, 'get_cashflow', {})).error, true, 'not hers to read');
+    });
+  });
+
+  /**
+   * Feeding any kind of record (#138). The sheet importer handles one shape;
+   * this handles the other thirty tables, through each resource's own schema
+   * and save hooks rather than around them.
+   */
+  describe('importing records of any kind', () => {
+    const admin = async () => (await token({ name: `Records ${id}`, role: 'admin', can_write: true })).token;
+    const count = async (sql, args = []) => Number((await pool.query(sql, args)).rows[0].n);
+
+    test('it says what can be imported and what each kind takes', async () => {
+      const t = await admin();
+      const all = JSON.parse((await call(t, 'describe_entity', {})).text);
+      const names = all.entities.map((e) => e.name);
+      assert.ok(names.includes('companies') && names.includes('travel-logs') && names.includes('enquiries'));
+      // The ones a plain INSERT is the wrong instrument for stay out.
+      for (const n of ['quotation-lines', 'payment-stages', 'notes', 'tasks', 'exchange-rates']) {
+        assert.ok(!names.includes(n), `${n} is written by something that knows how`);
+      }
+      const one = JSON.parse((await call(t, 'describe_entity', { entity: 'companies' })).text);
+      assert.equal(one.match_on, 'name');
+      const name = one.fields.find((f) => f.name === 'name');
+      assert.equal(name.required, true, 'a company must be called something');
+      assert.equal(one.fields.find((f) => f.name === 'sector').required, false);
+    });
+
+    test('a dry run reports what it would do and writes nothing', async () => {
+      const t = await admin();
+      const before = await count('SELECT count(*) AS n FROM companies');
+      const plan = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows: [
+        { name: 'Falcon Foods Ltd', sector: 'Food', city: 'Pune' },
+        { name: 'Asha Client Ltd', sector: 'Chemicals' },
+        { sector: 'no name at all' },
+      ] })).text);
+
+      assert.equal(plan.dry_run, true);
+      assert.equal(plan.rows_sent, 3);
+      assert.equal(plan.created, 1, 'Falcon is new');
+      assert.equal(plan.updated, 1, 'Asha Client Ltd is a fixture, so it matches by name');
+      assert.equal(plan.rejected, 1, 'a company with no name is refused');
+      const refused = plan.rows.find((r) => r.action === 'rejected');
+      assert.ok(refused.why.name, `the reason names the field: ${JSON.stringify(refused.why)}`);
+
+      assert.equal(await count('SELECT count(*) AS n FROM companies'), before, 'a dry run writes nothing');
+    });
+
+    test('a real run writes, and running it twice does not duplicate', async () => {
+      const t = await admin();
+      const rows = [{ name: 'Delta Pumps Pvt Ltd', sector: 'Pumps', city: 'Nashik' }];
+      const done = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows, dry_run: false })).text);
+      assert.equal(done.created, 1);
+      assert.equal(done.dry_run, false);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']), 1);
+
+      // The same list again: an update, not a second copy. This is what makes
+      // re-sending a corrected spreadsheet safe.
+      const again = JSON.parse((await call(t, 'import_records', {
+        entity: 'companies', rows: [{ name: 'Delta Pumps Pvt Ltd', sector: 'Pumps & Valves', city: 'Nashik' }], dry_run: false,
+      })).text);
+      assert.equal(again.updated, 1);
+      assert.equal(again.created, 0);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']), 1,
+        'matched by name, so still one row');
+      const { rows: [row] } = await pool.query('SELECT sector FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']);
+      assert.equal(row.sector, 'Pumps & Valves', 'and the correction landed');
+    });
+
+    test('one bad row stops the batch; none of it lands', async () => {
+      const t = await admin();
+      const before = await count('SELECT count(*) AS n FROM companies');
+      const res = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows: [
+        { name: 'Good Row Industries' },
+        { name: '' },
+      ], dry_run: false })).text);
+      assert.equal(res.rejected, 1);
+      assert.equal(await count('SELECT count(*) AS n FROM companies'), before,
+        'half an imported client list is worse than none of it');
+    });
+
+    test('it validates by the resource\'s own rules, not looser ones', async () => {
+      const t = await admin();
+      // currency is an enum on quotations; a form would refuse CAD and so must this.
+      const res = JSON.parse((await call(t, 'import_records', { entity: 'quotations', rows: [
+        { quotation_no: 'QT-IMPORT-1', client_name: 'Asha Client Ltd', quotation_date: '2026-09-01', currency: 'CAD' },
+      ] })).text);
+      assert.equal(res.rejected, 1, 'the schema is the form\'s, so the answer is the form\'s');
+      assert.ok(JSON.stringify(res.rows[0].why).includes('currency'));
+    });
+
+    test('a sales token is not offered it, nor allowed it', async () => {
+      const sales = (await token({ name: 'Sales records', role: 'sales', person: 'asha', can_write: true })).token;
+      const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${sales}`).set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 9200, method: 'tools/list', params: {} });
+      const names = res.body.result.tools.map((x) => x.name);
+      assert.ok(!names.includes('import_records') && !names.includes('describe_entity'));
+      assert.equal((await call(sales, 'import_records', { entity: 'companies', rows: [{ name: 'Sneaky Ltd' }] })).error, true);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Sneaky Ltd']), 0);
+    });
+
+    test('what is written by something that knows how cannot be fed here', async () => {
+      const t = await admin();
+      for (const entity of ['payment-stages', 'quotation-lines', 'exchange-rates', 'nonsense']) {
+        const res = await call(t, 'import_records', { entity, rows: [{ anything: 1 }] });
+        assert.equal(res.error, true, `${entity} must be refused`);
+      }
+    });
+  });
+
+  test('duplicate companies come back grouped, and nothing here merges them', async () => {
+    const t = (await token({ name: 'Dupes', role: 'admin', can_write: true })).token;
+    // The seed already carries Hindalco and three of its plants, which is
+    // the real shape of this problem. companies.name_key is UNIQUE, so the
+    // only way one name reaches the table twice is punctuated differently.
+    await pool.query(`INSERT INTO companies (name) VALUES
+      ('Hindalco-Belur'), ('Zephyr Pumps Ltd'), ('Zephyr-Pumps Ltd'), ('Wholly Unrelated Dredging Co')`);
+
+    const res = JSON.parse((await call(t, 'list_duplicate_companies', { limit: 100 })).text);
+    const nameOf = (g) => g.names.map((n) => n.name);
+
+    // The property pairs could not have: a company is in one group or none.
+    // Pairwise output put Hindalco in four rows at once, each proposing a
+    // different merge, several of them contradicting the others.
+    const seen = new Map();
+    for (const g of res.groups) {
+      for (const n of g.names) {
+        assert.ok(!seen.has(n.id), `${n.name} is in two groups at once: ${seen.get(n.id)} and ${nameOf(g)}`);
+        seen.set(n.id, nameOf(g));
+      }
+    }
+
+    // Two spellings of one thing, identical once punctuated away: nothing
+    // to weigh up, and its own group because nothing else looks like it.
+    const zephyr = res.groups.find((g) => nameOf(g).includes('Zephyr Pumps Ltd'));
+    assert.ok(zephyr, `Zephyr is grouped: ${JSON.stringify(res.groups.map(nameOf))}`);
+    assert.deepEqual(nameOf(zephyr).sort(), ['Zephyr Pumps Ltd', 'Zephyr-Pumps Ltd']);
+    assert.equal(zephyr.certain, true);
+    assert.match(zephyr.confidence, /same name/);
+
+    // Hindalco's plants land in one group, and it does not claim they are
+    // one company — bare "Hindalco" matches each plant while the plants do
+    // not match each other, so the group asks rather than asserts.
+    const hindalco = res.groups.find((g) => nameOf(g).includes('Hindalco - Belur'));
+    assert.ok(hindalco, 'the Hindalco family is grouped');
+    assert.ok(nameOf(hindalco).includes('Hindalco-Belur'), 'both spellings of Belur are in it');
+    assert.equal(hindalco.certain, false, 'a shared brand is a question, not an answer');
+    assert.equal(hindalco.confidence, 'shares a brand');
+
+    assert.ok(!res.groups.some((g) => nameOf(g).includes('Wholly Unrelated Dredging Co')),
+      'a company with no look-alike is in no group');
+
+    // No tool here can act on any of it, whatever the token may write.
+    const list = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 9300, method: 'tools/list', params: {} });
+    assert.ok(!list.body.result.tools.map((x) => x.name).some((n) => /merge/i.test(n)),
+      'merging is the Companies screen\'s, not this server\'s');
+  });
+
   test('a reading token is not offered complete_task', async () => {
     const t = (await token({ name: 'Reader', role: 'admin' })).token;
     const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
@@ -541,14 +792,15 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const t = await token({ name: 'Short lived', role: 'admin', can_write: true });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });
     const names = tools.body.result.tools.map((x) => x.name);
-    assert.ok(names.length >= 18, `only ${names.length} tools are offered`);
+    assert.ok(names.length >= 27, `only ${names.length} tools are offered`);
+    assert.ok(names.length >= 19, `only ${names.length} tools are offered`);
     // Every name is verb_noun, so the verb is what decides whether the tool
     // could do damage. Matching anywhere in the name read 'pay' inside
     // list_payables and called a read destructive, which is the kind of
     // false alarm that gets a guard deleted.
     for (const n of names) {
       assert.doesNotMatch(n, /^(delete|remove|drop|void|cancel|pay|send|reassign|set)_/, `${n} names something this server must not be able to do`);
-      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit)_/, `${n} is a verb this server has not agreed to`);
+      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit|import|describe)_|^aggregate$/, `${n} is a verb this server has not agreed to`);
     }
     await request(app).post(`/api/api-tokens/${t.id}/revoke`).set('Cookie', staff).expect(200);
     assert.equal((await call(t.token, 'list_pipeline')).status, 401);

@@ -296,6 +296,87 @@ async function claimDocument(client, def, values, id, scope) {
   return replaced;
 }
 
+/**
+ * Note for anyone diffing against main: `assertVisible` and the
+ * `def.visibleTo` hook it read are deliberately absent. They were main's
+ * second answer to "whose record is this?", keyed on the free-text
+ * sales_person. Ownership is owner_user_id and only owner_user_id, applied
+ * through resourceClause / scopedIdPredicate below.
+ */
+
+/**
+ * Write one new row of a resource: its auto-id, its document claim, its
+ * INSERT and its onSave hook, in that order, on the client it is given.
+ *
+ * Lifted out of the POST route so bulk import over MCP writes records the
+ * same way a form does (#138). Two writers of one table must share the code
+ * that writes it, or the day somebody adds a hook only one of them runs it.
+ * Takes a client rather than opening its own transaction, so a caller
+ * writing many rows can put them all in one.
+ */
+export async function insertRecord(client, def, { values, input, scope }) {
+  if (def.hasDocument) await claimDocument(client, def, values);
+
+  if (def.autoId) {
+    const col = sequenceColumn(def.autoId);
+    if (values[col] == null) {
+      // Reference field is blank — auto-generate using the record's own date for the year.
+      // This ensures a quotation dated 2025-11-15 gets a CTZ/QT/2025/... number even when
+      // today is 2026.
+      const rawDate = def.autoIdDateField ? values[def.autoIdDateField] : null;
+      const year = (typeof rawDate === 'string' && rawDate.length >= 4)
+        ? rawDate.slice(0, 4)
+        : undefined; // undefined → claimNextId falls back to current business year
+      values[col] = await claimNextId(def.autoId, client, year);
+    }
+    // else: user supplied an explicit reference number — preserve it exactly.
+    // The DB UNIQUE constraint returns HTTP 409 on a duplicate (already handled in error.js).
+  }
+  const cols = Object.keys(values);
+  if (!cols.length) throw new ApiError(422, 'Nothing to save');
+
+  const { rows } = await client.query(
+    `INSERT INTO ${ident(def.table)} (${cols.map(ident).join(', ')})
+     VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
+     RETURNING *`,
+    cols.map((c) => values[c])
+  );
+  // `scope` reaches onSave because a hook may itself read another table —
+  // linkProjectQuotation only links a quotation the caller can reach. The
+  // staff route passes it; MCP's bulk import does not, which leaves that
+  // hook exactly as unrestricted as it is on main.
+  const extra = await def.onSave?.(client, { before: null, after: rows[0], input, scope });
+  return { row: rows[0], extra };
+}
+
+/** The same for an existing row, by id or natural key. Returns null if gone. */
+export async function updateRecordRow(client, def, id, { values, input }) {
+  const cols = Object.keys(values);
+  let before = null;
+  if (def.onSave) {
+    const keyParams = [];
+    const keyPred = idPredicate(def, String(id), keyParams);
+    ({ rows: [before] } = await client.query(
+      `SELECT * FROM ${ident(def.table)} WHERE ${keyPred} FOR UPDATE`, keyParams));
+  }
+  let rows;
+  if (cols.length) {
+    const params = cols.map((c) => values[c]);
+    const pred = idPredicate(def, String(id), params);
+    const sets = cols.map((c, i) => `${ident(c)} = $${i + 1}`).join(', ');
+    ({ rows } = await client.query(
+      `UPDATE ${ident(def.table)} SET ${sets} WHERE ${pred} RETURNING *`, params));
+  } else {
+    rows = before ? [before] : [];
+  }
+  if (!rows.length) return null;
+  const extra = await def.onSave?.(client, { before, after: rows[0], input });
+  return { row: rows[0], extra };
+}
+
+/** One row against the resource's own schema — the form's rules, exactly. */
+export const validateRecord = (def, body, opts = { partial: false }) => validate(def, body, opts);
+
 export function crudRouter(name, def) {
   const router = Router();
   const readFrom = def.view || def.table;
@@ -401,36 +482,12 @@ export function crudRouter(name, def) {
 
     const { id, extra } = await write(async (client) => {
       // A row that inherits its ownership may only be filed under a parent
-      // this request can reach.
+      // this request can reach. It stays here, in front of the shared
+      // writer, rather than inside it: the check is about who is asking,
+      // and insertRecord is also called by MCP, which has no such caller.
       await assertParentReachable(client, def, values, scopeOf(req), input);
-      if (def.hasDocument) await claimDocument(client, def, values);
-
-      if (def.autoId) {
-        const col = sequenceColumn(def.autoId);
-        if (values[col] == null) {
-          // Reference field is blank — auto-generate using the record's own date for the year.
-          // This ensures a quotation dated 2025-11-15 gets a CTZ/QT/2025/... number even when
-          // today is 2026.
-          const rawDate = def.autoIdDateField ? values[def.autoIdDateField] : null;
-          const year = (typeof rawDate === 'string' && rawDate.length >= 4)
-            ? rawDate.slice(0, 4)
-            : undefined; // undefined → claimNextId falls back to current business year
-          values[col] = await claimNextId(def.autoId, client, year);
-        }
-        // else: user supplied an explicit reference number — preserve it exactly.
-        // The DB UNIQUE constraint returns HTTP 409 on a duplicate (already handled in error.js).
-      }
-      const cols = Object.keys(values);
-      if (!cols.length) throw new ApiError(422, 'Nothing to save');
-
-      const { rows } = await client.query(
-        `INSERT INTO ${ident(def.table)} (${cols.map(ident).join(', ')})
-         VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})
-         RETURNING *`,
-        cols.map((c) => values[c])
-      );
-      const extra = await def.onSave?.(client, { before: null, after: rows[0], input, scope: scopeOf(req) });
-      return { id: rows[0].id, extra };
+      const written = await insertRecord(client, def, { values, input, scope: scopeOf(req) });
+      return { id: written.row.id, extra: written.extra };
     });
 
     const { rows: full } = await query(

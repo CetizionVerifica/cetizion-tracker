@@ -105,9 +105,18 @@ function monthFirstColumn(values) {
  * keeps it: the sheet shows "USD 8,111" and the value must not arrive as a
  * bare 8111 that would be read as rupees.
  */
-function sheetToGrid(ws) {
+export function sheetToGrid(ws) {
   const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
   if (!range) return [];
+  // The declared range is what the file claims, and one stray format in a far
+  // corner makes Excel claim the whole sheet — A1:XFD1048576, a billion cells
+  // to walk for a hundred rows of sales. The cells that are really there say
+  // where the data ends; the start is left alone so a row keeps its number.
+  const last = lastCell(ws);
+  if (!last) return [];
+  range.e.r = Math.min(range.e.r, last.r);
+  range.e.c = Math.min(range.e.c, last.c);
+  if (range.e.r < range.s.r || range.e.c < range.s.c) return [];
   const grid = [];
   for (let r = range.s.r; r <= range.e.r; r++) {
     const row = [];
@@ -130,6 +139,25 @@ function sheetToGrid(ws) {
   }
   grid.firstRow = range.s.r;
   return grid;
+}
+
+/**
+ * The furthest row and column that hold a value, from the cells the sheet
+ * actually has. Keys beginning with "!" are the sheet's own settings
+ * (!ref, !merges, !cols), not cells.
+ */
+function lastCell(ws) {
+  let r = -1;
+  let c = -1;
+  for (const key of Object.keys(ws)) {
+    if (key.charCodeAt(0) === 0x21) continue;
+    const cell = ws[key];
+    if (!cell || cell.v === null || cell.v === undefined) continue;
+    const at = XLSX.utils.decode_cell(key);
+    if (at.r > r) r = at.r;
+    if (at.c > c) c = at.c;
+  }
+  return r < 0 || c < 0 ? null : { r, c };
 }
 
 /** The currency a number format displays, if any. */

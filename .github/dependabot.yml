@@ -18,6 +18,12 @@
 # To turn routine updates back on, raise the limit — 5 was the previous
 # setting, and the grouping below means a run of small bumps arrives as one
 # review rather than twenty.
+#
+# Not covered here: server's `xlsx`, which is installed from SheetJS's own
+# site because npm's copy stopped at 0.18.5 and carries two HIGH advisories
+# fixed after it. Dependabot cannot see that package, so a person checks
+# sheetjs.com at the quarterly access review. See docs/security.md section 5
+# before changing how it is installed.
 version: 2
 updates:
   - package-ecosystem: npm

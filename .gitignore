@@ -4,6 +4,11 @@ web/playwright-report/
 
 node_modules/
 dist/
+
+# Real client sales sheets, kept locally for imports. Live client data: a
+# commit would publish it.
+server/import/
+
 .env
 .env.local
 # Sales sheets and import specs: real client data, never in the repo.
