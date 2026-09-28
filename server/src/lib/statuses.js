@@ -9,11 +9,24 @@
  */
 
 export const QUOTATION_STATUS = {
+  // Made but not yet sent (#24): a converted enquiry or a renewal starts here.
+  draft: 'Draft',
   submitted: 'Submitted',
   negotiating: 'Under Negotiation',
   onHold: 'On Hold',
   won: 'Won - PO Received',
   lost: 'Lost',
+};
+
+// A payment stage's status. Not stored: v_payment_stages works it out
+// (db/views.sql), so these must match the labels that view produces.
+export const STAGE_STATUS = {
+  notDue: 'Not Due',
+  toInvoice: 'To Invoice',
+  paid: 'Paid',
+  overdue: 'Overdue',
+  partiallyPaid: 'Partially Paid',
+  due: 'Due',
 };
 
 // Since #24 an enquiry is a lead: several open statuses, Unqualified
@@ -39,7 +52,7 @@ export const LEGACY_ENQUIRY_STATUS = {
 export const STATUS = {
   enquiry: [...ENQUIRY_STATUS.open, ENQUIRY_STATUS.quoted, ENQUIRY_STATUS.declined],
   quotation: [
-    QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.won,
+    QUOTATION_STATUS.draft, QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.won,
     QUOTATION_STATUS.lost, QUOTATION_STATUS.onHold,
   ],
   trigger: ['On PO Registration', 'On Delivery', 'On Milestone', 'Manual'],

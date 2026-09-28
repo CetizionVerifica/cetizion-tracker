@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
 import { RecordPaymentDialog } from '../components/actions.jsx';
@@ -22,7 +22,16 @@ export default function Collections() {
   const [paying, setPaying] = useState(null);       // stage
   const [logFor, setLogFor] = useState(null);       // stage id
   const { data, loading, error, refetch } = useFetch(() => api.raw('/collections'), []);
-  const d = data?.data;
+  // Reports links an ageing bar here as ?bucket=31-60. The list narrows to
+  // the clients with money in that band, and says so, rather than opening on
+  // everything owed and leaving the reader to find the nine invoices.
+  const [params, setParams] = useSearchParams();
+  const bucket = params.get('bucket');
+  const raw = data?.data;
+  const band = raw?.buckets.find((b) => b.key === bucket);
+  const d = raw && band
+    ? { ...raw, clients: raw.clients.filter((c) => c.buckets[band.key] > 0).map((c) => ({ ...c, stages: c.stages.filter((s) => s.bucket === band.key) })) }
+    : raw;
 
   async function lift(stage) {
     try { await api.action(`/collections/stages/${stage.id}/hold`, { on_hold: false }); toast('Hold lifted', 'success'); refetch(); }
@@ -33,12 +42,20 @@ export default function Collections() {
     <>
       <PageHeader title="Collections" subtitle="Invoiced and unpaid, by client and by age. Log every chase; a promise to pay pauses reminders until its date, a hold pauses them until lifted." />
       <div className="page stack">
+        {band && (
+          <Alert tone="info">
+            <span>
+              Showing <strong>{band.label.toLowerCase()}</strong> only — {d.clients.length} client{d.clients.length === 1 ? '' : 's'}. The totals above still cover everything outstanding.{' '}
+              <button type="button" className="btn btn--sm" onClick={() => { const next = new URLSearchParams(params); next.delete('bucket'); setParams(next, { replace: true }); }}>Show all</button>
+            </span>
+          </Alert>
+        )}
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {d && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
             <Stat label="Overdue" value={money(d.totals.overdue)} tone={d.totals.overdue > 0 ? 'danger' : ''} />
-            {d.buckets.map((b) => <Stat key={b} label={`${b} days`} value={money(d.totals.buckets[b])} tone={b === '90+' && d.totals.buckets[b] > 0 ? 'danger' : ''} />)}
+            {d.buckets.map((b) => <Stat key={b.key} label={b.label} value={money(d.totals.buckets[b.key])} tone={b.key === '90+' && d.totals.buckets[b.key] > 0 ? 'danger' : ''} />)}
             <Stat label="Promised" value={money(d.totals.promised)} meta="pay-by dates given" />
             <Stat label="On hold" value={money(d.totals.on_hold)} meta="disputes" />
             {d.foreign?.length > 0 && (
@@ -52,7 +69,10 @@ export default function Collections() {
           </div>
         )}
         <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">
-          {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} /> : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
+          {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} />
+            /* Same reason as Payables: an empty list after a failed load
+               is not the same fact as nothing being owed. */
+            : error ? null : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
             <DataTable
               rows={d.clients}
               onRowClick={(r) => setOpen(open === (r.company_id ?? r.company) ? null : (r.company_id ?? r.company))}
@@ -61,7 +81,7 @@ export default function Collections() {
                 { key: 'company', header: 'Client', className: 'strong', render: (r) => <>{r.company_id ? <Link to={`/companies/${r.company_id}`} onClick={(e) => e.stopPropagation()}>{r.company}</Link> : r.company}{r.contact_name && <div className="small muted">{r.contact_name}{r.contact_email ? ` · ${r.contact_email}` : ''}{r.contact_phone ? ` · ${r.contact_phone}` : ''}</div>}</> },
                 { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => money(r.outstanding) },
                 { key: 'overdue', header: 'Overdue', align: 'right', render: (r) => (r.overdue > 0 ? <span style={{ color: 'var(--danger-fg)' }}>{money(r.overdue)}</span> : <span className="muted">—</span>) },
-                ...d.buckets.map((b) => ({ key: b, header: b, align: 'right', render: (r) => (r.buckets[b] > 0 ? money(r.buckets[b]) : <span className="muted">—</span>) })),
+                ...d.buckets.map((b) => ({ key: b.key, header: b.label, align: 'right', render: (r) => (r.buckets[b.key] > 0 ? money(r.buckets[b.key]) : <span className="muted">—</span>) })),
                 { key: 'oldest', header: 'Oldest', align: 'right', render: (r) => (r.oldest_days > 0 ? `${r.oldest_days} d` : '—') },
                 { key: 'chased', header: 'Last chased', render: (r) => (r.last_chased_at ? new Date(r.last_chased_at).toLocaleDateString() : <span className="muted">never</span>) },
                 { key: 'promise', header: 'Promise', render: (r) => (r.promise_to_pay_date ? <Badge tone={r.promise_to_pay_date < today() ? 'danger' : 'info'}>{date(r.promise_to_pay_date)}</Badge> : <span className="muted">—</span>) },

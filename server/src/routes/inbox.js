@@ -20,6 +20,7 @@ import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { replyToThread } from '../lib/mailbox/sync.js';
+import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate } from '../lib/inbox.js';
 
 export const inboxRouter = Router();
@@ -43,7 +44,8 @@ const inboxSchema = z.object({
 inboxRouter.get('/inboxes', async (req, res) => {
   const { rows } = await query(
     `SELECT i.*, a.email, a.status AS mailbox_status,
-            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id AND c.status = 'open') AS open
+            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id AND c.status = 'open') AS open,
+            (SELECT COUNT(*)::int FROM inbox_conversations c WHERE c.inbox_id = i.id) AS conversations
        FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id ORDER BY i.name`);
   const { rows: shared } = await query(`SELECT id, email FROM connected_accounts WHERE is_shared AND status <> 'disconnected' AND id NOT IN (SELECT account_id FROM inboxes) ORDER BY email`);
   res.json({ data: rows, available_mailboxes: shared });
@@ -70,6 +72,29 @@ inboxRouter.patch('/inboxes/:id', requireAdmin, async (req, res) => {
   const { rows: [i] } = await query(`UPDATE inboxes SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1 RETURNING *`, [Number(req.params.id), ...set.map(([, x]) => x)]);
   if (!i) throw new ApiError(404, 'Inbox not found');
   res.json({ data: i });
+});
+
+/**
+ * Delete an inbox.
+ *
+ * inbox_conversations.inbox_id cascades, and that table is the triage: the
+ * status, the owner, the labels, the reply clock and the link to an enquiry.
+ * The mail itself lives in email_threads and stays — the mailbox keeps every
+ * message either way — but the work done on top of it does not come back.
+ *
+ * So a delete that would discard any of it refuses once and says how much.
+ * ?discard=yes is the caller saying it read that sentence.
+ */
+inboxRouter.delete('/inboxes/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows: [i] } = await query('SELECT id, name FROM inboxes WHERE id = $1', [id]);
+  if (!i) throw new ApiError(404, 'Inbox not found');
+  const { rows: [{ count }] } = await query('SELECT COUNT(*)::int AS count FROM inbox_conversations WHERE inbox_id = $1', [id]);
+  if (count > 0 && req.query.discard !== 'yes') {
+    throw new ApiError(409, `${i.name} has ${count} conversation${count === 1 ? '' : 's'}. Deleting it discards their status, owner and reply clock. The emails themselves stay under the mailbox.`, { conversations: count });
+  }
+  await query('DELETE FROM inboxes WHERE id = $1', [id]);
+  res.json({ data: { deleted: i.name, conversations: count } });
 });
 
 // ------------------------------------------------------------ canned responses
@@ -128,14 +153,54 @@ const inboxScope = (req, from) => (isAdmin(req)
   : { clause: `(i.members = '{}' OR i.members && ARRAY[$${from}, $${from + 1}]::text[] OR c.assignee IS NULL OR lower(c.assignee) IN (lower($${from}), lower($${from + 1})))`, params: identities(req) });
 
 const LIST = `
-  SELECT c.*, i.name AS inbox_name, t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
+  SELECT c.*, i.name AS inbox_name, ia.email AS inbox_email,
+         t.subject, t.message_count, t.last_message_at, t.last_direction, t.entity, t.entity_id,
          co.name AS company_name, ct.name AS contact_name,
-         (c.status = 'open' AND c.response_due_at IS NOT NULL AND c.response_due_at < now()) AS overdue
+         (c.status = 'open' AND c.response_due_at IS NOT NULL AND c.response_due_at < now()) AS overdue,
+         -- Two things the list has to say about a thread without anybody
+         -- opening it, because they decide who picks it up. Both are read
+         -- off what is already joined: no extra tables, no second query.
+         --
+         -- looks_new: nobody has turned it into an enquiry and it is not
+         -- attached to any record, so it is either new business or noise.
+         (c.enquiry_no IS NULL AND t.entity IS NULL AND c.status = 'open') AS looks_new,
+         -- for_finance: it is about money that has already been invoiced,
+         -- so it is finance's to answer even though it arrived in sales.
+         -- COALESCE, because a thread attached to nothing gives NULL here
+         -- and the client would then have three states to handle for a
+         -- question with two answers.
+         COALESCE(t.entity = 'payment_stage', false) AS for_finance,
+         -- Nobody has opened it yet. Not the same as having no owner: a
+         -- thread can be read and left deliberately unassigned.
+         (c.first_opened_at IS NULL) AS unread,
+         -- The first line of the newest message, so the list can be
+         -- triaged without opening anything. It is already stored on the
+         -- message; LATERAL keeps it one row per conversation instead of
+         -- a second query per row.
+         --
+         -- Safe to read straight out: applyVisibility runs at ingest
+         -- (lib/mailbox/sync.js), so a mailbox set to metadata-only has
+         -- already stored this as NULL. The privacy choice was made
+         -- before the row existed, not on the way out.
+         last.snippet,
+         COALESCE(last.has_attachments, false) AS has_attachments
     FROM inbox_conversations c
     JOIN inboxes i ON i.id = c.inbox_id
+    -- Which shared address the thread actually arrived at. With more than
+    -- one inbox the reading pane otherwise cannot say whether a client
+    -- wrote to sales@ or to somebody's own mailbox, and the reply goes out
+    -- from whichever it was.
+    JOIN connected_accounts ia ON ia.id = i.account_id
     JOIN email_threads t ON t.id = c.thread_id
     LEFT JOIN companies co ON co.id = c.company_id
-    LEFT JOIN contacts ct ON ct.id = c.contact_id`;
+    LEFT JOIN contacts ct ON ct.id = c.contact_id
+    LEFT JOIN LATERAL (
+      SELECT m.snippet, m.has_attachments
+        FROM email_messages m
+       WHERE m.thread_id = t.id
+       ORDER BY m.sent_at DESC, m.id DESC
+       LIMIT 1
+    ) last ON true`;
 
 // Snoozed conversations wake when their time comes.
 const wake = () => query(`UPDATE inbox_conversations SET status = 'open', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until <= now()`);
@@ -170,7 +235,11 @@ inboxRouter.get('/', async (req, res) => {
   params.push(...scope.params);
   const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY (c.status = 'open') DESC, c.response_due_at NULLS LAST, t.last_message_at DESC LIMIT 500`, params);
-  res.json({ data: rows });
+  // The preview is a column written at ingest, so mail synced before the
+  // quoted history was split out still carries it — which is every thread
+  // in the inbox today. Cutting it here fixes the backlog without dropping
+  // a sync cursor and re-reading a year of mail to rewrite one text field.
+  res.json({ data: rows.map((r) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })) });
 });
 
 async function loadConversation(id, req) {
@@ -182,8 +251,66 @@ async function loadConversation(id, req) {
   return c;
 }
 
+/**
+ * What this thread looks like, and the one thing worth doing about it.
+ *
+ * The inbox is not a second CRM: rather than making somebody work out
+ * whether an email is new business, the thread says so and offers the
+ * single action that follows. Only one suggestion is ever returned,
+ * because two suggestions is a decision again.
+ *
+ * Every read here is scoped the same way the conversation itself is —
+ * the caller has already been shown this conversation, so its company's
+ * own deals are no wider a disclosure.
+ */
+async function suggestionFor(conversation) {
+  if (conversation.enquiry_no) return null;        // already converted
+  if (conversation.entity) return null;            // already attached to a record
+  if (conversation.status !== 'open') return null;
+
+  if (!conversation.company_id) {
+    return {
+      kind: 'unknown_company',
+      headline: `Nothing on file matches ${conversation.from_email}.`,
+      detail: 'Converting it will create the company as well as the enquiry.',
+      action: 'Create the enquiry',
+    };
+  }
+
+  const { rows: [open] } = await query(
+    `SELECT count(*)::int AS n FROM quotations
+      WHERE company_id = $1 AND status IN ('Draft', 'Submitted', 'Under Negotiation', 'On Hold')`,
+    [conversation.company_id]
+  );
+  if (open.n > 0) {
+    return {
+      kind: 'open_deal',
+      headline: `${conversation.company_name} already has ${open.n} open deal${open.n === 1 ? '' : 's'}.`,
+      detail: 'This may belong to one of them rather than being new business.',
+      action: 'Create the enquiry anyway',
+    };
+  }
+  return {
+    kind: 'new_enquiry',
+    headline: `This looks like a new enquiry from ${conversation.company_name}.`,
+    detail: 'A company already on file, with no open deal.',
+    action: 'Create the deal',
+  };
+}
+
 inboxRouter.get('/:id', async (req, res) => {
-  res.json({ data: await loadConversation(Number(req.params.id), req) });
+  const conversation = await loadConversation(Number(req.params.id), req);
+  // Opening it is what marks it seen — the same gesture a mail client has
+  // always used, and the only one that needs no extra button. Written once
+  // and never overwritten, so the dot answers "has anybody looked at this"
+  // rather than "who looked most recently"; WHERE first_opened_at IS NULL
+  // makes a re-read a no-op rather than a write on every GET.
+  if (conversation.unread) {
+    await query(
+      'UPDATE inbox_conversations SET first_opened_at = now(), first_opened_by = $2 WHERE id = $1 AND first_opened_at IS NULL',
+      [conversation.id, who(req)]);
+  }
+  res.json({ data: { ...conversation, suggestion: await suggestionFor(conversation) } });
 });
 
 const patchSchema = z.object({

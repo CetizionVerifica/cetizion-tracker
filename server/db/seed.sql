@@ -7,8 +7,6 @@ BEGIN;
 INSERT INTO settings (key, value, notes) VALUES
   ('finance_email', 'finance@cetizion.com', 'Receives the ''raise invoice'' worklist reminders.'),
   ('hr_email', 'hr@cetizion.com', 'Owns the Travel Log, approvals and reimbursements.'),
-  ('default_advance_percent', '0.5', 'Suggested first-stage split. Actual % is set per stage.'),
-  ('default_delivery_percent', '0.5', 'Suggested closing-stage split.'),
   ('vendor_invoice_window_days', '15', 'Travel vendor must invoice within this many days of the trip end.'),
   ('default_vendor_payment_terms_days', '30', 'Suggested terms for travel vendor invoices.'),
   ('default_po_payment_terms_days', '30', 'Default client payment terms on a new PO.');

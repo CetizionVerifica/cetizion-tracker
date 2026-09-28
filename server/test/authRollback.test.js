@@ -198,7 +198,7 @@ describe('switching modes and switching back', { skip: !ADMIN_URL && 'set TEST_D
 
       assert.equal(result.status, 'ok', mode);
       assert.equal(result.authMode, mode, '/api/health reports the mode');
-      assert.deepEqual(result.config, { mode }, '/api/auth/config agrees');
+      assert.deepEqual(result.config, { mode, providers: [] }, '/api/auth/config agrees');
     }
   });
 

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Alert, Badge, Card, DataTable, Field, Input, Modal, Select, useToast } from './ui.jsx';
+import { SettingsPane } from '../pages/SettingsArea.jsx';
+import { Button } from './ui/button';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 
@@ -21,8 +23,12 @@ export function ApiTokens() {
   }
   const endpoint = `${window.location.origin}/api/mcp`;
   return (
-    <Card flush title="Assistant access (MCP)" hint="Tokens that let Claude answer questions from live tracker data. A token reads only unless it is given writing, and writing means notes, tasks, logged calls and next steps; nothing else."
-      actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setForm({ name: '', role: 'sales', person: '', can_write: false })}>+ Token</button>}>
+    <SettingsPane
+      title="API tokens"
+      description="Tokens that let Claude answer questions from live tracker data. A token reads only unless it is given writing, and writing means notes, tasks, logged calls and next steps — nothing else."
+      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setForm({ name: '', role: 'sales', person: '', can_write: false })}>Create a token</Button>}
+    >
+      <Card flush>
       <DataTable rows={data?.data ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No tokens yet.</div>} columns={[
         { key: 'name', header: 'Token', className: 'strong', render: (r) => <>{r.name}<div className="small muted mono">{r.token_prefix}…</div></> },
         { key: 'role', header: 'Sees', render: (r) => (r.role === 'admin' ? 'Everything' : `${r.person}'s records`) },
@@ -32,6 +38,8 @@ export function ApiTokens() {
         { key: 'state', header: '', render: (r) => (r.revoked_at ? <Badge tone="danger">revoked</Badge> : <Badge tone="success">active</Badge>) },
         { key: 'act', header: '', align: 'right', render: (r) => !r.revoked_at && <button type="button" className="btn btn--sm btn--ghost" onClick={() => api.action(`/api-tokens/${r.id}/revoke`).then(() => { toast('Revoked', 'success'); refetch(); })}>Revoke</button> },
       ]} />
+      </Card>
+
       {form && (
         <Modal title="New assistant token" onClose={() => setForm(null)} footer={<><button type="button" className="btn" onClick={() => setForm(null)}>Cancel</button><button type="button" className="btn btn--primary" disabled={!form.name.trim() || (form.role === 'sales' && !form.person.trim())} onClick={create}>Create</button></>}>
           <div className="form-grid">
@@ -51,6 +59,6 @@ export function ApiTokens() {
           </div>
         </Modal>
       )}
-    </Card>
+    </SettingsPane>
   );
 }

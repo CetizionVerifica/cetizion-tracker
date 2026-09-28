@@ -6,6 +6,7 @@ import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.ts';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
+import { isAdmin } from './scope.js';
 
 const MAX_LIMIT = 1000;
 
@@ -42,6 +43,12 @@ export function buildWhere(def, reqQuery, params) {
     const normalized = def.normalizedFilters?.includes(col);
     if (values.length === 1 && values[0] === '__none__') {
       clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NULL` : `${ident(col)} IS NULL`);
+      continue;
+    }
+    // The other half of __none__: any value at all. The data-quality page
+    // needs it to say "invoiced" (?invoice_no=__any__) without a status list.
+    if (values.length === 1 && values[0] === '__any__') {
+      clauses.push(normalized ? `NULLIF(btrim(${ident(col)}), '') IS NOT NULL` : `${ident(col)} IS NOT NULL`);
       continue;
     }
     if (normalized) {
@@ -168,6 +175,17 @@ async function claimDocument(client, def, values, id) {
   return replaced;
 }
 
+/** 404 when the resource limits who sees its rows and this one is not theirs. */
+async function assertVisible(def, req) {
+  if (!def.visibleTo) return;
+  const params = [];
+  const pred = idPredicate(def, req.params.id, params);
+  const scoped = def.visibleTo(req, params);
+  if (!scoped) return;
+  const { rowCount } = await query(`SELECT 1 FROM ${ident(def.view || def.table)} WHERE ${pred} AND ${scoped}`, params);
+  if (!rowCount) throw new ApiError(404, `${def.label} not found`);
+}
+
 export function crudRouter(name, def) {
   const router = Router();
   const readFrom = def.view || def.table;
@@ -206,7 +224,10 @@ export function crudRouter(name, def) {
 
   router.get('/', async (req, res) => {
     const params = [];
-    const where = buildWhere(def, req.query, params);
+    const filters = buildWhere(def, req.query, params);
+    // A resource may say which rows a person may see at all (#22 scoping).
+    const scoped = def.visibleTo?.(req, params);
+    const where = scoped ? (filters ? `${filters} AND ${scoped}` : `WHERE ${scoped}`) : filters;
     const order = buildOrder(def, req.query.sort);
     const limit = Math.min(Number(req.query.limit) || 500, MAX_LIMIT);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -225,7 +246,8 @@ export function crudRouter(name, def) {
   router.get('/:id', async (req, res) => {
     const params = [];
     const pred = idPredicate(def, req.params.id, params);
-    const { rows } = await query(`SELECT * FROM ${ident(readFrom)} WHERE ${pred}`, params);
+    const scoped = def.visibleTo?.(req, params);
+    const { rows } = await query(`SELECT * FROM ${ident(readFrom)} WHERE ${pred}${scoped ? ` AND ${scoped}` : ''}`, params);
     if (!rows.length) throw new ApiError(404, `${def.label} not found`);
     res.json({ data: rows[0] });
   });
@@ -236,10 +258,14 @@ export function crudRouter(name, def) {
     // note or a file with nobody's name on it is the timeline saying an
     // anonymous someone did this, which #22 asks it not to do. Only filled
     // when the caller left it blank, so an import can still carry its own.
-    if (def.stampActor && !values[def.stampActor]) {
+    //
+    // Only an admin may set it to someone else (an import carrying its own
+    // author); for everybody else the session decides, whatever was sent.
+    if (def.stampActor && (!values[def.stampActor] || !isAdmin(req))) {
       const actor = req.user?.name || req.user?.username;
       if (actor) values[def.stampActor] = actor;
     }
+    await def.authorize?.(req, input);
 
     const { id, extra } = await write(async (client) => {
       if (def.hasDocument) await claimDocument(client, def, values);
@@ -282,6 +308,9 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: true });
+    if (def.stampActor && !isAdmin(req)) delete values[def.stampActor];
+    await assertVisible(def, req);
+    await def.authorize?.(req, input);
 
     // Reference-number guard: the field is immutable after creation.
     // Rules:
@@ -364,6 +393,7 @@ export function crudRouter(name, def) {
   });
 
   router.delete('/:id', ...mayDelete, async (req, res) => {
+    await assertVisible(def, req);
     const remove = async (client) => {
       const params = [];
       const pred = idPredicate(def, req.params.id, params);

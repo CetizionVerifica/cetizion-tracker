@@ -10,11 +10,11 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
-  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents CASCADE;
+  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents, project_milestones, quotation_stage_history, task_targets CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -58,13 +58,70 @@ CREATE TABLE exchange_rates (
 CREATE INDEX exchange_rates_lookup_idx
   ON exchange_rates (from_currency, to_currency, effective_from DESC);
 
+-- ---------------------------------------------------------------- holidays
+-- Working days (#73): the days nobody at Cetizion works, so a date that
+-- counts working days can skip them. Weekends are not listed; the helpers
+-- in businessDate.ts already skip Saturday and Sunday.
+CREATE TABLE holidays (
+  id          serial PRIMARY KEY,
+  holiday_on  date NOT NULL UNIQUE,
+  name        text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- India's gazetted holidays for Central Government offices at Delhi/New
+-- Delhi, as published by DoPT: 2026 from O.M. F.No.12/2/2023-JCA of
+-- 3 July 2025, 2027 from the O.M. of the same number of 16 July 2026. The
+-- dates of Id-ul-Fitr, Id-ul-Zuha, Muharram and Milad-un-Nabi follow the
+-- moon and can move; correct them in Settings → Holidays when they do.
+-- Weekend holidays are kept so the list reads like the published one.
+INSERT INTO holidays (holiday_on, name) VALUES
+  ('2026-01-26', 'Republic Day'),
+  ('2026-03-04', 'Holi'),
+  ('2026-03-21', 'Id-ul-Fitr'),
+  ('2026-03-26', 'Ram Navami'),
+  ('2026-03-31', 'Mahavir Jayanti'),
+  ('2026-04-03', 'Good Friday'),
+  ('2026-05-01', 'Buddha Purnima'),
+  ('2026-05-27', 'Id-ul-Zuha (Bakrid)'),
+  ('2026-06-26', 'Muharram'),
+  ('2026-08-15', 'Independence Day'),
+  ('2026-08-26', 'Milad-un-Nabi'),
+  ('2026-09-04', 'Janmashtami'),
+  ('2026-10-02', 'Mahatma Gandhi''s Birthday'),
+  ('2026-10-20', 'Dussehra'),
+  ('2026-11-08', 'Diwali'),
+  ('2026-11-24', 'Guru Nanak''s Birthday'),
+  ('2026-12-25', 'Christmas Day'),
+  ('2027-01-26', 'Republic Day'),
+  ('2027-03-10', 'Id-ul-Fitr'),
+  ('2027-03-23', 'Holi'),
+  ('2027-03-26', 'Good Friday'),
+  ('2027-04-15', 'Ram Navami'),
+  ('2027-04-19', 'Mahavir Jayanti'),
+  ('2027-05-17', 'Id-ul-Zuha (Bakrid)'),
+  ('2027-05-20', 'Buddha Purnima'),
+  ('2027-06-16', 'Muharram'),
+  -- Two holidays on one day in 2027; one row, since a date is a holiday or not.
+  ('2027-08-15', 'Independence Day; Milad-un-Nabi'),
+  ('2027-08-25', 'Janmashtami'),
+  ('2027-10-02', 'Mahatma Gandhi''s Birthday'),
+  ('2027-10-09', 'Dussehra'),
+  ('2027-10-29', 'Diwali'),
+  ('2027-11-14', 'Guru Nanak''s Birthday'),
+  ('2027-12-25', 'Christmas Day')
+ON CONFLICT (holiday_on) DO NOTHING;
+
 -- How far each reference series has got. A counter only ever goes up, so a
 -- number that has been issued is never reissued once its record is deleted.
 -- Empty on a fresh database; claimNextId also takes in the highest reference
 -- already present, so a seeded or imported database numbers on from there.
 CREATE TABLE sequence_counters (
   kind       text NOT NULL,
-  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$'),
+  -- A calendar year for five of the six series, and a financial year —
+  -- '26-27' — for the invoice series, which runs April to March the way a
+  -- GST invoice series has to.
+  year       text NOT NULL CHECK (year ~ '^[0-9]{4}$' OR year ~ '^[0-9]{2}-[0-9]{2}$'),
   last_n     int  NOT NULL DEFAULT 0 CHECK (last_n >= 0),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (kind, year)
@@ -223,13 +280,14 @@ CREATE TABLE pipeline_stages (
 );
 
 INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order, color, rotting_days) VALUES
-  ('Draft',                   10, 'open',   'Submitted',         1, '#94a3b8', 14),
+  ('Draft',                   10, 'open',   'Draft',             1, '#94a3b8', 14),
   ('Sent',                    40, 'open',   'Submitted',         2, '#38bdf8', 21),
   ('Negotiation',             60, 'open',   'Under Negotiation', 3, '#f59e0b', 21),
   ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
   ('On Hold',                 20, 'paused', 'On Hold',           5, '#a3a3a3', NULL),
   ('Won, PO received',       100, 'won',    'Won - PO Received', 6, '#16a34a', NULL),
-  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL)
+  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL),
+  ('Expired',                  0, 'lost',   'Lost',              8, '#9ca3af', NULL)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE lost_reasons (
@@ -339,7 +397,8 @@ CREATE TABLE quotations (
   quotation_value    numeric(16,2),
   currency           text NOT NULL DEFAULT 'INR',
   status             text NOT NULL DEFAULT 'Submitted'
-                       CHECK (status IN ('Submitted','Under Negotiation',
+                       CONSTRAINT quotations_status_check
+                       CHECK (status IN ('Draft','Submitted','Under Negotiation',
                                          'Won - PO Received','Lost','On Hold')),
   po_received        boolean NOT NULL DEFAULT false,
   project_id         text REFERENCES projects(project_id)
@@ -507,9 +566,19 @@ CREATE TABLE purchase_orders (
   quotation_no           text REFERENCES quotations(quotation_no)
                            ON UPDATE CASCADE ON DELETE SET NULL,
   document_id            int UNIQUE REFERENCES documents(id),
+  -- A revision names the PO it takes the place of; a cancelled PO will not
+  -- go ahead. Either takes a PO out of the sales figures only (migration 051).
+  replaces_po_number     text REFERENCES purchase_orders(po_number)
+                           ON UPDATE CASCADE ON DELETE SET NULL,
+  cancelled              boolean NOT NULL DEFAULT false,
   created_at             timestamptz NOT NULL DEFAULT now(),
-  updated_at             timestamptz NOT NULL DEFAULT now()
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT purchase_orders_not_replacing_itself CHECK (replaces_po_number <> po_number)
 );
+
+-- A PO is replaced by one revision at most; a later revision replaces that one.
+CREATE UNIQUE INDEX purchase_orders_replaces_key
+  ON purchase_orders (replaces_po_number) WHERE replaces_po_number IS NOT NULL;
 
 CREATE INDEX ON purchase_orders (project_id);
 CREATE INDEX purchase_orders_quotation_no_idx ON purchase_orders (quotation_no);
@@ -570,6 +639,16 @@ CREATE TABLE payment_stages (
 
 CREATE INDEX ON payment_stages (po_number);
 
+-- A GST invoice series has to be unbroken and unrepeated for the company,
+-- not merely unique within one order. Stages not yet invoiced hold NULL,
+-- and NULLs do not collide.
+--
+-- Migration 046 adds this to an existing database only when its data
+-- already satisfies it, because a number typed in by hand years ago may
+-- be duplicated and a migration that throws stops the container.
+CREATE UNIQUE INDEX payment_stages_invoice_no_key
+  ON payment_stages (invoice_no) WHERE invoice_no IS NOT NULL;
+
 -- ---------------------------------------------------------------------
 -- Engagements: what a client holds and when it renews (#28)
 -- ---------------------------------------------------------------------
@@ -610,8 +689,8 @@ CREATE UNIQUE INDEX engagements_po_service_key ON engagements (po_number, servic
 CREATE TABLE payments (
   id           serial PRIMARY KEY,
   stage_id     int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
-  -- A receipt is positive. An adjustment � someone correcting a total that
-  -- was typed too high � is a negative row, so the ledger still adds up to
+  -- A receipt is positive. An adjustment � someone correcting a total that
+  -- was typed too high � is a negative row, so the ledger still adds up to
   -- the figure on the stage. Writing the figure by hand instead left the
   -- correction to be undone by the next receipt.
   amount       numeric(16,2) NOT NULL,
@@ -891,6 +970,20 @@ CREATE TRIGGER quotation_defaults BEFORE INSERT ON quotations
 -- given with the move. Changing the status (the form, the importer, a
 -- conversion) picks the default stage for it; sending a draft moves it to
 -- Sent, and an acceptance moves an open one to Verbal yes.
+-- Every stage move, with the loss it leaves or enters (#25).
+CREATE TABLE quotation_stage_history (
+  id              bigserial PRIMARY KEY,
+  quotation_id    int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  from_stage_id   int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  to_stage_id     int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  lost_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  lost_notes      text,
+  competitor      text,
+  changed_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_stage_history_quotation_idx ON quotation_stage_history (quotation_id, changed_at);
+
 CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
 DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
 BEGIN
@@ -930,24 +1023,34 @@ BEGIN
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     END IF;
   END IF;
 
   IF TG_OP = 'INSERT' OR NEW.stage_id IS DISTINCT FROM OLD.stage_id THEN
     NEW.stage_changed_at := now();
+    -- Every move is kept (#25), with the loss it leaves or enters: a
+    -- reopening clears the reason, notes and competitor from the quotation,
+    -- and this is where they stay.
+    IF TG_OP = 'UPDATE' THEN
+      INSERT INTO quotation_stage_history (quotation_id, from_stage_id, to_stage_id, lost_reason_id, lost_notes, competitor)
+      VALUES (NEW.id, OLD.stage_id, NEW.stage_id,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_reason_id ELSE OLD.lost_reason_id END,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_notes ELSE OLD.lost_notes END,
+              CASE WHEN st.type = 'lost' THEN NEW.competitor ELSE OLD.competitor END);
+    END IF;
     IF st.type IN ('won', 'lost') THEN
       NEW.closed_at := COALESCE(NEW.closed_at, now());
     ELSE
       NEW.closed_at := NULL;
     END IF;
-    -- Reopened: the reason it was lost no longer applies.
+    -- Reopened: the reason it was lost no longer applies to it; the history keeps it.
     IF st.type <> 'lost' THEN
       NEW.lost_reason_id := NULL;
       NEW.lost_notes := NULL;
@@ -997,7 +1100,7 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, every reminder_interval_days.')
+  ('reminder_levels_days', '3,14,30', 'Days overdue at which the first, second and final reminders go out. After the final one, it repeats at the interval below.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- companies
@@ -1185,6 +1288,63 @@ CREATE TABLE notes (
 
 CREATE INDEX notes_entity_idx ON notes (entity, entity_id, created_at DESC);
 
+-- Every record a task is on (#22); the task's own entity is its main one,
+-- kept here by the trigger below.
+CREATE TABLE task_targets (
+  task_id    integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  entity     text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id  text NOT NULL,
+  PRIMARY KEY (task_id, entity, entity_id)
+);
+
+CREATE INDEX task_targets_entity_idx ON task_targets (entity, entity_id);
+
+-- A project's milestones, and the stages they trigger (#26).
+CREATE TABLE project_milestones (
+  id          serial PRIMARY KEY,
+  project_id  text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  name        text NOT NULL,
+  target_date date,
+  reached_on  date,
+  sort_order  int NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX project_milestones_name_idx ON project_milestones (project_id, lower(name));
+
+ALTER TABLE payment_stages ADD COLUMN IF NOT EXISTS milestone_id int REFERENCES project_milestones(id) ON DELETE SET NULL;
+
+CREATE INDEX payment_stages_milestone_idx ON payment_stages (milestone_id) WHERE milestone_id IS NOT NULL;
+
+-- Reaching a milestone (or taking it back) is recorded once, on the
+-- milestone, and every stage it triggers takes the date.
+CREATE OR REPLACE FUNCTION milestone_reached() RETURNS trigger AS $$
+BEGIN
+  UPDATE payment_stages SET milestone_reached_on = NEW.reached_on
+   WHERE milestone_id = NEW.id AND milestone_reached_on IS DISTINCT FROM NEW.reached_on;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER milestone_reached AFTER UPDATE OF reached_on ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION milestone_reached();
+
+CREATE TRIGGER project_milestones_set_updated_at BEFORE UPDATE ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE FUNCTION task_main_target() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND (OLD.entity, OLD.entity_id) IS DISTINCT FROM (NEW.entity, NEW.entity_id) THEN
+    DELETE FROM task_targets WHERE task_id = NEW.id AND entity = OLD.entity AND entity_id = OLD.entity_id;
+  END IF;
+  INSERT INTO task_targets (task_id, entity, entity_id) VALUES (NEW.id, NEW.entity, NEW.entity_id)
+    ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_main_target AFTER INSERT OR UPDATE OF entity, entity_id ON tasks
+  FOR EACH ROW EXECUTE FUNCTION task_main_target();
+
 -- Many files per record, beside the single document field some records carry.
 CREATE TABLE attachments (
   id           serial PRIMARY KEY,
@@ -1330,6 +1490,14 @@ CREATE TABLE IF NOT EXISTS users (
   -- It only ever goes up, so reactivating an account never hands its old
   -- cookies back. See migrations/016_session_version.sql.
   session_version integer NOT NULL DEFAULT 1,
+  -- What a person may change about themselves (C20, 049). Role, email and
+  -- active are facts about their job and stay on the admin screens.
+  phone          text,
+  signature      text,
+  time_zone      text,
+  -- Which emails they want. {} means the defaults, so nobody is silently
+  -- unsubscribed from everything by the column arriving.
+  notify         jsonb NOT NULL DEFAULT '{}'::jsonb,
   last_login_at  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
@@ -1356,6 +1524,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- Sign in with Microsoft 365 or Google (C18, 048). One person, several ways
+-- in. Nothing here creates a person: an identity attaches to a users row an
+-- admin has already added. users_active_needs_login above is deliberately
+-- unchanged, so a linked provider is an extra door rather than the only one.
+CREATE TABLE IF NOT EXISTS auth_identities (
+  id            serial PRIMARY KEY,
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider      text NOT NULL CHECK (provider IN ('microsoft', 'google')),
+  -- The provider's immutable id for the person. Email can change; this
+  -- cannot, so it is what a returning sign-in is matched on.
+  subject       text NOT NULL CHECK (btrim(subject) <> ''),
+  email         text,
+  linked_at     timestamptz NOT NULL DEFAULT now(),
+  last_used_at  timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_subject_idx ON auth_identities (provider, subject);
+CREATE UNIQUE INDEX IF NOT EXISTS auth_identities_user_provider_idx ON auth_identities (user_id, provider);
+
+-- Sessions you can see and end (C20, 049). The cookie still proves who
+-- somebody is; this row is what can be taken away, which is what makes
+-- "sign out that phone" a real button rather than a list nobody can act on.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  via           text NOT NULL DEFAULT 'password' CHECK (via IN ('password', 'microsoft', 'google')),
+  user_agent    text,
+  ip            text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions (user_id, last_seen_at DESC);
+
 -- ---------------------------------------------------------------------
 -- Notifications (#44)
 -- ---------------------------------------------------------------------
@@ -1375,6 +1576,12 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at     timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- #44: cleared by acting on the record, and emailed once.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS resolved_at timestamptz;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS emailed_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS notifications_open_entity_idx ON notifications (entity, entity_id) WHERE resolved_at IS NULL;
 
 -- Who has read what. A notification addressed to nobody is everyone's, and
 -- a single read_at on a shared row would mean the first person to look
@@ -1663,6 +1870,13 @@ CREATE TABLE IF NOT EXISTS inbox_conversations (
   snoozed_until      timestamptz,
   closed_at          timestamptz,
   enquiry_no         text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  -- Whether anybody has opened it yet, and who first did. Recorded once
+  -- for the team rather than per person: in a shared inbox the cost being
+  -- avoided is two people answering the same client, so what matters is
+  -- that somebody has seen it. "No owner" is a different fact — a thread
+  -- can be read and left deliberately unassigned.
+  first_opened_at    timestamptz,
+  first_opened_by    text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -2250,4 +2464,126 @@ CREATE INDEX IF NOT EXISTS activity_log_actor_idx  ON activity_log (actor_user_i
 CREATE INDEX IF NOT EXISTS activity_log_action_idx ON activity_log (action, id DESC);
 CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity_type, entity_id, id DESC);
 
+-- ---------------------------------------------------------------------
+-- Saved views: the pinned list in the sidebar, and every report.
+--
+-- A view is a resource, a set of filters and a name. That is enough to be
+-- three things at once — a sidebar entry with the count behind it, a
+-- preset on a list page, and, with `chart` set, a report, because a report
+-- here is a filtered list with a summary above it.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS saved_views (
+  id          serial PRIMARY KEY,
+  -- The resource key the API already knows, e.g. 'payment-stages'. Checked
+  -- against the resource registry on write: that registry is the one true
+  -- list and it lives in the code.
+  resource    text NOT NULL,
+  name        text NOT NULL,
+  -- The query the list endpoint would have been given. Re-validated
+  -- against the resource's declared filters on every read, so a filter
+  -- dropped from a resource stops being applied rather than erroring.
+  filters     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Null is everybody's; a username makes it one person's.
+  owner       text,
+  pinned      boolean NOT NULL DEFAULT false,
+  sort_order  int NOT NULL DEFAULT 0,
+  -- What the count means, so the sidebar can colour it.
+  tone        text CHECK (tone IN ('late', 'waiting', 'settled', 'info')),
+  chart       text,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Two views both called "Mine" on the same list is a bug reported later.
+CREATE UNIQUE INDEX IF NOT EXISTS saved_views_name_key
+  ON saved_views (resource, lower(name), COALESCE(owner, ''));
+CREATE INDEX IF NOT EXISTS saved_views_pinned_idx
+  ON saved_views (pinned, sort_order) WHERE pinned;
+
+-- The three the sidebar starts with. Rows, not code, so they can be
+-- renamed, reordered or unpinned without a deploy. Seeded only into an
+-- empty table, so a site that has made its own is left alone.
+INSERT INTO saved_views (resource, name, filters, pinned, sort_order, tone, chart)
+SELECT * FROM (VALUES
+  ('payment-stages', 'Overdue money', '{"stage_status":"Overdue"}'::jsonb, true, 1, 'late', 'ageing'),
+  ('payment-stages', 'To invoice',    '{"stage_status":"To Invoice"}'::jsonb, true, 2, 'waiting', NULL),
+  ('quotations',     'Open deals',    '{"status":"Draft,Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
+) AS seed(resource, name, filters, pinned, sort_order, tone, chart)
+WHERE NOT EXISTS (SELECT 1 FROM saved_views);
+
 COMMIT;
+
+-- Notifications cleared by acting on their record (#44).
+-- Acting on the record clears what the notification asked for (#44). In
+-- the database rather than in each route, so a task ticked on the Tasks page,
+-- on the timeline or through the MCP tools all count the same.
+CREATE OR REPLACE FUNCTION resolve_notifications(p_kinds text[], p_entity text, p_entity_id text) RETURNS void AS $$
+  UPDATE notifications SET resolved_at = now()
+   WHERE resolved_at IS NULL AND kind = ANY(p_kinds) AND entity = p_entity AND entity_id = p_entity_id;
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION task_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
+    UPDATE notifications SET resolved_at = now()
+     WHERE resolved_at IS NULL AND dedupe_key LIKE 'task:' || NEW.id || ':%';
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION enquiry_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  -- Followed up: the status moved on, or the next follow-up was set again.
+  IF NEW.status IS DISTINCT FROM OLD.status OR NEW.next_follow_up_at IS DISTINCT FROM OLD.next_follow_up_at THEN
+    PERFORM resolve_notifications(ARRAY['follow_up'], 'enquiry', NEW.enquiry_no);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION quotation_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF OLD.approval_status = 'pending' AND NEW.approval_status IS DISTINCT FROM 'pending' THEN
+    PERFORM resolve_notifications(ARRAY['approval'], 'quotation', NEW.quotation_no);
+  END IF;
+  -- Decided, accepted, extended or revised: the expiry warning and the
+  -- unopened-link reminder no longer apply.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('Won - PO Received', 'Lost')
+     OR NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL
+     OR NEW.valid_until IS DISTINCT FROM OLD.valid_until
+     OR NEW.revision IS DISTINCT FROM OLD.revision THEN
+    PERFORM resolve_notifications(ARRAY['expiring', 'acceptance'], 'quotation', NEW.quotation_no);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION payment_stage_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF NEW.amount_received IS DISTINCT FROM OLD.amount_received
+     AND NEW.amount_received >= (SELECT round(po.po_value * NEW.stage_percent, 2) FROM purchase_orders po WHERE po.po_number = NEW.po_number) THEN
+    PERFORM resolve_notifications(ARRAY['invoice_overdue'], 'payment_stage', NEW.id::text);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION conversation_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  -- Answered or closed: the "no reply yet" reminder is done with.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status <> 'open'
+     OR NEW.response_due_at IS NULL AND OLD.response_due_at IS NOT NULL THEN
+    UPDATE notifications SET resolved_at = now()
+     WHERE resolved_at IS NULL AND kind = 'inbox' AND link = '/inbox?c=' || NEW.id;
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF status ON tasks
+  FOR EACH ROW EXECUTE FUNCTION task_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF amount_received ON payment_stages
+  FOR EACH ROW EXECUTE FUNCTION payment_stage_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON inbox_conversations
+  FOR EACH ROW EXECUTE FUNCTION conversation_resolves_notifications();

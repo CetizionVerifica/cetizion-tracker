@@ -26,7 +26,7 @@ function loadConfigWith(env) {
     const out = execFileSync(
       process.execPath,
       ['-e', "import('./src/auth/config.js').then(m => console.log(m.authConfig.mode))"],
-      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      { cwd: SERVER_DIR, env: { ...process.env, NODE_ENV: 'test', SKIP_DOTENV: '1', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
     return { ok: true, mode: out.trim().split('\n').at(-1) };
   } catch (err) {
@@ -99,7 +99,10 @@ describe('the shared password, in production', () => {
 
 describe('sessionSubject', () => {
   const shared = sharedPayload('admin', Date.now() + 1000);
-  const database = databasePayload(7, 1, Date.now() + 1000);
+  // v3 carries the session row this cookie belongs to; without it there is
+  // nothing for "sign out that phone" to end.
+  const SESSION_ID = '11111111-2222-3333-4444-555555555555';
+  const database = databasePayload(7, 1, Date.now() + 1000, SESSION_ID);
 
   test('reads a shared cookie only in shared mode', () => {
     assert.deepEqual(sessionSubject(shared, 'shared'), { kind: 'shared', username: 'admin' });
@@ -107,12 +110,12 @@ describe('sessionSubject', () => {
   });
 
   test('reads a database cookie only in database mode', () => {
-    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7, sv: 1 });
+    assert.deepEqual(sessionSubject(database, 'database'), { kind: 'database', uid: 7, sv: 1, sid: SESSION_ID });
     assert.equal(sessionSubject(database, 'shared'), null, 'a database cookie is not a way into shared mode');
   });
 
   test('the database payload carries an id and nothing that can go stale', () => {
-    assert.deepEqual(Object.keys(database).sort(), ['exp', 'sv', 'uid', 'v']);
+    assert.deepEqual(Object.keys(database).sort(), ['exp', 'sid', 'sv', 'uid', 'v']);
     assert.equal(database.v, DATABASE_SESSION_VERSION);
     assert.ok(!('role' in database), 'the role is never signed into the cookie');
     assert.ok(!('active' in database), 'nor whether the account is switched on');

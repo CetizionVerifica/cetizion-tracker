@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, Select, Stat } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
@@ -12,8 +13,11 @@ import { date, money } from '../lib/format.js';
 const LABEL = { invoiced: 'Invoiced, due', scheduled: 'To be invoiced', pipeline: 'Pipeline (weighted)', vendors: 'Vendor bills', claims: 'Expense claims' };
 
 export default function Cashflow() {
+  const [params] = useSearchParams();
   const [months, setMonths] = useState('6');
-  const [open, setOpen] = useState(null);
+  // Reports links a month of the cash chart here as ?month=2026-10, and the
+  // month opens on arrival rather than asking for the same click twice.
+  const [open, setOpen] = useState(() => params.get('month'));
   const { data, loading, error } = useFetch(() => api.raw(`/cashflow?months=${months}`), [months]);
   const d = data?.data;
   const rows = d?.months ?? [];
@@ -30,7 +34,7 @@ export default function Cashflow() {
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
         {d && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label={`In, next ${months} months`} value={money(totals.inflow)} meta="invoiced + scheduled" />
             <Stat label="Pipeline on top" value={money(totals.pipeline)} meta="weighted by probability" />
             <Stat label="Out" value={money(totals.outflow)} meta="vendors + claims" />

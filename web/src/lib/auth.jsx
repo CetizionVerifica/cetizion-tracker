@@ -32,6 +32,9 @@ export function AuthProvider({ children }) {
   const [state, setState] = useState({ status: 'checking', user: null });
   // Which field to ask for. Unknown until the API says; the form waits.
   const [mode, setMode] = useState(null);
+  // Which provider buttons the deployment has configured. Empty is the
+  // normal state, and the form draws nothing rather than a dead button.
+  const [providers, setProviders] = useState([]);
 
   // Ask once on load: a cookie from a previous visit means no sign-in screen.
   useEffect(() => {
@@ -40,10 +43,11 @@ export function AuthProvider({ children }) {
     Promise.all([
       api.auth.me().then((result) => result.data, () => null),
       // Its own catch: not knowing the mode must not look like being signed out.
-      api.auth.config().then((result) => result.data.mode, () => 'shared'),
-    ]).then(([user, resolvedMode]) => {
+      api.auth.config().then((result) => result.data, () => ({ mode: 'shared', providers: [] })),
+    ]).then(([user, authConfig]) => {
       if (cancelled) return;
-      setMode(resolvedMode);
+      setMode(authConfig.mode);
+      setProviders(authConfig.providers || []);
       setState(user ? { status: 'in', user } : SIGNED_OUT);
     });
 
@@ -83,6 +87,7 @@ export function AuthProvider({ children }) {
     () => ({
       ...state,
       mode,
+      providers,
       displayName: displayName(state.user),
       // Shared mode has one account with full access, so it is an admin.
       // Database mode asks the role the server just re-read.
@@ -90,7 +95,7 @@ export function AuthProvider({ children }) {
       signIn,
       signOut,
     }),
-    [state, mode, signIn, signOut]
+    [state, mode, providers, signIn, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

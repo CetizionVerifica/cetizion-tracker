@@ -22,7 +22,7 @@ export default function Accounting() {
       <PageHeader title="Accounting" subtitle="The books against the tracker. The books win on invoice and payment details; every difference waits here until it is taken or explained." />
       <div className="page stack">
         {s && (
-          <div className="grid grid--stats">
+          <div className="auto-grid--stats">
             <Stat label="Books" value={{ none: 'Not connected', zoho: 'Zoho Books', tally: 'Tally Prime', file: 'Export files' }[s.provider]} meta={s.provider === 'zoho' ? (s.zoho ? 'API set up' : 'ZOHO_* not set') : s.provider === 'tally' ? (s.tally ? 'Tally reachable by URL' : 'upload day-book exports') : s.provider === 'file' ? 'upload exports under Import' : 'set accounting_provider in Settings'} />
             <Stat label="Open differences" value={open} tone={open ? 'danger' : 'ok'} />
             <Stat label="Matched" value={s.counts.matched || 0} meta={`${s.counts.resolved || 0} resolved by hand`} />

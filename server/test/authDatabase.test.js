@@ -424,7 +424,9 @@ describe('database mode', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     const res = await request(app).get('/api/auth/config');
 
     assert.equal(res.status, 200, 'readable without signing in');
-    assert.deepEqual(res.body.data, { mode: 'database' });
+    // The mode, and which provider buttons to draw — nothing else. No
+    // provider is configured in this suite, so the list is empty.
+    assert.deepEqual(res.body.data, { mode: 'database', providers: [] });
     const text = JSON.stringify(res.body);
     assert.ok(!text.includes('shared-admin'), text);
     assert.ok(!/secret|password|AUTH_/i.test(text), text);

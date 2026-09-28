@@ -94,8 +94,12 @@ export default function Quotations() {
         initialSearch={params.get('q') || undefined}
         filters={[
           { name: 'status', label: 'Status', options: lookups.enums?.quotation || [] },
+          // Reports links a pipeline bar here as ?stage_id=N, and a stage is
+          // how the board already talks about a deal.
+          { name: 'stage_id', label: 'Stage', options: (lookups.pipeline_stages || []).map((s) => ({ value: String(s.id), label: s.name })) },
           { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
-          { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
+          { name: 'sales_person', label: 'Owner', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sales_people] },
+          { name: 'quotation_value', label: 'Value', options: [{ value: '__none__', label: 'Not set' }, { value: '__any__', label: 'Set' }] },
         ]}
       />
 

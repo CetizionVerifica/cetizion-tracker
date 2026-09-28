@@ -7,10 +7,11 @@ import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
 import {
-  invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
+  invoicingCsvRows, ordersCsvRows, overdueCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
+import { payablesRows } from '../lib/payables.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -42,10 +43,12 @@ const SALES_REPORTS = {
   orders: { build: revenueReport, toRows: ordersCsvRows },
   invoicing: { build: revenueReport, toRows: invoicingCsvRows },
   'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
+  overdue: { build: revenueReport, toRows: overdueCsvRows },
 };
 
-// Report builders started at once for the PDF. Two of them fan out into
-// several queries each, so at most 5 of the pool's 10 connections are in use.
+// Report builders started at once for the PDF. The two that fan out the
+// most are revenueReport (4 queries) and salesReviewSections (3), so at
+// most 7 of the pool's 10 connections are in use at a time.
 const REPORT_CONCURRENCY = 2;
 
 /**
@@ -133,6 +136,16 @@ async function listRows(req) {
   }
   return rows;
 }
+
+/**
+ * The payables page as a spreadsheet (#76): the same rows, in the same
+ * order, as /api/dashboard/payables. Registered before /:resource.csv,
+ * which would otherwise take "payables" for a resource and 404.
+ */
+exportRouter.get('/payables.csv', async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  sendCsv(res, `cetizion-payables-${stamp}`, await payablesRows());
+});
 
 /**
  * Any list can still leave as a spreadsheet — the point is that the

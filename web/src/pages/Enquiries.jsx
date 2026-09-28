@@ -59,7 +59,7 @@ export default function Enquiries() {
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
     { name: 'sales_person', label: 'Owner', type: 'combo', options: lookups.sales_people },
     { name: 'sales_person_email', label: 'Owner email', type: 'email' },
-    { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `"${CONVERTED}" creates the quotation unless one is linked; "Unqualified" needs a reason` },
+    { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `Leaving New needs a source and the client; Qualified and "${CONVERTED}" need the services and an estimated value; Unqualified needs a reason. "${CONVERTED}" creates a draft quotation, a line per service, unless one is linked` },
     { name: 'next_follow_up_at', label: 'Next follow-up', type: 'date', hint: 'Blank: set from Settings when the status changes' },
     { name: 'expected_decision_date', label: 'Expected decision', type: 'date' },
     { name: 'unqualified_reason_id', label: 'Reason, if unqualified', type: 'select', options: lookups.lost_reasons.map((r) => ({ value: String(r.id), label: r.name })) },

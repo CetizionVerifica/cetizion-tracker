@@ -3,6 +3,8 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, number, percent } from '../lib/format.js';
+import { poCurrencyFields } from '../lib/poCurrency.js';
+import { poRevisionFields } from '../lib/poRevision.js';
 
 export default function PurchaseOrders() {
   const navigate = useNavigate();
@@ -10,7 +12,20 @@ export default function PurchaseOrders() {
   const [params] = useSearchParams();
 
   const columns = [
-    { key: 'po_number', header: 'PO', className: 'mono strong', render: (r) => <>{r.po_number}<div className="small muted">{date(r.po_date)}</div></> },
+    {
+      key: 'po_number',
+      header: 'PO',
+      className: 'mono strong',
+      render: (r) => (
+        <>
+          {r.po_number}
+          <div className="small muted">{date(r.po_date)}</div>
+          {/* Out of the sales figures; still billed as usual. */}
+          {r.cancelled && <Badge tone="warning">cancelled</Badge>}
+          {r.replaced_by_po_number && <div className="small muted">replaced by {r.replaced_by_po_number}</div>}
+        </>
+      ),
+    },
     { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}<div className="small muted mono">{r.project_id}{r.quotation_no ? ` · ${r.quotation_no}` : ' · no quotation linked'}</div></> },
     { key: 'po_value', header: 'PO value', align: 'right', render: (r) => money(r.po_value, r.currency) },
     { key: 'service_count', header: 'Services', align: 'right', render: (r) => number(r.service_count) },
@@ -36,6 +51,7 @@ export default function PurchaseOrders() {
     { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
   ];
 
+  const poCurrency = poCurrencyFields(lookups.won_quotations);
   const fields = [
     { name: 'po_number', label: 'PO number', required: true },
     { name: 'project_id', label: 'Project', required: true, type: 'select', options: lookups.projects.map((p) => ({ value: p.project_id, label: `${p.project_id} — ${p.client_name}` })) },
@@ -49,15 +65,17 @@ export default function PurchaseOrders() {
         .filter((q) => !values.project_id || q.project_id === values.project_id)
         .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.project_id})` })),
       hint: 'The order this PO fulfils, on the same project. Left blank, it is linked when the project has one won quotation',
+      ...poCurrency.quotation,
     },
     { name: 'po_date', label: 'PO date', type: 'date', hint: 'Registering the date makes advance stages invoiceable' },
     { name: 'po_value', label: 'PO value', type: 'money', required: true },
-    { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
+    { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR', ...poCurrency.currency },
     { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number', default: '30' },
     { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
     { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Setting this makes on-delivery stages invoiceable' },
     { name: 'project_manager_email', label: 'Manager email', type: 'email' },
     { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
+    ...poRevisionFields(lookups.purchase_orders),
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 
@@ -81,6 +99,7 @@ export default function PurchaseOrders() {
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
         { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'quotation_no', label: 'Quotation', options: [{ value: '__none__', label: 'Not linked' }, { value: '__any__', label: 'Linked' }] },
       ]}
       banner={
         lookups.projects.length === 0 ? (

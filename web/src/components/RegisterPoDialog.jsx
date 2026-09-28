@@ -3,6 +3,7 @@ import { Alert, Field, Input, Modal, Select, useToast } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
+import { poCurrencyWarning } from '../lib/poCurrency.js';
 
 /**
  * PO received → project in one step (#26). From a quotation: the project
@@ -31,8 +32,15 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
   const [errors, setErrors] = useState({});
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The currency starts as the quotation's; changing it is allowed, and flagged.
+  const currencyWarning = poCurrencyWarning([quotation], { quotation_no: quotation.quotation_no, currency: v.currency });
   const set = (k, val) => { setV((s) => ({ ...s, [k]: val })); setErrors((e) => ({ ...e, [k]: undefined })); };
   const template = templates.find((t) => String(t.id) === v.payment_terms_template_id);
+  // A PO for a different amount than was quoted is worth a second look (#26).
+  const quoted = Number(quotation.total ?? quotation.quotation_value);
+  const poValue = v.po_value === '' ? quoted : Number(v.po_value);
+  const differs = Number.isFinite(quoted) && quoted > 0 && Number.isFinite(poValue) && Math.abs(poValue - quoted) > 0.005;
+  const gap = differs ? ((poValue - quoted) / quoted) * 100 : 0;
 
   async function submit(e) {
     e.preventDefault(); setBusy(true); setError(null); setErrors({});
@@ -49,7 +57,7 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
         payload.document_id = data.id;
       }
       const { data } = await api.action(`/quotations/${encodeURIComponent(quotation.quotation_no)}/register`, payload);
-      toast(`${data.po_number} registered under ${data.project_id}: ${data.stages.length} stages, ${data.checklist_steps} checklist steps`, 'success');
+      toast(`${data.po_number} registered under ${data.project_id}: ${data.stages.length} stages, ${data.checklist_steps} checklist steps${data.po_value_differs ? '. The PO differs from the quotation' : ''}`, data.po_value_differs ? 'warning' : 'success');
       invalidateLookups();
       onDone?.(data);
       onClose();
@@ -75,9 +83,20 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
           <Field label="PO number" required error={errors.po_number}><Input value={v.po_number} onChange={(e) => set('po_number', e.target.value)} /></Field>
           <Field label="PO date" error={errors.po_date}><Input type="date" value={v.po_date} onChange={(e) => set('po_date', e.target.value)} /></Field>
           <Field label="PO value" error={errors.po_value} hint="Blank: the quotation total"><Input type="number" step="0.01" min="0" value={v.po_value} onChange={(e) => set('po_value', e.target.value)} /></Field>
-          <Field label="Currency"><Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} /></Field>
+          <Field label="Currency">
+            <Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} />
+            {currencyWarning && <span className="field__hint" role="status" style={{ color: 'var(--warn-fg)' }}>{currencyWarning}</span>}
+          </Field>
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
           <Field label="PO document" hint="The client's PO, if you have the file"><input type="file" className="input" onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
+          {differs && (
+            <div className="span-all">
+              <Alert tone="warning">
+                The PO is {money(poValue, v.currency)} against {money(quoted, quotation.currency)} quoted ({gap > 0 ? '+' : ''}{gap.toFixed(1)}%).
+                The service lines will be scaled to the PO; check the number before you register it.
+              </Alert>
+            </div>
+          )}
 
           <div className="span-all" style={{ fontWeight: 650, marginTop: 6 }}>Payment schedule</div>
           <div className="span-all">

@@ -119,6 +119,11 @@ mailboxRouter.get('/', async (req, res) => {
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
             a.auto_create_contacts, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             (SELECT COUNT(*)::int FROM email_threads t WHERE t.account_id = a.id) AS threads,
+            -- Whether mail from this mailbox actually reaches the Inbox.
+            -- Being shared is not enough: routing needs an active inboxes
+            -- row, and without one a shared mailbox stores threads that
+            -- nobody ever sees on the Inbox page.
+            EXISTS (SELECT 1 FROM inboxes i WHERE i.account_id = a.id AND i.active) AS feeds_inbox,
             (SELECT COUNT(*)::int FROM email_messages m WHERE m.account_id = a.id) AS messages,
             (SELECT json_agg(json_build_object('folder', f.folder, 'subscribed_until', f.subscription_expires_at, 'synced', f.delta_link IS NOT NULL)) FROM mail_folders f WHERE f.account_id = a.id) AS folders
        FROM connected_accounts a WHERE ${listScope.clause} ORDER BY a.status = 'disconnected', a.email`, listScope.params);
@@ -132,7 +137,11 @@ mailboxRouter.get('/connect/microsoft', (req, res) => {
 });
 
 mailboxRouter.get('/oauth/microsoft', async (req, res) => {
-  const back = (msg) => res.redirect(`/mailboxes?${new URLSearchParams(msg)}`);
+  // /settings/mailboxes, not /mailboxes: the page moved into the Settings
+  // area in the redesign. The old path still redirects, but a redirect
+  // that drops the query string turned every outcome of this flow —
+  // success and failure alike — into a silent return to the page.
+  const back = (msg) => res.redirect(`/settings/mailboxes?${new URLSearchParams(msg)}`);
   const state = readState(req.query.state);
   if (!state || state.u !== who(req)) return back({ error: 'The sign-in could not be verified. Please try again.' });
   if (req.query.error) return back({ error: String(req.query.error_description || req.query.error).slice(0, 200) });
@@ -195,6 +204,20 @@ mailboxRouter.patch('/:id', async (req, res) => {
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_messages SET subject = NULL, snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'subject') await query('UPDATE email_messages SET snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_threads SET subject = NULL WHERE account_id = $1', [a.id]);
+  // How far back to read is only consulted for a folder that has no delta
+  // link yet (lib/mailbox/sync.js), because after the first pass Graph
+  // hands us a cursor and we follow it. So raising the number on its own
+  // changes nothing at all — the next sync resumes from the cursor and
+  // never looks further back than it already has.
+  //
+  // Dropping the cursor is what makes the setting mean something: the next
+  // sync walks the new window from the start. It is safe to repeat,
+  // because ingest() skips any message already stored for the account
+  // (sync.js, the provider_id check), so a second pass over ground already
+  // covered stores nothing twice.
+  if (parsed.data.import_days !== undefined) {
+    await query('UPDATE mail_folders SET delta_link = NULL WHERE account_id = $1', [a.id]);
+  }
   res.json({ data: a });
 });
 

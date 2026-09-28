@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { quoteWonEnquiry } from './enquiries.js';
-import { linkProjectQuotation } from './projects.js';
+import { saveEnquiry } from './enquiries.js';
+import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
+import { mayWriteOnRecords, onRecordVisibleSql } from './scope.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -106,7 +107,7 @@ export const resources = {
     label: 'Company',
     defaultSort: 'name',
     search: ['name', 'sector', 'city', 'gstin'],
-    filters: ['sector', 'city'],
+    filters: ['sector', 'city', 'contacts'],
     normalizedFilters: ['sector', 'city'],
     columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
     schema: z.object({
@@ -196,7 +197,7 @@ export const resources = {
       services_interested: str(500),
       notes: str(2000),
     }),
-    onSave: quoteWonEnquiry,
+    onSave: saveEnquiry,
   },
 
   quotations: {
@@ -211,7 +212,7 @@ export const resources = {
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
@@ -285,8 +286,30 @@ export const resources = {
       // is written by linkProjectQuotation. Declared here so it survives
       // validation and reaches onSave.
       quotation_no: str(60),
+      // Not a column either: delivery is recorded on the project's POs, which
+      // is where the on-delivery stages read it (#26). v_projects reports it back.
+      actual_delivery_date: date(),
     }),
-    onSave: linkProjectQuotation,
+    onSave: saveProject,
+  },
+
+  'project-milestones': {
+    // What a project has to reach before an On Milestone stage can be
+    // invoiced (#26). Reaching one stamps its date on every stage it triggers.
+    table: 'project_milestones',
+    view: null,
+    label: 'Milestone',
+    defaultSort: 'sort_order, target_date NULLS LAST, id',
+    search: ['name', 'project_id'],
+    filters: ['project_id'],
+    columns: ['project_id', 'name', 'target_date', 'reached_on', 'sort_order'],
+    schema: z.object({
+      project_id: requiredStr(40),
+      name: requiredStr(160),
+      target_date: date(),
+      reached_on: date(),
+      sort_order: int({ min: 0 }).default(0),
+    }),
   },
 
   'purchase-orders': {
@@ -311,6 +334,8 @@ export const resources = {
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
       'payment_terms_days', 'actual_initiation_date', 'actual_delivery_date',
       'project_manager_email', 'remarks', 'document_id',
+      // Revised or cancelled — out of the sales figures (linkPurchaseOrder checks the link).
+      'replaces_po_number', 'cancelled',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -325,6 +350,10 @@ export const resources = {
       remarks: str(1000),
       document_id: int({ min: 1 }),
       quotation_no: str(60),
+      replaces_po_number: str(60),
+      // NOT NULL in the table: blank means "not cancelled". An edit that does
+      // not send it leaves it alone (crud writes only the fields sent).
+      cancelled: bool().transform((v) => v ?? false),
     }),
     onSave: linkPurchaseOrder,
   },
@@ -361,11 +390,11 @@ export const resources = {
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
-    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name'],
+    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id'],
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
-      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on',
+      'reminder_sent_on', 'remarks', 'document_id', 'credit_days', 'milestone_name', 'milestone_reached_on', 'milestone_id',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -383,6 +412,7 @@ export const resources = {
       credit_days: int({ min: 0, max: 365 }),
       milestone_name: str(160),
       milestone_reached_on: date(),
+      milestone_id: int({ min: 1 }),
     }),
   },
 
@@ -568,6 +598,20 @@ export const resources = {
     stampActor: 'created_by',
     view: null,
     label: 'Task',
+    // A sales user sees the tasks on their own records, and any task that is
+    // theirs to do or that they set, wherever it sits (#22).
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'tasks', params, { ownColumns: ['assignee', 'created_by'], taskTargets: true }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
+    // The other records the task is on, besides its own (#22). Sent as the
+    // whole list: what is not in it is taken off.
+    onSave: async (client, { after, input }) => {
+      if (!Array.isArray(input.targets)) return undefined;
+      await client.query('DELETE FROM task_targets WHERE task_id = $1 AND NOT (entity = $2 AND entity_id = $3)', [after.id, after.entity, after.entity_id]);
+      for (const t of input.targets) {
+        await client.query('INSERT INTO task_targets (task_id, entity, entity_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [after.id, t.entity, String(t.entity_id)]);
+      }
+      return undefined;
+    },
     defaultSort: 'due_at NULLS LAST, id',
     search: ['title', 'description', 'entity_id', 'assignee'],
     filters: ['entity', 'entity_id', 'status', 'assignee', 'priority', 'type'],
@@ -583,6 +627,7 @@ export const resources = {
       type: enumOf(['call', 'email', 'meeting', 'follow_up', 'document', 'other']).default('follow_up'),
       assignee: str(120),
       created_by: str(120),
+      targets: z.array(z.object({ entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']), entity_id: requiredStr(120) })).max(20).optional(),
     }),
   },
 
@@ -591,6 +636,8 @@ export const resources = {
     stampActor: 'author',
     view: null,
     label: 'Note',
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'notes', params, { ownColumns: ['author'] }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
     defaultSort: 'pinned DESC, created_at DESC',
     search: ['body'],
     filters: ['entity', 'entity_id'],
@@ -642,6 +689,8 @@ export const resources = {
     filters: ['entity', 'entity_id'],
     columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
     stampActor: 'uploaded_by',
+    visibleTo: (req, params) => onRecordVisibleSql(req, 'attachments', params, { ownColumns: ['uploaded_by'] }),
+    authorize: (req, input) => mayWriteOnRecords(req, input),
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
       entity_id: requiredStr(120),
@@ -855,6 +904,25 @@ export const resources = {
       source: enumOf(['manual', 'feed']).default('manual'),
       entered_by: str(120),
       note: str(300),
+    }),
+  },
+
+  holidays: {
+    // The days nobody works (#73), which the working-day helpers in
+    // businessDate.ts skip. Read by everybody, because the figures sales
+    // and finance see count them; kept by an admin, like the rates above.
+    adminOnlyWrites: true,
+    table: 'holidays',
+    view: null,
+    label: 'Holiday',
+    defaultSort: 'holiday_on',
+    search: ['name'],
+    filters: [],
+    dateFilter: 'holiday_on',
+    columns: ['holiday_on', 'name'],
+    schema: z.object({
+      holiday_on: requiredDate(),
+      name: requiredStr(120),
     }),
   },
 };
