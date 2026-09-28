@@ -19,7 +19,7 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS } from '../import/rules.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema } from '../import/rules.js';
 import { stageKey, needsReading } from '../import/stages.js';
 import { commitBatch } from '../import/commit.js';
 import { businessToday, businessYear } from '../lib/businessDate.ts';
@@ -81,9 +81,26 @@ async function liveSnapshot() {
   };
 }
 
+/**
+ * The most rows one upload may carry.
+ *
+ * The 15 MB multer limit was the only bound, and an xlsx is a zip, so it
+ * decompresses to far more sheet than that suggests. Nothing here scales
+ * gently: matching is rows × quotations of fuzzy comparison on the event
+ * loop, the row is extracted four times over, the plan inserts about seven
+ * database round trips per row, and the AI review is one call per fifteen
+ * rows — all inside the HTTP request, which means the whole process stops
+ * serving anybody while it runs. Refusing a sheet is a sentence someone
+ * can act on; a request that never returns is not.
+ */
+const MAX_IMPORT_ROWS = 3000;
+
 /** Parse, map, review, plan — and store the result as draft items. */
 async function planBatch({ batchId, buffer, sheet, rules }) {
   const wb = readWorkbook(buffer, sheet);
+  if (wb.rows.length > MAX_IMPORT_ROWS) {
+    throw new ApiError(422, `Sheet "${wb.sheet}" has ${wb.rows.length.toLocaleString('en-IN')} rows; this reads up to ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} at a time. Split it and upload the parts — each one keeps its own review.`);
+  }
   resetUsage();
   const { mapping, source: mapSource, ai_error: mapErr } = await mapColumns(wb.headers, wb.rows.slice(0, 5));
   if (!mapping.client || !mapping.stage) {
@@ -128,8 +145,41 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
   return plan;
 }
 
-// Keep uploaded bytes for re-planning within the process lifetime.
+/**
+ * Uploaded bytes, kept only long enough to re-plan.
+ *
+ * This was an unbounded Map holding every upload for the process lifetime,
+ * and only a draft delete ever removed one — so a committed batch leaked
+ * its buffer for good. A weekly 10 MB sheet is half a gigabyte of retained
+ * client data a year in a container nothing restarts between deploys, and
+ * the raw sheet sitting in heap long after the import is a retention
+ * problem as much as a memory one.
+ *
+ * Evicted on commit, on delete, past its age, and oldest-first past the
+ * count. Losing one only costs a re-upload: `replan` already 410s when the
+ * bytes are gone, which is also what happens when a second worker serves
+ * the request.
+ */
+const FILE_CACHE_MAX = 8;
+const FILE_CACHE_TTL_MS = 60 * 60 * 1000;
 const fileCache = new Map();
+
+function rememberFile(id, buffer) {
+  const now = Date.now();
+  for (const [key, held] of fileCache) {
+    if (now - held.at > FILE_CACHE_TTL_MS) fileCache.delete(key);
+  }
+  fileCache.set(id, { buffer, at: now });
+  // Map iterates in insertion order, so the first key is the oldest.
+  while (fileCache.size > FILE_CACHE_MAX) fileCache.delete(fileCache.keys().next().value);
+}
+
+function recallFile(id) {
+  const held = fileCache.get(id);
+  if (!held) return null;
+  if (Date.now() - held.at > FILE_CACHE_TTL_MS) { fileCache.delete(id); return null; }
+  return held.buffer;
+}
 
 /** A CSV template with the columns the importer understands and one example row. */
 importRouter.get('/template.csv', (req, res) => {
@@ -146,13 +196,22 @@ importRouter.get('/template.csv', (req, res) => {
 importRouter.post('/batches', upload.single('file'), async (req, res) => {
   if (!req.file) throw new ApiError(422, 'Choose a file to upload');
   let rules = {};
-  if (req.body.rules) { try { rules = JSON.parse(req.body.rules); } catch { throw new ApiError(422, 'rules must be JSON'); } }
+  if (req.body.rules) {
+    let sent;
+    try { sent = JSON.parse(req.body.rules); } catch { throw new ApiError(422, 'rules must be JSON'); }
+    const parsed = rulesSchema.safeParse(sent);
+    if (!parsed.success) {
+      const said = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      throw new ApiError(422, `Please check the import settings — ${said}`);
+    }
+    rules = parsed.data;
+  }
   const { rows } = await query(
     `INSERT INTO import_batches (filename, uploaded_by, rules) VALUES ($1, $2, $3) RETURNING *`,
     [req.file.originalname, req.user.username, JSON.stringify({ ...DEFAULT_RULES, ...rules })]
   );
   const batch = rows[0];
-  fileCache.set(batch.id, req.file.buffer);
+  rememberFile(batch.id, req.file.buffer);
   try {
     await planBatch({ batchId: batch.id, buffer: req.file.buffer, sheet: req.body.sheet || null, rules });
   } catch (err) {
@@ -196,9 +255,15 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
   const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
-  const buffer = fileCache.get(id);
+  const buffer = recallFile(id);
   if (!buffer) throw new ApiError(410, 'The uploaded file is no longer held in memory; upload it again');
-  const rules = { ...(rows[0].rules || {}), ...(req.body?.rules || {}) };
+  // Same gate as the upload: a replan takes rules from the client too.
+  const sent = rulesSchema.safeParse(req.body?.rules || {});
+  if (!sent.success) {
+    const said = sent.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    throw new ApiError(422, `Please check the import settings — ${said}`);
+  }
+  const rules = { ...(rows[0].rules || {}), ...sent.data };
   await planBatch({ batchId: id, buffer, sheet: req.body?.sheet || rows[0].sheet_name, rules });
   res.json({ data: await loadBatch(id) });
 });
@@ -303,6 +368,8 @@ importRouter.post('/batches/:id/commit', async (req, res) => {
   if (blocking.length) throw new ApiError(422, `${blocking.length} included item(s) still have errors. Fix or untick them first.`, { items: blocking.map((b) => b.id) });
   try {
     const result = await commitBatch(batch, items, { user: req.user.username });
+    // Committed, so the bytes are not wanted again.
+    fileCache.delete(batch.id);
     res.json({ data: { ...(await loadBatch(batch.id)), written: result.written } });
   } catch (err) {
     if (err.status === 422) throw new ApiError(422, err.message, { item_seq: err.item_seq });

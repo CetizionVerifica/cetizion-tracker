@@ -119,6 +119,21 @@ export async function commitBatch(batch, items, { user }) {
   const written = [];
 
   await transaction(async (client) => {
+    // The status was read before this transaction opened, so two commits
+    // that overlap both passed that check — a double-click, or a client
+    // retrying after a proxy gave up on a slow batch. Both then wrote:
+    // every quotation created twice under different claimed numbers, and
+    // the PO inserts either duplicated or tripped a unique constraint
+    // half way through. The row lock is what makes the check mean
+    // something, and it has to be the first statement inside.
+    const { rows: [locked] } = await client.query('SELECT status FROM import_batches WHERE id = $1 FOR UPDATE', [batch.id]);
+    if (!locked) throw new Error(`import batch ${batch.id} not found`);
+    if (locked.status === 'committed') {
+      const already = new Error('This batch is already committed');
+      already.status = 422;
+      throw already;
+    }
+
     for (const item of included) {
       const p = item.payload;
       const parent = item.parent_seq ? results.get(item.parent_seq) : null;

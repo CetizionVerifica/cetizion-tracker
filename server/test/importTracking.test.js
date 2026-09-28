@@ -189,3 +189,25 @@ test('a row with no service matches the deal it already made, instead of making 
   assert.ok(q.flags.some((f) => f.code === 'duplicate'));
   assert.equal(q.payload.__update_fields, undefined);
 });
+
+/**
+ * The settings a client may send. Each of these used to reach code that
+ * assumed a number or a safe string, and failed somewhere far enough away
+ * that the message blamed the uploaded file.
+ */
+test('import settings are checked before they reach anything that trusts them', async () => {
+  const { rulesSchema } = await import('../src/import/rules.js');
+
+  assert.equal(rulesSchema.safeParse({ po_date_offset_days: 'abc' }).success, false, 'a word is not a number of days');
+  assert.equal(rulesSchema.safeParse({ default_split: {} }).success, false, 'a split has to be a list of numbers');
+  assert.equal(rulesSchema.safeParse({ default_currency: 'RUPEES' }).success, false, 'a currency is three letters');
+  // invoice_prefix is interpolated into a RegExp, so its shape is the guard.
+  assert.equal(rulesSchema.safeParse({ invoice_prefix: 'CV(.*)PL' }).success, false, 'a prefix is not a pattern');
+  assert.equal(rulesSchema.safeParse({ invoice_prefix: 'CTZ/26' }).success, true, 'a real prefix still passes');
+
+  // Numbers that arrive as text from a form are coerced rather than refused.
+  const ok = rulesSchema.safeParse({ po_date_offset_days: '14', default_split: ['40', '60'] });
+  assert.equal(ok.success, true);
+  assert.equal(ok.data.po_date_offset_days, 14);
+  assert.deepEqual(ok.data.default_split, [40, 60]);
+});
