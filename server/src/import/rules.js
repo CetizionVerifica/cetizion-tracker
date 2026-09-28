@@ -25,6 +25,7 @@
  *   invoice        PO number + stage (an invoice already on that stage)
  *   receipt        PO number + stage (money already recorded on that stage)
  */
+import { z } from 'zod';
 import { findDate, looksLikeReference, parseMoney, readCurrency, splitReference } from './parse.js';
 import { classifyStage, readsAsItself, stageKey } from './stages.js';
 import { unitOf } from './fields.js';
@@ -52,6 +53,41 @@ export const DEFAULT_RULES = {
   // moved back by a sheet.
   update_from_sheet: true,
 };
+
+/**
+ * What a client may actually send as rules.
+ *
+ * These were JSON.parse'd and spread straight into the defaults, so a
+ * number arriving as text became NaN halfway down — po_date_offset_days
+ * of "abc" makes an Invalid Date whose toISOString throws, surfacing as
+ * "Could not read this file", and default_split of {} yields a stage
+ * percent of NaN. invoice_prefix is also interpolated into a RegExp, so
+ * it needs a shape rather than a shrug. Admin-only, which makes this
+ * robustness rather than security — but the house rule is zod at the
+ * boundary, and every one of those failures reads as the file's fault.
+ */
+export const rulesSchema = z.object({
+  exclude_iso: z.boolean(),
+  won_requires_po: z.boolean(),
+  include_pending: z.boolean(),
+  include_lost: z.boolean(),
+  po_date_offset_days: z.coerce.number().int().min(0).max(365),
+  invoice_date_offset_days: z.coerce.number().int().min(0).max(365),
+  delivery_offset_months: z.coerce.number().int().min(0).max(120),
+  delivery_only_if_past: z.boolean(),
+  default_split: z.array(z.coerce.number().min(0).max(100)).min(1).max(12),
+  default_terms_days: z.coerce.number().int().min(0).max(365),
+  default_currency: z.string().trim().length(3),
+  // Letters, digits, dash and slash: enough for CVPL or CTZ/26, and
+  // nothing that changes what the pattern it is built into means.
+  invoice_prefix: z.string().trim().min(1).max(20).regex(/^[A-Za-z0-9/-]+$/, 'Letters, digits, - and / only'),
+  apply_onboarding_template: z.boolean(),
+  overwrite_existing: z.boolean(),
+  update_from_sheet: z.boolean(),
+  // The model's readings, kept between plans; keys are arbitrary wordings.
+  stage_map: z.record(z.string(), z.string().nullable()),
+  ai_stage_map: z.record(z.string(), z.string().nullable()),
+}).partial();
 
 /** Who writes the sheet's remarks and reminders: how they are found again. */
 export const IMPORT_AUTHOR = 'Bulk import';

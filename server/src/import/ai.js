@@ -52,6 +52,19 @@ async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000 } =
         // flash-class model spends its output budget deliberating and
         // truncates. Fable models cannot switch thinking off; keep it low.
         reasoning: /fable/i.test(aiConfig.model) ? { effort: 'low' } : { enabled: false },
+        // What goes out is a client's commercial detail — names, deal
+        // values, invoice numbers, and whatever somebody typed in a
+        // remarks column. Which provider serves the model decides whether
+        // that is kept, and the default is to let OpenRouter choose freely.
+        //
+        // data_collection: 'deny' routes only to providers that do not
+        // store or train on prompts; zdr narrows that to zero-retention
+        // endpoints. Both can make a request fail to route rather than
+        // fall back to a provider that keeps it, which is the right way
+        // round: not answering is recoverable, and the importer falls back
+        // to rules. A copy of a client's pipeline on somebody's training
+        // set is not recoverable.
+        provider: { data_collection: 'deny', zdr: true },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
