@@ -249,10 +249,10 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
           </span>
           <span
             className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
-            title={[row.company_name || row.from_email, row.from_name].filter(Boolean).join(' · ')}
+            title={[row.company_name, row.from_name, row.from_email].filter(Boolean).join(' · ')}
           >
-            {row.company_name || row.from_email}
-            {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
+            {row.company_name || row.from_name || row.from_email}
+            {row.company_name && row.from_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
           {row.has_attachments && (
             <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
@@ -384,16 +384,16 @@ export default function Inbox() {
               <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
             </Button>
             <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Inbox</h1>
-            <span aria-live="polite" className="text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
+            <span aria-live="polite" className="shrink-0 whitespace-nowrap text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
             <div className="flex-1" />
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {VIEWS.map((v) => (
                 <button
                   key={v.key}
                   type="button"
                   onClick={() => { const n = new URLSearchParams(); n.set('view', v.key); setParams(n, { replace: true }); }}
                   className={cn(
-                    'rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
                     view === v.key ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -410,7 +410,7 @@ export default function Inbox() {
                   onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
                   aria-label="Set up inboxes and canned responses"
                   className={cn(
-                    'ml-auto rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'ml-auto whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
                     view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
