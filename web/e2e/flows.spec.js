@@ -222,3 +222,46 @@ test('a checklist step that finance owns has no tick box, and says who has it', 
   await expect(page.getByText(/Recording the delivery date closes the delivery step/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Record the delivery date' })).toHaveCount(1);
 });
+
+/**
+ * The inbox's security boundary, in the browser that enforces it (#105).
+ *
+ * cleanMail is the DOMPurify pass — the library Zero uses — and it only
+ * runs where there is a DOM, so the unit suite in Node cannot see it work:
+ * there, it deliberately returns its input and leaves the frame's content
+ * policy to do the stopping. This is the test that watches it actually
+ * strip something, and it runs the real module rather than a copy of it.
+ */
+test('a message is cleaned in the browser, and a tracking pixel loses its src', async ({ page }) => {
+  await page.goto('/');
+  const evil = '<p onclick="steal()">Hello</p>'
+    + '<script>alert(1)</script>'
+    + '<img src="https://tracker.invalid/open.gif?id=9" width="1" height="1">'
+    + '<img src="cid:logo.png">'
+    + '<a href="javascript:alert(1)">click</a>'
+    + '<iframe src="https://evil.invalid"></iframe>';
+
+  const out = await page.evaluate(async (html) => {
+    const { cleanMail, framePolicy } = await import('/src/lib/mailFrame.js');
+    return { blocked: cleanMail(html, false), shown: cleanMail(html, true), policy: framePolicy(false) };
+  }, evil);
+
+  // Nothing that runs, navigates or posts survives either way.
+  for (const body of [out.blocked, out.shown]) {
+    expect(body).not.toContain('<script');
+    expect(body).not.toContain('onclick');
+    expect(body).not.toContain('<iframe');
+    expect(body).not.toContain('javascript:');
+  }
+
+  // The read receipt: its src is gone, and the policy would refuse the
+  // fetch even if it were not. An image that travelled with the message
+  // has no network to reach, so it stays.
+  expect(out.blocked).not.toContain('tracker.invalid');
+  expect(out.blocked).toContain('cid:logo.png');
+  expect(out.policy).toContain("img-src data: cid:");
+  expect(out.policy).not.toContain('https:');
+
+  // And asking for them puts them back.
+  expect(out.shown).toContain('tracker.invalid');
+});

@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { MoreHorizontal, PanelLeft, Paperclip, Reply } from 'lucide-react';
+import { ChevronRight, MoreHorizontal, PanelLeft, Paperclip, Reply } from 'lucide-react';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -210,6 +210,74 @@ function MailBody({ id, html }) {
   );
 }
 
+/**
+ * One message in a thread, open or shut.
+ *
+ * A four-exchange thread rendered every message in full, so reading the
+ * reply somebody actually sent meant scrolling past three you had already
+ * read — and the one that matters is always the last. Everything above it
+ * collapses to the line you need to recognise it by: who, when, and its
+ * first few words. A thread of one or two stays open, because collapsing
+ * half of a two-message thread hides nothing and costs a click.
+ *
+ * The body is inset rather than bled to the card edge. An email is written
+ * for white paper and has to stay on it, but a white rectangle butted
+ * against the dark chrome reads as a hole in the interface; with a margin
+ * and a radius it reads as a letter lying on the desk.
+ */
+function Message({ m, openByDefault }) {
+  const [open, setOpen] = useState(openByDefault);
+  useEffect(() => { setOpen(openByDefault); }, [openByDefault, m.id]);
+  const outbound = m.direction === 'outbound';
+  const who = m.from_name || m.from_email;
+
+  return (
+    <article
+      className={cn(
+        'overflow-hidden rounded-[10px] border border-border bg-card',
+        outbound && 'border-l-[3px] border-l-primary'
+      )}
+    >
+      <header
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v); } }}
+        className="flex w-full cursor-pointer items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors duration-150 hover:bg-secondary/60"
+      >
+        <ChevronRight
+          className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-150', open && 'rotate-90')}
+          strokeWidth={2}
+          aria-hidden="true"
+        />
+        <span className="shrink-0 text-[13px] font-semibold text-foreground">{who}</span>
+        {outbound && <Badge tone="info">sent</Badge>}
+        {m.sent_from_tracker_by && <Badge tone="neutral">by {m.sent_from_tracker_by}</Badge>}
+        {/* Shut, the line has to be enough to recognise the message by. */}
+        {!open && m.snippet && (
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">{m.snippet}</span>
+        )}
+        {open && <span className="flex-1" />}
+        <time
+          dateTime={m.sent_at}
+          title={new Date(m.sent_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+          className="shrink-0 text-[11.5px] text-muted-foreground"
+        >
+          {when(m.sent_at)}
+        </time>
+      </header>
+      {open && (
+        <div className="px-2.5 pb-2.5">
+          {m.body_html
+            ? <MailBody id={m.id} html={m.body_html} />
+            : <div className="rounded-[7px] bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">{m.snippet}</div>}
+        </div>
+      )}
+    </article>
+  );
+}
+
 const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
   // An option in a listbox rather than a button, so a screen reader says
   // "2 of 4, selected" and the arrow keys mean what they look like they
@@ -249,10 +317,10 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
           </span>
           <span
             className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
-            title={[row.company_name || row.from_email, row.from_name].filter(Boolean).join(' · ')}
+            title={[row.company_name, row.from_name, row.from_email].filter(Boolean).join(' · ')}
           >
-            {row.company_name || row.from_email}
-            {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
+            {row.company_name || row.from_name || row.from_email}
+            {row.company_name && row.from_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
           {row.has_attachments && (
             <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
@@ -384,16 +452,16 @@ export default function Inbox() {
               <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
             </Button>
             <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Inbox</h1>
-            <span aria-live="polite" className="text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
+            <span aria-live="polite" className="shrink-0 whitespace-nowrap text-[13px] text-secondary-text">{s ? `${s.open} open` : ''}</span>
             <div className="flex-1" />
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {VIEWS.map((v) => (
                 <button
                   key={v.key}
                   type="button"
                   onClick={() => { const n = new URLSearchParams(); n.set('view', v.key); setParams(n, { replace: true }); }}
                   className={cn(
-                    'rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
                     view === v.key ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -410,7 +478,7 @@ export default function Inbox() {
                   onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
                   aria-label="Set up inboxes and canned responses"
                   className={cn(
-                    'ml-auto rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'ml-auto whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
                     view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -523,7 +591,21 @@ function Conversation({ id, onBack, onChanged }) {
         >
           ← All conversations
         </button>
-        <h2 className="text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
+        <div className="flex items-start gap-4">
+          <h2 className="min-w-0 flex-1 text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
+          {/* The three things done to a conversation, on the line the
+              subject is on. They were a third row under the metadata, which
+              put 96px of chrome above every message on a pane whose whole
+              job is showing the message. */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {c.status !== 'closed'
+              ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'closed' }, 'Closed')}>Close</Button>
+              : <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'open' }, 'Reopened')}>Reopen</Button>}
+            {c.status !== 'snoozed' && c.status !== 'closed' && (
+              <Button variant="ghost" size="sm" onClick={() => setSnoozing(true)}>Snooze</Button>
+            )}
+          </div>
+        </div>
         <p className="mt-1 wrap-anywhere text-[12.5px] text-secondary-text">
           {c.from_name || c.from_email} &lt;{c.from_email}&gt;
           {/* Which of our addresses it came to. C13 writes this as "to
@@ -536,22 +618,17 @@ function Conversation({ id, onBack, onChanged }) {
           {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
         </p>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {c.status !== 'closed'
-            ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'closed' }, 'Closed')}>Close</Button>
-            : <Button variant="secondary" size="sm" disabled={busy} onClick={() => update({ status: 'open' }, 'Reopened')}>Reopen</Button>}
-          {c.status !== 'snoozed' && c.status !== 'closed' && (
-            <Button variant="ghost" size="sm" onClick={() => setSnoozing(true)}>Snooze</Button>
-          )}
-          <div className="flex-1" />
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <label className="text-[12px] text-muted-foreground" htmlFor={`owner-${c.id}`}>Owner</label>
           <Input
+            id={`owner-${c.id}`}
             list="inbox-people"
             defaultValue={c.assignee || ''}
             key={`${c.id}-${c.assignee}`}
             onBlur={(e) => e.target.value !== (c.assignee || '') && update({ assignee: e.target.value || null }, 'Reassigned')}
             placeholder="Unassigned"
             aria-label="Owner"
-            className="w-40"
+            className="h-7 w-44 text-[12.5px]"
           />
           <datalist id="inbox-people">{lookups.sales_people.map((p) => <option key={p} value={p} />)}</datalist>
         </div>
@@ -585,12 +662,9 @@ function Conversation({ id, onBack, onChanged }) {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 px-6 py-4">
-        {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m) => (
-          <div key={m.id} className={`mail mail--${m.direction}`}>
-            <div className="mail__head"><span className="strong">{m.from_name || m.from_email}</span>{m.sent_from_tracker_by && <Badge tone="info">by {m.sent_from_tracker_by}</Badge>}<span className="small muted mail__when">{when(m.sent_at)}</span></div>
-            {m.body_html ? <MailBody id={m.id} html={m.body_html} /> : <div className="mail__snippet">{m.snippet}</div>}
-          </div>
+      <div className="flex flex-col gap-2.5 px-6 py-4">
+        {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m, i) => (
+          <Message key={m.id} m={m} openByDefault={i >= t.messages.length - 1 || t.messages.length <= 2} />
         ))}
 
         {/* Reading is the common case and replying is the occasional one,
@@ -598,8 +672,8 @@ function Conversation({ id, onBack, onChanged }) {
             third of the pane on every thread somebody only glanced at. */}
         {!composing ? (
           <div>
-            <Button variant="secondary" size="sm" onClick={() => setComposing(true)}>
-              <Reply className="size-3.5" strokeWidth={1.75} aria-hidden="true" /> Reply
+            <Button onClick={() => setComposing(true)}>
+              <Reply className="size-4" strokeWidth={1.75} aria-hidden="true" /> Reply
             </Button>
           </div>
         ) : (

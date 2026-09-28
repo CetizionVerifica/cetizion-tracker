@@ -13,9 +13,78 @@
  * the whole inbox and it is a string — the one part of this screen worth
  * asserting on directly rather than through a browser.
  */
+import DOMPurify from 'dompurify';
 
 /** Does this message pull anything from the network? */
 export const hasRemoteImage = (html) => /<img\b[^>]*\bsrc\s*=\s*["']?https?:/i.test(String(html || ''));
+
+
+/**
+ * A second sanitiser, in the browser, on HTML the server already cleaned.
+ *
+ * This is the library Zero uses (apps/mail/lib/email-utils.ts:
+ * `DOMPurify.sanitize(html)`), and it is here for the reason a second one
+ * is ever worth having: the server's pass happens once, at ingest, in
+ * mailbox/sync.js — and that is not the only way a row reaches
+ * email_threads. routes/portal.js writes one directly. A client that
+ * sanitises whatever it is handed does not care which path the HTML came
+ * down.
+ *
+ * Where this differs from Zero, deliberately: Zero calls sanitize with its
+ * defaults and renders the result inline, which keeps every remote image
+ * and so keeps every tracking pixel. Blocked images are the point of #105,
+ * so the hook below strips a remote src at the DOM level as well, and the
+ * frame's content policy still refuses the fetch underneath it. Either one
+ * alone would do; a read receipt is worth both.
+ */
+const REMOTE = /^\s*https?:/i;
+
+// Registered once. DOMPurify hooks are global, so the flag is what makes
+// this call-specific — safe because sanitize() is synchronous and cannot
+// interleave with another call.
+let blockRemote = false;
+let hooked = false;
+
+function hook() {
+  if (hooked || !DOMPurify.isSupported) return;
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    if (!blockRemote || data.attrName !== 'src') return;
+    if (REMOTE.test(data.attrValue)) {
+      data.keepAttr = false;
+      // Without this the browser resolves a src-less <img> against the
+      // frame's own URL and draws a broken-image glyph where the picture
+      // was; the placeholder says what happened instead.
+      node.setAttribute?.('data-blocked', 'remote image');
+    }
+  });
+  hooked = true;
+}
+
+/**
+ * Clean a message body for display. Falls back to the input untouched when
+ * there is no DOM to parse with — Node, a unit test — which is safe
+ * because the server has already sanitised it and the frame's policy is
+ * what stops the network either way.
+ */
+export function cleanMail(html, showImages = false) {
+  const raw = String(html ?? '');
+  if (!DOMPurify.isSupported) return raw;
+  hook();
+  blockRemote = !showImages;
+  try {
+    return DOMPurify.sanitize(raw, {
+      // A stored email is read, not edited, so anything interactive goes.
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'base', 'link', 'meta'],
+      FORBID_ATTR: ['srcset', 'formaction', 'ping'],
+      ALLOW_DATA_ATTR: false,
+      // cid: is how an image that travelled with the message refers to it.
+      ADD_URI_SAFE_ATTR: [],
+      ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid|data):/i,
+    });
+  } finally {
+    blockRemote = false;
+  }
+}
 
 /**
  * `img-src data: cid:` keeps the images that travelled with the message and
@@ -39,7 +108,68 @@ export const framePolicy = (showImages) => [
   "base-uri 'none'",
 ].join('; ');
 
-const STYLE = 'html,body{margin:0}body{font:13px system-ui,sans-serif;padding:10px 12px;color:#0f172a}img{max-width:100%}';
+/**
+ * How a message reads once its own styling is gone.
+ *
+ * The server strips every `<style>` block and `style` attribute before the
+ * message is stored (mailbox/rules.js), so what arrives here is bare
+ * structural HTML: paragraphs, lists, tables, blockquotes. The browser's
+ * defaults then rendered it as an unstyled 1998 web page — Times-ish
+ * headings, `<table border="1">` drawn with the old inset 3D ridges, lists
+ * jammed against the margin, and a line of body text running the full
+ * width of a 900px pane.
+ *
+ * That is what this replaces. It is not decoration: an email is somebody's
+ * commercial correspondence and most of what is left after sanitising is
+ * structure, so the structure has to carry the reading. A measure it is
+ * comfortable to read down, tables that look like tables, and a quoted
+ * block that is visibly somebody else's words.
+ *
+ * Off-white rather than #fff: this sits in a dark application, and a pure
+ * white slab at full brightness is a glare panel. #fbfbf9 is enough to take
+ * the edge off without making the message look tinted or unread.
+ */
+const STYLE = `
+html { -webkit-text-size-adjust: 100%; }
+html, body { margin: 0; background: #fbfbf9; }
+body {
+  padding: 16px 20px 18px;
+  color: #23262b;
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Emails arrive as one long column. A measure keeps it readable; a table
+     wider than this still gets its full width from the rule below. */
+  max-width: 680px;
+  word-break: break-word;
+}
+p { margin: 0 0 0.85em; }
+p:last-child, ul:last-child, ol:last-child, table:last-child { margin-bottom: 0; }
+h1, h2, h3, h4, h5, h6 { margin: 1.4em 0 0.5em; line-height: 1.3; font-weight: 600; }
+h1 { font-size: 1.4em; } h2 { font-size: 1.25em; } h3 { font-size: 1.1em; }
+h4, h5, h6 { font-size: 1em; }
+ul, ol { margin: 0 0 0.85em; padding-left: 1.4em; }
+li { margin: 0.2em 0; }
+a { color: #0b5fa5; text-decoration: underline; text-underline-offset: 2px; }
+img { max-width: 100%; height: auto; }
+hr { height: 0; margin: 1.4em 0; border: 0; border-top: 1px solid #e4e4df; }
+/* The default is border: 1px inset ridges, which is where the 1998 look
+   came from. Collapsed, hairline, with the header row doing the work. */
+table { border-collapse: collapse; margin: 0 0 0.9em; max-width: 100%; font-size: 0.95em; }
+th, td { border: 1px solid #e0e0da; padding: 6px 10px; text-align: left; vertical-align: top; }
+th { background: #f2f2ee; font-weight: 600; }
+caption { padding-bottom: 6px; color: #6b6f76; font-size: 0.9em; text-align: left; }
+/* Somebody else's words, and they should look like it. */
+blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.1em 0 0.1em 0.95em;
+  border-left: 2px solid #d8d8d1;
+  color: #5c6069;
+}
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+pre { overflow-x: auto; padding: 10px 12px; border-radius: 6px; background: #f2f2ee; }
+code { padding: 0.1em 0.3em; border-radius: 4px; background: #f2f2ee; }
+pre code { padding: 0; background: none; }
+small { color: #6b6f76; }
+`.replace(/\s*\n\s*/g, ' ').trim();
 
 /**
  * `<base target="_blank">` is why the frame needs the popup permissions:
@@ -51,4 +181,4 @@ export const frameDoc = (html, showImages) =>
   + `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages)}">`
   + `<base target="_blank" rel="noopener noreferrer">`
   + `<style>${STYLE}</style>`
-  + `</head><body>${String(html ?? '')}</body></html>`;
+  + `</head><body>${cleanMail(html, showImages)}</body></html>`;

@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { cn } from 'cn';
 import { ListPage } from '../components/ListPage.jsx';
+import { ChevronDown, ChevronUp, Merge, X } from 'lucide-react';
 import { Alert, Badge, Modal, useToast } from '../components/ui.jsx';
+import { Button } from '../components/ui/button';
+import { Checkbox } from '../components/ui/checkbox.tsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -47,7 +51,7 @@ export default function Companies() {
    * because "Hindalco - Belur" and "Hindalco FRP" are two plants and the
    * whole point of the group is to ask which of these are one client.
    */
-  function open(group) {
+  function openGroup(group) {
     setReview(group);
     setKeepId(group.suggested_keep);
     setChosen(new Set(group.certain ? group.members.map((m) => m.id) : []));
@@ -126,94 +130,159 @@ export default function Companies() {
         banner={groups.length > 0 && (hidden ? (
           // Hidden, not gone. Something that can never be found again is not
           // a preference, it is a trapdoor.
-          <p className="small muted" style={{ margin: '0 0 12px' }}>
-            {groups.length} possible duplicate{groups.length === 1 ? '' : 's'}.{' '}
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => hide(false)}>Show</button>
-          </p>
+          <div className="mb-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
+            <span>{groups.length} possible duplicate{groups.length === 1 ? '' : 's'}</span>
+            <Button variant="link" size="xs" className="h-auto p-0" onClick={() => hide(false)}>Show</Button>
+          </div>
         ) : (
           <Alert tone="warning">
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <div style={{ flex: 1 }}>
-                <strong>{groups.length} group{groups.length === 1 ? '' : 's'} of companies may be one client spelt more than once.</strong>{' '}
-                Open a group to choose which spellings are really the same, and which one to keep.
+            <div className="w-full">
+              <div className="flex items-start gap-3">
+                <p className="measure flex-1">
+                  <strong>{groups.length} group{groups.length === 1 ? '' : 's'} of companies may be one client spelt more than once.</strong>{' '}
+                  Open one to choose which spellings are really the same, and which to keep.
+                </p>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="-mr-1 -mt-0.5 shrink-0 text-current/70 hover:text-current"
+                  aria-label="Hide duplicate suggestions"
+                  onClick={() => hide(true)}
+                >
+                  <X aria-hidden="true" />
+                </Button>
               </div>
-              <button type="button" className="btn btn--sm" onClick={() => hide(true)}>Hide</button>
+
+              <ul className="mt-2.5 divide-y divide-current/10 border-t border-current/10">
+                {listed.map((g) => (
+                  <li key={g.members[0].id} className="flex items-center gap-3 py-1.5">
+                    <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                      <Link to={`/companies/${g.members[0].id}`} className="font-medium underline-offset-2 hover:underline">
+                        {g.members[0].name}
+                      </Link>
+                      <span className="text-current/70"> +{g.size - 1} more</span>
+                    </span>
+                    <span className="hidden shrink-0 tabular-nums text-[12px] text-current/70 sm:inline">
+                      {g.records} record{g.records === 1 ? '' : 's'}
+                    </span>
+                    <Badge tone={g.certain ? 'warning' : 'neutral'} className="hidden shrink-0 md:inline-flex">{g.confidence}</Badge>
+                    <Button variant="outline" size="xs" className="shrink-0" onClick={() => openGroup(g)}>Review</Button>
+                  </li>
+                ))}
+              </ul>
+
+              {groups.length > SHOWN && (
+                <Button variant="link" size="xs" className="mt-1.5 h-auto p-0" onClick={() => setExpanded(!expanded)}>
+                  {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+                  {expanded ? `Show first ${SHOWN}` : `Show all ${groups.length}`}
+                </Button>
+              )}
             </div>
-            <ul className="small" style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-              {listed.map((g) => (
-                <li key={g.members[0].id} style={{ marginBottom: 4 }}>
-                  <Link to={`/companies/${g.members[0].id}`}>{g.members[0].name}</Link>{' '}
-                  <span className="muted">+{g.size - 1} more · {g.records} record{g.records === 1 ? '' : 's'}</span>{' '}
-                  <Badge tone={g.certain ? 'warning' : 'default'}>{g.confidence}</Badge>{' '}
-                  <button type="button" className="btn btn--sm" onClick={() => open(g)}>Review</button>
-                </li>
-              ))}
-            </ul>
-            {groups.length > SHOWN && (
-              <button type="button" className="btn btn--ghost btn--sm" style={{ marginTop: 6 }} onClick={() => setExpanded(!expanded)}>
-                {expanded ? `Show first ${SHOWN}` : `Show all ${groups.length}`}
-              </button>
-            )}
           </Alert>
         ))}
       />
       {review && (
         <Modal
+          size="lg"
           title={review.certain ? 'The same name, spelt differently' : 'Which of these are the same client?'}
           subtitle={review.certain
-            ? 'These differ only by capitals and spacing, so there is nothing to weigh up.'
-            : 'These share a brand. That does not make them one company — a plant, a unit or a subsidiary is its own client. Tick only the ones that are genuinely the same.'}
+            ? 'These differ only by punctuation, so there is nothing to weigh up.'
+            : 'These share a brand. That does not make them one company \u2014 a plant, a unit or a subsidiary is its own client. Tick only the ones that are genuinely the same.'}
           onClose={() => setReview(null)}
           footer={(
-            <>
-              <button type="button" className="btn" onClick={() => setReview(null)}>Cancel</button>
-              <button type="button" className="btn btn--danger" disabled={busy || !losing.length} onClick={merge}>
-                {busy ? 'Merging…' : losing.length ? `Merge ${losing.length} into ${keep?.name}` : 'Nothing ticked'}
-              </button>
-            </>
+            <div className="flex w-full items-center justify-between gap-3">
+              <p className="text-[12px] text-muted-foreground">
+                {losing.length
+                  ? `${losing.length} of ${review.size} fold in \u00b7 ${losing.reduce((n, m) => n + m.records, 0)} record${losing.reduce((n, m) => n + m.records, 0) === 1 ? '' : 's'} move`
+                  : 'Nothing ticked yet'}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
+                <Button variant="destructive" disabled={busy || !losing.length} onClick={merge}>
+                  <Merge aria-hidden="true" />
+                  {busy ? 'Merging\u2026' : losing.length ? `Merge into ${keep?.name}` : 'Merge'}
+                </Button>
+              </div>
+            </div>
           )}
         >
-          <table className="table">
-            <thead>
-              <tr><th>Merge</th><th>Company</th><th className="right">Records</th><th>Keep this one</th></tr>
-            </thead>
-            <tbody>
-              {review.members.map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      aria-label={`Merge ${m.name}`}
-                      checked={m.id === keepId || chosen.has(m.id)}
-                      disabled={m.id === keepId}
-                      onChange={() => toggle(m.id)}
-                    />
-                  </td>
-                  <td>
-                    <Link to={`/companies/${m.id}`}>{m.name}</Link>
-                    {m.sector && <div className="small muted">{m.sector}</div>}
-                  </td>
-                  <td className="right">{m.records}</td>
-                  <td>
-                    <input
-                      type="radio"
-                      name="keep"
-                      aria-label={`Keep ${m.name}`}
-                      checked={m.id === keepId}
-                      onChange={() => { setKeepId(m.id); setChosen((prev) => { const n = new Set(prev); n.delete(m.id); return n; }); }}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul className="space-y-1.5">
+            {review.members.map((m) => {
+              const keeping = m.id === keepId;
+              const ticked = chosen.has(m.id);
+              return (
+                <li
+                  key={m.id}
+                  className={cn(
+                    'flex items-center gap-3 rounded-[10px] border px-3 py-2.5 transition-colors',
+                    keeping
+                      ? 'border-l-[3px] border-primary/40 border-l-primary bg-primary/5'
+                      : ticked
+                        ? 'border-late/40 bg-late/5'
+                        : 'border-border hover:border-muted-foreground/40 hover:bg-accent/40'
+                  )}
+                >
+                  {keeping ? (
+                    <Badge tone="success" className="shrink-0">Keeping</Badge>
+                  ) : (
+                    // The whole label is the hit target, not the 16px box.
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                      <Checkbox
+                        className="size-[18px] border-muted-foreground/60"
+                        checked={ticked}
+                        onCheckedChange={() => toggle(m.id)}
+                        aria-label={`Fold ${m.name} into ${keep?.name ?? 'the one kept'}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium">{m.name}</span>
+                        <span className="block text-[12px] text-muted-foreground">
+                          {[m.sector, `${m.records} record${m.records === 1 ? '' : 's'}`].filter(Boolean).join(' \u00b7 ')}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {keeping && (
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold">{m.name}</span>
+                      <span className="block text-[12px] text-muted-foreground">
+                        {[m.sector, `${m.records} record${m.records === 1 ? '' : 's'}`].filter(Boolean).join(' \u00b7 ')}
+                      </span>
+                    </span>
+                  )}
+
+                  <Link
+                    to={`/companies/${m.id}`}
+                    className="shrink-0 text-[12px] text-muted-foreground underline-offset-2 hover:underline"
+                  >
+                    Open
+                  </Link>
+                  {!keeping && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="shrink-0"
+                      onClick={() => { setKeepId(m.id); setChosen((prev) => { const n = new Set(prev); n.delete(m.id); return n; }); }}
+                    >
+                      Keep this one
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
           {losing.length > 0 && (
-            <Alert tone="danger">
-              Every enquiry, quotation, project and contact under{' '}
-              <strong>{losing.map((m) => m.name).join(', ')}</strong> moves to{' '}
-              <strong>{keep?.name}</strong> and takes that name. {losing.length === 1 ? 'That company is' : 'Those companies are'} then deleted.
-              This cannot be undone.
-            </Alert>
+            <div className="mt-4">
+              <Alert tone="danger">
+                <span className="measure">
+                  Every enquiry, quotation, project and contact under{' '}
+                  <strong>{losing.map((m) => m.name).join(', ')}</strong> moves to{' '}
+                  <strong>{keep?.name}</strong> and takes that name.{' '}
+                  {losing.length === 1 ? 'That company is' : 'Those companies are'} then deleted. This cannot be undone.
+                </span>
+              </Alert>
+            </div>
           )}
         </Modal>
       )}
