@@ -21,7 +21,7 @@ Backend only. React dashboards, visual charts, and target management forms are d
 
 ## 2. Originating-Salesperson Attribution Rules
 
-### 2.1 Schema Additions (`021_sales_targets_and_origin.sql`)
+### 2.1 Schema Additions (`054_sales_targets_and_origin.sql`)
 Three immutable attribution fields are added to `enquiries`, `quotations`, and `projects`:
 * `originating_user_id` (`integer REFERENCES users(id) ON DELETE SET NULL`): Active foreign key to the user account.
 * `originating_user_snapshot_id` (`integer`): Durable user ID snapshot preserved even if the user account is later deleted or deactivated.
@@ -187,7 +187,7 @@ When a client makes multiple payments across different calendar years (e.g. ₹4
 
 ## 7. Migration Verification
 
-Migration `server/db/migrations/021_sales_targets_and_origin.sql` was verified against parent commit `54cb4f3` (`origin/feature/issue-18-assignment-history`) using the official CI migration checker:
+The migration content, originally `021_sales_targets_and_origin.sql` and now renumbered to `054_sales_targets_and_origin.sql` for integration with current `main`, was verified against parent commit `54cb4f3` (`origin/feature/issue-18-assignment-history`) using the official CI migration checker:
 
 ```bash
 TEST_DATABASE_URL="postgres://postgres:password@localhost:5432/postgres" \
@@ -196,7 +196,7 @@ TEST_DATABASE_URL="postgres://postgres:password@localhost:5432/postgres" \
 
 Results:
 * Clean upgrade of deployed schema with seed data.
-* Upgrade applied `021_sales_targets_and_origin.sql` and `views.sql`.
+* Upgrade verification originally applied `021_sales_targets_and_origin.sql` and `views.sql`; the migration is now numbered `054_sales_targets_and_origin.sql`.
 * Second upgrade verified database is fully up to date.
 * Fresh schema (`schema.sql`) matched upgraded schema byte-for-byte with 0 diff lines.
 

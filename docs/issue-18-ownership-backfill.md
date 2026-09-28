@@ -12,7 +12,7 @@ Branch `feature/issue-18-ownership-backfill`, stacked on
 Phase 2A added `owner_user_id` to `enquiries`, `quotations` and `projects`
 and left it null everywhere, because a migration that knows nothing about
 the business has no safe way to fill it in. Migration
-`019_backfill_record_ownership.sql` fills in the subset where the historical
+`052_backfill_record_ownership.sql` fills in the subset where the historical
 data names somebody exactly, and leaves the rest alone.
 
 The whole design is one rule: **never guess.** A null owner is a true and
@@ -143,7 +143,7 @@ does not run twice. Left there, those records would stay unowned forever.
 ### `npm run ownership:backfill` — whenever, by an operator
 
 The same SQL, run on demand. The command does not contain the matching
-rules: it reads `db/migrations/019_backfill_record_ownership.sql` and
+rules: it reads `db/migrations/052_backfill_record_ownership.sql` and
 executes it. One statement of what a deterministic match is, two ways to
 invoke it — two SQL files that start identical and drift is how a "safe
 deterministic backfill" quietly stops being either. A test asserts the

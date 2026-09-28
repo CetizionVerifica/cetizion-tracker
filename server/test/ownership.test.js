@@ -25,7 +25,7 @@ const PASSWORD = 'a-good-long-test-password';
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 const VIEWS = readFileSync(join(DB_DIR, 'views.sql'), 'utf8');
-const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '018_record_ownership.sql'), 'utf8');
+const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '051_record_ownership.sql'), 'utf8');
 
 const OWNED = ['enquiries', 'quotations', 'projects'];
 

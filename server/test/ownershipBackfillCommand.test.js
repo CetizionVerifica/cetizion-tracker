@@ -91,7 +91,7 @@ describe('npm run ownership:backfill', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     const onDisk = readFileSync(join(DB_DIR, 'migrations', ownership.BACKFILL_MIGRATION), 'utf8');
 
     assert.equal(ownership.BACKFILL_SQL, onDisk, 'the command executes the migration file verbatim');
-    assert.equal(ownership.BACKFILL_MIGRATION, '019_backfill_record_ownership.sql');
+    assert.equal(ownership.BACKFILL_MIGRATION, '052_backfill_record_ownership.sql');
     // If this ever fails, the rules have moved and BACKFILL_MIGRATION is stale.
     assert.match(onDisk, /SET owner_user_id = u\.id/);
     assert.match(onDisk, /owner_user_id IS NULL/);

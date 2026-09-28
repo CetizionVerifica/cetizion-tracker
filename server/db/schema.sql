@@ -159,7 +159,7 @@ CREATE TABLE projects (
   -- The salesperson responsible for this record (#18 Phase 2A). Null
   -- everywhere until Phase 2B decides the backfill; `sales_person` above
   -- stays the free-text name the reports group by. See
-  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- migrations/051_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id         int,
   originating_user_id          int,
@@ -198,7 +198,7 @@ CREATE TABLE quotations (
   -- The salesperson responsible for this record (#18 Phase 2A). Null
   -- everywhere until Phase 2B decides the backfill; `sales_person` above
   -- stays the free-text name the reports group by. See
-  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- migrations/051_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id      int,
   originating_user_id          int,
@@ -246,7 +246,7 @@ CREATE TABLE enquiries (
   -- The salesperson responsible for this record (#18 Phase 2A). Null
   -- everywhere until Phase 2B decides the backfill; `sales_person` above
   -- stays the free-text name the reports group by. See
-  -- migrations/018_record_ownership.sql. The foreign key is declared after
+  -- migrations/051_record_ownership.sql. The foreign key is declared after
   -- the users table below, which is created later in this file.
   owner_user_id      int,
   originating_user_id          int,
@@ -719,7 +719,7 @@ CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
 -- enquiries.owner_user_id, quotations.owner_user_id and
 -- projects.owner_user_id, declared with their tables above and pointed at
 -- users here because users is created further down this file than they are
--- (see migrations/018_record_ownership.sql).
+-- (see migrations/051_record_ownership.sql).
 --
 -- ON DELETE SET NULL: deleting a leaver's account must not delete the
 -- company's sales history, and must not be refused forever because they

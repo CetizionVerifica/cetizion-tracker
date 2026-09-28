@@ -191,7 +191,7 @@ All administrative ownership mutations require a meaningful, non-empty business 
 
 ## 6. Ownership History Schema & Migration 020
 
-Defined in `migrations/020_ownership_history.sql` and mirrored in `schema.sql`:
+Defined in `migrations/053_ownership_history.sql` and mirrored in `schema.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS ownership_history (
