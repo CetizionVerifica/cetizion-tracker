@@ -828,6 +828,55 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     });
   });
 
+  /**
+   * Marking a milestone reached is a money control. The trigger stamps
+   * milestone_reached_on on every payment stage pointing at it, and a stage
+   * triggered "On Milestone" is ready to invoice the moment that is not
+   * null — so an unscoped PATCH moved somebody else's project into the
+   * invoice run.
+   */
+  describe("a milestone on somebody else's project (#26)", () => {
+    let theirMilestone;
+    let theirStage;
+
+    before(async () => {
+      await db.query(`INSERT INTO projects (project_id, client_name, sales_person) VALUES ('PRJ-THEIRS', 'Other Deal Ltd', 'Somebody Else') ON CONFLICT DO NOTHING`);
+      await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, currency) VALUES ('PO-THEIRS', 'PRJ-THEIRS', '2026-01-10', 500000, 'INR') ON CONFLICT DO NOTHING`);
+      const { rows: [m] } = await db.query(
+        `INSERT INTO project_milestones (project_id, name) VALUES ('PRJ-THEIRS', 'Stage 2 audit closed') RETURNING id`);
+      theirMilestone = m.id;
+      const { rows: [st] } = await db.query(
+        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, milestone_id)
+         VALUES ('PO-THEIRS', 1, 'On milestone', 'On Milestone', 1, $1) RETURNING id`, [theirMilestone]);
+      theirStage = st.id;
+    });
+
+    test('a sales user cannot mark it reached, and the stage stays unbillable', async () => {
+      const res = await as(sales.cookie)('patch', `/api/project-milestones/${theirMilestone}`).send({ reached_on: '2026-09-28' });
+      assert.equal(res.status, 404, JSON.stringify(res.body));
+
+      const { rows: [stage] } = await db.query('SELECT milestone_reached_on FROM payment_stages WHERE id = $1', [theirStage]);
+      assert.equal(stage.milestone_reached_on, null, 'a refused request must not have moved the money either');
+    });
+
+    test('nor see it in the list, nor delete it', async () => {
+      const list = await as(sales.cookie)('get', '/api/project-milestones');
+      assert.equal(list.status, 200);
+      assert.ok(!list.body.data.some((m) => m.id === theirMilestone), "a colleague's milestone is not on the list");
+
+      const gone = await as(sales.cookie)('delete', `/api/project-milestones/${theirMilestone}`);
+      assert.equal(gone.status, 404);
+    });
+
+    test('the admin can, and that is what makes the stage billable', async () => {
+      const res = await as(admin.cookie)('patch', `/api/project-milestones/${theirMilestone}`).send({ reached_on: '2026-09-28' });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+
+      const { rows: [stage] } = await db.query('SELECT milestone_reached_on FROM payment_stages WHERE id = $1', [theirStage]);
+      assert.ok(stage.milestone_reached_on, 'the control is who may do it, not whether it works');
+    });
+  });
+
   describe('tasks, notes, files and timelines are scoped to the person (#22)', () => {
     const MINE = 'CTZ/QT/2026/701';
     const THEIRS = 'CTZ/QT/2026/702';
@@ -839,6 +888,27 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
          ON CONFLICT DO NOTHING`, [MINE, THEIRS, sales.user.name]);
       await db.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, 'A colleague''s note', 'Somebody Else')`, [THEIRS]);
       await db.query(`INSERT INTO tasks (entity, entity_id, title, created_by) VALUES ('quotation', $1, 'A colleague''s task', 'Somebody Else')`, [THEIRS]);
+    });
+
+    /**
+     * The scoping above is only worth what its least guarded door is. The
+     * CSV export reads the same resource definitions and never asked them
+     * who may see a row, so every 404 here had a second way round it.
+     */
+    test('and cannot download the colleague\'s note through the CSV export either', async () => {
+      const csv = await as(sales.cookie)('get', '/api/export/notes.csv');
+      assert.equal(csv.status, 200, JSON.stringify(csv.body));
+      assert.doesNotMatch(csv.text, /A colleague's note/, 'the export must not hand over what /api/notes hides');
+
+      const tasks = await as(sales.cookie)('get', '/api/export/tasks.csv');
+      assert.equal(tasks.status, 200);
+      assert.doesNotMatch(tasks.text, /A colleague's task/);
+    });
+
+    test('an admin still exports everything', async () => {
+      const csv = await as(admin.cookie)('get', '/api/export/notes.csv');
+      assert.equal(csv.status, 200);
+      assert.match(csv.text, /A colleague's note/, 'scoping is about who is asking, not about hiding rows from everyone');
     });
 
     test("a sales user reads their own record's timeline and not a colleague's", async () => {

@@ -124,7 +124,16 @@ async function listRows(req) {
   const def = resources[req.params.resource];
   if (!def) throw new ApiError(404, 'Unknown export');
   const params = [];
-  const where = buildWhere(def, req.query, params);
+  const filters = buildWhere(def, req.query, params);
+  // The same rows the page would show this person, and no others.
+  //
+  // This route reads the resource definitions but never asked them who may
+  // see a row, so #22's scoping stopped at the CRUD route: a sales user got
+  // a 404 on a colleague's note through /api/notes/:id and then downloaded
+  // every note in the company through /api/export/notes.csv. A control with
+  // a second door beside it is not a control.
+  const scoped = def.visibleTo?.(req, params);
+  const where = scoped ? (filters ? `${filters} AND ${scoped}` : `WHERE ${scoped}`) : filters;
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
     params

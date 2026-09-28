@@ -81,3 +81,26 @@ export async function mayWriteOnRecords(req, input, db = { query }) {
     if (!(await canSeeRecord(req, entity, id, db))) throw new ApiError(404, 'Record not found');
   }
 }
+
+/**
+ * SQL: rows hanging off a project this person owns. Null for an admin.
+ *
+ * A project milestone is not a record somebody attaches to a deal, so
+ * recordVisibleSql above does not reach it — it belongs to the project by
+ * a column. It still has to be scoped, and more sharply than most: marking
+ * one reached sets milestone_reached_on on every payment stage pointing at
+ * it, and a stage triggered "On Milestone" becomes ready to invoice the
+ * moment that is not null (views.sql). Unscoped, any signed-in user could
+ * make somebody else's project billable.
+ *
+ * Either name on the project counts. The person who sold it and the person
+ * delivering it both have a reason to say a milestone was reached, and the
+ * delivery manager is usually the one who knows.
+ */
+export function ownProjectSql(req, table, params, { column = 'project_id' } = {}) {
+  if (isAdmin(req)) return null;
+  params.push(identities(req));
+  const p = `$${params.length}::text[]`;
+  return `EXISTS (SELECT 1 FROM projects op WHERE op.project_id = ${table}.${column}
+    AND (lower(btrim(op.sales_person)) = ANY(${p}) OR lower(btrim(op.project_manager)) = ANY(${p})))`;
+}
