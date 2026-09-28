@@ -86,7 +86,12 @@ export default function Payables() {
               { key: 'days_overdue', header: 'Days overdue', align: 'right', render: (r) => (r.days_overdue > 0 ? r.days_overdue : <span className="muted">—</span>) },
               { key: 'bucket', header: 'Ageing', render: (r) => <Badge tone={BUCKET_TONE[r.bucket]}>{r.bucket}</Badge> },
             ]}
-            empty={<Empty icon="✓" title="Nothing owed" text="Every vendor bill with an invoice number is paid." />}
+            // A failed load leaves rows empty, and "nothing owed" is not
+            // what an empty list means then. The commonest way this fires
+            // is an expired session, so somebody comes back from lunch and
+            // reads that every vendor bill is paid — on the page whose
+            // whole job is to say what is not.
+            empty={error ? null : <Empty icon="✓" title="Nothing owed" text="Every vendor bill with an invoice number is paid." />}
           />
         </Card>
       </div>
