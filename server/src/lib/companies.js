@@ -14,7 +14,7 @@
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, logActivity } from './activity.js';
-import { compact, similarName } from './names.ts';
+import { compact, similarNamePairs } from './names.ts';
 
 const weight = (c) => c.quotations + c.projects + c.enquiries;
 
@@ -46,15 +46,17 @@ export async function duplicateCompanies() {
   // groups. What comes out is one group per client however many spellings
   // reached it, and no pair can contradict another because there are no
   // longer any pairs.
+  //
+  // The pairs come from similarNamePairs rather than a double loop, which
+  // files each name under what a match would have to share and compares
+  // only names filed together — 77 companies is 2,926 comparisons the long
+  // way and 500 would be 125,000, on every page load. Same answer, because
+  // the same alike() still decides each candidate.
   const parent = new Map(rows.map((r) => [r.id, r.id]));
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
   const union = (x, y) => { const rx = find(x); const ry = find(y); if (rx !== ry) parent.set(rx, ry); };
 
-  for (let i = 0; i < rows.length; i++) {
-    for (let j = i + 1; j < rows.length; j++) {
-      if (similarName(rows[i].name, rows[j].name)) union(rows[i].id, rows[j].id);
-    }
-  }
+  for (const [i, j] of similarNamePairs(rows.map((r) => r.name))) union(rows[i].id, rows[j].id);
 
   const groups = new Map();
   for (const r of rows) {

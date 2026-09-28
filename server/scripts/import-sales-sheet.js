@@ -22,6 +22,17 @@
  *
  * Nothing is deleted or overwritten.  Re-running is safe: existing records
  * are reported as skipped.
+ *
+ * Kept deliberately, though the app's own importer (#45) is how a sheet is
+ * normally brought in — upload, review on screen, commit, with the batch and
+ * every item recorded in import_batches / import_items.  This script is the
+ * headless way to push a ready-made spec at a remote tracker, which is useful
+ * for filling staging, and it leaves no such trail.
+ *
+ * It holds NO import rules: which deals count, what dates are assumed and how
+ * the payment split is decided all live in src/import/rules.js and nowhere
+ * else.  This script only sends a spec somebody else has already produced, so
+ * there is nothing here to keep in step with the app.
  */
 import { readFileSync } from 'node:fs';
 

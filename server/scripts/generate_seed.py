@@ -4,6 +4,9 @@ Turn the Cetizion workbook into SQL.
 
   python3 scripts/generate_seed.py "<path to .xlsx>"
 
+Needs openpyxl, which is not part of the app (the server is Node, and this
+script only runs by hand): pip install openpyxl
+
 Writes two files next to db/schema.sql:
 
   db/seed.sql  — reference data plus every real row in the workbook

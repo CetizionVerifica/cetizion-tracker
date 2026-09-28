@@ -27,15 +27,21 @@ RUN npm ci --omit=dev
 # -------------------------------------------------------------- runtime ---
 FROM node:${NODE_VERSION}-bookworm-slim
 
-# tini as PID 1 so Swarm's SIGTERM reaches node during a rolling update.
-# Also: security updates for the base system, and a current npm (the bundled
-# one carries known advisories; npm stays for `npm run db:upgrade`).
+# tini as PID 1 so Swarm's SIGTERM reaches node during a rolling update, plus
+# security updates for the base system.
+#
+# npm and corepack are removed: nothing in the running container uses them.
+# The API starts with `node`, start.js applies migrations itself, and the one
+# manual command is `node server/scripts/db.js upgrade` (db.js resolves its
+# paths from import.meta.url, so any working directory will do). Their own
+# bundled packages were the only CRITICAL/HIGH findings in the image scan,
+# and they were being skipped rather than fixed.
 RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends tini \
  && rm -rf /var/lib/apt/lists/* \
- && npm install -g npm@latest \
- && npm cache clean --force
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 ENV NODE_ENV=production
 ENV PORT=4000

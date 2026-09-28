@@ -111,6 +111,18 @@ Everything has a working default in development. To change one, copy
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Google sign-in |
 | `MAIL_TOKEN_KEY` | none | encrypts stored mailbox tokens |
 | `OPENROUTER_API_KEY` | none | optional AI help in the bulk importer — **read [docs/bulk-import.md](docs/bulk-import.md) before setting it**, it sends sheet content to a third party |
+| `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash` | any model id OpenRouter serves |
+| `EMAIL_MODE` | `log` | nothing is sent. `sandbox`: only `EMAIL_ALLOWLIST` addresses. `live`: over SMTP |
+| `SMTP_HOST` / `_PORT` / `_SECURE` / `_USER` / `_PASS` | none | needed for `EMAIL_MODE=live` |
+| `EMAIL_FROM` / `EMAIL_REPLY_TO` / `EMAIL_BCC` | none | the sender on every outgoing email |
+
+Every email is written to `email_log` whatever the mode, so `log` gives a full dry run:
+the reminder is composed and recorded, and marked `suppressed` because nothing left the
+server. A stage only counts as chased once an email really goes out, so switching to
+`live` sends the first real reminders that day rather than treating them as already sent.
+
+The repository variable `CODEQL_ENABLED=true` turns on the CodeQL scan in CI. It is off
+until GitHub code scanning is enabled for the repository; the other scans always run.
 
 Generate a session secret:
 
@@ -243,6 +255,14 @@ cetizion-tracker/
 | `npm run seed:demo` | Load `db/demo.sql` — the worked example |
 | `npm run reset` | create → migrate → seed |
 
+The table above is for a checkout on your own machine. **The container has no npm** —
+it runs `node` and nothing else, so the scan covers every file in it. On the rare
+occasion a migration has to be applied by hand inside the container, the command is:
+
+```bash
+docker exec <container> node server/scripts/db.js upgrade
+```
+
 A schema change goes in two places: `schema.sql`, and a new numbered file in
 `db/migrations`. Each migration:
 
@@ -284,6 +304,45 @@ migrations before the API starts.
 More in [docs/operations.md](docs/operations.md), with
 [docs/staging.md](docs/staging.md), [docs/backups.md](docs/backups.md) and
 [docs/security.md](docs/security.md) alongside.
+
+### The worker
+
+Scheduled work runs in a second process, not in the API:
+
+```bash
+npm run worker --prefix server
+```
+
+**Without it nothing scheduled happens at all** — no payment reminders, no digests, no
+mailbox sync, no exchange rates. The API still serves the app, and the admin "Run now"
+button on Emails & jobs still runs a job by hand, so the absence is quiet.
+
+In Dokploy it is a second application from the same image and the same environment,
+with the start command changed to `node server/src/worker.js`. Run exactly one:
+two workers would send every reminder twice.
+
+The schedule lives in `server/src/jobs.js`, in the business time zone:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| `webhooks.deliver` | every minute | Sends webhook events to their endpoints and retries failed ones |
+| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes |
+| `notifications.email` | every 10 minutes | Emails the notifications people asked to get by email |
+| `ops.watch` | every 15 minutes | Checks the certificate, disk, backups and stuck jobs; alerts when something is wrong |
+| `documents.purge` | 03:00 daily | Finishes interrupted document removals |
+| `accounting.sync` | 06:30 daily | Compares invoices and payments with the books |
+| `deliverables.daily` | 07:50 daily | Marks expired certificates; reminds owners before expiry |
+| `notifications.daily` | 08:00 daily | Raises notifications for tasks, follow-ups, approvals, overdue invoices, renewals |
+| `quotations.expire` | 08:15 daily | Marks quotations past their validity as lost |
+| `notifications.digest` | 08:30 weekdays | Each person's digest of what is waiting for them |
+| `renewals.daily` | 08:45 daily | Opens renewal quotations inside the lead time |
+| `reminders.payment` | 09:00 weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |
+| `notifications.weekly` | 09:00 Mondays | The admins' week in notifications |
+| `finance.digest` | 09:30 weekdays | Summary to `finance_email`: stages to invoice, overdue invoices, reminders sent today |
+| `visits.reminders` | 17:00 daily | Reminds the team, and the client where chosen, before a visit |
+| `exchange.rates` | 21:00 weekdays | Fetches the ECB reference rates; hand-entered rates are left alone |
+
+The finance digest runs after the payment reminders, so its count covers the same morning.
 
 ---
 

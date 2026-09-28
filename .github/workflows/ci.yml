@@ -180,6 +180,7 @@ jobs:
           name: playwright-report
           path: web/playwright-report
           retention-days: 7
+
   image:
     name: Docker image builds
     runs-on: ubuntu-latest
@@ -195,7 +196,7 @@ jobs:
     # until the lead creates the Dokploy staging app and sets the repository
     # variables STAGING_ENABLED=true and STAGING_URL.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.STAGING_ENABLED == 'true'
-    needs: [types, server, web, image]
+    needs: [types, server, web, e2e, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -230,7 +231,7 @@ jobs:
     name: Deploy to production
     # Only a push to main, and only once every check above has passed.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [types, server, web, image]
+    needs: [types, server, web, e2e, image]
     runs-on: ubuntu-latest
     permissions:
       # To move the production branch.

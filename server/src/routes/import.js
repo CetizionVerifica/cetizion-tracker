@@ -21,7 +21,7 @@ import multer from 'multer';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
-import { reviewFlags, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema } from '../import/rules.js';
+import { reviewFlags, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema, sanitizeRules, flagRepeatedPoNumbers } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
 import { fileCache, loadBatch, planBatch, recallFile, rememberFile } from '../import/batches.js';
 
@@ -97,9 +97,14 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
     const said = sent.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new ApiError(422, `Please check the import settings — ${said}`);
   }
-  const rules = { ...(rows[0].rules || {}), ...sent.data };
+  // Stored rules are sanitized, not refused: a batch saved before the schema
+  // existed must still be re-plannable. Anything the request sends is checked
+  // whole, as on upload.
+  const stored = sanitizeRules(rows[0].rules);
+  const rules = { ...stored.rules, ...sent.data };
   await planBatch({ batchId: id, buffer, sheet: req.body?.sheet || rows[0].sheet_name, rules });
-  res.json({ data: await loadBatch(id) });
+  const data = await loadBatch(id);
+  res.json({ data, ...(stored.dropped.length ? { meta: { dropped_rules: stored.dropped } } : {}) });
 });
 
 importRouter.delete('/batches/:id', async (req, res) => {
@@ -163,8 +168,38 @@ importRouter.patch('/items/:id', async (req, res) => {
       [body.action, rows[0].batch_id, await descendantSeqs(rows[0].batch_id, rows[0].seq)]
     );
   }
+  // A repeated PO number is a question about the whole batch, not one row:
+  // correcting a number, unticking a row or keeping an existing PO can settle
+  // it for the others too, so it is asked again across the batch.
+  if (rows[0].step === 'purchase_order') await recheckRepeatedPos(rows[0].batch_id);
   res.json({ data: await loadBatch(rows[0].batch_id) });
 });
+
+/**
+ * Settle "the same PO number on several rows" afresh for a batch, after a
+ * reviewer's change. The planner flags it once (flagRepeatedPoNumbers); without
+ * this, correcting the number, or unticking the row that creates the PO, left
+ * the error in place and the commit blocked for good. Only rows still ticked
+ * count: an unticked row creates nothing, so it cannot collide.
+ */
+async function recheckRepeatedPos(batchId) {
+  const { rows } = await query(
+    `SELECT id, step, action, included, source_row, payload, flags FROM import_items
+      WHERE batch_id = $1 AND step = 'purchase_order' ORDER BY seq`,
+    [batchId]
+  );
+  const items = rows.map((r) => ({
+    ...r,
+    source_label: r.payload?.__source_label ?? null,
+    before: JSON.stringify(r.flags || []),
+    flags: (r.flags || []).filter((f) => f.code !== 'duplicate_po_in_sheet'),
+  }));
+  flagRepeatedPoNumbers(items.filter((it) => it.included));
+  for (const it of items) {
+    const after = JSON.stringify(it.flags);
+    if (after !== it.before) await query('UPDATE import_items SET flags = $1, updated_at = now() WHERE id = $2', [after, it.id]);
+  }
+}
 
 const uncertainMatch = (item) => item.step === 'quotation' && (item.flags || []).some((f) => f.code === 'duplicate' && f.certain === false);
 
