@@ -144,8 +144,11 @@ describe('rows that name their parent in text', () => {
   });
 
   test('the three polymorphic resources declare it, and nothing declares it wrongly', () => {
+    // A task also stands on the records in task_targets (#22), so it takes
+    // the variant of the same rule that looks there too.
+    const expected = { tasks: 'task_entity', notes: 'entity', attachments: 'entity' };
     for (const name of ['tasks', 'notes', 'attachments']) {
-      assert.equal(resources[name].ownerScopedBy, 'entity', name);
+      assert.equal(resources[name].ownerScopedBy, expected[name], name);
       assert.equal(resources[name].ownerScoped, undefined, `${name} has no owner column of its own`);
       // The columns the predicate reads have to be columns the resource
       // actually writes, or a create could file a row under nothing.

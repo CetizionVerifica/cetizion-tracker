@@ -67,7 +67,8 @@ lookupRouter.get('/', async (req, res) => {
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query(`SELECT p.project_id, p.client_name FROM projects p ${pjWhere}
               ORDER BY p.project_id DESC`, pj.params),
-      query(`SELECT po.po_number, po.project_id, po.client_name, po.po_value, po.currency
+      // replaced_by_po_number so the form can show a PO that was superseded (#26).
+      query(`SELECT po.po_number, po.project_id, po.client_name, po.po_value, po.currency, po.replaced_by_po_number
                FROM v_purchase_orders po ${poWhere} ORDER BY po.po_number DESC`, poS.params),
       query('SELECT travel_id, employee_name, destination FROM travel_logs ORDER BY travel_id DESC'),
       // Enquiries come first in the pipeline, so their names are offered too.
@@ -89,8 +90,9 @@ lookupRouter.get('/', async (req, res) => {
               GROUP BY ${nameKey('sector')}
               ORDER BY 1`, sec.params),
       query('SELECT key, value, notes FROM settings ORDER BY key'),
-      // For linking an enquiry to an existing quotation, and a PO to its won one.
-      query(`SELECT q.quotation_no, q.client_name, q.status, q.project_id
+      // For linking an enquiry to an existing quotation, and a PO to its won
+      // one — currency so the PO form can default to it and flag a mismatch.
+      query(`SELECT q.quotation_no, q.client_name, q.status, q.project_id, q.currency
                FROM quotations q ${qtWhere}
               ORDER BY q.quotation_date DESC NULLS LAST, q.quotation_no DESC`, qt.params),
       // Currencies actually recorded against something, so Settings can ask

@@ -49,8 +49,8 @@ describe('GET /api/search', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run'
   let pool;
   let cookie;
 
-  const find = async (q) => {
-    const res = await request(app).get(`/api/search?q=${encodeURIComponent(q)}`).set('Cookie', cookie);
+  const find = async (q, extra = '') => {
+    const res = await request(app).get(`/api/search?q=${encodeURIComponent(q)}${extra}`).set('Cookie', cookie);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     return res.body;
   };
@@ -89,6 +89,17 @@ describe('GET /api/search', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run'
     await exec(dbUrl, `
       INSERT INTO travel_logs (travel_id, employee_name, destination, travel_start_date)
       VALUES ('TRV-2026-031', 'R. Bhatt', 'Renukoot', '2026-05-01')`);
+    // Two POs where one number is the start of the other (#75): the exact
+    // one must come first however the list would otherwise sort them.
+    await exec(dbUrl, `
+      INSERT INTO purchase_orders (po_number, project_id, po_value, currency, po_date)
+      VALUES ('HIN-PO-120', 'PRJ-2026-044', 10000, 'INR', '2026-06-01'),
+             ('HIN-PO-12',  'PRJ-2026-044', 20000, 'INR', '2026-05-01')`);
+    // Twenty-five quotations for one client, to see the limit bite.
+    await exec(dbUrl, `
+      INSERT INTO quotations (quotation_no, client_name, quotation_date, status)
+      SELECT 'BULK/' || lpad(n::text, 3, '0'), 'Bulk Buyer Pvt Ltd', DATE '2026-01-01' + n, 'Submitted'
+        FROM generate_series(1, 25) AS n`);
   });
 
   after(async () => {
@@ -145,8 +156,52 @@ describe('GET /api/search', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run'
     assert.deepEqual(body.data, []);
   });
 
+  test('an exact reference comes first, above records it is only the start of', async () => {
+    const body = await find('HIN-PO-12');
+    const orders = body.data.filter((row) => row.type === 'order').map((row) => row.title);
+    assert.deepEqual(orders, ['HIN-PO-12', 'HIN-PO-120']);
+    assert.equal(body.data[0].title, 'HIN-PO-12', 'first across every type, not just among orders');
+    assert.equal(body.data[0].href, `/purchase-orders/${encodeURIComponent('HIN-PO-12')}`);
+  });
+
+  test('case and extra spaces do not matter', async () => {
+    const shouted = await find('  HINDALCO    industries ');
+    const company = shouted.data.find((row) => row.type === 'company');
+    assert.equal(company?.title, 'Hindalco Industries');
+    // A company's name is its reference, so the whole name typed is exact.
+    assert.equal(company.rank, 0);
+
+    const lower = await find('ctz/qt/2026/091');
+    assert.deepEqual(lower.data.map((row) => row.title), ['CTZ/QT/2026/091']);
+  });
+
+  test('an empty q and a one-character q both answer 200 with nothing', async () => {
+    assert.deepEqual((await find('')).data, []);
+    assert.deepEqual((await find('a')).data, []);
+    assert.deepEqual((await find('   a  ')).data, [], 'spaces do not make one character two');
+  });
+
+  test('limit is per type: five by default, as asked, and never above twenty', async () => {
+    const deals = (body) => body.data.filter((row) => row.type === 'deal');
+
+    const byDefault = await find('bulk buyer');
+    assert.equal(deals(byDefault).length, 5);
+    assert.equal(byDefault.meta.limit, 5);
+    assert.equal(byDefault.meta.truncated, true, 'there were more than it showed');
+
+    assert.equal(deals(await find('bulk buyer', '&limit=3')).length, 3);
+
+    const capped = await find('bulk buyer', '&limit=500');
+    assert.equal(capped.meta.limit, 20);
+    assert.equal(deals(capped).length, 20);
+
+    const all = await find('bulk buyer', '&limit=nonsense');
+    assert.equal(all.meta.limit, 5, 'a limit that is not a number is the default');
+  });
+
   test('signing out closes it, like every other read', async () => {
     const res = await request(app).get('/api/search?q=hindal');
     assert.equal(res.status, 401);
   });
 });
+

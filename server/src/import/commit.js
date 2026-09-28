@@ -16,6 +16,7 @@
 import { transaction } from '../db.js';
 import { resources, ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { claimNextId } from '../lib/sequences.js';
+import { IMPORT_AUTHOR } from './rules.js';
 
 const ORDER = ['quotation', 'project', 'purchase_order', 'service', 'stage', 'invoice', 'receipt'];
 
@@ -67,12 +68,72 @@ async function update(client, table, values, whereSql, whereParams) {
   return rowCount;
 }
 
+/**
+ * The sheet's history for one deal: its new remarks and follow-up comments
+ * as timeline notes, the last follow-up as the last contact, the follow-up
+ * comment as the next step, and the next follow-up as a reminder (moved,
+ * not doubled, when a later sheet changes the date). Returns what it did.
+ */
+async function applyTracking(client, quotationNo, t) {
+  if (!t) return [];
+  const did = [];
+  let notes = 0;
+  for (const body of t.notes || []) {
+    const seen = await client.query(`SELECT 1 FROM notes WHERE entity = 'quotation' AND entity_id = $1 AND body = $2`, [quotationNo, body]);
+    if (seen.rowCount) continue;
+    await client.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, $2, $3)`, [quotationNo, body, IMPORT_AUTHOR]);
+    notes += 1;
+  }
+  if (notes) did.push(`${notes} note${notes === 1 ? '' : 's'}`);
+  if (t.last_contacted) {
+    const { rowCount } = await client.query(
+      // Midday, so the date reads the same in any time zone.
+      `UPDATE quotations SET last_contacted_at = $2::date + interval '12 hours' WHERE quotation_no = $1 AND (last_contacted_at IS NULL OR last_contacted_at::date < $2::date)`,
+      [quotationNo, t.last_contacted]);
+    if (rowCount) did.push(`last contact ${t.last_contacted}`);
+  }
+  if (t.next_step) await client.query('UPDATE quotations SET next_step = $2 WHERE quotation_no = $1', [quotationNo, t.next_step]);
+  const openTask = `entity = 'quotation' AND entity_id = $1 AND type = 'follow_up' AND created_by = '${IMPORT_AUTHOR}' AND status <> 'done'`;
+  if (t.close_follow_up) {
+    const { rowCount } = await client.query(`UPDATE tasks SET status = 'done', completed_at = now(), updated_at = now() WHERE ${openTask}`, [quotationNo]);
+    if (rowCount) did.push('reminder closed');
+  }
+  if (t.follow_up) {
+    const f = t.follow_up;
+    const { rowCount } = await client.query(
+      `UPDATE tasks SET due_at = $2, title = $3, description = $4, assignee = COALESCE($5, assignee), updated_at = now() WHERE ${openTask}`,
+      [quotationNo, f.due, f.title, f.description, f.assignee]);
+    if (!rowCount) {
+      await client.query(
+        `INSERT INTO tasks (entity, entity_id, title, description, due_at, type, assignee, created_by) VALUES ('quotation', $1, $2, $3, $4, 'follow_up', $5, $6)`,
+        [quotationNo, f.title, f.description, f.due, f.assignee, IMPORT_AUTHOR]);
+    }
+    did.push(`reminder ${f.due}`);
+  }
+  return did;
+}
+
 export async function commitBatch(batch, items, { user }) {
   const included = items.filter((it) => it.included).sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step) || a.seq - b.seq);
   const results = new Map(); // seq -> { ref, id, ... }
   const written = [];
 
   await transaction(async (client) => {
+    // The status was read before this transaction opened, so two commits
+    // that overlap both passed that check — a double-click, or a client
+    // retrying after a proxy gave up on a slow batch. Both then wrote:
+    // every quotation created twice under different claimed numbers, and
+    // the PO inserts either duplicated or tripped a unique constraint
+    // half way through. The row lock is what makes the check mean
+    // something, and it has to be the first statement inside.
+    const { rows: [locked] } = await client.query('SELECT status FROM import_batches WHERE id = $1 FOR UPDATE', [batch.id]);
+    if (!locked) throw new Error(`import batch ${batch.id} not found`);
+    if (locked.status === 'committed') {
+      const already = new Error('This batch is already committed');
+      already.status = 422;
+      throw already;
+    }
+
     for (const item of included) {
       const p = item.payload;
       const parent = item.parent_seq ? results.get(item.parent_seq) : null;
@@ -86,7 +147,24 @@ export async function commitBatch(batch, items, { user }) {
               const q = rows[0];
               let n;
               if (replacing) {
-                n = await update(client, 'quotations', changes('quotations', p, ['quotation_date', 'client_name', 'contact_person', 'service_quoted', 'sales_person', 'quotation_value', 'currency', 'status', 'po_received', 'remarks']), 'id = $1', [q.id]);
+                // Remarks someone wrote in the tracker itself are kept on the
+                // timeline before the sheet's remarks take their place.
+                const own = q.remarks && q.remarks !== p.remarks && q.remarks !== p.tracking?.prior_remarks;
+                if (own) await client.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, $2, $3)`, [q.quotation_no, `Remarks before this upload: ${q.remarks}`, IMPORT_AUTHOR]);
+                // Only what the planner judged the sheet's to change.
+                //
+                // This wrote all ten columns whenever anything differed, so
+                // one moved cell dragged nine untouched ones back to
+                // whatever the sheet happened to hold. update_fields is the
+                // three-way merge's verdict (rules.js, sheetChanges); the
+                // four outside it are not compared field-by-field —
+                // client_name identifies the row, remarks are archived to
+                // the timeline just above, and po_received is derived.
+                const always = ['client_name', 'po_received', 'remarks'];
+                const cols = Array.isArray(p.__update_fields)
+                  ? [...new Set([...p.__update_fields, ...always])]
+                  : ['quotation_date', 'client_name', 'contact_person', 'service_quoted', 'sales_person', 'quotation_value', 'currency', 'status', 'po_received', 'remarks'];
+                n = await update(client, 'quotations', changes('quotations', p, cols), 'id = $1', [q.id]);
               } else {
                 // Keep the original: fill blanks only.
                 const fill = {};
@@ -95,17 +173,21 @@ export async function commitBatch(batch, items, { user }) {
                 n = await update(client, 'quotations', fill, 'id = $1', [q.id]);
               }
               results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: q.project_id, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
-              written.push({ seq: item.seq, ref: q.quotation_no, action: replacing ? 'replaced' : n ? 'kept, blanks filled' : 'kept' });
+              const tracked = await applyTracking(client, q.quotation_no, p.tracking);
+              written.push({ seq: item.seq, ref: q.quotation_no, action: [replacing ? 'updated' : n ? 'kept, blanks filled' : 'kept', ...tracked].join(', ') });
               break;
             }
             // The planned number may have been taken since the plan was made:
             // then take the next in the series, the way the Quotations page does.
             let no = p.quotation_no;
             if ((await client.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [no])).rowCount) no = await claimNextId('quotation', client);
-            const data = validate('quotations', { ...p, quotation_no: no, project_id: null });
+            const { tracking, ...record } = p;
+            const data = validate('quotations', { ...record, quotation_no: no, project_id: null });
             const q = await insert(client, 'quotations', data);
             results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
-            written.push({ seq: item.seq, ref: q.quotation_no, action: no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)` });
+            const tracked = await applyTracking(client, q.quotation_no, tracking);
+            const how = no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)`;
+            written.push({ seq: item.seq, ref: q.quotation_no, action: [how, ...tracked].join(', ') });
             break;
           }
 

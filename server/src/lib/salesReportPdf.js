@@ -8,6 +8,9 @@ import {
   sectorAnalysis, serviceAnalysis,
 } from './salesReviewAnalysis.js';
 
+// CLIENT_TYPES.repeat in salesReport.js, which this file does not import: it pulls in the database.
+const REPEAT_CLIENT = 'Repeat client';
+
 /**
  * The Sales & Enquiry Performance Review: an A4 portrait management report
  * with charts and a written analysis, built on the server from the same data
@@ -247,11 +250,11 @@ export function salesReportDocDefinition(data) {
 
   // Sector won value in INR. Converted in SQL at the rate in force on each
   // quotation's own date, the same lookup every other figure here uses.
-  const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: row.pos + row.lost + row.pipeline }));
-  const sectorTotal = {
-    ...sectors.summary,
-    quotations: sectors.summary.pos + sectors.summary.lost + sectors.summary.pipeline,
-  };
+  // Quotations, one each: phase POs on one quotation are one deal won, and a
+  // quotation marked won with no PO registered still counts.
+  const quotationCount = (s) => s.won_deals + s.lost + s.pipeline + s.won_without_po;
+  const sectorRows = sectors.rows.map((row) => ({ ...row, quotations: quotationCount(row) }));
+  const sectorTotal = { ...sectors.summary, quotations: quotationCount(sectors.summary) };
 
   // Exchange rates the figures used, and any currency left unconverted.
   const quotationUnconverted = quotationStatus.total.unconverted ?? [];
@@ -269,13 +272,26 @@ export function salesReportDocDefinition(data) {
     ...revenue.orders.total.order_unconverted.map((a) => a.currency),
     ...revenue.invoicing.total.missing_rates,
   ])].sort();
+  // Currencies whose newest rate is itself days old (lib/fx.ts), from both
+  // halves of the report, each named once: the web page's banner, in print.
+  const staleRates = [...new Map(
+    [...(fx.summary.stale_rates ?? []), ...(revenue.stale_rates ?? [])].map((r) => [r.currency, r])
+  ).values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  const staleCurrencies = new Set(staleRates.map((r) => r.currency));
+
   // Each figure is converted at the rate in force on its own date; this line
   // names the latest rate on record, so a stale one is visible at a glance.
   const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 4 });
+  const rateDay = (iso) => {
+    const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+    return `${d} ${MONTH_NAMES[m - 1]} ${y}`;
+  };
   const ratesText = used.size
     ? [...used].sort().map((currency) => {
         const r = rates[currency];
-        return r ? `1 ${currency} = ₹${inr.format(r.rate)} from ${r.effective_from}` : `${currency}: not set`;
+        if (!r) return `${currency}: not set`;
+        return `1 ${currency} = ₹${inr.format(r.rate)} (rate of ${rateDay(r.effective_from)}` +
+          `${staleCurrencies.has(currency) ? ', not updated since' : ''})`;
       }).join('   ·   ')
     : 'Not needed — every amount in this report is in INR';
 
@@ -287,7 +303,7 @@ export function salesReportDocDefinition(data) {
   const kA = clientAnalysis(customers);
   const rA = revenueAnalysis(revenue, revenueLabel);
   const head = headline({ enquiries, sectors, customers, revenue, revenueLabel, priority: rA.priority });
-  const fixes = managementFixes({ gaps, sectors, services, revenue, missingRates });
+  const fixes = managementFixes({ gaps, sectors, services, revenue, missingRates, staleRates });
 
   const et = enquiries.total;
   const ct = customers.summary.total;
@@ -325,6 +341,17 @@ export function salesReportDocDefinition(data) {
         `(${plural(sectorTotal.quotations, 'quotation')}) and purchase-order register (${plural(p.pos, 'PO')} dated in ${revenueLabel})`,
       style: 'small',
       margin: [0, 6, 0, 0],
+    },
+    // Won business moved from quotation status and date to the PO register,
+    // so earlier printouts do not reconcile with this one. Said on the cover,
+    // where anyone comparing two reports looks first.
+    {
+      text: 'How won business is counted: from the purchase orders registered, by PO date. Reports produced before ' +
+        'September 2026 counted quotations marked won, by quotation date, so their monthly and quarterly figures ' +
+        'will not match this one — a deal quoted in March with its PO in April now falls in April.',
+      style: 'small',
+      italics: true,
+      margin: [0, 3, 0, 0],
     },
     { text: 'AT A GLANCE', style: 'kicker' },
     {
@@ -495,6 +522,7 @@ export function salesReportDocDefinition(data) {
       withoutValue ? note(`${withoutValue} with no value`) : null
     );
   const STATUS_STYLE = {
+    [QUOTATION_STATUS.draft]: { label: 'Draft (not yet sent)', color: '#cbd5e1', field: 'draft' },
     [QUOTATION_STATUS.submitted]: { label: 'Submitted', color: SKY, field: 'submitted' },
     [QUOTATION_STATUS.negotiating]: { label: 'Under negotiation', color: GOLD, field: 'negotiating' },
     [QUOTATION_STATUS.onHold]: { label: 'On hold', color: '#9ca3af', field: 'on_hold' },
@@ -746,6 +774,9 @@ export function salesReportDocDefinition(data) {
   ];
 
   // ------------------------------------------------ 4. service-wise
+  // "Won" is an actual PO (see serviceRows in salesReviewData.js), matched
+  // to a line by its own quotation's service text — the same PO-based
+  // definition Sector-wise and Client analysis use.
   const serviceBars = services.rows
     .filter((row) => row.won > 0)
     .sort((a, b) => a.other - b.other || b.won_value_inr - a.won_value_inr)
@@ -785,8 +816,9 @@ export function salesReportDocDefinition(data) {
   ];
 
   // ------------------------------------------------ 5. clients
-  const repeatRows = customers.rows.filter((row) => row.pos_to_date >= 2);
-  const singleRows = customers.rows.filter((row) => row.pos_to_date < 2);
+  // The type the server gave each client (CLIENT_TYPES in salesReport.js).
+  const repeatRows = customers.rows.filter((row) => row.client_type === REPEAT_CLIENT);
+  const singleRows = customers.rows.filter((row) => row.client_type !== REPEAT_CLIENT);
   const topClients = customers.rows
     .filter((row) => row.won_value_inr > 0)
     .sort((a, b) => b.won_value_inr - a.won_value_inr)
@@ -824,8 +856,8 @@ export function salesReportDocDefinition(data) {
     { header: 'Repeat orders', value: (r) => number(r.repeat_orders), total: (s) => number(s.repeat_orders), align: 'right', width: 50 },
   ];
   const repeatNames = [...repeatRows]
-    .sort((a, b) => b.pos_to_date - a.pos_to_date)
-    .map((row) => `${row.client} (${plural(row.pos_to_date, 'PO')})`);
+    .sort((a, b) => b.deals_to_date - a.deals_to_date || b.pos_to_date - a.pos_to_date)
+    .map((row) => `${row.client} (${plural(row.deals_to_date, 'deal')}${row.pos_to_date > row.deals_to_date ? `, ${plural(row.pos_to_date, 'PO')}` : ''})`);
   const clientSection = [
     section(5, 'Client analysis', kA.lead, [
       ct.clients
@@ -931,16 +963,16 @@ export function salesReportDocDefinition(data) {
       : insightsBlock(rA.insights),
     {
       stack: [
-        { text: 'Order intake by month', style: 'h2' },
-        { text: 'Won quotations by quotation date, in INR · Average deal = order intake ÷ the orders that have a value', style: 'lead' },
-        figure(8, `Order intake by month (INR), ${revenueLabel}`, intakeChart, `No orders were won in ${revenueLabel}.`),
+        { text: 'Quotations won by month', style: 'h2' },
+        { text: 'Quotations marked Won - PO Received, by quotation date, in INR — not the same as the POs registered below, which can land in a different month · Average deal = order intake ÷ the orders that have a value', style: 'lead' },
+        figure(8, `Quotations won by month (INR), ${revenueLabel}`, intakeChart, `No quotations were won in ${revenueLabel}.`),
       ],
       unbreakable: true,
     },
     reportTable({
       columns: [
         { header: 'Month', value: (r) => r.label, width: 70 },
-        { header: 'Orders won', value: (r) => number(r.orders_won), total: (s) => number(s.orders_won), align: 'right', width: 60 },
+        { header: 'Quotations won', value: (r) => number(r.orders_won), total: (s) => number(s.orders_won), align: 'right', width: 66 },
         {
           header: 'Order intake (INR)',
           value: (r) => lines(money(r.order_intake_inr), r.order_unconverted.length ? note(`+ ${amounts(r.order_unconverted)} (rate not set)`, 'warnNote') : null),
@@ -981,7 +1013,7 @@ export function salesReportDocDefinition(data) {
     ),
     subsection(
       'Payment status',
-      'Overdue = an invoice is past its due date · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid',
+      'Overdue = at least one invoice is past its due date, and Due now is every unpaid invoice on those POs, overdue or not · To Invoice = a stage is due to be billed · No stages = no payment schedule has been set up yet · Pending = invoiced, not yet overdue · Up to date = nothing due now · Fully Paid = every stage paid · Counts every PO, including revised and cancelled ones, which are still billed; POs won leaves those out',
       reportTable({
         columns: [{ header: 'Payment status', value: (r) => r.status, width: 62 }, ...poMoneyColumns],
         rows: revenue.payment_status.rows,
@@ -989,6 +1021,42 @@ export function salesReportDocDefinition(data) {
         empty: noPos,
       }),
       revenue.payment_status.rows.length + 1
+    ),
+    subsection(
+      'Overdue by client',
+      'Every invoice overdue today, on a purchase order dated in the period · Due = invoiced − received on that invoice · Only the overdue invoices, so the total can be lower than Due now in the Payment status Overdue row',
+      reportTable({
+        columns: [
+          { header: 'Client', value: (r) => r.client },
+          { header: 'PO', value: (r) => r.po_number, width: 62 },
+          { header: 'Invoice', value: (r) => r.invoice_no || '—', width: 58 },
+          { header: 'Due date', value: (r) => dateLabel(r.due_date), width: 58 },
+          { header: 'Days overdue', value: (r) => number(r.days_overdue), align: 'right', width: 54 },
+          {
+            header: 'Received (INR)',
+            value: (r) => (r.received_rate !== null
+              ? money(r.received_inr)
+              : lines(money(r.amount_received, r.currency), note('rate not set', 'warnNote'))),
+            total: (s) => lines(money(s.received_inr), s.received_unconverted.length ? note(`+ ${amounts(s.received_unconverted)} (rate not set)`, 'warnNote') : null),
+            align: 'right',
+            width: 76,
+          },
+          {
+            header: 'Due (INR)',
+            value: (r) => (r.due_rate !== null
+              ? money(r.due_inr)
+              : lines(money(r.due_now_amount, r.currency), note('rate not set', 'warnNote'))),
+            total: (s) => lines(money(s.due_inr), s.due_unconverted.length ? note(`+ ${amounts(s.due_unconverted)} (rate not set)`, 'warnNote') : null),
+            align: 'right',
+            width: 76,
+          },
+        ],
+        rows: revenue.overdue_by_client.rows,
+        total: revenue.overdue_by_client.total,
+        empty: 'Nothing overdue in this period.',
+        compact: true,
+      }),
+      revenue.overdue_by_client.rows.length + 1
     ),
   ];
 
@@ -1010,9 +1078,9 @@ export function salesReportDocDefinition(data) {
   const appendix = [
     { text: 'Appendix', style: 'h1', pageBreak: 'before' },
     rule(),
-    subsection('A.  FX deals', `${periodText} · won POs billed in a currency other than INR · INR value = won value × the exchange rate`, reportTable({
+    subsection('A.  FX deals', `${periodText} · registered POs billed in a currency other than INR · INR value = won value × the exchange rate`, reportTable({
       columns: [
-        { header: 'Client', value: (r) => lines(r.customer, note(r.quotation_nos)) },
+        { header: 'Client', value: (r) => lines(r.customer, note(r.po_numbers)) },
         { header: 'Sector', value: (r) => r.sector, width: 70 },
         { header: 'Currency', value: (r) => r.currency, width: 38 },
         { header: 'Won POs', value: (r) => number(r.deals), total: (s) => number(s.deals), align: 'right', width: 34 },
@@ -1037,7 +1105,7 @@ export function salesReportDocDefinition(data) {
       empty: 'No FX deals in this period: every won PO is in INR.',
       compact: true,
     }), fx.rows.length + 1),
-    subsection(`B.  Repeat clients (${repeatRows.length})`, '2 or more won POs up to the end of the period · repeat orders = won POs after the first',
+    subsection(`B.  Repeat clients (${repeatRows.length})`, '2 or more deals won up to the end of the period · a deal is a quotation with a PO, so phase POs on one quotation are one deal · repeat orders = deals after the first',
       reportTable({ columns: clientColumns, rows: repeatRows, total: customers.summary.repeat, empty: 'No repeat clients in this period.', compact: true }),
       repeatRows.length),
     subsection(`C.  Single enquiry clients (${singleRows.length})`, 'Every other client: one won PO, quoted but not won yet, or only on the Enquiries page',
@@ -1048,13 +1116,14 @@ export function salesReportDocDefinition(data) {
         `Every section covers ${periodText}: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.`,
         'Enquiries are the rows on the Enquiries page, counted by their status there: open (New, Contacted, Qualified or Nurture), Unqualified, or Converted ("quotation sent").',
         'Quotation status is the status on the Quotations page: Submitted, Under Negotiation, On Hold, Won - PO Received or Lost. Open = anything not yet won or lost.',
-        `A PO won is a quotation marked "${WON}". Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
-        'Win % = POs won ÷ (POs won + lost). Open deals have no outcome yet, so they are left out.',
-        'Won value (INR) converts each quotation at the exchange rate set in Settings. An amount in a currency with no rate is shown separately, never guessed.',
+        `A PO won (Sector-wise performance, Service-wise sales, Client analysis, FX deals) is an actual purchase order registered in the Purchase Orders register, dated by its own PO date — not simply a quotation marked "${WON}": a quotation can be marked won with nothing registered yet, and one won quotation can carry more than one PO. Service-wise sales matches each PO to a line by its own quotation's service text. "Quotations won" (Quotations won by month, in Revenue and collections) is the one exception: it counts the quotation itself, by quotation date, and can differ from the PO count for the same reason. Pipeline = quotations Submitted, Under Negotiation or On Hold.`,
+        'Win % = deals won ÷ (deals won + lost), where a deal won is a quotation with a PO dated in the period: several POs against one quotation (a project split into phases) are one deal won, so it is counted in the same units as lost. Open deals have no outcome yet, so they are left out.',
+        'Won value (INR) converts each quotation or PO at the exchange rate set in Settings, on its own date. An amount in a currency with no rate is shown separately, never guessed.',
         'Service lines are matched from the service text by keywords. A quotation naming several services counts in each of its lines; the Total row counts it once. "Other services" is text that matches no line.',
         'Clients and sectors are grouped by spelling: capital letters and extra spaces are ignored, any other difference is a separate name.',
-        'Repeat client = 2 or more won POs up to the end of the period; every other client is a single enquiry client. Repeat orders = won POs after a client\'s first.',
-        'Order intake = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received on invoices that have been raised; work that is due to be billed but has no invoice yet is shown separately as To bill. Collection rate = received against invoices ÷ invoiced. Every amount is converted at the rate in force on its own date, so the INR Due now differs from invoiced − received by the realised FX movement, reported as FX gain / loss.',
+        'Repeat client = 2 or more deals won up to the end of the period, a deal being a quotation with a PO registered against it: a project split into several phase POs is one deal, so it does not by itself make a client a repeat client. Every other client is a single enquiry client. Repeat orders = deals after a client\'s first. A client with only a quotation lost in the period is not listed — a quotation still open (Submitted, Under Negotiation or On Hold) is, since it can still become a PO.',
+        'Quotations won = won quotation values in INR, by quotation date. Invoicing, collections and payment status list every purchase order by its PO date, exactly as the Purchase orders page shows them. Due now = invoiced − received on invoices that have been raised; work that is due to be billed but has no invoice yet is shown separately as To bill. Collection rate = received against invoices ÷ invoiced. Every amount is converted at the rate in force on its own date, so the INR Due now differs from invoiced − received by the realised FX movement, reported as FX gain / loss.',
+        'Overdue by client lists every invoice past its due date today, one row per invoice, for a PO dated in the period. Payment status counts whole purchase orders instead: a PO with one overdue invoice is in its Overdue row with every unpaid invoice it has, overdue or not, so the Due now in that row can be higher than the Overdue by client total. Received and Due convert at the rate on the payment date and the invoice date respectively.',
         'The written analysis is produced from these figures by fixed rules, so the same data always reads the same way: a rate of 60% or more reads as strong and under 40% as weak; one sector with half of won value, or two clients with 35%, is flagged as concentration; under 50% of PO value invoiced, or under 70% of invoices collected, is named as the priority. No AI or outside service is used.',
       ],
       style: 'body',

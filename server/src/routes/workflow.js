@@ -72,7 +72,7 @@ projectRouter.get('/:projectId/full', async (req, res) => {
   const qParams = [id];
   const qMine = ownerClause(scope, qParams, { alias: 'q' });
 
-  const [pos, services, stages, onboarding, travel, quotations] = await Promise.all([
+  const [pos, services, stages, onboarding, travel, quotations, milestones] = await Promise.all([
     query('SELECT * FROM v_purchase_orders WHERE project_id = $1 ORDER BY po_date NULLS LAST, po_number', [id]),
     query(`SELECT s.* FROM po_services s
              JOIN purchase_orders p ON p.po_number = s.po_number
@@ -82,6 +82,13 @@ projectRouter.get('/:projectId/full', async (req, res) => {
     query('SELECT * FROM v_travel_logs WHERE project_id = $1 ORDER BY travel_start_date NULLS LAST', [id]),
     query(`SELECT q.* FROM v_quotations q WHERE q.project_id = $1 ${qMine ? `AND ${qMine}` : ''}
             ORDER BY q.quotation_date`, qParams),
+    // Each milestone with the stages it triggers and what they are worth (#26).
+    // No predicate of its own: the project was gated at the top of this
+    // handler, and a milestone belongs to its project.
+    query(`SELECT m.*, COALESCE((SELECT json_agg(json_build_object('id', s.id, 'po_number', s.po_number, 'stage_name', s.stage_name,
+                   'stage_amount', s.stage_amount, 'currency', s.currency, 'invoice_no', s.invoice_no) ORDER BY s.po_number, s.stage_no)
+              FROM v_payment_stages s WHERE s.milestone_id = m.id), '[]'::json) AS stages
+             FROM project_milestones m WHERE m.project_id = $1 ORDER BY m.sort_order, m.target_date NULLS LAST, m.id`, [id]),
   ]);
 
   // The checklist steps that another record owns answer for themselves,
@@ -107,6 +114,7 @@ projectRouter.get('/:projectId/full', async (req, res) => {
       onboarding_progress: onboardingProgress(checklist),
       travel: travel.rows,
       quotations: quotations.rows,
+      milestones: milestones.rows,
     },
   });
 });

@@ -298,6 +298,10 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
         client_name: 'Origin Client Corp',
         service: 'Design Verification',
         status: 'In Progress',
+        // #24: an enquiry leaves New only with a source, and is converted
+        // only with a value. Business fields, not ownership ones.
+        source: 'Referral',
+        estimated_value: 120000,
       });
     assert.equal(resEnq.status, 201, JSON.stringify(resEnq.body));
     const enqId = resEnq.body.data.id;
@@ -342,8 +346,8 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
     // (LEGACY_ENQUIRY_STATUS); this one writes to the table directly, so it
     // has to use what the table accepts. Same enquiry, same open state.
     const { rows: [reassignedEnq] } = await db.query(`
-      INSERT INTO enquiries (enquiry_no, client_name, service, status, owner_user_id, originating_user_id, originating_user_snapshot_id, originating_user_name)
-      VALUES ('CTZ/ENQ/2026/002', 'Reassigned Client', 'Consulting', 'Contacted', $1, $2, $2, 'Sam Sales')
+      INSERT INTO enquiries (enquiry_no, client_name, service, status, owner_user_id, originating_user_id, originating_user_snapshot_id, originating_user_name, source, estimated_value)
+      VALUES ('CTZ/ENQ/2026/002', 'Reassigned Client', 'Consulting', 'Contacted', $1, $2, $2, 'Sam Sales', 'Referral', 75000)
       RETURNING id
     `, [salesB.user.id, salesA.user.id]);
 
@@ -377,6 +381,8 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
         client_name: 'Unattributed Client',
         service: 'Testing',
         status: 'In Progress',
+        source: 'Outreach',
+        estimated_value: 90000,
       });
     assert.equal(resAdminEnq.status, 201);
     const adminEnqId = resAdminEnq.body.data.id;

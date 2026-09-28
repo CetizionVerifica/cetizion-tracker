@@ -338,6 +338,16 @@ export function parentClause(scope, params, { kind, alias }) {
   }
   // A row that names its parent in text: tasks, notes, attachments.
   if (kind === 'entity') return entityCase(alias, n);
+  // A task, which main lets stand on several records at once (task_targets,
+  // #22). Any one of those records being reachable makes the task reachable,
+  // because the task genuinely hangs off it — the same parent rule, applied
+  // to each parent. It grants nothing on the *other* records it names: those
+  // are reached, or not, through their own ownership.
+  if (kind === 'task_entity') {
+    return `(${entityCase(alias, n)}
+      OR EXISTS (SELECT 1 FROM task_targets tt
+                  WHERE tt.task_id = ${alias}.id AND ${entityCase('tt', n)}))`;
+  }
   throw new Error(`Unknown ownership parent: ${kind}`);
 }
 

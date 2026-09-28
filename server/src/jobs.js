@@ -6,8 +6,9 @@
 import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
+import { runExchangeRateSync } from './lib/fx.ts';
 import { runRenewals } from './lib/renewals.js';
-import { runNotifications } from './lib/notify.js';
+import { runDigests, runNotifications, runWeeklyDigest, sendNotificationEmails } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
 import { runVisitReminders } from './lib/visits.js';
@@ -19,8 +20,9 @@ import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while sync
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
- * period ago are marked lost as expired. Only sent ones: anything typed in
- * or imported without a send is left for a person to decide.
+ * period ago move to the Expired stage (#25), which counts as lost. Only sent
+ * ones: anything typed in or imported without a send is left for a person to
+ * decide. Without an Expired stage (renamed or retired) they are marked Lost.
  */
 async function expireQuotations() {
   const { rows: [{ value: grace }] } = await query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'quotation_expiry_grace_days'), '14') AS value`);
@@ -28,7 +30,8 @@ async function expireQuotations() {
     `UPDATE quotations q
         SET lost_reason_id = (SELECT id FROM lost_reasons WHERE name = 'Quotation expired'),
             lost_notes = 'Validity date ' || q.valid_until || ' passed',
-            status = 'Lost'
+            stage_id = COALESCE((SELECT id FROM pipeline_stages WHERE name = 'Expired' AND active), q.stage_id),
+            status = CASE WHEN EXISTS (SELECT 1 FROM pipeline_stages WHERE name = 'Expired' AND active) THEN q.status ELSE 'Lost' END
       WHERE q.status IN ('Submitted', 'Under Negotiation') AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL
         AND q.valid_until IS NOT NULL AND q.valid_until + ($1::int) < CURRENT_DATE
       RETURNING q.quotation_no, q.client_name, q.valid_until`,
@@ -90,14 +93,40 @@ export const JOBS = {
     run: () => runDeliverableReminders(),
   },
   'notifications.daily': {
-    description: 'Raise notifications for tasks, follow-ups, approvals, new overdue invoices, renewals and expiring quotations; email the digest',
+    description: 'Raise notifications for tasks, follow-ups, approvals, new overdue invoices, renewals and expiring quotations',
     cron: '0 8 * * *',
     run: (opts) => runNotifications(opts),
+  },
+  // #44: working days are Monday to Friday until the holiday calendar (#73) lands.
+  'notifications.digest': {
+    description: 'Each person their own digest of what is waiting for them, unless they switched it off',
+    cron: '30 8 * * 1-5',
+    run: (opts) => runDigests(opts),
+  },
+  'notifications.weekly': {
+    description: 'Monday digest for admins: the week in notifications, and what is still open',
+    cron: '0 9 * * 1',
+    run: (opts) => runWeeklyDigest(opts),
+  },
+  'notifications.email': {
+    description: 'Email the notifications people asked to get by email, outside their quiet hours',
+    cron: '*/10 * * * *',
+    run: (opts) => sendNotificationEmails(opts),
   },
   'finance.digest': {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',
     cron: '30 8 * * 1-5',
     run: (opts) => runFinanceDigest(opts),
+  },
+  // The ECB publishes its reference rates each working day at about 16:00
+  // CET, which is the evening in the business time zone. A failure throws
+  // before anything is written, so the run is recorded as failed and
+  // yesterday's rates stand: an older record's rate has not changed just
+  // because today's file was late.
+  'exchange.rates': {
+    description: 'Fetch the day\'s ECB reference rates and store one row per currency; hand-entered rates are left alone',
+    cron: '0 21 * * 1-5',        // after the ECB has published, business time zone
+    run: (opts) => runExchangeRateSync(opts),
   },
   // A purge that could not reach Cloudinary leaves the row marked and tries
   // again here. Without a schedule the only retry was the next upload, so on

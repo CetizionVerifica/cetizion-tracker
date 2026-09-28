@@ -12,6 +12,8 @@ import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
+import { poCurrencyFields } from '../lib/poCurrency.js';
+import { poRevisionFields } from '../lib/poRevision.js';
 
 /**
  * One purchase order, as C6 draws it.
@@ -389,6 +391,18 @@ export default function PurchaseOrderDetail() {
           </>
         }
       >
+        {/* Out of the sales figures, but still billed: say so where the PO is read. */}
+        {(po.cancelled || po.replaced_by_po_number) && (
+          <Alert tone="warning">
+            {po.cancelled ? 'This purchase order is cancelled' : <>This purchase order is replaced by <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po.replaced_by_po_number)}`}>{po.replaced_by_po_number}</Link></>}
+            , so it is left out of the sales figures. Its payment stages, invoices and receipts are unchanged.
+          </Alert>
+        )}
+        {po.replaces_po_number && (
+          <Alert>
+            This purchase order is a revision of <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po.replaces_po_number)}`}>{po.replaces_po_number}</Link>, which is left out of the sales figures in its favour.
+          </Alert>
+        )}
         {stagesOff && (
           <Alert tone="danger">
             The stages on this PO total {percent(po.stages_percent_total, 1)} — they should total 100%.
@@ -491,15 +505,17 @@ export default function PurchaseOrderDetail() {
                   .filter((q) => q.project_id === po.project_id)
                   .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name}` })),
               ],
+              ...poCurrencyFields(lookups.won_quotations).quotation,
             },
             { name: 'po_date', label: 'PO date', type: 'date', hint: 'Makes advance stages invoiceable' },
             { name: 'po_value', label: 'PO value', type: 'money', required: true },
-            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
+            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], ...poCurrencyFields(lookups.won_quotations).currency },
             { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number' },
             { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
             { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Makes on-delivery stages invoiceable' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
             { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
+            ...poRevisionFields(lookups.purchase_orders, { projectId: po.project_id, poNumber: po.po_number }),
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

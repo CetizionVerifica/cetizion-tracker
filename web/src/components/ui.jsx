@@ -47,12 +47,15 @@ export function Card({ title, hint, actions, children, flush = false, className 
           when there is not. Held `shrink-0` beside it, a card header
           carrying two filters pushed a phone page past its viewport. */}
       {(title || actions) && (
-        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="min-w-0">
+        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+          {/* The title keeps a readable width; actions too wide to sit
+              beside it wrap onto their own line rather than squeezing it
+              to a word per line. */}
+          <div className="min-w-0 sm:flex-[1_1_260px]">
             {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
             {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
-          {actions && <div className="flex min-w-0 flex-wrap items-center gap-2 sm:shrink-0">{actions}</div>}
+          {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
         </CardHeader>
       )}
       <CardContent className={flush ? 'p-0' : 'p-4'}>{children}</CardContent>
@@ -88,7 +91,7 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
 
 /* ----------------------------------------------------------------- badge */
 
-export function Badge({ children, tone, dot = false }) {
+export function Badge({ children, tone, dot = false, className }) {
   if (children === null || children === undefined || children === '') {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -97,7 +100,7 @@ export function Badge({ children, tone, dot = false }) {
   // says anything here, which is the design's rule and also the accessible
   // one.
   return (
-    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral)}>
+    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </UiBadge>
@@ -517,6 +520,9 @@ export function Tabs({ tabs, active, onChange }) {
           {tab.count !== undefined && (
             <span className="num rounded-[6px] bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
           )}
+          {tab.warning ? (
+            <span className="num rounded-[6px] bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
+          ) : null}
         </button>
       ))}
     </div>

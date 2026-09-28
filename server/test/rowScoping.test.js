@@ -101,9 +101,13 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     for (const [key, owner] of Object.entries(owners)) {
       n += 1;
       const tag = String(n).padStart(3, '0');
+      // source, service and an estimated value: #24 requires all three before
+      // an enquiry may leave New, so a fixture without them cannot be
+      // converted. They are business fields, not ownership ones.
       rows.enquiries[key] = (await db.query(
-        `INSERT INTO enquiries (enquiry_no, client_name, sales_person, owner_user_id)
-         VALUES ($1, $2, 'Ramesh', $3) RETURNING id`,
+        `INSERT INTO enquiries (enquiry_no, client_name, sales_person, owner_user_id,
+                                source, service, estimated_value, currency)
+         VALUES ($1, $2, 'Ramesh', $3, 'Referral', 'Audit', 50000, 'INR') RETURNING id`,
         [`CTZ/ENQ/2026/${tag}`, `Client ${key.toUpperCase()}`, owner])).rows[0].id;
       rows.quotations[key] = (await db.query(
         `INSERT INTO quotations (quotation_no, client_name, sales_person, quotation_date,

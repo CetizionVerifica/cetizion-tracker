@@ -46,7 +46,8 @@ const UNDO_PHASE_2A = [
 // Records of the kind that already exist: named salesperson as free text,
 // and no user account behind it, because there were none when they were typed.
 const LEGACY_ROWS = `
-INSERT INTO enquiries  (enquiry_no, client_name, sales_person) VALUES ('CTZ/ENQ/2026/900', 'Old Client', 'Ramesh');
+INSERT INTO enquiries  (enquiry_no, client_name, sales_person, source, service, estimated_value)
+  VALUES ('CTZ/ENQ/2026/900', 'Old Client', 'Ramesh', 'Referral', 'Audit', 50000);
 INSERT INTO quotations (quotation_no, client_name, sales_person) VALUES ('CTZ/QT/2026/900', 'Old Client', 'Ramesh');
 INSERT INTO projects   (project_id, client_name, sales_person)   VALUES ('PRJ-2026-900', 'Old Client', 'Ramesh');
 `;
@@ -302,7 +303,12 @@ describe('ownership changes no API behaviour', { skip: !ADMIN_URL && 'set TEST_D
   };
 
   const body = {
-    enquiries: { client_name: 'Acme', sales_person: 'Ramesh', service: 'ASI audit' },
+    // source and estimated_value: #24 will not let an enquiry leave New
+    // without them, and one of the tests below converts this one.
+    enquiries: {
+      client_name: 'Acme', sales_person: 'Ramesh', service: 'ASI audit',
+      source: 'Referral', estimated_value: 50000,
+    },
     quotations: { client_name: 'Acme', sales_person: 'Ramesh', service_quoted: 'ASI audit' },
     projects: { client_name: 'Acme', sales_person: 'Ramesh', primary_service: 'ASI audit' },
   };

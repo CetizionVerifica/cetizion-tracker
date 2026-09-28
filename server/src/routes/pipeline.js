@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { ownerClause, scopeOf, scopedSources } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { RATES, rateOn } from '../lib/salesReport.js';
 
 export const pipelineRouter = Router();
 
@@ -28,39 +29,59 @@ pipelineRouter.get('/', async (req, res) => {
   const closedParams = []; const closedSrc = scopedSources(scope, closedParams);
   const filters = (params) => {
     const where = [];
-    if (req.query.sales_person) { params.push(String(req.query.sales_person)); where.push(`q.sales_person = $${params.length}`); }
-    if (req.query.sector) { params.push(String(req.query.sector)); where.push(`q.sector = $${params.length}`); }
+    if (req.query.sales_person) { params.push(String(req.query.sales_person)); where.push(`v.sales_person = $${params.length}`); }
+    if (req.query.sector) { params.push(String(req.query.sector)); where.push(`v.sector = $${params.length}`); }
     return where.length ? `AND ${where.join(' AND ')}` : '';
   };
   const cardWhere = filters(cardParams);
   const closedWhere = filters(closedParams);
   const [stages, cards, closed] = await Promise.all([
     query('SELECT * FROM pipeline_stages WHERE active ORDER BY sort_order'),
-    query(`SELECT q.id, q.quotation_no, q.client_name, q.company_id, q.service_quoted, q.sales_person, q.sector, q.quotation_value, q.currency, q.status, q.stage_id, q.probability, q.weighted_value,
-                  q.expected_close_date, q.next_step, q.days_in_stage, q.stale, q.valid_until, q.expired, q.sent_at, q.accepted_at, q.quotation_date
-             FROM ${cardSrc.vQuotations} q WHERE q.stage_type IN ('open', 'paused') ${cardWhere}
-            ORDER BY q.stage_order, q.expected_close_date NULLS LAST, q.quotation_value DESC NULLS LAST`, cardParams),
-    query(`SELECT q.stage, COUNT(*)::int AS n, COALESCE(SUM(q.quotation_value) FILTER (WHERE q.currency = 'INR'), 0) AS value_inr,
-                  q.lost_reason
-             FROM ${closedSrc.vQuotations} q WHERE q.stage_type IN ('won', 'lost') AND q.closed_at >= now() - interval '90 days' ${closedWhere}
-            GROUP BY q.stage, q.lost_reason ORDER BY q.stage, n DESC`, closedParams),
+    // Every currency counts, converted to INR at the rate on the quotation's
+    // own date (#25), the way the sales reports convert. A currency with no
+    // rate for that date is left out of the totals and counted as such.
+    //
+    // The relation is substituted, not the arithmetic: main's conversion is
+    // untouched, it simply runs over the cards this reader may see.
+    query(`WITH ${RATES}
+           SELECT v.id, v.quotation_no, v.client_name, v.company_id, v.service_quoted, v.sales_person, v.sector, v.quotation_value, v.currency, v.status,
+                  v.stage_id, v.probability, v.weighted_value, v.expected_close_date, v.next_step, v.days_in_stage, v.stale, v.valid_until, v.expired,
+                  v.sent_at, v.accepted_at, v.quotation_date,
+                  round(v.quotation_value * r.rate, 2) AS value_inr, round(v.weighted_value * r.rate, 2) AS weighted_inr
+             FROM ${cardSrc.vQuotations} v ${rateOn('r', 'v.currency', 'v.quotation_date')}
+            WHERE v.stage_type IN ('open', 'paused') ${cardWhere}
+            ORDER BY v.stage_order, v.expected_close_date NULLS LAST, v.quotation_value DESC NULLS LAST`, cardParams),
+    query(`WITH ${RATES}
+           SELECT v.stage, COUNT(*)::int AS n, COALESCE(round(SUM(v.quotation_value * r.rate), 2), 0) AS value_inr,
+                  COUNT(*) FILTER (WHERE v.quotation_value IS NOT NULL AND r.rate IS NULL)::int AS without_rate, v.lost_reason
+             FROM ${closedSrc.vQuotations} v ${rateOn('r', 'v.currency', 'v.quotation_date')}
+            WHERE v.stage_type IN ('won', 'lost') AND v.closed_at >= now() - interval '90 days' ${closedWhere}
+            GROUP BY v.stage, v.lost_reason ORDER BY v.stage, n DESC`, closedParams),
   ]);
   // Forecast: weighted INR value of open quotations by expected close month; undated ones in their own bucket.
+  const converted = (c) => c.quotation_value != null && c.value_inr != null;
   const forecast = {};
   for (const c of cards.rows) {
-    if (c.currency !== 'INR' || !c.quotation_value) continue;
+    // A draft has not gone to the client: it is not forecast (#24).
+    if (c.status === 'Draft' || !converted(c) || !Number(c.quotation_value)) continue;
     const key = c.expected_close_date ? String(c.expected_close_date).slice(0, 7) : 'undated';
     forecast[key] ??= { month: key, count: 0, value: 0, weighted: 0 };
-    forecast[key].count += 1; forecast[key].value += Number(c.quotation_value); forecast[key].weighted += Number(c.weighted_value || 0);
+    forecast[key].count += 1; forecast[key].value += Number(c.value_inr); forecast[key].weighted += Number(c.weighted_inr || 0);
   }
-  const perStage = Object.fromEntries(stages.rows.map((s) => [s.id, { count: 0, value: 0, weighted: 0, stale: 0 }]));
+  const perStage = Object.fromEntries(stages.rows.map((s) => [s.id, { count: 0, value: 0, weighted: 0, stale: 0, without_rate: 0 }]));
   for (const c of cards.rows) {
     const t = perStage[c.stage_id]; if (!t) continue;
     t.count += 1;
-    if (c.currency === 'INR') { t.value += Number(c.quotation_value || 0); t.weighted += Number(c.weighted_value || 0); }
+    if (converted(c)) { t.value += Number(c.value_inr); if (c.status !== 'Draft') t.weighted += Number(c.weighted_inr || 0); }
+    else if (c.quotation_value != null) t.without_rate += 1;
     if (c.stale) t.stale += 1;
   }
-  res.json({ data: { stages: stages.rows.map((s) => ({ ...s, ...perStage[s.id] })), cards: cards.rows, forecast: Object.values(forecast).sort((a, b) => a.month.localeCompare(b.month)), closed_90_days: closed.rows } });
+  const withoutRate = cards.rows.filter((c) => c.quotation_value != null && c.value_inr == null).length;
+  res.json({ data: {
+    stages: stages.rows.map((s) => ({ ...s, ...perStage[s.id] })), cards: cards.rows,
+    forecast: Object.values(forecast).sort((a, b) => a.month.localeCompare(b.month)), closed_90_days: closed.rows,
+    without_rate: withoutRate,
+  } });
 });
 
 const moveSchema = z.object({

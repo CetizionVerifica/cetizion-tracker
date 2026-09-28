@@ -217,7 +217,7 @@ describe(
       const createRes = await request(app)
         .post('/api/enquiries')
         .set('Cookie', cookie)
-        .send({ client_name: 'Acme Ltd', enquiry_date: '2025-06-17', status: 'In Progress' });
+        .send({ client_name: 'Acme Ltd', enquiry_date: '2025-06-17', status: 'In Progress', source: 'Referral', service: 'EcoVadis', estimated_value: 150000 });
       assert.equal(createRes.status, 201, `Expected 201, got ${createRes.status}: ${JSON.stringify(createRes.body)}`);
       const enquiryId = createRes.body.data.id;
       const enquiryNo = createRes.body.data.enquiry_no;
@@ -236,10 +236,28 @@ describe(
       assert.match(quotationNo, /^CTZ\/QT\/2025\/\d+$/, `Expected 2025 quotation series, got: ${quotationNo}`);
 
       // 4. Verify the created quotation row in the database
-      const [quote] = await exec(dbUrl, 'SELECT quotation_no, quotation_date FROM quotations WHERE quotation_no = $1', [quotationNo]);
+      const [quote] = await exec(dbUrl, 'SELECT quotation_no, quotation_date, status FROM quotations WHERE quotation_no = $1', [quotationNo]);
       assert.ok(quote, 'quotation row must exist in the database');
+      assert.equal(quote.status, 'Draft', 'a converted enquiry is a draft until it is sent (#24)');
+      const lines = await exec(dbUrl, `SELECT l.description, l.rate::float AS rate FROM quotation_lines l JOIN quotations q ON q.id = l.quotation_id WHERE q.quotation_no = $1`, [quotationNo]);
+      assert.deepEqual(lines, [{ description: 'EcoVadis', rate: 150000 }], 'a line per service, the one service at the estimate');
       assert.equal(quote.quotation_date, '2025-06-17', 'quotation_date must inherit the 2025-06-17 enquiry_date');
       assert.equal(quote.quotation_no, quotationNo, 'quotation_no must match the enquiry linked quotation_no');
+    });
+
+    test('T5c: an enquiry cannot be qualified without the services and a value (#24)', async () => {
+      const made = await request(app).post('/api/enquiries').set('Cookie', cookie)
+        .send({ client_name: 'Rules Ltd', enquiry_date: '2026-09-01', source: 'Website' });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      const refused = await request(app).patch(`/api/enquiries/${made.body.data.id}`).set('Cookie', cookie).send({ status: 'Qualified' });
+      assert.equal(refused.status, 422, JSON.stringify(refused.body));
+      const fields = refused.body.error?.fields || refused.body.fields || {};
+      assert.deepEqual(Object.keys(fields).sort(), ['estimated_value', 'service'], JSON.stringify(refused.body));
+      const [still] = await exec(dbUrl, 'SELECT status FROM enquiries WHERE id = $1', [made.body.data.id]);
+      assert.equal(still.status, 'New', 'a refused move saves nothing');
+      const ok = await request(app).patch(`/api/enquiries/${made.body.data.id}`).set('Cookie', cookie)
+        .send({ status: 'Qualified', service: 'GHG verification', estimated_value: 90000 });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
     });
 
     // -----------------------------------------------------------------------

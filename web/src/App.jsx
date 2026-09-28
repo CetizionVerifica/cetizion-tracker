@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Today from './pages/Today.jsx';
@@ -34,6 +34,7 @@ import TravelLogs from './pages/TravelLogs.jsx';
 import TripDetail from './pages/TripDetail.jsx';
 import InvoiceRun from './pages/InvoiceRun.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
+import Payables from './pages/Payables.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
 import SettingsArea from './pages/SettingsArea.jsx';
@@ -42,6 +43,40 @@ import Inbox from './pages/Inbox.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
 import { api } from './lib/api.js';
+import { useToast } from './components/ui.jsx';
+
+/**
+ * New notifications pop up while the app is open (#44): every minute, while
+ * the tab is visible, anything that arrived since the last look is shown as
+ * a toast and the bell count refreshes. The server leaves out the kinds the
+ * person switched off, and says when it is their quiet hours: then only the
+ * count moves. The baseline is the server's own latest time, so a clock that
+ * disagrees with the server's neither repeats nor misses one.
+ */
+function useNotificationPopups(onNew) {
+  const toast = useToast();
+  const since = useRef(null);
+  useEffect(() => {
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const { data: s } = await api.raw('/notifications/summary');
+        if (!s?.latest) return;
+        if (since.current === null) { since.current = s.latest; return; }
+        if (new Date(s.latest) <= new Date(since.current)) return;
+        const { data: fresh } = await api.raw(`/notifications?unread=1&limit=5&since=${encodeURIComponent(since.current)}`);
+        since.current = s.latest;
+        onNew?.();
+        if (s.quiet) return;
+        for (const n of (fresh || []).slice(0, 3)) toast(n.body ? `${n.title} · ${n.body}` : n.title, 'info');
+      } catch { /* the next tick tries again */ }
+    };
+    tick();
+    const id = setInterval(tick, 60_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
 import { useAuth } from './lib/auth.jsx';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button.tsx';
@@ -378,7 +413,8 @@ export default function App() {
 
   // The sidebar counters are the whole point of the app: what is waiting
   // on someone, visible without opening anything.
-  const { data: nData } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
+  const { data: nData, refetch: refetchBell } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
+  useNotificationPopups(refetchBell);
   const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
   // A pinned view is only worth its place if it says how much is behind it,
   // and the count is the same one the list shows when you click through.
@@ -471,6 +507,7 @@ export default function App() {
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
+          <Route path="/payables" element={<Payables />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
           {/* One Settings area. The five admin pages it absorbed keep

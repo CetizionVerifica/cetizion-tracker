@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { requireAdmin } from '../auth/middleware.js';
 import {
-  OWNER_COLUMN, ownerForNewRecord, parentClause, resourceClause, scopeOf,
+  OWNER_COLUMN, isUnrestricted, ownerForNewRecord, parentClause, recordReachableSql,
+  resourceClause, scopeOf,
 } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
@@ -134,11 +135,24 @@ const PARENT_KEYS = {
   quotation: [['quotation_id', 'int']],
   project: [['project_id', 'text']],
   entity: [['entity', 'text'], ['entity_id', 'text']],
+  // A task is written with one primary parent; the rest of its records
+  // arrive as `targets` and are checked one by one below.
+  task_entity: [['entity', 'text'], ['entity_id', 'text']],
 };
 
-async function assertParentReachable(client, def, values, scope) {
+async function assertParentReachable(client, def, values, scope, input = null) {
   const kind = def.ownerScopedBy;
   if (!kind || scope.unrestricted) return;
+
+  // A task may be put on several records at once (#22). Each is a record
+  // this caller has to be able to reach, or a task could be filed onto
+  // somebody else's deal by listing it as a secondary target.
+  for (const t of (kind === 'task_entity' && Array.isArray(input?.targets)) ? input.targets : []) {
+    const probe = recordReachableSql(scope, t.entity, t.entity_id);
+    if (!probe) continue;
+    const { rowCount } = await client.query(probe.sql, probe.params);
+    if (!rowCount) throw new ApiError(404, `${def.label} not found`);
+  }
   const keys = PARENT_KEYS[kind];
   // A kind with no key list here would otherwise be checked against the
   // wrong column, which reads as "reachable" — the one failure this whole
@@ -147,7 +161,11 @@ async function assertParentReachable(client, def, values, scope) {
 
   const params = keys.map(([col]) => values[col] ?? null);
   const columns = keys.map(([col, type], i) => `$${i + 1}::${type} AS ${col}`).join(', ');
-  const where = parentClause(scope, params, { kind, alias: 'parent' });
+  // The one-row relation has the parent keys and nothing else, so the task
+  // variant — which reaches into task_targets by the row's own id — cannot
+  // be asked here. Its extra records are the `targets` checked above; the
+  // primary parent is an ordinary entity pair.
+  const where = parentClause(scope, params, { kind: kind === 'task_entity' ? 'entity' : kind, alias: 'parent' });
   const { rowCount } = await client.query(
     `SELECT 1 FROM (SELECT ${columns}) parent WHERE ${where}`,
     params
@@ -164,12 +182,13 @@ async function assertParentReachable(client, def, values, scope) {
  * check by a concurrent save — for the resources that run in a transaction;
  * for the others the UPDATE's own predicate is still the thing that decides.
  */
-async function assertDestinationReachable(client, def, id, values, scope) {
+async function assertDestinationReachable(client, def, id, values, scope, input = null) {
   const kind = def.ownerScopedBy;
   if (!kind || scope.unrestricted) return;
   const keys = PARENT_KEYS[kind];
   if (!keys) throw new Error(`Unknown ownership parent: ${kind}`);
-  if (!keys.some(([col]) => Object.hasOwn(values, col))) return;
+  const movesTargets = def.ownerScopedBy === 'task_entity' && Array.isArray(input?.targets);
+  if (!movesTargets && !keys.some(([col]) => Object.hasOwn(values, col))) return;
 
   const params = [];
   const pred = scopedIdPredicate(def, id, params, scope, def.table);
@@ -179,7 +198,7 @@ async function assertDestinationReachable(client, def, id, values, scope) {
     params
   );
   if (!current) throw new ApiError(404, `${def.label} not found`);
-  await assertParentReachable(client, def, { ...current, ...values }, scope);
+  await assertParentReachable(client, def, { ...current, ...values }, scope, input);
 }
 
 function pickWritable(def, body) {
@@ -318,6 +337,11 @@ export function crudRouter(name, def) {
     // Built before the rest of the WHERE so it lands in the same statement:
     // the count has to be the count of what this user may see, or a sales
     // user's pagination would advertise how many records they cannot open.
+    //
+    // main reached the same need through a per-resource `visibleTo` hook
+    // keyed on the free-text sales_person; ownership is owner_user_id and
+    // only owner_user_id, so the predicate comes from the resource's
+    // declared ownership instead. One engine, one truth.
     const scoped = resourceClause(def, scopeOf(req), params, { alias: readFrom });
     const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
     const order = buildOrder(def, req.query.sort);
@@ -351,10 +375,14 @@ export function crudRouter(name, def) {
     // note or a file with nobody's name on it is the timeline saying an
     // anonymous someone did this, which #22 asks it not to do. Only filled
     // when the caller left it blank, so an import can still carry its own.
-    if (def.stampActor && !values[def.stampActor]) {
+    //
+    // Only an admin may set it to someone else (an import carrying its own
+    // author); for everybody else the session decides, whatever was sent.
+    if (def.stampActor && (!values[def.stampActor] || !isUnrestricted(req.user))) {
       const actor = req.user?.name || req.user?.username;
       if (actor) values[def.stampActor] = actor;
     }
+    await def.authorize?.(req, input);
 
     // A sales user owns what they enter. Taken from the session, never from
     // the body — owner_user_id is in no resource's writable columns, so a
@@ -374,7 +402,7 @@ export function crudRouter(name, def) {
     const { id, extra } = await write(async (client) => {
       // A row that inherits its ownership may only be filed under a parent
       // this request can reach.
-      await assertParentReachable(client, def, values, scopeOf(req));
+      await assertParentReachable(client, def, values, scopeOf(req), input);
       if (def.hasDocument) await claimDocument(client, def, values);
 
       if (def.autoId) {
@@ -415,6 +443,8 @@ export function crudRouter(name, def) {
 
   router.patch('/:id', ...mayWrite, async (req, res) => {
     const { values, input } = validate(def, req.body, { partial: true });
+    if (def.stampActor && !isUnrestricted(req.user)) delete values[def.stampActor];
+    await def.authorize?.(req, input);
 
     // Reference-number guard: the field is immutable after creation.
     // Rules:
@@ -451,7 +481,7 @@ export function crudRouter(name, def) {
       // keys actually sent are taken from the payload, so a partial move
       // (entity_id without entity) is judged against the row as it will be,
       // not against half of it.
-      await assertDestinationReachable(client, def, req.params.id, values, scopeOf(req));
+      await assertDestinationReachable(client, def, req.params.id, values, scopeOf(req), input);
 
       const replacedDocument = def.hasDocument ? await claimDocument(client, def, values, req.params.id, scopeOf(req)) : null;
       const cols = Object.keys(values);

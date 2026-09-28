@@ -3,15 +3,16 @@ import XLSX from 'xlsx';
 import { query } from '../db.js';
 import { buildWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
-import { ownerClause, scopeOf } from '../auth/ownership.js';
+import { resourceClause, scopeOf } from '../auth/ownership.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
 import {
-  invoicingCsvRows, ordersCsvRows, paymentStatusCsvRows, revenueReport,
+  invoicingCsvRows, ordersCsvRows, overdueCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
+import { payablesRows } from '../lib/payables.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -47,10 +48,12 @@ const SALES_REPORTS = {
   orders: { build: buildRevenue, toRows: ordersCsvRows },
   invoicing: { build: buildRevenue, toRows: invoicingCsvRows },
   'payment-status': { build: buildRevenue, toRows: paymentStatusCsvRows },
+  overdue: { build: buildRevenue, toRows: overdueCsvRows },
 };
 
-// Report builders started at once for the PDF. Two of them fan out into
-// several queries each, so at most 5 of the pool's 10 connections are in use.
+// Report builders started at once for the PDF. The two that fan out the
+// most are revenueReport (4 queries) and salesReviewSections (3), so at
+// most 7 of the pool's 10 connections are in use at a time.
 const REPORT_CONCURRENCY = 2;
 
 /**
@@ -129,10 +132,17 @@ async function listRows(req) {
   const def = resources[req.params.resource];
   if (!def) throw new ApiError(404, 'Unknown export');
   const params = [];
-  // The same predicate the list endpoint applies (#18 Phase 2C). A
-  // spreadsheet is the easiest place to forget row-level access and the
-  // worst place to leak it: one request and the whole table walks out.
-  const scoped = def.ownerScoped ? ownerClause(scopeOf(req), params) : '';
+  // The same rows the page would show this person, and no others.
+  //
+  // main found this door open from its side too: a sales user got a 404 on a
+  // colleague's note through /api/notes/:id and then downloaded every note in
+  // the company through /api/export/notes.csv. A control with a second door
+  // beside it is not a control. Ours was half-open the same way — it asked
+  // only about `ownerScoped`, so the parent-derived resources (notes, tasks,
+  // attachments, POs, stages, lines, payments, costs) walked straight out.
+  // resourceClause answers for every ownership shape, so both doors close.
+  const relation = def.view || def.table;
+  const scoped = resourceClause(def, scopeOf(req), params, { alias: relation });
   const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
@@ -145,6 +155,16 @@ async function listRows(req) {
   }
   return rows;
 }
+
+/**
+ * The payables page as a spreadsheet (#76): the same rows, in the same
+ * order, as /api/dashboard/payables. Registered before /:resource.csv,
+ * which would otherwise take "payables" for a resource and 404.
+ */
+exportRouter.get('/payables.csv', async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  sendCsv(res, `cetizion-payables-${stamp}`, await payablesRows());
+});
 
 /**
  * Any list can still leave as a spreadsheet — the point is that the

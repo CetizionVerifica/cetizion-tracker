@@ -43,6 +43,20 @@ const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 const FACT_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
 
+const trim = (n) => String(Math.round(Number(n) * 100) / 100);
+
+/**
+ * The tax part of the totals line: CGST and SGST within the state, IGST
+ * outside it (#23). A quotation loaded before the split existed still
+ * shows its single stored figure rather than nothing.
+ */
+function gstSummary(gst, taxTotal, cur) {
+  if (!gst?.bands?.length) return `GST ${money(taxTotal, cur)}`;
+  if (gst.zero_rated) return 'GST zero-rated (export)';
+  if (!gst.intra) return gst.bands.map((b) => `IGST ${trim(b.rate)}% ${money(b.igst, cur)}`).join(' · ');
+  return gst.bands.map((b) => `CGST ${trim(b.rate / 2)}% ${money(b.cgst, cur)} · SGST ${trim(b.rate / 2)}% ${money(b.sgst, cur)}`).join(' · ');
+}
+
 /** A cell in the facts grid under the lines. */
 function GridFact({ label, children }) {
   return (
@@ -100,7 +114,7 @@ export default function QuotationDetail() {
   if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton" style={{ height: 240 }} /></div></>;
 
   const cur = q.currency;
-  const open = ['Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
+  const open = ['Draft', 'Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
   const won = q.status === 'Won - PO Received';
   const approvalBlocked = q.approval_status === 'pending' || q.approval_status === 'rejected';
   const total = q.line_count ? q.total : q.quotation_value;
@@ -301,7 +315,10 @@ export default function QuotationDetail() {
                 ))}
                 <TableRow className="bg-secondary hover:bg-secondary">
                   <TableCell colSpan={5} className="px-5 text-[12.5px] text-secondary-text">
-                    Subtotal {money(q.subtotal, cur)} · GST {money(q.tax_total, cur)}
+                    Subtotal {money(q.subtotal, cur)} · {gstSummary(q.gst, q.tax_total, cur)}
+                    {q.gst?.problems?.length > 0 && (
+                      <div className="mt-1 text-[11.5px] text-muted-foreground">{q.gst.problems.join(' ')}</div>
+                    )}
                   </TableCell>
                   <TableCell className="mono px-5 text-right text-[14px] font-semibold text-foreground">{money(q.total, cur)}</TableCell>
                   {!won && <TableCell />}
