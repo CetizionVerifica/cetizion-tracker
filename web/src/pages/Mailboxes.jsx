@@ -69,6 +69,7 @@ export default function Mailboxes() {
   const [busy, setBusy] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [tuning, setTuning] = useState(null);
+  const [rereading, setRereading] = useState(null);
 
   const rows = data?.data ?? [];
   const cfg = data?.configured;
@@ -117,6 +118,20 @@ export default function Mailboxes() {
     const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;
     if (!skipped.length) return head;
     return `${head} · skipped ${skipped.map(([why, n]) => `${n} ${why}`).join(', ')}`;
+  }
+
+  /**
+   * What a re-read actually did.
+   *
+   * "Done" would be useless here: the answer people need is whether it
+   * found anything, and if not, whether that is because there was nothing
+   * to fix or because it looked in the wrong window.
+   */
+  function rereadResult(x) {
+    const { updated = 0, seen = 0, messages_held: held = 0 } = x.data || {};
+    if (!seen) return 'The mailbox returned nothing for that window — try more days, or reconnect it.';
+    if (!updated) return `Nothing to update — the ${number(seen)} message${seen === 1 ? '' : 's'} it re-read are already current.`;
+    return `${number(updated)} of ${number(held)} stored message${held === 1 ? '' : 's'} rewritten with the sender's own styling.`;
   }
 
   /** What the "Synced" column says, which is mostly about whether it is still running. */
@@ -286,6 +301,9 @@ export default function Mailboxes() {
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setTuning(row)}>
                             What this mailbox syncs…
                           </DropdownMenuItem>
+                          <DropdownMenuItem className="text-[13px]" onSelect={() => setRereading(row)}>
+                            Re-read stored mail…
+                          </DropdownMenuItem>
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setDisconnecting(row)}>
                             Disconnect this mailbox
                           </DropdownMenuItem>
@@ -382,6 +400,25 @@ export default function Mailboxes() {
         />
       )}
 
+      {rereading && (
+        <ConfirmDialog
+          tone="normal"
+          title={`Re-read stored mail for ${rereading.email}?`}
+          message={
+            'Mail already in the tracker was stripped of its styling by the old rules, and the original was never kept — so it is fetched from the mailbox again and stored as it really looks. '
+            + 'Only messages already here are updated: nothing new is imported, no conversation is opened or reopened, and a mailbox that shares only metadata still stores no subject and no body. '
+            + 'It reads the last 30 days and makes one request per message, so a busy mailbox will take a few minutes. Running it twice is running it once.'
+          }
+          confirmLabel={busy === rereading.id ? 'Re-reading…' : 'Re-read'}
+          busy={busy === rereading.id}
+          onConfirm={async () => {
+            const row = rereading;
+            setRereading(null);
+            await run(row.id, () => api.action(`/mailboxes/${row.id}/refresh-bodies`, { days: 30 }), rereadResult);
+          }}
+          onClose={() => setRereading(null)}
+        />
+      )}
       {disconnecting && (
         <ConfirmDialog
           title={`Disconnect ${disconnecting.email}?`}
