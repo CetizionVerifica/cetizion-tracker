@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { lockAttachableDocument } from '../lib/documents.js';
+import { currencyMismatch } from '../lib/purchaseOrders.js';
 import { claimNextId } from '../lib/sequences.js';
 import { notify } from '../lib/notify.js';
 
@@ -217,7 +218,12 @@ registerRouter.post('/:key/register', async (req, res) => {
       }
     }
 
-    return { quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency, stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null };
+    return {
+      quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency,
+      stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null,
+      // The currency defaults to the quotation's; one changed by hand is saved, and flagged.
+      save_warning: currencyMismatch(currency, q),
+    };
   });
 
   res.status(201).json({ data: { ...data, ...checked } });

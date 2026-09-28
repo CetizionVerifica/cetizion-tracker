@@ -14,6 +14,7 @@ import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
+import { date } from '../lib/format.js';
 
 export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
@@ -453,6 +454,84 @@ export function Assumptions() {
         the automatic-email switch under Emails &amp; jobs — each with the context that makes it make sense. The
         payment split a new order starts from comes from a payment-schedule template, also under Templates.
       </p>
+    </SettingsPane>
+  );
+}
+
+/**
+ * The days nobody works (#73). Weekends are skipped anyway; this is the
+ * list of weekday closures the working-day counts leave out, starting with
+ * the gazetted holidays for 2026 and 2027.
+ */
+export function Holidays() {
+  const toast = useToast();
+  const { isAdmin } = useAuth();
+  const { rows, loading, refetch } = useList('holidays', { limit: 500 });
+  // 'new' or the row being changed. The pane told people to correct the
+  // moon-dated holidays here and then offered only Add and Delete, so
+  // moving Id by a day meant deleting it and retyping it — while
+  // PATCH /api/holidays/:id existed and worked the whole time.
+  const [editing, setEditing] = useState(null);
+
+  async function remove(row) {
+    if (!window.confirm(`Delete ${row.name} on ${date(row.holiday_on)}? It becomes a working day again.`)) return;
+    try {
+      await api.remove('holidays', row.id);
+      toast('Holiday deleted', 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
+  return (
+    <SettingsPane
+      title="Holidays"
+      description="Days the office is closed. Working-day counts skip these as well as Saturdays and Sundays. Dates that follow the moon (Id, Muharram, Milad-un-Nabi) can move; correct them here when they do."
+      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a holiday</Button>}
+    >
+      <Card flush>
+        <DataTable
+          loading={loading}
+          rows={rows}
+          columns={[
+            { key: 'holiday_on', header: 'Date', render: (r) => date(r.holiday_on) },
+            {
+              key: 'weekday',
+              header: 'Day',
+              className: 'muted',
+              render: (r) => new Date(`${r.holiday_on}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' }),
+            },
+            { key: 'name', header: 'Holiday', className: 'strong' },
+            ...(isAdmin ? [{
+              key: 'act',
+              header: '',
+              align: 'right',
+              render: (r) => (
+                <div className="table__actions">
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Edit</button>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => remove(r)}>Delete</button>
+                </div>
+              ),
+            }] : []),
+          ]}
+          empty={<Empty title="No holidays yet" text="Add the days the office is closed." />}
+        />
+      </Card>
+
+      {editing && (
+        <RecordForm
+          title={editing === 'new' ? 'New holiday' : `Edit ${editing.name}`}
+          resource="holidays"
+          record={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refetch(); }}
+          fields={[
+            { name: 'holiday_on', label: 'Date', type: 'date', required: true },
+            { name: 'name', label: 'Name', required: true, hint: 'e.g. Republic Day' },
+          ]}
+        />
+      )}
     </SettingsPane>
   );
 }

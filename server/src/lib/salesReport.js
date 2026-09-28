@@ -5,11 +5,19 @@ import { share } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**
- * Sales reports, read straight from the quotations table.
+ * Sales reports, read straight from the quotations and purchase_orders
+ * tables.
  *
- * A quotation marked "Won - PO Received" counts as a PO: many deals are won
- * well before their PO is registered, and counting registered POs alone
- * would leave those out.
+ * A "PO won" is an actual row in the Purchase Orders register, not a
+ * quotation whose status happens to be "Won - PO Received": the status can
+ * be set by hand with nothing registered behind it, and a single won
+ * quotation can end up with more than one PO against it (a project may
+ * hold several). Client and sector for a PO come from the quotation it
+ * fulfils — its own quotation_no when the PO names one, otherwise its
+ * project's won quotation (poQuotationNo) — and its client name comes from the
+ * project, since a PO carries none of its own. Lost and pipeline
+ * quotations have no PO to count, so they still come straight from the
+ * quotations table, by quotation date.
  *
  * Clients and sectors are free text, so they are grouped by spelling. Case
  * and stray spaces are ignored; any other difference is a different name.
@@ -27,7 +35,99 @@ export const inPeriod = (column) => `COALESCE(($1::date IS NULL OR ${column} >= 
 
 export const IN_PERIOD = inPeriod('quotation_date');
 
-const UP_TO_END = `COALESCE($2::date IS NULL OR quotation_date <= $2::date, false)`;
+// $2 only, with the same "no date, never counts" rule as inPeriod — for "how
+// many up to the end of the period", where an order from before it still counts.
+const upToEnd = (column) => `COALESCE($2::date IS NULL OR ${column} <= $2::date, false)`;
+
+/**
+ * The quotation a purchase order (table alias `po`) fulfils: its own
+ * quotation_no when it names one, otherwise a quotation on its project —
+ * a won one first, as linkPurchaseOrder requires, then an open one, a lost
+ * one only when the project has nothing else; the earliest quotation date
+ * breaks a tie. Every figure that ties a PO to a quotation uses this one
+ * rule — won counts, contract dates and the "won but no PO" check — so a PO
+ * is never credited to one quotation in one section and another in the next.
+ */
+export const poQuotationNo = (po) => `COALESCE(
+      ${po}.quotation_no,
+      (SELECT q2.quotation_no FROM quotations q2
+        WHERE q2.project_id = ${po}.project_id
+        ORDER BY q2.status = '${QUOTATION_STATUS.won}' DESC,
+                 q2.status = '${QUOTATION_STATUS.lost}',
+                 q2.quotation_date NULLS LAST,
+                 q2.quotation_no
+        LIMIT 1)
+    )`;
+
+/**
+ * Whether a purchase order (table alias `po`) counts as a sale: not cancelled,
+ * and not replaced by a revision (PO-441-R1 replacing PO-441), so a revised
+ * order is one order at its revised value rather than two. Only the sales
+ * figures use this. Billing and collections count every PO, because money
+ * invoiced or received against a replaced one is still real.
+ */
+export const poCountsAsSale = (po) => `(NOT ${po}.cancelled AND NOT EXISTS (
+      SELECT 1 FROM purchase_orders rev WHERE rev.replaces_po_number = ${po}.po_number))`;
+
+/**
+ * Every purchase order that counts as a sale (poCountsAsSale above),
+ * resolved to the client and sector of the quotation it
+ * fulfils (poQuotationNo above), ready to filter or aggregate by period, so
+ * each PO resolves to at most one quotation and is never counted twice.
+ * deal_key is that quotation, or the PO itself when it resolves to none:
+ * several POs against one quotation are one deal won, not several. A PO
+ * with nothing entered for its value (po_value left at its column default
+ * of 0) is treated as "no value", the same as a null quotation value
+ * elsewhere — po_value itself is never null.
+ */
+const PO_RESOLVED = `po_resolved AS (
+  SELECT po.po_number,
+         po.po_date,
+         po.currency,
+         NULLIF(po.po_value, 0)                                    AS po_value,
+         q.quotation_no,
+         q.currency                                                AS quotation_currency,
+         COALESCE(q.quotation_no, po.po_number)                    AS deal_key,
+         btrim(pr.client_name)                                     AS client_name,
+         ${nameKey('pr.client_name')}                               AS client_key,
+         NULLIF(btrim(q.sector), '')                                AS sector,
+         NULLIF(${nameKey('q.sector')}, '')                         AS sector_key
+    FROM purchase_orders po
+    JOIN projects pr ON pr.project_id = po.project_id
+    LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
+   WHERE ${poCountsAsSale('po')}
+)`;
+
+/**
+ * Purchase orders with no PO date. They cannot be placed in a period, so once
+ * one is chosen they are in none of the PO figures; listed so the report can
+ * say so rather than come out quietly short. Empty when no period is chosen.
+ */
+async function undatedPurchaseOrders({ from, to }) {
+  if (!from && !to) return [];
+  const { rows } = await query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number');
+  return rows.map((row) => row.po_number);
+}
+
+/**
+ * POs in the period saved in a different currency from the quotation they
+ * fulfil. Allowed — a client can order in another currency — but usually the
+ * dropdown left at INR, and every figure here converts from the PO's
+ * currency. The PO forms warn on save; this catches what was saved anyway.
+ * Only the currency is compared: a PO for part of a quotation is normal.
+ */
+async function currencyMismatchPurchaseOrders({ from, to }) {
+  const { rows } = await query(
+    `WITH ${PO_RESOLVED}
+     SELECT po_number, currency, quotation_no, quotation_currency
+       FROM po_resolved
+      WHERE quotation_currency IS NOT NULL AND currency <> quotation_currency
+        AND ${inPeriod('po_date')}
+      ORDER BY po_number`,
+    [from, to]
+  );
+  return rows;
+}
 
 // Every dated rate, plus INR at 1 from the beginning of time. A currency with
 // no row at all never appears, which gives a null rate through the lookup
@@ -119,24 +219,34 @@ function sumAmounts(lists) {
 }
 
 /**
- * The sales funnel per sector. Enquiries are counted by enquiry date, the
- * rest by quotation date. Every quotation is exactly one of won, lost or
- * pipeline (Submitted, Under Negotiation, On Hold).
+ * The sales funnel per sector. Enquiries are counted by enquiry date; a PO
+ * won by its own PO date, straight from the Purchase Orders register (see
+ * PO_RESOLVED above); lost and pipeline quotations by quotation date. A
+ * quotation in the period with no PO against it is exactly one of lost,
+ * pipeline (Submitted, Under Negotiation, On Hold) or won_without_po —
+ * marked won with nothing registered, so it is in no PO figure and is
+ * counted on its own rather than disappearing.
+ *
+ * Win % is deals won ÷ (deals won + lost): a deal is the quotation a PO
+ * fulfils, so a project split into phase POs counts as one win, not one
+ * per phase — lost is a count of quotations, and so is this.
  */
 export async function sectorReport({ from, to }) {
   const { rows } = await query(
     `WITH ${RATES},
+     ${PO_RESOLVED},
+     po AS (
+       SELECT * FROM po_resolved WHERE ${inPeriod('po_date')}
+     ),
      q AS (
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
               NULLIF(btrim(sector), '')         AS sector,
-              ${nameKey('client_name')}          AS client_key,
-              status = '${QUOTATION_STATUS.won}'       AS is_won,
-              status = '${QUOTATION_STATUS.lost}'                    AS is_lost,
-              quotation_value,
-              currency,
-              quotation_date
+              status = '${QUOTATION_STATUS.won}'  AS is_won,
+              status = '${QUOTATION_STATUS.lost}' AS is_lost,
+              ${IN_PERIOD}                        AS in_period,
+              quotation_no IN (SELECT quotation_no FROM po_resolved
+                                WHERE quotation_no IS NOT NULL) AS has_po
          FROM quotations
-        WHERE ${IN_PERIOD}
      ),
      e AS (
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
@@ -146,65 +256,77 @@ export async function sectorReport({ from, to }) {
      ),
      sectors AS (
        SELECT sector_key, mode() WITHIN GROUP (ORDER BY sector) AS sector
-         FROM (SELECT sector_key, sector FROM q
+         FROM (SELECT sector_key, sector FROM po
+               UNION ALL
+               SELECT sector_key, sector FROM q WHERE in_period
                UNION ALL
                SELECT sector_key, sector FROM e) names
         GROUP BY sector_key
      ),
      quoted AS (
        SELECT sector_key,
-              COUNT(*) FILTER (WHERE is_won)                             AS pos,
-              COUNT(*) FILTER (WHERE is_lost)                            AS lost,
-              COUNT(*) FILTER (WHERE NOT is_won AND NOT is_lost)         AS pipeline,
-              COUNT(DISTINCT client_key) FILTER (WHERE is_won)           AS customers,
-              COUNT(*) FILTER (WHERE is_won AND quotation_value IS NULL) AS pos_without_value,
-              COUNT(*) FILTER (WHERE is_won AND currency <> 'INR')       AS fx_deals
+              COUNT(*) FILTER (WHERE in_period AND is_lost)                    AS lost,
+              COUNT(*) FILTER (WHERE in_period AND NOT is_won AND NOT is_lost) AS pipeline,
+              COUNT(*) FILTER (WHERE in_period AND is_won AND NOT has_po)      AS won_without_po
          FROM q
+        GROUP BY sector_key
+     ),
+     po_agg AS (
+       SELECT sector_key,
+              COUNT(*)::int                                      AS pos,
+              COUNT(DISTINCT deal_key)                            AS won_deals,
+              COUNT(DISTINCT client_key)                          AS customers,
+              COUNT(*) FILTER (WHERE po_value IS NULL)            AS pos_without_value,
+              COUNT(*) FILTER (WHERE currency <> 'INR')           AS fx_deals
+         FROM po
         GROUP BY sector_key
      ),
      enquired AS (
        SELECT sector_key, COUNT(*) AS enquiries FROM e GROUP BY sector_key
      ),
      by_currency AS (
-       SELECT sector_key, currency, SUM(quotation_value) AS amount
-         FROM q
-        WHERE is_won AND quotation_value IS NOT NULL
+       SELECT sector_key, currency, SUM(po_value) AS amount
+         FROM po
+        WHERE po_value IS NOT NULL
         GROUP BY 1, 2
      ),
      converted AS (
-       SELECT q.sector_key, SUM(q.quotation_value * r.rate) FILTER (WHERE is_won) AS won_value_inr
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        GROUP BY q.sector_key
+       SELECT p.sector_key, SUM(p.po_value * r.rate) AS won_value_inr
+         FROM po p
+         ${rateOn('r', 'p.currency', 'p.po_date')}
+        GROUP BY p.sector_key
      ),
      unconverted AS (
-       SELECT q.sector_key, q.currency, SUM(q.quotation_value) AS amount
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE is_won AND q.quotation_value IS NOT NULL AND r.rate IS NULL
+       SELECT p.sector_key, p.currency, SUM(p.po_value) AS amount
+         FROM po p
+         ${rateOn('r', 'p.currency', 'p.po_date')}
+        WHERE p.po_value IS NOT NULL AND r.rate IS NULL
         GROUP BY 1, 2
      ),
      rates_used AS (
-       SELECT q.sector_key, q.currency, r.rate, r.effective_from
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE is_won AND q.currency <> 'INR' AND r.rate IS NOT NULL
+       SELECT p.sector_key, p.currency, r.rate, r.effective_from
+         FROM po p
+         ${rateOn('r', 'p.currency', 'p.po_date')}
+        WHERE p.currency <> 'INR' AND r.rate IS NOT NULL
         GROUP BY 1, 2, 3, 4
      )
      SELECT COALESCE(s.sector, 'Not set')                              AS sector,
             s.sector_key IS NULL                                       AS not_set,
             COALESCE(en.enquiries, 0)::int                             AS enquiries,
-            COALESCE(qu.pos, 0)::int                                   AS pos,
+            COALESCE(pa.pos, 0)::int                                   AS pos,
+            COALESCE(pa.won_deals, 0)::int                             AS won_deals,
             COALESCE(qu.lost, 0)::int                                  AS lost,
             COALESCE(qu.pipeline, 0)::int                              AS pipeline,
-            COALESCE(qu.customers, 0)::int                             AS customers,
-            COALESCE(qu.pos_without_value, 0)::int                     AS pos_without_value,
-            COALESCE(qu.fx_deals, 0)::int                              AS fx_deals,
+            COALESCE(qu.won_without_po, 0)::int                        AS won_without_po,
+            COALESCE(pa.customers, 0)::int                             AS customers,
+            COALESCE(pa.pos_without_value, 0)::int                     AS pos_without_value,
+            COALESCE(pa.fx_deals, 0)::int                              AS fx_deals,
             ROUND(COALESCE(co.won_value_inr, 0), 2)                    AS won_value_inr,
             ${amountsFor('by_currency', 'sector_key', 's.sector_key')}  AS amounts,
             ${amountsFor('unconverted', 'sector_key', 's.sector_key')}  AS unconverted,
             ${ratesUsedFor('rates_used', 'sector_key', 's.sector_key')}  AS rate_details
        FROM sectors s
+       LEFT JOIN po_agg pa   ON pa.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN quoted qu   ON qu.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN enquired en ON en.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN converted co ON co.sector_key IS NOT DISTINCT FROM s.sector_key
@@ -212,8 +334,8 @@ export async function sectorReport({ from, to }) {
     [from, to]
   );
 
-  // Won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out.
-  for (const row of rows) row.win_rate = share(row.pos, row.pos + row.lost);
+  // Deals won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out.
+  for (const row of rows) row.win_rate = share(row.won_deals, row.won_deals + row.lost);
   const total = (field) => rows.reduce((sum, row) => sum + row[field], 0);
 
   return {
@@ -221,10 +343,14 @@ export async function sectorReport({ from, to }) {
     summary: {
       enquiries: total('enquiries'),
       pos: total('pos'),
+      won_deals: total('won_deals'),
       lost: total('lost'),
       pipeline: total('pipeline'),
+      won_without_po: total('won_without_po'),
+      undated_pos: await undatedPurchaseOrders({ from, to }),
+      currency_mismatch_pos: await currencyMismatchPurchaseOrders({ from, to }),
       fx_deals: total('fx_deals'),
-      win_rate: share(total('pos'), total('pos') + total('lost')),
+      win_rate: share(total('won_deals'), total('won_deals') + total('lost')),
       sectors: rows.filter((row) => !row.not_set && row.pos > 0).length,
       pos_without_sector: rows.find((row) => row.not_set)?.pos ?? 0,
       amounts: sumAmounts(rows.map((row) => row.amounts)),
@@ -235,28 +361,30 @@ export async function sectorReport({ from, to }) {
 }
 
 /**
- * Won POs billed in a currency other than INR, per client, sector and
- * currency, with the INR value at the rate set in Settings.
+ * Purchase orders billed in a currency other than INR, per client, sector
+ * and currency, with the INR value at the rate set in Settings.
  */
 export async function fxReport({ from, to }) {
   const { rows } = await query(
-    `WITH ${RATES}
-     SELECT mode() WITHIN GROUP (ORDER BY btrim(q.client_name))                    AS customer,
-            COALESCE(mode() WITHIN GROUP (ORDER BY NULLIF(btrim(q.sector), '')),
-                     'Not set')                                                     AS sector,
-            NULLIF(${nameKey('q.sector')}, '') IS NULL                              AS not_set,
-            q.currency,
-            COUNT(*)::int                                                           AS deals,
-            COUNT(*) FILTER (WHERE q.quotation_value IS NULL)::int                  AS deals_without_value,
-            COALESCE(SUM(q.quotation_value), 0)                                     AS amount,
+    `WITH ${RATES},
+     ${PO_RESOLVED},
+     po AS (
+       SELECT * FROM po_resolved WHERE currency <> 'INR' AND ${inPeriod('po_date')}
+     )
+     SELECT mode() WITHIN GROUP (ORDER BY po.client_name)                     AS customer,
+            COALESCE(mode() WITHIN GROUP (ORDER BY po.sector), 'Not set')     AS sector,
+            po.sector_key IS NULL                                             AS not_set,
+            po.currency,
+            COUNT(*)::int                                                     AS deals,
+            COUNT(*) FILTER (WHERE po.po_value IS NULL)::int                  AS deals_without_value,
+            COALESCE(SUM(po.po_value), 0)                                     AS amount,
             r.rate,
-            r.effective_from                                                        AS rate_effective_from,
-            ROUND(COALESCE(SUM(q.quotation_value), 0) * r.rate, 2)                  AS amount_inr,
-            string_agg(q.quotation_no, ', ' ORDER BY q.quotation_date, q.quotation_no) AS quotation_nos
-       FROM quotations q
-       ${rateOn('r', 'q.currency', 'q.quotation_date')}
-      WHERE q.status = '${QUOTATION_STATUS.won}' AND q.currency <> 'INR' AND ${IN_PERIOD}
-      GROUP BY ${nameKey('q.client_name')}, NULLIF(${nameKey('q.sector')}, ''), q.currency, r.rate, r.effective_from
+            r.effective_from                                                  AS rate_effective_from,
+            ROUND(COALESCE(SUM(po.po_value), 0) * r.rate, 2)                  AS amount_inr,
+            string_agg(po.po_number, ', ' ORDER BY po.po_date, po.po_number)  AS po_numbers
+       FROM po
+       ${rateOn('r', 'po.currency', 'po.po_date')}
+      GROUP BY po.client_key, po.sector_key, po.currency, r.rate, r.effective_from
       ORDER BY currency, amount DESC, customer`,
     [from, to]
   );
@@ -276,28 +404,35 @@ export async function fxReport({ from, to }) {
 export const CLIENT_TYPES = { repeat: 'Repeat client', single: 'Single enquiry client' };
 
 /**
- * Every client with an enquiry or a quotation in the period, listed once
- * however many of each they have.
+ * Every client with an enquiry, a live quotation or a PO in the period,
+ * listed once however many of each they have. A quotation lost in the
+ * period does not by itself put a client on this report — see the clients
+ * CTE below — though its count still shows for a client who qualifies
+ * another way.
  *
  * Enquiries are the rows on the Enquiries page; an enquiry that became a
- * quotation is still one enquiry, and its quotation counts only under POs
- * won / lost. A client is a repeat client with 2 or more won POs up to the
- * end of the period, so an order placed before the period still counts;
- * every other client is a single enquiry client.
+ * quotation is still one enquiry, and its quotation counts only under lost
+ * or POs won. A won PO is an actual row in the Purchase Orders register, by
+ * its own PO date (see PO_RESOLVED above) — a client whose quotation was
+ * marked won but never registered as a PO still appears here, with 0 POs,
+ * rather than disappearing from the report. A client is a repeat client
+ * with 2 or more deals won up to the end of the period (deal_key: phase POs
+ * on one quotation are one deal), so an order placed before the period
+ * still counts; every other client is a single enquiry client.
  */
 export async function customerReport({ from, to }) {
   const { rows } = await query(
     `WITH ${RATES},
+     ${PO_RESOLVED},
+     po AS (
+       SELECT *, ${inPeriod('po_date')} AS in_period, ${upToEnd('po_date')} AS up_to_end
+         FROM po_resolved
+     ),
      q AS (
        SELECT ${nameKey('client_name')}   AS client_key,
               btrim(client_name)           AS client_name,
-              status = '${QUOTATION_STATUS.won}' AS is_won,
-              status = '${QUOTATION_STATUS.lost}'              AS is_lost,
-              quotation_value,
-              currency,
-              quotation_date,
-              ${IN_PERIOD}                 AS in_period,
-              ${UP_TO_END}                 AS up_to_end
+              status = '${QUOTATION_STATUS.lost}' AS is_lost,
+              ${IN_PERIOD}                 AS in_period
          FROM quotations
      ),
      e AS (
@@ -307,8 +442,14 @@ export async function customerReport({ from, to }) {
         WHERE ${inPeriod('enquiry_date')}
      ),
      clients AS (
+       -- A quotation lost in the period does not, on its own, put a client
+       -- on this report: it is not a PO and it is not a chance still open.
+       -- A quotation still open (Submitted, Under Negotiation, On Hold) does
+       -- — there is still a chance it becomes a PO — same as a won one does.
        SELECT client_key, mode() WITHIN GROUP (ORDER BY client_name) AS client
-         FROM (SELECT client_key, client_name FROM q WHERE in_period
+         FROM (SELECT client_key, client_name FROM po WHERE in_period
+               UNION ALL
+               SELECT client_key, client_name FROM q WHERE in_period AND NOT is_lost
                UNION ALL
                SELECT client_key, client_name FROM e) names
         GROUP BY client_key
@@ -316,51 +457,62 @@ export async function customerReport({ from, to }) {
      enquired AS (
        SELECT client_key, COUNT(*) AS enquiries FROM e GROUP BY client_key
      ),
-     quoted AS (
-       SELECT q.client_key,
-              COUNT(*) FILTER (WHERE in_period AND is_won)                                AS pos,
-              COUNT(*) FILTER (WHERE in_period AND is_lost)                               AS lost,
-              COUNT(*) FILTER (WHERE up_to_end AND is_won)                                AS pos_to_date,
-              COUNT(*) FILTER (WHERE in_period AND is_won AND quotation_value IS NULL)    AS pos_without_value,
-              SUM(q.quotation_value * r.rate) FILTER (WHERE in_period AND is_won)         AS won_value_inr
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        GROUP BY q.client_key
+     lost AS (
+       SELECT client_key, COUNT(*) FILTER (WHERE in_period AND is_lost) AS lost
+         FROM q GROUP BY client_key
+     ),
+     po_agg AS (
+       SELECT client_key,
+              COUNT(*) FILTER (WHERE in_period)                      AS pos,
+              COUNT(DISTINCT deal_key) FILTER (WHERE in_period)      AS won_deals,
+              COUNT(*) FILTER (WHERE up_to_end)                      AS pos_to_date,
+              COUNT(DISTINCT deal_key) FILTER (WHERE up_to_end)      AS deals_to_date,
+              COUNT(*) FILTER (WHERE in_period AND po_value IS NULL) AS pos_without_value,
+              SUM(po_value * r.rate) FILTER (WHERE in_period)        AS won_value_inr
+         FROM po
+         ${rateOn('r', 'po.currency', 'po.po_date')}
+        GROUP BY client_key
      ),
      unconverted AS (
-       SELECT q.client_key, q.currency, SUM(q.quotation_value) AS amount
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE in_period AND is_won AND q.quotation_value IS NOT NULL AND r.rate IS NULL
+       SELECT po.client_key, po.currency, SUM(po.po_value) AS amount
+         FROM po
+         ${rateOn('r', 'po.currency', 'po.po_date')}
+        WHERE in_period AND po.po_value IS NOT NULL AND r.rate IS NULL
         GROUP BY 1, 2
      ),
      rates_used AS (
-       SELECT q.client_key, q.currency, r.rate, r.effective_from
-         FROM q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE in_period AND is_won AND q.currency <> 'INR' AND r.rate IS NOT NULL
+       SELECT po.client_key, po.currency, r.rate, r.effective_from
+         FROM po
+         ${rateOn('r', 'po.currency', 'po.po_date')}
+        WHERE in_period AND po.currency <> 'INR' AND r.rate IS NOT NULL
         GROUP BY 1, 2, 3, 4
      )
      SELECT c.client,
             COALESCE(en.enquiries, 0)::int                                  AS enquiries,
-            COALESCE(qu.pos, 0)::int                                        AS pos,
-            COALESCE(qu.lost, 0)::int                                       AS lost,
-            COALESCE(qu.pos_to_date, 0)::int                                AS pos_to_date,
-            GREATEST(COALESCE(qu.pos_to_date, 0) - 1, 0)::int               AS repeat_orders,
-            COALESCE(qu.pos_without_value, 0)::int                          AS pos_without_value,
-            ROUND(COALESCE(qu.won_value_inr, 0), 2)                         AS won_value_inr,
+            COALESCE(pa.pos, 0)::int                                        AS pos,
+            COALESCE(pa.won_deals, 0)::int                                  AS won_deals,
+            COALESCE(l.lost, 0)::int                                        AS lost,
+            COALESCE(pa.pos_to_date, 0)::int                                AS pos_to_date,
+            COALESCE(pa.deals_to_date, 0)::int                              AS deals_to_date,
+            GREATEST(COALESCE(pa.deals_to_date, 0) - 1, 0)::int             AS repeat_orders,
+            COALESCE(pa.pos_without_value, 0)::int                         AS pos_without_value,
+            ROUND(COALESCE(pa.won_value_inr, 0), 2)                        AS won_value_inr,
             ${amountsFor('unconverted', 'client_key', 'c.client_key')}      AS unconverted,
-            ${ratesUsedFor('rates_used', 'client_key', 'c.client_key')}      AS rate_details
+            ${ratesUsedFor('rates_used', 'client_key', 'c.client_key')}     AS rate_details
        FROM clients c
-       LEFT JOIN quoted qu   ON qu.client_key = c.client_key
+       LEFT JOIN po_agg pa   ON pa.client_key = c.client_key
+       LEFT JOIN lost l      ON l.client_key = c.client_key
        LEFT JOIN enquired en ON en.client_key = c.client_key
-      ORDER BY pos_to_date DESC, won_value_inr DESC, enquiries DESC, client`,
+      ORDER BY deals_to_date DESC, pos_to_date DESC, won_value_inr DESC, enquiries DESC, client`,
     [from, to]
   );
 
   for (const row of rows) {
-    row.client_type = row.pos_to_date >= 2 ? CLIENT_TYPES.repeat : CLIENT_TYPES.single;
-    row.win_rate = share(row.pos, row.pos + row.lost);
+    // Two deals, not two PO documents: one project split into phase POs is
+    // still one order, and does not make its client a repeat client.
+    row.client_type = row.deals_to_date >= 2 ? CLIENT_TYPES.repeat : CLIENT_TYPES.single;
+    // Deals won ÷ decided, as in sectorReport: phase POs on one quotation are one win.
+    row.win_rate = share(row.won_deals, row.won_deals + row.lost);
   }
 
   const summarise = (list) => {
@@ -369,8 +521,9 @@ export async function customerReport({ from, to }) {
       clients: list.length,
       enquiries: total('enquiries'),
       pos: total('pos'),
+      won_deals: total('won_deals'),
       lost: total('lost'),
-      win_rate: share(total('pos'), total('pos') + total('lost')),
+      win_rate: share(total('won_deals'), total('won_deals') + total('lost')),
       won_value_inr: Math.round(total('won_value_inr') * 100) / 100,
       repeat_orders: total('repeat_orders'),
       pos_without_value: total('pos_without_value'),
@@ -427,7 +580,7 @@ export function fxCsvRows({ rows }) {
     'Rate (INR per unit)': row.rate ?? 'Not set',
     'Won value (INR)': row.amount_inr ?? '',
     'POs with no value entered': row.deals_without_value,
-    Quotations: row.quotation_nos,
+    'PO numbers': row.po_numbers,
   }));
 }
 
@@ -444,6 +597,7 @@ export function customerCsvRows({ rows }) {
     'Won value (INR)': row.won_value_inr,
     'Not in INR value (rate not set)': notConverted(row.unconverted),
     'Repeat orders': row.repeat_orders,
+    'Deals won to date': row.deals_to_date,
     'POs won to date': row.pos_to_date,
     'POs with no value entered': row.pos_without_value,
   }));

@@ -468,6 +468,9 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     const LISTS = [
       'pipeline-stages', 'payment-terms-templates', 'payment-terms-template-lines',
       'onboarding-templates', 'onboarding-template-lines', 'lead-sources', 'lost-reasons',
+      // A holiday moves every deadline and reply clock in the app, so a
+      // sales user reads the calendar and an admin sets it (#73).
+      'holidays',
     ];
 
     for (const list of LISTS) {

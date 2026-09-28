@@ -3,6 +3,7 @@ import { Alert, Field, Input, Modal, Select, useToast } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { money, today } from '../lib/format.js';
+import { poCurrencyWarning } from '../lib/poCurrency.js';
 
 /**
  * PO received → project in one step (#26). From a quotation: the project
@@ -31,6 +32,8 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
   const [errors, setErrors] = useState({});
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The currency starts as the quotation's; changing it is allowed, and flagged.
+  const currencyWarning = poCurrencyWarning([quotation], { quotation_no: quotation.quotation_no, currency: v.currency });
   const set = (k, val) => { setV((s) => ({ ...s, [k]: val })); setErrors((e) => ({ ...e, [k]: undefined })); };
   const template = templates.find((t) => String(t.id) === v.payment_terms_template_id);
   // A PO for a different amount than was quoted is worth a second look (#26).
@@ -80,7 +83,10 @@ export function RegisterPoDialog({ quotation, onClose, onDone }) {
           <Field label="PO number" required error={errors.po_number}><Input value={v.po_number} onChange={(e) => set('po_number', e.target.value)} /></Field>
           <Field label="PO date" error={errors.po_date}><Input type="date" value={v.po_date} onChange={(e) => set('po_date', e.target.value)} /></Field>
           <Field label="PO value" error={errors.po_value} hint="Blank: the quotation total"><Input type="number" step="0.01" min="0" value={v.po_value} onChange={(e) => set('po_value', e.target.value)} /></Field>
-          <Field label="Currency"><Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} /></Field>
+          <Field label="Currency">
+            <Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} />
+            {currencyWarning && <span className="field__hint" role="status" style={{ color: 'var(--warn-fg)' }}>{currencyWarning}</span>}
+          </Field>
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
           <Field label="PO document" hint="The client's PO, if you have the file"><input type="file" className="input" onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
           {differs && (

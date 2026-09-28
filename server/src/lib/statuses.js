@@ -18,6 +18,17 @@ export const QUOTATION_STATUS = {
   lost: 'Lost',
 };
 
+// A payment stage's status. Not stored: v_payment_stages works it out
+// (db/views.sql), so these must match the labels that view produces.
+export const STAGE_STATUS = {
+  notDue: 'Not Due',
+  toInvoice: 'To Invoice',
+  paid: 'Paid',
+  overdue: 'Overdue',
+  partiallyPaid: 'Partially Paid',
+  due: 'Due',
+};
+
 // Since #24 an enquiry is a lead: several open statuses, Unqualified
 // instead of Declined, Converted once quoted.
 export const ENQUIRY_STATUS = {

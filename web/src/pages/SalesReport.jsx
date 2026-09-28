@@ -67,12 +67,12 @@ const CLIENT_COLUMNS = [
 function ClientTotals({ label, s }) {
   return (
     <>
-      <td>{label}</td>
-      <td className="num">{number(s.enquiries)}</td>
-      <td className="num">{number(s.pos)}</td>
-      <td className="num">{percent(s.win_rate)}</td>
-      <td className="num"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} rateDetails={s.rate_details} /></td>
-      <td className="num">{number(s.repeat_orders)}</td>
+      <td className="px-3 py-2 align-top text-[13px]">{label}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.enquiries)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.pos)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(s.win_rate)}</td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right"><InrValue value={s.won_value_inr} unconverted={s.unconverted} withoutValue={s.pos_without_value} rateDetails={s.rate_details} /></td>
+      <td className="num px-3 py-2 align-top text-[13px] text-right">{number(s.repeat_orders)}</td>
     </>
   );
 }
@@ -97,8 +97,9 @@ export default function SalesReport() {
   const sectors = d?.sectors;
   const customers = d?.customers;
   const fx = d?.fx;
-  const repeatRows = customers ? customers.rows.filter((row) => row.pos_to_date >= 2) : [];
-  const singleRows = customers ? customers.rows.filter((row) => row.pos_to_date < 2) : [];
+  // The server decides the type (salesReport.js customerReport), so the page never disagrees with it.
+  const repeatRows = customers ? customers.rows.filter((row) => row.client_type === 'Repeat client') : [];
+  const singleRows = customers ? customers.rows.filter((row) => row.client_type !== 'Repeat client') : [];
 
   return (
     <>
@@ -164,6 +165,49 @@ export default function SalesReport() {
                 <Link to="/settings">Add the rate in Settings</Link> (INR for 1 unit, from the date it applied).
               </Alert>
             )}
+            {sectors.summary.undated_pos.length > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.undated_pos.length} purchase order{sectors.summary.undated_pos.length === 1 ? ' has' : 's have'} no PO date
+                </strong>
+                , so {sectors.summary.undated_pos.length === 1 ? 'it is' : 'they are'} left out of every PO figure on this page for the
+                period chosen — sector-wise, FX deals, clients and revenue:{' '}
+                {sectors.summary.undated_pos.map((po, i) => (
+                  <span key={po}>
+                    {i > 0 && ', '}
+                    <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po)}`}>{po}</Link>
+                  </span>
+                ))}
+                . Add the PO date on the PO to include {sectors.summary.undated_pos.length === 1 ? 'it' : 'them'}.
+              </Alert>
+            )}
+            {sectors.summary.currency_mismatch_pos.length > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.currency_mismatch_pos.length} purchase order{sectors.summary.currency_mismatch_pos.length === 1 ? ' is' : 's are'} in
+                  a different currency from {sectors.summary.currency_mismatch_pos.length === 1 ? 'its' : 'their'} quotation
+                </strong>
+                , so the value may be read in the wrong currency:{' '}
+                {sectors.summary.currency_mismatch_pos.map((po, i) => (
+                  <span key={po.po_number}>
+                    {i > 0 && ', '}
+                    <Link className="mono" to={`/purchase-orders/${encodeURIComponent(po.po_number)}`}>{po.po_number}</Link>
+                    {` (${po.currency}; quotation in ${po.quotation_currency})`}
+                  </span>
+                ))}
+                . Open the PO and check its currency.
+              </Alert>
+            )}
+            {sectors.summary.won_without_po > 0 && (
+              <Alert tone="warning">
+                <strong>
+                  {sectors.summary.won_without_po} quotation{sectors.summary.won_without_po === 1 ? ' is' : 's are'} marked won with no
+                  purchase order registered
+                </strong>
+                , so {sectors.summary.won_without_po === 1 ? 'it is' : 'they are'} not counted as won, lost or pipeline below.{' '}
+                <Link to={quotationsUrl({ status: 'Won - PO Received' })}>Register the purchase order</Link> to count it.
+              </Alert>
+            )}
 
             <div className="auto-grid--stats">
               <Stat
@@ -189,7 +233,7 @@ export default function SalesReport() {
 
             <Card
               title="Sector-wise POs"
-              hint="Enquiries by enquiry date, the rest by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = won ÷ (won + lost) · FX deals = won POs not in INR · Values stay in their own currency"
+              hint="Enquiries by enquiry date, POs won by PO date, lost and pipeline by quotation date · Pipeline = Submitted, Under Negotiation or On Hold · Win % = deals won ÷ (deals won + lost), several POs on one quotation counting as one deal · FX deals = won POs not in INR · Values stay in their own currency"
               flush
               actions={<CsvButton report="sectors" params={params} disabled={!sectors.rows.length} />}
             >
@@ -212,21 +256,21 @@ export default function SalesReport() {
                 rows={sectors.rows}
                 footer={
                   <>
-                    <td>Total</td>
-                    <td className="num">{number(sectors.summary.enquiries)}</td>
-                    <td className="num">{number(sectors.summary.pos)}</td>
-                    <td className="num">{number(sectors.summary.lost)}</td>
-                    <td className="num">{number(sectors.summary.pipeline)}</td>
-                    <td className="num">{percent(sectors.summary.win_rate)}</td>
-                    <td className="num"><Amounts list={sectors.summary.amounts} /></td>
-                    <td className="num">{number(sectors.summary.fx_deals)}</td>
+                    <td className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.enquiries)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.pos)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.lost)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.pipeline)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(sectors.summary.win_rate)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right"><Amounts list={sectors.summary.amounts} /></td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(sectors.summary.fx_deals)}</td>
                   </>
                 }
                 empty={<Empty title="No enquiries or quotations in this period" />}
               />
             </Card>
 
-            <Card title="POs by sector" hint="Won quotations, grouped by the sector entered on them">
+            <Card title="POs by sector" hint="Registered purchase orders, grouped by the sector of the quotation they fulfil">
               <BarList
                 items={sectors.rows.filter((row) => row.pos > 0).map((row) => ({ label: row.sector, value: row.pos, extra: row }))}
                 valueFormat={(v, item) =>
@@ -237,13 +281,13 @@ export default function SalesReport() {
 
             <Card
               title="FX deals"
-              hint="Won POs billed in a currency other than INR · INR value = won value × the rate in force on the quotation date"
+              hint="Registered POs billed in a currency other than INR · INR value = won value × the rate in force on the PO date"
               flush
               actions={<CsvButton report="fx" params={params} disabled={!fx.rows.length} />}
             >
               <DataTable
                 columns={[
-                  { key: 'customer', header: 'Client', className: 'strong', render: (row) => <>{row.customer}<div className="small muted mono">{row.quotation_nos}</div></> },
+                  { key: 'customer', header: 'Client', className: 'strong', render: (row) => <>{row.customer}<div className="small muted mono">{row.po_numbers}</div></> },
                   {
                     key: 'sector',
                     header: 'Sector',
@@ -288,11 +332,11 @@ export default function SalesReport() {
                 rows={fx.rows}
                 footer={
                   <>
-                    <td colSpan={3}>Total</td>
-                    <td className="num">{number(fx.summary.deals)}</td>
-                    <td className="num"><Amounts list={fx.summary.amounts} /></td>
-                    <td />
-                    <td className="num">
+                    <td colSpan={3} className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(fx.summary.deals)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right"><Amounts list={fx.summary.amounts} /></td>
+                    <td className="px-3 py-2 align-top text-[13px]" />
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">
                       {money(fx.summary.amount_inr, 'INR')}
                       {fx.summary.missing_rates.length > 0 && (
                         <div className="small" style={{ color: 'var(--warn-fg)' }}>excludes {fx.summary.missing_rates.join(', ')}</div>
@@ -306,7 +350,7 @@ export default function SalesReport() {
 
             <Card
               title="Repeat clients"
-              hint="2 or more won POs up to the end of the period · Enquiries = rows on the Enquiries page · Win % = won ÷ (won + lost) · Won value (INR) includes FX deals at the rate in force on each quotation date · Repeat orders = won POs after the first"
+              hint="2 or more deals won up to the end of the period — a deal is a quotation with a PO, so phase POs on one quotation are one deal · Enquiries = rows on the Enquiries page · Win % = deals won ÷ (deals won + lost), several POs on one quotation counting as one deal · Won value (INR) includes FX deals at the rate in force on each PO date · Repeat orders = deals after the first"
               flush
               actions={<CsvButton report="customers" params={params} disabled={!customers.rows.length} />}
             >
@@ -348,19 +392,19 @@ export default function SalesReport() {
                 ]}
                 footer={
                   <>
-                    <td>Total</td>
-                    <td className="num">{number(customers.summary.total.clients)}</td>
-                    <td className="num">{number(customers.summary.total.enquiries)}</td>
-                    <td className="num">{number(customers.summary.total.pos)}</td>
-                    <td className="num">{percent(customers.summary.total.win_rate)}</td>
-                    <td className="num">
+                    <td className="px-3 py-2 align-top text-[13px]">Total</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.clients)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.enquiries)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.pos)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{percent(customers.summary.total.win_rate)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">
                       <InrValue
                         value={customers.summary.total.won_value_inr}
                         unconverted={customers.summary.total.unconverted}
                         withoutValue={customers.summary.total.pos_without_value}
                       />
                     </td>
-                    <td className="num">{number(customers.summary.total.repeat_orders)}</td>
+                    <td className="num px-3 py-2 align-top text-[13px] text-right">{number(customers.summary.total.repeat_orders)}</td>
                   </>
                 }
               />

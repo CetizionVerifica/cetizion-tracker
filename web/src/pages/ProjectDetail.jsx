@@ -17,6 +17,8 @@ import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, number } from '../lib/format.js';
+import { poCurrencyFields } from '../lib/poCurrency.js';
+import { poRevisionFields } from '../lib/poRevision.js';
 
 /**
  * The project record (C15) — the onboarding checklist is the page, not a
@@ -469,13 +471,15 @@ export default function ProjectDetail() {
                 .filter((q) => q.status === 'Won - PO Received')
                 .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${money(q.quotation_value, q.currency)}` })),
               hint: 'The order this PO fulfils; revenue counts the PO against it',
+              ...poCurrencyFields(quotations).quotation,
             },
             { name: 'po_date', label: 'PO date', type: 'date' },
             { name: 'po_value', label: 'PO value', type: 'money', required: true },
-            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
+            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], ...poCurrencyFields(quotations).currency },
             { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
             { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
+            ...poRevisionFields(lookups.purchase_orders, { projectId: p.project_id }),
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />

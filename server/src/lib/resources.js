@@ -334,6 +334,8 @@ export const resources = {
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
       'payment_terms_days', 'actual_initiation_date', 'actual_delivery_date',
       'project_manager_email', 'remarks', 'document_id',
+      // Revised or cancelled — out of the sales figures (linkPurchaseOrder checks the link).
+      'replaces_po_number', 'cancelled',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -348,6 +350,10 @@ export const resources = {
       remarks: str(1000),
       document_id: int({ min: 1 }),
       quotation_no: str(60),
+      replaces_po_number: str(60),
+      // NOT NULL in the table: blank means "not cancelled". An edit that does
+      // not send it leaves it alone (crud writes only the fields sent).
+      cancelled: bool().transform((v) => v ?? false),
     }),
     onSave: linkPurchaseOrder,
   },
@@ -898,6 +904,25 @@ export const resources = {
       source: enumOf(['manual', 'feed']).default('manual'),
       entered_by: str(120),
       note: str(300),
+    }),
+  },
+
+  holidays: {
+    // The days nobody works (#73), which the working-day helpers in
+    // businessDate.ts skip. Read by everybody, because the figures sales
+    // and finance see count them; kept by an admin, like the rates above.
+    adminOnlyWrites: true,
+    table: 'holidays',
+    view: null,
+    label: 'Holiday',
+    defaultSort: 'holiday_on',
+    search: ['name'],
+    filters: [],
+    dateFilter: 'holiday_on',
+    columns: ['holiday_on', 'name'],
+    schema: z.object({
+      holiday_on: requiredDate(),
+      name: requiredStr(120),
     }),
   },
 };
