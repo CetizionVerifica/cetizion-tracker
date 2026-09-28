@@ -22,7 +22,7 @@ producing the numbers it produced yesterday.
 
 ## The change
 
-Migration `051_record_ownership.sql`, mirrored into `db/schema.sql`.
+Migration `059_record_ownership.sql`, mirrored into `db/schema.sql`.
 
 ```
 enquiries.owner_user_id   int NULL  → users(id) ON DELETE SET NULL

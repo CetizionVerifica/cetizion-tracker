@@ -25,7 +25,7 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 const VIEWS = readFileSync(join(DB_DIR, 'views.sql'), 'utf8');
-const BACKFILL = readFileSync(join(DB_DIR, 'migrations', '052_backfill_record_ownership.sql'), 'utf8');
+const BACKFILL = readFileSync(join(DB_DIR, 'migrations', '060_backfill_record_ownership.sql'), 'utf8');
 const DIAGNOSTIC = readFileSync(join(DB_DIR, 'diagnostics', 'ownership-backfill.sql'), 'utf8');
 
 // The two tables carrying a salesperson email, and the one that does not.

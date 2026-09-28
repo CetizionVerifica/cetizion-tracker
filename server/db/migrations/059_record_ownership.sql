@@ -1,4 +1,4 @@
--- 018 — whose record is this (#18 Phase 2A).
+-- 059 — whose record is this (#18 Phase 2A).
 --
 -- Every sales record already names a salesperson, as free text: the
 -- `sales_person` column, filled in from the workbook and typed by hand

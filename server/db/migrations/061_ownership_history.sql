@@ -1,4 +1,4 @@
--- 020 — ownership history and handover audit trail (#18 Phase 3).
+-- 061 — ownership history and handover audit trail (#18 Phase 3).
 --
 -- Phase 2A added owner_user_id to enquiries, quotations and projects.
 -- Phase 2B backfilled historical ownership where history was certain.

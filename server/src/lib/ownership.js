@@ -35,7 +35,7 @@ const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'db');
  * here, so there is one place to change if a later migration ever
  * supersedes the rules — and a test asserts this file still holds them.
  */
-export const BACKFILL_MIGRATION = '052_backfill_record_ownership.sql';
+export const BACKFILL_MIGRATION = '060_backfill_record_ownership.sql';
 
 export const BACKFILL_SQL = readFileSync(join(DB_DIR, 'migrations', BACKFILL_MIGRATION), 'utf8');
 export const REPORT_SQL = readFileSync(join(DB_DIR, 'diagnostics', 'ownership-backfill.sql'), 'utf8');

@@ -1,6 +1,6 @@
--- 019 — fill in the owner where history says it beyond doubt (#18 Phase 2B).
+-- 060 — fill in the owner where history says it beyond doubt (#18 Phase 2B).
 --
--- 018 added owner_user_id to enquiries, quotations and projects and left it
+-- 059 added owner_user_id to enquiries, quotations and projects and left it
 -- null on every row, because there was no safe way to fill it in from a
 -- migration that knew nothing about the business. This file fills in the
 -- subset where the historical data names somebody exactly, and leaves the
