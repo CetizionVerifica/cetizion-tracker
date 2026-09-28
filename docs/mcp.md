@@ -48,7 +48,8 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_payables` | what we owe travel vendors, longest overdue first, with the total and every ageing bucket — paged |
 | `list_data_gaps` | what is missing and what it is blocking, with the page that lists those rows |
 | `list_tasks` | open tasks, soonest due first, with the record each is on — paged |
-| `create_task`, `add_note`, `log_touch`, `update_next_step`, `complete_task` | small writes, shown on the record as made "via MCP" |
+| `create_task`, `add_note`, `log_touch`, `update_next_step` | small writes, shown on the record as made "via MCP" |
+| `complete_task` | marks a task done. `tasks` has no column for who did it; the trace is in the token log |
 
 Resources: the pipeline stages, the service catalogue, and what each KPI means.
 
@@ -63,6 +64,16 @@ of that rule a second time.
 `list_payables` is not scoped by salesperson, because a travel vendor's bill
 belongs to the company and there is no owner on it to scope by. That matches
 the Payables page, which any signed-in person can already open (#89).
+
+Two more places where a sales token sees past "only your own records". Both
+are the web app's rules, carried here on purpose rather than by accident:
+
+- **A task is readable wherever it sits** if it is assigned to you, was
+  raised by you, or is on a record you can see. So a task on a colleague's
+  deal, assigned to you, comes with that deal's number on it.
+- **An unassigned inbox conversation is anyone's**, in any inbox. That is
+  what makes "what has nobody picked up?" answerable; it also means a
+  subject from an inbox you are not a member of can reach you.
 
 ## What you can ask it
 
