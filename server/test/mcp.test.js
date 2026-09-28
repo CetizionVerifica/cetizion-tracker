@@ -439,6 +439,113 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     });
   });
 
+  /**
+   * Feeding any kind of record (#138). The sheet importer handles one shape;
+   * this handles the other thirty tables, through each resource's own schema
+   * and save hooks rather than around them.
+   */
+  describe('importing records of any kind', () => {
+    const admin = async () => (await token({ name: `Records ${id}`, role: 'admin', can_write: true })).token;
+    const count = async (sql, args = []) => Number((await pool.query(sql, args)).rows[0].n);
+
+    test('it says what can be imported and what each kind takes', async () => {
+      const t = await admin();
+      const all = JSON.parse((await call(t, 'describe_entity', {})).text);
+      const names = all.entities.map((e) => e.name);
+      assert.ok(names.includes('companies') && names.includes('travel-logs') && names.includes('enquiries'));
+      // The ones a plain INSERT is the wrong instrument for stay out.
+      for (const n of ['quotation-lines', 'payment-stages', 'notes', 'tasks', 'exchange-rates']) {
+        assert.ok(!names.includes(n), `${n} is written by something that knows how`);
+      }
+      const one = JSON.parse((await call(t, 'describe_entity', { entity: 'companies' })).text);
+      assert.equal(one.match_on, 'name');
+      const name = one.fields.find((f) => f.name === 'name');
+      assert.equal(name.required, true, 'a company must be called something');
+      assert.equal(one.fields.find((f) => f.name === 'sector').required, false);
+    });
+
+    test('a dry run reports what it would do and writes nothing', async () => {
+      const t = await admin();
+      const before = await count('SELECT count(*) AS n FROM companies');
+      const plan = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows: [
+        { name: 'Falcon Foods Ltd', sector: 'Food', city: 'Pune' },
+        { name: 'Asha Client Ltd', sector: 'Chemicals' },
+        { sector: 'no name at all' },
+      ] })).text);
+
+      assert.equal(plan.dry_run, true);
+      assert.equal(plan.rows_sent, 3);
+      assert.equal(plan.created, 1, 'Falcon is new');
+      assert.equal(plan.updated, 1, 'Asha Client Ltd is a fixture, so it matches by name');
+      assert.equal(plan.rejected, 1, 'a company with no name is refused');
+      const refused = plan.rows.find((r) => r.action === 'rejected');
+      assert.ok(refused.why.name, `the reason names the field: ${JSON.stringify(refused.why)}`);
+
+      assert.equal(await count('SELECT count(*) AS n FROM companies'), before, 'a dry run writes nothing');
+    });
+
+    test('a real run writes, and running it twice does not duplicate', async () => {
+      const t = await admin();
+      const rows = [{ name: 'Delta Pumps Pvt Ltd', sector: 'Pumps', city: 'Nashik' }];
+      const done = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows, dry_run: false })).text);
+      assert.equal(done.created, 1);
+      assert.equal(done.dry_run, false);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']), 1);
+
+      // The same list again: an update, not a second copy. This is what makes
+      // re-sending a corrected spreadsheet safe.
+      const again = JSON.parse((await call(t, 'import_records', {
+        entity: 'companies', rows: [{ name: 'Delta Pumps Pvt Ltd', sector: 'Pumps & Valves', city: 'Nashik' }], dry_run: false,
+      })).text);
+      assert.equal(again.updated, 1);
+      assert.equal(again.created, 0);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']), 1,
+        'matched by name, so still one row');
+      const { rows: [row] } = await pool.query('SELECT sector FROM companies WHERE name = $1', ['Delta Pumps Pvt Ltd']);
+      assert.equal(row.sector, 'Pumps & Valves', 'and the correction landed');
+    });
+
+    test('one bad row stops the batch; none of it lands', async () => {
+      const t = await admin();
+      const before = await count('SELECT count(*) AS n FROM companies');
+      const res = JSON.parse((await call(t, 'import_records', { entity: 'companies', rows: [
+        { name: 'Good Row Industries' },
+        { name: '' },
+      ], dry_run: false })).text);
+      assert.equal(res.rejected, 1);
+      assert.equal(await count('SELECT count(*) AS n FROM companies'), before,
+        'half an imported client list is worse than none of it');
+    });
+
+    test('it validates by the resource\'s own rules, not looser ones', async () => {
+      const t = await admin();
+      // currency is an enum on quotations; a form would refuse CAD and so must this.
+      const res = JSON.parse((await call(t, 'import_records', { entity: 'quotations', rows: [
+        { quotation_no: 'QT-IMPORT-1', client_name: 'Asha Client Ltd', quotation_date: '2026-09-01', currency: 'CAD' },
+      ] })).text);
+      assert.equal(res.rejected, 1, 'the schema is the form\'s, so the answer is the form\'s');
+      assert.ok(JSON.stringify(res.rows[0].why).includes('currency'));
+    });
+
+    test('a sales token is not offered it, nor allowed it', async () => {
+      const sales = (await token({ name: 'Sales records', role: 'sales', person: 'asha', can_write: true })).token;
+      const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${sales}`).set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 9200, method: 'tools/list', params: {} });
+      const names = res.body.result.tools.map((x) => x.name);
+      assert.ok(!names.includes('import_records') && !names.includes('describe_entity'));
+      assert.equal((await call(sales, 'import_records', { entity: 'companies', rows: [{ name: 'Sneaky Ltd' }] })).error, true);
+      assert.equal(await count('SELECT count(*) AS n FROM companies WHERE name = $1', ['Sneaky Ltd']), 0);
+    });
+
+    test('what is written by something that knows how cannot be fed here', async () => {
+      const t = await admin();
+      for (const entity of ['payment-stages', 'quotation-lines', 'exchange-rates', 'nonsense']) {
+        const res = await call(t, 'import_records', { entity, rows: [{ anything: 1 }] });
+        assert.equal(res.error, true, `${entity} must be refused`);
+      }
+    });
+  });
+
   test('duplicate companies come back grouped, and nothing here merges them', async () => {
     const t = (await token({ name: 'Dupes', role: 'admin', can_write: true })).token;
     // The seed already carries Hindalco and three of its plants, which is
@@ -597,7 +704,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     // false alarm that gets a guard deleted.
     for (const n of names) {
       assert.doesNotMatch(n, /^(delete|remove|drop|void|cancel|pay|send|reassign|set)_/, `${n} names something this server must not be able to do`);
-      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit)_/, `${n} is a verb this server has not agreed to`);
+      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit|import|describe)_/, `${n} is a verb this server has not agreed to`);
     }
     await request(app).post(`/api/api-tokens/${t.id}/revoke`).set('Cookie', staff).expect(200);
     assert.equal((await call(t.token, 'list_pipeline')).status, 401);
