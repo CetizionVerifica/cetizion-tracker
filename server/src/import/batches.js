@@ -3,7 +3,7 @@
  *
  * This lived inside routes/import.js, which was fine while an upload was
  * the only way in. The MCP server now plans and commits the same batches
- * from a conversation (#134), and two callers sharing a pipeline must
+ * from a conversation (#135), and two callers sharing a pipeline must
  * share the code that is the pipeline — a second planBatch would be a
  * second set of rules, drifting from the first the day either changed.
  *

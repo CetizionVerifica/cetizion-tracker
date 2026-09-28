@@ -14,7 +14,7 @@
  *
  * The pipeline itself — reading the sheet, planning, and loading a batch
  * back — is in ../import/batches.js, because the MCP server plans and
- * commits the same batches from a conversation (#134).
+ * commits the same batches from a conversation (#135).
  */
 import { Router } from 'express';
 import multer from 'multer';
