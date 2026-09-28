@@ -13,9 +13,78 @@
  * the whole inbox and it is a string — the one part of this screen worth
  * asserting on directly rather than through a browser.
  */
+import DOMPurify from 'dompurify';
 
 /** Does this message pull anything from the network? */
 export const hasRemoteImage = (html) => /<img\b[^>]*\bsrc\s*=\s*["']?https?:/i.test(String(html || ''));
+
+
+/**
+ * A second sanitiser, in the browser, on HTML the server already cleaned.
+ *
+ * This is the library Zero uses (apps/mail/lib/email-utils.ts:
+ * `DOMPurify.sanitize(html)`), and it is here for the reason a second one
+ * is ever worth having: the server's pass happens once, at ingest, in
+ * mailbox/sync.js — and that is not the only way a row reaches
+ * email_threads. routes/portal.js writes one directly. A client that
+ * sanitises whatever it is handed does not care which path the HTML came
+ * down.
+ *
+ * Where this differs from Zero, deliberately: Zero calls sanitize with its
+ * defaults and renders the result inline, which keeps every remote image
+ * and so keeps every tracking pixel. Blocked images are the point of #105,
+ * so the hook below strips a remote src at the DOM level as well, and the
+ * frame's content policy still refuses the fetch underneath it. Either one
+ * alone would do; a read receipt is worth both.
+ */
+const REMOTE = /^\s*https?:/i;
+
+// Registered once. DOMPurify hooks are global, so the flag is what makes
+// this call-specific — safe because sanitize() is synchronous and cannot
+// interleave with another call.
+let blockRemote = false;
+let hooked = false;
+
+function hook() {
+  if (hooked || !DOMPurify.isSupported) return;
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    if (!blockRemote || data.attrName !== 'src') return;
+    if (REMOTE.test(data.attrValue)) {
+      data.keepAttr = false;
+      // Without this the browser resolves a src-less <img> against the
+      // frame's own URL and draws a broken-image glyph where the picture
+      // was; the placeholder says what happened instead.
+      node.setAttribute?.('data-blocked', 'remote image');
+    }
+  });
+  hooked = true;
+}
+
+/**
+ * Clean a message body for display. Falls back to the input untouched when
+ * there is no DOM to parse with — Node, a unit test — which is safe
+ * because the server has already sanitised it and the frame's policy is
+ * what stops the network either way.
+ */
+export function cleanMail(html, showImages = false) {
+  const raw = String(html ?? '');
+  if (!DOMPurify.isSupported) return raw;
+  hook();
+  blockRemote = !showImages;
+  try {
+    return DOMPurify.sanitize(raw, {
+      // A stored email is read, not edited, so anything interactive goes.
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'base', 'link', 'meta'],
+      FORBID_ATTR: ['srcset', 'formaction', 'ping'],
+      ALLOW_DATA_ATTR: false,
+      // cid: is how an image that travelled with the message refers to it.
+      ADD_URI_SAFE_ATTR: [],
+      ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid|data):/i,
+    });
+  } finally {
+    blockRemote = false;
+  }
+}
 
 /**
  * `img-src data: cid:` keeps the images that travelled with the message and
@@ -112,4 +181,4 @@ export const frameDoc = (html, showImages) =>
   + `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages)}">`
   + `<base target="_blank" rel="noopener noreferrer">`
   + `<style>${STYLE}</style>`
-  + `</head><body>${String(html ?? '')}</body></html>`;
+  + `</head><body>${cleanMail(html, showImages)}</body></html>`;
