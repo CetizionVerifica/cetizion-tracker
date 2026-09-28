@@ -25,21 +25,22 @@ export async function payablesRows() {
 }
 
 /**
- * Rows, and a count and an outstanding sum for every bucket — zero rows
- * included, so the summary always has the same seven cards. "amount
- * missing" has a count and no sum: those bills are a gap, never zero.
+ * A count and an outstanding sum for every bucket — zero rows included, so
+ * the summary always has the same seven cards. "amount missing" has a count
+ * and no sum: those bills are a gap, never zero.
+ *
+ * Separate from payables() because the MCP tool wants the totals beside a
+ * single page of rows rather than beside all of them, and a second copy of
+ * this GROUP BY is a second answer to "what do we owe".
  */
-export async function payables() {
-  const [rows, grouped] = await Promise.all([
-    payablesRows(),
-    query(`
-      SELECT bucket,
-             COUNT(*)::int                     AS invoices,
-             COALESCE(SUM(outstanding), 0)     AS outstanding
-        FROM v_vendor_invoice_ageing
-       GROUP BY bucket`),
-  ]);
-  const byBucket = new Map(grouped.rows.map((row) => [row.bucket, row]));
+export async function payablesSummary() {
+  const { rows: grouped } = await query(`
+    SELECT bucket,
+           COUNT(*)::int                     AS invoices,
+           COALESCE(SUM(outstanding), 0)     AS outstanding
+      FROM v_vendor_invoice_ageing
+     GROUP BY bucket`);
+  const byBucket = new Map(grouped.map((row) => [row.bucket, row]));
   const buckets = BUCKETS.map((bucket) => ({
     bucket,
     invoices: byBucket.get(bucket)?.invoices ?? 0,
@@ -47,9 +48,14 @@ export async function payables() {
   }));
   const total = buckets.reduce((sum, b) => sum + (b.outstanding ?? 0), 0);
   return {
-    rows,
     buckets,
     total_outstanding: Math.round(total * 100) / 100,
     amount_missing: byBucket.get('amount missing')?.invoices ?? 0,
   };
+}
+
+/** Every row, with the bucket summary beside it. What the page reads. */
+export async function payables() {
+  const [rows, summary] = await Promise.all([payablesRows(), payablesSummary()]);
+  return { rows, ...summary };
 }
