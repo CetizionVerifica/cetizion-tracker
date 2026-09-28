@@ -19,6 +19,12 @@ date, an outstanding balance — none of them are stored, so none of them can dr
 step with the facts they came from. A person types a fact once, in one place, and every
 screen that needs it reads it from there.
 
+<div align="center">
+  <img src="docs/images/today.png" alt="The Today screen: one overdue invoice promoted above a short, ordered list of what else needs a person" width="900">
+  <p><em><strong>Today</strong> — the most overdue money first, then everything else in order.<br>
+  One primary action on the page; the list empties as you work down it.</em></p>
+</div>
+
 ---
 
 ## What it does
@@ -26,6 +32,14 @@ screen that needs it reads it from there.
 **Sales.** Enquiries become quotations become deals. A pipeline board with stages and
 probability, quotations as real documents with line items, GST and revisions, approval
 for a discount, and a client-facing acceptance link.
+
+<img src="docs/images/pipeline.png" alt="The pipeline board: deals as cards in stage columns, each column showing its count, gross and probability-weighted value" width="900">
+
+<img src="docs/images/quotations.png" alt="The quotations list with a saved view, filters, status badges and an inline Register action on a won deal" width="900">
+
+*Every list works the same way: a saved view, filters that live in the URL so a link
+carries them, and the next action on the row itself — a won deal offers **Register**
+where the project would be.*
 
 **A shared inbox.** Client email from a connected Microsoft 365 mailbox arrives already
 matched to its company and its deal. Threads are assigned, have a reply clock, and turn
@@ -37,6 +51,11 @@ when you opened their revised terms.
 on its own trigger — registration, delivery, a project milestone — and nobody marks it by
 hand. Invoice runs, receipts, collections ageing, cash-flow forecasting, payables to
 travel vendors, and profitability per project.
+
+<img src="docs/images/reports.png" alt="Reports: pipeline by stage, collections ageing, cash expected over six months, and win rate by quarter" width="900">
+
+*Every bar links into the list behind it, and each chart opens as a table — a figure you
+cannot interrogate is a figure you have to trust.*
 
 **Delivery and travel.** Projects with onboarding checklists and milestones, site visit
 scheduling, trips with vendor invoices and employee expense claims, and certificates with
