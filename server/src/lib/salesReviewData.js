@@ -372,9 +372,10 @@ export async function serviceReport(period) {
 
 /** Quotation statuses as they read: still open first, then the outcome. */
 export const QUOTATION_STATUSES = [
-  QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold, WON, LOST,
+  QUOTATION_STATUS.draft, QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.onHold, WON, LOST,
 ];
 const STATUS_FIELD = {
+  [QUOTATION_STATUS.draft]: 'draft',
   [QUOTATION_STATUS.submitted]: 'submitted',
   [QUOTATION_STATUS.negotiating]: 'negotiating',
   [QUOTATION_STATUS.onHold]: 'on_hold',
@@ -455,12 +456,14 @@ export function quotationPipeline(rows) {
 /** Quotations (month YYYY-MM, oldest first) per status, per month and in total. */
 export function quotationStatusSummary(rows, period = {}) {
   // Every status is listed, even at zero; one the Quotations page gains later still counts.
+  // Draft only when there are some: most periods have none, and a zero row
+  // for quotations nobody has sent yet is noise in a sales report.
   const others = [...new Set(rows.map((q) => q.status).filter((status) => !QUOTATION_STATUSES.includes(status)))];
   return {
     rows: [...QUOTATION_STATUSES, ...others].map((status) => {
       const list = rows.filter((q) => q.status === status);
       return { status, quotations: list.length, ...inrTotals(list) };
-    }),
+    }).filter((row) => row.status !== QUOTATION_STATUS.draft || row.quotations > 0),
     months: monthRows(rows, period, summariseQuotationStatuses),
     total: summariseQuotationStatuses(rows),
     pipeline: quotationPipeline(rows),

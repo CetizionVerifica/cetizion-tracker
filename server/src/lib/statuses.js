@@ -9,6 +9,8 @@
  */
 
 export const QUOTATION_STATUS = {
+  // Made but not yet sent (#24): a converted enquiry or a renewal starts here.
+  draft: 'Draft',
   submitted: 'Submitted',
   negotiating: 'Under Negotiation',
   onHold: 'On Hold',
@@ -50,7 +52,7 @@ export const LEGACY_ENQUIRY_STATUS = {
 export const STATUS = {
   enquiry: [...ENQUIRY_STATUS.open, ENQUIRY_STATUS.quoted, ENQUIRY_STATUS.declined],
   quotation: [
-    QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.won,
+    QUOTATION_STATUS.draft, QUOTATION_STATUS.submitted, QUOTATION_STATUS.negotiating, QUOTATION_STATUS.won,
     QUOTATION_STATUS.lost, QUOTATION_STATUS.onHold,
   ],
   trigger: ['On PO Registration', 'On Delivery', 'On Milestone', 'Manual'],

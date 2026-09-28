@@ -8,6 +8,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { canSeeRecord, onRecordVisibleSql } from '../lib/scope.js';
 
 export const timelineRouter = Router();
 export const taskSummaryRouter = Router();
@@ -28,6 +29,16 @@ async function recordEvents(entity, id) {
     push(q.approval_requested_at, 'Sent for approval', q.approval_reason || (q.discount_percent ? `${Number(q.discount_percent)}% discount` : null));
     push(q.approval_decided_at, `Discount ${q.approval_status}`, q.approval_note);
     push(q.closed_at, q.status === 'Lost' ? `Lost${q.lost_reason ? `: ${q.lost_reason}` : ''}` : `Won${q.project_id ? ` · project ${q.project_id}` : ''}`, q.lost_notes);
+    // A reopened loss, with what it had been lost for (#25): the quotation no longer holds it.
+    const { rows: reopened } = await query(
+      `SELECT h.changed_at, f.name AS from_stage, t.name AS to_stage, lr.name AS reason, h.lost_notes, h.competitor
+         FROM quotation_stage_history h JOIN pipeline_stages f ON f.id = h.from_stage_id JOIN pipeline_stages t ON t.id = h.to_stage_id
+         LEFT JOIN lost_reasons lr ON lr.id = h.lost_reason_id
+        WHERE h.quotation_id = $1 AND f.type = 'lost' AND t.type <> 'lost'`, [q.id]);
+    for (const r of reopened) {
+      push(r.changed_at, `Reopened from ${r.from_stage} to ${r.to_stage}`,
+        ['had been lost', r.reason ? `for ${r.reason}` : null, r.competitor ? `to ${r.competitor}` : null, r.lost_notes].filter(Boolean).join(' · '));
+    }
     const { rows: revs } = await query('SELECT revision, note, created_by, created_at FROM quotation_revisions WHERE quotation_id = $1', [q.id]);
     for (const r of revs) push(r.created_at, `Revision ${r.revision + 1}`, r.note || (r.created_by ? `by ${r.created_by}` : null));
     const { rows: links } = await query('SELECT * FROM quotation_acceptances WHERE quotation_id = $1', [q.id]);
@@ -88,6 +99,8 @@ timelineRouter.get('/', async (req, res) => {
   const entity = String(req.query.entity || '');
   const id = String(req.query.id || '');
   if (!ENTITIES.has(entity) || !id) throw new ApiError(422, 'entity and id are required');
+  // A sales user reads the history of their own records only (#22, #18).
+  if (!(await canSeeRecord(req, entity, id))) throw new ApiError(404, 'Record not found');
   const kinds = req.query.kind ? new Set(String(req.query.kind).split(',')) : null;
   const wants = (k) => !kinds || kinds.has(k);
   // Emails are logged against a company or a quotation; a company's timeline shows both.
@@ -96,7 +109,10 @@ timelineRouter.get('/', async (req, res) => {
     : `entity = $2 AND entity_id = $1`;
   const [notes, tasks, files, emails, events, threads, touches] = await Promise.all([
     wants('note') ? query('SELECT id, body, author, pinned, created_at, updated_at FROM notes WHERE entity = $2 AND entity_id = $1', [id, entity]) : { rows: [] },
-    wants('task') ? query('SELECT * FROM tasks WHERE entity = $2 AND entity_id = $1', [id, entity]) : { rows: [] },
+    // Every task this record is on, its own or linked (#22), with the other records it is on.
+    wants('task') ? query(`SELECT t.*, (SELECT json_agg(json_build_object('entity', x.entity, 'entity_id', x.entity_id) ORDER BY x.entity, x.entity_id)
+        FROM task_targets x WHERE x.task_id = t.id AND NOT (x.entity = t.entity AND x.entity_id = t.entity_id)) AS targets
+      FROM tasks t WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $2 AND tt.entity_id = $1)`, [id, entity]) : { rows: [] },
     wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
     wants('email') ? query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE ${emailWhere}`, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
     wants('event') ? recordEvents(entity, id) : [],
@@ -111,16 +127,19 @@ timelineRouter.get('/', async (req, res) => {
     ...threads.rows.map((t) => ({ kind: 'email', at: t.last_message_at, id: `thread-${t.thread_id}`, thread_id: t.thread_id, title: t.visibility === 'metadata' ? `Email thread (${t.message_count})` : `${t.subject || '(no subject)'}${t.message_count > 1 ? ` (${t.message_count})` : ''}`, detail: `${t.last_direction === 'inbound' ? 'from' : 'to'} ${t.contact_name || 'the client'} · ${t.mailbox}`, by: null, record: t })),
     ...touches.rows.map((c) => ({ kind: 'touch', at: c.started_at, id: c.id, title: `${TOUCH[c.channel] || c.channel}${c.direction === 'inbound' ? ' from' : ' with'} ${c.contact_name || 'the client'}${c.outcome ? ` · ${c.outcome.replace('_', ' ')}` : ''}`, detail: [c.summary, c.duration_seconds ? `${Math.round(c.duration_seconds / 60)} min` : null, c.attendees ? `with ${c.attendees}` : null].filter(Boolean).join(' · '), by: c.username, record: c })),
     ...events,
-  ].sort((a, b) => new Date(b.at) - new Date(a.at));
+  // Pinned notes head the history; everything else newest first.
+  ].sort((a, b) => (b.pinned === true) - (a.pinned === true) || new Date(b.at) - new Date(a.at));
   res.json({ data: items, open_tasks: tasks.rows.filter((t) => t.status !== 'done').length });
 });
 
 taskSummaryRouter.get('/summary', async (req, res) => {
+  const params = [];
+  const scoped = onRecordVisibleSql(req, 'tasks', params, { ownColumns: ['assignee', 'created_by'], taskTargets: true });
   const { rows: [r] } = await query(
     `SELECT COUNT(*) FILTER (WHERE status <> 'done')::int AS open,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at < CURRENT_DATE)::int AS overdue,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at = CURRENT_DATE)::int AS today,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at > CURRENT_DATE AND due_at <= CURRENT_DATE + 7)::int AS this_week
-       FROM tasks`);
+       FROM tasks ${scoped ? `WHERE ${scoped}` : ''}`, params);
   res.json({ data: r });
 });

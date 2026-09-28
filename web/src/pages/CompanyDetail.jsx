@@ -24,7 +24,7 @@ import { useAuth } from '../lib/auth.jsx';
  * because the client thinks of them as one relationship.
  */
 
-const OPEN_STATUSES = new Set(['Submitted', 'Under Negotiation', 'On Hold']);
+const OPEN_STATUSES = new Set(['Draft', 'Submitted', 'Under Negotiation', 'On Hold']);
 
 /** The status of a deal or order, as a word with a colour behind it. */
 function toneFor(status) {

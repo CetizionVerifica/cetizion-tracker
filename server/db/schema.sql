@@ -14,7 +14,7 @@ DROP TABLE IF EXISTS holidays, user_sessions, auth_identities, saved_views, acti
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
-  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents CASCADE;
+  payment_terms_template_lines, payment_terms_templates, settings, exchange_rates, sequence_counters, documents, project_milestones, quotation_stage_history, task_targets CASCADE;
 
 -- ---------------------------------------------------------------------
 -- Reference data (the workbook's Settings / Services / Travel Lists tabs)
@@ -280,13 +280,14 @@ CREATE TABLE pipeline_stages (
 );
 
 INSERT INTO pipeline_stages (name, probability, type, maps_to_status, sort_order, color, rotting_days) VALUES
-  ('Draft',                   10, 'open',   'Submitted',         1, '#94a3b8', 14),
+  ('Draft',                   10, 'open',   'Draft',             1, '#94a3b8', 14),
   ('Sent',                    40, 'open',   'Submitted',         2, '#38bdf8', 21),
   ('Negotiation',             60, 'open',   'Under Negotiation', 3, '#f59e0b', 21),
   ('Verbal yes, awaiting PO', 90, 'open',   'Under Negotiation', 4, '#22c55e', 30),
   ('On Hold',                 20, 'paused', 'On Hold',           5, '#a3a3a3', NULL),
   ('Won, PO received',       100, 'won',    'Won - PO Received', 6, '#16a34a', NULL),
-  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL)
+  ('Lost',                     0, 'lost',   'Lost',              7, '#ef4444', NULL),
+  ('Expired',                  0, 'lost',   'Lost',              8, '#9ca3af', NULL)
 ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE lost_reasons (
@@ -396,7 +397,8 @@ CREATE TABLE quotations (
   quotation_value    numeric(16,2),
   currency           text NOT NULL DEFAULT 'INR',
   status             text NOT NULL DEFAULT 'Submitted'
-                       CHECK (status IN ('Submitted','Under Negotiation',
+                       CONSTRAINT quotations_status_check
+                       CHECK (status IN ('Draft','Submitted','Under Negotiation',
                                          'Won - PO Received','Lost','On Hold')),
   po_received        boolean NOT NULL DEFAULT false,
   project_id         text REFERENCES projects(project_id)
@@ -968,6 +970,20 @@ CREATE TRIGGER quotation_defaults BEFORE INSERT ON quotations
 -- given with the move. Changing the status (the form, the importer, a
 -- conversion) picks the default stage for it; sending a draft moves it to
 -- Sent, and an acceptance moves an open one to Verbal yes.
+-- Every stage move, with the loss it leaves or enters (#25).
+CREATE TABLE quotation_stage_history (
+  id              bigserial PRIMARY KEY,
+  quotation_id    int NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  from_stage_id   int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  to_stage_id     int REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  lost_reason_id  int REFERENCES lost_reasons(id) ON DELETE SET NULL,
+  lost_notes      text,
+  competitor      text,
+  changed_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX quotation_stage_history_quotation_idx ON quotation_stage_history (quotation_id, changed_at);
+
 CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
 DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
 BEGIN
@@ -1007,24 +1023,34 @@ BEGIN
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NOT NULL AND OLD.sent_at IS NULL AND st.name = 'Draft' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Sent';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.accepted_at IS NULL AND OLD.accepted_at IS NOT NULL AND st.name = 'Verbal yes, awaiting PO' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Negotiation';
       NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     ELSIF NEW.sent_at IS NULL AND OLD.sent_at IS NOT NULL AND st.name = 'Sent' THEN
       SELECT * INTO st FROM pipeline_stages WHERE name = 'Draft';
-      NEW.stage_id := st.id; NEW.probability := st.probability; stage_changed := true;
+      NEW.stage_id := st.id; NEW.status := st.maps_to_status; NEW.probability := st.probability; stage_changed := true;
     END IF;
   END IF;
 
   IF TG_OP = 'INSERT' OR NEW.stage_id IS DISTINCT FROM OLD.stage_id THEN
     NEW.stage_changed_at := now();
+    -- Every move is kept (#25), with the loss it leaves or enters: a
+    -- reopening clears the reason, notes and competitor from the quotation,
+    -- and this is where they stay.
+    IF TG_OP = 'UPDATE' THEN
+      INSERT INTO quotation_stage_history (quotation_id, from_stage_id, to_stage_id, lost_reason_id, lost_notes, competitor)
+      VALUES (NEW.id, OLD.stage_id, NEW.stage_id,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_reason_id ELSE OLD.lost_reason_id END,
+              CASE WHEN st.type = 'lost' THEN NEW.lost_notes ELSE OLD.lost_notes END,
+              CASE WHEN st.type = 'lost' THEN NEW.competitor ELSE OLD.competitor END);
+    END IF;
     IF st.type IN ('won', 'lost') THEN
       NEW.closed_at := COALESCE(NEW.closed_at, now());
     ELSE
       NEW.closed_at := NULL;
     END IF;
-    -- Reopened: the reason it was lost no longer applies.
+    -- Reopened: the reason it was lost no longer applies to it; the history keeps it.
     IF st.type <> 'lost' THEN
       NEW.lost_reason_id := NULL;
       NEW.lost_notes := NULL;
@@ -1262,6 +1288,63 @@ CREATE TABLE notes (
 
 CREATE INDEX notes_entity_idx ON notes (entity, entity_id, created_at DESC);
 
+-- Every record a task is on (#22); the task's own entity is its main one,
+-- kept here by the trigger below.
+CREATE TABLE task_targets (
+  task_id    integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  entity     text NOT NULL CHECK (entity IN ('company','contact','enquiry','quotation','project','purchase_order','payment_stage')),
+  entity_id  text NOT NULL,
+  PRIMARY KEY (task_id, entity, entity_id)
+);
+
+CREATE INDEX task_targets_entity_idx ON task_targets (entity, entity_id);
+
+-- A project's milestones, and the stages they trigger (#26).
+CREATE TABLE project_milestones (
+  id          serial PRIMARY KEY,
+  project_id  text NOT NULL REFERENCES projects(project_id) ON UPDATE CASCADE ON DELETE CASCADE,
+  name        text NOT NULL,
+  target_date date,
+  reached_on  date,
+  sort_order  int NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX project_milestones_name_idx ON project_milestones (project_id, lower(name));
+
+ALTER TABLE payment_stages ADD COLUMN IF NOT EXISTS milestone_id int REFERENCES project_milestones(id) ON DELETE SET NULL;
+
+CREATE INDEX payment_stages_milestone_idx ON payment_stages (milestone_id) WHERE milestone_id IS NOT NULL;
+
+-- Reaching a milestone (or taking it back) is recorded once, on the
+-- milestone, and every stage it triggers takes the date.
+CREATE OR REPLACE FUNCTION milestone_reached() RETURNS trigger AS $$
+BEGIN
+  UPDATE payment_stages SET milestone_reached_on = NEW.reached_on
+   WHERE milestone_id = NEW.id AND milestone_reached_on IS DISTINCT FROM NEW.reached_on;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER milestone_reached AFTER UPDATE OF reached_on ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION milestone_reached();
+
+CREATE TRIGGER project_milestones_set_updated_at BEFORE UPDATE ON project_milestones
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE FUNCTION task_main_target() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND (OLD.entity, OLD.entity_id) IS DISTINCT FROM (NEW.entity, NEW.entity_id) THEN
+    DELETE FROM task_targets WHERE task_id = NEW.id AND entity = OLD.entity AND entity_id = OLD.entity_id;
+  END IF;
+  INSERT INTO task_targets (task_id, entity, entity_id) VALUES (NEW.id, NEW.entity, NEW.entity_id)
+    ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_main_target AFTER INSERT OR UPDATE OF entity, entity_id ON tasks
+  FOR EACH ROW EXECUTE FUNCTION task_main_target();
+
 -- Many files per record, beside the single document field some records carry.
 CREATE TABLE attachments (
   id           serial PRIMARY KEY,
@@ -1493,6 +1576,12 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at     timestamptz,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- #44: cleared by acting on the record, and emailed once.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS resolved_at timestamptz;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS emailed_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS notifications_open_entity_idx ON notifications (entity, entity_id) WHERE resolved_at IS NULL;
 
 -- Who has read what. A notification addressed to nobody is everyone's, and
 -- a single read_at on a shared row would mean the first person to look
@@ -2419,8 +2508,82 @@ INSERT INTO saved_views (resource, name, filters, pinned, sort_order, tone, char
 SELECT * FROM (VALUES
   ('payment-stages', 'Overdue money', '{"stage_status":"Overdue"}'::jsonb, true, 1, 'late', 'ageing'),
   ('payment-stages', 'To invoice',    '{"stage_status":"To Invoice"}'::jsonb, true, 2, 'waiting', NULL),
-  ('quotations',     'Open deals',    '{"status":"Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
+  ('quotations',     'Open deals',    '{"status":"Draft,Submitted,Under Negotiation"}'::jsonb, true, 3, 'info', NULL)
 ) AS seed(resource, name, filters, pinned, sort_order, tone, chart)
 WHERE NOT EXISTS (SELECT 1 FROM saved_views);
 
 COMMIT;
+
+-- Notifications cleared by acting on their record (#44).
+-- Acting on the record clears what the notification asked for (#44). In
+-- the database rather than in each route, so a task ticked on the Tasks page,
+-- on the timeline or through the MCP tools all count the same.
+CREATE OR REPLACE FUNCTION resolve_notifications(p_kinds text[], p_entity text, p_entity_id text) RETURNS void AS $$
+  UPDATE notifications SET resolved_at = now()
+   WHERE resolved_at IS NULL AND kind = ANY(p_kinds) AND entity = p_entity AND entity_id = p_entity_id;
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION task_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
+    UPDATE notifications SET resolved_at = now()
+     WHERE resolved_at IS NULL AND dedupe_key LIKE 'task:' || NEW.id || ':%';
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION enquiry_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  -- Followed up: the status moved on, or the next follow-up was set again.
+  IF NEW.status IS DISTINCT FROM OLD.status OR NEW.next_follow_up_at IS DISTINCT FROM OLD.next_follow_up_at THEN
+    PERFORM resolve_notifications(ARRAY['follow_up'], 'enquiry', NEW.enquiry_no);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION quotation_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF OLD.approval_status = 'pending' AND NEW.approval_status IS DISTINCT FROM 'pending' THEN
+    PERFORM resolve_notifications(ARRAY['approval'], 'quotation', NEW.quotation_no);
+  END IF;
+  -- Decided, accepted, extended or revised: the expiry warning and the
+  -- unopened-link reminder no longer apply.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('Won - PO Received', 'Lost')
+     OR NEW.accepted_at IS NOT NULL AND OLD.accepted_at IS NULL
+     OR NEW.valid_until IS DISTINCT FROM OLD.valid_until
+     OR NEW.revision IS DISTINCT FROM OLD.revision THEN
+    PERFORM resolve_notifications(ARRAY['expiring', 'acceptance'], 'quotation', NEW.quotation_no);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION payment_stage_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  IF NEW.amount_received IS DISTINCT FROM OLD.amount_received
+     AND NEW.amount_received >= (SELECT round(po.po_value * NEW.stage_percent, 2) FROM purchase_orders po WHERE po.po_number = NEW.po_number) THEN
+    PERFORM resolve_notifications(ARRAY['invoice_overdue'], 'payment_stage', NEW.id::text);
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION conversation_resolves_notifications() RETURNS trigger AS $$
+BEGIN
+  -- Answered or closed: the "no reply yet" reminder is done with.
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status <> 'open'
+     OR NEW.response_due_at IS NULL AND OLD.response_due_at IS NOT NULL THEN
+    UPDATE notifications SET resolved_at = now()
+     WHERE resolved_at IS NULL AND kind = 'inbox' AND link = '/inbox?c=' || NEW.id;
+  END IF;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF status ON tasks
+  FOR EACH ROW EXECUTE FUNCTION task_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF amount_received ON payment_stages
+  FOR EACH ROW EXECUTE FUNCTION payment_stage_resolves_notifications();
+CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON inbox_conversations
+  FOR EACH ROW EXECUTE FUNCTION conversation_resolves_notifications();

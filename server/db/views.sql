@@ -43,6 +43,7 @@ SELECT
   ps.credit_days,
   ps.milestone_name,
   ps.milestone_reached_on,
+  ps.milestone_id,
   ps.on_hold,
   ps.hold_reason,
   ps.promise_to_pay_date,

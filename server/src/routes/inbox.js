@@ -279,7 +279,7 @@ async function suggestionFor(conversation) {
 
   const { rows: [open] } = await query(
     `SELECT count(*)::int AS n FROM quotations
-      WHERE company_id = $1 AND status IN ('Submitted', 'Under Negotiation', 'On Hold')`,
+      WHERE company_id = $1 AND status IN ('Draft', 'Submitted', 'Under Negotiation', 'On Hold')`,
     [conversation.company_id]
   );
   if (open.n > 0) {

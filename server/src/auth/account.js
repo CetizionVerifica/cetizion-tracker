@@ -30,10 +30,21 @@ import { authConfig } from './config.js';
 import { databasePayload, signSession } from './session.js';
 import { enabledProviders } from './oauth.js';
 import { requireAuth } from './middleware.js';
+import { CHANNELS, GROUPS } from '../lib/notificationPrefs.js';
 
 export const accountRouter = Router();
 
 const NOTIFY_KEYS = ['follow_up_late', 'deal_accepted', 'discount_approval', 'monday_brief'];
+
+// What each person hears about and how (#44): see lib/notificationPrefs.js.
+const hhmm = z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/, 'A time like 19:00');
+const notifySchema = z.object({
+  ...Object.fromEntries(NOTIFY_KEYS.map((k) => [k, z.boolean().optional()])),
+  kinds: z.partialRecord(z.enum(Object.keys(GROUPS)), z.enum(CHANNELS)).optional(),
+  quiet: z.object({ from: hhmm, to: hhmm }).nullable().optional(),
+  digest: z.boolean().optional(),
+  weekly: z.boolean().optional(),
+}).strict();
 
 accountRouter.use(requireAuth, (req, res, next) => {
   if (authConfig.mode !== 'database' || !req.user?.id) {
@@ -55,7 +66,7 @@ const profileSchema = z.object({
   // partialRecord, not record: in zod 4 a record keyed by an enum is
   // exhaustive, so `{ monday_brief: true }` was rejected for not mentioning
   // the other three. The page deliberately sends one switch at a time.
-  notify: z.partialRecord(z.enum(NOTIFY_KEYS), z.boolean()).optional(),
+  notify: notifySchema.optional(),
 });
 
 const passwordSchema = z.object({
@@ -109,6 +120,9 @@ accountRouter.get('/', async (req, res) => {
       // to link one that is available and not one that is not.
       providers: enabledProviders(),
       notify_keys: NOTIFY_KEYS,
+      // The groups the settings page offers, with their labels (#44).
+      notify_groups: Object.entries(GROUPS).map(([key, g]) => ({ key, label: g.label })),
+      notify_channels: CHANNELS,
     },
   });
 });
@@ -120,7 +134,10 @@ accountRouter.patch('/', async (req, res) => {
 
   // Merged, not replaced: the page sends one switch at a time, and a
   // replace would silently clear the other three.
-  const notify = body.notify ? { ...(row.notify || {}), ...body.notify } : row.notify;
+  // Per-kind channels merge the same way, one group at a time.
+  const notify = body.notify
+    ? { ...(row.notify || {}), ...body.notify, ...(body.notify.kinds ? { kinds: { ...(row.notify?.kinds || {}), ...body.notify.kinds } } : {}) }
+    : row.notify;
 
   const { rows: [updated] } = await query(
     `UPDATE users
