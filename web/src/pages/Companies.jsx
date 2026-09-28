@@ -6,6 +6,9 @@ import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
 
+/** Where this browser remembers that the duplicates banner was dismissed. */
+const DUPES_HIDDEN = 'cetizion.companies.duplicates';
+
 /**
  * Every client once (#20). A company is created the moment a name is typed
  * on an enquiry, quotation or project; this page is where its spelling,
@@ -21,8 +24,22 @@ export default function Companies() {
   const [keepId, setKeepId] = useState(null);  // the spelling that survives
   const [chosen, setChosen] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  // Remembered per browser, like the sidebar. Reading it can throw in a
+  // locked-down browser, and a page that will not render because of a
+  // preference is worse than a preference that does not stick.
+  const [hidden, setHidden] = useState(() => {
+    try { return localStorage.getItem(DUPES_HIDDEN) === 'hidden'; } catch { return false; }
+  });
+  const hide = (value) => {
+    setHidden(value);
+    setExpanded(false);
+    try { localStorage.setItem(DUPES_HIDDEN, value ? 'hidden' : 'shown'); } catch { /* not this browser's to remember */ }
+  };
   const dups = useFetch(() => api.raw('/companies/duplicates'), [refresh]);
   const groups = dups.data?.data ?? [];
+  const SHOWN = 8;
+  const listed = expanded ? groups : groups.slice(0, SHOWN);
 
   /**
    * Open a group. A same-name group has nothing to weigh up, so everything
@@ -106,12 +123,24 @@ export default function Companies() {
           { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
           { name: 'contacts', label: 'Contacts', options: [{ value: '0', label: 'None' }] },
         ]}
-        banner={groups.length > 0 && (
+        banner={groups.length > 0 && (hidden ? (
+          // Hidden, not gone. Something that can never be found again is not
+          // a preference, it is a trapdoor.
+          <p className="small muted" style={{ margin: '0 0 12px' }}>
+            {groups.length} possible duplicate{groups.length === 1 ? '' : 's'}.{' '}
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => hide(false)}>Show</button>
+          </p>
+        ) : (
           <Alert tone="warning">
-            <strong>{groups.length} group{groups.length === 1 ? '' : 's'} of companies may be one client spelt more than once.</strong>{' '}
-            Open a group to choose which spellings are really the same, and which one to keep.
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <strong>{groups.length} group{groups.length === 1 ? '' : 's'} of companies may be one client spelt more than once.</strong>{' '}
+                Open a group to choose which spellings are really the same, and which one to keep.
+              </div>
+              <button type="button" className="btn btn--sm" onClick={() => hide(true)}>Hide</button>
+            </div>
             <ul className="small" style={{ margin: '8px 0 0', paddingLeft: 18 }}>
-              {groups.slice(0, 8).map((g) => (
+              {listed.map((g) => (
                 <li key={g.members[0].id} style={{ marginBottom: 4 }}>
                   <Link to={`/companies/${g.members[0].id}`}>{g.members[0].name}</Link>{' '}
                   <span className="muted">+{g.size - 1} more · {g.records} record{g.records === 1 ? '' : 's'}</span>{' '}
@@ -119,10 +148,14 @@ export default function Companies() {
                   <button type="button" className="btn btn--sm" onClick={() => open(g)}>Review</button>
                 </li>
               ))}
-              {groups.length > 8 && <li className="muted">and {groups.length - 8} more</li>}
             </ul>
+            {groups.length > SHOWN && (
+              <button type="button" className="btn btn--ghost btn--sm" style={{ marginTop: 6 }} onClick={() => setExpanded(!expanded)}>
+                {expanded ? `Show first ${SHOWN}` : `Show all ${groups.length}`}
+              </button>
+            )}
           </Alert>
-        )}
+        ))}
       />
       {review && (
         <Modal
