@@ -21,7 +21,7 @@ import { sentFields } from '../lib/sentFields.js';
 import { claimNextId } from '../lib/sequences.js';
 import { replyToThread } from '../lib/mailbox/sync.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
-import { fillTemplate } from '../lib/inbox.js';
+import { fillTemplate, wake } from '../lib/inbox.js';
 
 export const inboxRouter = Router();
 
@@ -202,8 +202,7 @@ const LIST = `
        LIMIT 1
     ) last ON true`;
 
-// Snoozed conversations wake when their time comes.
-const wake = () => query(`UPDATE inbox_conversations SET status = 'open', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until <= now()`);
+
 
 inboxRouter.get('/summary', async (req, res) => {
   await wake();

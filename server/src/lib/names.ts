@@ -11,7 +11,7 @@ export const nameKey = (column: string): string => `lower(regexp_replace(btrim($
 /** The same key in JavaScript, for values compared against nameKey(). */
 export const normalizeName = (value: unknown): string => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-const compact = (s: unknown): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+export const compact = (s: unknown): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 // Words that say what kind of company it is, not which one: two clients
 // sharing only "Labs" or "Aluminium" are not the same client.
 const GENERIC = new Set([
@@ -42,6 +42,23 @@ function alike(a: NameProfile, b: NameProfile): boolean {
   if (a.c === b.c) return true;
   if ((a.c.length >= 5 && b.c.includes(a.c)) || (b.c.length >= 5 && a.c.includes(b.c))) return true;
   if (!a.t.length || !b.t.length) return false;
+  // Each side carrying its own distinguishing word means two things, not two
+  // spellings of one: "Hindalco - Belur", "Hindalco FRP" and "Hindalco -
+  // Kuppam" share a brand and are three plants. They were all being offered
+  // as merges of each other, and a merge rewrites the client name on every
+  // record of both and then deletes one of them.
+  //
+  // One side having extra words is still a match, because that is what a
+  // fuller spelling of the same thing looks like: "Hindalco" inside "Aditya
+  // Birla - Hindalco", "Hindalco Industries Alupuram unit" beside "Hindalco
+  // Alupuram".
+  //
+  // It sits in alike() rather than in similarName because the bucketing
+  // below shortlists candidates and then asks alike() to decide; a rule
+  // added anywhere else would not be applied to the fast path.
+  const onlyA = a.t.filter((t) => !b.t.includes(t));
+  const onlyB = b.t.filter((t) => !a.t.includes(t));
+  if (onlyA.length && onlyB.length) return false;
   const shared = a.t.filter((t) => b.t.includes(t));
   return shared.length >= 1 && shared.some((t) => t.length >= 4) && shared.length / Math.min(a.t.length, b.t.length) >= 0.5;
 }
