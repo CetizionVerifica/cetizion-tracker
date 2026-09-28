@@ -43,6 +43,10 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_pipeline` | open deals with stage, owner, value, probability, weighted value, last contact — paged |
 | `list_collections` | unpaid invoices, overdue first, with recent chasing — paged |
 | `get_kpis` | quotations issued, value, wins, losses, win rate, pipeline, days to win, touches |
+| `aggregate` | count or total anything, grouped by any column — and by month, quarter or year |
+| `describe_aggregate` | what can be counted, and by which columns |
+| `list_renewals` | engagements coming up for renewal, soonest first |
+| `get_cashflow` | cash expected in and out by month. Admin only |
 | `list_activity` | notes, tasks, logged calls and email threads on a record — paged |
 | `list_inbox` | client emails nobody has answered: who wrote, about what, whose it is, how late — paged |
 | `list_payables` | what we owe travel vendors, longest overdue first, with the total and every ageing bucket — paged |
@@ -145,6 +149,46 @@ you and it agree.
 
 An admin token may name a person: *"How is Ramesh doing against last quarter?"*
 A sales token cannot — it only ever sees its own.
+
+### Anything countable
+
+> **"How many deals are we carrying per sector, and what are they worth?"**
+
+`aggregate` is one tool for the whole class of these. Group any records by any
+of their columns, count or total them:
+
+> Chemicals is the biggest book: 14 open deals worth ₹62,40,000. Pharma has
+> 9 at ₹38,10,000. Metals 6 at ₹51,90,000 — fewer deals, bigger ones.
+> 91 quotations have no sector at all, which is more than any single sector
+> has, so treat the split as indicative until those are filled in.
+
+A date column can be grouped by period — `by: "quotation_date:month"` — which
+is the shape most of these questions really take. Filters are the ones the
+list screens take, so a figure here and a filtered list agree.
+
+Two things it will not do. It will not read a column it was not given: the
+column, the measured field and every filter are checked against the real
+table first. And it will not let a sales token count what this server cannot
+say the ownership of — travel bills and expense claims have no salesperson on
+them, so those are admin-only rather than open.
+
+### The money questions
+
+> **"What's up for renewal in the next 60 days?"**
+
+`list_renewals`, scoped to your own engagements:
+
+> Four. **Kreative Organics** EcoVadis is due in 11 days and no renewal
+> quotation has been raised yet. **Cohance** is due in 28 days with a renewal
+> already out at ₹3,40,000. Two more in the fifties.
+> The Kreative one is the one to move on.
+
+> **"When is the money actually coming in?"**
+
+`get_cashflow` — billed and unpaid, scheduled but not yet billed, the weighted
+pipeline, and what we owe travel vendors and staff, by month. Admin only: it
+is the company's cash position and there is no salesperson on a forecast to
+scope it by.
 
 ### The inbox nobody has answered
 

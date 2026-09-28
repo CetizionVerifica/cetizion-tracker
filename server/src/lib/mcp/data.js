@@ -12,15 +12,15 @@ import { recordVisibleSql } from '../scope.js';
 import { dataQuality } from '../dataQuality.js';
 import { BUCKETS, payablesSummary } from '../payables.js';
 
-const isAdmin = (scope) => scope.role === 'admin';
+export const isAdmin = (scope) => scope.role === 'admin';
 
 /** A WHERE fragment and its parameter for "this record belongs to the token's person". */
-function own(scope, column, params) {
+export function own(scope, column, params) {
   if (isAdmin(scope)) return 'TRUE';
   params.push(scope.person);
   return `lower(btrim(${column})) = lower(btrim($${params.length}))`;
 }
-function ownCompany(scope, companyColumn, params) {
+export function ownCompany(scope, companyColumn, params) {
   if (isAdmin(scope)) return 'TRUE';
   params.push(scope.person);
   const p = `$${params.length}`;

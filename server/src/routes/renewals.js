@@ -12,35 +12,13 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { discoverEngagements, openRenewal } from '../lib/renewals.js';
+import { discoverEngagements, openRenewal, renewalsList } from '../lib/renewals.js';
 
 export const renewalsRouter = Router();
 
 renewalsRouter.get('/', async (req, res) => {
-  const params = []; const where = [];
-  if (req.query.status) { params.push(String(req.query.status).split(',')); where.push(`e.status = ANY($${params.length})`); }
-  if (req.query.company_id) { params.push(Number(req.query.company_id)); where.push(`e.company_id = $${params.length}`); }
-  const { rows } = await query(`
-    SELECT e.*, c.name AS company_name, sv.renewal_lead_days, sv.renewal_interval_months,
-           oq.quotation_no AS original_quotation_no, rq.quotation_no AS renewal_quotation_no, rq.status AS renewal_status,
-           rq.quotation_value AS renewal_value, rq.currency AS renewal_currency,
-           (e.next_due_on - CURRENT_DATE)::int AS days_to_due
-      FROM engagements e
-      LEFT JOIN companies c ON c.id = e.company_id
-      LEFT JOIN services sv ON sv.id = e.service_id
-      LEFT JOIN quotations oq ON oq.id = e.quotation_id
-      LEFT JOIN quotations rq ON rq.id = e.renewal_quotation_id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY CASE e.status WHEN 'renewal_open' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, e.next_due_on`, params);
-  const { rows: [t] } = await query(`
-    SELECT COUNT(*) FILTER (WHERE status = 'active')::int AS active,
-           COUNT(*) FILTER (WHERE status = 'renewal_open')::int AS open,
-           COUNT(*) FILTER (WHERE status = 'active' AND next_due_on <= CURRENT_DATE + 30)::int AS due_30,
-           COUNT(*) FILTER (WHERE status = 'active' AND next_due_on <= CURRENT_DATE + 90)::int AS due_90,
-           COUNT(*) FILTER (WHERE status = 'renewed')::int AS renewed,
-           COUNT(*) FILTER (WHERE status = 'lapsed')::int AS lapsed
-      FROM engagements`);
-  res.json({ data: rows, totals: t });
+  const { rows, totals } = await renewalsList({ status: req.query.status, company_id: req.query.company_id });
+  res.json({ data: rows, totals });
 });
 
 // Half of renewals.daily, and it writes: it creates engagements from

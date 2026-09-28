@@ -116,3 +116,45 @@ export async function runRenewals({ today = businessToday() } = {}) {
   const opened = await openRenewals({ today });
   return { today, discovered, opened, ...settled };
 }
+
+/**
+ * Every engagement with its renewal state, and the counts behind the
+ * summary cards. Lifted out of the route because the MCP server answers
+ * "what is up for renewal?" from the same rows (#140).
+ */
+export async function renewalsList({ status, company_id: companyId, owner } = {}) {
+  const params = []; const where = [];
+  if (status) { params.push(String(status).split(',')); where.push(`e.status = ANY($${params.length})`); }
+  if (companyId) { params.push(Number(companyId)); where.push(`e.company_id = $${params.length}`); }
+  // Whose renewal it is: the engagement's own owner, or failing that the
+  // salesperson on the quotation it came from — an engagement is created
+  // from a won deal and inherits that relationship. In SQL rather than by
+  // filtering rows afterwards, which is the rule everywhere else here.
+  if (owner) {
+    params.push(owner);
+    const p = `$${params.length}`;
+    where.push(`(lower(btrim(e.owner)) = lower(btrim(${p})) OR lower(btrim(oq.sales_person)) = lower(btrim(${p})))`);
+  }
+  const { rows } = await query(`
+    SELECT e.*, c.name AS company_name, sv.renewal_lead_days, sv.renewal_interval_months,
+           oq.sales_person AS quotation_owner,
+           oq.quotation_no AS original_quotation_no, rq.quotation_no AS renewal_quotation_no, rq.status AS renewal_status,
+           rq.quotation_value AS renewal_value, rq.currency AS renewal_currency,
+           (e.next_due_on - CURRENT_DATE)::int AS days_to_due
+      FROM engagements e
+      LEFT JOIN companies c ON c.id = e.company_id
+      LEFT JOIN services sv ON sv.id = e.service_id
+      LEFT JOIN quotations oq ON oq.id = e.quotation_id
+      LEFT JOIN quotations rq ON rq.id = e.renewal_quotation_id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY CASE e.status WHEN 'renewal_open' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, e.next_due_on`, params);
+  const { rows: [totals] } = await query(`
+    SELECT COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+           COUNT(*) FILTER (WHERE status = 'renewal_open')::int AS open,
+           COUNT(*) FILTER (WHERE status = 'active' AND next_due_on <= CURRENT_DATE + 30)::int AS due_30,
+           COUNT(*) FILTER (WHERE status = 'active' AND next_due_on <= CURRENT_DATE + 90)::int AS due_90,
+           COUNT(*) FILTER (WHERE status = 'renewed')::int AS renewed,
+           COUNT(*) FILTER (WHERE status = 'lapsed')::int AS lapsed
+      FROM engagements`);
+  return { rows, totals };
+}
