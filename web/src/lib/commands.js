@@ -221,6 +221,7 @@ export const JUMPS = [
   { id: 'go-renewals', verb: 'Renewals', to: '/renewals', icon: 'waiting', keywords: 'renewals expiring recurring' },
   { id: 'go-trips', verb: 'Trips', to: '/travel', icon: 'trip', keywords: 'travel trips journeys' },
   { id: 'go-vendor-invoices', verb: 'Vendor invoices', to: '/vendor-invoices', icon: 'trip', keywords: 'vendor bills travel agent' },
+  { id: 'go-payables', verb: 'Payables', to: '/payables', icon: 'money', keywords: 'payables owe vendors ageing overdue bills creditors travel agent pay' },
   { id: 'go-claims', verb: 'Expense claims', to: '/expense-claims', icon: 'money', keywords: 'expenses claims reimburse' },
   { id: 'go-travel-spend', verb: 'Travel spend', to: '/travel-dashboard', icon: 'trip', keywords: 'travel spend cost dashboard' },
   { id: 'go-schedule', verb: 'Schedule', to: '/schedule', icon: 'waiting', keywords: 'calendar visits audits diary schedule' },
@@ -241,6 +242,7 @@ export const JUMPS = [
   // types — not "settings".
   { id: 'go-rates', verb: 'Exchange rates', to: '/settings/rates', icon: 'money', keywords: 'exchange rates currency fx usd eur conversion' },
   { id: 'go-assumptions', verb: 'Assumptions', to: '/settings/assumptions', icon: 'waiting', keywords: 'assumptions settings defaults terms thresholds' },
+  { id: 'go-holidays', verb: 'Holidays', to: '/settings/holidays', icon: 'waiting', keywords: 'holidays calendar working days closed off gazetted' },
   { id: 'go-users', verb: 'Users & roles', to: '/settings/users', icon: 'company', adminOnly: true, keywords: 'users people roles accounts passwords access' },
   { id: 'go-sign-in', verb: 'Sign-in methods', to: '/settings/sign-in', icon: 'company', adminOnly: true, keywords: 'sign in sso oauth microsoft google single sign on login providers' },
   { id: 'go-tokens', verb: 'API tokens', to: '/settings/tokens', icon: 'waiting', adminOnly: true, keywords: 'api tokens mcp claude assistant access' },

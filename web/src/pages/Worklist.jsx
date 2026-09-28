@@ -118,7 +118,7 @@ export default function Worklist() {
                 { key: 'stage_amount', header: 'Stage value', align: 'right', render: (r) => money(r.stage_amount, r.currency) },
                 { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
                 { key: 'to_bill_amount', header: 'To bill', align: 'right', render: (r) => (r.to_bill_amount > 0 ? money(r.to_bill_amount, r.currency) : <span className="muted">—</span>) },
-                { key: 'invoice_due_date', header: 'Due date', render: (r) => date(r.invoice_due_date) },
+                { key: 'invoice_due_date', header: 'Due date', render: (r) => <>{date(r.invoice_due_date)}<WorkingDaysLate row={r} /></> },
                 { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
                 { key: 'follow_up_action', header: 'What to do', className: 'wrap small', render: (r) => r.follow_up_action },
                 {
@@ -154,7 +154,7 @@ export default function Worklist() {
                 { key: 'travel_id', header: 'Trip', className: 'mono small', render: (r) => <>{r.travel_id}<div className="muted">{r.employee_name}</div></> },
                 { key: 'invoice_amount', header: 'Amount', align: 'right', render: (r) => money(r.invoice_amount) },
                 { key: 'amount_paid', header: 'Paid', align: 'right', render: (r) => money(r.amount_paid) },
-                { key: 'pay_by', header: 'Pay by', render: (r) => date(r.pay_by) },
+                { key: 'pay_by', header: 'Pay by', render: (r) => <>{date(r.pay_by)}<WorkingDaysLate row={r} /></> },
                 { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
                 { key: 'finance_action', header: 'What to do', className: 'wrap small' },
                 {
@@ -288,4 +288,15 @@ export default function Worklist() {
       {dialog?.type === 'convert' && <ConvertQuotationDialog quotation={dialog.row} onClose={close} onDone={done} />}
     </>
   );
+}
+
+/**
+ * Lateness in working days, under the due date (#73). The badge and the
+ * reminders still count calendar days; this is how many of those days
+ * anybody was in the office to act on it.
+ */
+function WorkingDaysLate({ row }) {
+  if (row.working_days_overdue == null) return null;
+  const n = row.working_days_overdue;
+  return <div className="muted small">{n} working day{n === 1 ? '' : 's'} late</div>;
 }

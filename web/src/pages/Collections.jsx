@@ -69,7 +69,10 @@ export default function Collections() {
           </div>
         )}
         <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">
-          {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} /> : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
+          {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} />
+            /* Same reason as Payables: an empty list after a failed load
+               is not the same fact as nothing being owed. */
+            : error ? null : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
             <DataTable
               rows={d.clients}
               onRowClick={(r) => setOpen(open === (r.company_id ?? r.company) ? null : (r.company_id ?? r.company))}

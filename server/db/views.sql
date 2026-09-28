@@ -13,7 +13,7 @@
 BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_projects, v_purchase_orders,
-  v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
+  v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
@@ -217,6 +217,57 @@ CROSS JOIN LATERAL (
   SELECT CASE WHEN s.payment_status = 'Overdue'
               THEN CURRENT_DATE - b.pay_by ELSE 0 END
 ) d(days_overdue);
+
+-- ---------------------------------------------------------------------
+-- Vendor payables ageing (#76) — what Cetizion owes travel vendors
+--   One row per bill with money still owed, or with no amount to know
+--   what is owed. Built on v_travel_vendor_invoices, so pay_by, status
+--   and days_overdue are that view's, never recomputed. Vendor bills are
+--   recorded in rupees; the table has no currency to mix.
+-- ---------------------------------------------------------------------
+
+-- The ageing bucket for a number of days overdue, as its own function so
+-- the boundaries can be tested directly: real pay-by dates are month-ends,
+-- so no fixture can put a bill exactly 30 days late on any given day.
+-- 0 is not overdue (the pay-by day itself included); 30 is still 0-30.
+CREATE OR REPLACE FUNCTION payables_bucket(p_days_overdue int)
+RETURNS text AS $$
+  SELECT CASE
+    WHEN p_days_overdue <= 0  THEN 'not due'
+    WHEN p_days_overdue <= 30 THEN '0-30'
+    WHEN p_days_overdue <= 60 THEN '31-60'
+    WHEN p_days_overdue <= 90 THEN '61-90'
+    ELSE '90+'
+  END;
+$$ LANGUAGE sql IMMUTABLE;
+
+CREATE VIEW v_vendor_invoice_ageing AS
+SELECT
+  v.id,
+  v.vendor_invoice_id,
+  v.vendor_invoice_no,
+  v.travel_id,
+  v.travel_vendor,
+  v.employee_name,
+  v.client_name,
+  v.invoice_date,
+  v.invoice_amount,
+  v.amount_paid,
+  -- NULL, not zero, when the amount was never entered: a gap to fill,
+  -- not a bill that costs nothing.
+  v.invoice_amount - v.amount_paid                        AS outstanding,
+  v.pay_by,
+  v.payment_status,
+  v.days_overdue,
+  CASE
+    WHEN v.invoice_amount IS NULL THEN 'amount missing'
+    -- Owed, but with no invoice date there is no pay-by date to age from.
+    WHEN v.pay_by IS NULL         THEN 'date missing'
+    ELSE payables_bucket(v.days_overdue)
+  END                                                     AS bucket
+FROM v_travel_vendor_invoices v
+-- Awaited has no bill yet and Paid owes nothing; everything else is owed.
+WHERE v.payment_status IN ('To Pay', 'Partially Paid', 'Overdue', 'Enter date', 'Enter amount');
 
 -- ---------------------------------------------------------------------
 -- Employee expense claims

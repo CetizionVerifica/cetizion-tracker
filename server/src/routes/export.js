@@ -11,6 +11,7 @@ import {
 } from '../lib/revenueReport.js';
 import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
 import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
+import { payablesRows } from '../lib/payables.js';
 import { ApiError } from '../middleware/error.js';
 
 export const exportRouter = Router();
@@ -135,6 +136,16 @@ async function listRows(req) {
   }
   return rows;
 }
+
+/**
+ * The payables page as a spreadsheet (#76): the same rows, in the same
+ * order, as /api/dashboard/payables. Registered before /:resource.csv,
+ * which would otherwise take "payables" for a resource and 404.
+ */
+exportRouter.get('/payables.csv', async (req, res) => {
+  const stamp = new Date().toISOString().slice(0, 10);
+  sendCsv(res, `cetizion-payables-${stamp}`, await payablesRows());
+});
 
 /**
  * Any list can still leave as a spreadsheet — the point is that the

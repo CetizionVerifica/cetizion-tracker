@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { resources } from '../lib/resources.js';
+import { nameKey, normalizeName } from '../lib/names.ts';
 
 export const searchRouter = Router();
 
@@ -19,10 +20,18 @@ export const searchRouter = Router();
  * what opening that list would have shown and no more.
  */
 
-/** 24 rows is two screenfuls in the palette; past that, refine the words. */
-const PER_TYPE = 6;
-const TOTAL = 24;
+/**
+ * Hits per object: five unless the caller asks (?limit=), and never more
+ * than twenty. Past that, the answer is better words, not a longer list.
+ */
+const DEFAULT_LIMIT = 5;
+const MAX_LIMIT = 20;
 const MAX_Q = 120;
+
+function perType(raw) {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, MAX_LIMIT) : DEFAULT_LIMIT;
+}
 
 /**
  * What the palette draws for a hit: a title you would recognise, a line of
@@ -86,46 +95,67 @@ function columnsFor(entry) {
 /**
  * What somebody typed, as a pattern that means only itself.
  *
- * `%` and `_` are ILIKE's own wildcards, so a query of "%" would otherwise
+ * `%` and `_` are LIKE's own wildcards, so a query of "%" would otherwise
  * match every row of every object — the palette answering a keystroke with
  * the whole database. They are characters people type, not patterns they
  * meant, so they are escaped and searched for literally.
  */
-function pattern(q) {
-  return `%${q.replace(/([\\%_])/g, '\\$1')}%`;
-}
+const escapeLike = (q) => q.replace(/([\\%_])/g, '\\$1');
 
 /**
- * One object's hits.
- *
- * The ILIKE is the same shape the list pages use. It cannot use an index,
- * which is fine at this size and is the reason for the per-object limit —
- * eight small scans, not one big one.
+ * A column the way names are compared everywhere else in the app (#75):
+ * case ignored, runs of spaces one space, the ends trimmed. The query goes
+ * through normalizeName, the same rule in JavaScript, so "hetero  LABS"
+ * finds "Hetero Labs" and "CTZ/QT/2026/064 " finds its quotation.
  */
-async function hits(entry, q) {
+const key = (column) => nameKey(`"${column}"::text`);
+
+/**
+ * One object's hits, best first.
+ *
+ * Rank 0 is the record whose own reference is exactly what was typed, then
+ * any column matching exactly, then one starting with it, then one merely
+ * containing it; the list page's own order breaks ties. The match cannot
+ * use an index, which is fine at this size and is the reason for the
+ * per-object limit — eight small scans, not one big one. One row past the
+ * limit is read so the answer can say there were more.
+ */
+async function hits(entry, q, limit) {
   const def = resources[entry.resource];
-  if (!def?.search?.length) return [];
+  if (!def?.search?.length) return { rows: [], more: false };
   const from = def.view || def.table;
   const columns = columnsFor(entry).map((c) => `"${c}"`).join(', ');
-  const where = def.search.map((c) => `"${c}"::text ILIKE $1 ESCAPE '\\'`).join(' OR ');
+  const any = (test) => def.search.map((c) => `${key(c)} ${test}`).join(' OR ');
   const { rows } = await query(
-    `SELECT ${columns} FROM ${from} WHERE ${where} ORDER BY ${def.defaultSort} LIMIT ${PER_TYPE}`,
-    [pattern(q)]
+    `SELECT ${columns},
+            CASE WHEN ${key(entry.title)} = $1 THEN 0
+                 WHEN ${any('= $1')} THEN 1
+                 WHEN ${any(`LIKE $2 ESCAPE '\\'`)} THEN 2
+                 ELSE 3 END AS rank
+       FROM ${from}
+      WHERE ${any(`LIKE $3 ESCAPE '\\'`)}
+      ORDER BY rank, ${def.defaultSort}
+      LIMIT ${limit + 1}`,
+    [q, `${escapeLike(q)}%`, `%${escapeLike(q)}%`]
   );
-  return rows.map((row) => ({
-    type: entry.type,
-    label: def.label,
-    icon: entry.icon,
-    id: row.id,
-    title: String(row[entry.title] ?? (entry.fallbackTitle ? row[entry.fallbackTitle] : '') ?? ''),
-    subtitle: entry.subtitle.map((c) => row[c]).filter(Boolean).join(' · '),
-    state: entry.state ? row[entry.state] || null : null,
-    href: entry.href(row),
-  }));
+  return {
+    more: rows.length > limit,
+    rows: rows.slice(0, limit).map((row) => ({
+      type: entry.type,
+      label: def.label,
+      icon: entry.icon,
+      id: row.id,
+      title: String(row[entry.title] ?? (entry.fallbackTitle ? row[entry.fallbackTitle] : '') ?? ''),
+      subtitle: entry.subtitle.map((c) => row[c]).filter(Boolean).join(' · '),
+      state: entry.state ? row[entry.state] || null : null,
+      href: entry.href(row),
+      rank: row.rank,
+    })),
+  };
 }
 
 /**
- * GET /api/search?q=
+ * GET /api/search?q=&limit=
  *
  * Empty or one-character queries answer with nothing rather than with
  * everything: a palette that lists the whole database on the first
@@ -133,13 +163,17 @@ async function hits(entry, q) {
  * until somebody has typed enough to mean a particular record.
  */
 searchRouter.get('/', async (req, res) => {
-  const q = String(req.query.q ?? '').trim().slice(0, MAX_Q);
-  if (q.length < 2) return res.json({ data: [], meta: { q, truncated: false } });
+  const q = normalizeName(String(req.query.q ?? '').slice(0, MAX_Q));
+  const limit = perType(req.query.limit);
+  if (q.length < 2) return res.json({ data: [], meta: { q, limit, truncated: false } });
 
-  const found = await Promise.all(SEARCHABLE.map((entry) => hits(entry, q)));
-  const data = found.flat();
+  const found = await Promise.all(SEARCHABLE.map((entry) => hits(entry, q, limit)));
+  // Best rank first across objects, and in SEARCHABLE order within a rank
+  // (the sort is stable), so the palette, which groups by type in the order
+  // the types arrive, opens on the group holding the exact reference.
+  const data = found.flatMap((one) => one.rows).sort((a, b) => a.rank - b.rank);
   res.json({
-    data: data.slice(0, TOTAL),
-    meta: { q, truncated: data.length > TOTAL },
+    data,
+    meta: { q, limit, truncated: found.some((one) => one.more) },
   });
 });
