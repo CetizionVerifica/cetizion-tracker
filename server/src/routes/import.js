@@ -19,7 +19,7 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
 import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR } from '../import/rules.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS } from '../import/rules.js';
 import { stageKey, needsReading } from '../import/stages.js';
 import { commitBatch } from '../import/commit.js';
 import { businessToday, businessYear } from '../lib/businessDate.ts';
@@ -63,7 +63,19 @@ async function liveSnapshot() {
     next_project_no: Number(np.rows[0].n) + 1,
     year: businessYear(),
     today: businessToday(),
-    trail: Object.fromEntries(trail.rows.map((t) => [t.ref, { ...(t.payload.tracking?.sheet || {}), legacy: t.payload.remarks || null, remarks_field: t.payload.remarks || null }])),
+    // What the last committed upload said about each deal.
+    //
+    // `was` is the half that was missing: without it the planner could see
+    // that the sheet and the tracker disagree but not which of the two had
+    // moved, so a re-upload of an unchanged sheet reverted whatever a human
+    // had corrected in between. Keeping the previous sheet values makes it
+    // a three-way merge (rules.js, sheetChanges).
+    trail: Object.fromEntries(trail.rows.map((t) => [t.ref, {
+      ...(t.payload.tracking?.sheet || {}),
+      legacy: t.payload.remarks || null,
+      remarks_field: t.payload.remarks || null,
+      was: Object.fromEntries(SHEET_FIELDS.map((col) => [col, t.payload[col] ?? null])),
+    }])),
     follow_up_tasks: Object.fromEntries(tasks.rows.map((t) => [t.entity_id, { id: t.id, due_at: t.due_at }])),
     sheet_notes: sheetNotes,
   };
@@ -214,7 +226,15 @@ importRouter.patch('/items/:id', async (req, res) => {
     vals.push(body.action); sets.push(`action = $${vals.length}`);
   }
   if (body.payload && typeof body.payload === 'object') {
-    const merged = { ...rows[0].payload, ...body.payload };
+    // The planner's own bookkeeping is not the client's to set. __parent_seq
+    // is the linkage the tree is walked by — two items pointed at each other
+    // would spin `while (p)` in loadBatch forever, and the bad state is
+    // stored, so every later read of the batch hangs the process again.
+    // __update_fields decides which columns a commit may write. Both are
+    // hidden from the client on the way out; they have to be refused on the
+    // way in too.
+    const sent = Object.fromEntries(Object.entries(body.payload).filter(([k]) => !k.startsWith('__')));
+    const merged = { ...rows[0].payload, ...sent };
     vals.push(JSON.stringify(merged)); sets.push(`payload = $${vals.length}`);
     // An edit by a reviewer clears the "assumed" note for fields they touched.
     const touched = Object.keys(body.payload).filter((k) => body.payload[k] !== null && body.payload[k] !== '');

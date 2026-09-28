@@ -78,14 +78,54 @@ export function newText(text, before, heard = []) {
 /** The fields a re-upload may change on a quotation, and how they read. */
 const CHANGEABLE = [['status', 'stage'], ['quotation_value', 'value'], ['currency', 'currency'], ['quotation_date', 'proposal date'],
   ['contact_person', 'contact'], ['sales_person', 'sales person'], ['service_quoted', 'service']];
-function sheetChanges(existing, payload) {
+
+/**
+ * The same columns, for the snapshot the trail keeps of what the sheet last
+ * said (routes/import.js). One list, so the snapshot and the comparison can
+ * never drift apart — a field kept here but missing there would silently go
+ * back to overwriting the tracker.
+ */
+export const SHEET_FIELDS = CHANGEABLE.map(([col]) => col);
+const sameValue = (a, b) => (typeof b === 'number'
+  ? a !== null && a !== undefined && Math.abs(Number(a) - b) < 0.01
+  : squash(a) === squash(b));
+
+/**
+ * What the sheet wants to change, and whether it is the sheet's to change.
+ *
+ * Comparing the sheet against the tracker alone cannot tell "the sheet
+ * moved" from "somebody corrected the tracker". It always read the second
+ * as the first, so re-uploading an unchanged sheet on Friday reverted the
+ * value a salesperson fixed on Wednesday — status, value, currency, dates,
+ * contact, owner and service, seven fields, with nothing louder than an
+ * info badge on one row of five hundred.
+ *
+ * `was` is what this sheet said at the last committed upload, so each field
+ * has three readings and only one of them is ours to act on:
+ *
+ *   sheet unchanged          → the tracker moved. Leave it alone.
+ *   sheet moved, tracker not → the sheet is the newer fact. Apply it.
+ *   both moved               → a person and a spreadsheet disagree, and the
+ *                              person is the one who knew they were editing.
+ *                              Keep theirs and say so.
+ */
+function sheetChanges(existing, payload, was) {
   const out = [];
   for (const [col, label] of CHANGEABLE) {
     const to = payload[col];
     const from = existing[col] ?? null;
     if (to === null || to === undefined || to === '') continue;
-    const same = typeof to === 'number' ? from !== null && Math.abs(Number(from) - to) < 0.01 : squash(from) === squash(to);
-    if (!same) out.push({ field: col, label, from, to });
+    if (sameValue(from, to)) continue;
+
+    // No record of what the sheet said before — the first upload after this
+    // shipped, or a deal matched some other way. Report it, never apply it:
+    // without the third reading this is exactly the guess that caused the
+    // reverts.
+    const then = was ? was[col] ?? null : undefined;
+    if (then === undefined) { out.push({ field: col, label, from, to, verdict: 'unknown' }); continue; }
+
+    if (sameValue(then, to)) { out.push({ field: col, label, from, to, verdict: 'theirs' }); continue; }
+    out.push({ field: col, label, from, to, verdict: sameValue(from, then) ? 'sheet' : 'both' });
   }
   return out;
 }
@@ -367,7 +407,21 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
     if (!existing && r.quotation_no && liveQNo.has(norm(r.quotation_no))) { existing = liveQNo.get(norm(r.quotation_no)); qHow = 'quotation number'; }
     if (!existing) {
-      const cands = live.quotations.filter((q) => similarName(q.client_name, r.client) && sameService(q.service_quoted, r.service)
+      // A sheet with no service column never matched anything.
+      //
+      // sameService is false whenever either side is blank, and the client
+      // +service filter required it — so rows whose service is only named
+      // once the quote goes out (the pending half of most sheets) matched
+      // nothing, took the create path, and every weekly upload made another
+      // copy of the same deal. Eight uploads, eight quotations, all shown
+      // as clean creates.
+      //
+      // With no service, the date carries the match instead, and it stays
+      // uncertain: client and date is a weaker claim than client and
+      // service, so it may flag a duplicate but never silently update one.
+      const svcBlank = !String(r.service || '').trim();
+      const cands = svcBlank && !r.proposal_date ? [] : live.quotations.filter((q) => similarName(q.client_name, r.client)
+        && (svcBlank || sameService(q.service_quoted, r.service))
         && (!r.proposal_date || !q.quotation_date || String(q.quotation_date).slice(0, 10) === r.proposal_date));
       if (cands.length) {
         existing = cands.find((q) => r.proposal_date && String(q.quotation_date).slice(0, 10) === r.proposal_date) || cands[0];
@@ -375,7 +429,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
         qCertain = false;
         // A deal an earlier upload wrote, with the same client and service,
         // is the same row come round again: the weekly sheet re-uploaded.
-        if (live.trail?.[existing.quotation_no]) { qHow = `${qHow}, from an earlier upload`; qCertain = true; }
+        if (live.trail?.[existing.quotation_no] && !svcBlank) { qHow = `${qHow}, from an earlier upload`; qCertain = true; }
       }
     }
 
@@ -415,15 +469,39 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     if (existing) {
       duplicate(qItem, `${existing.quotation_no} (${existing.status})`, qHow, qCertain);
       qItem.existing_ref = existing.quotation_no;
-      const changed = sheetChanges(existing, qItem.payload);
-      const says = changed.map((c) => `${c.label} ${c.from ?? '(blank)'} → ${c.to}`).join('; ');
+      const changed = sheetChanges(existing, qItem.payload, live.trail?.[existing.quotation_no]?.was);
+      const reads = (list) => list.map((c) => `${c.label} ${c.from ?? '(blank)'} → ${c.to}`).join('; ');
+      const mine = changed.filter((c) => c.verdict === 'sheet');
+      const theirs = changed.filter((c) => c.verdict === 'theirs');
+      const both = changed.filter((c) => c.verdict === 'both');
+      const unknown = changed.filter((c) => c.verdict === 'unknown');
+      const says = reads(changed);
       if (existing.status === WON_STATUS && r.stage !== WON_STATUS) {
         qItem.flags.push({ level: 'warn', code: 'status_differs', message: `The tracker has this deal as won; the sheet says ${r.stage}. Kept as won`, by: 'rule' });
-      } else if (changed.length && qCertain && rules.update_from_sheet && !rules.overwrite_existing) {
+      } else if (mine.length && qCertain && rules.update_from_sheet && !rules.overwrite_existing) {
         qItem.action = 'update';
-        qItem.flags.push({ level: 'info', code: 'sheet_changes', message: `Updated from the sheet: ${says}`, by: 'rule', changes: changed });
+        // Only the fields the sheet actually moved. Everything else keeps
+        // whatever the tracker holds, so one changed cell cannot drag six
+        // untouched ones back to what the sheet happened to say.
+        // On the payload, not the item: only the columns listed in the
+        // INSERT survive into import_items, and a verdict that does not
+        // reach the commit is a verdict that silently means nothing.
+        qItem.payload.__update_fields = mine.map((c) => c.field);
+        qItem.flags.push({ level: 'info', code: 'sheet_changes', message: `Updated from the sheet: ${reads(mine)}`, by: 'rule', changes: mine });
       } else if (changed.length) {
         qItem.flags.push({ level: 'warn', code: 'status_differs', message: `Changed in the sheet, not applied while kept: ${says}`, by: 'rule', changes: changed });
+      }
+      // Said separately, because these are not the sheet asking for
+      // anything — they are the tracker having moved on, and somebody
+      // should know before they reconcile the two by hand.
+      if (theirs.length) {
+        qItem.flags.push({ level: 'info', code: 'tracker_ahead', message: `Changed in the tracker since the last upload, left alone: ${reads(theirs)}`, by: 'rule', changes: theirs });
+      }
+      if (both.length) {
+        qItem.flags.push({ level: 'warn', code: 'both_changed', message: `Changed in both the sheet and the tracker; the tracker's kept: ${reads(both)}`, by: 'rule', changes: both });
+      }
+      if (unknown.length) {
+        qItem.flags.push({ level: 'warn', code: 'no_previous_upload', message: `Differs from the tracker, with no record of what the sheet said before, so nothing is applied: ${reads(unknown)}`, by: 'rule', changes: unknown });
       }
     }
     qItem.payload.tracking = tracking(r, existing, qItem);
