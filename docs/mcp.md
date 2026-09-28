@@ -44,12 +44,25 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_collections` | unpaid invoices, overdue first, with recent chasing — paged |
 | `get_kpis` | quotations issued, value, wins, losses, win rate, pipeline, days to win, touches |
 | `list_activity` | notes, tasks, logged calls and email threads on a record — paged |
-| `create_task`, `add_note`, `log_touch`, `update_next_step` | small writes, shown on the record as made "via MCP" |
+| `list_inbox` | client emails nobody has answered: who wrote, about what, whose it is, how late — paged |
+| `list_payables` | what we owe travel vendors, longest overdue first, with the total and every ageing bucket — paged |
+| `list_data_gaps` | what is missing and what it is blocking, with the page that lists those rows |
+| `list_tasks` | open tasks, soonest due first, with the record each is on — paged |
+| `create_task`, `add_note`, `log_touch`, `update_next_step`, `complete_task` | small writes, shown on the record as made "via MCP" |
 
 Resources: the pipeline stages, the service catalogue, and what each KPI means.
 
 No tool deletes anything, changes a stage or status, sends a message, or
 records money. The numbers are the same queries the app uses.
+
+`list_inbox` returns subjects and status, never message bodies. A mailbox's
+owner chooses what the team may see of it, and that choice is applied once
+when mail arrives — so a tool that read bodies would have to apply the rest
+of that rule a second time.
+
+`list_payables` is not scoped by salesperson, because a travel vendor's bill
+belongs to the company and there is no owner on it to scope by. That matches
+the Payables page, which any signed-in person can already open (#89).
 
 ## What you can ask it
 
@@ -116,6 +129,48 @@ you and it agree.
 An admin token may name a person: *"How is Ramesh doing against last quarter?"*
 A sales token cannot — it only ever sees its own.
 
+### The inbox nobody has answered
+
+> **"What's in the inbox that nobody's answered?"**
+
+`list_inbox` with `unanswered_only`, which means the client wrote last and
+nothing has gone back. It is ordered by when the reply was due, so the top of
+the list is the most overdue:
+
+> Four threads are waiting on us, two of them past their reply time.
+> **Aurora Chemicals** — "Revised scope for the July audit", unassigned, due
+> two days ago. **Northwind Steel** — "PO query", yours, due yesterday.
+> The other two came in this morning and are not late yet.
+> Aurora is nobody's, which is why it has sat: pick it up or assign it.
+
+Subjects and status only. It will not read you the email.
+
+### What we owe travel vendors
+
+> **"What do we owe travel vendors?"**
+
+`list_payables`, which reads the same view as the Payables page, so the figures
+match what finance sees. Rupees. Every reply carries the whole debt and the
+ageing, not just the rows on the page:
+
+> ₹6,84,000 outstanding across 19 bills. ₹1,90,000 of it is over 90 days —
+> six bills, all Yatra Travels. ₹3,05,000 is not yet due. Two bills have no
+> amount recorded at all, so they are not in either number; somebody has to
+> enter those before the total means anything.
+
+### What is blocking invoicing
+
+> **"What's blocking invoicing this week?"**
+
+`list_data_gaps` runs the Data quality checks and reports only the ones that
+found something, with the page that lists exactly those rows:
+
+> Three things. Eleven invoiced payment stages have no invoice document
+> attached — those are the ones that stop a client paying. Four purchase
+> orders have no quotation linked, so nothing can be reconciled against them.
+> Two quotations have no value, which keeps them out of the pipeline figures.
+> The eleven stages are the ones to clear first.
+
 ### Writing things down
 
 > **"Add a task on CTZ/QT/2026/062 to call them Friday, and note that legal
@@ -124,6 +179,13 @@ A sales token cannot — it only ever sees its own.
 `create_task` and `add_note`. Both land on the record's timeline marked as
 made through MCP, so a week later it is clear which were typed by a person and
 which came from a conversation.
+
+> **"What are my open tasks?"** ... **"the Aurora one is done."**
+
+`list_tasks` then `complete_task`. Soonest due first, with the record each task
+sits on, so a task raised in one conversation can be found and closed in the
+next. Closing one twice is closing it once — the second call says it was
+already done rather than failing.
 
 ## What it will not do
 
@@ -136,8 +198,14 @@ Not an oversight. These are the boundary:
 | Mark a project milestone reached | It makes a payment stage billable — a money action in delivery clothes |
 | Delete anything | — |
 | Send an email or a message | `log_touch` records a call that already happened. Nothing here contacts a client |
+| Read a client's email | `list_inbox` gives subjects and status. Whether the team may see more than that is the mailbox owner's decision, made once, in Settings |
 
-A read-only token does not merely refuse the four write tools — **it is not
+Marking a task done is the one exception, and a narrow one: `complete_task`
+closes a task and changes nothing else about it. It exists because
+`create_task` could add one that nothing could read back, which made the
+writing half of this server write-only.
+
+A read-only token does not merely refuse the write tools — **it is not
 offered them**. An MCP client plans from the list it is given, so showing a
 tool that will be refused is worse than not showing it.
 
@@ -149,8 +217,8 @@ pretty-printed, fifty-one open deals measured 24 KB — roughly six thousand
 tokens for one question.
 
 Ask for a filter before asking for a bigger page. `stage`, `owner`,
-`close_from`/`close_to` and `min_days_overdue` all narrow the query at the
-database rather than in the answer.
+`close_from`/`close_to`, `min_days_overdue`, `unanswered_only`, `bucket` and
+`overdue_only` all narrow the query at the database rather than in the answer.
 
 ## Keep it inside
 

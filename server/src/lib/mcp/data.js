@@ -7,6 +7,8 @@
 import { query, transaction } from '../../db.js';
 import { RATES } from '../salesReport.js';
 import { businessToday } from '../businessDate.ts';
+import { dataQuality } from '../dataQuality.js';
+import { BUCKETS, payablesSummary } from '../payables.js';
 
 const isAdmin = (scope) => scope.role === 'admin';
 
@@ -300,4 +302,173 @@ export async function updateNextStep(scope, token, { quotation_no: no, next_step
     await db.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, $2, $3)`, [no, `Next step set: ${nextStep}${close ? ` (close by ${close})` : ''}`, actor(token)]);
     return q;
   });
+}
+
+// ---------------------------------------------------------------- inbox
+
+/**
+ * Conversations in the shared inbox, the ones due soonest first.
+ *
+ * Only what the list screen shows: who wrote, about what, whose it is, and
+ * whether it is late. No message bodies. A mailbox's owner chooses what the
+ * team may see of it, and that choice is applied once at ingest — `subject`
+ * here is already whatever they allowed, and a tool reading bodies would
+ * have to re-apply the rest of that rule. A rule applied in two places is a
+ * rule that will eventually be applied in one.
+ */
+export async function listInbox(scope, { status, unanswered_only: unansweredOnly = false, limit, offset } = {}) {
+  const win = page({ limit, offset });
+  const params = [];
+  const where = [status ? null : "c.status IN ('open','pending_client')"].filter(Boolean);
+  if (status) { params.push(status); where.push(`c.status = $${params.length}`); }
+  // Nobody has answered since the client last wrote. NULL means no message
+  // has been classified yet, which is also nobody's reply.
+  if (unansweredOnly) where.push("(t.last_direction = 'inbound' OR t.last_direction IS NULL)");
+  if (!isAdmin(scope)) {
+    // The rule the Inbox page applies: a conversation is yours if the inbox
+    // is open to everyone, you are a member of it, it is unassigned, or it
+    // is assigned to you. The page matches two identities (sign-in name and
+    // full name); a token carries one person, so this matches that one.
+    params.push(scope.person || '');
+    const p = `$${params.length}`;
+    where.push(`(i.members = '{}' OR i.members && ARRAY[lower(${p})]::text[] OR c.assignee IS NULL OR lower(c.assignee) = lower(${p}))`);
+  }
+  const { rows } = await query(
+    `SELECT count(*) OVER () AS total_rows,
+            c.id, c.status, c.priority, c.assignee, c.from_name, c.from_email, c.enquiry_no,
+            t.subject, t.last_message_at, t.message_count, t.last_direction,
+            co.name AS company, i.name AS inbox, c.response_due_at,
+            (c.status = 'open' AND c.response_due_at IS NOT NULL AND c.response_due_at < now()) AS overdue
+       FROM inbox_conversations c
+       JOIN inboxes i ON i.id = c.inbox_id
+       JOIN email_threads t ON t.id = c.thread_id
+       LEFT JOIN companies co ON co.id = c.company_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY c.response_due_at NULLS LAST, t.last_message_at DESC NULLS LAST, c.id
+      LIMIT ${win.limit} OFFSET ${win.offset}`, params);
+  return paged(rows, win);
+}
+
+// ------------------------------------------------------------- payables
+
+/**
+ * What we owe travel vendors, longest overdue first, with the bucket
+ * summary beside the page so the totals are the whole debt and not just
+ * this page of it.
+ *
+ * Reads v_vendor_invoice_ageing, the view the Payables page and its CSV
+ * read, so the three agree by construction. Vendor bills are in rupees;
+ * nothing here mixes currencies.
+ *
+ * Not scoped by person, which is what the page does: a travel vendor's bill
+ * belongs to the company, and there is no ownership column to scope it by.
+ * If #89 settles that money is finance-only, this is one of the surfaces
+ * that decision has to reach.
+ */
+export async function listPayables(scope, { bucket, limit, offset } = {}) {
+  const win = page({ limit, offset });
+  const params = [];
+  const where = [];
+  if (bucket) { params.push(bucket); where.push(`bucket = $${params.length}`); }
+  const [{ rows }, summary] = await Promise.all([
+    query(
+      `SELECT count(*) OVER () AS total_rows,
+              vendor_invoice_no, travel_vendor, employee_name, client_name, travel_id,
+              invoice_date, invoice_amount, amount_paid, outstanding, pay_by,
+              payment_status, days_overdue, bucket
+         FROM v_vendor_invoice_ageing
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY days_overdue DESC NULLS LAST, pay_by NULLS LAST, vendor_invoice_id
+        LIMIT ${win.limit} OFFSET ${win.offset}`, params),
+    payablesSummary(),
+  ]);
+  return { ...paged(rows, win), ...summary, currency: 'INR' };
+}
+
+/**
+ * The bucket names, so the tool's accepted values are the page's buckets
+ * rather than a second list that can drift from them.
+ */
+export const PAYABLE_BUCKETS = BUCKETS;
+
+// ------------------------------------------------------------ data gaps
+
+/**
+ * What is missing, and where to go and fix it.
+ *
+ * The same checks the Data quality page runs, filtered to the ones that
+ * currently find something. Counts rather than rows, because the question
+ * this answers — what is blocking invoicing this week — is answered by a
+ * number with a name on it. `fix_at` is the page that lists exactly those
+ * rows, which is where somebody goes to clear them.
+ */
+export async function listDataGaps() {
+  const checks = await dataQuality();
+  const blocking = checks.filter((c) => Number(c.count) > 0);
+  return {
+    gaps: blocking.map(({ key, label, count, link }) => ({ key, label, count: Number(count), fix_at: link })),
+    total_gaps: blocking.reduce((n, c) => n + Number(c.count), 0),
+    checks_run: checks.length,
+    all_clear: blocking.length === 0,
+  };
+}
+
+// ---------------------------------------------------------------- tasks
+
+/**
+ * Open tasks, soonest due first.
+ *
+ * create_task could add one and nothing could read it back, which made the
+ * write half of this server write-only. A sales token sees tasks assigned
+ * to it or raised by it; an admin token sees everyone's.
+ */
+export async function listTasks(scope, { assignee, overdue_only: overdueOnly = false, limit, offset } = {}) {
+  const win = page({ limit, offset });
+  const params = [];
+  const where = ["t.status <> 'done'"];
+  if (overdueOnly) where.push('t.due_at IS NOT NULL AND t.due_at < CURRENT_DATE');
+  // Naming somebody else's tasks is an admin's to do; a sales token asking
+  // for them gets its own, which is what its scope says it may see.
+  if (assignee && isAdmin(scope)) { params.push(assignee); where.push(`lower(btrim(t.assignee)) = lower(btrim($${params.length}))`); }
+  if (!isAdmin(scope)) where.push(mine(scope, params));
+  const { rows } = await query(
+    `SELECT count(*) OVER () AS total_rows,
+            t.id, t.title, t.description, t.status, t.priority, t.type, t.assignee, t.created_by,
+            t.due_at::text AS due_on, (t.due_at IS NOT NULL AND t.due_at < CURRENT_DATE) AS overdue,
+            t.entity, t.entity_id
+       FROM tasks t
+      WHERE ${where.join(' AND ')}
+      ORDER BY t.due_at NULLS LAST, t.id
+      LIMIT ${win.limit} OFFSET ${win.offset}`, params);
+  return paged(rows, win);
+}
+
+/** A task is a sales token's if it is assigned to it or was raised by it. */
+function mine(scope, params) {
+  params.push(scope.person || '');
+  const p = `$${params.length}`;
+  return `(lower(btrim(t.assignee)) = lower(btrim(${p})) OR lower(btrim(t.created_by)) = lower(btrim(${p})))`;
+}
+
+/**
+ * Mark a task done — the only thing this server may change about a task.
+ *
+ * Reads first, then writes: a task this token may not see returns null, so
+ * it cannot learn an id exists by being refused it, and a task already done
+ * says so rather than erroring. Calling it twice is calling it once. Who
+ * completed it is in api_token_log, which every MCP call writes; tasks
+ * itself has no column for it and the web app does not record one either.
+ */
+export async function completeTask(scope, { task_id: id }) {
+  const params = [Number(id)];
+  const visible = isAdmin(scope) ? 'TRUE' : mine(scope, params);
+  const { rows: [t] } = await query(
+    `SELECT t.id, t.title, t.status, t.assignee, t.entity, t.entity_id, t.completed_at
+       FROM tasks t WHERE t.id = $1 AND ${visible}`, params);
+  if (!t) return null;
+  if (t.status === 'done') return { ...t, already_done: true };
+  const { rows: [done] } = await query(
+    `UPDATE tasks SET status = 'done', completed_at = now(), updated_at = now()
+      WHERE id = $1 RETURNING id, title, status, completed_at, assignee, entity, entity_id`, [t.id]);
+  return { ...done, already_done: false };
 }
