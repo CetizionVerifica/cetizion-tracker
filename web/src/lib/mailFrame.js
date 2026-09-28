@@ -15,6 +15,9 @@
  */
 import DOMPurify from 'dompurify';
 
+/** Did the sender style this, or is it bare structure? */
+export const hasOwnStyling = (html) => /<style[\s>]|style\s*=/i.test(String(html || ''));
+
 /** Does this message pull anything from the network? */
 export const hasRemoteImage = (html) => /<img\b[^>]*\bsrc\s*=\s*["']?https?:/i.test(String(html || ''));
 
@@ -74,12 +77,25 @@ export function cleanMail(html, showImages = false) {
   try {
     return DOMPurify.sanitize(raw, {
       // A stored email is read, not edited, so anything interactive goes.
-      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'base', 'link', 'meta'],
+      // <style> stays: it is the message's own design, and the frame's
+      // content policy is what stops CSS reaching the network. <link> and
+      // <base> do not, because those are how it would.
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'base', 'link', 'meta'],
       FORBID_ATTR: ['srcset', 'formaction', 'ping'],
       ALLOW_DATA_ATTR: false,
-      // cid: is how an image that travelled with the message refers to it.
-      ADD_URI_SAFE_ATTR: [],
-      ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid|data):/i,
+      // A <style> element belongs in the head, and DOMPurify parsing a
+      // fragment has no head to put it in — so it drops it, and ADD_TAGS
+      // alone does not change that. Parsing a whole document is what keeps
+      // the message's own CSS.
+      WHOLE_DOCUMENT: true,
+      ADD_TAGS: ['style'],
+      // No ALLOWED_URI_REGEXP here, deliberately. Overriding it was a
+      // mistake: DOMPurify tests every attribute against that pattern, not
+      // only the ones holding a URL, so a stricter one silently deleted
+      // width="640", bgcolor, align and cellpadding — the attributes email
+      // layout is actually built from. The default already refuses
+      // javascript: and already permits cid:, which was the whole of what
+      // the override was reaching for.
     });
   } finally {
     blockRemote = false;
@@ -131,16 +147,13 @@ export const framePolicy = (showImages) => [
  */
 const STYLE = `
 html { -webkit-text-size-adjust: 100%; }
-html, body { margin: 0; background: #fbfbf9; }
-body {
-  padding: 16px 20px 18px;
-  color: #23262b;
-  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  /* Emails arrive as one long column. A measure keeps it readable; a table
-     wider than this still gets its full width from the rule below. */
-  max-width: 680px;
-  word-break: break-word;
-}
+html, body { margin: 0; }
+/* A designed email brings its own canvas and expects white under it. */
+body { background: #ffffff; color: #23262b; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; word-break: break-word; }
+/* A bare one gets ours: paper, a margin, and a measure to read down.
+   Everything below is a default the sender's own CSS overrides — theirs
+   comes later in the document, and an inline style beats both. */
+body.plain { background: #fbfbf9; padding: 16px 20px 18px; max-width: 680px; }
 p { margin: 0 0 0.85em; }
 p:last-child, ul:last-child, ol:last-child, table:last-child { margin-bottom: 0; }
 h1, h2, h3, h4, h5, h6 { margin: 1.4em 0 0.5em; line-height: 1.3; font-weight: 600; }
@@ -176,9 +189,21 @@ small { color: #6b6f76; }
  * without them a link loads the client's website *inside* the message,
  * which looks like the tracker and is not.
  */
-export const frameDoc = (html, showImages) =>
-  `<!doctype html><html><head>`
-  + `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages)}">`
-  + `<base target="_blank" rel="noopener noreferrer">`
-  + `<style>${STYLE}</style>`
-  + `</head><body>${cleanMail(html, showImages)}</body></html>`;
+export const frameDoc = (html, showImages) => {
+  const ours = `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages)}">`
+    + `<base target="_blank" rel="noopener noreferrer">`
+    + `<style>${STYLE}</style>`;
+  const plain = hasOwnStyling(html) ? '' : ' class="plain"';
+  const clean = cleanMail(html, showImages);
+
+  // Sanitised as a whole document, the message comes back with its own
+  // <style> lifted into a head. Ours is put in ahead of it, so that where
+  // the two say the same thing about the same element the sender's wins —
+  // later rule, equal specificity — and an inline style beats both.
+  if (/<head>/i.test(clean)) {
+    return `<!doctype html>${clean.replace('<head>', `<head>${ours}`).replace(/<body(?=[\s>])/i, `<body${plain}`)}`;
+  }
+  // No DOM to sanitise with (Node, a unit test): the server has already
+  // cleaned this, and the policy still governs the frame either way.
+  return `<!doctype html><html><head>${ours}</head><body${plain}>${clean}</body></html>`;
+};
