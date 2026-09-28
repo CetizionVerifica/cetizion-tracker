@@ -65,8 +65,69 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       .send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } });
     if (res.status !== 200) return { status: res.status };
     const r = res.body.result;
-    return { status: 200, error: Boolean(r.isError), text: r.content.map((c) => c.text).join('\n') };
+    return { status: 200, error: Boolean(r.isError), text: r.content.map((c) => c.text).join('\n'), structured: r.structuredContent, raw: r };
   }
+
+  /**
+   * Every tool declares an outputSchema, and the SDK validates our own
+   * structuredContent against it and throws when it does not match. That is
+   * the point — a query that quietly stops returning a column should fail
+   * loudly. It also means a schema written from memory rather than from the
+   * SQL breaks a working tool, so every one of them gets called here.
+   */
+  test('every tool answers, and its own output passes the schema it declares', async () => {
+    // Writing too: the four write tools are hidden from a reading token,
+    // so a reading one would never exercise their schemas.
+    const t = (await token({ name: 'Schema check', role: 'admin', can_write: true })).token;
+    const calls = [
+      ['search_records', { text: 'Client' }],
+      ['get_company', { company_id: 1001 }],
+      ['get_quotation', { quotation_no: 'QT-ASHA' }],
+      ['get_project', { project_id: 'PRJ-ASHA' }],
+      ['get_po', { po_number: 'PO-ASHA' }],
+      ['list_pipeline', {}],
+      ['list_collections', { overdue_only: false }],
+      ['get_kpis', {}],
+      ['list_activity', { entity: 'quotation', id: 'QT-ASHA' }],
+      ['create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'A follow-up from the schema check' }],
+      ['add_note', { entity: 'quotation', id: 'QT-ASHA', text: 'A note from the schema check' }],
+      ['log_touch', { entity: 'quotation', id: 'QT-ASHA', channel: 'call', outcome: 'connected' }],
+      ['update_next_step', { quotation_no: 'QT-ASHA', next_step: 'Send the revised scope' }],
+    ];
+    for (const [name, args] of calls) {
+      const r = await call(t, name, args);
+      assert.equal(r.status, 200, `${name} -> HTTP ${r.status}`);
+      assert.equal(r.error, false, `${name} -> ${r.text}`);
+      assert.ok(r.structured !== undefined, `${name} returned no structuredContent, so its schema is never checked`);
+    }
+  });
+
+  test('a list says how much it did not return, and the next page differs', async () => {
+    const t = (await token({ name: 'Paging', role: 'admin' })).token;
+    const first = JSON.parse((await call(t, 'list_pipeline', { limit: 1 })).text);
+    assert.equal(first.deals.length, 1);
+    assert.equal(first.limit, 1);
+    assert.ok(first.total >= 2, 'the fixtures hold two open deals');
+    assert.equal(first.has_more, true, 'one of two is not the end of the list');
+
+    const second = JSON.parse((await call(t, 'list_pipeline', { limit: 1, offset: 1 })).text);
+    assert.notEqual(second.deals[0].quotation_no, first.deals[0].quotation_no, 'offset must move the window');
+    assert.equal(second.total, first.total, 'the total is of the whole list, not of the page');
+  });
+
+  test('a caller cannot ask for a thousand rows', async () => {
+    const t = (await token({ name: 'Ceiling', role: 'admin' })).token;
+    const res = await call(t, 'list_pipeline', { limit: 1000 });
+    // Refused at the boundary rather than silently clamped: a caller that
+    // asked for a thousand should learn it cannot have them.
+    assert.equal(res.error, true, 'the input schema caps limit at 100');
+  });
+
+  test('the result is not pretty-printed', async () => {
+    const t = (await token({ name: 'Compact', role: 'admin' })).token;
+    const { text } = await call(t, 'list_pipeline', {});
+    assert.doesNotMatch(text, /\n /, 'indentation is paid for by the caller and read by nobody');
+  });
 
   test('a sales token sees only its own records, on every tool', async () => {
     const asha = (await token({ name: 'Asha', role: 'sales', person: 'asha' })).token;
