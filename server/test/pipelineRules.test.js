@@ -117,11 +117,11 @@ describe('quotation rules in the database', { skip: !ADMIN_URL && 'TEST_DATABASE
     await db.query('ALTER TABLE quotations ENABLE TRIGGER USER');
     const events = async () => Number((await one('SELECT COUNT(*) AS n FROM webhook_events')).n);
     const before = await events();
-    const migration = readFileSync(new URL('../db/migrations/053_quotation_draft.sql', import.meta.url), 'utf8');
+    const migration = readFileSync(new URL('../db/migrations/055_quotation_draft.sql', import.meta.url), 'utf8');
     await db.query(migration);
     await db.query(migration);
     // 053 carries its own copy of the stage trigger; the later migrations bring it up to date, as on an upgrade.
-    await db.query(readFileSync(new URL('../db/migrations/054_stage_history_expired.sql', import.meta.url), 'utf8'));
+    await db.query(readFileSync(new URL('../db/migrations/056_stage_history_expired.sql', import.meta.url), 'utf8'));
     const row = await one('SELECT status, stage_id, probability FROM quotations WHERE id = $1', [q.id]);
     assert.deepEqual([row.status, row.stage_id, row.probability], ['Submitted', await stageId('Sent'), 40]);
     assert.equal((await one(`SELECT maps_to_status FROM pipeline_stages WHERE name = 'Draft'`)).maps_to_status, 'Draft');

@@ -132,7 +132,7 @@ describe('a real quotation reports its own split', { skip: !ADMIN_URL && 'set TE
     const events = async () => Number((await db.query('SELECT COUNT(*) FROM webhook_events')).rows[0].count);
     const before = await events();
 
-    const migration = readFileSync(new URL('../db/migrations/052_quotation_line_backfill.sql', import.meta.url), 'utf8');
+    const migration = readFileSync(new URL('../db/migrations/054_quotation_line_backfill.sql', import.meta.url), 'utf8');
     await db.query(migration);
     await db.query(migration);
 

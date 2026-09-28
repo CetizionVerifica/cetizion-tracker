@@ -910,7 +910,7 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       const { join, dirname } = await import('node:path');
       const { fileURLToPath } = await import('node:url');
       await db.query(`UPDATE quotations SET remarks = 'Client wants a site visit first' WHERE quotation_no = $1`, [MINE]);
-      const migration = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations', '051_task_targets_first_notes.sql'), 'utf8');
+      const migration = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations', '053_task_targets_first_notes.sql'), 'utf8');
       await db.query(migration);
       await db.query(migration);
       const { rows } = await db.query(`SELECT author, pinned FROM notes WHERE entity = 'quotation' AND entity_id = $1 AND body = 'Client wants a site visit first'`, [MINE]);

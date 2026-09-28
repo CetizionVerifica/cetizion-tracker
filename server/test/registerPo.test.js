@@ -207,7 +207,7 @@ describe('registering a purchase order from a quotation', { skip: !ADMIN_URL && 
       `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, milestone_name, milestone_reached_on)
        VALUES ($1, 1, 'Report', 'On Milestone', 1, 'Final report', '2026-10-01')`, [poNumber]);
     const { readFileSync } = await import('node:fs');
-    const migration = readFileSync(new URL('../db/migrations/055_project_milestones.sql', import.meta.url), 'utf8');
+    const migration = readFileSync(new URL('../db/migrations/057_project_milestones.sql', import.meta.url), 'utf8');
     await db.query(migration);
     await db.query(migration);
     const { rows } = await db.query(
