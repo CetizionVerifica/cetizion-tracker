@@ -546,6 +546,55 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     });
   });
 
+  test('duplicate companies come back grouped, and nothing here merges them', async () => {
+    const t = (await token({ name: 'Dupes', role: 'admin', can_write: true })).token;
+    // The seed already carries Hindalco and three of its plants, which is
+    // the real shape of this problem. companies.name_key is UNIQUE, so the
+    // only way one name reaches the table twice is punctuated differently.
+    await pool.query(`INSERT INTO companies (name) VALUES
+      ('Hindalco-Belur'), ('Zephyr Pumps Ltd'), ('Zephyr-Pumps Ltd'), ('Wholly Unrelated Dredging Co')`);
+
+    const res = JSON.parse((await call(t, 'list_duplicate_companies', { limit: 100 })).text);
+    const nameOf = (g) => g.names.map((n) => n.name);
+
+    // The property pairs could not have: a company is in one group or none.
+    // Pairwise output put Hindalco in four rows at once, each proposing a
+    // different merge, several of them contradicting the others.
+    const seen = new Map();
+    for (const g of res.groups) {
+      for (const n of g.names) {
+        assert.ok(!seen.has(n.id), `${n.name} is in two groups at once: ${seen.get(n.id)} and ${nameOf(g)}`);
+        seen.set(n.id, nameOf(g));
+      }
+    }
+
+    // Two spellings of one thing, identical once punctuated away: nothing
+    // to weigh up, and its own group because nothing else looks like it.
+    const zephyr = res.groups.find((g) => nameOf(g).includes('Zephyr Pumps Ltd'));
+    assert.ok(zephyr, `Zephyr is grouped: ${JSON.stringify(res.groups.map(nameOf))}`);
+    assert.deepEqual(nameOf(zephyr).sort(), ['Zephyr Pumps Ltd', 'Zephyr-Pumps Ltd']);
+    assert.equal(zephyr.certain, true);
+    assert.match(zephyr.confidence, /same name/);
+
+    // Hindalco's plants land in one group, and it does not claim they are
+    // one company — bare "Hindalco" matches each plant while the plants do
+    // not match each other, so the group asks rather than asserts.
+    const hindalco = res.groups.find((g) => nameOf(g).includes('Hindalco - Belur'));
+    assert.ok(hindalco, 'the Hindalco family is grouped');
+    assert.ok(nameOf(hindalco).includes('Hindalco-Belur'), 'both spellings of Belur are in it');
+    assert.equal(hindalco.certain, false, 'a shared brand is a question, not an answer');
+    assert.equal(hindalco.confidence, 'shares a brand');
+
+    assert.ok(!res.groups.some((g) => nameOf(g).includes('Wholly Unrelated Dredging Co')),
+      'a company with no look-alike is in no group');
+
+    // No tool here can act on any of it, whatever the token may write.
+    const list = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 9300, method: 'tools/list', params: {} });
+    assert.ok(!list.body.result.tools.map((x) => x.name).some((n) => /merge/i.test(n)),
+      'merging is the Companies screen\'s, not this server\'s');
+  });
+
   test('a reading token is not offered complete_task', async () => {
     const t = (await token({ name: 'Reader', role: 'admin' })).token;
     const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
@@ -648,7 +697,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const t = await token({ name: 'Short lived', role: 'admin', can_write: true });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });
     const names = tools.body.result.tools.map((x) => x.name);
-    assert.ok(names.length >= 18, `only ${names.length} tools are offered`);
+    assert.ok(names.length >= 19, `only ${names.length} tools are offered`);
     // Every name is verb_noun, so the verb is what decides whether the tool
     // could do damage. Matching anywhere in the name read 'pay' inside
     // list_payables and called a read destructive, which is the kind of

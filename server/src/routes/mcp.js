@@ -21,6 +21,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
+import { duplicateCompanies } from '../lib/companies.js';
 import * as imports from '../lib/mcp/imports.js';
 import * as records from '../lib/mcp/records.js';
 
@@ -266,6 +267,32 @@ function buildServer(token) {
       created: z.number().int(), updated: z.number().int(), rejected: z.number().int(), dry_run: z.boolean(),
       rows: z.array(row({ at: z.number().int(), action: z.string(), key: z.unknown().optional(), id: num, why: z.unknown().optional() })),
       rows_shown: z.number().int(), next: z.string() } });
+  // Reading duplicates, and deliberately not merging them. A merge rewrites
+  // the client name on every quotation, enquiry and project of one company
+  // and then deletes it, with no undo — the most destructive thing this API
+  // does. Finding them is the useful half and costs nothing; acting on one
+  // belongs on the Companies screen, where whoever does it can see the
+  // records that are about to move.
+  tool('list_duplicate_companies', 'Groups of companies that look like one client spelt more than once. A group means the names share a brand, not that they are the same company — a plant or a subsidiary is its own client. Read-only: merging is done on the Companies screen.',
+    { limit: z.number().int().min(1).max(100).optional().describe('Groups to return, default 25') },
+    async ({ limit }) => {
+      const groups = await duplicateCompanies();
+      const n = Math.min(Math.max(Number(limit) || 25, 1), 100);
+      return json({
+        groups: groups.slice(0, n).map((g) => ({
+          names: g.members.map((m) => ({ id: m.id, name: m.name, records: m.records })),
+          size: g.size,
+          records: g.records,
+          confidence: g.confidence,
+          certain: g.certain,
+        })),
+        total: groups.length,
+        certain_groups: groups.filter((g) => g.certain).length,
+        merge_at: '/companies',
+      });
+    },
+    { out: { groups: z.array(row({ names: z.array(row({ id: z.number().int(), name: z.string(), records: num })), size: z.number().int(), records: z.number().int(), confidence: z.string(), certain: z.boolean() })),
+      total: z.number().int(), certain_groups: z.number().int(), merge_at: z.string() } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));
