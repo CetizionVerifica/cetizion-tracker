@@ -11,7 +11,7 @@ export const nameKey = (column: string): string => `lower(regexp_replace(btrim($
 /** The same key in JavaScript, for values compared against nameKey(). */
 export const normalizeName = (value: unknown): string => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
-const compact = (s: unknown): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+export const compact = (s: unknown): string => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 // Words that say what kind of company it is, not which one: two clients
 // sharing only "Labs" or "Aluminium" are not the same client.
 const GENERIC = new Set([
@@ -36,6 +36,19 @@ export function similarName(a: unknown, b: unknown): boolean {
   if ((na.length >= 5 && nb.includes(na)) || (nb.length >= 5 && na.includes(nb))) return true;
   const ta = tokens(a); const tb = tokens(b);
   if (!ta.length || !tb.length) return false;
+  // Each side carrying its own distinguishing word means two things, not
+  // two spellings of one: "Hindalco - Belur", "Hindalco FRP" and "Hindalco
+  // - Kuppam" share a brand and are three plants. They were all being
+  // offered as merges of each other, and a merge rewrites the client name
+  // on every record of both and then deletes one of them.
+  //
+  // One side having extra words is still a match, because that is what a
+  // fuller spelling of the same thing looks like: "Hindalco" inside
+  // "Aditya Birla - Hindalco", "Hindalco Industries Alupuram unit" beside
+  // "Hindalco Alupuram".
+  const onlyA = ta.filter((t) => !tb.includes(t));
+  const onlyB = tb.filter((t) => !ta.includes(t));
+  if (onlyA.length && onlyB.length) return false;
   const shared = ta.filter((t) => tb.includes(t));
   return shared.length >= 1 && shared.some((t) => t.length >= 4) && shared.length / Math.min(ta.length, tb.length) >= 0.5;
 }

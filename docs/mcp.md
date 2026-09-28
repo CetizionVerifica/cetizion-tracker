@@ -47,6 +47,7 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_inbox` | client emails nobody has answered: who wrote, about what, whose it is, how late — paged |
 | `list_payables` | what we owe travel vendors, longest overdue first, with the total and every ageing bucket — paged |
 | `list_data_gaps` | what is missing and what it is blocking, with the page that lists those rows |
+| `list_duplicate_companies` | groups of companies that may be one client spelt more than once. Read-only |
 | `list_tasks` | open tasks, soonest due first, with the record each is on — paged |
 | `create_task`, `add_note`, `log_touch`, `update_next_step` | small writes, shown on the record as made "via MCP" |
 | `complete_task` | marks a task done. `tasks` has no column for who did it; the trace is in the token log |
@@ -237,6 +238,7 @@ Not an oversight. These are the boundary:
 | Delete anything | — |
 | Send an email or a message | `log_touch` records a call that already happened. Nothing here contacts a client |
 | Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true` |
+| Merge two companies | Finding look-alikes is the useful half and costs nothing. A merge rewrites the client name on every record of one company and deletes it, with no undo — that belongs on the Companies screen, where whoever does it can see the records about to move |
 | Read a client's email | `list_inbox` gives subjects and status. Whether the team may see more than that is the mailbox owner's decision, made once, in Settings |
 
 Bulk import is the other way in, and it keeps the same boundary by
