@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { requireAdmin } from '../auth/middleware.js';
+import { pool } from '../db.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { MIN_PASSWORD_LENGTH, passwordProblem } from '../lib/passwords.js';
 import {
   ActiveNeedsLoginError, DuplicateEmailError, LastAdminError, ROLES,
@@ -24,7 +26,14 @@ import { ApiError } from '../middleware/error.js';
  * database mode would be a circle nobody could step into.
  *
  * No hash ever leaves here: every row is selected by column list, and the
- * password column is not in any of them.
+ * password column is not in any of them. Nor does one reach the activity
+ * log: every call below records what changed, and a password is recorded as
+ * the fact that it was reset and nothing else.
+ *
+ * Each of the three writes passes its activity row into the transaction the
+ * change itself runs in, so the two commit together. An account edited with
+ * no record of who edited it is the failure this phase exists to prevent,
+ * and it is a worse outcome than the edit being refused.
  */
 
 export const userRouter = Router();
@@ -124,10 +133,21 @@ userRouter.get('/', async (req, res) => {
 
 userRouter.post('/', async (req, res) => {
   const body = parse(newUser, req.body);
+  const actor = actorFrom(req.user);
 
   let created;
   try {
-    created = await createUserAsAdmin(body);
+    created = await createUserAsAdmin(body, pool, (client, row) =>
+      logActivity(client, {
+        actor,
+        action: ACTIONS.USER_CREATED,
+        entityType: 'user',
+        entityId: row.id,
+        // The account as it was created. Kept even though the users table
+        // holds the same fields, because this is the only place that still
+        // says who this account was once it has been deleted.
+        metadata: { name: row.name, email: row.email, role: row.role, active: row.active },
+      }));
   } catch (err) {
     throw asApiError(err);
   }
@@ -140,13 +160,68 @@ userRouter.post('/', async (req, res) => {
   res.status(201).json({ data: user });
 });
 
+/**
+ * What one edit is called in the activity log.
+ *
+ * Switching an account off or back on is the change somebody will come
+ * looking for, so it gets its own name — and only one name. Recording a
+ * `user.updated` beside a `user.deactivated` would double every such edit
+ * in the log and leave a reader working out whether two things happened;
+ * the `changed_fields` below already say that the name moved too.
+ */
+function userEditAction(before, after) {
+  if (before && before.active !== after.active) {
+    return after.active ? ACTIONS.USER_REACTIVATED : ACTIONS.USER_DEACTIVATED;
+  }
+  return ACTIONS.USER_UPDATED;
+}
+
+/** Which of the editable fields actually moved, and what the notable ones moved from. */
+function userEditMetadata(before, after) {
+  const fields = ['name', 'email', 'role', 'active'];
+  const changed = before ? fields.filter((f) => before[f] !== after[f]) : fields;
+  const metadata = { changed_fields: changed };
+
+  // What it changed from and to, not only that it changed. An admin
+  // repointing somebody's account at an address they control is the case
+  // this log exists for, and "an email changed on user 5 at 14:03" cannot
+  // be acted on without going to a backup for the old value.
+  for (const field of ['name', 'email']) {
+    if (before && changed.includes(field)) {
+      metadata[`old_${field}`] = before[field];
+      metadata[`new_${field}`] = after[field];
+    }
+  }
+  if (before && changed.includes('role')) {
+    metadata.old_role = before.role;
+    metadata.new_role = after.role;
+  }
+  if (before && changed.includes('active')) {
+    metadata.old_active = before.active;
+    metadata.new_active = after.active;
+    // Switching somebody off raises their session_version in the same
+    // statement, which ends the sessions they were holding. Worth saying,
+    // because "they were signed out" is otherwise invisible here.
+    if (!after.active) metadata.sessions_revoked = true;
+  }
+  return metadata;
+}
+
 userRouter.patch('/:id', async (req, res) => {
   const id = userId(req.params.id);
   const changes = parse(userChanges, req.body);
+  const actor = actorFrom(req.user);
 
   let updated;
   try {
-    updated = await updateUser(id, changes);
+    updated = await updateUser(id, changes, pool, (client, { before, after }) =>
+      logActivity(client, {
+        actor,
+        action: userEditAction(before, after),
+        entityType: 'user',
+        entityId: after.id,
+        metadata: userEditMetadata(before, after),
+      }));
   } catch (err) {
     throw asApiError(err);
   }
@@ -173,7 +248,20 @@ userRouter.post('/:id/password', async (req, res) => {
   const id = userId(req.params.id);
   const { password: plain } = parse(newPassword, req.body);
 
-  const updated = await setUserPassword(id, plain);
+  const actor = actorFrom(req.user);
+
+  const updated = await setUserPassword(id, plain, pool, (client, row) =>
+    logActivity(client, {
+      actor,
+      action: ACTIONS.USER_PASSWORD_RESET,
+      entityType: 'user',
+      entityId: row.id,
+      // Never the password, and never the hash. What an admin reading this
+      // needs is that a reset happened, to whom, by whom and when — all of
+      // which is in the row's own columns — plus the consequence that is
+      // not: every session that account held has ended.
+      metadata: { sessions_revoked: true },
+    }));
   if (!updated) throw new ApiError(404, 'User not found');
 
   res.json({ data: updated });

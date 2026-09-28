@@ -78,6 +78,7 @@ export default function Projects() {
       filters={[
         { name: 'project_stage', label: 'Stage', options: ['Not Started', 'Onboarding', 'In Progress', 'Delivered'] },
         { name: 'payment_status', label: 'Payment', options: ['Overdue', 'Invoicing pending', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
+        { name: 'sales_person', label: 'Sales person', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sales_people] },
       ]}
     />
   );

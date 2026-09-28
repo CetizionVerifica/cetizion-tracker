@@ -5,7 +5,7 @@
  * runners read the rows, apply them and send through lib/mail.js.
  */
 import { query } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { financeDigest, paymentReminder } from './emailTemplates.js';
 import { sendMail } from './mail.js';
 

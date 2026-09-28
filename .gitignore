@@ -11,7 +11,17 @@ server/import/
 
 .env
 .env.local
+# Sales sheets and import specs: real client data, never in the repo.
+server/import/
 *.log
 .DS_Store
 .mcp.json
 Issue-18-ANALYSIS.md
+
+# Local one-off pages written for Shyam, kept out of the repo.
+/cetizion-on-twenty.html
+/twenty-workspace-update.html
+/twenty-workspace-update.pdf
+
+# Design handoff bundles from claude.ai/design: local reference, not source.
+*-handoff.zip

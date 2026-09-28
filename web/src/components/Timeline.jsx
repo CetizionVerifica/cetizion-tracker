@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Badge, Card, ConfirmDialog, Empty, Field, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
@@ -70,6 +70,9 @@ export function Timeline({ entity, id, title = 'Activity' }) {
                   <span className="small muted timeline__when">{new Date(it.at).toLocaleString()}{it.by ? ` · ${it.by}` : ''}</span>
                 </div>
                 {it.detail && <div className="timeline__detail">{it.detail}</div>}
+                {it.kind === 'task' && it.record.targets?.length > 0 && (
+                  <div className="timeline__detail small muted">Also on {it.record.targets.map(targetLabel).join(', ')}</div>
+                )}
                 {(it.kind === 'note' || it.kind === 'task' || it.kind === 'file') && (
                   <div className="timeline__actions">
                     {it.kind === 'note' && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setNote(it.record)}>Edit</button>}
@@ -117,12 +120,13 @@ function NoteDialog({ entity, id, record, onClose, onSaved }) {
 
 function TaskDialog({ entity, id, record, people, onClose, onSaved }) {
   const toast = useToast();
-  const [v, setV] = useState(() => record ? { ...record, due_at: record.due_at || '' } : { title: '', description: '', due_at: '', type: 'follow_up', priority: 'normal', assignee: '', status: 'todo' });
+  const [v, setV] = useState(() => record ? { ...record, due_at: record.due_at || '', targets: record.targets || [] } : { title: '', description: '', due_at: '', type: 'follow_up', priority: 'normal', assignee: '', status: 'todo', targets: [] });
   const [busy, setBusy] = useState(false);
   const set = (k, val) => setV((s) => ({ ...s, [k]: val }));
   async function save(e) {
     e.preventDefault(); setBusy(true);
-    const payload = { title: v.title, description: v.description || null, due_at: v.due_at || null, type: v.type, priority: v.priority, assignee: v.assignee || null, status: v.status };
+    const payload = { title: v.title, description: v.description || null, due_at: v.due_at || null, type: v.type, priority: v.priority, assignee: v.assignee || null, status: v.status,
+      targets: v.targets.map((t) => ({ entity: t.entity, entity_id: t.entity_id })) };
     try {
       if (record) await api.update('tasks', record.id, payload); else await api.create('tasks', { ...payload, entity, entity_id: id });
       onSaved();
@@ -138,8 +142,78 @@ function TaskDialog({ entity, id, record, people, onClose, onSaved }) {
         <Field label="For"><Input list="task-people" value={v.assignee} onChange={(e) => set('assignee', e.target.value)} placeholder="Who does it" /><datalist id="task-people">{people.map((p) => <option key={p} value={p} />)}</datalist></Field>
         {record && <Field label="Status"><Select value={v.status} placeholder={null} options={[{ value: 'todo', label: 'To do' }, { value: 'in_progress', label: 'In progress' }, { value: 'done', label: 'Done' }]} onChange={(e) => set('status', e.target.value)} /></Field>}
         <div className="span-all"><Field label="Details"><Textarea rows={3} value={v.description || ''} onChange={(e) => set('description', e.target.value)} /></Field></div>
+        <div className="span-all"><AlsoOn value={v.targets} main={{ entity: record?.entity || entity, entity_id: record?.entity_id || id }} onChange={(targets) => set('targets', targets)} /></div>
       </form>
     </Modal>
+  );
+}
+
+// A search hit, as a record a task can be on.
+const TARGET_OF = {
+  deal: (h) => ({ entity: 'quotation', entity_id: h.title }),
+  enquiry: (h) => ({ entity: 'enquiry', entity_id: h.title }),
+  company: (h) => ({ entity: 'company', entity_id: String(h.id) }),
+  contact: (h) => ({ entity: 'contact', entity_id: String(h.id) }),
+  project: (h) => ({ entity: 'project', entity_id: h.title }),
+  order: (h) => ({ entity: 'purchase_order', entity_id: h.title }),
+};
+const ENTITY_NAME = { quotation: 'quotation', enquiry: 'enquiry', company: 'company', contact: 'contact', project: 'project', purchase_order: 'PO', payment_stage: 'payment stage' };
+const targetLabel = (t) => t.label || `${ENTITY_NAME[t.entity] || t.entity} ${t.entity_id}`;
+const targetKey = (t) => `${t.entity}:${t.entity_id}`;
+
+/**
+ * The other records a task is on (#22): "send the revised quotation" is
+ * work on the quotation and on the company, and shows on both timelines.
+ */
+function AlsoOn({ value, main, onChange }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  useEffect(() => {
+    const text = q.trim();
+    if (text.length < 2) { setHits([]); return undefined; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.raw(`/search?q=${encodeURIComponent(text)}`);
+        setHits((res.data || []).filter((h) => TARGET_OF[h.type]).slice(0, 8));
+      } catch { setHits([]); }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+  const taken = new Set([targetKey(main), ...value.map(targetKey)]);
+  const add = (h) => {
+    const t = { ...TARGET_OF[h.type](h), label: `${h.label.toLowerCase()} ${h.title}` };
+    if (!taken.has(targetKey(t))) onChange([...value, t]);
+    setQ(''); setHits([]);
+  };
+  return (
+    // Not a Field: that is a <label>, and a click on its text would press the
+    // first chip's remove button.
+    <div role="group" aria-labelledby="also-on-label" className="flex flex-col gap-1.5">
+      <span id="also-on-label" className="text-[12px] font-medium text-secondary-foreground">Also on</span>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          {value.map((t) => (
+            <Badge key={targetKey(t)} tone="info">
+              {targetLabel(t)}
+              <button type="button" className="btn btn--sm btn--ghost" style={{ padding: '0 4px', minHeight: 0 }} aria-label={`Remove ${targetLabel(t)}`} onClick={() => onChange(value.filter((x) => targetKey(x) !== targetKey(t)))}>✕</button>
+            </Badge>
+          ))}
+        </div>
+      )}
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a company, quotation, project, PO…" aria-label="Search a record to add" />
+      {hits.length > 0 && (
+        <ul className="stack" style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, gap: 2 }}>
+          {hits.map((h) => (
+            <li key={`${h.type}-${h.id}`}>
+              <button type="button" className="btn btn--sm btn--ghost" disabled={taken.has(targetKey(TARGET_OF[h.type](h)))} onClick={() => add(h)} style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'left' }}>
+                <span className="strong">{h.title}</span>&nbsp;<span className="small muted">{h.label}{h.subtitle ? ` · ${h.subtitle}` : ''}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <span className="text-[12px] text-muted-foreground">Other records this task is about. It shows on each of their timelines too.</span>
+    </div>
   );
 }
 

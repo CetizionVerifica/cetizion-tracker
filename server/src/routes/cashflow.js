@@ -4,7 +4,9 @@
  *
  *   GET /api/cashflow?months=6
  *
- * In:  invoiced stages not yet paid, by their due date (overdue ones now);
+ * In:  payments already received this month (`received`, not part of `inflow`
+ *      — that is what is still to come);
+ *      invoiced stages not yet paid, by their due date (overdue ones now);
  *      stages not yet invoiced, by when their trigger is expected (PO
  *      registration: now; delivery: the project's planned delivery, else
  *      the PO date plus the terms); open quotations weighted by their
@@ -15,7 +17,7 @@
  */
 import { Router } from 'express';
 import { query } from '../db.js';
-import { businessToday } from '../lib/businessDate.js';
+import { businessToday } from '../lib/businessDate.ts';
 
 export const cashflowRouter = Router();
 
@@ -27,9 +29,10 @@ cashflowRouter.get('/', async (req, res) => {
   const today = businessToday();
   const first = ym(today);
   const keys = Array.from({ length: months }, (_, i) => addMonths(first, i));
-  const rows = Object.fromEntries(keys.map((k) => [k, { month: k, invoiced: 0, scheduled: 0, pipeline: 0, vendors: 0, claims: 0, items: [] }]));
-  const later = { month: 'later', invoiced: 0, scheduled: 0, pipeline: 0, vendors: 0, claims: 0, items: [] };
-  const unscheduled = { month: 'unscheduled', invoiced: 0, scheduled: 0, pipeline: 0, vendors: 0, claims: 0, items: [] };
+  const blank = (month) => ({ month, received: 0, invoiced: 0, scheduled: 0, pipeline: 0, vendors: 0, claims: 0, items: [] });
+  const rows = Object.fromEntries(keys.map((k) => [k, blank(k)]));
+  const later = blank('later');
+  const unscheduled = blank('unscheduled');
   const foreign = [];
   const put = (when, field, amount, item) => {
     if (!amount) return;
@@ -38,7 +41,7 @@ cashflowRouter.get('/', async (req, res) => {
     if (item) bucket.items.push({ ...item, field, amount: Number(amount), when: when || null });
   };
 
-  const [{ rows: stages }, { rows: quotes }, { rows: vendors }, { rows: claims }] = await Promise.all([
+  const [{ rows: stages }, { rows: quotes }, { rows: vendors }, { rows: claims }, { rows: receipts }] = await Promise.all([
     query(`SELECT ps.*, po.po_date, po.actual_delivery_date, po.payment_terms_days, pr.planned_delivery_date, pr.client_name AS project_client
              FROM v_payment_stages ps JOIN purchase_orders po ON po.po_number = ps.po_number JOIN projects pr ON pr.project_id = po.project_id
             WHERE ps.stage_status <> 'Paid'`),
@@ -48,6 +51,13 @@ cashflowRouter.get('/', async (req, res) => {
             WHERE finance_to_pay`),
     query(`SELECT claim_id, employee_name, amount_claimed, amount_reimbursed, status FROM v_employee_expense_claims
             WHERE status IN ('Approved - to reimburse', 'Partly reimbursed')`),
+    // Money already in the bank this month. A forecast that starts at the
+    // first of the month and shows only what is still owed reads as though
+    // the month has collected nothing, which is wrong by the third of it.
+    query(`SELECT to_char(p.received_on, 'YYYY-MM') AS month, SUM(p.amount) AS amount
+             FROM payments p JOIN v_payment_stages ps ON ps.id = p.stage_id
+            WHERE p.received_on >= date_trunc('month', $1::date) AND ps.currency = 'INR'
+            GROUP BY 1`, [today]),
   ]);
 
   for (const s of stages) {
@@ -73,6 +83,8 @@ cashflowRouter.get('/', async (req, res) => {
   }
   for (const v of vendors) put(v.pay_by || today, 'vendors', Number(v.invoice_amount || 0) - Number(v.amount_paid || 0), { ref: v.vendor_invoice_id, client: v.travel_vendor, note: v.payment_status });
   for (const c of claims) put(today, 'claims', Number(c.amount_claimed || 0) - Number(c.amount_reimbursed || 0), { ref: c.claim_id, client: c.employee_name, note: c.status });
+  // No item lines: a receipt is not a thing to chase, it is the month's floor.
+  for (const r of receipts) (rows[r.month] || later).received += Number(r.amount || 0);
 
   const list = [...keys.map((k) => rows[k]), later, unscheduled].map((b) => ({
     ...b,

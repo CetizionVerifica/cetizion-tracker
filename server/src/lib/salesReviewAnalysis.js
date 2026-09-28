@@ -1,5 +1,5 @@
 import { amounts, compactInr, decimal, number, percent, plural } from './reportFormat.js';
-import { r2, share } from './reportMath.js';
+import { r2, share } from './reportMath.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 /**
@@ -150,7 +150,8 @@ export function sectorAnalysis(sectors, rows) {
       `${concentrated ? ' More than half of won business depends on this one sector.' : ''}`));
   }
 
-  const decided = named.filter((row) => row.pos + row.lost >= 3).sort((a, b) => b.win_rate - a.win_rate || b.pos - a.pos);
+  // Decided deals, the same units as win_rate: phase POs on one quotation are one deal.
+  const decided = named.filter((row) => row.won_deals + row.lost >= 3).sort((a, b) => b.win_rate - a.win_rate || b.pos - a.pos);
   if (decided.length >= 2 && decided[0].win_rate - decided.at(-1).win_rate >= 0.15) {
     const [best, worst] = [decided[0], decided.at(-1)];
     insights.push(insight('OPPORTUNITY', 'action', `${best.sector} converts best, winning ${percent(best.win_rate)} of decided quotations against ${percent(worst.win_rate)} for ${worst.sector}.`));
@@ -176,7 +177,7 @@ export function serviceAnalysis(services) {
     insights.push(insight('HEADLINE', 'good', `${top.service} is the largest service line: ${compactInr(top.won_value_inr)} won from ${plural(top.won, 'PO')}.`));
   }
 
-  const decided = named.filter((row) => row.won + row.lost >= 3).sort((a, b) => b.win_rate - a.win_rate || b.won - a.won);
+  const decided = named.filter((row) => row.won_deals + row.lost >= 3).sort((a, b) => b.win_rate - a.win_rate || b.won - a.won);
   if (decided.length >= 2 && decided[0].win_rate - decided.at(-1).win_rate >= 0.15) {
     const [best, worst] = [decided[0], decided.at(-1)];
     insights.push(insight('OPPORTUNITY', 'action',
@@ -312,7 +313,7 @@ export function headline({ enquiries, sectors, customers, revenue, revenueLabel,
 }
 
 // ------------------------------------------------------- 7. what to fix
-export function managementFixes({ gaps, sectors, services, revenue, missingRates }) {
+export function managementFixes({ gaps, sectors, services, revenue, missingRates, staleRates = [] }) {
   const fixes = [];
   const add = (title, detail) => fixes.push({ title, detail });
   const ofQuotations = (n) => `${number(n)} of ${plural(gaps.quotations, 'quotation')} in the period ${has(n)}`;
@@ -324,7 +325,7 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
   if (gaps.won_without_po) {
     add('Register the purchase order for every won quotation',
       `${number(gaps.won_without_po)} won ${gaps.won_without_po === 1 ? 'quotation has' : 'quotations have'} no purchase order registered, ` +
-      `so ${gaps.won_without_po === 1 ? 'it is' : 'they are'} missing from invoicing, collections and payment status.`);
+      `so ${gaps.won_without_po === 1 ? 'it is' : 'they are'} missing from every won figure, invoicing, collections and payment status.`);
   }
   if (gaps.quotations_without_sector) {
     add('Set the sector on every quotation',
@@ -348,10 +349,24 @@ export function managementFixes({ gaps, sectors, services, revenue, missingRates
   const undatedPos = revenue.undated_pos ?? [];
   if (undatedPos.length) {
     add('Add the PO date to every purchase order',
-      `${plural(undatedPos.length, 'purchase order')} ${has(undatedPos.length)} no PO date, so ${undatedPos.length === 1 ? 'it is' : 'they are'} left out of the revenue figures: ${undatedPos.join(', ')}.`);
+      `${plural(undatedPos.length, 'purchase order')} ${has(undatedPos.length)} no PO date, so ${undatedPos.length === 1 ? 'it is' : 'they are'} left out of every PO figure for the period — sector-wise, service-wise, client analysis, FX deals and revenue: ${undatedPos.join(', ')}.`);
+  }
+  const mismatched = sectors.summary.currency_mismatch_pos ?? [];
+  if (mismatched.length) {
+    add('Check the currency on these purchase orders',
+      `${plural(mismatched.length, 'purchase order')} ${mismatched.length === 1 ? 'is' : 'are'} in a different currency from ${mismatched.length === 1 ? 'its' : 'their'} quotation, ` +
+      `so ${mismatched.length === 1 ? 'its' : 'their'} value may be read in the wrong currency: ` +
+      `${mismatched.map((po) => `${po.po_number} (${po.currency}; quotation ${po.quotation_no} in ${po.quotation_currency})`).join(', ')}.`);
   }
   if (missingRates.length) {
     add('Set the exchange rates', `No rate covers the dates of the ${missingRates.join(', ')} amounts in this report, so they are left out of every INR figure and shown separately. Add each one under Settings -> Exchange rates, dated from when it applied.`);
+  }
+  // The newest rate a currency has is itself old, so recent figures convert
+  // at a number from before (lib/fx.ts). The daily ECB job keeps these current.
+  if (staleRates.length) {
+    add('Bring the exchange rates up to date',
+      `The newest rate held for ${joinNames(staleRates.map((r) => r.currency))} is not from this week, so recent figures convert at an older number: ` +
+      `${staleRates.map((r) => r.note).join('; ')}. The daily exchange-rate job updates these; check that it is running.`);
   }
   if (gaps.undated_quotations || gaps.undated_enquiries) {
     const parts = [

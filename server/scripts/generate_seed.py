@@ -4,6 +4,9 @@ Turn the Cetizion workbook into SQL.
 
   python3 scripts/generate_seed.py "<path to .xlsx>"
 
+Needs openpyxl, which is not part of the app (the server is Node, and this
+script only runs by hand): pip install openpyxl
+
 Writes two files next to db/schema.sql:
 
   db/seed.sql  — reference data plus every real row in the workbook
@@ -106,9 +109,8 @@ def build(xlsx_path: Path):
          "Receives the 'raise invoice' worklist reminders."),
         ("hr_email", "hr@cetizion.com",
          "Owns the Travel Log, approvals and reimbursements."),
-        ("default_advance_percent", "0.5",
-         "Suggested first-stage split. Actual % is set per stage."),
-        ("default_delivery_percent", "0.5", "Suggested closing-stage split."),
+        # No default_advance_percent / default_delivery_percent: payment-terms
+        # templates (#26) replaced them, and nothing read them in between.
         ("vendor_invoice_window_days", "15",
          "Travel vendor must invoice within this many days of the trip end."),
         ("default_vendor_payment_terms_days", "30",

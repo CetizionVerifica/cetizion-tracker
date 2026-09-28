@@ -76,15 +76,24 @@ export function verifySession(token, secret, now = Date.now()) {
   return payload;
 }
 
-/** The database session shape. Bumped if that payload ever changes meaning. */
-export const DATABASE_SESSION_VERSION = 2;
+/**
+ * The database session shape. Bumped if that payload ever changes meaning.
+ *
+ * 3 added `sid`, the row in user_sessions this cookie belongs to. Like `sv`
+ * before it, it is required rather than defaulted: a cookie with no session
+ * id is one signed before sessions could be listed or ended, and there is
+ * no honest value to assume for it. Everybody signs in once more, which is
+ * the same trade version 2 made.
+ */
+export const DATABASE_SESSION_VERSION = 3;
 
 export const sharedPayload = (username, expiresAt) => ({ sub: username, exp: expiresAt });
 
-export const databasePayload = (userId, sessionVersion, expiresAt) => ({
+export const databasePayload = (userId, sessionVersion, expiresAt, sessionId) => ({
   v: DATABASE_SESSION_VERSION,
   uid: userId,
   sv: sessionVersion,
+  sid: sessionId,
   exp: expiresAt,
 });
 
@@ -100,7 +109,7 @@ export const databasePayload = (userId, sessionVersion, expiresAt) => ({
  * only one of which anybody is watching.
  *
  * @returns {{kind: 'shared', username: string}
- *          | {kind: 'database', uid: number, sv: number}
+ *          | {kind: 'database', uid: number, sv: number, sid: string}
  *          | null}
  */
 export function sessionSubject(payload, mode) {
@@ -114,8 +123,10 @@ export function sessionSubject(payload, mode) {
       // before revocation existed, and there is no honest value to assume
       // for it — assuming 1 would let exactly the cookies this feature
       // exists to end carry on working.
-      Number.isSafeInteger(payload.sv) && payload.sv > 0;
-    return ok ? { kind: 'database', uid: payload.uid, sv: payload.sv } : null;
+      Number.isSafeInteger(payload.sv) && payload.sv > 0 &&
+      // Same reasoning as `sv`: no session id, no session row to end.
+      typeof payload.sid === 'string' && payload.sid.length > 0;
+    return ok ? { kind: 'database', uid: payload.uid, sv: payload.sv, sid: payload.sid } : null;
   }
 
   // Shared: the original shape, which carries no version at all. Anything

@@ -89,6 +89,40 @@ describe('a connected mailbox, and the door Microsoft knocks on', { skip: !ADMIN
     }
   });
 
+  /**
+   * How far back a mailbox reads is only consulted for a folder with no
+   * delta link, so raising it while a cursor exists changed precisely
+   * nothing — the setting looked like it worked and the older mail never
+   * arrived. Dropping the cursor is what gives the number meaning.
+   */
+  test('asking for more history drops the sync cursor so the next pass goes back for it', async () => {
+    const box = await testMailbox(`history-${Date.now()}@cetizionverifica.com`);
+    await db.query(`INSERT INTO mail_folders (account_id, folder, delta_link) VALUES ($1, 'inbox', 'cursor-abc'), ($1, 'sentitems', 'cursor-def')`, [box.id]);
+
+    const { body } = await agent.patch(`/api/mailboxes/${box.id}`).send({ import_days: 365 }).expect(200);
+    assert.equal(body.data.import_days, 365);
+
+    const { rows } = await db.query('SELECT delta_link FROM mail_folders WHERE account_id = $1', [box.id]);
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((f) => f.delta_link === null), 'both folders start again from the new window');
+  });
+
+  test('changing something else leaves the cursor where it was', async () => {
+    const box = await testMailbox(`cursor-kept-${Date.now()}@cetizionverifica.com`);
+    await db.query(`INSERT INTO mail_folders (account_id, folder, delta_link) VALUES ($1, 'inbox', 'cursor-keep')`, [box.id]);
+
+    await agent.patch(`/api/mailboxes/${box.id}`).send({ exclude_internal: false }).expect(200);
+
+    const { rows: [folder] } = await db.query('SELECT delta_link FROM mail_folders WHERE account_id = $1', [box.id]);
+    assert.equal(folder.delta_link, 'cursor-keep', 're-reading the whole window is not free; only ask for it when asked');
+  });
+
+  test('mail between colleagues can be kept, for a mailbox that wants it', async () => {
+    const box = await testMailbox(`internal-${Date.now()}@cetizionverifica.com`);
+    const { body } = await agent.patch(`/api/mailboxes/${box.id}`).send({ exclude_internal: false }).expect(200);
+    assert.equal(body.data.exclude_internal, false);
+  });
+
   test('disconnecting stops the mail, destroys the tokens and says what it could not do', async () => {
     const box = await testMailbox(`leaving-${Date.now()}@cetizionverifica.com`);
     await db.query(`UPDATE connected_accounts SET tokens_encrypted = 'pretend-token' WHERE id = $1`, [box.id]);

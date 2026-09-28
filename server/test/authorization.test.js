@@ -468,6 +468,9 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     const LISTS = [
       'pipeline-stages', 'payment-terms-templates', 'payment-terms-template-lines',
       'onboarding-templates', 'onboarding-template-lines', 'lead-sources', 'lost-reasons',
+      // A holiday moves every deadline and reply clock in the app, so a
+      // sales user reads the calendar and an admin sets it (#73).
+      'holidays',
     ];
 
     for (const list of LISTS) {
@@ -638,8 +641,77 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       assert.equal(admin_read.status, 200, 'an admin can read it');
     });
 
+    test('a thread on a record they own is theirs to read, wherever it arrived', async () => {
+      // #29 asks for this in so many words: "a sales user sees threads on
+      // their own records". The client replies to whoever they have always
+      // written to, so the thread about your own deal usually lands in
+      // somebody else's mailbox.
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('colleague@example.test', 'microsoft', 'colleague@example.test', 'active', 'share_everything') RETURNING id`);
+      const no = `CTZ/QT/2026/9${Math.floor(Math.random() * 90) + 10}`;
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Their Client Ltd', '2026-09-01', 50000, 'Submitted', $2)`, [no, sales.user.name]);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id, first_message_at, last_message_at)
+         VALUES ($1, $2, 'About your quotation', 'quotation', $3, now(), now()) RETURNING id`,
+        [a.id, `conv-own-${a.id}`, no]);
+
+      const read = await as(sales.cookie)('get', `/api/mail/threads/${t.id}`);
+      assert.equal(read.status, 200, `their own deal, in a colleague's mailbox: ${JSON.stringify(read.body)}`);
+
+      const listed = await as(sales.cookie)('get', `/api/mail/threads?entity=quotation&id=${encodeURIComponent(no)}`);
+      assert.equal(listed.status, 200);
+      assert.ok(listed.body.data.some((x) => x.id === t.id), 'and it shows on the record page');
+
+      // Reading it is not the same as speaking as its owner: a reply leaves
+      // from that mailbox and lands in that person's Sent Items.
+      const reply = await as(sales.cookie)('post', `/api/mail/threads/${t.id}/reply`).send({ html: 'Hello' });
+      assert.equal(reply.status, 404, 'replying still needs the mailbox to be theirs');
+    });
+
+    test('a thread on a deal that is not theirs stays invisible', async () => {
+      const { rows: [a] } = await db.query(
+        `INSERT INTO connected_accounts (username, provider, email, status, visibility)
+         VALUES ('other@example.test', 'microsoft', 'other@example.test', 'active', 'share_everything') RETURNING id`);
+      const no = `CTZ/QT/2026/8${Math.floor(Math.random() * 90) + 10}`;
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Not Their Client', '2026-09-01', 50000, 'Submitted', 'Somebody Else')`, [no]);
+      const { rows: [t] } = await db.query(
+        `INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id, first_message_at, last_message_at)
+         VALUES ($1, $2, 'Not your deal', 'quotation', $3, now(), now()) RETURNING id`,
+        [a.id, `conv-other-${a.id}`, no]);
+      assert.equal((await as(sales.cookie)('get', `/api/mail/threads/${t.id}`)).status, 404);
+    });
+
+    test('a task records who made it, the way a note and a file already do', async () => {
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ('CTZ/QT/2026/001', 'Signed Copy Ltd', '2026-09-01', 50000, 'Submitted', $1) ON CONFLICT DO NOTHING`, [sales.user.name]);
+      const made = await as(sales.cookie)('post', '/api/tasks')
+        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'Chase the signed copy' });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      assert.ok(made.body.data.created_by, 'a task with nobody\'s name on it is an anonymous timeline entry (#22)');
+
+      const imported = await as(admin.cookie)('post', '/api/tasks')
+        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'From the old sheet', created_by: 'Ramesh' });
+      assert.equal(imported.body.data.created_by, 'Ramesh', 'an author sent explicitly is kept, so an import carries its own');
+    });
+
     test('making a mailbox into a team inbox is the admin\'s call', async () => {
       const res = await as(sales.cookie)('post', '/api/inbox/inboxes').send({ name: 'Mine now', account_id: 1 });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+    });
+
+    /**
+     * Deleting one is the same call pointed the other way, and worse:
+     * inbox_conversations cascades, so it discards the whole team's triage
+     * and quietly stops the shared address reaching anybody.
+     */
+    test('and so is deleting one', async () => {
+      const res = await as(sales.cookie)('delete', '/api/inbox/inboxes/1?discard=yes');
       assert.equal(res.status, 403, JSON.stringify(res.body));
     });
   });
@@ -732,6 +804,190 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     test('an unauthenticated caller is turned away first', async () => {
       const res = await as(null)('get', '/api/api-tokens');
       assert.equal(res.status, 401, JSON.stringify(res.body));
+    });
+  });
+
+  // ------------------------------------------------ #22: who sees the history
+
+  describe('the pipeline counts every currency (#25)', () => {
+    test('a USD quotation is converted at the rate on its date, and one with no rate is counted as left out', async () => {
+      await db.query(`INSERT INTO exchange_rates (from_currency, to_currency, rate, effective_from, source) VALUES ('USD', 'INR', 80, '2026-08-31', 'manual') ON CONFLICT DO NOTHING`);
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, currency, status, sales_person)
+         VALUES ('CTZ/QT/2026/881', 'Dollar Deal Inc', '2026-09-01', 1000, 'USD', 'Submitted', 'FX Person'),
+                ('CTZ/QT/2026/882', 'Dirham Deal LLC', '2026-09-01', 500, 'AED', 'Submitted', 'FX Person')`);
+      const res = await as(admin.cookie)('get', '/api/pipeline?sales_person=FX%20Person');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const sent = res.body.data.stages.find((s) => s.name === 'Sent');
+      assert.equal(sent.value, 80000, 'USD 1,000 at 80 is ₹80,000 in the column total');
+      assert.equal(sent.without_rate, 1, 'the AED one has no rate and is said to be left out');
+      assert.equal(res.body.data.without_rate, 1);
+      const card = res.body.data.cards.find((c) => c.quotation_no === 'CTZ/QT/2026/881');
+      assert.equal(Number(card.value_inr), 80000);
+      assert.equal(Number(card.quotation_value), 1000, 'the card still shows its own currency');
+    });
+  });
+
+  /**
+   * Marking a milestone reached is a money control. The trigger stamps
+   * milestone_reached_on on every payment stage pointing at it, and a stage
+   * triggered "On Milestone" is ready to invoice the moment that is not
+   * null — so an unscoped PATCH moved somebody else's project into the
+   * invoice run.
+   */
+  describe("a milestone on somebody else's project (#26)", () => {
+    let theirMilestone;
+    let theirStage;
+
+    before(async () => {
+      await db.query(`INSERT INTO projects (project_id, client_name, sales_person) VALUES ('PRJ-THEIRS', 'Other Deal Ltd', 'Somebody Else') ON CONFLICT DO NOTHING`);
+      await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, currency) VALUES ('PO-THEIRS', 'PRJ-THEIRS', '2026-01-10', 500000, 'INR') ON CONFLICT DO NOTHING`);
+      const { rows: [m] } = await db.query(
+        `INSERT INTO project_milestones (project_id, name) VALUES ('PRJ-THEIRS', 'Stage 2 audit closed') RETURNING id`);
+      theirMilestone = m.id;
+      const { rows: [st] } = await db.query(
+        `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, milestone_id)
+         VALUES ('PO-THEIRS', 1, 'On milestone', 'On Milestone', 1, $1) RETURNING id`, [theirMilestone]);
+      theirStage = st.id;
+    });
+
+    test('a sales user cannot mark it reached, and the stage stays unbillable', async () => {
+      const res = await as(sales.cookie)('patch', `/api/project-milestones/${theirMilestone}`).send({ reached_on: '2026-09-28' });
+      assert.equal(res.status, 404, JSON.stringify(res.body));
+
+      const { rows: [stage] } = await db.query('SELECT milestone_reached_on FROM payment_stages WHERE id = $1', [theirStage]);
+      assert.equal(stage.milestone_reached_on, null, 'a refused request must not have moved the money either');
+    });
+
+    test('nor see it in the list, nor delete it', async () => {
+      const list = await as(sales.cookie)('get', '/api/project-milestones');
+      assert.equal(list.status, 200);
+      assert.ok(!list.body.data.some((m) => m.id === theirMilestone), "a colleague's milestone is not on the list");
+
+      const gone = await as(sales.cookie)('delete', `/api/project-milestones/${theirMilestone}`);
+      assert.equal(gone.status, 404);
+    });
+
+    test('the admin can, and that is what makes the stage billable', async () => {
+      const res = await as(admin.cookie)('patch', `/api/project-milestones/${theirMilestone}`).send({ reached_on: '2026-09-28' });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+
+      const { rows: [stage] } = await db.query('SELECT milestone_reached_on FROM payment_stages WHERE id = $1', [theirStage]);
+      assert.ok(stage.milestone_reached_on, 'the control is who may do it, not whether it works');
+    });
+  });
+
+  describe('tasks, notes, files and timelines are scoped to the person (#22)', () => {
+    const MINE = 'CTZ/QT/2026/701';
+    const THEIRS = 'CTZ/QT/2026/702';
+
+    before(async () => {
+      await db.query(
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
+         VALUES ($1, 'Own Deal Ltd', '2026-09-01', 10000, 'Submitted', $3), ($2, 'Other Deal Ltd', '2026-09-01', 20000, 'Submitted', 'Somebody Else')
+         ON CONFLICT DO NOTHING`, [MINE, THEIRS, sales.user.name]);
+      await db.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, 'A colleague''s note', 'Somebody Else')`, [THEIRS]);
+      await db.query(`INSERT INTO tasks (entity, entity_id, title, created_by) VALUES ('quotation', $1, 'A colleague''s task', 'Somebody Else')`, [THEIRS]);
+    });
+
+    /**
+     * The scoping above is only worth what its least guarded door is. The
+     * CSV export reads the same resource definitions and never asked them
+     * who may see a row, so every 404 here had a second way round it.
+     */
+    test('and cannot download the colleague\'s note through the CSV export either', async () => {
+      const csv = await as(sales.cookie)('get', '/api/export/notes.csv');
+      assert.equal(csv.status, 200, JSON.stringify(csv.body));
+      assert.doesNotMatch(csv.text, /A colleague's note/, 'the export must not hand over what /api/notes hides');
+
+      const tasks = await as(sales.cookie)('get', '/api/export/tasks.csv');
+      assert.equal(tasks.status, 200);
+      assert.doesNotMatch(tasks.text, /A colleague's task/);
+    });
+
+    test('an admin still exports everything', async () => {
+      const csv = await as(admin.cookie)('get', '/api/export/notes.csv');
+      assert.equal(csv.status, 200);
+      assert.match(csv.text, /A colleague's note/, 'scoping is about who is asking, not about hiding rows from everyone');
+    });
+
+    test("a sales user reads their own record's timeline and not a colleague's", async () => {
+      const own = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(MINE)}`);
+      assert.equal(own.status, 200, JSON.stringify(own.body));
+      const other = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(THEIRS)}`);
+      assert.equal(other.status, 404, 'a colleague\'s deal is not confirmed to exist');
+      const asAdmin = await as(admin.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(THEIRS)}`);
+      assert.equal(asAdmin.status, 200);
+    });
+
+    test('the task, note and file lists hold only what the person may see', async () => {
+      const notes = await as(sales.cookie)('get', '/api/notes?limit=500');
+      assert.equal(notes.status, 200);
+      assert.equal(notes.body.data.some((n) => n.entity_id === THEIRS), false, 'a colleague\'s note is not listed');
+      const tasks = await as(sales.cookie)('get', '/api/tasks?limit=500');
+      assert.equal(tasks.body.data.some((t) => t.entity_id === THEIRS), false, 'a colleague\'s task is not listed');
+      const all = await as(admin.cookie)('get', '/api/tasks?limit=500');
+      assert.ok(all.body.data.some((t) => t.entity_id === THEIRS), 'an admin sees everything');
+
+      const { rows: [n] } = await db.query('SELECT id FROM notes WHERE entity_id = $1', [THEIRS]);
+      assert.equal((await as(sales.cookie)('get', `/api/notes/${n.id}`)).status, 404);
+      assert.equal((await as(sales.cookie)('patch', `/api/notes/${n.id}`).send({ body: 'Rewritten' })).status, 404);
+      assert.equal((await as(sales.cookie)('delete', `/api/notes/${n.id}`)).status, 404);
+
+      const summary = await as(sales.cookie)('get', '/api/tasks/summary');
+      const everyone = await as(admin.cookie)('get', '/api/tasks/summary');
+      assert.ok(summary.body.data.open < everyone.body.data.open, 'the counts are the person\'s too');
+    });
+
+    test("nothing is hung on a colleague's record, and nobody signs as someone else", async () => {
+      const onTheirs = await as(sales.cookie)('post', '/api/notes').send({ entity: 'quotation', entity_id: THEIRS, body: 'Hello' });
+      assert.equal(onTheirs.status, 404, JSON.stringify(onTheirs.body));
+
+      const signed = await as(sales.cookie)('post', '/api/notes').send({ entity: 'quotation', entity_id: MINE, body: 'Mine', author: 'The Boss' });
+      assert.equal(signed.status, 201, JSON.stringify(signed.body));
+      assert.equal(signed.body.data.author, sales.user.name, 'the session names the author, not the request');
+      const edited = await as(sales.cookie)('patch', `/api/notes/${signed.body.data.id}`).send({ body: 'Mine, edited', author: 'The Boss' });
+      assert.equal(edited.status, 200, JSON.stringify(edited.body));
+      assert.equal(edited.body.data.author, sales.user.name);
+    });
+
+    test('a task on several records shows on each of their timelines', async () => {
+      const { rows: [co] } = await db.query('SELECT company_id FROM quotations WHERE quotation_no = $1', [MINE]);
+      assert.ok(co.company_id, 'the quotation is linked to its company');
+      const made = await as(sales.cookie)('post', '/api/tasks').send({
+        entity: 'quotation', entity_id: MINE, title: 'Send the revised scope',
+        targets: [{ entity: 'company', entity_id: String(co.company_id) }],
+      });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      const onCompany = await as(sales.cookie)('get', `/api/timeline?entity=company&id=${co.company_id}`);
+      assert.equal(onCompany.status, 200, JSON.stringify(onCompany.body));
+      const task = onCompany.body.data.find((i) => i.kind === 'task' && i.id === made.body.data.id);
+      assert.ok(task, 'the task is on the company\'s timeline too');
+      assert.deepEqual(task.record.targets, [{ entity: 'company', entity_id: String(co.company_id) }]);
+
+      const sneaky = await as(sales.cookie)('patch', `/api/tasks/${made.body.data.id}`)
+        .send({ targets: [{ entity: 'quotation', entity_id: THEIRS }] });
+      assert.equal(sneaky.status, 404, 'a task is not put on a record its maker may not see');
+
+      const off = await as(sales.cookie)('patch', `/api/tasks/${made.body.data.id}`).send({ targets: [] });
+      assert.equal(off.status, 200, JSON.stringify(off.body));
+      const { rows } = await db.query('SELECT entity FROM task_targets WHERE task_id = $1', [made.body.data.id]);
+      assert.deepEqual(rows.map((r) => r.entity), ['quotation'], 'only its own record is left');
+    });
+
+    test('the old remarks become the first, pinned note, once', async () => {
+      const { readFileSync } = await import('node:fs');
+      const { join, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+      await db.query(`UPDATE quotations SET remarks = 'Client wants a site visit first' WHERE quotation_no = $1`, [MINE]);
+      const migration = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations', '053_task_targets_first_notes.sql'), 'utf8');
+      await db.query(migration);
+      await db.query(migration);
+      const { rows } = await db.query(`SELECT author, pinned FROM notes WHERE entity = 'quotation' AND entity_id = $1 AND body = 'Client wants a site visit first'`, [MINE]);
+      assert.deepEqual(rows, [{ author: 'Moved from remarks', pinned: true }]);
+
+      const timeline = await as(sales.cookie)('get', `/api/timeline?entity=quotation&id=${encodeURIComponent(MINE)}`);
+      assert.equal(timeline.body.data[0].pinned, true, 'a pinned note heads the history');
     });
   });
 });

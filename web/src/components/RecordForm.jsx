@@ -17,6 +17,15 @@ import { useToast } from './ui.jsx';
  *
  * A field with { auto: 'enquiry' } is a reference number the server assigns
  * when the record is created: shown read-only, never sent.
+ *
+ * A field may also take:
+ *   fills(value, values)  other fields to set when this one changes, as
+ *                         { name: value } — a PO's currency from its quotation
+ *   warn(values)          a warning to show under the field, or null. It
+ *                         never blocks saving; that is what errors are for.
+ *
+ * A save the server accepts but has doubts about comes back with
+ * data.save_warning, shown as a warning toast.
  */
 export function RecordForm({
   title,
@@ -67,7 +76,8 @@ export function RecordForm({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (name, value) => {
-    setValues((v) => ({ ...v, [name]: value }));
+    const fills = fields.find((field) => field.name === name)?.fills;
+    setValues((v) => ({ ...v, [name]: value, ...(fills ? fills(value, v) : {}) }));
     setErrors((e) => (e[name] ? { ...e, [name]: undefined } : e));
   };
 
@@ -132,6 +142,10 @@ export function RecordForm({
         : await api.create(resource, payload);
       const assigned = fields.find((field) => field.auto && saved?.data?.[field.name]);
       toast(isEdit ? 'Changes saved' : assigned ? `Created ${saved.data[assigned.name]}` : 'Created', 'success');
+      // Already on screen when a field warned about it; otherwise (a quotation
+      // linked by the server, say) this is the first anyone hears of it.
+      const warnedOnScreen = fields.some((field) => field.warn?.(values));
+      if (saved?.data?.save_warning && !warnedOnScreen) toast(saved.data.save_warning, 'warning');
       onSaved?.(saved?.data);
       onClose();
     } catch (err) {
@@ -170,6 +184,7 @@ export function RecordForm({
                 field={resolveOptions(field, values)}
                 value={values[field.name]}
                 error={errors[field.name]}
+                warning={field.warn?.(values)}
                 onChange={(v) => set(field.name, v)}
                 record={record}
                 file={picked[field.name]}
@@ -197,7 +212,7 @@ function resolveOptions(field, values) {
     : field;
 }
 
-function FormField({ field, value, error, onChange, record, file, onFile, preview, isEdit }) {
+function FormField({ field, value, error, warning, onChange, record, file, onFile, preview, isEdit }) {
   if (field.auto) {
     if (isEdit) {
       // Edit mode: the reference number is immutable — show it as read-only.
@@ -303,6 +318,9 @@ function FormField({ field, value, error, onChange, record, file, onFile, previe
   return (
     <Field label={field.label} required={field.required} hint={hint} error={error}>
       {control}
+      {warning && !error && (
+        <span className="field__hint" role="status" style={{ color: 'var(--warn-fg)' }}>{warning}</span>
+      )}
     </Field>
   );
 }

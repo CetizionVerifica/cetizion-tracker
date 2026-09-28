@@ -60,6 +60,34 @@ function readable(req, alias, from) {
   };
 }
 
+/**
+ * "threads this person may read": the mailboxes above, plus a thread that
+ * sits on a record they own.
+ *
+ * #29 asks for that third case in so many words — "a sales user sees
+ * threads on their own records" — and without it the client's reply about
+ * your own deal is invisible to you whenever it arrived in a colleague's
+ * mailbox, which is most of the time.
+ *
+ * Reading only. Replying stays on `readable`, because a reply leaves from
+ * the mailbox and lands in that person's Sent Items: seeing the thread and
+ * speaking as somebody else are different questions.
+ */
+function readableThread(req, accountAlias, threadAlias, from) {
+  const base = readable(req, accountAlias, from);
+  if (isAdmin(req)) return base;
+  const t = threadAlias;
+  const mine = (table, key, column) => `EXISTS (SELECT 1 FROM ${table} x WHERE ${t}.entity = '${column}' AND x.${key} = ${t}.entity_id
+      AND (lower(x.sales_person) = lower($${from}) OR lower(x.sales_person) = lower($${from + 1})))`;
+  return {
+    clause: `(${base.clause}
+      OR ${mine('quotations', 'quotation_no', 'quotation')}
+      OR ${mine('projects', 'project_id', 'project')}
+      OR ${mine('enquiries', 'enquiry_no', 'enquiry')})`,
+    params: base.params,
+  };
+}
+
 /** Null when there is no such mailbox, so the caller can 404 rather than leak. */
 async function mayAdminister(req, id) {
   const { rows } = await query('SELECT username FROM connected_accounts WHERE id = $1', [id]);
@@ -91,6 +119,11 @@ mailboxRouter.get('/', async (req, res) => {
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
             a.auto_create_contacts, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             (SELECT COUNT(*)::int FROM email_threads t WHERE t.account_id = a.id) AS threads,
+            -- Whether mail from this mailbox actually reaches the Inbox.
+            -- Being shared is not enough: routing needs an active inboxes
+            -- row, and without one a shared mailbox stores threads that
+            -- nobody ever sees on the Inbox page.
+            EXISTS (SELECT 1 FROM inboxes i WHERE i.account_id = a.id AND i.active) AS feeds_inbox,
             (SELECT COUNT(*)::int FROM email_messages m WHERE m.account_id = a.id) AS messages,
             (SELECT json_agg(json_build_object('folder', f.folder, 'subscribed_until', f.subscription_expires_at, 'synced', f.delta_link IS NOT NULL)) FROM mail_folders f WHERE f.account_id = a.id) AS folders
        FROM connected_accounts a WHERE ${listScope.clause} ORDER BY a.status = 'disconnected', a.email`, listScope.params);
@@ -104,7 +137,11 @@ mailboxRouter.get('/connect/microsoft', (req, res) => {
 });
 
 mailboxRouter.get('/oauth/microsoft', async (req, res) => {
-  const back = (msg) => res.redirect(`/mailboxes?${new URLSearchParams(msg)}`);
+  // /settings/mailboxes, not /mailboxes: the page moved into the Settings
+  // area in the redesign. The old path still redirects, but a redirect
+  // that drops the query string turned every outcome of this flow —
+  // success and failure alike — into a silent return to the page.
+  const back = (msg) => res.redirect(`/settings/mailboxes?${new URLSearchParams(msg)}`);
   const state = readState(req.query.state);
   if (!state || state.u !== who(req)) return back({ error: 'The sign-in could not be verified. Please try again.' });
   if (req.query.error) return back({ error: String(req.query.error_description || req.query.error).slice(0, 200) });
@@ -167,6 +204,20 @@ mailboxRouter.patch('/:id', async (req, res) => {
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_messages SET subject = NULL, snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'subject') await query('UPDATE email_messages SET snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_threads SET subject = NULL WHERE account_id = $1', [a.id]);
+  // How far back to read is only consulted for a folder that has no delta
+  // link yet (lib/mailbox/sync.js), because after the first pass Graph
+  // hands us a cursor and we follow it. So raising the number on its own
+  // changes nothing at all — the next sync resumes from the cursor and
+  // never looks further back than it already has.
+  //
+  // Dropping the cursor is what makes the setting mean something: the next
+  // sync walks the new window from the start. It is safe to repeat,
+  // because ingest() skips any message already stored for the account
+  // (sync.js, the provider_id check), so a second pass over ground already
+  // covered stores nothing twice.
+  if (parsed.data.import_days !== undefined) {
+    await query('UPDATE mail_folders SET delta_link = NULL WHERE account_id = $1', [a.id]);
+  }
   res.json({ data: a });
 });
 
@@ -211,7 +262,7 @@ mailThreadRouter.get('/threads', async (req, res) => {
   if (entity === 'company' || companyId) { params.push(Number(companyId || id)); where.push(`t.company_id = $${params.length}`); }
   else if (entity && id) { params.push(String(entity), String(id)); where.push(`t.entity = $${params.length - 1} AND t.entity_id = $${params.length}`); }
   else throw new ApiError(422, 'entity and id, or company_id, are required');
-  const scope = readable(req, 'a', params.length + 1);
+  const scope = readableThread(req, 'a', 't', params.length + 1);
   where.push(scope.clause);
   const { rows } = await query(
     `SELECT t.id, t.subject, t.company_id, t.contact_id, t.entity, t.entity_id, t.first_message_at, t.last_message_at, t.message_count, t.last_direction,
@@ -225,7 +276,7 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // A thread somebody else's mailbox holds answers the same as one that is
   // not there: whether a colleague is talking to a client is not a question
   // this route should answer.
-  const scope = readable(req, 'a', 2);
+  const scope = readableThread(req, 'a', 't', 2);
   const { rows: [t] } = await query(
     `SELECT t.*, a.email AS mailbox, a.visibility, a.status AS mailbox_status, c.name AS company_name, ct.name AS contact_name
        FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id

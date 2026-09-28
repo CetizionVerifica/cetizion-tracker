@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { similarName, similarNamePairs } from '../src/lib/names.js';
+import { similarName, similarNamePairs } from '../src/lib/names.ts';
 
 // Finding look-alike company names without comparing every name with every
 // other. The answer must stay exactly what comparing them all would give.

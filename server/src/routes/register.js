@@ -20,7 +20,9 @@ import { z } from 'zod';
 import { transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { lockAttachableDocument } from '../lib/documents.js';
+import { currencyMismatch } from '../lib/purchaseOrders.js';
 import { claimNextId } from '../lib/sequences.js';
+import { notify } from '../lib/notify.js';
 
 export const registerRouter = Router();
 
@@ -51,6 +53,8 @@ registerRouter.post('/:key/register', async (req, res) => {
     throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.') || '_', i.message])) });
   }
   const b = parsed.data;
+  // What the registration found worth saying, added to the response (#26).
+  const checked = {};
 
   const data = await transaction(async (client) => {
     const key = decodeURIComponent(req.params.key);
@@ -140,18 +144,53 @@ registerRouter.post('/:key/register', async (req, res) => {
           ORDER BY (t.id = (SELECT payment_terms_template_id FROM services WHERE name = $1)) DESC, t.is_default DESC LIMIT 1`, [q.service_quoted]));
     }
     const stages = [];
+    // A stage triggered On Milestone points at the project's milestone of that
+    // name (#26), made here if the project does not have it yet.
+    const milestoneFor = async (name) => {
+      if (!name || !String(name).trim()) return null;
+      const { rows: [m] } = await client.query(
+        `INSERT INTO project_milestones (project_id, name) VALUES ($1, btrim($2))
+         ON CONFLICT (project_id, lower(name)) DO UPDATE SET name = project_milestones.name
+         RETURNING id, reached_on`, [projectId, name]);
+      return m;
+    };
     if (template) {
       const { rows: tl } = await client.query('SELECT * FROM payment_terms_template_lines WHERE template_id = $1 ORDER BY sort_order, id', [template.id]);
       const total = tl.reduce((n, l) => n + Number(l.percent), 0);
       if (Math.abs(total - 100) > 0.01) throw new ApiError(422, `Template "${template.name}" adds up to ${total}%, not 100%`);
       for (const [i, l] of tl.entries()) {
+        const milestone = l.trigger_event === 'On Milestone' ? await milestoneFor(l.milestone_name) : null;
         const { rows: [s] } = await client.query(
-          `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days, milestone_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, stage_no, stage_name, stage_percent`,
-          [po.po_number, i + 1, l.stage_name, l.trigger_event, Number(l.percent) / 100, l.credit_days ?? null, l.milestone_name ?? null]);
+          `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days, milestone_name, milestone_id, milestone_reached_on)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, stage_no, stage_name, stage_percent`,
+          [po.po_number, i + 1, l.stage_name, l.trigger_event, Number(l.percent) / 100, l.credit_days ?? null, l.milestone_name ?? null,
+           milestone?.id ?? null, milestone?.reached_on ?? null]);
         stages.push(s);
       }
     }
+
+    // The PO against what was quoted (#26): the dialog warns before, this says after.
+    const quoted = q.total ?? q.quotation_value;
+    const poDiffers = quoted != null && Math.abs(Number(poValue) - Number(quoted)) > 0.005;
+
+    // The deal's owner and the project manager hear of it (#26): by email
+    // when it is known (the sign-in the bell matches), else by name.
+    const { rows: [pr] } = await client.query('SELECT project_manager, project_manager_email, sales_person FROM projects WHERE project_id = $1', [projectId]);
+    const people = [
+      pr?.project_manager_email || pr?.project_manager,
+      q.sales_person_email || pr?.sales_person || q.sales_person,
+    ].map((p) => (p ? String(p).trim() : '')).filter(Boolean);
+    for (const who of [...new Set(people.map((p) => p.toLowerCase()))]) {
+      await notify({
+        username: people.find((p) => p.toLowerCase() === who), kind: 'po_registered',
+        title: `PO ${po.po_number} registered · ${projectId}`,
+        body: `${q.client_name}: ${currency} ${poValue}${poDiffers ? ` (quoted ${q.currency || currency} ${quoted})` : ''}${stages.length ? `, ${stages.length} payment stage${stages.length === 1 ? '' : 's'}` : ''}.`,
+        entity: 'project', entityId: projectId, link: `/projects/${encodeURIComponent(projectId)}`,
+        dedupeKey: `po-registered:${po.po_number}:${who}`,
+      }, client);
+    }
+
+    Object.assign(checked, { quoted_total: quoted ?? null, po_value_differs: poDiffers });
 
     // ---- onboarding checklist from the template
     let checklist = 0;
@@ -179,8 +218,13 @@ registerRouter.post('/:key/register', async (req, res) => {
       }
     }
 
-    return { quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency, stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null };
+    return {
+      quotation_no: q.quotation_no, project_id: projectId, project_created: projectCreated, po_number: po.po_number, po_value: poValue, currency,
+      stages, service_lines: lines.length || 1, checklist_steps: checklist, template: template?.name || null,
+      // The currency defaults to the quotation's; one changed by hand is saved, and flagged.
+      save_warning: currencyMismatch(currency, q),
+    };
   });
 
-  res.status(201).json({ data });
+  res.status(201).json({ data: { ...data, ...checked } });
 });

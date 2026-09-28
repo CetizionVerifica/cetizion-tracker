@@ -1,7 +1,9 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
+import { SavedViews } from './SavedViews.jsx';
 import { api } from '../lib/api.js';
 import { useDebounced, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -36,28 +38,50 @@ export function ListPage({
   banner,
 }) {
   const toast = useToast();
-  const [search, setSearch] = useState(initialSearch || '');
+  const [urlParams] = useSearchParams();
+
+  /**
+   * A filter named in the address bar is applied, whatever list this is.
+   *
+   * A saved view is a resource and a set of filters, and it links here as
+   * `?stage_status=Overdue`. Reading the URL once, here, is what lets a
+   * view work on every list without each page being taught about it —
+   * before this, each page mapped its own handful of parameters by hand,
+   * and a view pointing at any other filter quietly did nothing.
+   */
+  const fromUrl = {};
+  for (const { name } of filters) {
+    const value = urlParams.get(name);
+    if (value) fromUrl[name] = value;
+  }
+  const urlSearch = urlParams.get('q') || '';
+
+  const [search, setSearch] = useState(initialSearch || urlSearch);
   // Arriving from a dashboard tile pre-selects the matching filter, so the
   // dropdown shows why the list is short.
-  const [filterValues, setFilterValues] = useState(() => initialFilters || {});
+  const [filterValues, setFilterValues] = useState(() => ({ ...initialFilters, ...fromUrl }));
 
   // Those props come from the URL, and this screen stays mounted when the URL
   // changes under it — a second tile, or another ?q= link. Without this the
   // address bar would say one thing and the table show another. Compared by
   // value, so a filter the user picked by hand is left alone.
-  const initialFiltersKey = JSON.stringify(initialFilters || {});
+  const initialFiltersKey = JSON.stringify({ ...initialFilters, ...fromUrl });
   useEffect(() => {
     setFilterValues(JSON.parse(initialFiltersKey));
   }, [initialFiltersKey]);
   useEffect(() => {
     setSearch(initialSearch || '');
   }, [initialSearch]);
+  // The server already understands `?sort=column:dir`; nothing in the UI
+  // ever asked for it, so a sixty-row list could only be read in the one
+  // order the resource happened to default to.
+  const [sort, setSort] = useState('');
   const [editing, setEditing] = useState(null); // record | 'new' | null
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const debouncedSearch = useDebounced(search);
-  const params = { q: debouncedSearch, ...filterValues };
+  const params = { q: debouncedSearch, ...filterValues, ...(sort ? { sort } : {}) };
   // refreshToken lets a parent pull fresh rows after an action without
   // remounting, so the user's search and filters survive.
   const { rows, total, loading, error, refetch } = useList(resource, params, [refreshToken]);
@@ -84,9 +108,23 @@ export function ListPage({
     }
   }
 
+  /**
+   * A column is sortable when its key is a field the rows actually carry.
+   *
+   * Derived from the data rather than declared per page, so it cannot
+   * name a field that does not exist — and a column that only renders
+   * something computed has no key in the row, so it stays unsorted rather
+   * than sorting by something the reader cannot see. A page can still say
+   * `sortBy` explicitly when the visible column and the field differ.
+   */
+  const sortable = columns.map((col) => ({
+    ...col,
+    sortBy: col.sortBy ?? (rows[0] && Object.hasOwn(rows[0], col.key) ? col.key : undefined),
+  }));
+
   const tableColumns = rowActions
     ? [
-        ...columns,
+        ...sortable,
         {
           key: '__actions',
           header: '',
@@ -106,7 +144,7 @@ export function ListPage({
           ),
         },
       ]
-    : columns;
+    : sortable;
 
   return (
     <>
@@ -135,6 +173,16 @@ export function ListPage({
         {typeof banner === 'function' ? banner(rows) : banner}
 
         <Card flush>
+          <SavedViews
+            resource={resource}
+            filters={filterValues}
+            search={debouncedSearch}
+            onApply={(saved) => {
+              const { q, ...rest } = saved || {};
+              setSearch(q || '');
+              setFilterValues(rest);
+            }}
+          />
           <div className="toolbar">
             <div className="search">
               <span className="search__icon">⌕</span>
@@ -204,6 +252,10 @@ export function ListPage({
               rows={rows}
               loading={loading}
               onRowClick={onRowClick}
+              label={title}
+              sort={sort}
+              onSort={setSort}
+              stickyHeader
               empty={
                 emptyState || (
                   <Empty

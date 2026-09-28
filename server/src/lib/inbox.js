@@ -5,7 +5,7 @@
  * Registered as a mailbox hook, so it runs inside the transaction that
  * stores each message.
  */
-import { businessWeekday } from './businessDate.js';
+import { businessWeekday } from './businessDate.ts';
 import { messageHooks } from './mailbox/sync.js';
 import { notify } from './notify.js';
 

@@ -11,6 +11,12 @@ const USERNAME = 'tester';
 const PASSWORD = 'a-good-long-test-password';
 
 process.env.NODE_ENV = 'test';
+// Pinned, not inherited. This is the shared-mode suite, and it used to say
+// so only in its comment: the mode came from the default, so a developer
+// with AUTH_MODE=database in their own .env ran these tests against the
+// users table instead — where /api/auth/login opens a pool, and a suite
+// that promises to need no database hangs waiting for one.
+process.env.AUTH_MODE = 'shared';
 process.env.AUTH_USERNAME = USERNAME;
 process.env.AUTH_PASSWORD = PASSWORD;
 process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';

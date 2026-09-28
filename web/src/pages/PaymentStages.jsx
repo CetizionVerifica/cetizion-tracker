@@ -101,6 +101,8 @@ export default function PaymentStages() {
         filters={[
           { name: 'stage_status', label: 'Status', options: ['To Invoice', 'Overdue', 'Due', 'Partially Paid', 'Paid', 'Not Due'] },
           { name: 'trigger_event', label: 'Trigger', options: lookups.enums?.trigger || [] },
+          { name: 'invoice_no', label: 'Invoice', options: [{ value: '__any__', label: 'Raised' }, { value: '__none__', label: 'Not raised' }] },
+          { name: 'document_id', label: 'Invoice document', options: [{ value: '__none__', label: 'Missing' }, { value: '__any__', label: 'Attached' }] },
         ]}
         banner={
           <Alert>

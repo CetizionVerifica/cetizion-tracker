@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { money, reportTimeZone, salesReportDocDefinition, salesReportPdf } from '../src/lib/salesReportPdf.js';
-import { monthRows, paymentStatusRows, summariseOrders, summarisePurchaseOrders } from '../src/lib/revenueReport.js';
+import {
+  monthRows, paymentStatusRows, summariseOrders, summariseOverdue, summarisePurchaseOrders,
+} from '../src/lib/revenueReport.js';
 import { contractPipeline, enquirySummary, quotationStatusSummary, serviceRows } from '../src/lib/salesReviewData.js';
 
 // Report data in the exact shapes the report modules return; the revenue,
@@ -11,12 +13,13 @@ const group = (extra) => ({
   pos_without_value: 0, unconverted: [], ...extra,
 });
 
-function revenueFrom(orders, pos, period = { from: '2026-01-01', to: '2026-12-31' }) {
+function revenueFrom(orders, pos, period = { from: '2026-01-01', to: '2026-12-31' }, overdue = []) {
   const poTotal = summarisePurchaseOrders(pos);
   return {
     orders: { months: monthRows(orders, period, summariseOrders), total: summariseOrders(orders) },
     invoicing: { months: monthRows(pos, period, summarisePurchaseOrders), total: poTotal },
     payment_status: { rows: paymentStatusRows(pos), total: poTotal },
+    overdue_by_client: { rows: overdue, total: summariseOverdue(overdue) },
     years: [2026],
     rates: [{ currency: 'EUR', rate: 110.43 }],
   };
@@ -78,19 +81,19 @@ function fixture(overrides = {}) {
     rates: { EUR: { rate: 110.43, effective_from: '2026-01-01' } },
     sectors: {
       rows: [
-        { sector: 'Pharmaceutical', not_set: false, enquiries: 1, pos: 1, lost: 1, pipeline: 2, customers: 1, pos_without_value: 0, fx_deals: 0, amounts: [{ currency: 'INR', amount: 100000 }], unconverted: [], won_value_inr: 100000, win_rate: 0.5 },
-        { sector: 'Not set', not_set: true, enquiries: 0, pos: 1, lost: 0, pipeline: 0, customers: 1, pos_without_value: 0, fx_deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1181601, win_rate: 1 },
+        { sector: 'Pharmaceutical', not_set: false, enquiries: 1, pos: 1, won_deals: 1, lost: 1, pipeline: 2, won_without_po: 0, customers: 1, pos_without_value: 0, fx_deals: 0, amounts: [{ currency: 'INR', amount: 100000 }], unconverted: [], won_value_inr: 100000, win_rate: 0.5 },
+        { sector: 'Not set', not_set: true, enquiries: 0, pos: 1, won_deals: 1, lost: 0, pipeline: 0, won_without_po: 0, customers: 1, pos_without_value: 0, fx_deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1181601, win_rate: 1 },
       ],
-      summary: { enquiries: 1, pos: 2, lost: 1, pipeline: 2, fx_deals: 1, win_rate: 2 / 3, sectors: 1, pos_without_sector: 1, amounts: [{ currency: 'INR', amount: 100000 }, { currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1281601 },
+      summary: { enquiries: 1, pos: 2, won_deals: 2, lost: 1, pipeline: 2, won_without_po: 0, undated_pos: [], fx_deals: 1, win_rate: 2 / 3, sectors: 1, pos_without_sector: 1, amounts: [{ currency: 'INR', amount: 100000 }, { currency: 'EUR', amount: 10700 }], unconverted: [], won_value_inr: 1281601 },
     },
     fx: {
-      rows: [{ customer: 'Midal Cables', sector: 'Not set', not_set: true, currency: 'EUR', deals: 1, deals_without_value: 0, amount: 10700, rate: 110.43, amount_inr: 1181601, quotation_nos: 'CTZ/QT/2026/045' }],
+      rows: [{ customer: 'Midal Cables', sector: 'Not set', not_set: true, currency: 'EUR', deals: 1, deals_without_value: 0, amount: 10700, rate: 110.43, amount_inr: 1181601, po_numbers: 'PO-2' }],
       summary: { deals: 1, amounts: [{ currency: 'EUR', amount: 10700 }], amount_inr: 1181601, missing_rates: [] },
     },
     customers: {
       rows: [
-        { client: 'Hetero', enquiries: 0, pos: 2, lost: 0, pos_to_date: 2, repeat_orders: 1, pos_without_value: 0, won_value_inr: 200000, unconverted: [], client_type: 'Repeat client', win_rate: 1 },
-        { client: 'Harman', enquiries: 1, pos: 0, lost: 1, pos_to_date: 0, repeat_orders: 0, pos_without_value: 0, won_value_inr: 0, unconverted: [], client_type: 'Single enquiry client', win_rate: 0 },
+        { client: 'Hetero', enquiries: 0, pos: 2, lost: 0, pos_to_date: 2, deals_to_date: 2, repeat_orders: 1, pos_without_value: 0, won_value_inr: 200000, unconverted: [], client_type: 'Repeat client', win_rate: 1 },
+        { client: 'Harman', enquiries: 1, pos: 0, lost: 1, pos_to_date: 0, deals_to_date: 0, repeat_orders: 0, pos_without_value: 0, won_value_inr: 0, unconverted: [], client_type: 'Single enquiry client', win_rate: 0 },
       ],
       summary: {
         repeat: group({ clients: 1, pos: 2, win_rate: 1, won_value_inr: 200000, repeat_orders: 1 }),
@@ -101,7 +104,7 @@ function fixture(overrides = {}) {
     revenue: revenueFrom(ORDERS, POS),
     enquiries: enquirySummary(ENQUIRIES, period),
     quotationStatus: quotationStatusSummary(QUOTE_STATUS, period),
-    services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }]),
+    services: serviceRows(QUOTES, [{ service: 'EcoVadis' }, { service: 'PSCI' }], CONTRACT_POS),
     contracts: contractPipeline(CONTRACT_POS),
     gaps: GAPS,
     ...overrides,
@@ -206,7 +209,7 @@ test('figures carry through: sectors, services, clients and revenue', () => {
     'EcoVadis', 'ISO certification & management systems', 'ASI / Copper Mark / LME', 'Other services', 'Total (each quotation once)',
     '1 quotation names more than one service',
     // Clients.
-    'Clients with repeat orders: ', 'Hetero (2 POs)',
+    'Clients with repeat orders: ', 'Hetero (2 deals)',
     // POs: ₹1,40,000 value, ₹90,000 invoiced, ₹70,000 received, ₹20,000 due; 64% invoiced, 78% collected.
     '₹1,40,000', '₹90,000', '₹70,000', '₹20,000', '78%', '64%',
     'Overdue', 'To Invoice', 'Pending', 'Up to date', 'Fully Paid',
@@ -215,6 +218,8 @@ test('figures carry through: sectors, services, clients and revenue', () => {
     assert.ok(text.includes(figure), `missing "${figure}"`);
   }
   assert.ok(text.includes('14 Sep 2026, 16:00 (Asia/Kolkata)'), 'generated stamp in the viewer time zone');
+  // Earlier printouts counted won business differently; the cover says so.
+  assert.ok(text.includes('How won business is counted: from the purchase orders registered, by PO date.'));
 });
 
 test('the analysis names the priority and the data gaps', () => {
@@ -262,7 +267,24 @@ test('problems in the data are called out, not hidden', () => {
 
   const undated = fixture();
   undated.revenue = { ...undated.revenue, undated_pos: ['PO-9'] };
-  assert.ok(textOf(salesReportDocDefinition(undated)).includes('1 purchase order has no PO date, so it is left out of the revenue figures: PO-9.'));
+  assert.ok(textOf(salesReportDocDefinition(undated)).includes('1 purchase order has no PO date, so it is left out of every PO figure for the period — sector-wise, service-wise, client analysis, FX deals and revenue: PO-9.'));
+
+  // A rate on record but months old: the web page's banner, in print, named once
+  // even when both the FX deals and the revenue half report it.
+  const stale = fixture();
+  const eurStale = { currency: 'EUR', effective_from: '2026-01-01', publishing_days: 185, stale: true, note: 'EUR converted at the rate of 1 Jan 2026' };
+  stale.fx = { ...stale.fx, summary: { ...stale.fx.summary, stale_rates: [eurStale] } };
+  stale.revenue = { ...stale.revenue, stale_rates: [eurStale] };
+  const staleText = textOf(salesReportDocDefinition(stale));
+  assert.ok(staleText.includes('Bring the exchange rates up to date'));
+  assert.ok(staleText.includes('The newest rate held for EUR is not from this week, so recent figures convert at an older number: EUR converted at the rate of 1 Jan 2026.'));
+  assert.ok(staleText.includes('1 EUR = ₹110.43 (rate of 1 Jan 2026, not updated since)'));
+  assert.equal(staleText.split('Bring the exchange rates up to date').length - 1, 1, 'named once');
+
+  // Current rates: the line says whose day the rate is, and nothing is flagged.
+  const current = textOf(salesReportDocDefinition(fixture()));
+  assert.ok(current.includes('1 EUR = ₹110.43 (rate of 1 Jan 2026)'));
+  assert.ok(!current.includes('Bring the exchange rates up to date'));
 });
 
 test('revenue follows the same period as the rest of the report, not a separate one', () => {
@@ -270,7 +292,7 @@ test('revenue follows the same period as the rest of the report, not a separate 
   const september = fixture({ period: narrowed, revenue: revenueFrom(ORDERS, POS, narrowed) });
   const text = textOf(salesReportDocDefinition(september));
   assert.ok(text.includes('Period: 01 Sep 2026 – 14 Sep 2026'));
-  assert.ok(text.includes('Order intake by month (INR), 01 Sep 2026 – 14 Sep 2026'));
+  assert.ok(text.includes('Quotations won by month (INR), 01 Sep 2026 – 14 Sep 2026'));
   assert.ok(text.includes('Every section covers 01 Sep 2026 – 14 Sep 2026: enquiries by enquiry date, quotations by quotation date, purchase orders by PO date.'));
   assert.ok(!text.includes('PLEASE NOTE'), 'no more "revenue covers a different period" disclaimer');
 });

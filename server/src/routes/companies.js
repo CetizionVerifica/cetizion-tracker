@@ -13,7 +13,8 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { similarNamePairs } from '../lib/names.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { similarNamePairs } from '../lib/names.ts';
 
 export const companyRouter = Router();
 
@@ -57,6 +58,7 @@ const mergeSchema = z.object({ into: z.coerce.number().int().positive() });
  * duplicate is useful and costs nothing; acting on one is the admin's.
  */
 companyRouter.post('/:id/merge', requireAdmin, async (req, res) => {
+  const actor = actorFrom(req.user);
   const source = Number(req.params.id);
   const parsed = mergeSchema.safeParse(req.body || {});
   if (!Number.isInteger(source) || !parsed.success) throw new ApiError(422, 'Pick the company to merge into');
@@ -91,6 +93,29 @@ companyRouter.post('/:id/merge', requireAdmin, async (req, res) => {
       counts[table] = rowCount;
     }
     await client.query('DELETE FROM companies WHERE id = $1', [source]);
+
+    // In the same transaction as the merge. This is the most destructive
+    // thing the API does and the source company is gone at the end of it,
+    // so the only remaining answer to "where did this client go?" is this
+    // row — it had better not be able to go missing on its own.
+    //
+    // Filed against the surviving company, because that is the one somebody
+    // can still look up; the company that was folded in survives only as
+    // its id and name in the metadata.
+    await logActivity(client, {
+      actor,
+      action: ACTIONS.COMPANY_MERGED,
+      entityType: 'company',
+      entityId: b.id,
+      metadata: {
+        source_company_id: a.id,
+        source_company_name: a.name,
+        target_company_id: b.id,
+        target_company_name: b.name,
+        moved: counts,
+      },
+    });
+
     return { merged: a.name, into: b.name, moved: counts };
   });
   res.json({ data: result });

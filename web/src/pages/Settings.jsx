@@ -1,14 +1,22 @@
 import { useState } from 'react';
 import { PageHeader } from '../App.jsx';
+import { SettingsPane } from './SettingsArea.jsx';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Chip, RecordSection } from '../components/record.jsx';
+import { cn } from 'cn';
 import { Card, DataTable, Tabs, Badge, Alert, Empty, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { money } from '../lib/format.js';
 import { ApiTokens } from '../components/ApiTokens.jsx';
 import { UsersAdmin } from '../components/UsersAdmin.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useList, useLookups, invalidateLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
+import { date } from '../lib/format.js';
 
-const CATALOGUES = {
+export const CATALOGUES = {
   services: { resource: 'services', label: 'Service', title: 'Service offerings', hint: 'Offered on quotations and PO service lines' },
   'travel-vendors': { resource: 'travel-vendors', label: 'Travel vendor', title: 'Travel vendors', hint: 'Who trips are booked through' },
   'expense-categories': { resource: 'expense-categories', label: 'Expense category', title: 'Expense categories', hint: 'What employees can claim against' },
@@ -33,7 +41,7 @@ export default function Settings() {
 
       <div className="page stack">
         <ExchangeRates />
-        <SettingsValues />
+        <Assumptions />
 
         <Tabs active={active} onChange={setTab} tabs={tabs} />
 
@@ -51,7 +59,7 @@ export default function Settings() {
  * date, the invoice date, the payment date — so adding today's rate never
  * changes what last year's deals were worth.
  */
-function ExchangeRates() {
+export function ExchangeRates() {
   const toast = useToast();
   const lookups = useLookups();
   const { rows, loading, refetch } = useList('exchange-rates', { limit: 500 });
@@ -85,13 +93,12 @@ function ExchangeRates() {
   }
 
   return (
-    <>
-      <Card
-        flush
-        title="Exchange rates"
-        hint="INR for 1 unit, from the date it took effect · reports convert each figure at the rate in force on its own date"
-        actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setEditing('new')}>+ Rate</button>}
-      >
+    <SettingsPane
+      title="Exchange rates"
+      description="INR for one unit, from the date it took effect. Reports convert each figure at the rate in force on its own date, so a restated rate never rewrites history."
+      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a rate</Button>}
+    >
+      <Card flush>
         {missing.length > 0 && (
           <Alert tone="warning">
             <span>
@@ -152,7 +159,7 @@ function ExchangeRates() {
           ]}
         />
       )}
-    </>
+    </SettingsPane>
   );
 }
 
@@ -209,24 +216,154 @@ function RateHistoryChart({ rows, currencies }) {
   );
 }
 
-function SettingsValues() {
+/** Settings that now have a pane of their own, with the context to match. */
+const MOVED = new Set([
+  'company_name', 'company_address', 'company_gstin', 'company_state_code', 'finance_email',
+  'quotation_terms_default', 'emails_enabled',
+]);
+
+/**
+ * The assumptions, grouped by the question they answer.
+ *
+ * They were one alphabetical list of thirty-four keys, which meant the
+ * names had to carry the grouping themselves — `quotation_expiry_grace_days`
+ * next to `quotation_expiry_warning_days` next to `quotation_validity_days`
+ * — and a person hunting for "how long does a quote last" had to read all
+ * of them. Grouped, the prefixes are redundant and the labels can be the
+ * words somebody would actually say.
+ *
+ * Every key already carries a written explanation in `settings.notes`, and
+ * the API has always sent it. The old table dropped it on the floor.
+ *
+ * `quiet` hides that explanation for the few keys whose note only restates
+ * the label — "Suggested vendor terms" over "Suggested terms for travel
+ * vendor invoices" is the same sentence twice, which is the duplication
+ * this screen was meant to remove rather than relocate.
+ */
+const GROUPS = [
+  {
+    title: 'Quoting',
+    hint: 'what a new quotation starts from',
+    items: [
+      { key: 'quotation_validity_days', label: 'A quotation stays open for', unit: 'days' },
+      { key: 'quotation_expiry_warning_days', quiet: true, label: 'Warn its owner before it expires', unit: 'days' },
+      { key: 'quotation_expiry_grace_days', label: 'Mark it lost after expiry', unit: 'days' },
+      { key: 'acceptance_unviewed_days', quiet: true, label: 'Flag an unopened acceptance link after', unit: 'days' },
+      { key: 'discount_approval_threshold_percent', label: 'Discount that needs approval', type: 'percent' },
+      { key: 'gst_rate_default', label: 'GST on a new line', type: 'percent' },
+    ],
+  },
+  {
+    title: 'Orders and delivery',
+    hint: 'suggested when a PO is registered',
+    items: [
+      { key: 'default_po_payment_terms_days', quiet: true, label: 'Payment terms on a new order', unit: 'days' },
+      { key: 'deliverable_reminder_days', label: 'Remind before a certificate expires', type: 'list', unit: 'days' },
+      { key: 'visit_reminder_days', label: 'Remind before a visit', unit: 'days' },
+    ],
+  },
+  {
+    title: 'Getting paid',
+    hint: 'when the tracker chases, and how often',
+    items: [
+      { key: 'reminder_grace_days', label: 'Wait after the due date', unit: 'days' },
+      { key: 'reminder_levels_days', label: 'Reminders go out at', type: 'list', unit: 'days overdue' },
+      { key: 'reminder_interval_days', label: 'Then repeat every', unit: 'days' },
+      { key: 'no_contact_days', label: 'Call a deal untouched after', unit: 'days' },
+    ],
+  },
+  {
+    title: 'What counts as a problem',
+    hint: 'the thresholds behind the red and amber on every page',
+    items: [
+      { key: 'margin_alert_percent', label: 'Flag a project margin below', type: 'percent' },
+      { key: 'cost_alert_share_percent', label: 'Warn when costs pass this share of the order', type: 'percent' },
+      { key: 'lead_first_response_hours', label: 'Target first response to an enquiry', unit: 'hours' },
+      { key: 'lead_follow_up_default_days', label: 'Default next follow-up', unit: 'days' },
+    ],
+  },
+  {
+    title: 'Travel vendors',
+    items: [
+      { key: 'default_vendor_payment_terms_days', quiet: true, label: 'Suggested vendor terms', unit: 'days' },
+      { key: 'vendor_invoice_window_days', label: 'A vendor must invoice within', unit: 'days' },
+    ],
+  },
+  {
+    title: 'Who gets told',
+    hint: 'blank falls back to the accounts email on Company profile',
+    items: [
+      { key: 'alert_email', label: 'Alerts', type: 'email' },
+      { key: 'approver_email', label: 'Quotation approvals', type: 'email' },
+      { key: 'digest_email', label: 'The daily digest', type: 'email' },
+      { key: 'hr_email', label: 'Travel and reimbursements', type: 'email' },
+    ],
+  },
+  {
+    title: 'The books',
+    items: [
+      { key: 'accounting_provider', quiet: true, label: 'Where the books are', type: 'choice', options: ['none', 'zoho', 'tally', 'file'] },
+      { key: 'accounting_apply_payments', label: 'Apply payments found in the books', type: 'bool' },
+    ],
+  },
+  {
+    title: 'Running the tracker',
+    hint: 'the lead’s settings rather than the desk’s',
+    items: [
+      { key: 'public_app_url', label: 'Address clients open links on', type: 'text' },
+      { key: 'internal_email_domains', label: 'Our own email domains', type: 'text' },
+      { key: 'incoming_enquiries_enabled', label: 'Accept enquiries posted by webhook', type: 'bool' },
+      { key: 'signin_lockout_failures', label: 'Failed sign-ins before a lockout', unit: 'tries' },
+      { key: 'signin_lockout_minutes', quiet: true, label: 'A lockout lasts', unit: 'minutes' },
+      { key: 'backup_max_age_hours', quiet: true, label: 'Alert with no backup for', unit: 'hours' },
+      { key: 'backup_verify_max_age_days', quiet: true, label: 'Alert with no restore check for', unit: 'days' },
+    ],
+  },
+];
+
+const KNOWN = new Set(GROUPS.flatMap((g) => g.items.map((i) => i.key)));
+
+/** "1 days" is the tell that nobody read the screen. */
+function unitFor(unit, value) {
+  if (!unit || Number(value) !== 1) return unit;
+  return unit.replace(/^(day|hour|minute|tr(y|ie))s\b/, (m) => (m === 'tries' ? 'try' : m.slice(0, -1)));
+}
+
+/** A value as somebody would read it, rather than as it is stored. */
+function shown(item, value) {
+  if (value === undefined || value === '') return null;
+  if (item.type === 'bool') return value === 'true' ? 'On' : 'Off';
+  if (item.type === 'percent') return `${value}%`;
+  if (item.type === 'list') {
+    const parts = String(value).split(',').map((v) => v.trim()).filter(Boolean);
+    const joined = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+    return `${joined}${item.unit ? ` ${item.unit}` : ''}`;
+  }
+  const unit = unitFor(item.unit, value);
+  return unit ? `${value} ${unit}` : value;
+}
+
+export function Assumptions() {
   const toast = useToast();
-  const { data, loading, refetch } = useFetch(() => api.raw('/lookups'));
+  const { data, loading, refetch } = useFetch(() => api.raw('/settings'));
   const [editing, setEditing] = useState(null);
-  const [value, setValue] = useState('');
+  const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const settings = data?.data?.settings || {};
-  // fx_rate_* moved to Exchange rates above, where each rate carries its date.
-  const rows = Object.entries(settings)
-    .filter(([key]) => !key.startsWith('fx_rate_'))
-    .map(([key, val]) => ({ id: key, key, value: val }));
+  const rows = data?.data ?? [];
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  // Anything the server grows that this file has not been taught about
+  // still has to be editable, so it lands here rather than vanishing.
+  const extras = rows
+    .filter((r) => !KNOWN.has(r.key) && !MOVED.has(r.key) && !r.key.startsWith('fx_rate_'))
+    .map((r) => ({ key: r.key, label: r.key.replace(/_/g, ' ') }));
+  const groups = extras.length ? [...GROUPS, { title: 'Anything else', items: extras }] : GROUPS;
 
   async function save(key) {
     setBusy(true);
     try {
-      await api.update('settings', key, { value });
-      toast('Setting saved', 'success');
+      await api.update('settings', key, { value: draft });
+      toast('Saved', 'success');
       invalidateLookups();
       setEditing(null);
       refetch();
@@ -237,67 +374,169 @@ function SettingsValues() {
     }
   }
 
+  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+
   return (
-    <Card flush title="Assumptions" hint="Changing these changes what the app computes everywhere">
-      <Alert>
-        <span>
-          <strong>Vendor invoice window</strong> drives the "invoice overdue from vendor" flag.
-          The default payment terms are only suggestions — actual terms live on each PO.
-        </span>
-      </Alert>
-      <DataTable
-        loading={loading}
-        rows={rows}
-        columns={[
-          {
-            key: 'key',
-            header: 'Setting',
-            className: 'mono',
-            render: (r) => r.key.replace(/_/g, ' '),
-          },
-          {
-            key: 'value',
-            header: 'Value',
-            render: (r) =>
-              editing === r.key ? (
-                <input
-                  className="input"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  autoFocus
-                  style={{ maxWidth: 280 }}
-                />
-              ) : r.value === '' ? (
-                <span className="muted">Not set</span>
-              ) : (
-                <span className="strong">{r.value}</span>
-              ),
-          },
-          {
-            key: 'act',
-            header: '',
-            align: 'right',
-            render: (r) => (
-              <div className="table__actions">
-                {editing === r.key ? (
-                  <>
-                    <button type="button" className="btn btn--sm btn--primary" onClick={() => save(r.key)} disabled={busy}>Save</button>
-                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(null)}>Cancel</button>
-                  </>
+    <SettingsPane
+      title="Assumptions"
+      description="The numbers the app computes with when a record does not say otherwise. Changing one changes what every future calculation assumes; nothing already recorded moves."
+    >
+      {groups.map((group) => (
+        <RecordSection key={group.title} title={group.title} hint={group.hint}>
+          {group.items.map((item, i) => {
+            const row = byKey[item.key];
+            if (!row) return null;
+            const open = editing === item.key;
+            const display = shown(item, row.value);
+            return (
+              <div
+                key={item.key}
+                className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 px-5 py-3', i < group.items.length - 1 && 'border-b border-border')}
+              >
+                <div className="min-w-[14rem] flex-1">
+                  <div className="text-[13px] font-medium text-foreground">{item.label}</div>
+                  {row.notes && !item.quiet && <p className="mt-0.5 max-w-[68ch] text-[12px]/[1.5] text-muted-foreground">{row.notes}</p>}
+                </div>
+
+                {open ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {item.type === 'bool' || item.type === 'choice' ? (
+                      <Select value={draft} onValueChange={setDraft}>
+                        <SelectTrigger size="sm" className="h-7 w-[11rem] text-[12.5px]" aria-label={item.label}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {(item.type === 'bool' ? ['true', 'false'] : item.options).map((o) => (
+                            <SelectItem key={o} value={o} className="text-[12.5px]">
+                              {item.type === 'bool' ? (o === 'true' ? 'On' : 'Off') : o}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        autoFocus
+                        className="h-7 w-[11rem] text-[12.5px]"
+                        aria-label={item.label}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') save(item.key); if (e.key === 'Escape') setEditing(null); }}
+                      />
+                    )}
+                    <Button size="sm" className="h-7 px-3 text-[12.5px]" disabled={busy} onClick={() => save(item.key)}>Save</Button>
+                    <Button variant="ghost" size="sm" className="h-7 px-3 text-[12.5px]" onClick={() => setEditing(null)}>Cancel</Button>
+                  </div>
                 ) : (
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => { setEditing(r.key); setValue(r.value); }}>Edit</button>
+                  <div className="flex items-center gap-3">
+                    {display === null ? (
+                      <span className="text-[12.5px] text-muted-foreground">not set</span>
+                    ) : item.type === 'bool' ? (
+                      <Chip tone={row.value === 'true' ? 'settled' : 'plain'}>{display}</Chip>
+                    ) : (
+                      <span className="mono text-[13px] text-foreground">{display}</span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-3 text-[12.5px]"
+                      onClick={() => { setEditing(item.key); setDraft(row.value); }}
+                    >
+                      Edit
+                    </Button>
+                  </div>
                 )}
               </div>
-            ),
-          },
-        ]}
-        empty={<Empty title="No settings recorded" />}
-      />
-    </Card>
+            );
+          })}
+        </RecordSection>
+      ))}
+
+      <p className="max-w-[70ch] text-[11.5px]/[1.6] text-muted-foreground">
+        The company&rsquo;s own details are under Company profile, the default quotation terms under Templates, and
+        the automatic-email switch under Emails &amp; jobs — each with the context that makes it make sense. The
+        payment split a new order starts from comes from a payment-schedule template, also under Templates.
+      </p>
+    </SettingsPane>
   );
 }
 
-function Catalogue({ resource, label, title, hint }) {
+/**
+ * The days nobody works (#73). Weekends are skipped anyway; this is the
+ * list of weekday closures the working-day counts leave out, starting with
+ * the gazetted holidays for 2026 and 2027.
+ */
+export function Holidays() {
+  const toast = useToast();
+  const { isAdmin } = useAuth();
+  const { rows, loading, refetch } = useList('holidays', { limit: 500 });
+  // 'new' or the row being changed. The pane told people to correct the
+  // moon-dated holidays here and then offered only Add and Delete, so
+  // moving Id by a day meant deleting it and retyping it — while
+  // PATCH /api/holidays/:id existed and worked the whole time.
+  const [editing, setEditing] = useState(null);
+
+  async function remove(row) {
+    if (!window.confirm(`Delete ${row.name} on ${date(row.holiday_on)}? It becomes a working day again.`)) return;
+    try {
+      await api.remove('holidays', row.id);
+      toast('Holiday deleted', 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
+  return (
+    <SettingsPane
+      title="Holidays"
+      description="Days the office is closed. Working-day counts skip these as well as Saturdays and Sundays. Dates that follow the moon (Id, Muharram, Milad-un-Nabi) can move; correct them here when they do."
+      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a holiday</Button>}
+    >
+      <Card flush>
+        <DataTable
+          loading={loading}
+          rows={rows}
+          columns={[
+            { key: 'holiday_on', header: 'Date', render: (r) => date(r.holiday_on) },
+            {
+              key: 'weekday',
+              header: 'Day',
+              className: 'muted',
+              render: (r) => new Date(`${r.holiday_on}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' }),
+            },
+            { key: 'name', header: 'Holiday', className: 'strong' },
+            ...(isAdmin ? [{
+              key: 'act',
+              header: '',
+              align: 'right',
+              render: (r) => (
+                <div className="table__actions">
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Edit</button>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => remove(r)}>Delete</button>
+                </div>
+              ),
+            }] : []),
+          ]}
+          empty={<Empty title="No holidays yet" text="Add the days the office is closed." />}
+        />
+      </Card>
+
+      {editing && (
+        <RecordForm
+          title={editing === 'new' ? 'New holiday' : `Edit ${editing.name}`}
+          resource="holidays"
+          record={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refetch(); }}
+          fields={[
+            { name: 'holiday_on', label: 'Date', type: 'date', required: true },
+            { name: 'name', label: 'Name', required: true, hint: 'e.g. Republic Day' },
+          ]}
+        />
+      )}
+    </SettingsPane>
+  );
+}
+
+export function Catalogue({ resource, label, title, hint }) {
   const toast = useToast();
   const { rows, loading, refetch } = useList(resource, {});
   const [editing, setEditing] = useState(null);
@@ -313,18 +552,23 @@ function Catalogue({ resource, label, title, hint }) {
   }
 
   return (
-    <>
-      <Card
-        flush
-        title={title}
-        hint={hint}
-        actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setEditing('new')}>+ {label}</button>}
-      >
+    <SettingsPane
+      title={title}
+      description={hint}
+      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</Button>}
+    >
+      <Card flush>
         <DataTable
           loading={loading}
           rows={rows}
           columns={[
             { key: 'name', header: 'Name', className: 'strong' },
+            // The catalogue a quotation line is filled from (#23): what picking the service prefills.
+            ...(resource === 'services' ? [
+              { key: 'default_rate', header: 'Default rate', align: 'right', render: (r) => (r.default_rate == null ? '—' : money(r.default_rate, r.currency)) },
+              { key: 'gst_rate', header: 'GST', align: 'right', render: (r) => `${Number(r.gst_rate)}%` },
+              { key: 'sac_code', header: 'SAC', className: 'mono', render: (r) => r.sac_code || '—' },
+            ] : []),
             { key: 'active', header: 'Status', render: (r) => <Badge tone={r.active ? 'success' : 'neutral'}>{r.active ? 'Active' : 'Hidden'}</Badge> },
             {
               key: 'act',
@@ -332,7 +576,7 @@ function Catalogue({ resource, label, title, hint }) {
               align: 'right',
               render: (r) => (
                 <div className="table__actions">
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Rename</button>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' ? 'Edit' : 'Rename'}</button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
                     {r.active ? 'Hide' : 'Restore'}
                   </button>
@@ -356,11 +600,20 @@ function Catalogue({ resource, label, title, hint }) {
           }}
           fields={[
             { name: 'name', label: 'Name', required: true, span: 'all' },
-            ...(resource === 'services' ? [{ name: 'sort_order', label: 'Sort order', type: 'number', default: '0' }] : []),
+            ...(resource === 'services' ? [
+              { name: 'default_rate', label: 'Default rate', type: 'money', hint: 'Filled in when the service is picked on a quotation line' },
+              { name: 'currency', label: 'Currency', type: 'select', options: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'], default: 'INR' },
+              { name: 'gst_rate', label: 'GST %', type: 'number', step: '0.01', default: '18' },
+              { name: 'unit', label: 'Unit', type: 'combo', options: ['engagement', 'site', 'day', 'audit', 'report', 'year'], default: 'engagement' },
+              { name: 'sac_code', label: 'SAC code', hint: 'Printed on the quotation line' },
+              { name: 'code', label: 'Internal code' },
+              { name: 'description', label: 'Default line description', type: 'textarea', span: 'all' },
+              { name: 'sort_order', label: 'Sort order', type: 'number', default: '0' },
+            ] : []),
             { name: 'active', label: 'Visible in dropdowns', type: 'boolean', default: 'true' },
           ]}
         />
       )}
-    </>
+    </SettingsPane>
   );
 }

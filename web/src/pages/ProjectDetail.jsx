@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
+import { ClipboardList, FileText, Flag, FolderKanban, Plane } from 'lucide-react';
+import { cn } from 'cn';
 import {
-  Card, Stat, Badge, DataTable, KeyValues, Progress, Tabs,
-  ErrorState, Empty, useToast, Alert, ConfirmDialog,
-} from '../components/ui.jsx';
-import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
+  Chip, RailPerson, RecordFlow, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat, flowSteps,
+} from '../components/record.jsx';
+import { Checklist } from '../components/checklist.jsx';
+import { Button } from '../components/ui/button.tsx';
+import { ErrorState, useToast, ConfirmDialog } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { ProjectProfit } from '../components/ProjectProfit.jsx';
@@ -13,14 +16,35 @@ import { ProjectVisits } from './Schedule.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money, date, percent, number } from '../lib/format.js';
+import { money, date, number } from '../lib/format.js';
+import { poCurrencyFields } from '../lib/poCurrency.js';
+import { poRevisionFields } from '../lib/poRevision.js';
+
+/**
+ * The project record (C15) — the onboarding checklist is the page, not a
+ * tab on it.
+ *
+ * What was here before: a details card, then five tabs, the first of which
+ * was an eleven-column table of purchase orders. The checklist — the only
+ * thing on this page that says whether the project is actually moving —
+ * was the third tab, behind a click, rendered as a table with five buttons
+ * per row.
+ *
+ * Now the checklist is the column, and four of its eleven steps are not
+ * ticked by anyone: the PO register and the payment schedule answer them
+ * (see server/src/lib/onboarding.js). Purchase orders become a list that
+ * links to the order record, which is where stages belong (C6). The
+ * project manager keeps exactly one button, the delivery date, because it
+ * is the only fact on this page that moves money.
+ */
+
+/** The template's four stages, in order, as the ladder across the top. */
+const LIFECYCLE = ['Onboarding', 'Execution', 'Delivery', 'Closure'];
 
 export default function ProjectDetail() {
   const { projectId } = useParams();
-  const navigate = useNavigate();
   const toast = useToast();
   const lookups = useLookups();
-  const [tab, setTab] = useState('pos');
   const [dialog, setDialog] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +70,11 @@ export default function ProjectDetail() {
     );
   }
 
-  const { project: p, purchase_orders: pos, payment_stages: stages, onboarding, travel, quotations } = data.data;
+  const {
+    project: p, purchase_orders: pos, payment_stages: stages,
+    onboarding, onboarding_progress: progress, travel, quotations, milestones = [],
+  } = data.data;
+
   // One currency across every PO on the project, or null when they differ.
   const mixed = p.po_count > 0 && !p.currency;
   const amount = (v) => (mixed ? '—' : money(v, p.currency || 'INR'));
@@ -83,6 +111,17 @@ export default function ProjectDetail() {
     }
   }
 
+  /** Reaching a milestone makes the stages it triggers billable (#26). */
+  async function markMilestone(m, reached) {
+    try {
+      await api.update('project-milestones', m.id, { reached_on: reached ? new Date().toISOString().slice(0, 10) : null });
+      toast(reached ? `${m.name} reached${m.stages.length ? ': its stages can be invoiced' : ''}` : `${m.name} marked not reached`, 'success');
+      refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }
+
   async function deleteStep(step) {
     setBusy(true);
     try {
@@ -96,262 +135,251 @@ export default function ProjectDetail() {
     }
   }
 
-  // Swap step numbers with the neighbour so the order is a stored fact,
-  // not a display trick. Two small updates, then one refetch.
-  async function moveStep(step, direction) {
-    const index = onboarding.findIndex((s) => s.id === step.id);
-    const other = onboarding[index + direction];
-    if (!other) return;
-    try {
-      await api.update('onboarding', step.id, { step_no: other.step_no });
-      await api.update('onboarding', other.id, { step_no: step.step_no });
-      refetch();
-    } catch (err) {
-      toast(err.message, 'danger');
-    }
-  }
+  // A lifecycle stage is done when every step under it is. Stages the
+  // template never used are left out rather than drawn as a gap.
+  const used = LIFECYCLE.filter((stage) => onboarding.some((s) => s.stage === stage));
+  const ladder = flowSteps(used.map((stage) => {
+    const steps = onboarding.filter((s) => s.stage === stage && s.effective_status !== 'N/A');
+    return { label: stage, done: steps.length > 0 && steps.every((s) => s.effective_status === 'Done') };
+  }));
 
-  const stageOptions = Array.from(
-    new Set(['Onboarding', 'Execution', 'Delivery', 'Closure', ...onboarding.map((s) => s.stage).filter(Boolean)])
-  );
+  // What recording the delivery date would actually do, in money. The
+  // design's sentence, computed rather than written: it is the reason the
+  // button is the only one on the page.
+  const unlocked = stages
+    .filter((s) => s.trigger_event === 'On Delivery' && !s.invoice_no)
+    .reduce((sum, s) => sum + Number(s.stage_amount || 0), 0);
+
+  const verdict = p.actual_delivery_date
+    ? `Delivered ${date(p.actual_delivery_date)}${p.delivery_variance_days > 0 ? `, ${p.delivery_variance_days} days after the plan` : ''}. ${p.balance_due_now > 0 ? `${amount(p.balance_due_now)} is still owed.` : 'Nothing is owed.'}`
+    : unlocked > 0
+      ? `Recording the delivery date closes the delivery step and makes ${amount(unlocked)} of on-delivery stages billable.`
+      : 'Recording the delivery date closes the delivery step. No stage on this project is triggered by delivery, so nothing becomes billable with it.';
+
+  const stepFields = checklistFields(onboarding, lookups);
   const nextStepNo = onboarding.reduce((max, s) => Math.max(max, Number(s.step_no) || 0), 0) + 1;
-  const stepFields = [
-    { name: 'project_id', label: 'Project', required: true, disabled: true },
-    { name: 'step_no', label: 'Step number', type: 'number', min: 1, required: true },
-    { name: 'stage', label: 'Stage', type: 'combo', options: stageOptions },
-    { name: 'status', label: 'Status', type: 'select', options: lookups.enums?.onboarding || ['Not Started', 'In Progress', 'Done', 'N/A'] },
-    { name: 'step', label: 'Step', required: true, type: 'textarea', rows: 2, span: 'all' },
-    { name: 'owner', label: 'Owner' },
-    { name: 'owner_email', label: 'Owner email', type: 'email' },
-    { name: 'target_date', label: 'Target date', type: 'date' },
-    { name: 'completed_date', label: 'Completed on', type: 'date' },
-    { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
-  ];
 
   return (
     <>
-      <PageHeader
+      <RecordPage
+        parent="Projects"
+        parentTo="/projects"
         title={`${p.project_id} · ${p.client_name}`}
-        subtitle={[p.primary_service, p.project_manager && `PM ${p.project_manager}`].filter(Boolean).join(' · ')}
-        actions={
+        mark={<FolderKanban className="size-5" strokeWidth={1.75} aria-hidden="true" />}
+        facts={[
+          p.primary_service,
+          p.project_manager && `PM ${p.project_manager}`,
+          p.planned_delivery_date && `Planned delivery ${date(p.planned_delivery_date)}`,
+          /* The stage, not the money: this project is "In Progress" even
+             when an invoice on it is overdue, and colouring the stage red
+             for that says the wrong thing twice. Late money is red in the
+             figures below, where it belongs. */
+          <Chip key="stage" tone={p.actual_delivery_date ? 'settled' : 'plain'}>{p.project_stage}</Chip>,
+        ]}
+        /* No button in the header: the one move this page offers is in the
+           band below, next to the sentence explaining what it will do. Two
+           copies of it read as two different buttons. */
+        menu={(
           <>
-            <Link className="btn" to="/projects">All projects</Link>
-            <button type="button" className="btn" onClick={() => setDialog({ type: 'edit' })}>Edit project</button>
-            <button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'newPo' })}>+ Purchase order</button>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'newPo' })}>Add a purchase order</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'newStep' })}>Add a checklist step</RecordMenuItem>
+            <RecordMenuItem onSelect={() => setDialog({ type: 'edit' })}>Edit the project</RecordMenuItem>
           </>
-        }
-      />
-
-      <div className="page stack">
-        {p.follow_up_action && (
-          <Alert tone={p.payment_status === 'Overdue' ? 'danger' : 'warning'}>{p.follow_up_action}</Alert>
         )}
-
-        <div className="grid grid--stats">
-          {/* Sums across the project's POs, so they only read in one currency.
-              v_projects gives it, or null when the POs disagree — then the
-              amount is withheld rather than shown with the wrong symbol, and
-              the PO table below shows each one properly. */}
-          <Stat label="Contract value" value={amount(p.total_contract_value)} meta={mixed ? 'POs in different currencies' : `${number(p.po_count)} purchase order(s)`} tone="brand" />
-          <Stat label="Invoiced" value={amount(p.total_invoiced)} meta={mixed ? 'see the purchase orders below' : `${amount(p.total_received)} received`} />
-          <Stat label="Due now" value={amount(p.balance_due_now)} tone={p.balance_due_now > 0 ? 'warn' : 'ok'} meta={p.payment_status} />
-          <Stat label="To bill" value={amount(p.balance_to_bill)} tone={p.balance_to_bill > 0 ? 'warn' : 'ok'} meta="Due to be invoiced, not yet billed" />
-          <Stat label="Travel cost" value={money(p.total_travel_cost)} meta={`${travel.length} trip(s)`} />
-          <Stat label="Project stage" value={p.project_stage} meta={p.delivery_variance_days !== null ? `${p.delivery_variance_days > 0 ? '+' : ''}${p.delivery_variance_days} days vs plan` : 'Delivery not recorded'} />
-        </div>
-
-        <Card title="Project details">
-          <KeyValues
-            items={[
-              { label: 'Client', value: p.client_name },
-              { label: 'Primary service', value: p.primary_service },
-              { label: 'Project manager', value: p.project_manager },
-              { label: 'Sales person', value: p.sales_person },
-              { label: 'Planned start', value: date(p.planned_start_date) },
-              { label: 'Planned delivery', value: date(p.planned_delivery_date) },
-              { label: 'Actual initiation', value: date(p.actual_initiation_date) },
-              { label: 'Actual delivery', value: date(p.actual_delivery_date) },
-              { label: 'Payment status', value: <Badge>{p.payment_status}</Badge> },
-              { label: 'Onboarding', value: p.onboarding_total ? <Progress value={p.onboarding_percent} /> : '—' },
-              { label: '% complete', value: percent(p.percent_complete) },
-              p.remarks && { label: 'Remarks', value: p.remarks },
-            ]}
+        flow={(
+          <RecordFlow
+            steps={ladder}
+            verdict={verdict}
+            actions={p.actual_delivery_date
+              ? <Button variant="secondary" onClick={() => setDialog({ type: 'edit' })}>Edit the project</Button>
+              : <Button onClick={() => setDialog({ type: 'edit' })}>Record the delivery date</Button>}
+            note={progress?.total
+              ? `Onboarding · ${progress.done} of ${progress.total} done${progress.left ? ` · ${progress.left} left` : ''}${progress.waiting ? `, ${progress.waiting} of them with another team` : ''}.`
+              : 'No checklist on this project yet.'}
           />
-        </Card>
+        )}
+        stats={(
+          <>
+            {/* Sums across the project's POs, so they only read in one
+                currency. v_projects gives it, or null when the POs disagree
+                — then the amount is withheld rather than shown with the
+                wrong symbol, and the orders list below shows each properly. */}
+            <RecordStat
+              label="Contract"
+              value={amount(p.total_contract_value)}
+              detail={mixed ? 'Orders in different currencies' : `${amount(p.total_invoiced)} invoiced`}
+            />
+            <RecordStat
+              label="Due now"
+              value={amount(p.balance_due_now)}
+              tone={p.balance_due_now > 0 ? 'late' : 'settled'}
+              detail={p.balance_due_now > 0 ? 'Invoiced and unpaid' : p.payment_status}
+            />
+            <RecordStat
+              label="To bill"
+              value={amount(p.balance_to_bill)}
+              tone={p.balance_to_bill > 0 ? 'waiting' : undefined}
+              detail={p.balance_to_bill > 0 ? 'Stages not yet invoiced' : 'Everything is invoiced'}
+            />
+            <RecordStat
+              label="Travel so far"
+              value={money(p.total_travel_cost)}
+              detail={travel.length ? `${number(travel.length)} trip${travel.length === 1 ? '' : 's'}` : 'Nobody has travelled yet'}
+            />
+          </>
+        )}
+        rail={(
+          <>
+            <RecordSection title="Trips" hint={travel.length ? `${money(p.total_travel_cost)} so far` : undefined}>
+              {travel.length === 0
+                ? <p className="px-5 py-4 text-[12.5px] text-muted-foreground">No travel recorded against this project.</p>
+                : travel.map((t, i) => (
+                  <RecordRow
+                    key={t.travel_id}
+                    icon={Plane}
+                    to={`/travel/${encodeURIComponent(t.travel_id)}`}
+                    title={`${t.travel_id} · ${t.employee_name}`}
+                    chip={t.vendor_invoice_status !== 'Invoiced' ? <Chip tone="waiting">{t.vendor_invoice_status}</Chip> : undefined}
+                    amount={money(t.total_travel_cost)}
+                    last={i === travel.length - 1}
+                  />
+                ))}
+            </RecordSection>
 
-        <Tabs
-          active={tab}
-          onChange={setTab}
-          tabs={[
-            { key: 'pos', label: 'Purchase orders', count: pos.length },
-            { key: 'stages', label: 'Payment stages', count: stages.length },
-            { key: 'onboarding', label: 'Onboarding', count: onboarding.length },
-            { key: 'travel', label: 'Travel', count: travel.length },
-            { key: 'quotes', label: 'Quotations', count: quotations.length },
-          ]}
+            <RecordSection title="People">
+              <RailPerson name={p.project_manager || 'Not assigned'} detail="Project manager" />
+              <RailPerson name={p.sales_person || 'Not recorded'} detail="Sold it" last />
+            </RecordSection>
+
+            {quotations.length > 0 && (
+              <RecordSection title="Quoted as">
+                {quotations.map((q, i) => (
+                  <RecordRow
+                    key={q.quotation_no}
+                    icon={FileText}
+                    to={`/quotations/${encodeURIComponent(q.quotation_no)}`}
+                    title={q.quotation_no}
+                    amount={money(q.quotation_value, q.currency)}
+                    last={i === quotations.length - 1}
+                  />
+                ))}
+              </RecordSection>
+            )}
+          </>
+        )}
+      >
+        <RecordSection
+          title="Checklist"
+          hint={onboarding.length ? 'The standard eleven, from the template' : undefined}
+          action={onboarding.length === 0
+            ? <Button size="sm" onClick={applyTemplate} disabled={busy}>Add the standard checklist</Button>
+            : <Button variant="secondary" size="sm" onClick={() => setDialog({ type: 'newStep' })}>Add a step</Button>}
+        >
+          {onboarding.length === 0 ? (
+            <p className="px-5 py-6 text-[13px] text-muted-foreground">
+              Nothing to work through yet. The standard checklist is eleven steps, four of which
+              answer themselves from the purchase orders and the payment schedule.
+            </p>
+          ) : (
+            <Checklist
+              steps={onboarding}
+              onToggle={toggleStep}
+              onEdit={(step) => setDialog({ type: 'editStep', row: step })}
+              onDelete={(step) => setDialog({ type: 'deleteStep', row: step })}
+            />
+          )}
+        </RecordSection>
+
+        <RecordSection
+          title="Milestones"
+          hint={milestones.length ? 'Reaching one makes the payment stages it triggers billable' : undefined}
+          action={<Button variant="secondary" size="sm" onClick={() => setDialog({ type: 'milestone' })}>Add a milestone</Button>}
+        >
+          {milestones.length === 0 ? (
+            <p className="px-5 py-6 text-[13px] text-muted-foreground">
+              No milestones. A payment stage triggered On Milestone gets its milestone when the PO is registered; add any other here.
+            </p>
+          ) : milestones.map((m, i) => {
+            const waiting = m.stages.filter((s) => !s.invoice_no).reduce((n, s) => n + Number(s.stage_amount || 0), 0);
+            return (
+              <div key={m.id} className={cn('flex flex-wrap items-center gap-3 px-5 py-3', i < milestones.length - 1 && 'border-b border-border')}>
+                <Flag className="size-4 shrink-0 text-secondary-text" strokeWidth={1.75} aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-foreground">{m.name}</div>
+                  <div className="text-[12px] text-muted-foreground">
+                    {[m.target_date && `Target ${date(m.target_date)}`,
+                      m.stages.length ? `Triggers ${m.stages.map((s) => `${s.stage_name} on ${s.po_number}`).join(', ')}` : 'No payment stage waits on it'].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                {m.reached_on
+                  ? <Chip tone="settled">Reached {date(m.reached_on)}</Chip>
+                  : waiting > 0 ? <Chip tone="waiting">{amount(waiting)} waiting on it</Chip> : null}
+                <Button variant={m.reached_on ? 'ghost' : 'secondary'} size="sm" onClick={() => markMilestone(m, !m.reached_on)}>
+                  {m.reached_on ? 'Not reached' : 'Mark reached'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setDialog({ type: 'milestone', row: m })}>Edit</Button>
+              </div>
+            );
+          })}
+        </RecordSection>
+
+        <RecordSection
+          title="Purchase orders"
+          hint={pos.length ? 'Stages, invoices and payments live on the order' : undefined}
+          action={<Button variant="secondary" size="sm" onClick={() => setDialog({ type: 'newPo' })}>Add an order</Button>}
+        >
+          {pos.length === 0 ? (
+            <p className="px-5 py-6 text-[13px] text-muted-foreground">
+              No purchase order yet, so nothing can be invoiced. Register it and the advance stage becomes billable.
+            </p>
+          ) : pos.map((po, i) => (
+            <RecordRow
+              key={po.po_number}
+              icon={ClipboardList}
+              to={`/purchase-orders/${encodeURIComponent(po.po_number)}`}
+              title={`${po.po_number} · ${po.stage_count} stage${Number(po.stage_count) === 1 ? '' : 's'}`}
+              chip={po.balance_due_now > 0
+                ? <Chip tone="late">{money(po.balance_due_now, po.currency)} due</Chip>
+                : po.balance_to_bill > 0 ? <Chip tone="waiting">{money(po.balance_to_bill, po.currency)} to bill</Chip>
+                  : <Chip tone="settled">Settled</Chip>}
+              amount={money(po.po_value, po.currency)}
+              last={i === pos.length - 1}
+            />
+          ))}
+        </RecordSection>
+
+        <DeliverablesTable
+          params={{ project_id: projectId }}
+          preset={{ project_id: projectId }}
+          compact
+          title="Certificate"
+          hint="An expiry date schedules the renewal ninety days before it"
         />
-
-        {tab === 'pos' && (
-          <Card flush>
-            <DataTable
-              rows={pos}
-              onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
-              columns={[
-                { key: 'po_number', header: 'PO', className: 'mono strong' },
-                { key: 'po_date', header: 'PO date', render: (r) => date(r.po_date) },
-                { key: 'po_value', header: 'Value', align: 'right', render: (r) => money(r.po_value, r.currency) },
-                { key: 'payment_terms_days', header: 'Terms', align: 'right', render: (r) => `${r.payment_terms_days} d` },
-                { key: 'service_count', header: 'Services', align: 'right' },
-                { key: 'stage_count', header: 'Stages', align: 'right' },
-                { key: 'total_invoiced', header: 'Invoiced', align: 'right', render: (r) => money(r.total_invoiced, r.currency) },
-                { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.balance_due_now, r.currency) },
-                { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? money(r.balance_to_bill, r.currency) : <span className="muted">—</span>) },
-                { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
-                { key: 'actual_delivery_date', header: 'Delivered', render: (r) => (r.actual_delivery_date ? date(r.actual_delivery_date) : <span className="muted">not yet</span>) },
-              ]}
-              empty={
-                <Empty
-                  title="No purchase orders yet"
-                  text="Register the PO so finance can raise the advance invoice."
-                  action={<button type="button" className="btn btn--primary" onClick={() => setDialog({ type: 'newPo' })}>+ Purchase order</button>}
-                />
-              }
-            />
-          </Card>
-        )}
-
-        {tab === 'stages' && (
-          <Card flush>
-            <DataTable
-              rows={stages}
-              columns={[
-                { key: 'po_number', header: 'PO', className: 'mono' },
-                { key: 'stage_name', header: 'Stage', render: (r) => <>{r.stage_no}. {r.stage_name}<div className="small muted">{r.trigger_event}</div></> },
-                { key: 'stage_amount', header: 'Value', align: 'right', render: (r) => money(r.stage_amount, r.currency) },
-                { key: 'invoice_no', header: 'Invoice', className: 'mono small', render: (r) => r.invoice_no || <span className="muted">—</span> },
-                { key: 'invoice_due_date', header: 'Due', render: (r) => date(r.invoice_due_date) },
-                { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
-                { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
-                { key: 'follow_up_action', header: 'Follow-up', className: 'wrap small' },
-                {
-                  key: 'act', header: '', align: 'right',
-                  render: (r) => (
-                    <div className="table__actions">
-                      {r.stage_status === 'To Invoice' && <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>}
-                      {['Overdue', 'Due', 'Partially Paid'].includes(r.stage_status) && <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'payment', row: r })}>Payment</button>}
-                    </div>
-                  ),
-                },
-              ]}
-              empty={<Empty title="No payment stages yet" text="Open a purchase order and set its payment split." />}
-            />
-          </Card>
-        )}
-
-        {tab === 'onboarding' && (
-          <Card
-            flush
-            title="Onboarding & lifecycle"
-            hint="Tick each step as it completes — the project's onboarding % follows"
-            actions={
-              <>
-                {onboarding.length === 0 && (
-                  <button type="button" className="btn btn--sm" onClick={applyTemplate} disabled={busy}>
-                    Add standard checklist
-                  </button>
-                )}
-                <button type="button" className="btn btn--primary btn--sm" onClick={() => setDialog({ type: 'newStep' })}>
-                  + Add step
-                </button>
-              </>
-            }
-          >
-            <DataTable
-              rows={onboarding}
-              columns={[
-                { key: 'step_no', header: '#', align: 'right', width: 50 },
-                { key: 'stage', header: 'Stage', render: (r) => <Badge>{r.stage}</Badge> },
-                { key: 'step', header: 'Step', className: 'wrap' },
-                { key: 'owner', header: 'Owner' },
-                { key: 'target_date', header: 'Target', render: (r) => date(r.target_date) },
-                { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
-                {
-                  key: 'act', header: '', align: 'right',
-                  render: (r) => {
-                    const i = onboarding.findIndex((s) => s.id === r.id);
-                    return (
-                      <div className="table__actions">
-                        <button type="button" className="btn btn--sm btn--ghost" title="Move up" aria-label="Move up" onClick={() => moveStep(r, -1)} disabled={i <= 0}>▲</button>
-                        <button type="button" className="btn btn--sm btn--ghost" title="Move down" aria-label="Move down" onClick={() => moveStep(r, 1)} disabled={i >= onboarding.length - 1}>▼</button>
-                        <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ type: 'editStep', row: r })}>Edit</button>
-                        <button type="button" className="btn btn--sm" onClick={() => toggleStep(r)}>
-                          {r.status === 'Done' ? 'Reopen' : 'Mark done'}
-                        </button>
-                        <button type="button" className="btn btn--sm btn--ghost" title="Delete step" aria-label="Delete step" onClick={() => setDialog({ type: 'deleteStep', row: r })}>✕</button>
-                      </div>
-                    );
-                  },
-                },
-              ]}
-              empty={
-                <Empty
-                  title="No onboarding steps"
-                  text="Start from the 11 standard lifecycle steps, or add your own one at a time."
-                  action={
-                    <div className="table__actions">
-                      <button type="button" className="btn btn--primary" onClick={applyTemplate} disabled={busy}>Add standard checklist</button>
-                      <button type="button" className="btn" onClick={() => setDialog({ type: 'newStep' })}>+ Add step</button>
-                    </div>
-                  }
-                />
-              }
-            />
-          </Card>
-        )}
-
-        {tab === 'travel' && (
-          <Card flush>
-            <DataTable
-              rows={travel}
-              columns={[
-                { key: 'travel_id', header: 'Trip', className: 'mono' },
-                { key: 'employee_name', header: 'Employee', className: 'strong' },
-                { key: 'destination', header: 'Destination' },
-                { key: 'travel_start_date', header: 'Dates', className: 'small', render: (r) => `${date(r.travel_start_date)} — ${date(r.travel_end_date)}` },
-                { key: 'vendor_cost', header: 'Vendor', align: 'right', render: (r) => money(r.vendor_cost) },
-                { key: 'employee_claims', header: 'Claims', align: 'right', render: (r) => money(r.employee_claims) },
-                { key: 'total_travel_cost', header: 'Total', align: 'right', className: 'strong', render: (r) => money(r.total_travel_cost) },
-                { key: 'vendor_invoice_status', header: 'Vendor invoice', render: (r) => <Badge>{r.vendor_invoice_status}</Badge> },
-              ]}
-              empty={<Empty title="No travel recorded against this project" />}
-            />
-          </Card>
-        )}
-
-        {tab === 'quotes' && (
-          <Card flush>
-            <DataTable
-              rows={quotations}
-              columns={[
-                { key: 'quotation_no', header: 'Quotation', className: 'mono' },
-                { key: 'quotation_date', header: 'Date', render: (r) => date(r.quotation_date) },
-                { key: 'service_quoted', header: 'Service', className: 'wrap' },
-                { key: 'quotation_value', header: 'Value', align: 'right', render: (r) => money(r.quotation_value, r.currency) },
-                { key: 'status', header: 'Status', render: (r) => <Badge>{r.status}</Badge> },
-              ]}
-              empty={<Empty title="No quotation linked to this project" />}
-            />
-          </Card>
-        )}
         <ProjectVisits projectId={projectId} />
         <ProjectProfit projectId={projectId} />
-        <DeliverablesTable params={{ project_id: projectId }} preset={{ project_id: projectId }} compact title="Deliverables" hint="Issue the certificate or report this project produced. An expiry date schedules the renewal." />
         <Timeline entity="project" id={projectId} />
-      </div>
+      </RecordPage>
+
+      {dialog?.type === 'milestone' && (
+        <RecordForm
+          title={dialog.row ? 'Edit milestone' : 'Add a milestone'}
+          subtitle={`For ${p.project_id} — ${p.client_name}`}
+          resource="project-milestones"
+          record={dialog.row || { project_id: p.project_id, sort_order: milestones.length }}
+          onClose={close}
+          onSaved={refetch}
+          fields={[
+            { name: 'project_id', type: 'hidden' },
+            { name: 'name', label: 'Milestone', required: true, span: 2, placeholder: 'Stage 1 audit complete' },
+            { name: 'target_date', label: 'Target date', type: 'date' },
+            { name: 'reached_on', label: 'Reached on', type: 'date', hint: 'Blank until it happens' },
+          ]}
+        />
+      )}
 
       {dialog?.type === 'newStep' && (
         <RecordForm
-          title="Add onboarding step"
+          title="Add a checklist step"
           subtitle={`For ${p.project_id} — ${p.client_name}`}
           resource="onboarding"
           record={{
@@ -362,6 +390,7 @@ export default function ProjectDetail() {
             owner: p.project_manager,
             owner_email: p.project_manager_email,
           }}
+          intro="A step you add is yours to tick. The template's money steps read the payment schedule instead."
           onClose={close}
           onSaved={refetch}
           fields={stepFields}
@@ -370,7 +399,7 @@ export default function ProjectDetail() {
 
       {dialog?.type === 'editStep' && (
         <RecordForm
-          title="Edit onboarding step"
+          title="Edit the step"
           subtitle={`Step ${dialog.row.step_no} of ${p.project_id}`}
           resource="onboarding"
           record={dialog.row}
@@ -382,26 +411,25 @@ export default function ProjectDetail() {
 
       {dialog?.type === 'deleteStep' && (
         <ConfirmDialog
-          title="Delete this step?"
-          message={`"${dialog.row.step}" will be removed from ${p.project_id}. The onboarding % will recalculate.`}
-          confirmLabel="Delete step"
+          title="Remove this step?"
+          message={`"${dialog.row.step}" will be removed from ${p.project_id}. The checklist count will recalculate.`}
+          confirmLabel="Remove step"
           busy={busy}
           onConfirm={() => deleteStep(dialog.row)}
           onClose={close}
         />
       )}
 
-      {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
-      {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}
-
       {dialog?.type === 'edit' && (
         <RecordForm
-          title="Edit project"
+          title={p.actual_delivery_date ? 'Edit project' : 'Record the delivery date'}
           resource="projects"
           record={p}
           onClose={close}
           onSaved={refetch}
+          intro={p.actual_delivery_date ? undefined : verdict}
           fields={[
+            { name: 'actual_delivery_date', label: 'Delivered on', type: 'date' },
             { name: 'client_name', label: 'Client', required: true },
             { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
             { name: 'project_manager', label: 'Project manager' },
@@ -443,17 +471,37 @@ export default function ProjectDetail() {
                 .filter((q) => q.status === 'Won - PO Received')
                 .map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${money(q.quotation_value, q.currency)}` })),
               hint: 'The order this PO fulfils; revenue counts the PO against it',
+              ...poCurrencyFields(quotations).quotation,
             },
             { name: 'po_date', label: 'PO date', type: 'date' },
             { name: 'po_value', label: 'PO value', type: 'money', required: true },
-            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'] },
+            { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], ...poCurrencyFields(quotations).currency },
             { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
             { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
+            ...poRevisionFields(lookups.purchase_orders, { projectId: p.project_id }),
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}
         />
       )}
     </>
   );
+}
+
+function checklistFields(onboarding, lookups) {
+  const stageOptions = Array.from(
+    new Set([...LIFECYCLE, ...onboarding.map((s) => s.stage).filter(Boolean)])
+  );
+  return [
+    { name: 'project_id', label: 'Project', required: true, disabled: true },
+    { name: 'step_no', label: 'Step number', type: 'number', min: 1, required: true },
+    { name: 'stage', label: 'Stage', type: 'combo', options: stageOptions },
+    { name: 'status', label: 'Status', type: 'select', options: lookups.enums?.onboarding || ['Not Started', 'In Progress', 'Done', 'N/A'] },
+    { name: 'step', label: 'Step', required: true, type: 'textarea', rows: 2, span: 'all' },
+    { name: 'owner', label: 'Owner' },
+    { name: 'owner_email', label: 'Owner email', type: 'email' },
+    { name: 'target_date', label: 'Target date', type: 'date' },
+    { name: 'completed_date', label: 'Completed on', type: 'date' },
+    { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
+  ];
 }

@@ -10,7 +10,7 @@
  *                        renewed; one lost, or long overdue, lapses it
  */
 import { query, transaction } from '../db.js';
-import { businessToday } from './businessDate.js';
+import { businessToday } from './businessDate.ts';
 import { claimNextId } from './sequences.js';
 
 const plusMonths = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); };
@@ -51,7 +51,7 @@ export async function openRenewal(engagementId, { today = businessToday(), by = 
     const { rows: [q] } = await client.query(
       `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted, sector, sales_person, sales_person_email, quotation_date,
                                quotation_value, currency, status, remarks)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Submitted',$11) RETURNING id, quotation_no`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Draft',$11) RETURNING id, quotation_no`,
       [no, e.client_name, orig?.contact_person ?? null, e.service_name, orig?.sector ?? null, e.owner || orig?.sales_person || null, orig?.sales_person_email ?? null, today,
        orig?.total ?? orig?.quotation_value ?? null, orig?.currency || 'INR',
        `Renewal of ${orig?.quotation_no || e.po_number || 'a previous engagement'} · cycle ${e.cycle + 1} · due ${e.next_due_on}`]);

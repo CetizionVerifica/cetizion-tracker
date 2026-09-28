@@ -15,10 +15,13 @@ import { requireAuth } from './auth/middleware.js';
 import { mountWebApp } from './web.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { lookupRouter, settingsRouter } from './routes/lookups.js';
+import { searchRouter } from './routes/search.js';
+import { viewRouter } from './routes/views.js';
 import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
 import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
+import { activityRouter } from './routes/activity.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import { quotationDocRouter } from './routes/quotations.js';
@@ -29,6 +32,7 @@ import { taskSummaryRouter, timelineRouter } from './routes/timeline.js';
 import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
+import { reportsRouter } from './routes/reports.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { communicationsRouter } from './routes/communications.js';
 import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js';
@@ -126,6 +130,8 @@ app.use('/api/mcp', mcpRouter);
 app.use('/api', requireAuth);
 
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/search', searchRouter);
+app.use('/api/views', viewRouter);
 app.use('/api/lookups', lookupRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
@@ -133,6 +139,10 @@ app.use('/api/import', importRouter);
 app.use('/api/documents', documentRouter);
 // Admin only, at its own router.
 app.use('/api/users', userRouter);
+// Admin only, and read only: what was done and by whom (#18 Phase 1.5).
+// Not in the resource registry below on purpose — an audit trail with a
+// generated create/update/delete router is not an audit trail.
+app.use('/api/activity', activityRouter);
 
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.
@@ -143,6 +153,7 @@ app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
+app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/communications', communicationsRouter);
 app.use('/api/deliverables', deliverablesRouter);

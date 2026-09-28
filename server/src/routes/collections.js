@@ -15,8 +15,18 @@ import { ApiError } from '../middleware/error.js';
 
 export const collectionsRouter = Router();
 
-const BUCKETS = [[0, 30, '0-30'], [31, 60, '31-60'], [61, 90, '61-90'], [91, 100000, '90+']];
-const bucketOf = (days) => (BUCKETS.find(([lo, hi]) => days >= lo && days <= hi) || BUCKETS[0])[2];
+// Money that is not late yet used to land in the same bucket as money a
+// month late, because days_overdue is negative before the due date and the
+// lookup floored it. It is a different conversation, so it gets its own band.
+const BUCKETS = [
+  { key: 'not-due', label: 'Not yet due', lo: -1e6, hi: 0 },
+  { key: '1-30', label: '1–30 days', lo: 1, hi: 30 },
+  { key: '31-60', label: '31–60 days', lo: 31, hi: 60 },
+  { key: '61-90', label: '61–90 days', lo: 61, hi: 90 },
+  { key: '90+', label: 'Over 90 days', lo: 91, hi: 1e6 },
+];
+const bucketOf = (days) => (BUCKETS.find((b) => days >= b.lo && days <= b.hi) || BUCKETS[0]).key;
+const emptyBuckets = () => Object.fromEntries(BUCKETS.map((b) => [b.key, 0]));
 
 collectionsRouter.get('/', async (req, res) => {
   const { rows } = await query(`
@@ -32,7 +42,7 @@ collectionsRouter.get('/', async (req, res) => {
      WHERE ps.invoice_no IS NOT NULL AND ps.stage_status IN ('Due', 'Overdue', 'Partially Paid')
      ORDER BY ps.days_overdue DESC, ps.invoice_due_date`);
   const clients = new Map();
-  const totals = { outstanding: 0, overdue: 0, buckets: Object.fromEntries(BUCKETS.map((b) => [b[2], 0])), on_hold: 0, promised: 0 };
+  const totals = { outstanding: 0, overdue: 0, buckets: emptyBuckets(), on_hold: 0, promised: 0 };
   // Debt in another currency is not converted here — there is no rate on a
   // collections screen and inventing one would be worse — but it is not
   // silently dropped either. It is listed, unconverted, the way Cashflow
@@ -40,7 +50,7 @@ collectionsRouter.get('/', async (req, res) => {
   const foreign = [];
   for (const s of rows) {
     const key = s.company_id ?? s.client_name;
-    if (!clients.has(key)) clients.set(key, { company_id: s.company_id, company: s.company_name, contact_name: s.contact_name, contact_email: s.contact_email, contact_phone: s.contact_phone, outstanding: 0, overdue: 0, oldest_days: 0, buckets: Object.fromEntries(BUCKETS.map((b) => [b[2], 0])), stages: [], last_chased_at: null, promise_to_pay_date: null });
+    if (!clients.has(key)) clients.set(key, { company_id: s.company_id, company: s.company_name, contact_name: s.contact_name, contact_email: s.contact_email, contact_phone: s.contact_phone, outstanding: 0, overdue: 0, oldest_days: 0, buckets: emptyBuckets(), stages: [], last_chased_at: null, promise_to_pay_date: null });
     const cl = clients.get(key);
     const out = Number(s.outstanding);
     const days = Number(s.days_overdue || 0);
@@ -56,7 +66,7 @@ collectionsRouter.get('/', async (req, res) => {
     if (s.promise_to_pay_date) totals.promised += inr ? out : 0;
   }
   const list = [...clients.values()].sort((a, b) => b.overdue - a.overdue || b.outstanding - a.outstanding);
-  res.json({ data: { totals, clients: list, buckets: BUCKETS.map((b) => b[2]), foreign } });
+  res.json({ data: { totals, clients: list, buckets: BUCKETS.map(({ key, label }) => ({ key, label })), foreign } });
 });
 
 collectionsRouter.get('/log', async (req, res) => {

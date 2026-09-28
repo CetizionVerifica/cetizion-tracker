@@ -1,8 +1,8 @@
 import { query } from '../db.js';
-import { IN_PERIOD, RATES, inPeriod, rateOn } from './salesReport.js';
+import { IN_PERIOD, RATES, inPeriod, rateOn, staleAmong } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
-import { r2, share as ratio } from './reportMath.js';
-import { QUOTATION_STATUS } from './statuses.js';
+import { r2, share as ratio } from './reportMath.ts';
+import { QUOTATION_STATUS, STAGE_STATUS } from './statuses.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
@@ -161,13 +161,35 @@ export function paymentStatusRows(pos) {
   return rows;
 }
 
+/** Overdue invoices, converted to INR at each row's own rate; unconverted rows are named, not guessed. */
+export function summariseOverdue(rows) {
+  const dueConverted = rows.filter((r) => r.due_rate !== null);
+  const receivedConverted = rows.filter((r) => r.received_rate !== null);
+  return {
+    invoices: rows.length,
+    clients: new Set(rows.map((r) => r.client)).size,
+    due_inr: r2(dueConverted.reduce((n, r) => n + r.due_inr, 0)),
+    received_inr: r2(receivedConverted.reduce((n, r) => n + r.received_inr, 0)),
+    due_unconverted: r2Amounts(rows.filter((r) => r.due_rate === null).map((r) => ({ currency: r.currency, amount: r.due_now_amount }))),
+    received_unconverted: r2Amounts(rows.filter((r) => r.received_rate === null).map((r) => ({ currency: r.currency, amount: r.amount_received }))),
+    missing_rates: [...new Set(rows.filter((r) => r.due_rate === null || r.received_rate === null).map((r) => r.currency))].sort(),
+  };
+}
+
+/** Sum [{ currency, amount }] per currency, rounded once at the end. */
+function r2Amounts(list) {
+  const totals = new Map();
+  for (const { currency, amount } of list) totals.set(currency, (totals.get(currency) || 0) + amount);
+  return [...totals].map(([currency, amount]) => ({ currency, amount: r2(amount) }));
+}
+
 /**
  * The revenue figures for a period. `years` fills the Sales reports page's
  * year picker; the PDF has no picker, so it passes includeYears: false and
  * that query is not run.
  */
 export async function revenueReport({ from, to }, { includeYears = true } = {}) {
-  const [orders, purchaseOrders, years, undated] = await Promise.all([
+  const [orders, purchaseOrders, overdueStages, years, undated] = await Promise.all([
     query(
       `WITH ${RATES}
        SELECT q.quotation_no,
@@ -244,6 +266,33 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
         ORDER BY p.po_date NULLS LAST, p.po_number`,
       [from, to]
     ),
+    // Every stage that is Overdue today, for a PO dated in the period, one
+    // row per invoice. Payment status counts whole POs instead: a PO with one
+    // overdue invoice is Overdue there, with every unpaid invoice it has in
+    // its Due now — so this total can be lower. Received converts at the payment date's
+    // rate (falling back to the invoice date with nothing received yet), due
+    // at the invoice date's rate — the same two rates the tables above use.
+    query(
+      `WITH ${RATES}
+       SELECT btrim(s.client_name)                      AS client,
+              s.po_number,
+              s.invoice_no,
+              to_char(s.invoice_due_date, 'YYYY-MM-DD')  AS due_date,
+              s.days_overdue,
+              s.currency,
+              s.amount_received,
+              s.due_now_amount,
+              rr.rate                                     AS received_rate,
+              dr.rate                                      AS due_rate,
+              ROUND(s.amount_received * rr.rate, 2)       AS received_inr,
+              ROUND(s.due_now_amount * dr.rate, 2)        AS due_inr
+         FROM v_payment_stages s
+         ${rateOn('rr', 's.currency', 'COALESCE(s.payment_received_date, s.invoice_date)')}
+         ${rateOn('dr', 's.currency', 's.invoice_date')}
+        WHERE s.stage_status = '${STAGE_STATUS.overdue}' AND ${inPeriod('s.po_date')}
+        ORDER BY s.client_name, s.days_overdue DESC`,
+      [from, to]
+    ),
     // Years with won orders or dated POs, for the year picker.
     includeYears
       ? query(
@@ -277,8 +326,12 @@ export async function revenueReport({ from, to }, { includeYears = true } = {}) 
     orders: { months: monthRows(orders.rows, period, summariseOrders), total: summariseOrders(orders.rows) },
     invoicing: { months: monthRows(purchaseOrders.rows, period, summarisePurchaseOrders), total: poTotal },
     payment_status: { rows: paymentStatusRows(purchaseOrders.rows), total: poTotal },
+    overdue_by_client: { rows: overdueStages.rows, total: summariseOverdue(overdueStages.rows) },
     years: years.rows.map((row) => row.year),
     rates: [...rates].map(([currency, rate]) => ({ currency, ...rate })),
+    // A currency whose newest rate is days old still converts every recent
+    // figure above. Say which, rather than let an old number pass for today's.
+    stale_rates: await staleAmong([...rates].map(([currency]) => ({ currency })), { period }),
     // With a date range those POs are left out of every PO figure above, so
     // name them; without one they are already counted in a "No date" row.
     undated_pos: from || to ? undated.rows.map((row) => row.po_number) : [],
@@ -304,7 +357,7 @@ const moneyColumns = (row) => ({
 export function ordersCsvRows({ orders }) {
   return [...orders.months, { label: 'Total', ...orders.total }].map((row) => ({
     Month: row.label,
-    'Orders won': row.orders_won,
+    'Quotations won': row.orders_won,
     'Order intake (INR)': row.order_intake_inr,
     'Average deal (INR)': row.average_deal_inr ?? '',
     'Orders with no value entered': row.orders_without_value,
@@ -325,5 +378,26 @@ export function paymentStatusCsvRows({ payment_status: status }) {
     'Payment status': row.status,
     POs: row.pos,
     ...moneyColumns(row),
+  }));
+}
+
+export function overdueCsvRows({ overdue_by_client: overdue }) {
+  return overdue.rows.map((row) => ({
+    Client: row.client,
+    PO: row.po_number,
+    Invoice: row.invoice_no,
+    'Due date': row.due_date,
+    'Days overdue': row.days_overdue,
+    Currency: row.currency,
+    // The original amount, in its own currency, is never left out — only
+    // its INR conversion can be missing, when no rate covers the date it
+    // converts on (the payment date for Received, the invoice date for
+    // Due). Matches fxCsvRows' Won value / Rate / Won value (INR) shape.
+    Received: row.amount_received,
+    'Received rate (INR per unit)': row.received_rate ?? 'Not set for the payment date',
+    'Received (INR)': row.received_rate !== null ? row.received_inr : '',
+    Due: row.due_now_amount,
+    'Due rate (INR per unit)': row.due_rate ?? 'Not set for the invoice date',
+    'Due (INR)': row.due_rate !== null ? row.due_inr : '',
   }));
 }

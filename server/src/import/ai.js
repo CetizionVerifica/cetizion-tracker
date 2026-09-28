@@ -1,9 +1,11 @@
 /**
- * The model's two jobs in the importer, and nothing else:
+ * The model's three jobs in the importer, and nothing else:
  *
  *   1. mapColumns   — say which sheet column holds which field, for sheets
  *                     whose headers don't match the known layout;
- *   2. reviewRows   — read free-text remarks and flag oddities: an advance
+ *   2. readStages   — read deal-stage wordings the rules did not understand
+ *                     (shown as the AI's reading, for the admin to check);
+ *   3. reviewRows   — read free-text remarks and flag oddities: an advance
  *                     percentage mentioned in a comment, a proforma-style
  *                     invoice number, a remark the figures contradict.
  *
@@ -50,6 +52,19 @@ async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000 } =
         // flash-class model spends its output budget deliberating and
         // truncates. Fable models cannot switch thinking off; keep it low.
         reasoning: /fable/i.test(aiConfig.model) ? { effort: 'low' } : { enabled: false },
+        // What goes out is a client's commercial detail — names, deal
+        // values, invoice numbers, and whatever somebody typed in a
+        // remarks column. Which provider serves the model decides whether
+        // that is kept, and the default is to let OpenRouter choose freely.
+        //
+        // data_collection: 'deny' routes only to providers that do not
+        // store or train on prompts; zdr narrows that to zero-retention
+        // endpoints. Both can make a request fail to route rather than
+        // fall back to a provider that keeps it, which is the right way
+        // round: not answering is recoverable, and the importer falls back
+        // to rules. A copy of a client's pipeline on somebody's training
+        // set is not recoverable.
+        provider: { data_collection: 'deny', zdr: true },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
@@ -81,43 +96,40 @@ async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000 } =
 /* 1. Column mapping                                                    */
 /* ------------------------------------------------------------------ */
 
-/** The fields the importer understands, with the header names seen so far. */
-export const FIELDS = {
-  sno:            ['s.no', 'sno', 'sr no', 'sr.no', 'serial', '#'],
-  client:         ['client name', 'client', 'customer', 'company'],
-  industry:       ['industry type', 'industry', 'sector'],
-  contact:        ['lead name', 'contact person', 'contact', 'lead'],
-  lead_type:      ['lead type', 'new/existing'],
-  stage:          ['deal stage', 'stage', 'status'],
-  service:        ['proposal name', 'service', 'service quoted', 'proposal', 'scope'],
-  proposal_date:  ['proposal sent date', 'proposal date', 'quotation date', 'sent date'],
-  quoted_price:   ['quoted price', 'quotation value', 'quote value', 'proposal value'],
-  po_date:        ['po received on', 'po date', 'po received'],
-  po_number:      ['po number', 'po no', 'po #', 'purchase order'],
-  quotation_no:   ['quotation no', 'quotation number', 'quote no', 'quote number', 'quotation ref', 'ctz no'],
-  po_amount:      ['po amount', 'po value', 'contract amount', 'order value'],
-  invoice_number: ['invoice number', 'invoice no', 'invoice #'],
-  invoice_amount: ['invoice amount', 'invoiced'],
-  received:       ['ammount received', 'amount received', 'received', 'payment received'],
-  pending:        ['pending', 'balance', 'outstanding'],
-  follow_up:      ['follow up comments', 'follow-up comments', 'comments', 'notes'],
-  remarks:        ['remarks', 'remark'],
-  sales_person:   ['sales person', 'owner', 'salesperson', 'sales owner'],
+// The fields and the header matcher live in fields.js, shared with the
+// reader (which uses them to find the header row and pick the sheet).
+export { FIELDS, heuristicMapping } from './fields.js';
+import { FIELDS, heuristicMapping } from './fields.js';
+import { QUOTE_STAGES, stageKey } from './stages.js';
+
+// What each field holds, for the model: a bare name like "received" or
+// "pending" is not enough to place "Yet to Receive" or "Money Received".
+const MEANING = {
+  sno: 'serial / row number of the deal',
+  client: 'customer company name',
+  industry: "client's industry or sector",
+  contact: "the client's contact person",
+  lead_type: 'lead source or type (new, repeat, referral)',
+  stage: 'deal stage or status (won, lost, proposal sent, on hold...)',
+  stage_detail: 'a second, more detailed stage or status column',
+  service: 'service or scope proposed',
+  proposal_date: 'date the proposal or quotation was sent',
+  quotation_no: 'quotation / proposal reference number',
+  quoted_price: 'fee or price quoted in the proposal',
+  currency: 'currency code of the amounts',
+  po_date: 'date the order was won: PO, work order, contract or award date',
+  po_number: 'purchase order, work order, contract or award number',
+  po_amount: 'order value: PO, work order or contract amount',
+  invoice_number: 'invoice number(s)',
+  invoice_amount: 'amount invoiced / billed so far',
+  received: 'money received / collected so far',
+  pending: 'amount still to be received / outstanding',
+  follow_up: 'follow-up comments: what was done or is to be done next (text)',
+  last_follow_up: 'date of the last follow-up / last contact with the client',
+  next_follow_up: 'date the next follow-up is due',
+  remarks: 'free-text remarks or comments',
+  sales_person: 'our salesperson or owner of the deal',
 };
-
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9#]/g, ' ').replace(/\s+/g, ' ').trim();
-
-/** Heuristic mapping: exact or near-exact header matches. */
-export function heuristicMapping(headers) {
-  const mapping = {};
-  const used = new Set();
-  for (const [field, names] of Object.entries(FIELDS)) {
-    const wanted = names.map(norm);
-    const hit = headers.find((h) => !used.has(h) && wanted.includes(norm(h)));
-    if (hit) { mapping[field] = hit; used.add(hit); }
-  }
-  return mapping;
-}
 
 /**
  * Ask the model only for the fields the heuristic could not place. Returns
@@ -126,18 +138,24 @@ export function heuristicMapping(headers) {
 export async function mapColumns(headers, sampleRows) {
   const mapping = heuristicMapping(headers);
   const missing = Object.keys(FIELDS).filter((f) => !mapping[f]);
-  const essential = ['client', 'stage', 'service'];
-  const needAI = aiConfig.enabled && (missing.some((f) => essential.includes(f)) || missing.length > 8);
+  // Whenever a named column is left over and a field is still free: one short
+  // call, and the model may only fill those gaps, never move a placed column.
+  const placed = new Set(Object.values(mapping));
+  const spare = headers.filter((h) => h && !placed.has(h) && !/^column_\d+$/.test(h));
+  const needAI = aiConfig.enabled && missing.length > 0 && spare.length > 0;
   if (!needAI) return { mapping, source: 'heuristic' };
 
   const system = `You map spreadsheet columns to fields for a sales tracker. Reply with JSON only:
 {"mapping": {"<field>": "<exact header text or null>", ...}}
 Fields and their meaning:
-${Object.keys(FIELDS).map((f) => `- ${f}`).join('\n')}
-Use a header only once. Use null when no column fits. Never invent headers.`;
+${Object.keys(FIELDS).map((f) => `- ${f}: ${MEANING[f] || f}`).join('\n')}
+Use a header only once. Use null when no column fits: a column that is none of
+these (an ID, e-mail, address, GST number, probability...) stays unmapped.
+Never invent headers.`;
   const user = `Headers: ${JSON.stringify(headers)}
 Already mapped (keep these): ${JSON.stringify(mapping)}
 Fields still unmapped: ${JSON.stringify(missing)}
+Columns not yet used: ${JSON.stringify(spare)}
 Sample rows: ${JSON.stringify(sampleRows.slice(0, 5))}`;
 
   try {
@@ -150,6 +168,35 @@ Sample rows: ${JSON.stringify(sampleRows.slice(0, 5))}`;
     return { mapping, source: 'heuristic+ai' };
   } catch (err) {
     return { mapping, source: 'heuristic', ai_error: err.message };
+  }
+}
+
+/**
+ * Read the deal-stage wordings the rules did not understand. Returns
+ * {map: {stageKey: reading}} with readings from QUOTE_STAGES or 'lead';
+ * a wording the model is unsure of is left out and stays "not understood".
+ */
+export async function readStages(wordings) {
+  const todo = [...new Set(wordings.filter(Boolean))].slice(0, 150);
+  if (!aiConfig.enabled || !todo.length) return { map: {} };
+  const system = `You read the deal-stage column of a B2B sales tracker (consulting: ESG ratings, audits, certification, assurance). For each wording reply with the stage it means. Reply with JSON only: {"stages": {"<wording exactly as given>": "<stage or null>"}}
+Stages:
+- "Won - PO Received": the order is placed or confirmed (PO, work order, signed contract, award) or work, invoicing or payment on it has started.
+- "Under Negotiation": a priced proposal is being negotiated, revised or re-quoted, or the client agreed but the formal order (PO) is still awaited.
+- "Submitted": a proposal, quotation or bid has been sent and the client has not answered yet.
+- "On Hold": paused, deferred or postponed.
+- "Lost": not won: lost, dropped, declined, cancelled, competitor chosen, no bid, done in-house.
+- "lead": no proposal sent yet: enquiry, RFQ/RFP received, intro call, scoping, NDA, proposal being prepared.
+Use null when the wording does not say which (a name, a date, a code, "see remarks").`;
+  try {
+    const out = await chatJSON(system, `Wordings: ${JSON.stringify(todo)}`, { maxTokens: 3000 });
+    const map = {};
+    for (const [wording, stage] of Object.entries(out.stages || {})) {
+      if (todo.includes(wording) && (QUOTE_STAGES.includes(stage) || stage === 'lead')) map[stageKey(wording)] = stage;
+    }
+    return { map };
+  } catch (err) {
+    return { map: {}, ai_error: err.message };
   }
 }
 

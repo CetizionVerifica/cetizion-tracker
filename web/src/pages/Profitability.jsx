@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
-import { Badge, Card, DataTable, Input, Select, Stat } from '../components/ui.jsx';
+import { Badge, Card, DataTable, Empty, Input, Select, Stat } from '../components/ui.jsx';
 import { marginTone } from '../components/ProjectProfit.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
@@ -56,14 +56,20 @@ export default function Profitability() {
           <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} title="POs to" />
         </>} />
       <div className="page stack">
-        <div className="grid grid--stats">
+        <div className="auto-grid--stats">
           <Stat label="Revenue" value={money(revenue)} />
           <Stat label="Cost" value={money(sum('total_cost'))} meta={`${money(sum('cost_committed'))} committed`} />
           <Stat label="Margin" value={money(margin)} meta={revenue > 0 ? `${((100 * margin) / revenue).toFixed(1)}%` : ''} tone={margin < 0 ? 'danger' : ''} />
           <Stat label="Gaps" value={gaps} meta="costs or POs with no amount or rate, left out" tone={gaps ? 'danger' : ''} />
         </div>
         <Card flush>
-          <DataTable loading={loading && !data} rows={rows} columns={cols} onRowClick={group === 'project' ? (r) => navigate(`/projects/${r.project_id}`) : undefined} />
+          <DataTable
+            loading={loading && !data}
+            rows={rows}
+            columns={cols}
+            onRowClick={group === 'project' ? (r) => navigate(`/projects/${r.project_id}`) : undefined}
+            empty={<Empty title="Nothing delivered in this period" text="Margin is counted when a project is delivered. Widen the dates, or group by something else." />}
+          />
         </Card>
       </div>
     </>

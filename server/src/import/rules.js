@@ -26,9 +26,12 @@
  *   receipt        PO number + stage (money already recorded on that stage)
  */
 import { z } from 'zod';
-import { parseMoney } from './parse.js';
+import { findDate, looksLikeReference, parseMoney, readCurrency, splitReference } from './parse.js';
+import { classifyStage, readsAsItself, stageKey } from './stages.js';
+import { unitOf } from './fields.js';
 import { resources } from '../lib/resources.js';
-import { sameService, similarName } from '../lib/names.js';
+import { sameService, similarName } from '../lib/names.ts';
+import { financialYear } from '../lib/sequences.js';
 
 export const DEFAULT_RULES = {
   exclude_iso: true,
@@ -45,30 +48,51 @@ export const DEFAULT_RULES = {
   invoice_prefix: 'CVPL',
   apply_onboarding_template: true,
   overwrite_existing: false,
+  // A deal already in the tracker, recognised for certain, takes what
+  // changed in the sheet (stage, value, dates...). A won deal is never
+  // moved back by a sheet.
+  update_from_sheet: true,
 };
 
 /**
- * Overrides a request may send. Every key is optional and an unknown key is
- * refused, so a typo fails loudly instead of silently using the default.
- * The prefix is built into a RegExp, so it is letters, digits and hyphens only.
+ * What a client may actually send as rules.
+ *
+ * These were JSON.parse'd and spread straight into the defaults, so a
+ * number arriving as text became NaN halfway down — po_date_offset_days
+ * of "abc" makes an Invalid Date whose toISOString throws, surfacing as
+ * "Could not read this file", and default_split of {} yields a stage
+ * percent of NaN. invoice_prefix is also interpolated into a RegExp, so
+ * it needs a shape rather than a shrug. Admin-only, which makes this
+ * robustness rather than security — but the house rule is zod at the
+ * boundary, and every one of those failures reads as the file's fault.
  */
-const days = z.number().int().min(0).max(365);
 export const rulesSchema = z.object({
   exclude_iso: z.boolean(),
   won_requires_po: z.boolean(),
   include_pending: z.boolean(),
   include_lost: z.boolean(),
-  po_date_offset_days: days,
-  invoice_date_offset_days: days,
-  delivery_offset_months: z.number().int().min(0).max(60),
+  po_date_offset_days: z.coerce.number().int().min(0).max(365),
+  invoice_date_offset_days: z.coerce.number().int().min(0).max(365),
+  delivery_offset_months: z.coerce.number().int().min(0).max(120),
   delivery_only_if_past: z.boolean(),
-  default_split: z.tuple([z.number().int().min(1).max(99), z.number().int().min(1).max(99)])
-    .refine(([a, b]) => a + b === 100, 'default_split must add up to 100'),
-  default_terms_days: days,
-  default_currency: z.string().regex(/^[A-Z]{3}$/, 'default_currency must be a three-letter code such as INR'),
-  invoice_prefix: z.string().regex(/^[A-Za-z0-9-]{1,20}$/, 'invoice_prefix may use letters, digits and hyphens only'),
+  // Every part is a payment stage, and a stage of 0% is refused by the
+  // database (stage_percent > 0); parts that do not add up to 100 make a PO
+  // whose stages do not total 100%.
+  default_split: z.array(z.coerce.number().gt(0).max(100)).min(1).max(12)
+    .refine((parts) => Math.abs(parts.reduce((a, b) => a + b, 0) - 100) < 0.001, 'default_split must add up to 100'),
+  default_terms_days: z.coerce.number().int().min(0).max(365),
+  default_currency: z.string().trim().length(3),
+  // Letters, digits, dash and slash: enough for CVPL or CTZ/26, and
+  // nothing that changes what the pattern it is built into means.
+  invoice_prefix: z.string().trim().min(1).max(20).regex(/^[A-Za-z0-9/-]+$/, 'Letters, digits, - and / only'),
   apply_onboarding_template: z.boolean(),
   overwrite_existing: z.boolean(),
+  update_from_sheet: z.boolean(),
+  // The model's readings, kept between plans; keys are arbitrary wordings.
+  stage_map: z.record(z.string(), z.string().nullable()),
+  ai_stage_map: z.record(z.string(), z.string().nullable()),
+  // An unknown key is refused, so a typo fails loudly instead of the default
+  // quietly applying.
 }).partial().strict();
 
 /**
@@ -98,16 +122,91 @@ export function sanitizeRules(stored) {
   return { rules: kept, dropped };
 }
 
-const ISO = /\bISO\b/i;
+/** Who writes the sheet's remarks and reminders: how they are found again. */
+export const IMPORT_AUTHOR = 'Bulk import';
+const NOTE_LABEL = { status: 'Status', remarks: 'Remarks', follow_up: 'Follow-up', next: 'Next follow-up' };
+const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/**
+ * What a sheet cell says that the tracker has not heard yet: nothing when
+ * the text was seen before, and only the added part when the team wrote on
+ * after it ("Reminder sent" → "Reminder sent | 25-Sep: asked for revision").
+ */
+export function newText(text, before, heard = []) {
+  if (!text) return null;
+  const t = squash(text);
+  if (heard.some((h) => h.includes(t))) return null;
+  const plain = String(text).replace(/\s+/g, ' ').trim();
+  const prev = String(before || '').replace(/\s+/g, ' ').trim();
+  const at = prev ? plain.toLowerCase().indexOf(prev.toLowerCase()) : -1;
+  if (at < 0) return plain;
+  const rest = `${plain.slice(0, at)} ${plain.slice(at + prev.length)}`.replace(/^[\s|;,.\-–—]+|[\s|;,\-–—]+$/g, '').replace(/\s+/g, ' ').trim();
+  return rest || null;
+}
+
+/** The fields a re-upload may change on a quotation, and how they read. */
+const CHANGEABLE = [['status', 'stage'], ['quotation_value', 'value'], ['currency', 'currency'], ['quotation_date', 'proposal date'],
+  ['contact_person', 'contact'], ['sales_person', 'sales person'], ['service_quoted', 'service']];
+
+/**
+ * The same columns, for the snapshot the trail keeps of what the sheet last
+ * said (routes/import.js). One list, so the snapshot and the comparison can
+ * never drift apart — a field kept here but missing there would silently go
+ * back to overwriting the tracker.
+ */
+export const SHEET_FIELDS = CHANGEABLE.map(([col]) => col);
+const sameValue = (a, b) => (typeof b === 'number'
+  ? a !== null && a !== undefined && Math.abs(Number(a) - b) < 0.01
+  : squash(a) === squash(b));
+
+/**
+ * What the sheet wants to change, and whether it is the sheet's to change.
+ *
+ * Comparing the sheet against the tracker alone cannot tell "the sheet
+ * moved" from "somebody corrected the tracker". It always read the second
+ * as the first, so re-uploading an unchanged sheet on Friday reverted the
+ * value a salesperson fixed on Wednesday — status, value, currency, dates,
+ * contact, owner and service, seven fields, with nothing louder than an
+ * info badge on one row of five hundred.
+ *
+ * `was` is what this sheet said at the last committed upload, so each field
+ * has three readings and only one of them is ours to act on:
+ *
+ *   sheet unchanged          → the tracker moved. Leave it alone.
+ *   sheet moved, tracker not → the sheet is the newer fact. Apply it.
+ *   both moved               → a person and a spreadsheet disagree, and the
+ *                              person is the one who knew they were editing.
+ *                              Keep theirs and say so.
+ */
+function sheetChanges(existing, payload, was) {
+  const out = [];
+  for (const [col, label] of CHANGEABLE) {
+    const to = payload[col];
+    const from = existing[col] ?? null;
+    if (to === null || to === undefined || to === '') continue;
+    if (sameValue(from, to)) continue;
+
+    // No record of what the sheet said before — the first upload after this
+    // shipped, or a deal matched some other way. Report it, never apply it:
+    // without the third reading this is exactly the guess that caused the
+    // reverts.
+    const then = was ? was[col] ?? null : undefined;
+    if (then === undefined) { out.push({ field: col, label, from, to, verdict: 'unknown' }); continue; }
+
+    if (sameValue(then, to)) { out.push({ field: col, label, from, to, verdict: 'theirs' }); continue; }
+    out.push({ field: col, label, from, to, verdict: sameValue(from, then) ? 'sheet' : 'both' });
+  }
+  return out;
+}
+
+const WON_STATUS = 'Won - PO Received';
+// "ISO 14001" and "ISO9001" alike: a digit may follow straight on (#23).
+const ISO = /\bISO(?![a-z])/i;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/** The quotation status a sheet's deal stage reads as, or null. See stages.js. */
 export function mapStage(raw) {
-  const s = String(raw || '').toLowerCase();
-  if (s.includes('won')) return 'Won - PO Received';
-  if (s.includes('lost')) return 'Lost';
-  if (s.includes('hold')) return 'On Hold';
-  if (s.includes('submit') || s.includes('negotiat') || s.includes('pending')) return 'Under Negotiation';
-  return null;
+  return classifyStage(raw).stage;
 }
 
 function plusDays(iso, n) {
@@ -120,65 +219,135 @@ function plusMonths(iso, n) {
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 
-/** Indian financial year for a date: 2026-03-07 -> "2025-26", 2026-07-08 -> "2026-27". */
-export function financialYear(iso) {
-  const [y, m] = iso.split('-').map(Number);
-  const start = m >= 4 ? y : y - 1;
-  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
-}
+/**
+ * Re-exported so callers of this module keep working, but there is only
+ * one implementation now.
+ *
+ * There used to be two, and they disagreed: this one wrote 2026-27 and
+ * the series wrote 26-27, so one company's GST invoice series was being
+ * numbered in two shapes at once — and the counter, which matches on the
+ * prefix, could not see the imported half. It would have handed out a
+ * number already in the books.
+ */
+export { financialYear };
 
 export function invoiceNumber(raw, date, prefix) {
   const s = String(raw).trim();
   if (new RegExp(`^${prefix}/`, 'i').test(s)) return s;          // already in full form
-  if (/^\d{4}-\d{2}\//.test(s)) return `${prefix}/${s}`;         // "2026-27/PI-003" carries its own year
+  // A sheet may carry its own year in either shape, and a number that
+  // arrives whole is kept whole: these are invoices that already exist.
+  if (/^\d{4}-\d{2}\//.test(s) || /^\d{2}-\d{2}\//.test(s)) return `${prefix}/${s}`;
   return `${prefix}/${financialYear(date)}/${s}`;
 }
 
-/** Pull the mapped fields out of one raw sheet row. */
-export function extractRow(raw, mapping) {
+/**
+ * Pull the mapped fields out of one raw sheet row.
+ *
+ * stageMap is the admin's own reading of a stage wording, keyed by
+ * stageKey(), as chosen on the review screen.
+ */
+export function extractRow(raw, mapping, { stageMap = null, aiStageMap = null } = {}) {
   const get = (f) => (mapping[f] ? raw[mapping[f]] : null);
-  const po = parseMoney(get('po_amount'));
-  const quoted = parseMoney(get('quoted_price'));
-  const received = parseMoney(get('received'));
-  const pending = parseMoney(get('pending'));
-  const invAmt = parseMoney(get('invoice_amount'));
+  // An amount in a column headed "(INR Lakhs)" or "(₹ Cr)" is counted in that unit.
+  const money = (f) => {
+    const v = get(f);
+    const m = parseMoney(v);
+    const unit = unitOf(mapping[f]);
+    const ownUnit = typeof v === 'string' && /\b(?:crores?|cr|lakhs?|lacs?|lac|l|k|mn|million|thousand)\b/i.test(v);
+    // Lakhs and crores count rupees: a dollar or euro amount keeps its own figure.
+    const foreign = m.currency && m.currency !== 'INR';
+    return unit === 1 || m.amount === null || ownUnit || foreign ? m : { ...m, amount: Math.round(m.amount * unit * 100) / 100, unit };
+  };
+  const po = money('po_amount');
+  const quoted = money('quoted_price');
+  const received = money('received');
+  const pending = money('pending');
+  const invAmt = money('invoice_amount');
   const snoRaw = get('sno');
   // The sheet's own S.No when it has one, else the row's position. Two rows
   // can end up with the same one — a blank S.No on row 12 next to a row
   // numbered 12 — so it labels a row for a person, and never identifies it:
   // `row` is the sheet position and is unique.
-  const snoGiven = Number.isFinite(Number(snoRaw)) && snoRaw !== null && String(snoRaw).trim() !== '';
-  const sno = snoGiven ? Number(snoRaw) : raw.__row;
+  const snoGiven = str(snoRaw) !== null;
+  const sno = snoGiven && Number.isFinite(Number(snoRaw)) ? Number(snoRaw) : raw.__row;
+
+  // The deal stage; a sheet with a separate "status detail" column is read
+  // from it when the stage column says nothing this importer understands.
+  const stageRaw = str(get('stage'));
+  const detailRaw = str(get('stage_detail'));
+  let reading = classifyStage(stageRaw, stageMap);
+  let stageText = stageRaw;
+  if ((reading.kind === 'blank' || reading.kind === 'unknown') && detailRaw) {
+    const fromDetail = classifyStage(detailRaw, stageMap);
+    if (fromDetail.kind !== 'blank' && fromDetail.kind !== 'unknown') { reading = fromDetail; stageText = detailRaw; }
+  }
+  // A wording the rules read nothing in, or that points two ways, takes the
+  // model's reading when there is one; the admin's own reading stays.
+  if (aiStageMap && reading.by === 'rule' && reading.kind !== 'blank') reading = classifyStage(stageText, stageMap, aiStageMap);
+
+  // "4501234567 (dtd 22.09.2026)": the number, and the date from its note.
+  const poRef = splitReference(get('po_number'));
+  const invRef = splitReference(get('invoice_number'));
+  // A quotation number is an identifier; a sentence in that column is a note
+  // ("Revised 22-Sep (5% disc.)", "Proposal dtd 09-Sep-2026 – ₹24,80,000").
+  // It matters: the number is how a duplicate is recognised.
+  const qRaw = str(get('quotation_no'));
+  const qIsNumber = Boolean(qRaw) && looksLikeReference(qRaw) && !/%|[₹$€£]|\b(?:revised|proposal|quotation|quote|dtd|dated|disc|discount|offer|annexure|auction|breakup|lumpsum)\b/i.test(qRaw);
+
+  const amountCurrency = po.currency || quoted.currency || received.currency || invAmt.currency || pending.currency || null;
+  // With no amount and no currency column, the quotation note may still say
+  // it: "Proposal dtd 01-Sep-2026 – USD 7,500 + travel" is a dollar deal.
+  const columnCurrency = readCurrency(get('currency')) || (qRaw && !qIsNumber ? readCurrency(qRaw) : null);
+  const nextDate = findDate(get('next_follow_up'));
   return {
     sno,
+    ref: str(snoRaw),
     sno_given: snoGiven,
     row: raw.__row,
     client: str(get('client')),
     industry: str(get('industry')),
     contact: str(get('contact')),
     lead_type: str(get('lead_type')),
-    stage_raw: str(get('stage')),
-    stage: mapStage(get('stage')),
+    stage_raw: stageText,
+    stage_column: stageRaw,
+    stage_detail: detailRaw,
+    stage: reading.stage,
+    stage_kind: reading.kind,
+    stage_by: reading.by,
     service: str(get('service')),
-    proposal_date: dateOrNull(get('proposal_date')),
-    quotation_no: str(get('quotation_no')),
+    proposal_date: findDate(get('proposal_date')),
+    quotation_no: qIsNumber ? qRaw : null,
+    quotation_note: qRaw && !qIsNumber ? qRaw : null,
     quoted_price: quoted.amount,
-    po_date: dateOrNull(get('po_date')),
-    po_number: str(get('po_number')),
+    quoted_reinterpreted: quoted.reinterpreted || null,
+    po_date: findDate(get('po_date')),
+    po_date_from_note: poRef.date,
+    po_number: poRef.number,
+    po_note: poRef.note,
     po_amount: po.amount,
     po_amount_reinterpreted: po.reinterpreted,
-    currency: po.currency || quoted.currency || received.currency || null,
-    invoice_number: str(get('invoice_number')),
+    amount_unit: po.unit || quoted.unit || received.unit || null,
+    currency: amountCurrency || columnCurrency || null,
+    currency_conflict: amountCurrency && columnCurrency && amountCurrency !== columnCurrency ? `${columnCurrency} column, ${amountCurrency} amount` : null,
+    invoice_number: invRef.number,
+    invoice_date: invRef.date,
+    invoice_note: invRef.note,
     invoice_amount: invAmt.amount,
     received: received.amount,
     pending: pending.amount,
     follow_up: str(get('follow_up')),
     remarks: str(get('remarks')),
+    last_follow_up: findDate(get('last_follow_up')),
+    next_follow_up: nextDate,
+    // "Next week", "after Diwali": no date to remind on, but worth keeping.
+    next_follow_up_note: nextDate ? null : str(get('next_follow_up')),
     sales_person: str(get('sales_person')),
   };
 }
 const str = (v) => (v === null || v === undefined ? null : String(v).trim() || null);
-const dateOrNull = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** A "Total" or "Grand total" line at the foot of a sheet is not a deal. */
+const TOTAL_ROW = /^(?:grand\s*|sub\s*-?\s*)?totals?\b/i;
 
 /**
  * Build the plan.
@@ -212,6 +381,23 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
   for (const s of live.stages || []) stageCount[norm(s.po_number)] = (stageCount[norm(s.po_number)] || 0) + 1;
   const liveInvoiceNos = new Map((live.stages || []).filter((s) => s.invoice_no).map((s) => [norm(s.invoice_no), s]));
 
+  const readOpts = { stageMap: rules.stage_map || null, aiStageMap: rules.ai_stage_map || null };
+
+  // S.No repeated on several rows, so a label can say which row it means.
+  const snoCounts = {};
+  for (const raw of rows) { const x = extractRow(raw, mapping, readOpts); if (x.sno_given) snoCounts[x.ref] = (snoCounts[x.ref] || 0) + 1; }
+
+  // Every distinct stage wording in the sheet and how it was read, so the
+  // reviewer can see it and change the reading of any one of them.
+  const stageValues = new Map();
+  const noteStage = (r) => {
+    if (!r.stage_raw) return;
+    const key = stageKey(r.stage_raw);
+    const seen = stageValues.get(key) || { value: r.stage_raw, key, reading: r.stage || r.stage_kind, by: r.stage_by, rows: 0 };
+    seen.rows += 1;
+    stageValues.set(key, seen);
+  };
+
   const push = (item) => { seq += 1; items.push({ seq, included: true, action: 'create', flags: [], assumptions: [], ...item }); return items[items.length - 1]; };
   const nextQuotationNo = () => { let n; do { n = `CTZ/QT/${live.year}/${String(qNo++).padStart(3, '0')}`; } while (usedQ.has(n)); usedQ.add(n); return n; };
   const nextProjectId = () => { let n; do { n = `PRJ-${live.year}-${String(pNo++).padStart(3, '0')}`; } while (usedP.has(n)); usedP.add(n); return n; };
@@ -222,30 +408,73 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     item.flags.push({ level: 'warn', code: 'duplicate', message: `${certain ? 'Already' : 'Possibly already'} on the site as ${ref} · matched by ${how}`, by: 'rule', match: how, certain });
   };
 
-  // S.No repeated on several rows, so a label can say which row it means.
-  const snoCounts = {};
-  for (const raw of rows) { const x = extractRow(raw, mapping); if (x.sno_given) snoCounts[x.sno] = (snoCounts[x.sno] || 0) + 1; }
+  /**
+   * What the row adds to the deal's history: its remarks and follow-up
+   * comments as timeline notes (only what is new since the last upload),
+   * the last follow-up as the deal's last contact, and the next follow-up
+   * as a reminder for the salesperson. Flags say what will happen.
+   */
+  const asOf = live.today || today();
+  const tracking = (r, existing, item) => {
+    const ref = existing?.quotation_no;
+    const before = (ref && live.trail?.[ref]) || {};
+    const heard = [...(ref && live.sheet_notes?.[ref]) || [], before.legacy, existing?.remarks].filter(Boolean).map(squash);
+    const t = { notes: [], last_contacted: null, next_step: null, follow_up: null, close_follow_up: false, prior_remarks: before.remarks_field ?? null,
+      sheet: { status: r.stage_detail !== r.stage_raw ? r.stage_detail : null, remarks: r.remarks, follow_up: r.follow_up, next: r.next_follow_up_note } };
+    for (const kind of ['status', 'remarks', 'follow_up', 'next']) {
+      const part = newText(t.sheet[kind], before[kind], heard);
+      if (part) t.notes.push(`${NOTE_LABEL[kind]}: ${part}`);
+    }
+    if (t.notes.length) {
+      const one = t.notes.length === 1 ? `: "${t.notes[0].length > 90 ? `${t.notes[0].slice(0, 87)}...` : t.notes[0]}"` : '';
+      item.flags.push({ level: 'info', code: 'timeline', message: `${t.notes.length} ${existing ? 'new ' : ''}note${t.notes.length === 1 ? '' : 's'} for the deal's timeline${one}`, by: 'rule' });
+    }
+    if (r.last_follow_up && r.last_follow_up <= asOf && (!existing?.last_contacted_at || r.last_follow_up > existing.last_contacted_at)) t.last_contacted = r.last_follow_up;
+    if (r.follow_up && squash(r.follow_up) !== squash(existing?.next_step)) t.next_step = r.follow_up;
+
+    const open = ref ? live.follow_up_tasks?.[ref] : null;
+    const who = r.sales_person || existing?.sales_person || null;
+    if (r.stage === 'Lost') {
+      if (open) {
+        t.close_follow_up = true;
+        item.flags.push({ level: 'info', code: 'follow_up_closed', message: `Deal lost: its follow-up reminder for ${open.due_at} will be closed`, by: 'rule' });
+      }
+    } else if (r.next_follow_up && r.next_follow_up < asOf) {
+      if (!open) item.flags.push({ level: 'info', code: 'follow_up_past', message: `Next follow-up ${r.next_follow_up} has already passed; no reminder set`, by: 'rule' });
+    } else if (r.next_follow_up && open?.due_at !== r.next_follow_up) {
+      t.follow_up = { due: r.next_follow_up, title: `Follow up ${r.client}${r.service ? ` – ${r.service}` : ''}`, description: r.follow_up || null, assignee: who };
+      item.flags.push({ level: 'info', code: 'follow_up', message: open ? `Follow-up reminder moves from ${open.due_at} to ${r.next_follow_up}` : `Follow-up reminder on ${r.next_follow_up}${who ? ` for ${who}` : ''}`, by: 'rule' });
+    }
+    return t;
+  };
 
   let lastProposalDate = null;   // nearest earlier row's date, for rows with none
 
   for (const raw of rows) {
-    const r = extractRow(raw, mapping);
-    // Keyed by the sheet position: hints must never cross between two rows
-    // that happen to share an S.No.
+    const r = extractRow(raw, mapping, readOpts);
+    // Keyed by the sheet position, as ai.js keys them: hints must never cross
+    // between two rows that happen to share an S.No.
     const hint = hints[r.row] || { advance_percent: null, flags: [] };
     const tag = !r.sno_given ? `sheet row ${r.row}`
-      : snoCounts[r.sno] > 1 ? `S.No ${r.sno} (sheet row ${r.row})`
-      : `S.No ${r.sno}`;
+      : snoCounts[r.ref] > 1 ? `S.No ${r.ref} (sheet row ${r.row})`
+      : `S.No ${r.ref}`;
     const dateBasis = r.proposal_date || lastProposalDate;
     const dateBasisNote = r.proposal_date ? 'proposal date' : `previous row's proposal date (${lastProposalDate})`;
     if (r.proposal_date) lastProposalDate = r.proposal_date;
 
-    if (!r.client || !r.stage) { skipped.push({ sno: r.sno, client: r.client, reason: r.client ? 'unrecognised deal stage' : 'no client name' }); continue; }
-    if (rules.exclude_iso && ISO.test(r.service || '')) { skipped.push({ sno: r.sno, client: r.client, reason: 'ISO proposal' }); continue; }
-    const won = r.stage === 'Won - PO Received';
-    if (won && rules.won_requires_po && !r.po_number) { skipped.push({ sno: r.sno, client: r.client, reason: 'won but no PO number' }); continue; }
-    if (r.stage === 'Lost' && !rules.include_lost) { skipped.push({ sno: r.sno, client: r.client, reason: 'lost deals excluded by rule' }); continue; }
-    if (!won && r.stage !== 'Lost' && !rules.include_pending) { skipped.push({ sno: r.sno, client: r.client, reason: 'pending deals excluded by rule' }); continue; }
+    const leaveOut = (reason) => skipped.push({ sno: r.sno, ref: r.ref, client: r.client, stage: r.stage_raw, reason });
+    if (TOTAL_ROW.test(r.client || '') || TOTAL_ROW.test(r.ref || '')) { leaveOut('total row'); continue; }
+    if (!r.client) { leaveOut('no client name'); continue; }
+    noteStage(r);
+    if (r.stage_kind === 'blank') { leaveOut('no deal stage'); continue; }
+    if (r.stage_kind === 'lead') { leaveOut('early lead, no proposal yet — add it as an enquiry'); continue; }
+    if (r.stage_kind === 'skip') { leaveOut('left out by your stage reading'); continue; }
+    if (!r.stage) { leaveOut('unrecognised deal stage'); continue; }
+    if (rules.exclude_iso && ISO.test(r.service || '')) { leaveOut('ISO proposal'); continue; }
+    const won = r.stage === WON_STATUS;
+    if (won && rules.won_requires_po && !r.po_number) { leaveOut(r.po_note ? `won but no PO number yet ("${r.po_note}")` : 'won but no PO number'); continue; }
+    if (r.stage === 'Lost' && !rules.include_lost) { leaveOut('lost deals excluded by rule'); continue; }
+    if (!won && r.stage !== 'Lost' && !rules.include_pending) { leaveOut('pending deals excluded by rule'); continue; }
 
     // ---- is this row already on the site? ------------------------------
     const poExisting = won && r.po_number ? livePO.get(norm(r.po_number)) : null;
@@ -257,17 +486,39 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     }
     if (!existing && r.quotation_no && liveQNo.has(norm(r.quotation_no))) { existing = liveQNo.get(norm(r.quotation_no)); qHow = 'quotation number'; }
     if (!existing) {
-      const cands = live.quotations.filter((q) => similarName(q.client_name, r.client) && sameService(q.service_quoted, r.service)
+      // A sheet with no service column never matched anything.
+      //
+      // sameService is false whenever either side is blank, and the client
+      // +service filter required it — so rows whose service is only named
+      // once the quote goes out (the pending half of most sheets) matched
+      // nothing, took the create path, and every weekly upload made another
+      // copy of the same deal. Eight uploads, eight quotations, all shown
+      // as clean creates.
+      //
+      // With no service, the date carries the match instead, and it stays
+      // uncertain: client and date is a weaker claim than client and
+      // service, so it may flag a duplicate but never silently update one.
+      const svcBlank = !String(r.service || '').trim();
+      const cands = svcBlank && !r.proposal_date ? [] : live.quotations.filter((q) => similarName(q.client_name, r.client)
+        && (svcBlank || sameService(q.service_quoted, r.service))
         && (!r.proposal_date || !q.quotation_date || String(q.quotation_date).slice(0, 10) === r.proposal_date));
       if (cands.length) {
         existing = cands.find((q) => r.proposal_date && String(q.quotation_date).slice(0, 10) === r.proposal_date) || cands[0];
         qHow = r.proposal_date && String(existing.quotation_date || '').slice(0, 10) === r.proposal_date ? 'client, service and date' : 'client and service';
         qCertain = false;
+        // A deal an earlier upload wrote, with the same client and service,
+        // is the same row come round again: the weekly sheet re-uploaded.
+        if (live.trail?.[existing.quotation_no] && !svcBlank) { qHow = `${qHow}, from an earlier upload`; qCertain = true; }
       }
     }
 
     // ---- quotation -------------------------------------------------
-    const remarks = [r.follow_up, r.remarks, `Imported from ${tag}`].filter(Boolean).join(' | ');
+    const remarks = [
+      r.stage_detail && r.stage_detail !== r.stage_raw ? `Status: ${r.stage_detail}` : null,
+      r.follow_up, r.remarks,
+      r.quotation_note ? `Quotation ref in sheet: ${r.quotation_note}` : null,
+      `Imported from ${tag}`,
+    ].filter(Boolean).join(' | ');
     const qItem = push({
       step: 'quotation', source_row: r.sno,
       payload: {
@@ -286,13 +537,53 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       },
     });
     for (const f of hint.flags) qItem.flags.push(f);
+    if (!readsAsItself(r.stage_raw, r.stage)) {
+      qItem.flags.push({ level: 'info', code: 'stage_read_as', message: `Sheet says "${r.stage_raw}"; read as ${r.stage}${r.stage_by === 'admin' ? ' (your reading)' : r.stage_by === 'ai' ? " (the AI's reading: check it)" : ''}`, by: r.stage_by === 'admin' || r.stage_by === 'ai' ? r.stage_by : 'rule' });
+    }
+    if (r.amount_unit) qItem.flags.push({ level: 'info', code: 'amount_unit', message: `Amounts read in ${r.amount_unit === 1e5 ? 'lakhs' : r.amount_unit === 1e7 ? 'crores' : r.amount_unit === 1e6 ? 'millions' : 'thousands'}, as the column header says`, by: 'rule' });
+    if (r.currency_conflict) qItem.flags.push({ level: 'warn', code: 'currency_conflict', message: `The currency column and the amount disagree (${r.currency_conflict}); read as ${r.currency}`, by: 'rule' });
+    if (r.quoted_reinterpreted && r.po_amount === null) qItem.flags.push({ level: 'warn', code: 'amount_reinterpreted', message: `Sheet says "${r.quoted_reinterpreted}"; read as ${r.quoted_price}. Confirm with sales`, by: 'rule' });
     if (!r.proposal_date) qItem.flags.push({ level: 'info', code: 'no_date', message: 'No proposal date in the sheet', by: 'rule' });
     if (!r.contact) qItem.flags.push({ level: 'info', code: 'no_contact', message: 'No contact person in the sheet', by: 'rule' });
     if (existing) {
       duplicate(qItem, `${existing.quotation_no} (${existing.status})`, qHow, qCertain);
       qItem.existing_ref = existing.quotation_no;
-      if (existing.status !== r.stage) qItem.flags.push({ level: 'warn', code: 'status_differs', message: `Site says ${existing.status}, sheet says ${r.stage}`, by: 'rule' });
+      const changed = sheetChanges(existing, qItem.payload, live.trail?.[existing.quotation_no]?.was);
+      const reads = (list) => list.map((c) => `${c.label} ${c.from ?? '(blank)'} → ${c.to}`).join('; ');
+      const mine = changed.filter((c) => c.verdict === 'sheet');
+      const theirs = changed.filter((c) => c.verdict === 'theirs');
+      const both = changed.filter((c) => c.verdict === 'both');
+      const unknown = changed.filter((c) => c.verdict === 'unknown');
+      const says = reads(changed);
+      if (existing.status === WON_STATUS && r.stage !== WON_STATUS) {
+        qItem.flags.push({ level: 'warn', code: 'status_differs', message: `The tracker has this deal as won; the sheet says ${r.stage}. Kept as won`, by: 'rule' });
+      } else if (mine.length && qCertain && rules.update_from_sheet && !rules.overwrite_existing) {
+        qItem.action = 'update';
+        // Only the fields the sheet actually moved. Everything else keeps
+        // whatever the tracker holds, so one changed cell cannot drag six
+        // untouched ones back to what the sheet happened to say.
+        // On the payload, not the item: only the columns listed in the
+        // INSERT survive into import_items, and a verdict that does not
+        // reach the commit is a verdict that silently means nothing.
+        qItem.payload.__update_fields = mine.map((c) => c.field);
+        qItem.flags.push({ level: 'info', code: 'sheet_changes', message: `Updated from the sheet: ${reads(mine)}`, by: 'rule', changes: mine });
+      } else if (changed.length) {
+        qItem.flags.push({ level: 'warn', code: 'status_differs', message: `Changed in the sheet, not applied while kept: ${says}`, by: 'rule', changes: changed });
+      }
+      // Said separately, because these are not the sheet asking for
+      // anything — they are the tracker having moved on, and somebody
+      // should know before they reconcile the two by hand.
+      if (theirs.length) {
+        qItem.flags.push({ level: 'info', code: 'tracker_ahead', message: `Changed in the tracker since the last upload, left alone: ${reads(theirs)}`, by: 'rule', changes: theirs });
+      }
+      if (both.length) {
+        qItem.flags.push({ level: 'warn', code: 'both_changed', message: `Changed in both the sheet and the tracker; the tracker's kept: ${reads(both)}`, by: 'rule', changes: both });
+      }
+      if (unknown.length) {
+        qItem.flags.push({ level: 'warn', code: 'no_previous_upload', message: `Differs from the tracker, with no record of what the sheet said before, so nothing is applied: ${reads(unknown)}`, by: 'rule', changes: unknown });
+      }
     }
+    qItem.payload.tracking = tracking(r, existing, qItem);
 
     if (!won) continue;
 
@@ -311,6 +602,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
 
     let poDate = r.po_date;
     const poAssumptions = [];
+    if (!poDate && r.po_date_from_note) { poDate = r.po_date_from_note; poAssumptions.push(`PO date taken from the note on the PO number ("${r.po_note}")`); }
     if (!poDate && dateBasis) { poDate = plusDays(dateBasis, rules.po_date_offset_days); poAssumptions.push(`PO date assumed as ${dateBasisNote} + ${rules.po_date_offset_days} days (${poDate})`); }
     let delivery = null;
     if (poDate) {
@@ -325,7 +617,9 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
         po_number: r.po_number, project_id: projectId, po_date: poDate, po_value: r.po_amount,
         currency: r.currency || rules.default_currency, payment_terms_days: rules.default_terms_days,
         actual_delivery_date: delivery,
-        remarks: [`Imported from ${tag}`, ...poAssumptions, fullOnCompletion ? 'Client terms: 100% after completion' : null].filter(Boolean).join(' | '),
+        remarks: [`Imported from ${tag}`, r.po_note ? `PO in sheet: ${r.po_note}` : null,
+          r.invoice_note && !r.invoice_number ? `Invoice in sheet: ${r.invoice_note}` : null,
+          ...poAssumptions, fullOnCompletion ? 'Client terms: 100% after completion' : null].filter(Boolean).join(' | '),
       },
     });
     if (poExisting) {
@@ -380,11 +674,11 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     // ---- invoice + receipt on the first stage -------------------------
     const liveFirst = poExisting ? liveStages.get(`${norm(r.po_number)}#1`) : null;
     if (r.invoice_number) {
-      const invDate = poDate ? plusDays(poDate, rules.invoice_date_offset_days) : null;
+      const invDate = r.invoice_date || (poDate ? plusDays(poDate, rules.invoice_date_offset_days) : null);
       const invoiceNo = invDate ? invoiceNumber(r.invoice_number, invDate, rules.invoice_prefix) : String(r.invoice_number);
       const inv = push({
         step: 'invoice', source_row: r.sno, parent_seq: stageItems[0].seq,
-        assumptions: invDate ? [`Invoice date assumed as PO date + ${rules.invoice_date_offset_days} day (${invDate})`] : [],
+        assumptions: r.invoice_date ? [] : invDate ? [`Invoice date assumed as PO date + ${rules.invoice_date_offset_days} day (${invDate})`] : [],
         payload: { po_number: r.po_number, stage_no: 1, invoice_no: invoiceNo, invoice_date: invDate },
       });
       if (liveFirst?.invoice_no) duplicate(inv, `invoice ${liveFirst.invoice_no} on ${r.po_number} stage 1`, 'PO number and stage');
@@ -409,15 +703,28 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       }
     } else if (r.received) {
       poItem.flags.push({ level: 'warn', code: 'receipt_without_invoice', message: `Sheet shows ${r.received} received but no invoice number; receipt not planned`, by: 'rule' });
+    } else if (r.invoice_note) {
+      poItem.flags.push({ level: 'info', code: 'invoice_without_number', message: `Sheet says "${r.invoice_note}" but gives no invoice number; no invoice planned, the note is kept in the PO's remarks`, by: 'rule' });
     }
   }
 
   flagRepeatedPoNumbers(items);
   for (const it of items) it.flags = reviewFlags(it.step, it.payload, it.flags);
-  const summary = summarise(items, skipped);
+  const summary = {
+    ...summarise(items, skipped),
+    stage_values: [...stageValues.values()].sort((a, b) => b.rows - a.rows || a.value.localeCompare(b.value)),
+  };
   return { items, skipped, summary, rules };
 }
 
+const AMOUNT_FIELDS = ['quotation_value', 'po_value', 'service_value', 'amount_received'];
+const SCHEMAS = { quotation: 'quotations', project: 'projects' };
+
+/**
+ * What would stop the commit, shown at review time instead: a negative
+ * amount, or a value the record's own form would refuse (too long, wrong
+ * type). Checks only the fields present, since ids are filled at commit.
+ */
 /**
  * Two rows carrying the same PO number each plan to create it, and the second
  * insert breaks the unique constraint at commit time — after the quotations
@@ -451,14 +758,6 @@ export function flagRepeatedPoNumbers(items) {
   return items;
 }
 
-const AMOUNT_FIELDS = ['quotation_value', 'po_value', 'service_value', 'amount_received'];
-const SCHEMAS = { quotation: 'quotations', project: 'projects' };
-
-/**
- * What would stop the commit, shown at review time instead: a negative
- * amount, or a value the record's own form would refuse (too long, wrong
- * type). Checks only the fields present, since ids are filled at commit.
- */
 export function reviewFlags(step, payload, flags = []) {
   const kept = flags.filter((f) => f.code !== 'negative_amount' && f.code !== 'invalid_value');
   const bad = AMOUNT_FIELDS.filter((k) => payload?.[k] !== null && payload?.[k] !== undefined && payload[k] !== '' && Number(payload[k]) < 0);
@@ -468,8 +767,16 @@ export function reviewFlags(step, payload, flags = []) {
     const present = Object.fromEntries(Object.entries(payload).filter(([k, v]) => v !== null && v !== undefined && v !== '' && !(AMOUNT_FIELDS.includes(k) && bad.includes(k))));
     const parsed = resource.schema.partial().safeParse(present);
     if (!parsed.success) {
-      const issues = parsed.error.issues.map((x) => `${String(x.path[0]).replace(/_/g, ' ')}: ${x.message}`).join('; ');
-      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Correct it or untick the row`, by: 'rule' });
+      // In words: "currency CAD is not one the tracker keeps (INR, EUR, …)",
+      // not the validator's "Invalid option: expected one of …".
+      const issues = parsed.error.issues.map((x) => {
+        const field = String(x.path[0]);
+        const allowed = x.values || x.options;
+        return Array.isArray(allowed) && present[field] !== undefined
+          ? `${field.replace(/_/g, ' ')} ${present[field]} is not one the tracker keeps (${allowed.join(', ')})`
+          : `${field.replace(/_/g, ' ')}: ${x.message}`;
+      }).join('; ');
+      kept.push({ level: 'error', code: 'invalid_value', message: `${issues}. Change it with Edit, or untick the row`, by: 'rule' });
     }
   }
   return kept;

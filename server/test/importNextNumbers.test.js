@@ -10,8 +10,9 @@ import { nextId } from '../src/lib/sequences.js';
 const db = ({ refs = [], counter = null }) => ({
   async query(sql, params) {
     if (/FROM sequence_counters/.test(sql)) return { rows: counter === null ? [] : [{ last_n: counter }] };
-    const prefix = params[0].replace(/%$/, '');
-    return { rows: refs.filter((r) => r.startsWith(prefix)).map((value) => ({ value })) };
+    // LIKE ANY of the series' prefixes: every spelling of the year it holds.
+    const prefixes = [params[0]].flat().map((p) => p.replace(/%$/, ''));
+    return { rows: refs.filter((r) => prefixes.some((p) => r.startsWith(p))).map((value) => ({ value })) };
   },
 });
 

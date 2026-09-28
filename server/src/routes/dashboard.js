@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
 import { revenueReport } from '../lib/revenueReport.js';
+import { dataQuality } from '../lib/dataQuality.js';
+import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
+import { payables } from '../lib/payables.js';
 
 export const dashboardRouter = Router();
 
@@ -15,7 +18,7 @@ dashboardRouter.get('/overview', async (req, res) => {
       SELECT
         COUNT(*)::int                                              AS quotations,
         COUNT(*) FILTER (WHERE status = 'Won - PO Received')::int  AS won,
-        COUNT(*) FILTER (WHERE status IN ('Submitted','Under Negotiation'))::int AS open,
+        COUNT(*) FILTER (WHERE status IN ('Draft','Submitted','Under Negotiation'))::int AS open,
         COUNT(*) FILTER (WHERE status = 'Lost')::int               AS lost,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0) AS value_inr,
         COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'
@@ -101,7 +104,7 @@ dashboardRouter.get('/overview', async (req, res) => {
  * To Invoice". Everything anyone has to act on today, in one place.
  */
 dashboardRouter.get('/worklist', async (req, res) => {
-  const [stages, vendors, claims, deliveries, gaps] = await Promise.all([
+  const [stages, vendors, claims, deliveries, gaps, holidays] = await Promise.all([
     query(`
       SELECT id, po_number, project_id, client_name, stage_no, stage_name,
              stage_amount, currency, invoice_no, invoice_date, document_id, document_name,
@@ -139,12 +142,31 @@ dashboardRouter.get('/worklist', async (req, res) => {
       FROM v_quotations
       WHERE status = 'Won - PO Received' AND project_id IS NULL
       ORDER BY quotation_date DESC NULLS LAST`),
+    query(`SELECT holiday_on FROM holidays`),
   ]);
+
+  // Days overdue stay calendar days, as every reminder counts them; this is
+  // the same lateness in the days somebody could have acted on it (#73).
+  //
+  // Both numbers are decided by one clock, on purpose. days_overdue comes
+  // from the views as Postgres CURRENT_DATE, which in our containers is
+  // UTC, while businessToday() is Asia/Kolkata — so between 00:00 and
+  // 05:30 IST they are a day apart, every day. Gating on days_overdue and
+  // counting from businessToday() put the two beside each other in one
+  // row: "overdue by 1 day" above "2 working days late", for five and a
+  // half hours out of every twenty-four. Comparing the due date against
+  // the same date the count runs from is what keeps them agreeing.
+  const today = businessToday();
+  const off = new Set(holidays.rows.map((row) => row.holiday_on));
+  const withWorkingDays = (due) => (row) => ({
+    ...row,
+    working_days_overdue: row[due] && row[due] < today ? workingDaysBetween(row[due], today, off) : null,
+  });
 
   res.json({
     data: {
-      payment_stages: stages.rows,
-      vendor_invoices: vendors.rows,
+      payment_stages: stages.rows.map(withWorkingDays('invoice_due_date')),
+      vendor_invoices: vendors.rows.map(withWorkingDays('pay_by')),
       expense_claims: claims.rows,
       late_deliveries: deliveries.rows,
       won_without_project: gaps.rows,
@@ -172,6 +194,22 @@ dashboardRouter.get('/sales-report', async (req, res) => {
 dashboardRouter.get('/revenue-report', async (req, res) => {
   const period = reportPeriod(req.query);
   res.json({ data: { period, ...(await revenueReport(period)) } });
+});
+
+/**
+ * What is missing, and where to fix it (#74): one count per check, each
+ * with a link to the list filtered to exactly those records. Read-only.
+ */
+dashboardRouter.get('/data-quality', async (req, res) => {
+  res.json({ data: { checks: await dataQuality() } });
+});
+
+/**
+ * What we owe travel vendors, aged (#76): every bill still owed, its
+ * bucket, and a count and outstanding total per bucket. In rupees.
+ */
+dashboardRouter.get('/payables', async (req, res) => {
+  res.json({ data: await payables() });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */

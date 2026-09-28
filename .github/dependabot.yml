@@ -1,5 +1,23 @@
-# Dependency updates (#37): one grouped pull request a week per package
-# set, so a run of small bumps is one review, not twenty.
+# Dependency updates (#37).
+#
+# Routine version bumps are OFF. `open-pull-requests-limit: 0` is GitHub's
+# own switch for that: "You can temporarily disable version updates for a
+# package manager by setting this option to zero."
+#
+# SECURITY updates still come through, and that is the point of switching it
+# off this way rather than deleting the file. The same documentation: "Security
+# update pull requests are not subject to this limit and do not count toward
+# it." So a package with a published advisory still opens a pull request; a
+# package that merely released a new minor does not.
+#
+# CI's "Known vulnerabilities in dependencies" job tells you a dependency is
+# vulnerable. It does not fix one. Dependabot's security updates are what
+# arrives with the fix already written, which is why they are worth keeping
+# even when nobody wants the weekly chore.
+#
+# To turn routine updates back on, raise the limit — 5 was the previous
+# setting, and the grouping below means a run of small bumps arrives as one
+# review rather than twenty.
 #
 # Not covered here: server's `xlsx`, which is installed from SheetJS's own
 # site because npm's copy stopped at 0.18.5 and carries two HIGH advisories
@@ -16,7 +34,8 @@ updates:
     groups:
       server-dependencies:
         patterns: ['*']
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
+
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -25,17 +44,23 @@ updates:
     groups:
       web-dependencies:
         patterns: ['*']
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
+
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
       day: monday
+    open-pull-requests-limit: 0
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
+
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0

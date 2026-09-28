@@ -1,0 +1,26 @@
+{
+  // Vite compiles .ts and .tsx on its own; this file is for the checker,
+  // in CI and in your editor. JavaScript is included so a .tsx file can
+  // import it, but not type-checked — converting 10,000 lines at once
+  // would bury the errors that matter. A file starts being checked when
+  // somebody converts it.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src"]
+}

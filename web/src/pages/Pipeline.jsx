@@ -38,13 +38,31 @@ export default function Pipeline() {
   function drop(stage) {
     setOver(null);
     const card = dragging; setDragging(null);
-    if (!card || card.stage_id === stage.id) return;
+    moveCard(card, stage);
+  }
+
+  /** Dragged, picked from "Move to", or moved with Alt+arrow: the same rules (#25). */
+  function moveCard(card, stage) {
+    if (!card || !stage || card.stage_id === stage.id) return;
     if (stage.type === 'lost') { setLosing({ card, stage }); return; }
     if (stage.type === 'won') { toast('Register the project or PO to win a quotation', 'info'); return; }
     move(card, stage);
   }
 
-  const columns = board ? board.stages.filter((s) => s.type === 'open' || s.type === 'paused' || s.type === 'lost') : [];
+  // Expired is the expiry job's to set, not a place to drop a card.
+  const columns = board ? board.stages.filter((s) => (s.type === 'open' || s.type === 'paused' || s.type === 'lost') && s.name !== 'Expired') : [];
+  const openColumns = columns.filter((s) => s.type !== 'lost');
+
+  function onCardKey(e, card) {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/quotations/${encodeURIComponent(card.quotation_no)}`); return; }
+    if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+      e.preventDefault();
+      const at = openColumns.findIndex((s) => s.id === card.stage_id);
+      const next = openColumns[at + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (at >= 0 && next) moveCard(card, next);
+    }
+  }
   const cardsFor = (s) => (board?.cards ?? []).filter((c) => c.stage_id === s.id);
 
   return (
@@ -57,12 +75,13 @@ export default function Pipeline() {
       <div className="page stack">
         {error && <Card><span style={{ color: 'var(--danger-fg)' }}>{error}</span></Card>}
         {board && (
-          <div className="grid grid--3">
-            <Card title="Open pipeline" hint="INR quotations in open stages">
+          <div className="auto-grid grid--3">
+            <Card title="Open pipeline" hint="Open stages, every currency converted to INR at the rate on the quotation's date; drafts not weighted">
               <div className="stat__value">{money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.value, 0))}</div>
               <div className="small muted">weighted {money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.weighted, 0))} · {board.cards.filter((c) => c.stale).length} stale</div>
+              {board.without_rate > 0 && <div className="small" style={{ color: 'var(--warn-fg)', marginTop: 4 }}>{board.without_rate} quotation{board.without_rate === 1 ? '' : 's'} left out: no exchange rate for {board.without_rate === 1 ? 'its' : 'their'} currency on {board.without_rate === 1 ? 'its' : 'their'} date (Settings → Exchange rates)</div>}
             </Card>
-            <Card title="Forecast by expected close" hint="Weighted INR value; undated quotations at the end">
+            <Card title="Forecast by expected close" hint="Weighted value in INR, drafts left out; undated quotations at the end">
               {board.forecast.length ? (
                 <table className="table" style={{ fontSize: 12 }}>
                   <tbody>{board.forecast.map((f) => <tr key={f.month}><td>{f.month === 'undated' ? 'No date' : monthLabel(f.month)}</td><td className="num">{f.count}</td><td className="num">{money(f.weighted)}</td></tr>)}</tbody>
@@ -99,6 +118,10 @@ export default function Pipeline() {
                     key={c.id}
                     className={`kanban__card ${c.stale ? 'is-stale' : ''} ${dragging?.id === c.id ? 'is-dragging' : ''}`}
                     draggable
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${c.quotation_no}, ${c.client_name}, ${s.name}. Enter opens it; Alt and the arrow keys move it between stages.`}
+                    onKeyDown={(e) => onCardKey(e, c)}
                     onDragStart={() => setDragging(c)}
                     onDragEnd={() => { setDragging(null); setOver(null); }}
                     onClick={() => navigate(`/quotations/${encodeURIComponent(c.quotation_no)}`)}
@@ -115,6 +138,18 @@ export default function Pipeline() {
                       {c.accepted_at && <Badge tone="success">accepted</Badge>}
                     </div>
                     {c.next_step && <div className="small" style={{ marginTop: 6 }}>→ {c.next_step}</div>}
+                    {/* The keyboard's (and anybody's) way to move a card: any stage, Lost included (#25). */}
+                    <select
+                      className="kanban__move"
+                      aria-label={`Move ${c.quotation_no} to`}
+                      value=""
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      onChange={(e) => moveCard(c, columns.find((x) => String(x.id) === e.target.value))}
+                    >
+                      <option value="">Move to…</option>
+                      {columns.filter((x) => x.id !== c.stage_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
                   </div>
                 ))}
               </div>

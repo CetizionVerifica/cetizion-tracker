@@ -18,25 +18,16 @@ import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { readWorkbook } from '../import/parse.js';
-import { mapColumns, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
-import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, rulesSchema, sanitizeRules } from '../import/rules.js';
+import { mapColumns, readStages, reviewRows, aiConfig, usage, resetUsage } from '../import/ai.js';
+import { buildPlan, reviewFlags, extractRow, summarise, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema, sanitizeRules, flagRepeatedPoNumbers } from '../import/rules.js';
+import { stageKey, needsReading } from '../import/stages.js';
 import { commitBatch } from '../import/commit.js';
-import { UploadCache } from '../import/uploadCache.js';
-import { businessYear } from '../lib/businessDate.js';
+import { businessToday, businessYear } from '../lib/businessDate.ts';
 import { nextId } from '../lib/sequences.js';
 
 export const importRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
-
-/** Rule overrides from a request, checked before any of them reaches the planner. */
-function checkRules(input) {
-  const parsed = rulesSchema.safeParse(input);
-  if (parsed.success) return parsed.data;
-  const issue = parsed.error.issues[0];
-  const where = issue.path.length ? `${issue.path.join('.')}: ` : '';
-  throw new ApiError(422, `Import rules are not valid: ${where}${issue.message}`);
-}
 
 // Whoever may run an import is whoever administers the tracker, and that
 // is a different person in each sign-in mode: the one shared account, or a
@@ -44,13 +35,14 @@ function checkRules(input) {
 // gate keeps meaning the same thing after the cutover.
 importRouter.use(requireAdmin);
 
+/** What the plan needs to know about the live data, in one round trip. */
 /** The number off the end of a reference: CTZ/QT/2026/063 → 63, PRJ-2026-008 → 8. */
 const seriesNumber = (ref) => Number(/(\d+)$/.exec(String(ref))?.[1] ?? 1);
 
-/** What the plan needs to know about the live data, in one round trip. */
 async function liveSnapshot() {
-  const [q, po, pr, sv, st, nextQuotation, nextProject] = await Promise.all([
-    query('SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person FROM quotations'),
+  const [q, po, pr, sv, st, nextQuotation, nextProject, trail, tasks, notes] = await Promise.all([
+    query(`SELECT id, quotation_no, client_name, service_quoted, quotation_date::text AS quotation_date, status, project_id, quotation_value, contact_person,
+      sales_person, currency, remarks, next_step, last_contacted_at::date::text AS last_contacted_at FROM quotations`),
     query('SELECT po_number, project_id, po_date::text AS po_date, po_value, currency FROM purchase_orders'),
     query('SELECT project_id, client_name, primary_service FROM projects'),
     query('SELECT po_number, service, service_value FROM po_services ORDER BY id'),
@@ -62,24 +54,84 @@ async function liveSnapshot() {
     // the commit then had to renumber the row it had shown.
     nextId('quotation'),
     nextId('project'),
+    // What the last committed upload said about each deal, to tell what is new.
+    query(`SELECT DISTINCT ON (ref) ref, payload FROM (
+        SELECT substring(i.committed_ref from '.*: (.*)$') AS ref, i.payload, b.committed_at
+          FROM import_items i JOIN import_batches b ON b.id = i.batch_id
+         WHERE b.status = 'committed' AND i.step = 'quotation' AND i.included AND i.committed_ref IS NOT NULL) x
+      WHERE ref IS NOT NULL ORDER BY ref, committed_at DESC`),
+    query(`SELECT DISTINCT ON (entity_id) entity_id, id, due_at::text AS due_at FROM tasks
+      WHERE entity = 'quotation' AND type = 'follow_up' AND created_by = $1 AND status <> 'done' ORDER BY entity_id, due_at`, [IMPORT_AUTHOR]),
+    query(`SELECT entity_id, body FROM notes WHERE entity = 'quotation' AND author = $1`, [IMPORT_AUTHOR]),
   ]);
+  const sheetNotes = {};
+  for (const n of notes.rows) (sheetNotes[n.entity_id] ||= []).push(n.body);
   return {
     quotations: q.rows, purchase_orders: po.rows, projects: pr.rows, services: sv.rows, stages: st.rows,
     next_quotation_no: seriesNumber(nextQuotation),
     next_project_no: seriesNumber(nextProject),
     year: businessYear(),
+    today: businessToday(),
+    // What the last committed upload said about each deal.
+    //
+    // `was` is the half that was missing: without it the planner could see
+    // that the sheet and the tracker disagree but not which of the two had
+    // moved, so a re-upload of an unchanged sheet reverted whatever a human
+    // had corrected in between. Keeping the previous sheet values makes it
+    // a three-way merge (rules.js, sheetChanges).
+    trail: Object.fromEntries(trail.rows.map((t) => [t.ref, {
+      ...(t.payload.tracking?.sheet || {}),
+      legacy: t.payload.remarks || null,
+      remarks_field: t.payload.remarks || null,
+      was: Object.fromEntries(SHEET_FIELDS.map((col) => [col, t.payload[col] ?? null])),
+    }])),
+    follow_up_tasks: Object.fromEntries(tasks.rows.map((t) => [t.entity_id, { id: t.id, due_at: t.due_at }])),
+    sheet_notes: sheetNotes,
   };
 }
+
+/**
+ * The most rows one upload may carry.
+ *
+ * The 15 MB multer limit was the only bound, and an xlsx is a zip, so it
+ * decompresses to far more sheet than that suggests. Nothing here scales
+ * gently: matching is rows × quotations of fuzzy comparison on the event
+ * loop, the row is extracted four times over, the plan inserts about seven
+ * database round trips per row, and the AI review is one call per fifteen
+ * rows — all inside the HTTP request, which means the whole process stops
+ * serving anybody while it runs. Refusing a sheet is a sentence someone
+ * can act on; a request that never returns is not.
+ */
+const MAX_IMPORT_ROWS = 3000;
 
 /** Parse, map, review, plan — and store the result as draft items. */
 async function planBatch({ batchId, buffer, sheet, rules }) {
   const wb = readWorkbook(buffer, sheet);
+  if (wb.rows.length > MAX_IMPORT_ROWS) {
+    throw new ApiError(422, `Sheet "${wb.sheet}" has ${wb.rows.length.toLocaleString('en-IN')} rows; this reads up to ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} at a time. Split it and upload the parts — each one keeps its own review.`);
+  }
   resetUsage();
   const { mapping, source: mapSource, ai_error: mapErr } = await mapColumns(wb.headers, wb.rows.slice(0, 5));
   if (!mapping.client || !mapping.stage) {
-    throw new ApiError(422, `Could not find the client and deal-stage columns. Headers seen: ${wb.headers.join(', ')}`);
+    throw new ApiError(422, `Could not find the client and deal-stage columns on sheet "${wb.sheet}". Headers seen: ${wb.headers.join(', ')}`);
   }
-  const extracted = wb.rows.map((r) => extractRow(r, mapping));
+  // A project status report or a contact list has a client and a status but
+  // nothing about a deal: importing it would invent quotations.
+  const DEAL_FIELDS = ['proposal_date', 'quotation_no', 'quoted_price', 'po_number', 'po_amount', 'po_date', 'invoice_number'];
+  if (!DEAL_FIELDS.some((f) => mapping[f])) {
+    throw new ApiError(422, `Sheet "${wb.sheet}" does not look like a sales sheet: it has no proposal date, quotation number, quoted value, PO number or PO amount column, so there is nothing to import as a deal. Headers seen: ${wb.headers.join(', ')}`);
+  }
+  // Stage wordings the rules are unsure of go to the model once; its readings are
+  // kept with the batch's rules, so reading the sheet again does not ask twice.
+  const stageMap = rules?.stage_map || null;
+  const known = rules?.ai_stage_map || {};
+  const unread = wb.rows.map((r) => extractRow(r, mapping, { stageMap }))
+    .filter((r) => r.stage_by === 'rule' && needsReading(r.stage_raw) && !(stageKey(r.stage_raw) in known)).map((r) => r.stage_raw);
+  const { map: aiStages, ai_error: stageErr } = await readStages(unread);
+  // A wording the model could not read either is remembered as such (null).
+  const asked = stageErr || !aiConfig.enabled ? {} : Object.fromEntries(unread.map((w) => [stageKey(w), null]));
+  rules = { ...(rules || {}), ai_stage_map: { ...known, ...asked, ...aiStages } };
+  const extracted = wb.rows.map((r) => extractRow(r, mapping, { stageMap, aiStageMap: rules.ai_stage_map }));
   const { hints, source: reviewSource, ai_error: reviewErr, ai_rows, ai_sent, ai_ms } = await reviewRows(extracted.filter((r) => r.client && r.stage));
   const live = await liveSnapshot();
   const plan = buildPlan({ rows: wb.rows, mapping, live, hints, rules });
@@ -90,20 +142,53 @@ async function planBatch({ batchId, buffer, sheet, rules }) {
       await client.query(
         `INSERT INTO import_items (batch_id, step, seq, source_row, parent_item_id, action, included, payload, flags, assumptions, existing_ref)
          VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,$10)`,
-        [batchId, it.step, it.seq, it.source_row, it.action, it.included, JSON.stringify({ ...it.payload, __parent_seq: it.parent_seq ?? null }), JSON.stringify(it.flags), JSON.stringify(it.assumptions), it.existing_ref || null]
+        [batchId, it.step, it.seq, it.source_row, it.action, it.included, JSON.stringify({ ...it.payload, __parent_seq: it.parent_seq ?? null, __source_label: it.source_label ?? null }), JSON.stringify(it.flags), JSON.stringify(it.assumptions), it.existing_ref || null]
       );
     }
     await client.query(
       `UPDATE import_batches SET sheet_name = $2, row_count = $3, mapping = $4, rules = $5, summary = $6, ai_model = $7, error = NULL WHERE id = $1`,
-      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, ai_errors: [mapErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
+      [batchId, wb.sheet, wb.rows.length, JSON.stringify({ mapping, source: mapSource, review_source: reviewSource, sheets: wb.sheets, headers: wb.headers, dropped_columns: wb.dropped_columns, ai_errors: [mapErr, stageErr, reviewErr].filter(Boolean), ai_rows, ai_sent, ai_ms, ai_usage: { ...usage } }),
         JSON.stringify(plan.rules), JSON.stringify({ ...plan.summary, skipped_rows: plan.skipped }), aiConfig.enabled ? aiConfig.model : 'no AI key: rules only']
     );
   });
   return plan;
 }
 
-// Uploaded bytes, kept only while the batch can still be re-planned.
-const fileCache = new UploadCache();
+/**
+ * Uploaded bytes, kept only long enough to re-plan.
+ *
+ * This was an unbounded Map holding every upload for the process lifetime,
+ * and only a draft delete ever removed one — so a committed batch leaked
+ * its buffer for good. A weekly 10 MB sheet is half a gigabyte of retained
+ * client data a year in a container nothing restarts between deploys, and
+ * the raw sheet sitting in heap long after the import is a retention
+ * problem as much as a memory one.
+ *
+ * Evicted on commit, on delete, past its age, and oldest-first past the
+ * count. Losing one only costs a re-upload: `replan` already 410s when the
+ * bytes are gone, which is also what happens when a second worker serves
+ * the request.
+ */
+const FILE_CACHE_MAX = 8;
+const FILE_CACHE_TTL_MS = 60 * 60 * 1000;
+const fileCache = new Map();
+
+function rememberFile(id, buffer) {
+  const now = Date.now();
+  for (const [key, held] of fileCache) {
+    if (now - held.at > FILE_CACHE_TTL_MS) fileCache.delete(key);
+  }
+  fileCache.set(id, { buffer, at: now });
+  // Map iterates in insertion order, so the first key is the oldest.
+  while (fileCache.size > FILE_CACHE_MAX) fileCache.delete(fileCache.keys().next().value);
+}
+
+function recallFile(id) {
+  const held = fileCache.get(id);
+  if (!held) return null;
+  if (Date.now() - held.at > FILE_CACHE_TTL_MS) { fileCache.delete(id); return null; }
+  return held.buffer;
+}
 
 /** A CSV template with the columns the importer understands and one example row. */
 importRouter.get('/template.csv', (req, res) => {
@@ -120,14 +205,22 @@ importRouter.get('/template.csv', (req, res) => {
 importRouter.post('/batches', upload.single('file'), async (req, res) => {
   if (!req.file) throw new ApiError(422, 'Choose a file to upload');
   let rules = {};
-  if (req.body.rules) { try { rules = JSON.parse(req.body.rules); } catch { throw new ApiError(422, 'rules must be JSON'); } }
-  rules = checkRules(rules);
+  if (req.body.rules) {
+    let sent;
+    try { sent = JSON.parse(req.body.rules); } catch { throw new ApiError(422, 'rules must be JSON'); }
+    const parsed = rulesSchema.safeParse(sent);
+    if (!parsed.success) {
+      const said = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      throw new ApiError(422, `Please check the import settings — ${said}`);
+    }
+    rules = parsed.data;
+  }
   const { rows } = await query(
     `INSERT INTO import_batches (filename, uploaded_by, rules) VALUES ($1, $2, $3) RETURNING *`,
     [req.file.originalname, req.user.username, JSON.stringify({ ...DEFAULT_RULES, ...rules })]
   );
   const batch = rows[0];
-  fileCache.set(batch.id, req.file.buffer);
+  rememberFile(batch.id, req.file.buffer);
   try {
     await planBatch({ batchId: batch.id, buffer: req.file.buffer, sheet: req.body.sheet || null, rules });
   } catch (err) {
@@ -146,8 +239,8 @@ async function loadBatch(id) {
   const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   const items = (await query('SELECT * FROM import_items WHERE batch_id = $1 ORDER BY seq', [id])).rows.map((it) => {
-    const { __parent_seq, ...payload } = it.payload;
-    return { ...it, payload, parent_seq: __parent_seq ?? null };
+    const { __parent_seq, __source_label, ...payload } = it.payload;
+    return { ...it, payload, parent_seq: __parent_seq ?? null, source_label: __source_label ?? null };
   });
   const bySeq = new Map(items.map((it) => [it.seq, it]));
   for (const it of items) {
@@ -171,13 +264,19 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
   const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
-  const buffer = fileCache.get(id);
+  const buffer = recallFile(id);
   if (!buffer) throw new ApiError(410, 'The uploaded file is no longer held in memory; upload it again');
+  // Same gate as the upload: a replan takes rules from the client too.
+  const sent = rulesSchema.safeParse(req.body?.rules || {});
+  if (!sent.success) {
+    const said = sent.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+    throw new ApiError(422, `Please check the import settings — ${said}`);
+  }
   // Stored rules are sanitized, not refused: a batch saved before the schema
   // existed must still be re-plannable. Anything the request sends is checked
-  // whole, exactly as on upload.
+  // whole, as on upload.
   const stored = sanitizeRules(rows[0].rules);
-  const rules = { ...stored.rules, ...checkRules(req.body?.rules || {}) };
+  const rules = { ...stored.rules, ...sent.data };
   await planBatch({ batchId: id, buffer, sheet: req.body?.sheet || rows[0].sheet_name, rules });
   const data = await loadBatch(id);
   res.json({ data, ...(stored.dropped.length ? { meta: { dropped_rules: stored.dropped } } : {}) });
@@ -206,7 +305,15 @@ importRouter.patch('/items/:id', async (req, res) => {
     vals.push(body.action); sets.push(`action = $${vals.length}`);
   }
   if (body.payload && typeof body.payload === 'object') {
-    const merged = { ...rows[0].payload, ...body.payload };
+    // The planner's own bookkeeping is not the client's to set. __parent_seq
+    // is the linkage the tree is walked by — two items pointed at each other
+    // would spin `while (p)` in loadBatch forever, and the bad state is
+    // stored, so every later read of the batch hangs the process again.
+    // __update_fields decides which columns a commit may write. Both are
+    // hidden from the client on the way out; they have to be refused on the
+    // way in too.
+    const sent = Object.fromEntries(Object.entries(body.payload).filter(([k]) => !k.startsWith('__')));
+    const merged = { ...rows[0].payload, ...sent };
     vals.push(JSON.stringify(merged)); sets.push(`payload = $${vals.length}`);
     // An edit by a reviewer clears the "assumed" note for fields they touched.
     const touched = Object.keys(body.payload).filter((k) => body.payload[k] !== null && body.payload[k] !== '');
@@ -236,8 +343,38 @@ importRouter.patch('/items/:id', async (req, res) => {
       [body.action, rows[0].batch_id, await descendantSeqs(rows[0].batch_id, rows[0].seq)]
     );
   }
+  // A repeated PO number is a question about the whole batch, not one row:
+  // correcting a number, unticking a row or keeping an existing PO can settle
+  // it for the others too, so it is asked again across the batch.
+  if (rows[0].step === 'purchase_order') await recheckRepeatedPos(rows[0].batch_id);
   res.json({ data: await loadBatch(rows[0].batch_id) });
 });
+
+/**
+ * Settle "the same PO number on several rows" afresh for a batch, after a
+ * reviewer's change. The planner flags it once (flagRepeatedPoNumbers); without
+ * this, correcting the number, or unticking the row that creates the PO, left
+ * the error in place and the commit blocked for good. Only rows still ticked
+ * count: an unticked row creates nothing, so it cannot collide.
+ */
+async function recheckRepeatedPos(batchId) {
+  const { rows } = await query(
+    `SELECT id, step, action, included, source_row, payload, flags FROM import_items
+      WHERE batch_id = $1 AND step = 'purchase_order' ORDER BY seq`,
+    [batchId]
+  );
+  const items = rows.map((r) => ({
+    ...r,
+    source_label: r.payload?.__source_label ?? null,
+    before: JSON.stringify(r.flags || []),
+    flags: (r.flags || []).filter((f) => f.code !== 'duplicate_po_in_sheet'),
+  }));
+  flagRepeatedPoNumbers(items.filter((it) => it.included));
+  for (const it of items) {
+    const after = JSON.stringify(it.flags);
+    if (after !== it.before) await query('UPDATE import_items SET flags = $1, updated_at = now() WHERE id = $2', [after, it.id]);
+  }
+}
 
 const uncertainMatch = (item) => item.step === 'quotation' && (item.flags || []).some((f) => f.code === 'duplicate' && f.certain === false);
 
@@ -275,7 +412,7 @@ importRouter.post('/batches/:id/commit', async (req, res) => {
   if (blocking.length) throw new ApiError(422, `${blocking.length} included item(s) still have errors. Fix or untick them first.`, { items: blocking.map((b) => b.id) });
   try {
     const result = await commitBatch(batch, items, { user: req.user.username });
-    // Committed batches never re-plan, so the sheet is no longer needed.
+    // Committed, so the bytes are not wanted again.
     fileCache.delete(batch.id);
     res.json({ data: { ...(await loadBatch(batch.id)), written: result.written } });
   } catch (err) {

@@ -1,5 +1,5 @@
 import { ApiError } from '../middleware/error.js';
-import { normalizeName } from './names.js';
+import { normalizeName } from './names.ts';
 import { QUOTATION_STATUS } from './statuses.js';
 
 const WON = QUOTATION_STATUS.won;
@@ -64,4 +64,21 @@ export async function linkProjectQuotation(client, { after, input }) {
     [after.project_id, quotationNo]
   );
   return { quotation_linked: quotationNo };
+}
+
+/**
+ * The project's save hook: the delivery date goes on its purchase orders
+ * (#26) — the form asked for it on the project, but the date lives on each
+ * PO, where the on-delivery stages and the project's own stage read it, so
+ * a date typed on the project was dropped. Orders already delivered keep
+ * their own date. Then the quotation link, as before.
+ */
+export async function saveProject(client, ctx) {
+  const delivered = ctx.input?.actual_delivery_date;
+  if (delivered) {
+    await client.query(
+      'UPDATE purchase_orders SET actual_delivery_date = $2 WHERE project_id = $1 AND actual_delivery_date IS NULL',
+      [ctx.after.project_id, delivered]);
+  }
+  return linkProjectQuotation(client, ctx);
 }

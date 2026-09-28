@@ -145,4 +145,90 @@ describe('the notification centre', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
     const { rows } = await db.query(`SELECT username FROM notifications WHERE kind IN ('task_due', 'task_overdue') ORDER BY id DESC LIMIT 1`);
     assert.equal(rows[0].username, 'Ravi', 'a task with an assignee is that person’s to see');
   });
+
+  // ------------------------------------------------------------------ #44
+
+  const setNotify = async (who, notify) => {
+    const res = await request(app).patch('/api/auth/account').set('Cookie', who.cookie).send({ notify });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.data.notify;
+  };
+  const emails = async (template) => (await db.query(`SELECT to_email, entity_id FROM email_log WHERE template = $1 ORDER BY id`, [template])).rows;
+
+  test('each person chooses, per kind, the app, email, both or off (#44)', async () => {
+    const kept = await setNotify(asha, { kinds: { tasks: 'off' } });
+    assert.deepEqual(kept.kinds, { tasks: 'off' });
+    await setNotify(asha, { kinds: { approvals: 'email' } });
+    const both = (await request(app).get('/api/auth/account').set('Cookie', asha.cookie)).body.data.profile?.notify
+      ?? (await db.query('SELECT notify FROM users WHERE id = $1', [asha.user.id])).rows[0].notify;
+    assert.deepEqual(both.kinds, { tasks: 'off', approvals: 'email' }, 'one group at a time, the others kept');
+
+    await raise({ username: 'Asha', kind: 'task_due', title: 'Hidden task', dedupeKey: `t44-a-${Date.now()}` });
+    await raise({ username: 'Asha', kind: 'approval', title: 'Emailed approval', dedupeKey: `t44-b-${Date.now()}` });
+    await raise({ username: 'Asha', kind: 'follow_up', title: 'Shown follow-up', dedupeKey: `t44-c-${Date.now()}` });
+    const titles = (await listed(asha)).map((n) => n.title);
+    assert.ok(titles.includes('Shown follow-up'));
+    assert.equal(titles.includes('Hidden task'), false, 'off is off');
+    assert.equal(titles.includes('Emailed approval'), false, 'email only is not in the bell');
+    assert.ok((await listed(ravi)).length >= 0);
+
+    const bad = await request(app).patch('/api/auth/account').set('Cookie', asha.cookie).send({ notify: { kinds: { tasks: 'loudly' } } });
+    assert.equal(bad.status, 422);
+  });
+
+  test('the email job sends what was asked for by email, once, and waits out quiet hours (#44)', async () => {
+    const { sendNotificationEmails } = await import('../src/lib/notify.js');
+    await setNotify(ravi, { kinds: { deals: 'both' }, quiet: { from: '00:00', to: '23:59' } });
+    await raise({ username: 'ravi@cetizionverifica.com', kind: 'po_registered', title: 'PO 44 registered', entity: 'project', entityId: 'PRJ-44', dedupeKey: `t44-d-${Date.now()}` });
+    const toRavi = async () => (await emails('notification')).filter((e) => e.to_email === 'ravi@cetizionverifica.com');
+    await sendNotificationEmails();
+    assert.equal((await toRavi()).length, 0, 'quiet hours: held back');
+    await setNotify(ravi, { quiet: null });
+    await sendNotificationEmails();
+    await sendNotificationEmails();
+    assert.equal((await toRavi()).length, 1, 'sent once, after the quiet hours');
+    assert.ok((await emails('notification')).some((e) => e.to_email === 'asha@cetizionverifica.com'), 'and the approval Asha asked to get by email');
+  });
+
+  test('doing the thing clears its notification for everybody (#44)', async () => {
+    const { rows: [t] } = await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at, assignee) VALUES ('company', '1', 'Call back', CURRENT_DATE, 'Ravi') RETURNING id`);
+    await raise({ username: 'Ravi', kind: 'task_due', title: 'Due today: Call back', entity: 'company', entityId: '1', dedupeKey: `task:${t.id}:2026-09-26` });
+    const was = await unread(ravi);
+    await db.query(`UPDATE tasks SET status = 'done' WHERE id = $1`, [t.id]);
+    assert.equal(await unread(ravi), was - 1, 'the ticked task is no longer waiting');
+
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, status, approval_status, sales_person) VALUES ('CTZ/QT/2026/944', 'Approve Me', 'Submitted', 'pending', 'Ravi')`);
+    await raise({ kind: 'approval', title: 'Approval waiting: CTZ/QT/2026/944', entity: 'quotation', entityId: 'CTZ/QT/2026/944', dedupeKey: `t44-e-${Date.now()}` });
+    await db.query(`UPDATE quotations SET approval_status = 'approved' WHERE quotation_no = 'CTZ/QT/2026/944'`);
+    const { rows: [n] } = await db.query(`SELECT resolved_at FROM notifications WHERE kind = 'approval' AND entity_id = 'CTZ/QT/2026/944'`);
+    assert.ok(n.resolved_at, 'a decided approval is resolved');
+  });
+
+  test('the 08:30 digest goes to each person, with only what is theirs (#44)', async () => {
+    const { runDigests } = await import('../src/lib/notify.js');
+    await setNotify(asha, { digest: false });
+    await raise({ username: 'Ravi', kind: 'follow_up', title: 'Ravi alone', dedupeKey: `t44-f-${Date.now()}` });
+    const result = await runDigests({ today: '2026-09-28' });
+    const tos = result.digests.map((d) => d.to);
+    assert.ok(tos.includes('ravi@cetizionverifica.com'));
+    assert.equal(tos.includes('asha@cetizionverifica.com'), false, 'she switched hers off');
+    const logged = await emails('daily_digest');
+    assert.ok(logged.some((e) => e.entity_id === `notifications:2026-09-28:${ravi.user.id}`), 'one per person, per day');
+  });
+
+  test('the Monday digest goes to admins only (#44)', async () => {
+    const { runWeeklyDigest } = await import('../src/lib/notify.js');
+    const boss = await createUser({ name: 'Boss', email: 'boss@cetizionverifica.com', password: PASSWORD, role: 'admin' }, db);
+    const result = await runWeeklyDigest({ today: '2026-09-28' });
+    assert.deepEqual(result.weekly.map((w) => w.to), [boss.email]);
+  });
+
+  test('the sweep no longer emails one address when people have accounts; the digests do (#44)', async () => {
+    const { JOBS } = await import('../src/jobs.js');
+    assert.equal(JOBS['notifications.digest'].cron, '30 8 * * 1-5', '08:30 on working days');
+    assert.equal(JOBS['notifications.weekly'].cron, '0 9 * * 1');
+    const { runNotifications } = await import('../src/lib/notify.js');
+    const out = await runNotifications({ today: '2026-09-28' });
+    assert.match(String(out.digest), /per person/);
+  });
 });

@@ -14,12 +14,17 @@ test('a sensible override passes unchanged', () => {
   assert.deepEqual(parsed.data, { default_split: [30, 70], invoice_prefix: 'CVPL', default_currency: 'USD' });
 });
 
+// A number sent as text ("7") is accepted and read as 7: the settings arrive
+// from a form, where every value is text.
+test('a number sent as text is read as a number', () => {
+  assert.equal(rulesSchema.parse({ po_date_offset_days: '7' }).po_date_offset_days, 7);
+});
+
 test('bad values are refused', () => {
   for (const bad of [
     { default_split: [60, 60] },            // does not add up to 100
     { default_split: [0, 100] },            // no advance stage
     { po_date_offset_days: -3 },
-    { po_date_offset_days: '7' },           // a string, not a number
     { delivery_offset_months: 1.5 },
     { default_currency: 'rupees' },
     { invoice_prefix: '.*' },               // would change the RegExp

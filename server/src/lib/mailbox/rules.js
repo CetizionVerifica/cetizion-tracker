@@ -4,6 +4,7 @@
  */
 import crypto from 'node:crypto';
 import sanitizeHtml from 'sanitize-html';
+import { QUOTE_CLASSES, splitQuoted } from './quotes.js';
 
 export const addr = (s) => String(s || '').trim().toLowerCase();
 export const domainOf = (email) => addr(email).split('@')[1] || '';
@@ -51,9 +52,16 @@ export function applyVisibility(msg, visibility) {
   return { ...msg, subject: null, snippet: null, body_html: null };
 }
 
-/** Plain text preview of an HTML body. */
+/**
+ * Plain text preview of an HTML body.
+ *
+ * The quoted history comes off first. A reply is mostly the message it is
+ * replying to, so taking the first 240 characters of the raw body gave a
+ * preview that was two lines of answer and then our own previous email
+ * read back to us — the one thing the reader already knows.
+ */
 export function snippet(html, max = 240) {
-  const text = String(html || '')
+  const text = String(splitQuoted(html).main || '')
     .replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>|<\/p>|<\/div>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -88,6 +96,18 @@ const SANITIZE = {
   allowedAttributes: {
     a: ['href', 'title', 'name', 'target', 'rel'],
     img: ['src', 'alt', 'title', 'width', 'height'],
+    // Where the quote starts, and nothing else.
+    //
+    // Mail clients mark the quoted history with a class, an id or
+    // type="cite", and stripping all three left no way to tell a reply's
+    // two new lines from the four screens of history under them — so the
+    // preview quoted our own last email back at us, and the reading pane
+    // had nothing to collapse. These are inert: no script runs here, the
+    // style tag and style attribute are both discarded, and the body is
+    // rendered in an iframe with its own document, so a class from an
+    // email cannot reach the app's own CSS.
+    div: ['id'],
+    blockquote: ['type'],
     td: ['colspan', 'rowspan', 'align'],
     th: ['colspan', 'rowspan', 'align', 'scope'],
     col: ['span', 'width'],
@@ -98,6 +118,10 @@ const SANITIZE = {
   allowedSchemes: ['http', 'https', 'mailto'],
   allowedSchemesByTag: { img: ['http', 'https', 'cid', 'data'] },
   allowProtocolRelative: false,
+  // Only the class names that mark a quoted reply survive; every other
+  // class is dropped, so this is a boundary marker and not a way for an
+  // email to carry styling hooks into the frame.
+  allowedClasses: { '*': QUOTE_CLASSES },
   disallowedTagsMode: 'discard',
   // A link opened from a stored email opens away from the tracker, and
   // cannot reach back through window.opener.

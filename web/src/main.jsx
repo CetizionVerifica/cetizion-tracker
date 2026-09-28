@@ -1,4 +1,5 @@
 import React from 'react';
+import './styles/globals.css';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
@@ -11,7 +12,6 @@ import { startErrorReporting } from './lib/errorReporting.js';
 import { EnvironmentBanner } from './components/EnvironmentBanner.jsx';
 
 startErrorReporting();
-import './styles.css';
 
 // A client's acceptance link (#53) opens outside the signed-in app.
 const acceptToken = window.location.pathname.match(/^\/accept\/([A-Za-z0-9_-]+)$/)?.[1];
