@@ -117,7 +117,21 @@ export default function SettingsArea() {
   const groups = GROUPS
     .map((group) => ({ ...group, items: group.items.filter((item) => isAdmin || !item.adminOnly) }))
     .filter((group) => group.items.length > 0);
-  const first = groups[0]?.items[0]?.to ?? 'rates';
+  /**
+   * Where /settings lands, stated rather than inferred.
+   *
+   * This was `groups[0].items[0]`, which meant the landing pane moved
+   * whenever the first group's membership changed. Adding Holidays — a
+   * pane every role may read — kept the Organisation group alive for a
+   * sales user, whose /settings had been landing on Exchange rates, and
+   * silently moved them to a list of public holidays. The first item of
+   * the first group is a fact about the menu, not a decision about where
+   * somebody should start.
+   */
+  const DEFAULT_PANE = 'rates';
+  const first = groups.some((group) => group.items.some((item) => item.to === DEFAULT_PANE))
+    ? DEFAULT_PANE
+    : groups[0]?.items[0]?.to ?? DEFAULT_PANE;
 
   return (
     <>

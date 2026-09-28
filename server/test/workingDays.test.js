@@ -68,3 +68,25 @@ test('the holiday list may be a Set or any iterable', () => {
   assert.equal(isWorkingDay(REPUBLIC_DAY, new Set(HOLIDAYS)), false);
   assert.equal(isWorkingDay(REPUBLIC_DAY, HOLIDAYS.values()), false);
 });
+
+/**
+ * A date column only has to look like YYYY-MM-DD to be stored, and
+ * Postgres accepts any year, so an invoice typed as 0202 for 2020 is a
+ * real row somebody can save. Counting it honestly means 476,000 loop
+ * iterations on the route that renders the landing screen.
+ */
+test('a span no real invoice could have is refused rather than walked', () => {
+  const started = Date.now();
+  assert.equal(workingDaysBetween('0202-01-15', '2026-09-25'), 0, 'a mistyped year is a typo, not a calculation');
+  assert.ok(Date.now() - started < 20, 'and it must not spend a fifth of a second finding that out');
+});
+
+test('a long but plausible overdue span is still counted', () => {
+  // Five years late is extraordinary, and somebody would still want the number.
+  assert.ok(workingDaysBetween('2021-09-25', '2026-09-25') > 1200);
+});
+
+test('an unparseable date counts nothing rather than throwing', () => {
+  assert.equal(workingDaysBetween('not-a-date', '2026-09-25'), 0);
+  assert.equal(workingDaysBetween('2026-09-25', 'not-a-date'), 0);
+});

@@ -204,6 +204,20 @@ mailboxRouter.patch('/:id', async (req, res) => {
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_messages SET subject = NULL, snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'subject') await query('UPDATE email_messages SET snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_threads SET subject = NULL WHERE account_id = $1', [a.id]);
+  // How far back to read is only consulted for a folder that has no delta
+  // link yet (lib/mailbox/sync.js), because after the first pass Graph
+  // hands us a cursor and we follow it. So raising the number on its own
+  // changes nothing at all — the next sync resumes from the cursor and
+  // never looks further back than it already has.
+  //
+  // Dropping the cursor is what makes the setting mean something: the next
+  // sync walks the new window from the start. It is safe to repeat,
+  // because ingest() skips any message already stored for the account
+  // (sync.js, the provider_id check), so a second pass over ground already
+  // covered stores nothing twice.
+  if (parsed.data.import_days !== undefined) {
+    await query('UPDATE mail_folders SET delta_link = NULL WHERE account_id = $1', [a.id]);
+  }
   res.json({ data: a });
 });
 

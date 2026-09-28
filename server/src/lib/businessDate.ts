@@ -41,6 +41,9 @@ type Holidays = Iterable<string>;
 
 const DAY_MS = 86_400_000;
 const toDay = (date: string): number => Date.parse(`${date}T00:00:00Z`) / DAY_MS;
+
+/** Twenty years. Longer than any real overdue span, shorter than a typo. */
+const MAX_SPAN_DAYS = 20 * 366;
 const fromDay = (day: number): string => new Date(day * DAY_MS).toISOString().slice(0, 10);
 const asSet = (holidays: Holidays): Set<string> => (holidays instanceof Set ? holidays : new Set(holidays));
 
@@ -78,8 +81,20 @@ export function addWorkingDays(date: string, n: number, holidays: Holidays = [])
  */
 export function workingDaysBetween(from: string, to: string, holidays: Holidays = []): number {
   const set = asSet(holidays);
+  const start = toDay(from) + 1;
+  const end = toDay(to);
+  // A date column only has to be YYYY-MM-DD to be stored, and Postgres
+  // takes any year, so an invoice typed as 0202 instead of 2020 is a real
+  // row. Walking it day by day is 476,000 iterations and 188ms of blocked
+  // event loop, on the route that renders the landing screen — one such
+  // row makes the app slow for everybody. Nothing here is a working day
+  // more than a few years out, so a span that long is a typo, not a
+  // calculation, and the honest answer is to refuse it rather than to
+  // spend two tenths of a second confirming it.
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  if (end - start > MAX_SPAN_DAYS) return 0;
   let count = 0;
-  for (let day = toDay(from) + 1, end = toDay(to); day <= end; day += 1) {
+  for (let day = start; day <= end; day += 1) {
     if (working(day, set)) count += 1;
   }
   return count;

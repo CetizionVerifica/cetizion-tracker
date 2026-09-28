@@ -1,15 +1,18 @@
-import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { PanelLeft, Reply } from 'lucide-react';
-import { Badge, Card, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { MoreHorizontal, PanelLeft, Paperclip, Reply } from 'lucide-react';
+import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
+import { frameDoc, hasRemoteImage } from '../lib/mailFrame.js';
+import { splitQuotedReply } from '../lib/quotedReply.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { useAuth } from '../lib/auth.jsx';
 import { date } from '../lib/format.js';
 
 /**
@@ -123,10 +126,28 @@ const MAIL_MAX = 720;
  * line of script, and *this* document can reach in and measure it. The
  * ResizeObserver catches images that arrive after load and change the
  * height under us.
+ *
+ * The popup permissions are what make a link in an email behave. Without
+ * them `<base target="_blank">` is refused and the client's website loads
+ * *inside* the message, which looks like the tracker and is not; with them
+ * it opens as an ordinary tab, outside the sandbox where it belongs.
  */
 function MailBody({ id, html }) {
   const ref = useRef(null);
   const [height, setHeight] = useState(null);
+  const [showImages, setShowImages] = useState(false);
+  const [showQuoted, setShowQuoted] = useState(false);
+
+  /**
+   * A reply is mostly the email it is replying to. Showing the whole thing
+   * meant every message in a thread repeated all the ones above it, so a
+   * four-exchange thread rendered the first message four times and the
+   * pane scrolled for pages. The history is still here, one click away —
+   * it is the thing you occasionally need and never want by default.
+   */
+  const parts = useMemo(() => splitQuotedReply(html), [html]);
+  const shown = parts.hasQuoted && !showQuoted ? parts.main : html;
+  const blocked = !showImages && hasRemoteImage(shown);
 
   // The body, not documentElement: documentElement.scrollHeight never
   // reports less than the frame's own viewport, so measuring it just reads
@@ -138,6 +159,10 @@ function MailBody({ id, html }) {
   }, []);
 
   const onLoad = useCallback(() => {
+    // Showing the images rewrites srcDoc, so this runs again on a frame
+    // that already has an observer. Without the disconnect the old one
+    // keeps measuring a document that is gone.
+    ref.current?._observer?.disconnect();
     measure();
     const body = ref.current?.contentDocument?.body;
     if (!body || typeof ResizeObserver === 'undefined') return;
@@ -149,15 +174,39 @@ function MailBody({ id, html }) {
   useEffect(() => () => ref.current?._observer?.disconnect(), []);
 
   return (
-    <iframe
-      ref={ref}
-      className="mail__body"
-      style={height ? { height } : undefined}
-      title={`email ${id}`}
-      sandbox="allow-same-origin"
-      onLoad={onLoad}
-      srcDoc={`<style>html,body{margin:0}body{font:13px system-ui,sans-serif;padding:10px 12px;color:#0f172a}img{max-width:100%}</style>${html}`}
-    />
+    <>
+      {blocked && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-[8px] border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
+          <span className="text-[12.5px] text-secondary-text">
+            Images are not loaded. Loading them tells the sender you opened this.
+          </span>
+          <Button variant="secondary" size="sm" className="ml-auto" onClick={() => setShowImages(true)}>
+            Show images
+          </Button>
+        </div>
+      )}
+      <iframe
+        ref={ref}
+        className="mail__body"
+        style={height ? { height } : undefined}
+        title={`email ${id}`}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        onLoad={onLoad}
+        srcDoc={frameDoc(shown, showImages)}
+      />
+      {parts.hasQuoted && (
+        <button
+          type="button"
+          onClick={() => setShowQuoted((v) => !v)}
+          aria-expanded={showQuoted}
+          className="mt-1.5 inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
+        >
+          <MoreHorizontal className="size-3.5" strokeWidth={2} aria-hidden="true" />
+          {showQuoted ? 'Hide the earlier replies' : 'Show the earlier replies'}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -191,6 +240,13 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
+          {/* Nobody has opened it yet. A dot rather than bolding the row:
+              weight would reflow the line the moment somebody read it, and
+              the name is already semibold on every row. It sits in a fixed
+              gutter so a read row lines up with an unread one. */}
+          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
+            {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
+          </span>
           <span
             className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
             title={[row.company_name || row.from_email, row.from_name].filter(Boolean).join(' · ')}
@@ -198,6 +254,9 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             {row.company_name || row.from_email}
             {row.from_name && row.company_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
+          {row.has_attachments && (
+            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
+          )}
           {/* Overdue is carried by the timestamp, not by a chip of its own.
               It is a fact about *when*, and on a quiet week every thread in
               the list is overdue — four red badges say nothing, four red
@@ -213,9 +272,26 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
         {/* Truncation has to be recoverable: the subject is the thing you
             are scanning for, and a clipped one with no way to read it is
             worse than a wrapped one. */}
-        <span className="mt-0.5 block truncate text-[12.5px] text-secondary-text" title={row.subject || '(no subject)'}>
+        <span className={cn(
+          'mt-0.5 block truncate text-[12.5px]',
+          row.unread ? 'font-medium text-foreground' : 'text-secondary-text'
+        )} title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
         </span>
+        {/* Two lines of the newest message. This is the band C13 does not
+            have, added deliberately: the subject alone does not say whether
+            a "Re: Quotation …" is a question, an approval or a complaint,
+            and opening a thread to find out is the thing the list exists to
+            avoid. Clamped rather than truncated because one line of an
+            email is rarely a sentence.
+
+            A mailbox set to metadata-only stores no snippet, so the band
+            simply does not appear for it rather than showing a blank line. */}
+        {row.snippet && (
+          <span className="mt-1 block line-clamp-2 text-[12px]/[1.45] text-muted-foreground">
+            {row.snippet}
+          </span>
+        )}
         {/* Two chips at most: what this thread is, and whose it is. The
             row had up to six, all the same size, so the one that differed
             between rows was the hardest to find. */}
@@ -231,6 +307,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
 export default function Inbox() {
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'all';
+  const { isAdmin } = useAuth();
   const selected = params.get('c');
   const [q, setQ] = useState('');
   const sidebar = useContext(SidebarContext);
@@ -323,6 +400,23 @@ export default function Inbox() {
                   {v.label}
                 </button>
               ))}
+              {/* The setup screen existed at ?view=setup and nothing linked
+                  to it, so the only way to create an inbox — without which
+                  a shared mailbox routes nothing — was to type the URL.
+                  Admin-only, because only an admin can act on it. */}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
+                  aria-label="Set up inboxes and canned responses"
+                  className={cn(
+                    'ml-auto rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  Set up
+                </button>
+              )}
             </div>
           </div>
 
@@ -389,6 +483,21 @@ function Conversation({ id, onBack, onChanged }) {
 
   useEffect(() => { setComposing(false); setBody(''); }, [id]);
 
+  /**
+   * Opening a thread is what marks it read, and the server does that as a
+   * side effect of the fetch above — so the row in the list keeps its dot
+   * until somebody tells it. This is that telling: once per thread, and
+   * only for one that was actually unread, so reading down the list does
+   * not refetch it on every arrow key.
+   */
+  const announced = useRef(null);
+  useEffect(() => {
+    if (c?.unread && announced.current !== id) {
+      announced.current = id;
+      onChanged();
+    }
+  }, [c?.unread, id, onChanged]);
+
   async function update(patch, ok) {
     setBusy(true);
     try { await api.raw(`/inbox/${id}`, { method: 'PATCH', body: patch }); if (ok) toast(ok, 'success'); conv.refetch(); onChanged(); }
@@ -414,9 +523,14 @@ function Conversation({ id, onBack, onChanged }) {
         >
           ← All conversations
         </button>
-        <h2 className="text-[17px]/[1.4] font-semibold text-foreground">{c.subject || '(no subject)'}</h2>
+        <h2 className="text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
         <p className="mt-1 wrap-anywhere text-[12.5px] text-secondary-text">
           {c.from_name || c.from_email} &lt;{c.from_email}&gt;
+          {/* Which of our addresses it came to. C13 writes this as "to
+              sales@", and it is the fact that decides who the reply is
+              from — with two shared mailboxes connected, the pane read
+              identically whichever one the client had written to. */}
+          {c.inbox_email && <> · to <span className="text-foreground">{c.inbox_email.split('@')[0]}@</span></>}
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
           {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
           {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
@@ -580,8 +694,28 @@ function InboxSetup() {
   const canned = useFetch(() => api.raw('/inbox/canned'));
   const [form, setForm] = useState(null);
   const [cannedForm, setCannedForm] = useState(null);
+  const [removing, setRemoving] = useState(null);
+  const [busy, setBusy] = useState(false);
   const rows = inboxes.data?.data ?? [];
   const avail = inboxes.data?.available_mailboxes ?? [];
+
+  /**
+   * The row already knows how many conversations it would take with it, so
+   * the dialog says the number rather than making the server refuse once to
+   * find out. ?discard=yes stands for having read it; the API still refuses
+   * a delete that arrives without it, for callers with no dialog.
+   */
+  async function deleteInbox() {
+    setBusy(true);
+    try {
+      await api.raw(`/inbox/inboxes/${removing.id}?discard=yes`, { method: 'DELETE' });
+      toast(`${removing.name} deleted`, 'success');
+      setRemoving(null);
+      inboxes.refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally { setBusy(false); }
+  }
 
   async function saveInbox() {
     try {
@@ -608,7 +742,14 @@ function InboxSetup() {
           { key: 'members', header: 'Round robin', render: (r) => r.members.join(', ') || '—' },
           { key: 'first_response_hours', header: 'Reply within', render: (r) => (r.first_response_hours ? `${r.first_response_hours} h` : 'Settings default') },
           { key: 'open', header: 'Open', align: 'right' },
-          { key: 'act', header: '', align: 'right', render: (r) => <button type="button" className="btn btn--sm btn--ghost" onClick={() => setForm({ ...r, members: r.members.join(', '), first_response_hours: r.first_response_hours || '', signature: r.signature || '' })}>Edit</button> },
+          {
+            key: 'act', header: '', align: 'right', render: (r) => (
+              <div className="table__actions">
+                <Button variant="ghost" size="sm" onClick={() => setForm({ ...r, members: r.members.join(', '), first_response_hours: r.first_response_hours || '', signature: r.signature || '' })}>Edit</Button>
+                <Button variant="ghost" size="sm" aria-label={`Delete ${r.name}`} onClick={() => setRemoving(r)}>Delete</Button>
+              </div>
+            ),
+          },
         ]} />
       </Card>
       <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>+ Response</button>}>
@@ -629,6 +770,18 @@ function InboxSetup() {
             <div className="span-all"><Field label="Signature"><Textarea rows={3} value={form.signature} onChange={set('signature')} /></Field></div>
           </div>
         </Modal>
+      )}
+      {removing && (
+        <ConfirmDialog
+          title={`Delete ${removing.name}?`}
+          message={removing.conversations
+            ? `Its ${removing.conversations} conversation${removing.conversations === 1 ? '' : 's'} lose their status, owner and reply clock. The emails themselves stay under the mailbox, and new mail to ${removing.email} stops reaching the inbox.`
+            : `Nothing has been routed to it yet. New mail to ${removing.email} stops reaching the inbox.`}
+          confirmLabel="Delete"
+          busy={busy}
+          onConfirm={deleteInbox}
+          onClose={() => setRemoving(null)}
+        />
       )}
       {cannedForm && (
         <Modal title={cannedForm.id ? 'Edit response' : 'New response'} onClose={() => setCannedForm(null)} footer={<><button type="button" className="btn" onClick={() => setCannedForm(null)}>Cancel</button><button type="button" className="btn btn--primary" disabled={!cannedForm.name.trim() || !cannedForm.body.trim()} onClick={saveCanned}>Save</button></>}>

@@ -466,7 +466,11 @@ export function Holidays() {
   const toast = useToast();
   const { isAdmin } = useAuth();
   const { rows, loading, refetch } = useList('holidays', { limit: 500 });
-  const [adding, setAdding] = useState(false);
+  // 'new' or the row being changed. The pane told people to correct the
+  // moon-dated holidays here and then offered only Add and Delete, so
+  // moving Id by a day meant deleting it and retyping it — while
+  // PATCH /api/holidays/:id existed and worked the whole time.
+  const [editing, setEditing] = useState(null);
 
   async function remove(row) {
     if (!window.confirm(`Delete ${row.name} on ${date(row.holiday_on)}? It becomes a working day again.`)) return;
@@ -483,7 +487,7 @@ export function Holidays() {
     <SettingsPane
       title="Holidays"
       description="Days the office is closed. Working-day counts skip these as well as Saturdays and Sundays. Dates that follow the moon (Id, Muharram, Milad-un-Nabi) can move; correct them here when they do."
-      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setAdding(true)}>Add a holiday</Button>}
+      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a holiday</Button>}
     >
       <Card flush>
         <DataTable
@@ -504,6 +508,7 @@ export function Holidays() {
               align: 'right',
               render: (r) => (
                 <div className="table__actions">
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Edit</button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={() => remove(r)}>Delete</button>
                 </div>
               ),
@@ -513,13 +518,13 @@ export function Holidays() {
         />
       </Card>
 
-      {adding && (
+      {editing && (
         <RecordForm
-          title="New holiday"
+          title={editing === 'new' ? 'New holiday' : `Edit ${editing.name}`}
           resource="holidays"
-          record={null}
-          onClose={() => setAdding(false)}
-          onSaved={refetch}
+          record={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refetch(); }}
           fields={[
             { name: 'holiday_on', label: 'Date', type: 'date', required: true },
             { name: 'name', label: 'Name', required: true, hint: 'e.g. Republic Day' },

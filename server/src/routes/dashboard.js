@@ -4,6 +4,7 @@ import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/sal
 import { revenueReport } from '../lib/revenueReport.js';
 import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
+import { payables } from '../lib/payables.js';
 
 export const dashboardRouter = Router();
 
@@ -146,11 +147,20 @@ dashboardRouter.get('/worklist', async (req, res) => {
 
   // Days overdue stay calendar days, as every reminder counts them; this is
   // the same lateness in the days somebody could have acted on it (#73).
+  //
+  // Both numbers are decided by one clock, on purpose. days_overdue comes
+  // from the views as Postgres CURRENT_DATE, which in our containers is
+  // UTC, while businessToday() is Asia/Kolkata — so between 00:00 and
+  // 05:30 IST they are a day apart, every day. Gating on days_overdue and
+  // counting from businessToday() put the two beside each other in one
+  // row: "overdue by 1 day" above "2 working days late", for five and a
+  // half hours out of every twenty-four. Comparing the due date against
+  // the same date the count runs from is what keeps them agreeing.
   const today = businessToday();
   const off = new Set(holidays.rows.map((row) => row.holiday_on));
   const withWorkingDays = (due) => (row) => ({
     ...row,
-    working_days_overdue: row.days_overdue > 0 && row[due] ? workingDaysBetween(row[due], today, off) : null,
+    working_days_overdue: row[due] && row[due] < today ? workingDaysBetween(row[due], today, off) : null,
   });
 
   res.json({
@@ -192,6 +202,14 @@ dashboardRouter.get('/revenue-report', async (req, res) => {
  */
 dashboardRouter.get('/data-quality', async (req, res) => {
   res.json({ data: { checks: await dataQuality() } });
+});
+
+/**
+ * What we owe travel vendors, aged (#76): every bill still owed, its
+ * bucket, and a count and outstanding total per bucket. In rupees.
+ */
+dashboardRouter.get('/payables', async (req, res) => {
+  res.json({ data: await payables() });
 });
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */
