@@ -141,6 +141,31 @@ importer runs on rules alone and says so ("rules only").
 
 Every number and date that is written is computed in code, never by the model.
 
+#### What leaves the building
+
+Setting `OPENROUTER_API_KEY` sends spreadsheet content to OpenRouter, and
+OpenRouter forwards it to whichever model `OPENROUTER_MODEL` names — by
+default `deepseek/deepseek-v4.1-flash`, which is not run by us and not run in
+India. Retention and training are that provider's terms, not ours.
+
+What goes out, specifically:
+
+| Call | What it carries |
+| --- | --- |
+| `mapColumns` | The column headers, and the first **five rows** of the sheet |
+| `readStages` | The stage wordings, as written |
+| `reviewRows` | Per row: PO number, invoice number, amounts received and pending, currency, and the **free-text remarks** |
+
+That is client names, deal values, invoice numbers and whatever somebody
+typed in a remarks column. It is real commercial information about real
+clients, and some of them may have said something about where their data may
+go.
+
+So it is off unless the key is set, and that is deliberate: turning it on is a
+decision about client confidentiality, not a performance setting. Without the
+key the importer runs on rules alone and says so ("rules only") — the sheet
+still imports, it just asks more questions.
+
 ### Re-uploads
 
 The latest committed import item for each quotation is the memory of what the
