@@ -136,7 +136,20 @@ export async function commitBatch(batch, items, { user }) {
                 // timeline before the sheet's remarks take their place.
                 const own = q.remarks && q.remarks !== p.remarks && q.remarks !== p.tracking?.prior_remarks;
                 if (own) await client.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, $2, $3)`, [q.quotation_no, `Remarks before this upload: ${q.remarks}`, IMPORT_AUTHOR]);
-                n = await update(client, 'quotations', changes('quotations', p, ['quotation_date', 'client_name', 'contact_person', 'service_quoted', 'sales_person', 'quotation_value', 'currency', 'status', 'po_received', 'remarks']), 'id = $1', [q.id]);
+                // Only what the planner judged the sheet's to change.
+                //
+                // This wrote all ten columns whenever anything differed, so
+                // one moved cell dragged nine untouched ones back to
+                // whatever the sheet happened to hold. update_fields is the
+                // three-way merge's verdict (rules.js, sheetChanges); the
+                // four outside it are not compared field-by-field —
+                // client_name identifies the row, remarks are archived to
+                // the timeline just above, and po_received is derived.
+                const always = ['client_name', 'po_received', 'remarks'];
+                const cols = Array.isArray(p.__update_fields)
+                  ? [...new Set([...p.__update_fields, ...always])]
+                  : ['quotation_date', 'client_name', 'contact_person', 'service_quoted', 'sales_person', 'quotation_value', 'currency', 'status', 'po_received', 'remarks'];
+                n = await update(client, 'quotations', changes('quotations', p, cols), 'id = $1', [q.id]);
               } else {
                 // Keep the original: fill blanks only.
                 const fill = {};

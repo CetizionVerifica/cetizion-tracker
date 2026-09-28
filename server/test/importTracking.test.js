@@ -61,7 +61,9 @@ test('the same sheet a week later updates the deal it wrote, with only the new r
     quotations: [{ id: 7, quotation_no: 'CTZ/QT/2026/001', client_name: 'Demo Alpha', service_quoted: 'GHG inventory', quotation_date: '2026-09-01',
       status: 'Submitted', project_id: null, quotation_value: '450000.00', contact_person: null, sales_person: 'Rohan', currency: 'INR',
       remarks: 'Reminder sent | Client wants a call | Imported from S.No 1', next_step: 'Reminder sent', last_contacted_at: '2026-09-20' }],
-    trail: { 'CTZ/QT/2026/001': { remarks: 'Client wants a call', follow_up: 'Reminder sent', legacy: 'Reminder sent | Client wants a call | Imported from S.No 1', remarks_field: 'Reminder sent | Client wants a call | Imported from S.No 1' } },
+    trail: { 'CTZ/QT/2026/001': { remarks: 'Client wants a call', follow_up: 'Reminder sent', legacy: 'Reminder sent | Client wants a call | Imported from S.No 1', remarks_field: 'Reminder sent | Client wants a call | Imported from S.No 1',
+      // What last week's sheet said, which is what the route now keeps.
+      was: { status: 'Submitted', quotation_value: 450000, currency: 'INR', quotation_date: '2026-09-01', contact_person: null, sales_person: 'Rohan', service_quoted: 'GHG inventory' } } },
     follow_up_tasks: { 'CTZ/QT/2026/001': { id: 3, due_at: '2026-10-02' } },
     sheet_notes: { 'CTZ/QT/2026/001': ['Remarks: Client wants a call', 'Follow-up: Reminder sent'] },
   };
@@ -109,4 +111,81 @@ test('an ISO proposal is left out however it is written, and a word starting ISO
   ], mapping, live: empty() });
   assert.deepEqual(plan.skipped.map((s) => [s.client, s.reason]), [['Iso One', 'ISO proposal'], ['Iso Two', 'ISO proposal']]);
   assert.ok(quote(plan, 'Not Iso'));
+});
+
+/**
+ * The bug this pair of tests exists for: comparing the sheet against the
+ * tracker alone cannot tell "the sheet moved" from "somebody corrected the
+ * tracker", and it always read the second as the first.
+ */
+test('a re-upload leaves alone what somebody changed in the tracker since', () => {
+  const live = {
+    ...empty(),
+    today: '2026-10-01',
+    // Sales corrected the value and advanced the stage on Wednesday.
+    quotations: [{ id: 7, quotation_no: 'CTZ/QT/2026/001', client_name: 'Demo Alpha', service_quoted: 'GHG inventory', quotation_date: '2026-09-01',
+      status: 'Under Negotiation', project_id: null, quotation_value: '500000.00', contact_person: null, sales_person: 'Rohan', currency: 'INR',
+      remarks: null, next_step: null, last_contacted_at: null }],
+    trail: { 'CTZ/QT/2026/001': {
+      // The sheet still says what it said last week.
+      was: { status: 'Submitted', quotation_value: 450000, currency: 'INR', quotation_date: '2026-09-01', contact_person: null, sales_person: 'Rohan', service_quoted: 'GHG inventory' },
+    } },
+  };
+  const plan = buildPlan({ rows: [
+    row(1, [1, 'Demo Alpha', 'Proposal submitted', 'GHG inventory', '01-Sep-2026', 450000, 'Rohan', '', '', '', '']),
+  ], mapping, live });
+
+  const q = quote(plan, 'Demo Alpha');
+  assert.equal(q.existing_ref, 'CTZ/QT/2026/001');
+  assert.notEqual(q.action, 'update', 'an unchanged sheet has nothing to apply');
+  assert.equal(q.payload.__update_fields, undefined, 'and nothing for the commit to write');
+  const ahead = q.flags.find((f) => f.code === 'tracker_ahead');
+  assert.ok(ahead, 'it says the tracker moved rather than silently putting it back');
+  assert.deepEqual(ahead.changes.map((c) => c.field).sort(), ['quotation_value', 'status']);
+});
+
+test('when both moved, the person wins and is told', () => {
+  const live = {
+    ...empty(),
+    today: '2026-10-01',
+    quotations: [{ id: 7, quotation_no: 'CTZ/QT/2026/001', client_name: 'Demo Alpha', service_quoted: 'GHG inventory', quotation_date: '2026-09-01',
+      status: 'Submitted', project_id: null, quotation_value: '500000.00', contact_person: null, sales_person: 'Rohan', currency: 'INR',
+      remarks: null, next_step: null, last_contacted_at: null }],
+    trail: { 'CTZ/QT/2026/001': {
+      was: { status: 'Submitted', quotation_value: 450000, currency: 'INR', quotation_date: '2026-09-01', contact_person: null, sales_person: 'Rohan', service_quoted: 'GHG inventory' },
+    } },
+  };
+  // The sheet moved the value too, to a third number.
+  const plan = buildPlan({ rows: [
+    row(1, [1, 'Demo Alpha', 'Negotiation', 'GHG inventory', '01-Sep-2026', 470000, 'Rohan', '', '', '', '']),
+  ], mapping, live });
+
+  const q = quote(plan, 'Demo Alpha');
+  const both = q.flags.find((f) => f.code === 'both_changed');
+  assert.ok(both, 'a disagreement between a person and a spreadsheet is worth a warning');
+  assert.deepEqual(both.changes.map((c) => c.field), ['quotation_value']);
+  // The stage only moved on the sheet, so that one is still the sheet's.
+  assert.deepEqual(q.payload.__update_fields, ['status']);
+  assert.ok(!q.payload.__update_fields.includes('quotation_value'), "the person's number is not overwritten");
+});
+
+test('a row with no service matches the deal it already made, instead of making another', () => {
+  const live = {
+    ...empty(),
+    today: '2026-10-01',
+    quotations: [{ id: 9, quotation_no: 'CTZ/QT/2026/009', client_name: 'Demo Beta', service_quoted: null, quotation_date: '2026-09-05',
+      status: 'Submitted', project_id: null, quotation_value: '250000.00', contact_person: null, sales_person: 'Rohan', currency: 'INR',
+      remarks: null, next_step: null, last_contacted_at: null }],
+  };
+  const plan = buildPlan({ rows: [
+    row(1, [1, 'Demo Beta', 'Proposal submitted', '', '05-Sep-2026', 250000, 'Rohan', '', '', '', '']),
+  ], mapping, live });
+
+  const q = quote(plan, 'Demo Beta');
+  assert.equal(q.existing_ref, 'CTZ/QT/2026/009', 'the weekly sheet must not create a second copy every upload');
+  assert.notEqual(q.action, 'create');
+  // Client and date is a weaker claim than client and service, so it may
+  // point at a duplicate but never quietly rewrite one.
+  assert.ok(q.flags.some((f) => f.code === 'duplicate'));
+  assert.equal(q.payload.__update_fields, undefined);
 });
