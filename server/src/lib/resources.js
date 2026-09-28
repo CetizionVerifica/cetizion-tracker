@@ -3,7 +3,7 @@ import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
-import { mayWriteOnRecords, onRecordVisibleSql } from './scope.js';
+import { mayWriteOnRecords, onRecordVisibleSql, ownProjectSql } from './scope.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -310,6 +310,15 @@ export const resources = {
       reached_on: date(),
       sort_order: int({ min: 0 }).default(0),
     }),
+    // Scoped to the project's own people (#26, and the review of #115).
+    //
+    // This is a money control, not a tidiness one. Marking a milestone
+    // reached stamps milestone_reached_on on every payment stage pointing
+    // at it, and a stage triggered "On Milestone" is ready to invoice the
+    // moment that is not null — so an open PATCH here let any signed-in
+    // user move another project into the invoice run, the cash-flow
+    // forecast and the ageing.
+    visibleTo: (req, params) => ownProjectSql(req, 'project_milestones', params),
   },
 
   'purchase-orders': {
