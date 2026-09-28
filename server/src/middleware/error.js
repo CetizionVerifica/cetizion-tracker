@@ -8,9 +8,23 @@ export class ApiError extends Error {
   }
 }
 
+// A few constraints are checked by name, so the form can put the message
+// next to the field it is about instead of in a banner. A new PO's own
+// checks (purchaseOrders.js) run after the INSERT, so these are what a
+// mistake meets first there.
+const CONSTRAINT_FIELDS = {
+  purchase_orders_replaces_key: ['replaces_po_number', 'That purchase order is already replaced by another revision: pick that revision instead'],
+  purchase_orders_not_replacing_itself: ['replaces_po_number', 'A purchase order cannot replace itself'],
+  purchase_orders_replaces_po_number_fkey: ['replaces_po_number', 'There is no purchase order with that number'],
+};
+
 // Postgres constraint violations are user mistakes far more often than
 // bugs, so translate the common ones into something a person can act on.
 export function fromPgError(err) {
+  const field = CONSTRAINT_FIELDS[err.constraint];
+  if (field && ['23505', '23514', '23503'].includes(err.code)) {
+    return { status: 422, message: 'Please check the highlighted fields', fields: { [field[0]]: field[1] } };
+  }
   switch (err.code) {
     case '23505': {
       const match = /Key \((.+?)\)=\((.+?)\)/.exec(err.detail || '');
@@ -50,7 +64,7 @@ export function errorHandler(err, req, res, next) {
 
   const translated = fromPgError(err);
   if (translated) {
-    return res.status(translated.status).json({ error: { message: translated.message } });
+    return res.status(translated.status).json({ error: { message: translated.message, ...(translated.fields && { fields: translated.fields }) } });
   }
 
   (req.log || console).error?.({ err }, 'unhandled error');

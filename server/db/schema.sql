@@ -564,9 +564,19 @@ CREATE TABLE purchase_orders (
   quotation_no           text REFERENCES quotations(quotation_no)
                            ON UPDATE CASCADE ON DELETE SET NULL,
   document_id            int UNIQUE REFERENCES documents(id),
+  -- A revision names the PO it takes the place of; a cancelled PO will not
+  -- go ahead. Either takes a PO out of the sales figures only (migration 051).
+  replaces_po_number     text REFERENCES purchase_orders(po_number)
+                           ON UPDATE CASCADE ON DELETE SET NULL,
+  cancelled              boolean NOT NULL DEFAULT false,
   created_at             timestamptz NOT NULL DEFAULT now(),
-  updated_at             timestamptz NOT NULL DEFAULT now()
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT purchase_orders_not_replacing_itself CHECK (replaces_po_number <> po_number)
 );
+
+-- A PO is replaced by one revision at most; a later revision replaces that one.
+CREATE UNIQUE INDEX purchase_orders_replaces_key
+  ON purchase_orders (replaces_po_number) WHERE replaces_po_number IS NOT NULL;
 
 CREATE INDEX ON purchase_orders (project_id);
 CREATE INDEX purchase_orders_quotation_no_idx ON purchase_orders (quotation_no);

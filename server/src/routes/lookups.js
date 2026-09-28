@@ -31,7 +31,7 @@ lookupRouter.get('/', async (req, res) => {
       query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query('SELECT project_id, client_name FROM projects ORDER BY project_id DESC'),
-      query(`SELECT po_number, project_id, client_name, po_value, currency
+      query(`SELECT po_number, project_id, client_name, po_value, currency, replaced_by_po_number
                FROM v_purchase_orders ORDER BY po_number DESC`),
       query('SELECT travel_id, employee_name, destination FROM travel_logs ORDER BY travel_id DESC'),
       // Enquiries come first in the pipeline, so their names are offered too.
@@ -51,8 +51,9 @@ lookupRouter.get('/', async (req, res) => {
               GROUP BY ${nameKey('sector')}
               ORDER BY 1`),
       query('SELECT key, value, notes FROM settings ORDER BY key'),
-      // For linking an enquiry to an existing quotation, and a PO to its won one.
-      query(`SELECT quotation_no, client_name, status, project_id
+      // For linking an enquiry to an existing quotation, and a PO to its won
+      // one — currency so the PO form can default to it and flag a mismatch.
+      query(`SELECT quotation_no, client_name, status, project_id, currency
                FROM quotations ORDER BY quotation_date DESC NULLS LAST, quotation_no DESC`),
       // Currencies actually recorded against something, so Settings can ask
       // for the rates that are really needed instead of every currency the
