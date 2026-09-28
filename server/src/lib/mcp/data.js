@@ -7,6 +7,8 @@
 import { query, transaction } from '../../db.js';
 import { RATES } from '../salesReport.js';
 import { businessToday } from '../businessDate.ts';
+import { wake } from '../inbox.js';
+import { recordVisibleSql } from '../scope.js';
 import { dataQuality } from '../dataQuality.js';
 import { BUCKETS, payablesSummary } from '../payables.js';
 
@@ -317,6 +319,10 @@ export async function updateNextStep(scope, token, { quotation_no: no, next_step
  * rule that will eventually be applied in one.
  */
 export async function listInbox(scope, { status, unanswered_only: unansweredOnly = false, limit, offset } = {}) {
+  // Nothing else brings a snoozed conversation back — there is no job, only
+  // whoever asks for a list next. Both Inbox routes do this; a reader that
+  // does not is a reader that quietly under-reports the queue.
+  await wake();
   const win = page({ limit, offset });
   const params = [];
   const where = [status ? null : "c.status IN ('open','pending_client')"].filter(Boolean);
@@ -329,9 +335,20 @@ export async function listInbox(scope, { status, unanswered_only: unansweredOnly
     // is open to everyone, you are a member of it, it is unassigned, or it
     // is assigned to you. The page matches two identities (sign-in name and
     // full name); a token carries one person, so this matches that one.
+    //
+    // The membership test is an unnest rather than `&&`, because `&&` is
+    // case-sensitive element equality and `inboxes.members` is free text
+    // typed into a settings field headed "Names, comma separated" — so it
+    // holds {Asha Kumar}, and comparing it against a lowercased array
+    // matched nothing at all. That disjunct was dead for every member whose
+    // name has a capital letter in it, and a member of an inbox was quietly
+    // told there was nothing in it. Both sides are folded here; the Inbox
+    // page compares raw and has the same latent hole from the other side.
     params.push(scope.person || '');
     const p = `$${params.length}`;
-    where.push(`(i.members = '{}' OR i.members && ARRAY[lower(${p})]::text[] OR c.assignee IS NULL OR lower(c.assignee) = lower(${p}))`);
+    where.push(`(i.members = '{}'
+      OR EXISTS (SELECT 1 FROM unnest(i.members) m WHERE lower(btrim(m)) = lower(btrim(${p})))
+      OR c.assignee IS NULL OR lower(c.assignee) = lower(${p}))`);
   }
   const { rows } = await query(
     `SELECT count(*) OVER () AS total_rows,
@@ -371,6 +388,10 @@ export async function listPayables(scope, { bucket, limit, offset } = {}) {
   const where = [];
   if (bucket) { params.push(bucket); where.push(`bucket = $${params.length}`); }
   const [{ rows }, summary] = await Promise.all([
+    // The same ORDER BY as payablesRows(), tiebreak included: pay_by is the
+    // month end, so two bills invoiced in one month share it and share a
+    // days_overdue, and without invoice_date they can come back in a
+    // different order than the page shows them.
     query(
       `SELECT count(*) OVER () AS total_rows,
               vendor_invoice_no, travel_vendor, employee_name, client_name, travel_id,
@@ -378,7 +399,7 @@ export async function listPayables(scope, { bucket, limit, offset } = {}) {
               payment_status, days_overdue, bucket
          FROM v_vendor_invoice_ageing
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-        ORDER BY days_overdue DESC NULLS LAST, pay_by NULLS LAST, vendor_invoice_id
+        ORDER BY days_overdue DESC, pay_by NULLS LAST, invoice_date NULLS LAST, vendor_invoice_id
         LIMIT ${win.limit} OFFSET ${win.offset}`, params),
     payablesSummary(),
   ]);
@@ -443,11 +464,27 @@ export async function listTasks(scope, { assignee, overdue_only: overdueOnly = f
   return paged(rows, win);
 }
 
-/** A task is a sales token's if it is assigned to it or was raised by it. */
+/**
+ * A task is a sales token's if it is assigned to it, was raised by it, or
+ * sits on a record it can see. That third one was missing, and its absence
+ * reopened exactly the hole list_tasks was written to close: create_task
+ * gates on canSee, so a token could add a task to its own quotation,
+ * delegate it to a colleague, and never see it again.
+ *
+ * The second one was broken too. Writes are stamped "<person> (via MCP)" so
+ * the timeline says where they came from, and an exact comparison against
+ * the person's name never equals that — so a token could not even find the
+ * tasks it had raised itself. The stamp is stripped before comparing.
+ */
 function mine(scope, params) {
   params.push(scope.person || '');
   const p = `$${params.length}`;
-  return `(lower(btrim(t.assignee)) = lower(btrim(${p})) OR lower(btrim(t.created_by)) = lower(btrim(${p})))`;
+  params.push([String(scope.person || '').trim().toLowerCase()]);
+  const ids = `$${params.length}::text[]`;
+  const raisedBy = `regexp_replace(t.created_by, '\\s*\\(via MCP\\)$', '', 'i')`;
+  return `(lower(btrim(t.assignee)) = lower(btrim(${p}))
+    OR lower(btrim(${raisedBy})) = lower(btrim(${p}))
+    OR ${recordVisibleSql('t.entity', 't.entity_id', ids)})`;
 }
 
 /**

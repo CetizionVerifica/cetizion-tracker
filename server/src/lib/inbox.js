@@ -5,6 +5,7 @@
  * Registered as a mailbox hook, so it runs inside the transaction that
  * stores each message.
  */
+import { query } from '../db.js';
 import { businessWeekday } from './businessDate.ts';
 import { messageHooks } from './mailbox/sync.js';
 import { notify } from './notify.js';
@@ -89,3 +90,18 @@ registerInboxHook();
 export function fillTemplate(body, vars) {
   return String(body).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => (vars[k] ?? '').toString());
 }
+
+/**
+ * Snoozed conversations wake when their time comes.
+ *
+ * There is no background job for this: a conversation comes back only
+ * because somebody asked for a list and it was woken on the way. That was
+ * fine while the Inbox page was the only reader — it lived in routes and
+ * both its list routes called it. list_inbox over MCP is a second reader,
+ * and one that will not call it is one that under-reports the queue: a
+ * thread snoozed until Tuesday stays invisible on Wednesday until a person
+ * happens to open the page.
+ */
+export const wake = () => query(
+  `UPDATE inbox_conversations SET status = 'open', snoozed_until = NULL
+    WHERE status = 'snoozed' AND snoozed_until <= now()`);
