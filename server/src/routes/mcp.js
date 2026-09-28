@@ -43,14 +43,31 @@ function buildServer(token) {
   const server = new McpServer({ name: 'cetizion-tracker', version: '1.0.0' }, {
     instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person}.`} ${token.can_write ? 'It may add notes and tasks.' : 'It may read only: nothing it does changes a record.'}`,
   });
-  const json = (v) => ({ content: [{ type: 'text', text: JSON.stringify(v, null, 1) }] });
+  /**
+   * The result, twice: once as text for a client that only reads content,
+   * once as structuredContent for one that can use the shape.
+   *
+   * No indentation. `JSON.stringify(v, null, 1)` put a newline and a space
+   * in front of every field of every row — fifty-one open deals measured
+   * 24 KB pretty against 6.6 KB compact, and the caller pays for all of it.
+   * Nothing reads this with its eyes.
+   */
+  const json = (v) => {
+    // Serialise once and parse it back, so structuredContent is exactly what
+    // the text block says — not a near-copy holding JS values that never
+    // reach the wire. node-pg returns timestamptz as a Date, and validation
+    // runs before serialisation, so a schema describing what the client
+    // actually receives would otherwise be told it is wrong.
+    const text = JSON.stringify(v);
+    return { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) };
+  };
   const notFound = (what) => ({ isError: true, content: [{ type: 'text', text: `${what} was not found, or this token may not see it.` }] });
-  const tool = (name, description, shape, fn, { write = false } = {}) => {
+  const tool = (name, description, shape, fn, { write = false, out } = {}) => {
     // A token that may not write does not list the write tools either. An
     // MCP client reads the list and plans from it, so offering a tool it
     // will be refused is worse than not offering it.
     if (write && !token.can_write) return;
-    server.registerTool(name, { description, inputSchema: shape, annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
+    server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: out } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
         await query('INSERT INTO api_token_log (token_id, tool, arguments, ok) VALUES ($1,$2,$3,true)', [token.id, name, JSON.stringify(args)]);
@@ -67,46 +84,86 @@ function buildServer(token) {
     });
   };
 
+  /**
+   * What each tool gives back.
+   *
+   * Declaring it buys two things. A client gets a shape instead of a string
+   * it has to re-parse, and the SDK validates our own output against the
+   * schema and throws when it does not match — so a query that quietly
+   * stops returning a column fails loudly rather than handing back a
+   * narrower object nobody notices.
+   *
+   * Every row is a loose object on purpose. These come straight from SQL,
+   * and a schema that pinned every column would turn "somebody added a
+   * field" into a broken tool. Extra keys pass; the named ones are the
+   * contract, and nullable because a column usually may be.
+   */
+  const row = (f) => z.looseObject(f);
+  const str = z.string().nullable().optional();
+  const num = z.number().nullable().optional();
+  const pageOf = (item) => ({
+    items: z.array(item),
+    total: z.number().int().describe('Rows matching the filters, not rows returned'),
+    offset: z.number().int(),
+    limit: z.number().int(),
+    has_more: z.boolean().describe('Call again with offset = offset + limit'),
+  });
+
   tool('search_records', 'Find companies, quotations, enquiries, projects and purchase orders by name, number or service.',
-    { text: z.string().min(2).describe('What to look for'), types: z.array(z.enum(['company', 'quotation', 'enquiry', 'project', 'purchase_order'])).optional() },
-    async ({ text, types }) => json(await data.searchRecords(scope, { text, types })));
+    { text: z.string().min(2).describe('What to look for'), types: z.array(z.enum(['company', 'quotation', 'enquiry', 'project', 'purchase_order'])).optional(), per_type_limit: z.number().int().min(1).max(25).optional().describe('Rows per type, default 10') },
+    async ({ text, types, per_type_limit: lim }) => json(await data.searchRecords(scope, { text, types, limit: lim })),
+    { out: { results: z.array(row({ type: z.string(), id: z.string(), title: str, detail: str })), count: z.number().int(), per_type_limit: z.number().int() } });
   tool('get_company', 'A client with its contacts, open deals, what it owes and its recent activity.',
     { company_id: z.number().int().describe('Company id, from search_records') },
-    async ({ company_id: id }) => { const r = await data.getCompany(scope, id); return r ? json(r) : notFound(`Company ${id}`); });
+    async ({ company_id: id }) => { const r = await data.getCompany(scope, id); return r ? json(r) : notFound(`Company ${id}`); },
+    { out: { name: str, contacts: z.array(row({})), open_deals: z.array(row({})), outstanding: z.array(row({})), recent_activity: z.array(row({})) } });
   tool('get_quotation', 'One quotation with its lines, stage, probability, acceptance and POs.',
     { quotation_no: z.string().describe('e.g. CTZ/QT/2026/062') },
-    async ({ quotation_no: no }) => { const r = await data.getQuotation(scope, no); return r ? json(r) : notFound(`Quotation ${no}`); });
+    async ({ quotation_no: no }) => { const r = await data.getQuotation(scope, no); return r ? json(r) : notFound(`Quotation ${no}`); },
+    { out: { quotation_no: str, client_name: str, status: str, lines: z.array(row({})), purchase_orders: z.array(row({})) } });
   tool('get_project', 'One project with its POs, money position and upcoming visits.',
     { project_id: z.string().describe('e.g. PRJ-2026-001') },
-    async ({ project_id: id }) => { const r = await data.getProject(scope, id); return r ? json(r) : notFound(`Project ${id}`); });
+    async ({ project_id: id }) => { const r = await data.getProject(scope, id); return r ? json(r) : notFound(`Project ${id}`); },
+    { out: { project_id: str, client_name: str, purchase_orders: z.array(row({})), upcoming_visits: z.array(row({})) } });
   tool('get_po', 'One purchase order with its payment stages and invoices.',
     { po_number: z.string() },
-    async ({ po_number: no }) => { const r = await data.getPo(scope, no); return r ? json(r) : notFound(`PO ${no}`); });
+    async ({ po_number: no }) => { const r = await data.getPo(scope, no); return r ? json(r) : notFound(`PO ${no}`); },
+    { out: { po_number: str, project_id: str, stages: z.array(row({})) } });
   tool('list_pipeline', 'Open quotations with stage, owner, value, probability, weighted value and last contact. Filter by stage name, owner (admin tokens only) and expected close dates.',
-    { stage: z.string().optional(), owner: z.string().optional(), close_from: DAY.optional(), close_to: DAY.optional() },
-    async (a) => json(await data.listPipeline(scope, { stage: a.stage, owner: a.owner, from: a.close_from, to: a.close_to })));
+    { stage: z.string().optional(), owner: z.string().optional(), close_from: DAY.optional(), close_to: DAY.optional(), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async (a) => json(await data.listPipeline(scope, { stage: a.stage, owner: a.owner, from: a.close_from, to: a.close_to, limit: a.limit, offset: a.offset })),
+    { out: { deals: z.array(row({ quotation_no: str, client_name: str, stage: str, value: num, currency: str, weighted_value: num, owner: str })),
+      totals_this_page: z.record(z.string(), row({ deals: z.number(), value: z.number(), weighted: z.number() })),
+      total: z.number().int(), offset: z.number().int(), limit: z.number().int(), has_more: z.boolean() } });
   tool('list_collections', 'Unpaid invoices, overdue first, with how long overdue, what is outstanding and the recent chasing.',
-    { overdue_only: z.boolean().optional().describe('Default true'), min_days_overdue: z.number().int().min(0).optional() },
-    async (a) => json(await data.listCollections(scope, { overdue_only: a.overdue_only ?? true, min_days: a.min_days_overdue })));
+    { overdue_only: z.boolean().optional().describe('Default true'), min_days_overdue: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async (a) => json(await data.listCollections(scope, { overdue_only: a.overdue_only ?? true, min_days: a.min_days_overdue, limit: a.limit, offset: a.offset })),
+    { out: pageOf(row({ invoice_no: str, client_name: str, outstanding: num, currency: str, days_overdue: num, owner: str })) });
   tool('get_kpis', 'Sales numbers for a period: quotations issued, value, wins, losses, win rate, open and weighted pipeline, days to win, touches. Admin tokens may name a person.',
     { from: DAY.optional(), to: DAY.optional(), person: z.string().optional() },
-    async (a) => json(await data.getKpis(scope, a)));
+    async (a) => json(await data.getKpis(scope, a)),
+    { out: { period: row({ from: str, to: str }), person: str, win_rate_percent: num, touches_logged: num, definitions: row({}) } });
   tool('list_activity', 'Notes, tasks, logged calls and email threads on a record, newest first.',
-    { entity: ENTITY, id: z.string() },
-    async ({ entity, id }) => { const r = await data.listActivity(scope, entity, id); return r ? json(r) : notFound(`${entity} ${id}`); });
+    { entity: ENTITY, id: z.string(), limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional().describe('Rows to skip; use has_more and total to walk the list') },
+    async ({ entity, id, limit, offset }) => { const r = await data.listActivity(scope, entity, id, { limit, offset }); return r ? json(r) : notFound(`${entity} ${id}`); },
+    { out: pageOf(row({ kind: str, at: str, text: str, by: str })) });
 
   tool('create_task', 'Add a follow-up task to a record. Marked as made through MCP.',
     { entity: ENTITY, id: z.string(), title: z.string().min(3).max(300), due_on: DAY.optional(), assignee: z.string().max(120).optional() },
-    async (a) => { const r = await data.createTask(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); }, { write: true });
+    async (a) => { const r = await data.createTask(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); },
+    { write: true, out: { id: num, title: str, due_at: str, assignee: str, status: str } });
   tool('add_note', 'Add a note to a record\'s timeline. Marked as made through MCP.',
     { entity: ENTITY, id: z.string(), text: z.string().min(2).max(4000) },
-    async (a) => { const r = await data.addNote(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); }, { write: true });
+    async (a) => { const r = await data.addNote(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); },
+    { write: true, out: { id: num, body: str, author: str } });
   tool('log_touch', 'Record a call, WhatsApp chat or meeting that already happened. It does not contact anyone.',
     { entity: z.enum(['company', 'quotation', 'enquiry', 'project']), id: z.string(), channel: z.enum(['call', 'whatsapp', 'meeting', 'email', 'other']), outcome: z.enum(['connected', 'no_answer', 'left_message', 'sent', 'held']).optional(), summary: z.string().max(4000).optional(), contact_name: z.string().max(160).optional() },
-    async (a) => { const r = await data.logTouch(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); }, { write: true });
+    async (a) => { const r = await data.logTouch(scope, token, a); return r ? json(r) : notFound(`${a.entity} ${a.id}`); },
+    { write: true, out: { id: num, channel: str, outcome: str, started_at: str } });
   tool('update_next_step', 'Set the next step (and optionally the expected close date) on an open quotation. It does not change its stage.',
     { quotation_no: z.string(), next_step: z.string().min(2).max(500), expected_close_date: DAY.optional() },
-    async (a) => { const r = await data.updateNextStep(scope, token, a); return r ? json(r) : notFound(`Quotation ${a.quotation_no}`); }, { write: true });
+    async (a) => { const r = await data.updateNextStep(scope, token, a); return r ? json(r) : notFound(`Quotation ${a.quotation_no}`); },
+    { write: true, out: { quotation_no: str, next_step: str, expected_close_date: str } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));

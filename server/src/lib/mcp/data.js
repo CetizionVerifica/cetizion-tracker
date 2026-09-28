@@ -25,7 +25,34 @@ function ownCompany(scope, companyColumn, params) {
         OR EXISTS (SELECT 1 FROM projects op WHERE op.company_id = ${companyColumn} AND lower(btrim(op.sales_person)) = lower(btrim(${p}))))`;
 }
 
-export async function searchRecords(scope, { text, types = ['company', 'quotation', 'enquiry', 'project', 'purchase_order'], limit = 20 }) {
+/**
+ * How much of a list one call returns.
+ *
+ * These defaulted to 200 and allowed 1,000, and the result was pretty-printed
+ * JSON. Fifty-one open deals measured 24 KB that way — roughly six thousand
+ * tokens — so the default alone could spend a fifth of a context window, and
+ * the ceiling could spend all of it. A caller that wants more now asks for
+ * the next page instead of a bigger page.
+ */
+export const PAGE = { default: 25, max: 100 };
+export const page = ({ limit, offset } = {}) => ({
+  limit: Math.min(Math.max(Number(limit) || PAGE.default, 1), PAGE.max),
+  offset: Math.max(Number(offset) || 0, 0),
+});
+
+/**
+ * count(*) OVER () rides along on the rows we are already fetching, so the
+ * total costs no second query. It is the same for every row, hence [0].
+ */
+const paged = (rows, { limit, offset }) => {
+  const total = rows.length ? Number(rows[0].total_rows) : 0;
+  for (const r of rows) delete r.total_rows;
+  return { items: rows, total, offset, limit, has_more: offset + rows.length < total };
+};
+
+export async function searchRecords(scope, { text, types = ['company', 'quotation', 'enquiry', 'project', 'purchase_order'], limit = 10 }) {
+  // Per type, not overall: five types at 20 was up to a hundred rows for a
+  // word somebody was still narrowing down.
   const like = `%${String(text).trim()}%`;
   const out = [];
   if (types.includes('company')) {
@@ -57,7 +84,9 @@ export async function searchRecords(scope, { text, types = ['company', 'quotatio
                                    WHERE (po.po_number ILIKE $1 OR p.client_name ILIKE $1) AND ${own(scope, 'p.sales_person', params)} ORDER BY po.po_date DESC NULLS LAST LIMIT ${limit}`, params);
     out.push(...rows);
   }
-  return out;
+  // An object, not a bare array: the wire format wants one, and a count the
+  // caller can see beats a list that stops without saying it has.
+  return { results: out, count: out.length, per_type_limit: limit };
 }
 
 export async function getCompany(scope, id) {
@@ -71,9 +100,11 @@ export async function getCompany(scope, id) {
     query(`SELECT s.currency, SUM(s.stage_amount - s.amount_received) AS outstanding, COUNT(*) FILTER (WHERE s.stage_status = 'Overdue')::int AS overdue_invoices
              FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
             WHERE p.company_id = $1 AND s.invoice_no IS NOT NULL AND s.stage_status <> 'Paid' GROUP BY s.currency`, [c.id]),
-    listActivity(scope, 'company', String(c.id), 15),
+    listActivity(scope, 'company', String(c.id), { limit: 15 }),
   ]);
-  return { ...c, contacts: contacts.rows, open_deals: deals.rows, outstanding: outstanding.rows, recent_activity: activity };
+  // The rows, not the page envelope: recent_activity on a company is a
+  // short list, and its total and offset would mean nothing embedded here.
+  return { ...c, contacts: contacts.rows, open_deals: deals.rows, outstanding: outstanding.rows, recent_activity: activity?.items ?? [] };
 }
 
 export async function getQuotation(scope, no) {
@@ -83,7 +114,11 @@ export async function getQuotation(scope, no) {
                                             approval_status, lost_reason, competitor, project_id, last_contacted_at
                                        FROM v_quotations q WHERE quotation_no = $1 AND ${own(scope, 'q.sales_person', params)}`, params);
   if (!q) return null;
-  const { rows: lines } = await query('SELECT description, qty, unit, rate, discount_percent, gst_rate, amount FROM quotation_lines ql JOIN quotations x ON x.id = ql.quotation_id WHERE x.quotation_no = $1 ORDER BY sort_order, ql.id', [no]);
+  // Every column qualified: quotations carries discount_percent too (the
+  // approval flow puts it there), so the unqualified list was ambiguous and
+  // this query threw on every call. get_quotation has never returned a
+  // quotation; the caller only ever saw the sanitised "could not do that".
+  const { rows: lines } = await query('SELECT ql.description, ql.qty, ql.unit, ql.rate, ql.discount_percent, ql.gst_rate, ql.amount FROM quotation_lines ql JOIN quotations x ON x.id = ql.quotation_id WHERE x.quotation_no = $1 ORDER BY ql.sort_order, ql.id', [no]);
   const { rows: pos } = await query('SELECT po_number, po_date, po_value, currency FROM purchase_orders WHERE quotation_no = $1', [no]);
   return { ...q, lines, purchase_orders: pos };
 }
@@ -107,7 +142,8 @@ export async function getPo(scope, no) {
   return { ...po, stages };
 }
 
-export async function listPipeline(scope, { stage, owner, from, to, limit = 200 } = {}) {
+export async function listPipeline(scope, { stage, owner, from, to, limit, offset } = {}) {
+  const win = page({ limit, offset });
   const params = [];
   const where = ["ps.type IN ('open','paused')", own(scope, 'q.sales_person', params)];
   if (stage) { params.push(`%${stage}%`); where.push(`ps.name ILIKE $${params.length}`); }
@@ -115,32 +151,37 @@ export async function listPipeline(scope, { stage, owner, from, to, limit = 200 
   if (from) { params.push(from); where.push(`q.expected_close_date >= $${params.length}`); }
   if (to) { params.push(to); where.push(`q.expected_close_date <= $${params.length}`); }
   const { rows } = await query(
-    `SELECT q.quotation_no, q.client_name, q.service_quoted, ps.name AS stage, q.probability, q.quotation_value AS value, q.currency,
+    `SELECT count(*) OVER () AS total_rows,
+            q.quotation_no, q.client_name, q.service_quoted, ps.name AS stage, q.probability, q.quotation_value AS value, q.currency,
             round(COALESCE(q.quotation_value, 0) * q.probability / 100.0, 2) AS weighted_value, q.expected_close_date, q.sales_person AS owner,
             q.next_step, q.last_contacted_at, q.stage_changed_at
        FROM quotations q JOIN pipeline_stages ps ON ps.id = q.stage_id
-      WHERE ${where.join(' AND ')} ORDER BY ps.sort_order, q.expected_close_date NULLS LAST LIMIT ${Math.min(Number(limit) || 200, 1000)}`, params);
+      WHERE ${where.join(' AND ')} ORDER BY ps.sort_order, q.expected_close_date NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, params);
+  const p = paged(rows, win);
+  // Totals cover this page, and say so. A per-currency total over 25 of 200
+  // deals read like the pipeline until it was labelled.
   const totals = {};
-  for (const r of rows) {
+  for (const r of p.items) {
     totals[r.currency] ||= { deals: 0, value: 0, weighted: 0 };
     totals[r.currency].deals += 1; totals[r.currency].value += Number(r.value || 0); totals[r.currency].weighted += Number(r.weighted_value || 0);
   }
-  return { deals: rows, totals };
+  return { deals: p.items, totals_this_page: totals, total: p.total, offset: p.offset, limit: p.limit, has_more: p.has_more };
 }
 
-export async function listCollections(scope, { overdue_only: overdueOnly = true, min_days: minDays = 0, limit = 200 } = {}) {
+export async function listCollections(scope, { overdue_only: overdueOnly = true, min_days: minDays = 0, limit, offset } = {}) {
+  const win = page({ limit, offset });
   const params = [];
   const where = ['s.invoice_no IS NOT NULL', "s.stage_status <> 'Paid'", own(scope, 'p.sales_person', params)];
   if (overdueOnly) where.push(`s.stage_status = 'Overdue'`);
   if (minDays) { params.push(Number(minDays)); where.push(`s.days_overdue >= $${params.length}`); }
   const { rows } = await query(
-    `SELECT s.id AS stage_id, s.invoice_no, s.invoice_date, s.invoice_due_date, s.days_overdue, s.client_name, s.po_number, s.stage_name,
+    `SELECT count(*) OVER () AS total_rows, s.id AS stage_id, s.invoice_no, s.invoice_date, s.invoice_due_date, s.days_overdue, s.client_name, s.po_number, s.stage_name,
             s.stage_amount, s.amount_received, (s.stage_amount - s.amount_received) AS outstanding, s.currency, s.stage_status,
             s.reminder_level, s.on_hold, s.promise_to_pay_date, p.sales_person AS owner,
             (SELECT json_agg(json_build_object('at', l.happened_at, 'channel', l.channel, 'summary', l.summary, 'promise_to_pay', l.promise_to_pay_date) ORDER BY l.happened_at DESC) FROM (SELECT * FROM collection_log cl WHERE cl.stage_id = s.id ORDER BY cl.happened_at DESC LIMIT 5) l) AS recent_chasing
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
-      WHERE ${where.join(' AND ')} ORDER BY s.days_overdue DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 200, 1000)}`, params);
-  return rows;
+      WHERE ${where.join(' AND ')} ORDER BY s.days_overdue DESC NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, params);
+  return paged(rows, win);
 }
 
 export async function getKpis(scope, { from, to, person } = {}) {
@@ -184,18 +225,19 @@ export const KPI_DEFINITIONS = {
   touches_logged: 'Calls, WhatsApp chats and meetings logged in the period on the person\'s clients.',
 };
 
-export async function listActivity(scope, entity, id, limit = 50) {
+export async function listActivity(scope, entity, id, { limit, offset } = {}) {
   // The record itself must be visible to the token first.
   if (!(await canSee(scope, entity, id))) return null;
+  const win = page({ limit, offset });
   const { rows } = await query(
-    `SELECT * FROM (
+    `SELECT count(*) OVER () AS total_rows, * FROM (
        SELECT 'note' AS kind, created_at AS at, body AS text, author AS by FROM notes WHERE entity = $1 AND entity_id = $2
        UNION ALL SELECT 'task', t.created_at, concat_ws(' · ', t.title, t.status, 'due ' || t.due_at), t.created_by FROM tasks t
          WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $1 AND tt.entity_id = $2)
        UNION ALL SELECT 'touch', started_at, concat_ws(' · ', channel, outcome, summary), username FROM communications WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
        UNION ALL SELECT 'email', last_message_at, concat_ws(' · ', subject, message_count || ' messages'), NULL FROM email_threads WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
-     ) x ORDER BY at DESC NULLS LAST LIMIT ${Math.min(Number(limit) || 50, 200)}`, [entity, String(id)]);
-  return rows;
+     ) x ORDER BY at DESC NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, [entity, String(id)]);
+  return paged(rows, win);
 }
 
 export async function canSee(scope, entity, id) {
