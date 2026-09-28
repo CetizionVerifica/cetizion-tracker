@@ -439,6 +439,101 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     });
   });
 
+  /**
+   * One tool for the whole class of counted questions (#140), and the two
+   * money questions nothing answered. What matters here is that aggregate
+   * cannot be talked into reading a column it was not given, and that an
+   * entity whose ownership this server cannot state is admin-only rather
+   * than open.
+   */
+  describe('counting, renewals and cash', () => {
+    test('it counts and totals, and the total matches the groups', async () => {
+      const t = (await token({ name: 'Counting', role: 'admin' })).token;
+      const byStatus = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'status' })).text);
+      assert.equal(byStatus.measure, 'count');
+      assert.ok(byStatus.groups.length >= 1);
+      assert.equal(byStatus.total, byStatus.groups.reduce((n, g) => n + g.value, 0),
+        'the total is of the groups it returned');
+
+      const value = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'sales_person', measure: 'sum', of: 'quotation_value' })).text);
+      assert.equal(value.measure, 'sum of quotation_value');
+      const asha = value.groups.find((g) => (g.group || '').toLowerCase() === 'asha');
+      assert.equal(asha.value, 100000, 'her one fixture quotation');
+
+      // A date column grouped by period, which is the shape most of these
+      // questions actually take.
+      const byMonth = JSON.parse((await call(t, 'aggregate', { entity: 'quotations', by: 'quotation_date:month' })).text);
+      assert.equal(byMonth.grouped_by, 'quotation_date by month');
+      assert.ok(byMonth.groups.every((g) => g.group === null || /^\d{4}-\d{2}$/.test(g.group)), JSON.stringify(byMonth.groups));
+    });
+
+    test('it will not read a column it was not given', async () => {
+      const t = (await token({ name: 'Injection', role: 'admin' })).token;
+      for (const by of ['nonexistent_column', 'name; DROP TABLE companies', '1', '(SELECT 1)']) {
+        const res = await call(t, 'aggregate', { entity: 'quotations', by });
+        assert.equal(res.error, true, `by: ${by} must be refused`);
+      }
+      // Same for the measured column and the filters.
+      assert.equal((await call(t, 'aggregate', { entity: 'quotations', by: 'status', measure: 'sum', of: 'client_name' })).error, true,
+        'a text column cannot be summed');
+      assert.equal((await call(t, 'aggregate', { entity: 'quotations', by: 'status', where: { nope: 1 } })).error, true);
+      // And the tables are all still there.
+      assert.ok(Number((await pool.query('SELECT count(*) AS n FROM companies')).rows[0].n) > 0);
+    });
+
+    test('a sales token counts only its own, and cannot count what has no owner', async () => {
+      const asha = (await token({ name: 'Asha counts', role: 'sales', person: 'asha' })).token;
+      const mine = JSON.parse((await call(asha, 'aggregate', { entity: 'quotations', by: 'sales_person' })).text);
+      assert.deepEqual(mine.groups.map((g) => (g.group || '').toLowerCase()), ['asha'],
+        'the scoping is applied before the grouping, so Ravi is not even a row');
+
+      // Travel bills and expense claims have no salesperson on them. The
+      // safe reading of "I cannot say whose this is" is not "everybody's".
+      for (const entity of ['vendor-invoices', 'expense-claims', 'travel-logs']) {
+        assert.equal((await call(asha, 'aggregate', { entity, by: 'id' })).error, true, `${entity} must be admin-only`);
+      }
+      const admin = (await token({ name: 'Admin counts', role: 'admin' })).token;
+      assert.equal((await call(admin, 'aggregate', { entity: 'vendor-invoices', by: 'travel_vendor' })).error, false);
+    });
+
+    test('renewals are scoped, and the cash forecast is an admin\'s', async () => {
+      const admin = (await token({ name: 'Money admin', role: 'admin' })).token;
+      const asha = (await token({ name: 'Money sales', role: 'sales', person: 'asha' })).token;
+
+      const r = await call(admin, 'list_renewals', {});
+      assert.equal(r.error, false, r.text);
+      const renewals = JSON.parse(r.text);
+      assert.ok(renewals.counts_all_engagements, 'the summary counts come back');
+
+      // Hers is scoped in SQL: an engagement owned by somebody else is not
+      // in her total, not merely absent from her page.
+      await pool.query(
+        `INSERT INTO engagements (company_id, client_name, service_name, next_due_on, status, owner)
+         VALUES (1001, 'Asha Client Ltd', 'EcoVadis', CURRENT_DATE + 10, 'active', 'asha'),
+                (1002, 'Ravi Client Ltd', 'EcoVadis', CURRENT_DATE + 10, 'active', 'ravi')`);
+      const hers = JSON.parse((await call(asha, 'list_renewals', {})).text);
+      assert.equal(hers.total, 1, `only her engagement: ${JSON.stringify(hers.items.map((i) => i.client))}`);
+      assert.equal(hers.items[0].client, 'Asha Client Ltd');
+      assert.equal(hers.items[0].days_to_due, 10);
+
+      // within_days narrows it, and a long window keeps it.
+      assert.equal(JSON.parse((await call(asha, 'list_renewals', { within_days: 5 })).text).total, 0);
+      assert.equal(JSON.parse((await call(asha, 'list_renewals', { within_days: 30 })).text).total, 1);
+
+      // The cash forecast is the company's position, so it is an admin's.
+      const cash = await call(admin, 'get_cashflow', { months: 3 });
+      assert.equal(cash.error, false, cash.text);
+      const f = JSON.parse(cash.text);
+      assert.equal(f.currency, 'INR');
+      assert.ok(f.months.length >= 3);
+      assert.ok(f.months.every((m) => typeof m.net === 'number'));
+      assert.doesNotMatch(JSON.stringify(f), /"items"/, 'item lines are off unless asked for');
+      assert.match(JSON.stringify(JSON.parse((await call(admin, 'get_cashflow', { months: 1, detail: true })).text)), /"items"/);
+
+      assert.equal((await call(asha, 'get_cashflow', {})).error, true, 'not hers to read');
+    });
+  });
+
   test('a reading token is not offered complete_task', async () => {
     const t = (await token({ name: 'Reader', role: 'admin' })).token;
     const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
@@ -541,14 +636,14 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const t = await token({ name: 'Short lived', role: 'admin', can_write: true });
     const tools = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t.token}`).set('Accept', 'application/json, text/event-stream').send({ jsonrpc: '2.0', id: 99, method: 'tools/list' });
     const names = tools.body.result.tools.map((x) => x.name);
-    assert.ok(names.length >= 18, `only ${names.length} tools are offered`);
+    assert.ok(names.length >= 27, `only ${names.length} tools are offered`);
     // Every name is verb_noun, so the verb is what decides whether the tool
     // could do damage. Matching anywhere in the name read 'pay' inside
     // list_payables and called a read destructive, which is the kind of
     // false alarm that gets a guard deleted.
     for (const n of names) {
       assert.doesNotMatch(n, /^(delete|remove|drop|void|cancel|pay|send|reassign|set)_/, `${n} names something this server must not be able to do`);
-      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit)_/, `${n} is a verb this server has not agreed to`);
+      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit|describe)_|^aggregate$/, `${n} is a verb this server has not agreed to`);
     }
     await request(app).post(`/api/api-tokens/${t.id}/revoke`).set('Cookie', staff).expect(200);
     assert.equal((await call(t.token, 'list_pipeline')).status, 401);

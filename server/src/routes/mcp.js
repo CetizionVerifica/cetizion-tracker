@@ -22,6 +22,8 @@ import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
 import * as imports from '../lib/mcp/imports.js';
+import * as agg from '../lib/mcp/aggregate.js';
+import * as money from '../lib/mcp/money.js';
 
 export const mcpRouter = Router();
 export const apiTokenRouter = Router();
@@ -241,6 +243,40 @@ function buildServer(token) {
       left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
       committed: z.boolean(), next: z.string(), written_count: z.number().int(), written_by_action: z.record(z.string(), z.number()),
       written: z.array(row({ seq: z.number().int(), ref: str, action: str })), written_shown: z.number().int() } });
+
+  // ---- counting, and the two money questions (#140) -----------------
+  tool('describe_aggregate', 'What can be counted and totalled, and by which columns. Call with no arguments for the list, or name an entity to see its columns, its dates and its number fields.',
+    { entity: z.string().max(60).optional() },
+    async (a) => json(await agg.describeAggregate(scope, a)),
+    { out: { entities: z.array(row({ name: z.string(), scoped: z.boolean() })).optional(), measures: z.array(z.string()).optional(),
+      periods: z.array(z.string()).optional(), note: str,
+      entity: str, group_by: z.array(z.string()).optional(), dates: z.array(z.string()).optional(), numbers: z.array(z.string()).optional() } });
+  tool('aggregate', 'Count or total any records, grouped by any of their columns — deals by stage, value by salesperson, quotations by sector, wins by month. Group a date column by period with "column:month". Filters are the same ones the list screens take.',
+    { entity: z.string().max(60).describe('From describe_aggregate, e.g. quotations'),
+      by: z.string().max(80).describe('A column, or a date column and a period: "quotation_date:month"'),
+      measure: z.enum(['count', 'sum', 'avg', 'min', 'max']).optional().describe('Default count'),
+      of: z.string().max(60).optional().describe('The number column to sum/average, required unless counting'),
+      where: z.record(z.string(), z.unknown()).optional().describe('Column filters, e.g. {status: "Submitted"}. Use null for "not set"'),
+      order: z.enum(['value', 'group']).optional().describe('Default value: biggest first'),
+      limit: z.number().int().min(1).max(200).optional().describe('Groups to return, default 50') },
+    async (a) => json(await agg.aggregate(scope, a)),
+    { out: { entity: z.string(), grouped_by: z.string(), measure: z.string(),
+      groups: z.array(row({ group: str, value: num, rows: z.number().int() })),
+      total: num, groups_returned: z.number().int(), blank_group_means: z.string() } });
+  tool('list_renewals', 'Engagements coming up for renewal, soonest first, with the renewal quotation where one has been raised. Use within_days for what is due inside a window.',
+    { status: z.string().max(60).optional().describe('active, renewal_open, renewed, lapsed, cancelled; comma-separated for several'),
+      within_days: z.number().int().optional().describe('Only those due within this many days; negative days mean already overdue'),
+      limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).optional() },
+    async (a) => json(await money.listRenewals(scope, a)),
+    { out: { ...pageOf(row({ engagement_id: z.number().int(), client: str, service: str, status: str, next_due_on: str, days_to_due: num, overdue: z.boolean().nullable().optional(), renewal_quotation_no: str, owner: str })),
+      counts_all_engagements: row({}) } });
+  tool('get_cashflow', 'Cash expected in and going out, by month: billed and unpaid, scheduled but not yet billed, the weighted pipeline, and what we owe travel vendors and staff. Rupees. Admin tokens only.',
+    { months: z.number().int().min(1).max(24).optional().describe('How many months ahead, default 6'),
+      detail: z.boolean().optional().describe('Include the biggest item lines per month. Off by default — a live book has thousands') },
+    async (a) => json(await money.getCashflow(scope, a)),
+    { out: { today: str, currency: z.string(), reads: z.string(),
+      months: z.array(row({ month: z.string(), received: num, invoiced: num, scheduled: num, pipeline: num, inflow: num, outflow: num, net: num, lines: z.number().int() })),
+      foreign: z.array(row({})) } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));
