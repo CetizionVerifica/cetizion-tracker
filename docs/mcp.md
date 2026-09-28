@@ -50,6 +50,9 @@ Claude Desktop (Settings → Developer → Edit config), through `mcp-remote`:
 | `list_tasks` | open tasks, soonest due first, with the record each is on — paged |
 | `create_task`, `add_note`, `log_touch`, `update_next_step` | small writes, shown on the record as made "via MCP" |
 | `complete_task` | marks a task done. `tasks` has no column for who did it; the trace is in the token log |
+| `plan_sheet_import` | read up to 500 sheet rows and plan the import — writes nothing |
+| `get_import_plan`, `update_import_plan`, `replan_sheet_import` | read the plan, tick rows off, keep or replace duplicates, change the rules |
+| `commit_sheet_import` | write a planned import. Admin only, and needs `confirm: true` |
 
 Resources: the pipeline stages, the service catalogue, and what each KPI means.
 
@@ -182,6 +185,30 @@ found something, with the page that lists exactly those rows:
 > Two quotations have no value, which keeps them out of the pipeline figures.
 > The eleven stages are the ones to clear first.
 
+### Importing a sheet from a conversation
+
+> **"Here are this week's 40 deals — what would importing them do?"**
+
+`plan_sheet_import` takes the rows as objects keyed by the sheet's own column
+headings and runs them through the same planner the Import screen uses: the
+same duplicate matching, the same three-way merge, the same assumptions. It
+writes nothing:
+
+> 40 rows read, 6 left out — 4 ISO proposals and 2 with no deal stage.
+> It would create 28 quotations and update 6, with 9 projects, 9 POs,
+> 18 payment stages and 5 invoices under the won ones.
+> Nine need you: **Aurora** — the sheet moved the value from ₹24,80,000
+> to ₹26,10,000 and the tracker has not moved, so that one applies.
+> **Northwind** changed in both the sheet and the tracker; the tracker's
+> is kept. Three POs are already on the site and will be left alone.
+> Nothing is written yet.
+
+> **"Leave Northwind out, replace the existing POs, then do it."**
+
+`update_import_plan` unticks the row and switches the duplicate POs from keep
+to replace; `commit_sheet_import` with `confirm: true` writes it. Committing
+is the only irreversible step and it is the only one that needs saying twice.
+
 ### Writing things down
 
 > **"Add a task on CTZ/QT/2026/062 to call them Friday, and note that legal
@@ -209,7 +236,18 @@ Not an oversight. These are the boundary:
 | Mark a project milestone reached | It makes a payment stage billable — a money action in delivery clothes |
 | Delete anything | — |
 | Send an email or a message | `log_touch` records a call that already happened. Nothing here contacts a client |
+| Import without being asked twice | Planning writes nothing; `commit_sheet_import` is a separate, admin-only tool that refuses without `confirm: true` |
 | Read a client's email | `list_inbox` gives subjects and status. Whether the team may see more than that is the mailbox owner's decision, made once, in Settings |
+
+Bulk import is the other way in, and it keeps the same boundary by
+splitting it in two. `plan_sheet_import` reads rows and writes **nothing** to
+the tracker — the plan lives in its own table until somebody commits it — so
+a model may plan, re-plan and pick over the result freely. `commit_sheet_import`
+is the single step that writes, it is a separate tool, it refuses without
+`confirm: true`, and it is admin-only, exactly as the Import screen is. A
+plan started here cannot be committed from the Import screen, and one uploaded
+there cannot be committed from here: two people editing one plan from two
+places is how a row gets committed that neither of them chose.
 
 Marking a task done is the one exception, and a narrow one: `complete_task`
 closes a task and changes nothing else about it. It exists because

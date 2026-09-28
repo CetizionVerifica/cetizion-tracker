@@ -21,6 +21,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
 import { ApiError, fromPgError } from '../middleware/error.js';
 import * as data from '../lib/mcp/data.js';
+import * as imports from '../lib/mcp/imports.js';
 
 export const mcpRouter = Router();
 export const apiTokenRouter = Router();
@@ -62,11 +63,14 @@ function buildServer(token) {
     return { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) };
   };
   const notFound = (what) => ({ isError: true, content: [{ type: 'text', text: `${what} was not found, or this token may not see it.` }] });
-  const tool = (name, description, shape, fn, { write = false, out } = {}) => {
+  const tool = (name, description, shape, fn, { write = false, admin = false, out } = {}) => {
     // A token that may not write does not list the write tools either. An
     // MCP client reads the list and plans from it, so offering a tool it
-    // will be refused is worse than not offering it.
+    // will be refused is worse than not offering it. The same goes for the
+    // import tools, which are an admin's on the upload screen and stay an
+    // admin's here.
     if (write && !token.can_write) return;
+    if (admin && token.role !== 'admin') return;
     server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: out } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
@@ -189,6 +193,54 @@ function buildServer(token) {
     { task_id: z.number().int().describe('Task id, from list_tasks or create_task') },
     async (a) => { const r = await data.completeTask(scope, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
     { write: true, out: { id: num, title: str, status: str, completed_at: str, already_done: z.boolean(), entity: str, entity_id: str } });
+
+  // ---- bulk import (#135) ------------------------------------------
+  //
+  // Planning writes nothing to the tracker; commit_sheet_import is the
+  // only one of these that changes a record, and it will not run without
+  // confirm: true. All four are admin-only, as the Import screen is.
+  const STEP = z.enum(['quotation', 'project', 'purchase_order', 'service', 'stage', 'invoice', 'receipt']);
+  tool('plan_sheet_import', `Read up to ${imports.MCP_MAX_ROWS} rows of a sales sheet and plan what importing them would do — quotations, projects, POs, payment stages, invoices and receipts — without writing anything. Finds duplicates already in the tracker and says, field by field, what the sheet would change. Send rows as objects keyed by the sheet's own column headings.`,
+    { rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))).min(1).describe("One object per sheet row, keys are column headings e.g. {'Client Name': 'Aurora Chemicals', 'Deal Stage': 'Closed Won (100%)', 'PO Number': '4530056073'}"),
+      sheet_name: z.string().max(120).optional().describe('What to call this batch in the import history'),
+      rules: z.record(z.string(), z.unknown()).optional().describe('Overrides for the import assumptions, e.g. {exclude_iso: false}') },
+    async (a) => json(await imports.planSheetImport(scope, token, a)),
+    { write: true, admin: true, out: { batch_id: z.number().int(), status: str, sheet: str, rows_read: z.number().int(),
+      steps: z.record(z.string(), row({})), duplicates: z.number().int(), assumptions: z.number().int(),
+      left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
+      committed: z.boolean(), next: z.string(), needs_attention: z.array(row({ seq: z.number().int(), step: str, row: num, client: str, action: str, included: z.boolean(), existing: str, says: z.array(z.string()), assumptions: z.array(z.string()) })), needs_attention_total: z.number().int() } });
+  tool('get_import_plan', 'Look at a planned import in detail, a page at a time — filter to one step, or to just the flagged, failing, duplicate or excluded rows.',
+    { batch_id: z.number().int(), step: STEP.optional(), only: z.enum(['flagged', 'errors', 'duplicates', 'excluded']).optional(),
+      limit: z.number().int().min(1).max(100).optional().describe('Rows to return, default 25'), offset: z.number().int().min(0).optional() },
+    async (a) => json(await imports.getImportPlan(scope, a)),
+    { write: true, admin: true, out: { batch_id: z.number().int(), status: str, sheet: str, rows_read: z.number().int(),
+      steps: z.record(z.string(), row({})), duplicates: z.number().int(), assumptions: z.number().int(),
+      left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
+      committed: z.boolean(), next: z.string(), items: z.array(row({ seq: z.number().int(), step: str, row: num, client: str, action: str, included: z.boolean(), existing: str, says: z.array(z.string()), assumptions: z.array(z.string()) })), total: z.number().int(), offset: z.number().int(), limit: z.number().int(), has_more: z.boolean() } });
+  tool('update_import_plan', 'Change what a planned import will do before committing it: tick or untick rows, and for a duplicate choose skip (keep what the tracker has) or update (replace it from the sheet). Aim it at named rows or at a whole step.',
+    { batch_id: z.number().int(), seqs: z.array(z.number().int()).max(500).optional().describe('Row seq numbers from the plan'), step: STEP.optional().describe('Every row of one step'),
+      included: z.boolean().optional().describe('Tick (true) or untick (false)'), action: z.enum(['create', 'update', 'skip']).optional().describe('skip keeps the original, update replaces it from the sheet'),
+      duplicates_only: z.boolean().optional().describe('With step, limit it to the duplicates') },
+    async (a) => json(await imports.updateImportPlan(scope, a)),
+    { write: true, admin: true, out: { batch_id: z.number().int(), status: str, sheet: str, rows_read: z.number().int(),
+      steps: z.record(z.string(), row({})), duplicates: z.number().int(), assumptions: z.number().int(),
+      left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
+      committed: z.boolean(), next: z.string(), changed: z.number().int() } });
+  tool('replan_sheet_import', 'Plan the same rows again with different import assumptions, replacing the previous plan. Nothing is written.',
+    { batch_id: z.number().int(), rules: z.record(z.string(), z.unknown()).describe('e.g. {exclude_iso: false, default_split: [30, 70]}') },
+    async (a) => json(await imports.replanSheetImport(scope, token, a)),
+    { write: true, admin: true, out: { batch_id: z.number().int(), status: str, sheet: str, rows_read: z.number().int(),
+      steps: z.record(z.string(), row({})), duplicates: z.number().int(), assumptions: z.number().int(),
+      left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
+      committed: z.boolean(), next: z.string(), needs_attention: z.array(row({ seq: z.number().int(), step: str, row: num, client: str, action: str, included: z.boolean(), existing: str, says: z.array(z.string()), assumptions: z.array(z.string()) })), needs_attention_total: z.number().int() } });
+  tool('commit_sheet_import', 'Write a planned import to the tracker. This is the only import step that changes a record, and it cannot be undone. Requires confirm: true, and refuses while any included row still has an error.',
+    { batch_id: z.number().int(), confirm: z.literal(true).describe('Must be true. Nothing is written without it') },
+    async (a) => json(await imports.commitSheetImport(scope, token, a)),
+    { write: true, admin: true, out: { batch_id: z.number().int(), status: str, sheet: str, rows_read: z.number().int(),
+      steps: z.record(z.string(), row({})), duplicates: z.number().int(), assumptions: z.number().int(),
+      left_out: z.number().int(), left_out_reasons: z.record(z.string(), z.number()), errors: z.number().int(),
+      committed: z.boolean(), next: z.string(), written_count: z.number().int(), written_by_action: z.record(z.string(), z.number()),
+      written: z.array(row({ seq: z.number().int(), ref: str, action: str })), written_shown: z.number().int() } });
 
   server.registerResource('pipeline-stages', 'tracker://pipeline-stages', { description: 'The quotation stages with their probabilities', mimeType: 'application/json' },
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify((await query('SELECT name, probability, type, sort_order FROM pipeline_stages WHERE active ORDER BY sort_order')).rows) }] }));

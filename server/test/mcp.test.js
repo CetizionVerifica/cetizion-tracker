@@ -324,6 +324,121 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     assert.equal((await call(asha, 'complete_task', { task_id: onHis.rows[0].id })).error, true);
   });
 
+  /**
+   * Bulk import (#134). The sheet goes in as rows from a conversation and
+   * through the same planner the upload screen uses, so what is proved here
+   * is the way in and the gates on it: planning writes nothing, committing
+   * needs saying so, and neither is offered to a token that is not an admin.
+   */
+  describe('bulk import over MCP', () => {
+    const SHEET = [
+      { 'S.No': 1, 'Client Name': 'Falcon Foods', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'PCF assessment', 'Proposal Sent Date': '01.09.2026', 'PO Amount': '', 'Quotation No': '', 'Sales Person': 'Asha' },
+      { 'S.No': 2, 'Client Name': 'Delta Pumps', 'Deal Stage': 'Closed Won (100%)', 'Proposal Name': 'EcoVadis', 'Proposal Sent Date': '05.08.2026', 'PO Number': '4500999111', 'PO Amount': '7,96,500/-', 'Sales Person': 'Ravi' },
+      { 'S.No': 3, 'Client Name': 'Zen Labs', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'ISO 9001 audit', 'Proposal Sent Date': '02.09.2026', 'PO Amount': '', 'Sales Person': 'Asha' },
+    ];
+    const admin = async () => (await token({ name: `Import ${id}`, role: 'admin', can_write: true })).token;
+    const count = async (sql, args = []) => Number((await pool.query(sql, args)).rows[0].n);
+
+    test('a sales token is not offered the import tools at all', async () => {
+      const sales = (await token({ name: 'Sales imports', role: 'sales', person: 'asha', can_write: true })).token;
+      const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${sales}`).set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 9100, method: 'tools/list', params: {} });
+      const names = res.body.result.tools.map((x) => x.name);
+      for (const n of ['plan_sheet_import', 'get_import_plan', 'update_import_plan', 'replan_sheet_import', 'commit_sheet_import']) {
+        assert.ok(!names.includes(n), `${n} is an admin's, on the Import screen and here`);
+      }
+      // And asking anyway is refused, not merely unlisted.
+      assert.equal((await call(sales, 'plan_sheet_import', { rows: SHEET })).error, true);
+    });
+
+    test('planning reads the sheet and writes nothing', async () => {
+      const t = await admin();
+      const before = await count('SELECT count(*) AS n FROM quotations');
+      const plan = JSON.parse((await call(t, 'plan_sheet_import', { rows: SHEET, sheet_name: 'September deals' })).text);
+
+      assert.equal(plan.rows_read, 3);
+      assert.equal(plan.committed, false);
+      assert.ok(plan.batch_id > 0);
+      // The won row carries a PO, so it plans the whole chain beneath it.
+      assert.equal(plan.steps.quotation.create, 2, 'two deals; the ISO row is left out by rule');
+      assert.equal(plan.steps.purchase_order.create, 1);
+      assert.ok(plan.steps.stage.create >= 2, 'a won PO is split into payment stages');
+      assert.equal(plan.left_out, 1);
+      assert.match(JSON.stringify(plan.left_out_reasons), /ISO/i);
+
+      assert.equal(await count('SELECT count(*) AS n FROM quotations'), before,
+        'planning must not write a single record');
+      assert.equal(await count('SELECT count(*) AS n FROM purchase_orders WHERE po_number = $1', ['4500999111']), 0);
+
+      // The rules are the reviewer's to change, and changing one re-reads
+      // the rows already sent rather than asking for them again.
+      const again = JSON.parse((await call(t, 'replan_sheet_import', { batch_id: plan.batch_id, rules: { exclude_iso: false } })).text);
+      assert.equal(again.batch_id, plan.batch_id, 'the same batch, re-planned');
+      assert.equal(again.steps.quotation.create, 3, 'the ISO deal comes in once the rule is off');
+      assert.equal(again.left_out, 0);
+      assert.equal(await count('SELECT count(*) AS n FROM quotations'), before, 'and still nothing written');
+    });
+
+    test('the plan can be read in detail, changed, and only then committed', async () => {
+      const t = await admin();
+      const plan = JSON.parse((await call(t, 'plan_sheet_import', { rows: SHEET, sheet_name: 'To commit' })).text);
+      const batchId = plan.batch_id;
+
+      // Detail is paged, and filtering to one step gives that step's rows.
+      const quotations = JSON.parse((await call(t, 'get_import_plan', { batch_id: batchId, step: 'quotation' })).text);
+      assert.equal(quotations.total, 2);
+      assert.ok(quotations.items.every((i) => i.step === 'quotation'));
+      const falcon = quotations.items.find((i) => /Falcon/.test(i.client || ''));
+      assert.ok(falcon, 'the pending deal is in the plan');
+
+      // Committing is refused unless it is asked for in as many words.
+      const unconfirmed = await call(t, 'commit_sheet_import', { batch_id: batchId });
+      assert.equal(unconfirmed.error, true, 'confirm is required');
+      assert.match(unconfirmed.text, /confirm/i);
+      assert.equal(await count('SELECT count(*) AS n FROM quotations WHERE client_name = $1', ['Falcon Foods']), 0,
+        'a refused commit writes nothing');
+
+      // Untick the pending deal; only the won one should land.
+      const changed = JSON.parse((await call(t, 'update_import_plan', { batch_id: batchId, seqs: [falcon.seq], included: false })).text);
+      assert.equal(changed.changed, 1);
+
+      const committed = await call(t, 'commit_sheet_import', { batch_id: batchId, confirm: true });
+      assert.equal(committed.error, false, committed.text);
+      const done = JSON.parse(committed.text);
+      assert.equal(done.committed, true);
+      assert.ok(done.written_count >= 1, `something was written: ${JSON.stringify(done.written_by_action)}`);
+
+      assert.equal(await count('SELECT count(*) AS n FROM quotations WHERE client_name = $1', ['Delta Pumps']), 1,
+        'the won deal landed');
+      assert.equal(await count('SELECT count(*) AS n FROM purchase_orders WHERE po_number = $1', ['4500999111']), 1,
+        'and its purchase order with it');
+      assert.equal(await count('SELECT count(*) AS n FROM quotations WHERE client_name = $1', ['Falcon Foods']), 0,
+        'the unticked row did not');
+
+      // Committed once is committed: the batch cannot be run again.
+      assert.equal((await call(t, 'commit_sheet_import', { batch_id: batchId, confirm: true })).error, true);
+    });
+
+    test('a batch uploaded on the Import screen is not this server\'s to commit', async () => {
+      const t = await admin();
+      const { rows: [own] } = await pool.query(
+        `INSERT INTO import_batches (filename, uploaded_by) VALUES ('september.xlsx', 'someone') RETURNING id`);
+      // Two people changing one plan from two places is how a row gets
+      // committed that neither of them chose.
+      const res = await call(t, 'commit_sheet_import', { batch_id: own.id, confirm: true });
+      assert.equal(res.error, true);
+      assert.match(res.text, /Import screen/);
+      assert.equal((await call(t, 'update_import_plan', { batch_id: own.id, step: 'quotation', included: false })).error, true);
+    });
+
+    test('a sheet with no deal columns is refused with a reason', async () => {
+      const t = await admin();
+      const res = await call(t, 'plan_sheet_import', { rows: [{ 'Client Name': 'Falcon Foods', 'Deal Stage': 'Proposal Sent' }] });
+      assert.equal(res.error, true);
+      assert.match(res.text, /sales sheet|proposal date|quotation number/i);
+    });
+  });
+
   test('a reading token is not offered complete_task', async () => {
     const t = (await token({ name: 'Reader', role: 'admin' })).token;
     const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
@@ -433,7 +548,7 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     // false alarm that gets a guard deleted.
     for (const n of names) {
       assert.doesNotMatch(n, /^(delete|remove|drop|void|cancel|pay|send|reassign|set)_/, `${n} names something this server must not be able to do`);
-      assert.match(n, /^(get|list|search|add|create|log|update|complete)_/, `${n} is a verb this server has not agreed to`);
+      assert.match(n, /^(get|list|search|add|create|log|update|complete|plan|replan|commit)_/, `${n} is a verb this server has not agreed to`);
     }
     await request(app).post(`/api/api-tokens/${t.id}/revoke`).set('Cookie', staff).expect(200);
     assert.equal((await call(t.token, 'list_pipeline')).status, 401);
