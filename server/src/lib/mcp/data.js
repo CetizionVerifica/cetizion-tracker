@@ -45,11 +45,28 @@ export const page = ({ limit, offset } = {}) => ({
 });
 
 /**
- * count(*) OVER () rides along on the rows we are already fetching, so the
- * total costs no second query. It is the same for every row, hence [0].
+ * One page of a list, with the total across every page.
+ *
+ * `fetch({ limit, offset })` runs the list's query for that window and returns
+ * its rows, each carrying count(*) OVER () AS total_rows. The count rides
+ * along on the rows already being fetched, so a page with rows costs no
+ * second query; it is the same on every row, hence [0].
+ *
+ * A page past the end has no row to read the count from. It used to report
+ * total 0 — list_tasks({ offset: 100 }) on five tasks said there were none,
+ * and list_payables answered "0 bills, ₹6,84,000 outstanding". So when a page
+ * comes back empty after skipping rows, the same query is asked again for its
+ * first row only: the same filters and the same scoping, so the same count.
+ * An empty first page needs no second look — nothing was skipped, so the list
+ * really is empty.
  */
-const paged = (rows, { limit, offset }) => {
-  const total = rows.length ? Number(rows[0].total_rows) : 0;
+const paged = async (fetch, { limit, offset }) => {
+  const rows = await fetch({ limit, offset });
+  let total = rows.length ? Number(rows[0].total_rows) : 0;
+  if (!rows.length && offset > 0) {
+    const [first] = await fetch({ limit: 1, offset: 0 });
+    total = first ? Number(first.total_rows) : 0;
+  }
   for (const r of rows) delete r.total_rows;
   return { items: rows, total, offset, limit, has_more: offset + rows.length < total };
 };
@@ -154,14 +171,13 @@ export async function listPipeline(scope, { stage, owner, from, to, limit, offse
   if (owner && isAdmin(scope)) { params.push(owner); where.push(`lower(q.sales_person) = lower($${params.length})`); }
   if (from) { params.push(from); where.push(`q.expected_close_date >= $${params.length}`); }
   if (to) { params.push(to); where.push(`q.expected_close_date <= $${params.length}`); }
-  const { rows } = await query(
+  const p = await paged(async (w) => (await query(
     `SELECT count(*) OVER () AS total_rows,
             q.quotation_no, q.client_name, q.service_quoted, ps.name AS stage, q.probability, q.quotation_value AS value, q.currency,
             round(COALESCE(q.quotation_value, 0) * q.probability / 100.0, 2) AS weighted_value, q.expected_close_date, q.sales_person AS owner,
             q.next_step, q.last_contacted_at, q.stage_changed_at
        FROM quotations q JOIN pipeline_stages ps ON ps.id = q.stage_id
-      WHERE ${where.join(' AND ')} ORDER BY ps.sort_order, q.expected_close_date NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, params);
-  const p = paged(rows, win);
+      WHERE ${where.join(' AND ')} ORDER BY ps.sort_order, q.expected_close_date NULLS LAST LIMIT ${w.limit} OFFSET ${w.offset}`, params)).rows, win);
   // Totals cover this page, and say so. A per-currency total over 25 of 200
   // deals read like the pipeline until it was labelled.
   const totals = {};
@@ -178,14 +194,13 @@ export async function listCollections(scope, { overdue_only: overdueOnly = true,
   const where = ['s.invoice_no IS NOT NULL', "s.stage_status <> 'Paid'", own(scope, 'p.sales_person', params)];
   if (overdueOnly) where.push(`s.stage_status = 'Overdue'`);
   if (minDays) { params.push(Number(minDays)); where.push(`s.days_overdue >= $${params.length}`); }
-  const { rows } = await query(
+  return paged(async (w) => (await query(
     `SELECT count(*) OVER () AS total_rows, s.id AS stage_id, s.invoice_no, s.invoice_date, s.invoice_due_date, s.days_overdue, s.client_name, s.po_number, s.stage_name,
             s.stage_amount, s.amount_received, (s.stage_amount - s.amount_received) AS outstanding, s.currency, s.stage_status,
             s.reminder_level, s.on_hold, s.promise_to_pay_date, p.sales_person AS owner,
             (SELECT json_agg(json_build_object('at', l.happened_at, 'channel', l.channel, 'summary', l.summary, 'promise_to_pay', l.promise_to_pay_date) ORDER BY l.happened_at DESC) FROM (SELECT * FROM collection_log cl WHERE cl.stage_id = s.id ORDER BY cl.happened_at DESC LIMIT 5) l) AS recent_chasing
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
-      WHERE ${where.join(' AND ')} ORDER BY s.days_overdue DESC NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, params);
-  return paged(rows, win);
+      WHERE ${where.join(' AND ')} ORDER BY s.days_overdue DESC NULLS LAST LIMIT ${w.limit} OFFSET ${w.offset}`, params)).rows, win);
 }
 
 export async function getKpis(scope, { from, to, person } = {}) {
@@ -233,15 +248,14 @@ export async function listActivity(scope, entity, id, { limit, offset } = {}) {
   // The record itself must be visible to the token first.
   if (!(await canSee(scope, entity, id))) return null;
   const win = page({ limit, offset });
-  const { rows } = await query(
+  return paged(async (w) => (await query(
     `SELECT count(*) OVER () AS total_rows, * FROM (
        SELECT 'note' AS kind, created_at AS at, body AS text, author AS by FROM notes WHERE entity = $1 AND entity_id = $2
        UNION ALL SELECT 'task', t.created_at, concat_ws(' · ', t.title, t.status, 'due ' || t.due_at), t.created_by FROM tasks t
          WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $1 AND tt.entity_id = $2)
        UNION ALL SELECT 'touch', started_at, concat_ws(' · ', channel, outcome, summary), username FROM communications WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
        UNION ALL SELECT 'email', last_message_at, concat_ws(' · ', subject, message_count || ' messages'), NULL FROM email_threads WHERE (entity = $1 AND entity_id = $2) OR ($1 = 'company' AND company_id::text = $2)
-     ) x ORDER BY at DESC NULLS LAST LIMIT ${win.limit} OFFSET ${win.offset}`, [entity, String(id)]);
-  return paged(rows, win);
+     ) x ORDER BY at DESC NULLS LAST LIMIT ${w.limit} OFFSET ${w.offset}`, [entity, String(id)])).rows, win);
 }
 
 export async function canSee(scope, entity, id) {
@@ -350,7 +364,7 @@ export async function listInbox(scope, { status, unanswered_only: unansweredOnly
       OR EXISTS (SELECT 1 FROM unnest(i.members) m WHERE lower(btrim(m)) = lower(btrim(${p})))
       OR c.assignee IS NULL OR lower(c.assignee) = lower(${p}))`);
   }
-  const { rows } = await query(
+  return paged(async (w) => (await query(
     `SELECT count(*) OVER () AS total_rows,
             c.id, c.status, c.priority, c.assignee, c.from_name, c.from_email, c.enquiry_no,
             t.subject, t.last_message_at, t.message_count, t.last_direction,
@@ -362,8 +376,7 @@ export async function listInbox(scope, { status, unanswered_only: unansweredOnly
        LEFT JOIN companies co ON co.id = c.company_id
       WHERE ${where.join(' AND ')}
       ORDER BY c.response_due_at NULLS LAST, t.last_message_at DESC NULLS LAST, c.id
-      LIMIT ${win.limit} OFFSET ${win.offset}`, params);
-  return paged(rows, win);
+      LIMIT ${w.limit} OFFSET ${w.offset}`, params)).rows, win);
 }
 
 // ------------------------------------------------------------- payables
@@ -387,12 +400,12 @@ export async function listPayables(scope, { bucket, limit, offset } = {}) {
   const params = [];
   const where = [];
   if (bucket) { params.push(bucket); where.push(`bucket = $${params.length}`); }
-  const [{ rows }, summary] = await Promise.all([
+  const [p, summary] = await Promise.all([
     // The same ORDER BY as payablesRows(), tiebreak included: pay_by is the
     // month end, so two bills invoiced in one month share it and share a
     // days_overdue, and without invoice_date they can come back in a
     // different order than the page shows them.
-    query(
+    paged(async (w) => (await query(
       `SELECT count(*) OVER () AS total_rows,
               vendor_invoice_no, travel_vendor, employee_name, client_name, travel_id,
               invoice_date, invoice_amount, amount_paid, outstanding, pay_by,
@@ -400,10 +413,10 @@ export async function listPayables(scope, { bucket, limit, offset } = {}) {
          FROM v_vendor_invoice_ageing
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
         ORDER BY days_overdue DESC, pay_by NULLS LAST, invoice_date NULLS LAST, vendor_invoice_id
-        LIMIT ${win.limit} OFFSET ${win.offset}`, params),
+        LIMIT ${w.limit} OFFSET ${w.offset}`, params)).rows, win),
     payablesSummary(),
   ]);
-  return { ...paged(rows, win), ...summary, currency: 'INR' };
+  return { ...p, ...summary, currency: 'INR' };
 }
 
 /**
@@ -452,7 +465,7 @@ export async function listTasks(scope, { assignee, overdue_only: overdueOnly = f
   // for them gets its own, which is what its scope says it may see.
   if (assignee && isAdmin(scope)) { params.push(assignee); where.push(`lower(btrim(t.assignee)) = lower(btrim($${params.length}))`); }
   if (!isAdmin(scope)) where.push(mine(scope, params));
-  const { rows } = await query(
+  return paged(async (w) => (await query(
     `SELECT count(*) OVER () AS total_rows,
             t.id, t.title, t.description, t.status, t.priority, t.type, t.assignee, t.created_by,
             t.due_at::text AS due_on, (t.due_at IS NOT NULL AND t.due_at < CURRENT_DATE) AS overdue,
@@ -460,8 +473,7 @@ export async function listTasks(scope, { assignee, overdue_only: overdueOnly = f
        FROM tasks t
       WHERE ${where.join(' AND ')}
       ORDER BY t.due_at NULLS LAST, t.id
-      LIMIT ${win.limit} OFFSET ${win.offset}`, params);
-  return paged(rows, win);
+      LIMIT ${w.limit} OFFSET ${w.offset}`, params)).rows, win);
 }
 
 /**
