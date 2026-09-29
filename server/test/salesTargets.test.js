@@ -392,4 +392,56 @@ describe('sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     assert.ok(res.status >= 400, `expected a refusal, got ${res.status}`);
   });
 
+
+  test('a month and a year target for one metric are not counted twice', async () => {
+    await setUp();
+    // Nothing in the schema stops an admin setting both: a month and a year
+    // are different periods, so the unique index allows each.
+    for (const month of ['2026-04', '2026-05', '2026-06']) {
+      await request(app)
+        .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+        .set('Cookie', admin.cookie)
+        .send({ period: { preset: 'month', anchor: `${month}-15` }, target_value: 5, unit: 'count' })
+        .expect(201);
+    }
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'fy', anchor: '2026-06-01' }, target_value: 60, unit: 'count' })
+      .expect(201);
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2027-04-01' },
+      compare: false,
+    });
+    const target = report.targets.find((t) => t.metric === 'won_quotations_count');
+
+    assert.equal(target.target_value, 15,
+      'the three months, not the three months plus the year on top of them');
+    assert.equal(target.period_type, 'month', 'the finest granularity somebody stated wins');
+    assert.ok(target.ignored_coarser_targets?.some((i) => i.period_type === 'year'),
+      'and the annual figure is reported as ignored rather than dropped in silence');
+  });
+
+  test('an annual target alone is still used when no monthly ones exist', async () => {
+    await setUp();
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'fy', anchor: '2026-06-01' }, target_value: 60, unit: 'count' })
+      .expect(201);
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2027-04-01' },
+      compare: false,
+    });
+    const target = report.targets.find((t) => t.metric === 'won_quotations_count');
+    assert.equal(target.target_value, 60);
+    assert.equal(target.period_type, 'year');
+  });
+
 });
