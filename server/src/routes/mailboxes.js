@@ -29,7 +29,7 @@ import { ApiError } from '../middleware/error.js';
 import { applyVisibility, sealTokens } from '../lib/mailbox/rules.js';
 import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
-import { disconnect, ensureSubscriptions, pushTestMessages, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
+import { disconnect, ensureSubscriptions, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
 
 export const mailboxRouter = Router();
 export const mailThreadRouter = Router();
@@ -226,6 +226,25 @@ mailboxRouter.post('/:id/sync', async (req, res) => {
   if (allowed === null) throw new ApiError(404, 'Mailbox not found');
   if (!allowed) throw new ApiError(403, NOT_YOURS);
   const r = await syncAccount(Number(req.params.id));
+  if (r.skipped === 'not active') throw new ApiError(409, 'This mailbox is not active; reconnect it first');
+  res.json({ data: r });
+});
+
+/**
+ * Re-read the bodies of mail already stored, under the sanitiser as it is
+ * now. Nothing is inserted and no conversation is touched — see
+ * refreshBodies. Whoever may administer the mailbox may run it, which is
+ * the same gate its sync is behind.
+ */
+mailboxRouter.post('/:id/refresh-bodies', async (req, res) => {
+  const allowed = await mayAdminister(req, Number(req.params.id));
+  if (allowed === null) throw new ApiError(404, 'Mailbox not found');
+  if (!allowed) throw new ApiError(403, NOT_YOURS);
+  const days = req.body?.days === undefined ? undefined : Number(req.body.days);
+  if (days !== undefined && (!Number.isFinite(days) || days < 1 || days > 3650)) {
+    throw new ApiError(422, 'days must be between 1 and 3650');
+  }
+  const r = await refreshBodies(Number(req.params.id), { days });
   if (r.skipped === 'not active') throw new ApiError(409, 'This mailbox is not active; reconnect it first');
   res.json({ data: r });
 });

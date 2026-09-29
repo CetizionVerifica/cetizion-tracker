@@ -71,6 +71,10 @@ test('the policy never contains a double quote, which would break out of the met
 test('a message with no body still produces a valid document', () => {
   for (const empty of [null, undefined, '']) {
     const doc = frameDoc(empty, false);
-    assert.match(doc, /<body><\/body><\/html>$/, `${String(empty)} should not print as text`);
+    // The body carries a class now, so this matches the shape rather than
+    // the exact tag: what matters is that it is empty and that null and
+    // undefined never reach the page as the words "null" and "undefined".
+    assert.match(doc, /<body[^>]*><\/body><\/html>$/, `${String(empty)} should not print as text`);
+    assert.doesNotMatch(doc, /null|undefined/, `${String(empty)} leaked into the document`);
   }
 });

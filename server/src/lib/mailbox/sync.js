@@ -209,6 +209,72 @@ export async function syncAccount(id) {
   return out;
 }
 
+/**
+ * Re-read the bodies of mail we already have, and store them again under
+ * the sanitiser as it is now.
+ *
+ * cleanHtml runs once, at ingest, and what it dropped is dropped for good:
+ * the message we keep is the cleaned one, and the original never touched
+ * our disk. So when the sanitiser learned to keep a sender's styling, every
+ * mail already stored stayed as the bare paragraphs the old rules had left
+ * of it. This is how those catch up — the provider still holds the real
+ * message, so it is fetched again and re-cleaned.
+ *
+ * Deliberately narrow:
+ *
+ *   It only UPDATEs. Nothing is inserted, no thread is created, no
+ *   conversation is opened or reopened, and a message the sweep finds that
+ *   we never stored is left alone — ingest decides what we keep, and that
+ *   decision is not being revisited here.
+ *
+ *   It does not touch the delta cursor. syncAccount stores a delta link per
+ *   folder and this sweep asks for a window instead, so a backfill cannot
+ *   cost the next sync the changes it had not seen yet.
+ *
+ *   applyVisibility is applied again, so a metadata-only mailbox still
+ *   stores no subject and no body. A backfill must not be a way for the
+ *   text to arrive where the mailbox's owner said it should not.
+ *
+ * Bounded by the same import_days window the first sync used, unless asked
+ * for more. Older mail than that was never fetched in the first place.
+ */
+export async function refreshBodies(id, { days } = {}) {
+  const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [id]);
+  if (!account || account.status !== 'active') return { id, skipped: 'not active' };
+  const provider = providerFor(account);
+  const since = new Date(Date.now() - (Number(days) || account.import_days) * 864e5).toISOString();
+  const out = { id, email: account.email, seen: 0, updated: 0, unchanged: 0, not_ours: 0 };
+  try {
+    for (const folder of FOLDERS) {
+      const { messages } = await provider.delta(folder, null, since);
+      for (const m of messages) {
+        if (!m.provider_id || !m.body_html) continue;
+        out.seen += 1;
+        const html = cleanHtml(m.body_html);
+        const row = applyVisibility(
+          { subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html },
+          account.visibility
+        );
+        const { rowCount } = await query(
+          `UPDATE email_messages SET body_html = $3, snippet = $4
+            WHERE account_id = $1 AND provider_id = $2
+              AND (body_html IS DISTINCT FROM $3 OR snippet IS DISTINCT FROM $4)`,
+          [account.id, m.provider_id, row.body_html, row.snippet]
+        );
+        if (rowCount) out.updated += 1; else out.unchanged += 1;
+      }
+    }
+    await saveTokens(account, provider);
+  } catch (err) {
+    out.error = err.message;
+  }
+  // Counted rather than inferred: "unchanged" includes messages the sweep
+  // returned that we never stored, and saying so keeps the numbers honest.
+  const { rows: [held] } = await query('SELECT count(*)::int AS n FROM email_messages WHERE account_id = $1', [account.id]);
+  out.messages_held = held.n;
+  return out;
+}
+
 /** Keep push notifications alive; the delta sweep covers any gap. */
 export async function ensureSubscriptions(account, provider = providerFor(account)) {
   if (account.provider !== 'microsoft' || !config.microsoft.webhookUrl) return 0;
