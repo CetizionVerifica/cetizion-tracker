@@ -432,6 +432,171 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       assert.equal((await call(t, 'commit_sheet_import', { batch_id: batchId, confirm: true })).error, true);
     });
 
+
+    /**
+     * A committed sheet reaches the activity log (#18 §3).
+     *
+     * commitBatch is a second writer — its own insert/update helpers, not
+     * crud.js's — so wiring the record importer did nothing for it. The
+     * actor is hooked into those two helpers rather than at each of the ten
+     * call sites, so a step added to the importer later is audited without
+     * anybody remembering to audit it.
+     *
+     * The sheet names a salesperson in a column ("Sales Person": Asha,
+     * Ravi). That is data the sheet is entitled to carry and #18 keeps the
+     * column for exactly that reason. What it must not do is decide who the
+     * audit trail says acted, which is what the last test here pins.
+     */
+    const activityRows = async (action) => (await pool.query(
+      `SELECT action, entity_type, entity_id, actor_type, actor_user_id, metadata
+         FROM activity_log WHERE action = $1 ORDER BY id`, [action])).rows;
+
+    /**
+     * These tests commit real records into the database this whole file
+     * shares, and a later test aggregates over every quotation in it. So
+     * each one clears up after itself. The activity rows are left where
+     * they are — the table is append-only by design and nothing counts it
+     * except the assertions above, which measure a delta.
+     */
+    const cleanupAudited = async () => {
+      await pool.query("DELETE FROM purchase_orders WHERE project_id IN (SELECT project_id FROM projects WHERE client_name ILIKE 'Audited %')");
+      await pool.query("DELETE FROM projects WHERE client_name ILIKE 'Audited %'");
+      await pool.query("DELETE FROM quotations WHERE client_name ILIKE 'Audited %'");
+    };
+
+    const commitSheet = async (t, rows, sheetName) => {
+      const plan = JSON.parse((await call(t, 'plan_sheet_import', { rows, sheet_name: sheetName })).text);
+      const done = await call(t, 'commit_sheet_import', { batch_id: plan.batch_id, confirm: true });
+      assert.equal(done.error, false, done.text);
+      return { plan, done: JSON.parse(done.text) };
+    };
+
+    test('committing a sheet records every quotation it creates', async () => {
+      const t = await token({ name: 'Sheet create', role: 'admin', can_write: true });
+      const before = (await activityRows('quotation.created')).length;
+
+      await commitSheet(t.token, [
+        { 'S.No': 1, 'Client Name': 'Audited Sheet Co', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'Audit trail', 'Proposal Sent Date': '03.09.2026', 'PO Amount': '', 'Sales Person': 'Asha' },
+      ], 'Audited create');
+
+      const rows = await activityRows('quotation.created');
+      assert.equal(rows.length, before + 1, 'the commit wrote one quotation and one row for it');
+      const row = rows[rows.length - 1];
+      assert.equal(row.entity_type, 'quotation');
+      assert.match(row.entity_id, /^CTZ\/QT\//, 'named by the reference a person would look up');
+      assert.equal(row.actor_type, 'shared_admin', 'an admin token has no account to point at');
+      assert.equal(row.metadata.actor_name, 'Sheet create');
+      await cleanupAudited();
+    });
+
+    test('a re-upload that changes a deal records the edit, with what it changed from', async () => {
+      const t = await token({ name: 'Sheet update', role: 'admin', can_write: true });
+      const row = (stage, amount) => ({
+        'S.No': 1, 'Client Name': 'Audited Revisit Ltd', 'Deal Stage': stage,
+        'Proposal Name': 'Revisited', 'Proposal Sent Date': '04.09.2026',
+        'PO Amount': amount, 'Sales Person': 'Asha',
+      });
+
+      await commitSheet(t.token, [row('Proposal Sent', '1,00,000/-')], 'Audited first');
+      const { rows: [q] } = await pool.query(
+        "SELECT quotation_no, quotation_value FROM quotations WHERE client_name ILIKE '%Audited Revisit%'");
+      assert.ok(q, 'the first upload created it');
+
+      const beforeEdits = (await activityRows('quotation.updated')).length;
+      await commitSheet(t.token, [row('Proposal Sent', '2,50,000/-')], 'Audited second');
+
+      const edits = await activityRows('quotation.updated');
+      assert.equal(edits.length, beforeEdits + 1, 'the second upload is an edit, not a second create');
+      const edit = edits[edits.length - 1];
+      assert.equal(edit.entity_id, q.quotation_no);
+      assert.equal(edit.actor_type, 'shared_admin');
+      assert.equal(edit.metadata.actor_name, 'Sheet update');
+      assert.ok(edit.metadata.changes.quotation_value, `the value change is named: ${JSON.stringify(edit.metadata.changes)}`);
+      assert.equal(Number(edit.metadata.changes.quotation_value.from), Number(q.quotation_value));
+      await cleanupAudited();
+    });
+
+    test('a deal that becomes won records the move, and the date it was won', async () => {
+      const t = await token({ name: 'Sheet won', role: 'admin', can_write: true });
+      const deal = (stage, extra = {}) => ({
+        'S.No': 1, 'Client Name': 'Audited Won Ltd', 'Deal Stage': stage,
+        'Proposal Name': 'Won deal', 'Proposal Sent Date': '06.08.2026',
+        'Sales Person': 'Ravi', 'PO Amount': '', ...extra,
+      });
+
+      // Open first. A sheet that arrives already won creates the quotation
+      // in that state, and creating something is not moving it — the create
+      // row carries the status, which the first test here covers.
+      await commitSheet(t.token, [deal('Proposal Sent')], 'Audited won open');
+      const before = (await activityRows('quotation.status_changed')).length;
+
+      // Then won. This is the write that used to escape the audit entirely:
+      // the importer marks it won with its own UPDATE while linking the
+      // project, outside the helper every other write goes through.
+      await commitSheet(t.token,
+        [deal('Closed Won (100%)', { 'PO Number': '4500777222', 'PO Amount': '5,00,000/-' })],
+        'Audited won closed');
+
+      const moves = await activityRows('quotation.status_changed');
+      assert.equal(moves.length, before + 1, 'the move is recorded');
+      const move = moves[moves.length - 1];
+      assert.equal(move.metadata.to, 'Won - PO Received');
+      assert.ok(move.metadata.won_at, 'and 064\'s derived date travels with it');
+      assert.equal(move.metadata.actor_name, 'Sheet won');
+
+      const { rows: [q] } = await pool.query(
+        "SELECT won_at, won_at_estimated FROM quotations WHERE client_name ILIKE '%Audited Won%'");
+      assert.ok(q.won_at, 'the record itself carries the won date');
+      assert.equal(q.won_at_estimated, false, 'watched happen, so not an estimate');
+      await cleanupAudited();
+    });
+
+    test('an unconfirmed commit writes no activity, as it writes nothing', async () => {
+      const t = await token({ name: 'Sheet dry', role: 'admin', can_write: true });
+      const before = (await activityRows('quotation.created')).length;
+
+      const plan = JSON.parse((await call(t.token, 'plan_sheet_import', {
+        rows: [{ 'S.No': 1, 'Client Name': 'Audited Dry Run Ltd', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'Never written', 'Proposal Sent Date': '07.09.2026', 'PO Amount': '', 'Sales Person': 'Asha' }],
+        sheet_name: 'Audited dry',
+      })).text);
+
+      const unconfirmed = await call(t.token, 'commit_sheet_import', { batch_id: plan.batch_id });
+      assert.equal(unconfirmed.error, true, 'confirm is required');
+
+      assert.equal((await activityRows('quotation.created')).length, before,
+        'planning and refusing to confirm leave the trail untouched');
+      const { rows } = await pool.query("SELECT 1 FROM quotations WHERE client_name ILIKE '%Audited Dry Run%'");
+      assert.equal(rows.length, 0, 'and no record either');
+      await cleanupAudited();
+    });
+
+    test('a sheet cannot sign somebody else’s name to the audit trail', async () => {
+      const t = await token({ name: 'Sheet spoof', role: 'admin', can_write: true });
+
+      await commitSheet(t.token, [
+        {
+          'S.No': 1, 'Client Name': 'Audited Spoof Ltd', 'Deal Stage': 'Proposal Sent',
+          'Proposal Name': 'Whose name', 'Proposal Sent Date': '08.09.2026', 'PO Amount': '',
+          // The column a caller might hope decides who gets the credit.
+          'Sales Person': 'Somebody Else',
+        },
+      ], 'Audited spoof');
+
+      const rows = await activityRows('quotation.created');
+      const row = rows[rows.length - 1];
+      assert.equal(row.actor_type, 'shared_admin');
+      assert.equal(row.actor_user_id, null, 'no cell in the sheet can put an id here');
+      assert.equal(row.metadata.actor_name, 'Sheet spoof',
+        'the actor is the credential that called, never the content it carried');
+
+      // The record still keeps what the sheet said — that is what the column
+      // is for — and naming somebody does not hand them the record either.
+      const { rows: [saved] } = await pool.query(
+        "SELECT sales_person, owner_user_id FROM quotations WHERE client_name ILIKE '%Audited Spoof%'");
+      assert.equal(saved.sales_person, 'Somebody Else');
+      assert.equal(saved.owner_user_id, null, 'ownership is owner_user_id, and a sheet does not set it');
+      await cleanupAudited();
+    });
     test('a batch uploaded on the Import screen is not this server\'s to commit', async () => {
       const t = await admin();
       const { rows: [own] } = await pool.query(

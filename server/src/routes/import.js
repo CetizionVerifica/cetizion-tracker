@@ -24,6 +24,7 @@ import { requireAdmin } from '../auth/middleware.js';
 import { reviewFlags, DEFAULT_RULES, IMPORT_AUTHOR, SHEET_FIELDS, rulesSchema, sanitizeRules, flagRepeatedPoNumbers } from '../import/rules.js';
 import { commitBatch } from '../import/commit.js';
 import { fileCache, loadBatch, planBatch, recallFile, rememberFile } from '../import/batches.js';
+import { actorFrom } from '../lib/activity.js';
 
 export const importRouter = Router();
 
@@ -236,7 +237,7 @@ importRouter.post('/batches/:id/commit', async (req, res) => {
   const blocking = items.filter((it) => it.included && it.flags.some((f) => f.level === 'error'));
   if (blocking.length) throw new ApiError(422, `${blocking.length} included item(s) still have errors. Fix or untick them first.`, { items: blocking.map((b) => b.id) });
   try {
-    const result = await commitBatch(batch, items, { user: req.user.username });
+    const result = await commitBatch(batch, items, { user: req.user.username, actor: actorFrom(req.user) });
     // Committed, so the bytes are not wanted again.
     fileCache.delete(batch.id);
     res.json({ data: { ...(await loadBatch(batch.id)), written: result.written } });

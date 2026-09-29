@@ -17,6 +17,7 @@ import { transaction } from '../db.js';
 import { resources, ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { claimNextId } from '../lib/sequences.js';
 import { IMPORT_AUTHOR } from './rules.js';
+import { isAudited, logRecordSaved } from '../lib/salesActivity.js';
 
 const ORDER = ['quotation', 'project', 'purchase_order', 'service', 'stage', 'invoice', 'receipt'];
 
@@ -47,24 +48,63 @@ function changes(resourceName, payload, cols) {
   return Object.fromEntries(Object.entries(parsed.data).filter(([col]) => Object.hasOwn(subset, col)));
 }
 
-async function insert(client, table, values) {
+/**
+ * The audit trail for a committed sheet (#18 §3).
+ *
+ * Hooked into these two writers rather than added at each of the ten call
+ * sites below, for the same reason lib/crud.js logs at insertRecord and
+ * updateRecordRow rather than at every route: a step added to commitBatch
+ * later is audited without anybody remembering to audit it. Only the
+ * ownership-scoped tables produce a row — see AUDITED_TABLES.
+ *
+ * The actor is the caller's credential, passed down from commitBatch. It is
+ * never read from the sheet: `sales_person` is a column the sheet may
+ * legitimately fill, and #18 keeps it precisely so historical attribution
+ * survives, but it does not decide who the trail says acted.
+ *
+ * Nothing is caught. logRecordSaved throws if the log cannot be written,
+ * and this runs on the batch's own client inside its transaction, so a
+ * failed audit row rolls the whole commit back rather than leaving records
+ * written with no record of who wrote them.
+ */
+async function insert(client, table, values, actor = null) {
   const cols = Object.keys(values).filter((k) => values[k] !== undefined);
   const params = cols.map((c) => values[c]);
   const { rows } = await client.query(
     `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
     params
   );
+  if (actor && isAudited(table)) {
+    await logRecordSaved(client, { table, before: null, after: rows[0], actor });
+  }
   return rows[0];
 }
 
-async function update(client, table, values, whereSql, whereParams) {
+async function update(client, table, values, whereSql, whereParams, actor = null) {
   const cols = Object.keys(values);
   if (!cols.length) return 0;
   const params = cols.map((c) => values[c]);
-  const { rowCount } = await client.query(
-    `UPDATE ${table} SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(', ')} WHERE ${whereSql.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + cols.length}`)}`,
+  const where = whereSql.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + cols.length}`);
+  const audited = Boolean(actor) && isAudited(table);
+
+  // Read first, so the log can say what each value changed from rather than
+  // only that it changed — the gap #83's review called out on user emails.
+  // The original whereSql is used here because its placeholders still match
+  // whereParams; only the UPDATE below has to renumber them past the SET.
+  const was = audited
+    ? new Map((await client.query(`SELECT * FROM ${table} WHERE ${whereSql}`, whereParams)).rows.map((r) => [r.id, r]))
+    : null;
+
+  const { rows, rowCount } = await client.query(
+    `UPDATE ${table} SET ${cols.map((c, i) => `${c} = $${i + 1}`).join(', ')} WHERE ${where}${audited ? ' RETURNING *' : ''}`,
     [...params, ...whereParams]
   );
+
+  if (audited) {
+    for (const after of rows) {
+      await logRecordSaved(client, { table, before: was.get(after.id) ?? null, after, actor });
+    }
+  }
   return rowCount;
 }
 
@@ -113,7 +153,7 @@ async function applyTracking(client, quotationNo, t) {
   return did;
 }
 
-export async function commitBatch(batch, items, { user }) {
+export async function commitBatch(batch, items, { user, actor = null }) {
   const included = items.filter((it) => it.included).sort((a, b) => ORDER.indexOf(a.step) - ORDER.indexOf(b.step) || a.seq - b.seq);
   const results = new Map(); // seq -> { ref, id, ... }
   const written = [];
@@ -164,13 +204,13 @@ export async function commitBatch(batch, items, { user }) {
                 const cols = Array.isArray(p.__update_fields)
                   ? [...new Set([...p.__update_fields, ...always])]
                   : ['quotation_date', 'client_name', 'contact_person', 'service_quoted', 'sales_person', 'quotation_value', 'currency', 'status', 'po_received', 'remarks'];
-                n = await update(client, 'quotations', changes('quotations', p, cols), 'id = $1', [q.id]);
+                n = await update(client, 'quotations', changes('quotations', p, cols), 'id = $1', [q.id], actor);
               } else {
                 // Keep the original: fill blanks only.
                 const fill = {};
                 if (!q.contact_person && p.contact_person) fill.contact_person = p.contact_person;
                 if (q.quotation_value === null && p.quotation_value !== null && p.quotation_value !== undefined) fill.quotation_value = p.quotation_value;
-                n = await update(client, 'quotations', fill, 'id = $1', [q.id]);
+                n = await update(client, 'quotations', fill, 'id = $1', [q.id], actor);
               }
               results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: q.project_id, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
               const tracked = await applyTracking(client, q.quotation_no, p.tracking);
@@ -183,7 +223,7 @@ export async function commitBatch(batch, items, { user }) {
             if ((await client.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [no])).rowCount) no = await claimNextId('quotation', client);
             const { tracking, ...record } = p;
             const data = validate('quotations', { ...record, quotation_no: no, project_id: null });
-            const q = await insert(client, 'quotations', data);
+            const q = await insert(client, 'quotations', data, actor);
             results.set(item.seq, { id: q.id, ref: q.quotation_no, project_id: null, client_name: q.client_name, service: q.service_quoted, sales_person: q.sales_person });
             const tracked = await applyTracking(client, q.quotation_no, tracking);
             const how = no === p.quotation_no ? 'created' : item.existing_ref ? `created as ${no} (imported as new, not ${item.existing_ref})` : `created as ${no} (planned number was taken)`;
@@ -196,8 +236,8 @@ export async function commitBatch(batch, items, { user }) {
             if ((item.action === 'skip' || replacing) && item.existing_ref) {
               const { rows } = await client.query('SELECT * FROM projects WHERE project_id = $1', [item.existing_ref]);
               if (!rows.length) throw new Error(`existing project ${item.existing_ref} not found`);
-              if (replacing) await update(client, 'projects', changes('projects', p, ['primary_service']), 'project_id = $1', [item.existing_ref]);
-              if (!parent.project_id) await client.query(`UPDATE quotations SET project_id = $1, po_received = true, status = 'Won - PO Received' WHERE id = $2`, [item.existing_ref, parent.id]);
+              if (replacing) await update(client, 'projects', changes('projects', p, ['primary_service']), 'project_id = $1', [item.existing_ref], actor);
+              if (!parent.project_id) await update(client, 'quotations', { project_id: item.existing_ref, po_received: true, status: 'Won - PO Received' }, 'id = $1', [parent.id], actor);
               results.set(item.seq, { ref: item.existing_ref, project_id: item.existing_ref, quotation_no: parent.ref });
               written.push({ seq: item.seq, ref: item.existing_ref, action: replacing ? 'replaced' : 'kept' });
               break;
@@ -208,8 +248,8 @@ export async function commitBatch(batch, items, { user }) {
               project_id: pid, client_name: parent.client_name || p.client_name, primary_service: p.primary_service || parent.service,
               sales_person: parent.sales_person || null, remarks: `Won from quotation ${parent.ref}`,
             });
-            await insert(client, 'projects', data);
-            await client.query(`UPDATE quotations SET project_id = $1, po_received = true, status = 'Won - PO Received' WHERE id = $2`, [pid, parent.id]);
+            await insert(client, 'projects', data, actor);
+            await update(client, 'quotations', { project_id: pid, po_received: true, status: 'Won - PO Received' }, 'id = $1', [parent.id], actor);
             if (p.apply_onboarding_template) {
               for (const [i, [stage, text]] of ONBOARDING_TEMPLATE.entries()) {
                 await client.query(`INSERT INTO onboarding_tasks (project_id, step_no, stage, step) VALUES ($1,$2,$3,$4)`, [pid, i + 1, stage, text]);
@@ -224,7 +264,7 @@ export async function commitBatch(batch, items, { user }) {
             if (item.action === 'skip' || replacing) {
               const { rowCount } = await client.query('SELECT 1 FROM purchase_orders WHERE po_number = $1', [p.po_number]);
               if (!rowCount) throw new Error(`existing PO ${p.po_number} not found`);
-              if (replacing) await update(client, 'purchase_orders', changes('purchase-orders', p, ['po_date', 'po_value', 'currency', 'payment_terms_days', 'actual_delivery_date', 'remarks']), 'po_number = $1', [p.po_number]);
+              if (replacing) await update(client, 'purchase_orders', changes('purchase-orders', p, ['po_date', 'po_value', 'currency', 'payment_terms_days', 'actual_delivery_date', 'remarks']), 'po_number = $1', [p.po_number], actor);
               // An older PO with no quotation link gets one from the sheet's row.
               if (parent?.quotation_no) await client.query('UPDATE purchase_orders SET quotation_no = COALESCE(quotation_no, $1) WHERE po_number = $2', [parent.quotation_no, p.po_number]);
               results.set(item.seq, { ref: p.po_number, po_number: p.po_number });
@@ -234,7 +274,7 @@ export async function commitBatch(batch, items, { user }) {
             const projectId = parent?.project_id || p.project_id;
             // Name the won quotation this PO fulfils, so revenue counts it once.
             const data = validate('purchase-orders', { ...p, project_id: projectId, quotation_no: parent?.quotation_no || null });
-            const po = await insert(client, 'purchase_orders', data);
+            const po = await insert(client, 'purchase_orders', data, actor);
             results.set(item.seq, { ref: po.po_number, po_number: po.po_number });
             written.push({ seq: item.seq, ref: po.po_number, action: 'created' });
             break;
@@ -245,13 +285,13 @@ export async function commitBatch(batch, items, { user }) {
             if (item.action === 'skip' || replacing) {
               const { rows } = await client.query('SELECT id, service FROM po_services WHERE po_number = $1 ORDER BY id LIMIT 1', [poNumber]);
               if (!rows.length) throw new Error(`no service line on ${poNumber} to keep or replace`);
-              if (replacing) await update(client, 'po_services', changes('po-services', p, ['service', 'service_value']), 'id = $1', [rows[0].id]);
+              if (replacing) await update(client, 'po_services', changes('po-services', p, ['service', 'service_value']), 'id = $1', [rows[0].id], actor);
               results.set(item.seq, { ref: `${poNumber} / ${replacing ? p.service : rows[0].service}` });
               written.push({ seq: item.seq, ref: replacing ? p.service : rows[0].service, action: replacing ? 'replaced' : 'kept' });
               break;
             }
             const data = validate('po-services', { ...p, po_number: poNumber });
-            await insert(client, 'po_services', data);
+            await insert(client, 'po_services', data, actor);
             results.set(item.seq, { ref: `${data.po_number} / ${data.service}` });
             written.push({ seq: item.seq, ref: data.service, action: 'created' });
             break;
@@ -262,13 +302,13 @@ export async function commitBatch(batch, items, { user }) {
             if (item.action === 'skip' || replacing) {
               const { rows } = await client.query('SELECT id FROM payment_stages WHERE po_number = $1 AND stage_no = $2', [poNumber, p.stage_no]);
               if (!rows.length) throw new Error(`stage ${p.stage_no} of ${poNumber} not found on the site`);
-              if (replacing) await update(client, 'payment_stages', changes('payment-stages', p, ['stage_name', 'trigger_event', 'stage_percent']), 'id = $1', [rows[0].id]);
+              if (replacing) await update(client, 'payment_stages', changes('payment-stages', p, ['stage_name', 'trigger_event', 'stage_percent']), 'id = $1', [rows[0].id], actor);
               results.set(item.seq, { ref: `${poNumber} stage ${p.stage_no}`, stage_id: rows[0].id });
               written.push({ seq: item.seq, ref: `${poNumber} stage ${p.stage_no}`, action: replacing ? 'replaced' : 'kept' });
               break;
             }
             const data = validate('payment-stages', { ...p, po_number: poNumber });
-            const s = await insert(client, 'payment_stages', data);
+            const s = await insert(client, 'payment_stages', data, actor);
             results.set(item.seq, { ref: `${s.po_number} stage ${s.stage_no}`, stage_id: s.id });
             written.push({ seq: item.seq, ref: `${s.po_number} stage ${s.stage_no}`, action: 'created' });
             break;
