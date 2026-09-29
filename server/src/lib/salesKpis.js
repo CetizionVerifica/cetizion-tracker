@@ -113,6 +113,27 @@ function dimensionClause(alias, { sector, service }, params, { serviceColumn = '
  */
 const PEOPLE = '$3::int[]';
 
+/**
+ * The period's edges, as instants in the business's own day.
+ *
+ * `won_at`, `lost_at`, `decided_at` and `stage_changed_at` are timestamptz;
+ * the period is a pair of dates. Comparing the two directly casts the date
+ * using the *session* timezone, which is UTC in the container while the
+ * business runs on Asia/Kolkata — so a deal won at 02:00 IST on 1 April is
+ * stored as 31 March 20:30 UTC and falls in the previous financial year.
+ * That is five and a half hours of every day attributed to the day before,
+ * and at a period edge to the period before.
+ *
+ * `::timestamp AT TIME ZONE $4` turns the date into midnight *where the
+ * business is*, which is the boundary every other part of this report
+ * already means. The intermediate `::timestamp` is not decoration: a bare
+ * `date` promotes to timestamptz, and `timestamptz AT TIME ZONE z` converts
+ * an instant *out of* UTC into local wall clock — the exact opposite. It
+ * yields 2026-06-01 05:30 instead of 2026-05-31 18:30+00, moving the
+ * boundary the wrong way by the same five and a half hours.
+ * Columns that are genuinely `date` — quotation_date, enquiry_date,
+ * invoice_date, received_on — are compared as dates and need none of this.
+ */
 const ownerFilter = (column) => ` AND (${PEOPLE} IS NULL OR ${column} = ANY(${PEOPLE}))`;
 
 /**
@@ -123,8 +144,8 @@ const ownerFilter = (column) => ` AND (${PEOPLE} IS NULL OR ${column} = ANY(${PE
  * of query that is fine at 92 rows and not at 92,000, and
  * percentile_cont is what the database is for.
  */
-async function cohortByPerson({ from, to }, userIds, dims) {
-  const params = [from, to, userIds ?? null];
+async function cohortByPerson({ from, to, time_zone: timeZone }, userIds, dims) {
+  const params = [from, to, userIds ?? null, timeZone];
   const q = attrib('q');
   const e = attrib('e');
 
@@ -149,25 +170,32 @@ async function cohortByPerson({ from, to }, userIds, dims) {
        -- which answers a different question: of the deals we quoted in
        -- March, how many eventually landed — not how many we won in March.
        SELECT ${q} AS person,
-              COUNT(*) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date)::int AS orders_won,
-              COUNT(*) FILTER (WHERE q.lost_at >= $1::date AND q.lost_at < $2::date)::int AS orders_lost,
-              COUNT(*) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date AND q.won_at_estimated)::int AS orders_won_estimated,
-              COALESCE(SUM(q.quotation_value * r.rate) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date), 0) AS order_intake_inr,
-              COUNT(*) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date AND q.quotation_value IS NOT NULL)::int AS won_with_value,
-              COUNT(*) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date
+              COUNT(*) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4))::int AS orders_won,
+              COUNT(*) FILTER (WHERE q.lost_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.lost_at < ($2::date::timestamp AT TIME ZONE $4))::int AS orders_lost,
+              COUNT(*) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4) AND q.won_at_estimated)::int AS orders_won_estimated,
+              COALESCE(SUM(q.quotation_value * r.rate) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4)), 0) AS order_intake_inr,
+              COUNT(*) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4) AND q.quotation_value IS NOT NULL)::int AS won_with_value,
+              COUNT(*) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4)
                                AND r.rate IS NULL AND q.currency <> 'INR')::int AS intake_unconverted,
-              -- Sales cycle: quotation_date to won_at, in days. Rows whose
-              -- won date was inferred are excluded rather than counted as
-              -- zero — a backfilled win is stamped with quotation_date, so
-              -- including them would drag every median toward nothing.
+              -- Sales cycle: quotation_date to won_at, in whole business
+              -- days. Measured by converting the instant to the business
+              -- calendar and subtracting two dates, not by epoch seconds —
+              -- a difference in seconds across a zone offset yields 29.77
+              -- days for a deal quoted on the 20th and won on the 20th of
+              -- the next month, which is not what "median days" means.
+              --
+              -- Rows whose won date was inferred are excluded rather than
+              -- counted as zero: a backfilled win is stamped with
+              -- quotation_date, so including them would drag every median
+              -- toward nothing.
               percentile_cont(0.5) WITHIN GROUP (
-                ORDER BY EXTRACT(EPOCH FROM (q.won_at - q.quotation_date::timestamptz)) / 86400
-              ) FILTER (WHERE q.won_at >= $1::date AND q.won_at < $2::date
+                ORDER BY ((q.won_at AT TIME ZONE $4)::date - q.quotation_date)
+              ) FILTER (WHERE q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4)
                           AND NOT q.won_at_estimated AND q.quotation_date IS NOT NULL) AS sales_cycle_days
          FROM quotations q
          ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE ((q.won_at >= $1::date AND q.won_at < $2::date)
-            OR (q.lost_at >= $1::date AND q.lost_at < $2::date))
+        WHERE ((q.won_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.won_at < ($2::date::timestamp AT TIME ZONE $4))
+            OR (q.lost_at >= ($1::date::timestamp AT TIME ZONE $4) AND q.lost_at < ($2::date::timestamp AT TIME ZONE $4)))
           AND ${q} IS NOT NULL
           ${ownerFilter(q)}
           ${dimensionClause('q', dims, params, { serviceColumn: 'service_quoted' })}
@@ -195,7 +223,7 @@ async function cohortByPerson({ from, to }, userIds, dims) {
               ) FILTER (WHERE lq.quotation_date IS NOT NULL AND e.enquiry_date IS NOT NULL) AS time_to_quote_days
          FROM enquiries e
          LEFT JOIN quotations lq ON lq.quotation_no = e.quotation_no
-        WHERE e.decided_at >= $1::date AND e.decided_at < $2::date
+        WHERE e.decided_at >= ($1::date::timestamp AT TIME ZONE $4) AND e.decided_at < ($2::date::timestamp AT TIME ZONE $4)
           AND ${e} IS NOT NULL
           ${ownerFilter(e)}
           ${dimensionClause('e', dims, params)}
@@ -251,10 +279,10 @@ async function cohortByPerson({ from, to }, userIds, dims) {
  * since. Reading the current status instead would make last quarter's
  * pipeline shrink every time somebody closes a deal today.
  */
-async function pipelineByPerson({ from, to }, userIds, dims, staleDays) {
-  // $1 the as-at date, $2 the stale threshold, $3 the people — the same
-  // fixed slot every query here uses.
-  const params = [to, staleDays, userIds ?? null];
+async function pipelineByPerson({ from, to, time_zone: timeZone }, userIds, dims, staleDays) {
+  // $1 the as-at date, $2 the stale threshold, $3 the people, $4 the
+  // business zone — the same fixed slots every query here uses.
+  const params = [to, staleDays, userIds ?? null, timeZone];
 
   const { rows } = await query(
     `WITH ${RATES},
@@ -264,8 +292,8 @@ async function pipelineByPerson({ from, to }, userIds, dims, staleDays) {
          ${rateOn('r', 'q.currency', 'q.quotation_date')}
         WHERE q.owner_user_id IS NOT NULL
           AND q.quotation_date < $1::date
-          AND (q.won_at  IS NULL OR q.won_at  >= $1::date)
-          AND (q.lost_at IS NULL OR q.lost_at >= $1::date)
+          AND (q.won_at  IS NULL OR q.won_at  >= ($1::date::timestamp AT TIME ZONE $4))
+          AND (q.lost_at IS NULL OR q.lost_at >= ($1::date::timestamp AT TIME ZONE $4))
           ${ownerFilter('q.owner_user_id')}
           ${dimensionClause('q', dims, params, { serviceColumn: 'service_quoted' })}
      )
@@ -277,9 +305,13 @@ async function pipelineByPerson({ from, to }, userIds, dims, staleDays) {
             -- setting. stage_changed_at is the pipeline's own clock;
             -- updated_at would reset on a typo fix and hide a dead deal.
             COUNT(*) FILTER (
-              WHERE COALESCE(stage_changed_at, quotation_date::timestamptz) < $1::date - ($2::int * INTERVAL '1 day')
+              WHERE COALESCE(stage_changed_at, (quotation_date::timestamp AT TIME ZONE $4))
+                  < (($1::date - $2::int)::timestamp AT TIME ZONE $4)
             )::int AS stale_quotations,
-            json_object_agg(status, status_count) FILTER (WHERE status IS NOT NULL) AS by_status
+            -- DISTINCT, because the count rides on every row of its group:
+            -- without it json_object_agg emits the same key once per
+            -- quotation, so a fifty-deal pipeline returns fifty keys.
+            json_object_agg(DISTINCT status, status_count) FILTER (WHERE status IS NOT NULL) AS by_status
        FROM (
          SELECT person, quotation_value, rate, currency, stage_changed_at, quotation_date, status,
                 COUNT(*) OVER (PARTITION BY person, status)::int AS status_count
@@ -294,10 +326,16 @@ async function pipelineByPerson({ from, to }, userIds, dims, staleDays) {
 /**
  * Invoiced and collected, and how much of each we actually know (#18 §5, 067).
  *
- * Attributed through the purchase order: to the quotation it fulfils where
- * there is one, and to the project otherwise — the same chain
- * purchaseOrderClause uses for access, so what a person is credited with
- * and what they can open are the same set.
+ * Attributed to the **originating** salesperson, like every other outcome
+ * figure here. Money arriving is the result of a sale somebody made, so
+ * reassigning a deal must not move last quarter's collections — the same
+ * rule order intake follows, and the reason it exists.
+ *
+ * Reached through the purchase order to the quotation it fulfils, because
+ * that is where an originator is recorded. A PO linked only to a project
+ * may have no originating person at all, and rather than fall back to the
+ * current owner — which is the assumption this rule exists to refuse — the
+ * money goes to an explicit unattributed bucket for somebody to place.
  *
  * Three buckets, because the data supports three different degrees of
  * confidence and collapsing them would report a guess as a fact:
@@ -311,10 +349,19 @@ async function pipelineByPerson({ from, to }, userIds, dims, staleDays) {
  *                             ledger, or a receipt with no date. Cannot be
  *                             placed in any period, and is reported as a
  *                             total rather than assigned to this one.
+ *
+ * And at the team level a fourth, which belongs to nobody:
+ *
+ *   unattributed              a PO whose work names no originating person.
+ *                             Real money, correctly refusing to name an
+ *                             owner for it.
  */
 async function collectionsByPerson({ from, to }, userIds) {
   const params = [from, to, userIds ?? null];
-  const owner = `COALESCE(oq.owner_user_id, pr.owner_user_id)`;
+  // Who did the work, surviving a deleted account — the same expression the
+  // cohort figures use. Never the current owner: that is the assumption the
+  // originator rule exists to refuse.
+  const owner = `COALESCE(oq.originating_user_id, oq.originating_user_snapshot_id)`;
 
   const { rows } = await query(
     `WITH ${RATES},
@@ -327,6 +374,20 @@ async function collectionsByPerson({ from, to }, userIds) {
          LEFT JOIN quotations oq ON oq.quotation_no = po.quotation_no
         WHERE ${owner} IS NOT NULL
           ${ownerFilter(owner)}
+     ),
+     -- The same set again with the filter inverted: money whose work names
+     -- nobody. Totalled for the team view and never credited to a person.
+     unattributed AS (
+       SELECT COALESCE(SUM((p.amount + p.tds_amount) * r.rate), 0) AS collected_inr
+         FROM payment_stages ps
+         JOIN purchase_orders po ON po.po_number = ps.po_number
+         JOIN projects pr        ON pr.project_id = po.project_id
+         LEFT JOIN quotations oq ON oq.quotation_no = po.quotation_no
+         JOIN payments p         ON p.stage_id = ps.id
+         ${rateOn('r', "COALESCE(po.currency, 'INR')", 'p.received_on')}
+        WHERE ${owner} IS NULL
+          AND p.origin = 'receipt'
+          AND p.received_on >= $1::date AND p.received_on < $2::date
      ),
      invoiced AS (
        SELECT s.person,
@@ -374,7 +435,11 @@ async function collectionsByPerson({ from, to }, userIds) {
             COALESCE(l.collected_inr, 0)               AS collected_inr,
             COALESCE(l.collected_estimated_inr, 0)     AS collected_estimated_inr,
             COALESCE(l.adjustments_inr, 0)             AS adjustments_inr,
-            COALESCE(l.undated_ledger_inr, 0) + COALESCE(o.off_ledger_inr, 0) AS collected_undated_inr
+            COALESCE(l.undated_ledger_inr, 0) + COALESCE(o.off_ledger_inr, 0) AS collected_undated_inr,
+            -- The same figure on every row; the team report reads it once.
+            -- Carried here rather than as a second round trip because it is
+            -- computed from the same CTEs.
+            (SELECT collected_inr FROM unattributed) AS unattributed_collected_inr
        FROM users u
        LEFT JOIN invoiced i   ON i.person = u.id
        LEFT JOIN ledger l     ON l.person = u.id
@@ -491,15 +556,44 @@ function attainment(targetRows, figures, { from, to }) {
   // dates rather than as whatever a locale makes of a JS Date.
   const inRange = targetRows.filter((t) => t.period_start >= from && t.period_end <= to);
 
+  /**
+   * One granularity per metric, finest first.
+   *
+   * Nothing stops an admin setting both twelve monthly intake targets and an
+   * annual one: 066's unique index keys on the period, and a month and a
+   * year are different periods. Summing everything inside the range would
+   * then count the same target twice and silently halve the attainment.
+   *
+   * The finest granularity present wins, because it is the one somebody
+   * took the trouble to state and the one §6's monthly chart needs. The
+   * coarser rows are reported as ignored rather than dropped in silence, so
+   * an admin can see that their annual figure is not being used.
+   */
+  const RANK = { month: 0, quarter: 1, year: 2 };
+  const finest = new Map();
+  for (const t of inRange) {
+    const rank = RANK[t.period_type] ?? 3;
+    const seen = finest.get(t.metric);
+    if (seen === undefined || rank < seen) finest.set(t.metric, rank);
+  }
+
+  const ignored = [];
   const byMetric = new Map();
   for (const t of inRange) {
-    const prev = byMetric.get(t.metric) ?? { metric: t.metric, target_value: 0, unit: t.unit, currency: t.currency, periods: 0 };
+    if ((RANK[t.period_type] ?? 3) !== finest.get(t.metric)) {
+      ignored.push({ metric: t.metric, period_type: t.period_type, target_value: Number(t.target_value) });
+      continue;
+    }
+    const prev = byMetric.get(t.metric) ?? {
+      metric: t.metric, target_value: 0, unit: t.unit, currency: t.currency,
+      periods: 0, period_type: t.period_type,
+    };
     prev.target_value += Number(t.target_value);
     prev.periods += 1;
     byMetric.set(t.metric, prev);
   }
 
-  return [...byMetric.values()].map((t) => {
+  const rows = [...byMetric.values()].map((t) => {
     const figureKey = METRIC_FIGURE[t.metric];
     const actual = figureKey ? figures[figureKey] : null;
     if (actual === null || actual === undefined) {
@@ -522,6 +616,11 @@ function attainment(targetRows, figures, { from, to }) {
       note: null,
     };
   });
+
+  // Attached to the first row rather than returned separately, so the
+  // caller that renders targets sees it without a second channel.
+  if (ignored.length && rows.length) rows[0].ignored_coarser_targets = ignored;
+  return rows;
 }
 
 /** One salesperson's KPIs, optionally against the previous period. */
@@ -608,7 +707,13 @@ async function teamReport({ period: periodInput, userIds = null, compare = true,
     previous_period: previous,
     stale_after_days: staleDays,
     people: assembled,
-    totals: totalsOf(assembled),
+    totals: {
+      ...totalsOf(assembled),
+      // Money whose work names no originating salesperson. Real, and
+      // deliberately credited to nobody rather than to whoever happens to
+      // own the record now (#18 §5, the originator rule).
+      unattributed_collected_inr: round2(collections[0]?.unattributed_collected_inr ?? 0),
+    },
     months: monthsIn(period).map((m) => m.from.slice(0, 7)),
   };
 }

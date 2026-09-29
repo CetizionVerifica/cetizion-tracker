@@ -471,6 +471,125 @@ describe('the sales KPI engine', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     });
 
 
+
+  // ------------------------------------------------- business-day boundaries
+
+  /**
+   * The edges of a period are midnight *where the business is* (#18 §5).
+   *
+   * won_at, lost_at and decided_at are timestamptz; a period is a pair of
+   * dates. Compared directly, Postgres reads the date in the session zone —
+   * UTC in the container — so the first five and a half hours of every IST
+   * day fall into the day before, and at a period edge into the period
+   * before. A financial-year report that does that cannot reconcile with
+   * the invoice series it exists to match.
+   */
+  const IST_FY_2627 = { from: '2026-04-01', to: '2027-04-01' };
+
+  test('a deal won just after IST midnight on 1 April is in the new financial year', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    // 02:00 IST on 1 April is 2026-03-31 20:30 UTC. Read in UTC it lands in
+    // the old year; read in IST it is the first hours of the new one.
+    await quotation(db, {
+      person: asha, client: 'Boundary Ltd', date: '2026-03-20', value: 700000,
+      status: WON, wonAt: '2026-04-01T02:00:00+05:30',
+    });
+
+    const { getTeamSalesKpis } = kpi;
+    const next = figuresFor(await getTeamSalesKpis({ period: IST_FY_2627, compare: false }), asha);
+    const prev = figuresFor(await getTeamSalesKpis({
+      period: { from: '2025-04-01', to: '2026-04-01' }, compare: false,
+    }), asha);
+
+    assert.equal(next.orders_won, 4, 'the three FY26-27 fixtures plus this one');
+    assert.ok(next.order_intake_inr >= 700000, 'and its value is in the new year');
+    assert.equal(prev.orders_won, 1, 'the previous year keeps only the deal that belongs to it');
+  });
+
+  test('a deal won just before IST midnight on 1 April stays in the old year', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    // 23:00 IST on 31 March is 2026-03-31 17:30 UTC — still the old year
+    // either way, and the control for the test above.
+    await quotation(db, {
+      person: asha, client: 'Boundary Ltd', date: '2026-03-20', value: 700000,
+      status: WON, wonAt: '2026-03-31T23:00:00+05:30',
+    });
+
+    const { getTeamSalesKpis } = kpi;
+    const next = figuresFor(await getTeamSalesKpis({ period: IST_FY_2627, compare: false }), asha);
+    assert.equal(next.orders_won, 3, 'the fixtures only; the boundary deal is last year\'s');
+  });
+
+  test('UTC midnight is the same business day, not the one before', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    // 2026-06-01 00:00 UTC is 05:30 IST on 1 June — inside June, not May.
+    await quotation(db, {
+      person: asha, client: 'Utc Midnight Ltd', date: '2026-05-02', value: 150000,
+      status: WON, wonAt: '2026-06-01T00:00:00+00:00',
+    });
+
+    const { getTeamSalesKpis } = kpi;
+    const june = figuresFor(await getTeamSalesKpis({
+      period: { from: '2026-06-01', to: '2026-07-01' }, compare: false,
+    }), asha);
+    const may = figuresFor(await getTeamSalesKpis({
+      period: { from: '2026-05-01', to: '2026-06-01' }, compare: false,
+    }), asha);
+
+    assert.equal(june.orders_won, 1, 'counted in June');
+    assert.equal(may.orders_won, 1, "May keeps only its own fixture, not this one");
+  });
+
+  test('an enquiry decided in the first hours of an IST day belongs to that day', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    await enquiry(db, {
+      person: asha, date: '2026-06-20', status: 'Unqualified',
+      decidedAt: '2026-07-01T01:00:00+05:30',
+    });
+
+    const { getTeamSalesKpis } = kpi;
+    const july = figuresFor(await getTeamSalesKpis({
+      period: { from: '2026-07-01', to: '2026-08-01' }, compare: false,
+    }), asha);
+    assert.equal(july.enquiries_decided ?? 0, 0, 'enquiries_decided is not a reported figure');
+    assert.equal(july.enquiry_to_quotation_percent, 0,
+      'one enquiry decided in July, none converted — so the rate is 0, not null');
+  });
+
+  test('the sales cycle is whole business days, not seconds across an offset', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    const { getTeamSalesKpis } = kpi;
+    // Quoted the 20th, won the 20th of the next month: thirty days.
+    assert.equal(
+      figuresFor(await getTeamSalesKpis({ period: IST_FY_2627, compare: false }), asha).sales_cycle_days,
+      30,
+      'measuring in epoch seconds across the IST offset gives 29.77'
+    );
+  });
+
+
+  test('pipeline by status names each status once, not once per quotation', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    // Three more open quotations in the same status as the fixture's one.
+    for (const d of ['2026-08-02', '2026-08-03', '2026-08-04']) {
+      await quotation(db, { person: asha, client: 'Bulk Ltd', date: d, value: 10000, status: 'Submitted' });
+    }
+
+    const { getTeamSalesKpis } = kpi;
+    const f = figuresFor(await getTeamSalesKpis({ period: PERIOD, compare: false }), asha);
+
+    assert.equal(f.open_quotations, 4);
+    assert.deepEqual(f.pipeline_by_status, { Submitted: 4 },
+      'the count rides on every row of its group; without DISTINCT this is four identical keys');
+    assert.equal(Object.keys(f.pipeline_by_status).length, 1);
+  });
+
   // ------------------------------------------------------- collections
 
   /**
@@ -630,6 +749,57 @@ describe('the sales KPI engine', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     assert.equal(figuresFor(report, asha).collected_inr, 700000);
     assert.equal(figuresFor(report, ravi).collected_inr, 0);
     assert.equal(report.totals.collected_inr, 700000, 'and the team total is the sum');
+  });
+
+
+  test('collections credit the originator, and do not move when a deal is reassigned', async () => {
+    await reset();
+    const { asha, ravi } = await fixture(db);
+    const { rows: [q] } = await db.query("SELECT quotation_no FROM quotations WHERE client_name = 'Beta Ltd'");
+    const stage = await orderFor(asha, { quotationNo: q.quotation_no });
+    await db.query(
+      `INSERT INTO payments (stage_id, amount, received_on, mode, origin)
+       VALUES ($1, 700000, '2026-07-10', 'bank_transfer', 'receipt')`, [stage]);
+
+    const { getTeamSalesKpis } = kpi;
+    const before = await getTeamSalesKpis({ period: PERIOD, compare: false });
+    assert.equal(figuresFor(before, asha).collected_inr, 700000);
+
+    // An admin hands Asha's whole book to Ravi.
+    await db.query('UPDATE quotations SET owner_user_id = $1 WHERE owner_user_id = $2', [ravi, asha]);
+    await db.query('UPDATE projects   SET owner_user_id = $1 WHERE owner_user_id = $2', [ravi, asha]);
+
+    const after = await getTeamSalesKpis({ period: PERIOD, compare: false });
+    assert.equal(figuresFor(after, asha).collected_inr, 700000,
+      'money follows whoever sold it, like order intake — reassignment is not a transfer of history');
+    assert.equal(figuresFor(after, ravi).collected_inr, 0);
+  });
+
+  test('money whose work names nobody goes to an unattributed bucket, not to the owner', async () => {
+    await reset();
+    const { asha } = await fixture(db);
+    // A purchase order under a project with no originating quotation: there
+    // is no originator to credit, and the current owner is not a substitute.
+    await db.query(
+      `INSERT INTO projects (project_id, client_name, owner_user_id) VALUES ('PRJ-ORPHAN', 'Orphan Ltd', $1)`,
+      [asha]);
+    await db.query(
+      `INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, currency)
+       VALUES ('PO-ORPHAN', 'PRJ-ORPHAN', '2026-05-01', 900000, 'INR')`);
+    const { rows: [s] } = await db.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent)
+       VALUES ('PO-ORPHAN', 1, 'Advance', 'On PO Registration', 1) RETURNING id`);
+    await db.query(
+      `INSERT INTO payments (stage_id, amount, received_on, mode, origin)
+       VALUES ($1, 450000, '2026-07-10', 'bank_transfer', 'receipt')`, [s.id]);
+
+    const { getTeamSalesKpis } = kpi;
+    const report = await getTeamSalesKpis({ period: PERIOD, compare: false });
+
+    assert.equal(figuresFor(report, asha).collected_inr, 0,
+      'she owns the project, but owning it now is not the same as having sold it');
+    assert.equal(report.totals.unattributed_collected_inr, 450000,
+      'the money is real and is reported, credited to nobody');
   });
 
   // ------------------------------------------------------------ the shape
