@@ -106,6 +106,35 @@ export function actorFrom(user) {
   throw new Error('Cannot record activity: the request has no recognised signed-in user.');
 }
 
+/**
+ * The actor behind an MCP call.
+ *
+ * A bearer token rather than a session cookie, but the same two shapes and
+ * the same rule: the identity comes from the credential, never from the
+ * payload. An import can carry its own `created_by` — that is what the
+ * column is for — and it does not touch who the audit trail says acted.
+ *
+ *   sales token   `users.id`, since 063 bound every live one to an account.
+ *   admin token   no account exists behind it, so `shared_admin` — the same
+ *                 classification the legacy shared login gets, and for the
+ *                 same reason: an administrator with no users row. The
+ *                 token's own name is carried as the label, which is what
+ *                 makes "Reporting" distinguishable from "Claude desktop"
+ *                 in the log.
+ *
+ * Returns null rather than throwing when there is no token at all. Unlike a
+ * request, an MCP writer can legitimately be called without one — the sheet
+ * importer's own tests drive it directly — and the writers treat a missing
+ * actor as "do not record" rather than as a failure.
+ */
+export function actorFromToken(token) {
+  if (!token) return null;
+  if (Number.isSafeInteger(token.user_id) && token.user_id > 0) {
+    return { type: 'user', userId: token.user_id, name: token.person ?? null };
+  }
+  return { type: 'shared_admin', userId: null, name: token.name ?? token.person ?? null };
+}
+
 // Anything whose name suggests it would let somebody act as the person
 // audited. A backstop, not a licence: call sites are expected not to pass
 // these at all, and this exists so that one day somebody spreading a whole

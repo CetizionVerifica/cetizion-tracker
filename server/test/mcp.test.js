@@ -635,6 +635,101 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       assert.ok(JSON.stringify(res.rows[0].why).includes('currency'));
     });
 
+
+    /**
+     * Records written through MCP were invisible to the activity log until
+     * now: importRecords calls the same insertRecord/updateRecordRow every
+     * form post goes through, but passed no actor, so logRecordSaved
+     * returned early and the trail simply had nothing for them (#18 §3).
+     *
+     * The actor comes from the bearer token. An admin token has no users
+     * row behind it — nothing to point actor_user_id at — so it is recorded
+     * as `shared_admin`, the same classification the legacy shared login
+     * gets and for the same reason. A sales token carries its users.id
+     * since 063; import_records is admin-only today, so that branch is
+     * exercised by the unit test on actorFromToken rather than here.
+     */
+    const activityFor = async (entityId) => (await pool.query(
+      `SELECT action, actor_type, actor_user_id, metadata FROM activity_log
+        WHERE entity_type = 'enquiry' AND entity_id = $1 ORDER BY id`, [entityId])).rows;
+
+    test('a record created through MCP reaches the activity log', async () => {
+      const t = await token({ name: 'Audited create', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-create`;
+      const done = JSON.parse((await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{ enquiry_no: ref, client_name: 'Audited Client Ltd', enquiry_date: '2026-05-01' }],
+        dry_run: false,
+      })).text);
+      assert.equal(done.created, 1, JSON.stringify(done));
+
+      const rows = await activityFor(ref);
+      assert.equal(rows.length, 1, 'one create, one row');
+      assert.equal(rows[0].action, 'enquiry.created');
+      assert.equal(rows[0].actor_type, 'shared_admin', 'an admin token has no account to point at');
+      assert.equal(rows[0].actor_user_id, null);
+      assert.equal(rows[0].metadata.actor_name, 'Audited create',
+        "the token's own name, so one integration is distinguishable from another");
+    });
+
+    test('a record updated through MCP reaches it too, with what changed', async () => {
+      const t = await token({ name: 'Audited update', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-update`;
+      const send = (rows) => call(t.token, 'import_records', { entity: 'enquiries', rows, dry_run: false });
+
+      await send([{ enquiry_no: ref, client_name: 'Audited Client Ltd', estimated_value: 100000, currency: 'INR' }]);
+      await send([{ enquiry_no: ref, client_name: 'Audited Client Ltd', estimated_value: 250000, currency: 'INR' }]);
+
+      const rows = await activityFor(ref);
+      assert.deepEqual(rows.map((r) => r.action), ['enquiry.created', 'enquiry.updated'],
+        'a re-import that changes a value is an edit, not a second create');
+      const change = rows[1].metadata.changes.estimated_value;
+      assert.equal(Number(change.from), 100000);
+      assert.equal(Number(change.to), 250000, 'and it says what it changed from');
+    });
+
+    test('a dry run writes no activity, as it writes nothing', async () => {
+      const t = await token({ name: 'Audited dry', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-dry`;
+      await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{ enquiry_no: ref, client_name: 'Audited Client Ltd' }],
+      });
+      assert.deepEqual(await activityFor(ref), []);
+    });
+
+    test('the sheet cannot sign somebody else\'s name to the audit trail', async () => {
+      const t = await token({ name: 'Audited spoof', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-spoof`;
+      await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{
+          enquiry_no: ref,
+          client_name: 'Audited Client Ltd',
+          // Every field a caller might hope decides who gets the credit.
+          sales_person: 'Somebody Else',
+          sales_person_email: 'somebody@elsewhere.test',
+        }],
+        dry_run: false,
+      });
+
+      const [row] = await activityFor(ref);
+      assert.equal(row.actor_type, 'shared_admin');
+      assert.equal(row.actor_user_id, null, 'no row in the payload can put an id here');
+      assert.equal(row.metadata.actor_name, 'Audited spoof',
+        'the actor is the credential that called, never the content it carried');
+
+      // The free-text salesperson is a different thing and a sheet may
+      // legitimately carry its own — #18 keeps that column precisely so
+      // historical attribution survives. What it must not do is decide who
+      // the audit trail says acted, and since 059 it does not decide
+      // ownership either.
+      const { rows: [saved] } = await pool.query(
+        'SELECT sales_person, owner_user_id FROM enquiries WHERE enquiry_no = $1', [ref]);
+      assert.equal(saved.sales_person, 'Somebody Else', 'the record still records what the sheet said');
+      assert.equal(saved.owner_user_id, null, 'and naming somebody does not hand them the record');
+    });
+
     test('a sales token is not offered it, nor allowed it', async () => {
       const sales = (await token({ name: 'Sales records', role: 'sales', person: 'asha', can_write: true })).token;
       const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${sales}`).set('Accept', 'application/json, text/event-stream')
