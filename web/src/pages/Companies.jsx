@@ -7,6 +7,7 @@ import { Alert, Badge, Modal, useToast } from '../components/ui.jsx';
 import { Button } from '../components/ui/button';
 import { Checkbox } from '../components/ui/checkbox.tsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
 
@@ -20,6 +21,10 @@ const DUPES_HIDDEN = 'cetizion.companies.duplicates';
  * folded together.
  */
 export default function Companies() {
+  // Spotting duplicates is everybody's; folding two clients into one is not
+  // (#85). The route is requireAdmin, so this only spares a sales user a
+  // button that answers 403.
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const lookups = useLookups();
   const toast = useToast();
@@ -198,10 +203,16 @@ export default function Companies() {
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
-                <Button variant="destructive" disabled={busy || !losing.length} onClick={merge}>
-                  <Merge aria-hidden="true" />
-                  {busy ? 'Merging\u2026' : losing.length ? `Merge into ${keep?.name}` : 'Merge'}
-                </Button>
+                {/* Spotting duplicates is everybody's; folding two clients into one
+                    is not (#85). POST /companies/:id/merge is requireAdmin, so this
+                    only spares a sales user a button that answers 403. The list and
+                    this review stay open — seeing the duplicates is ordinary work. */}
+                {isAdmin && (
+                  <Button variant="destructive" disabled={busy || !losing.length} onClick={merge}>
+                    <Merge aria-hidden="true" />
+                    {busy ? 'Merging\u2026' : losing.length ? `Merge into ${keep?.name}` : 'Merge'}
+                  </Button>
+                )}
               </div>
             </div>
           )}

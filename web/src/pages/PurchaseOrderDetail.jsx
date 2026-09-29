@@ -10,6 +10,8 @@ import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '..
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
+import { mayDeleteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { money, date, percent, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
@@ -197,6 +199,11 @@ export default function PurchaseOrderDetail() {
   const { poNumber } = useParams();
   const toast = useToast();
   const lookups = useLookups();
+  // A service line is what the PO value is checked against and what the
+  // invoicing figures are computed from, so po-services is adminOnlyDeletes
+  // on the server (#85). Entering and correcting one stays open.
+  const { isAdmin } = useAuth();
+  const mayDeleteService = mayDeleteResource('po-services', isAdmin);
   const [dialog, setDialog] = useState(null);
 
   const { data, loading, error, refetch } = useFetch(
@@ -459,7 +466,13 @@ export default function PurchaseOrderDetail() {
                 {row.remarks && <span className="min-w-0 max-w-[30%] truncate text-[12px] text-muted-foreground">{row.remarks}</span>}
                 <span className="mono">{money(row.service_value, po.currency)}</span>
                 <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'editService', row })}>Edit</Button>
-                <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`Remove ${row.service}`} onClick={() => deleteService(row)}>✕</Button>
+                {/* A service line is what the PO value is checked against and what
+                    the invoicing figures are computed from, so po-services is
+                    adminOnlyDeletes on the server (#85). Entering and correcting
+                    one stays open to everyone. */}
+                {mayDeleteService && (
+                  <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`Remove ${row.service}`} onClick={() => deleteService(row)}>✕</Button>
+                )}
               </div>
             ))
           )}

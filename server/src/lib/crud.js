@@ -86,6 +86,38 @@ function buildOrder(def, sortParam) {
   return `ORDER BY ${ident(rawCol)} ${dir} NULLS LAST`;
 }
 
+/**
+ * Refuse a generic write that touches a field the workflow owns (#85).
+ *
+ * Some columns are not the form's to set. An expense claim's approval and
+ * its reimbursement, a vendor invoice's payment: each has a route of its
+ * own that checks who is asking, checks the record is in a state where the
+ * change makes sense, and writes an audit row in the same transaction.
+ * Reaching the same column through POST or PATCH on the resource would do
+ * none of that, and the column would be none the wiser.
+ *
+ * Refused rather than quietly dropped. A silent drop returns 200 with the
+ * field unchanged, which reads to the caller exactly like success — and to
+ * anyone probing, exactly like a field that does not exist. It also hides
+ * the honest case: a form still sending a field it should no longer send is
+ * a bug worth seeing. The message names the route to use instead.
+ *
+ * The rule does not ask who is asking. An administrator writing these
+ * columns through the ordinary form skips the same checks and leaves the
+ * same blank in the audit trail; being allowed to make the change is not
+ * the same as being allowed to make it invisibly.
+ */
+function assertWorkflowFields(def, body) {
+  if (!def.protectedFields?.length || !body || typeof body !== 'object') return;
+  const attempted = def.protectedFields.filter((col) => Object.hasOwn(body, col));
+  if (!attempted.length) return;
+  throw new ApiError(
+    403,
+    `${def.label}: ${attempted.join(', ')} ${attempted.length > 1 ? 'are' : 'is'} set by its own action, not by this form.`,
+    { fields: Object.fromEntries(attempted.map((col) => [col, 'Use the action for this, not the form'])) }
+  );
+}
+
 /** Reject unknown keys early so typos surface instead of silently vanishing. */
 function pickWritable(def, body) {
   const out = {};
@@ -322,6 +354,7 @@ export function crudRouter(name, def) {
   });
 
   router.post('/', ...mayWrite, async (req, res) => {
+    assertWorkflowFields(def, req.body);
     const { values, input } = validate(def, req.body, { partial: false });
     // Who wrote it, taken from the session rather than the request body: a
     // note or a file with nobody's name on it is the timeline saying an
@@ -350,6 +383,7 @@ export function crudRouter(name, def) {
   });
 
   router.patch('/:id', ...mayWrite, async (req, res) => {
+    assertWorkflowFields(def, req.body);
     const { values, input } = validate(def, req.body, { partial: true });
     if (def.stampActor && !isAdmin(req)) delete values[def.stampActor];
     await assertVisible(def, req);

@@ -502,6 +502,13 @@ export const resources = {
   },
 
   'vendor-invoices': {
+    // What has actually been paid is recorded by POST /vendor-invoices/:id/pay,
+    // which validates the figure and writes an audit row naming the account
+    // that recorded it (#85). Both roles may pay a vendor invoice — that is
+    // the agreed rule — so the gate here is not about who, it is about which
+    // door: a payment entered through the ordinary edit form would land with
+    // none of that. Everything else on the invoice stays editable by anyone.
+    protectedFields: ['amount_paid', 'payment_date'],
     table: 'travel_vendor_invoices',
     view: 'v_travel_vendor_invoices',
     label: 'Vendor invoice',
@@ -527,6 +534,24 @@ export const resources = {
   },
 
   'expense-claims': {
+    // Submitting a claim is ordinary work and stays open to everyone. Deciding
+    // one and reimbursing it are not: they are what turn a claim into money,
+    // and they belong to POST /expense-claims/:id/decide and /reimburse, which
+    // are admin-only, validated and audited (#85).
+    //
+    // Listing the four fields here is what makes that real. Without it the
+    // generic form is a second, unguarded route to the same columns: a sales
+    // user could create a claim already marked Approved, name anybody as its
+    // approver, and write in what they had been paid. The gate is on the
+    // fields rather than on the resource because the rest of a claim — the
+    // amount, the category, the month, the remarks — is the claimant's own to
+    // enter and correct.
+    //
+    // Admins are held to it too. An administrator editing these figures
+    // through the ordinary form would skip the approval check, the cumulative
+    // arithmetic and the audit row just as surely; POST /expense-claims/:id/correct
+    // is the deliberate, recorded way to put a wrong figure right.
+    protectedFields: ['approval_status', 'approved_by', 'amount_reimbursed', 'reimbursement_date'],
     table: 'employee_expense_claims',
     view: 'v_employee_expense_claims',
     label: 'Expense claim',

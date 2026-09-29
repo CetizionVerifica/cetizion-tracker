@@ -5,6 +5,8 @@ import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './u
 import { RecordForm } from './RecordForm.jsx';
 import { SavedViews } from './SavedViews.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
+import { mayDeleteResource } from '../lib/permissions.js';
 import { useDebounced, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
 
@@ -34,7 +36,7 @@ export function ListPage({
   refreshToken,
   onSaved,
   rowActions = true,
-  canDelete = true,
+  canDelete,
   banner,
 }) {
   const toast = useToast();
@@ -55,6 +57,14 @@ export function ListPage({
     if (value) fromUrl[name] = value;
   }
   const urlSearch = urlParams.get('q') || '';
+
+  // Companies, contacts, purchase orders, their service lines and their
+  // payment stages are an admin's to delete (#85) — shared master data and
+  // the rows every billing figure is computed from. A page may still say
+  // canDelete={false} outright; left unsaid, the resource's own rule decides,
+  // so a list cannot forget the way every list did before.
+  const { isAdmin } = useAuth();
+  const mayDelete = canDelete ?? mayDeleteResource(resource, isAdmin);
 
   const [search, setSearch] = useState(initialSearch || urlSearch);
   // Arriving from a dashboard tile pre-selects the matching filter, so the
@@ -135,7 +145,7 @@ export function ListPage({
               <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(row)}>
                 Edit
               </button>
-              {canDelete && (
+              {mayDelete && (
                 <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDeleting(row)}>
                   ✕
                 </button>

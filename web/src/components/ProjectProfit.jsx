@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Badge, Card, ConfirmDialog, DataTable, KeyValues, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
+import { mayDeleteResource, mayWriteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
 
@@ -25,6 +27,13 @@ export function marginTone(pct, alert = 20) {
 export function ProjectProfit({ projectId, onChanged }) {
   const toast = useToast();
   const lookups = useLookups();
+  // A manual cost moves the margin this card is about, so project-costs is
+  // adminOnlyWrites on the server (#85) — and adminOnlyWrites implies the
+  // delete. The figures and the lines behind them stay readable to everyone;
+  // only the three controls that change them are the admin's.
+  const { isAdmin } = useAuth();
+  const mayWriteCost = mayWriteResource('project-costs', isAdmin);
+  const mayDeleteCost = mayDeleteResource('project-costs', isAdmin);
   const { data, refetch } = useFetch(() => api.raw(`/profitability/projects/${encodeURIComponent(projectId)}`), [projectId]);
   const [form, setForm] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -62,7 +71,7 @@ export function ProjectProfit({ projectId, onChanged }) {
           { label: 'Gaps', value: p.cost_gaps + p.revenue_gaps > 0 ? <Badge tone="warning">{p.cost_gaps + p.revenue_gaps} missing amount or rate</Badge> : 'none' },
         ]} />
       </Card>
-      <Card flush title="Costs" hint="Travel vendor bills and expense claims on this project's trips, and costs added here." actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setForm('new')}>+ Cost</button>}>
+      <Card flush title="Costs" hint="Travel vendor bills and expense claims on this project's trips, and costs added here." actions={mayWriteCost ? <button type="button" className="btn btn--sm btn--primary" onClick={() => setForm('new')}>+ Cost</button> : null}>
         <DataTable rows={p.lines} rowClassName={(r) => (r.gap ? 'tr--dup' : '')} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No costs recorded yet.</div>} columns={[
           { key: 'kind', header: 'Source', render: (r) => <Badge>{KIND[r.kind]}</Badge> },
           { key: 'what', header: 'What', className: 'wrap', render: (r) => (r.kind === 'manual' ? <>{r.description}<div className="small muted">{COST_CATEGORIES.find((c) => c.value === r.category)?.label}</div></> : <>{r.ref}<div className="small muted">{r.kind === 'expense_claim' ? `${r.expense_category || 'claim'} · ${r.approval_status}` : r.destination} · trip {r.travel_id}</div></>) },
@@ -71,7 +80,7 @@ export function ProjectProfit({ projectId, onChanged }) {
           { key: 'amount', header: 'Amount', align: 'right', render: (r) => (r.gap ? <Badge tone="warning">{r.gap}</Badge> : money(r.amount, r.currency || 'INR')) },
           { key: 'state', header: 'Paid', align: 'right', render: (r) => (r.kind === 'manual' ? (r.status === 'paid' ? 'paid' : 'committed') : money(r.amount_paid)) },
           { key: 'file', header: '', render: (r) => (r.document_id ? <a className="btn btn--sm btn--ghost" href={api.documentUrl(r.document_id)} target="_blank" rel="noopener noreferrer">File</a> : null) },
-          { key: 'act', header: '', align: 'right', render: (r) => r.kind === 'manual' && <div className="table__actions"><button type="button" className="btn btn--sm btn--ghost" onClick={() => setForm(r)}>Edit</button><button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(r)}>✕</button></div> },
+          { key: 'act', header: '', align: 'right', render: (r) => r.kind === 'manual' && <div className="table__actions">{mayWriteCost && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setForm(r)}>Edit</button>}{mayDeleteCost && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(r)}>✕</button>}</div> },
         ]} />
       </Card>
       {form && <RecordForm title={form === 'new' ? 'Add a cost' : 'Edit cost'} resource="project-costs" fields={fields} record={form === 'new' ? null : { ...form, document_name: form.file_name }} onClose={() => setForm(null)} onSaved={() => { setForm(null); refetch(); onChanged?.(); }} />}
