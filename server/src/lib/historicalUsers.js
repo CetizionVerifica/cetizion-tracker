@@ -172,10 +172,35 @@ export async function createHistoricalUsers(db = pool, { dryRun = false } = {}) 
     const creatable = discovered.filter((d) => d.disposition === DISPOSITIONS.CREATABLE);
     const skipped = discovered.filter((d) => d.disposition !== DISPOSITIONS.CREATABLE);
 
+    /**
+     * Two different names can legitimately carry one address — "Ramesh" and
+     * "Ramesh Kumar", both ramesh@cetizion.in. Discovery groups by name and
+     * checks each address against the users table *as it stood before the
+     * run*, so both looked free; the first insert took it and the second hit
+     * users_email_key, aborting the whole creation step with a constraint
+     * violation and no explanation.
+     *
+     * The address goes to the first name that claims it — there is no better
+     * rule available, and picking by record count would be a guess dressed
+     * up as one. The rest are created by name alone and say why, so an admin
+     * can reconcile them in Settings → Users rather than being handed a
+     * Postgres error and a job that did nothing.
+     */
+    const claimedEmails = new Set();
     const created = [];
     for (const person of creatable) {
+      const collides = person.email !== null && claimedEmails.has(person.email);
+      const entry = collides
+        ? {
+          ...person,
+          email: null,
+          emailWithheldReason: 'another name in this run claimed the same address first',
+        }
+        : person;
+      if (entry.email !== null) claimedEmails.add(entry.email);
+
       if (dryRun) {
-        created.push({ ...person, id: null });
+        created.push({ ...entry, id: null });
         continue;
       }
       // Written here rather than through createUser() so the insert stays
@@ -185,9 +210,9 @@ export async function createHistoricalUsers(db = pool, { dryRun = false } = {}) 
         `INSERT INTO users (name, email, password_hash, role, active)
          VALUES ($1, $2, NULL, 'sales', false)
          RETURNING id, name, email, role, active`,
-        [person.displayName, person.email]
+        [entry.displayName, entry.email]
       );
-      created.push({ ...person, id: rows[0].id });
+      created.push({ ...entry, id: rows[0].id });
     }
 
     if (dryRun) {

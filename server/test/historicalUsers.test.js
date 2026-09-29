@@ -230,6 +230,57 @@ describe('creating historical salespeople', { skip: !ADMIN_URL && 'set TEST_DATA
       assert.equal(created[0].displayName, 'Ramesh', 'the person is still created, by name');
     }));
 
+
+  test('two names sharing one address create both people instead of failing', () =>
+    withDatabase(async (db) => {
+      const { createHistoricalUsers } = await lib();
+      // A real shape: the same person typed two ways, one address.
+      await record(db, 'quotations', { salesPerson: 'Ramesh', email: 'ramesh@example.com' });
+      await record(db, 'enquiries', { salesPerson: 'Ramesh Kumar', email: 'ramesh@example.com' });
+
+      const { created } = await createHistoricalUsers(db);
+      assert.equal(created.length, 2, 'a shared address must not abort the whole run');
+
+      const withEmail = created.filter((p) => p.email !== null);
+      assert.equal(withEmail.length, 1, 'exactly one of them carries it — users_email_key allows no more');
+      const without = created.find((p) => p.email === null);
+      assert.match(without.emailWithheldReason, /another name in this run/,
+        'and the other says why, so an admin can reconcile it');
+
+      const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM users');
+      assert.equal(rows[0].n, 2);
+    }));
+
+  test('a shared address is still only claimed once across reruns', () =>
+    withDatabase(async (db) => {
+      const { createHistoricalUsers } = await lib();
+      await record(db, 'quotations', { salesPerson: 'Ramesh', email: 'ramesh@example.com' });
+      await record(db, 'enquiries', { salesPerson: 'Ramesh Kumar', email: 'ramesh@example.com' });
+
+      await createHistoricalUsers(db);
+      const second = await createHistoricalUsers(db);
+      assert.equal(second.created.length, 0, 'both names now resolve, so there is nothing to invent');
+
+      const { rows } = await db.query(
+        "SELECT COUNT(*)::int AS n FROM users WHERE email = 'ramesh@example.com'");
+      assert.equal(rows[0].n, 1);
+    }));
+
+  test('a dry run reports the collision without writing either account', () =>
+    withDatabase(async (db) => {
+      const { createHistoricalUsers } = await lib();
+      await record(db, 'quotations', { salesPerson: 'Ramesh', email: 'ramesh@example.com' });
+      await record(db, 'enquiries', { salesPerson: 'Ramesh Kumar', email: 'ramesh@example.com' });
+
+      const { created } = await createHistoricalUsers(db, { dryRun: true });
+      assert.equal(created.length, 2);
+      assert.equal(created.filter((p) => p.email !== null).length, 1,
+        'the rehearsal shows exactly what the real run will do');
+
+      const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM users');
+      assert.equal(rows[0].n, 0);
+    }));
+
   // --------------------------------------------------------------- dry run
 
   test('a dry run reports what it would do and writes nothing', () =>
