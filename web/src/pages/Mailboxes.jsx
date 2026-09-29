@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
 import { Alert, ConfirmDialog, Field, Modal, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
@@ -75,12 +75,22 @@ export default function Mailboxes() {
   const cfg = data?.configured;
   const blocked = block.data?.data ?? [];
 
-  async function run(id, fn, ok) {
-    setBusy(id);
+  /**
+   * `what` is running, not only where.
+   *
+   * busy used to be an id, so the only sign anything was happening was a
+   * button greying out — and a sync or a re-read is minutes of nothing,
+   * against a mailbox that looks idle. Naming the work lets the row say
+   * which of them it is doing.
+   */
+  async function run(id, fn, ok, what = 'Working…') {
+    setBusy({ id, what });
     try { const r = await fn(); if (ok) toast(ok(r), 'success'); refetch(); }
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(null); }
   }
+  /** What this mailbox is doing, or null if it is doing nothing. */
+  const doing = (id) => (busy?.id === id ? busy.what : null);
   const patch = (id, body) => run(id, () => api.raw(`/mailboxes/${id}`, { method: 'PATCH', body }), () => 'Saved');
 
   // Fires once, then clears the parameter so a refresh does not re-announce
@@ -284,8 +294,8 @@ export default function Mailboxes() {
                         variant="secondary"
                         size="sm"
                         className={ROW_BUTTON}
-                        disabled={busy === row.id}
-                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult)}
+                        disabled={Boolean(doing(row.id))}
+                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult, 'Fetching new mail…')}
                       >
                         Sync now
                       </Button>
@@ -321,6 +331,21 @@ export default function Mailboxes() {
                     'active', so the mailbox looked healthy while quietly
                     fetching nothing, and the one sentence explaining it was
                     stored and rendered to nobody. */}
+                {/* Sync and re-read both run for minutes against a mailbox
+                    that otherwise looks idle, and a greyed-out button is not
+                    an answer to "is it doing anything". It goes under the
+                    row rather than beside the button, because the action
+                    column is a few characters wide and the sentence was
+                    truncating to nothing. aria-live so it is announced and
+                    not only drawn; the spin stops entirely under
+                    prefers-reduced-motion, as all motion here does. */}
+                {doing(row.id) && (
+                  <p role="status" aria-live="polite" className="flex items-center gap-2 px-5 pb-3.5 text-[12.5px] text-secondary-text">
+                    <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" strokeWidth={2.2} aria-hidden="true" />
+                    {doing(row.id)}
+                  </p>
+                )}
+
                 {(broken || row.last_error) && (
                   <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text @3xl:max-w-[80ch]">
                     <strong className={cn('font-semibold', broken ? 'text-foreground' : 'text-waiting')}>
@@ -409,12 +434,13 @@ export default function Mailboxes() {
             + 'Only messages already here are updated: nothing new is imported, no conversation is opened or reopened, and a mailbox that shares only metadata still stores no subject and no body. '
             + 'It reads the last 30 days and makes one request per message, so a busy mailbox will take a few minutes. Running it twice is running it once.'
           }
-          confirmLabel={busy === rereading.id ? 'Re-reading…' : 'Re-read'}
-          busy={busy === rereading.id}
+          confirmLabel="Re-read"
+          busy={Boolean(doing(rereading.id))}
           onConfirm={async () => {
             const row = rereading;
             setRereading(null);
-            await run(row.id, () => api.action(`/mailboxes/${row.id}/refresh-bodies`, { days: 30 }), rereadResult);
+            await run(row.id, () => api.action(`/mailboxes/${row.id}/refresh-bodies`, { days: 30 }), rereadResult,
+              'Re-reading stored mail…');
           }}
           onClose={() => setRereading(null)}
         />
@@ -427,12 +453,12 @@ export default function Mailboxes() {
             + 'Microsoft has no way for us to cancel the permission itself — to withdraw it, the mailbox’s owner removes Cetizion Tracker at myaccount.microsoft.com → Apps.'
           }
           confirmLabel="Disconnect"
-          busy={busy === disconnecting.id}
+          busy={Boolean(doing(disconnecting.id))}
           onClose={() => setDisconnecting(null)}
           onConfirm={async () => {
             const row = disconnecting;
             setDisconnecting(null);
-            await run(row.id, () => api.action(`/mailboxes/${row.id}/disconnect`, { remove_bodies: true }), (x) => `Disconnected — ${x.data.upstream}`);
+            await run(row.id, () => api.action(`/mailboxes/${row.id}/disconnect`, { remove_bodies: true }), (x) => `Disconnected — ${x.data.upstream}`, 'Disconnecting…');
           }}
         />
       )}
