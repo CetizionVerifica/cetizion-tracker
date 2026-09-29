@@ -197,18 +197,16 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       const open = await quotation(db, { status: 'Submitted', date: '2025-08-01' });
       const conv = await enquiry(db, { status: 'Converted', date: '2025-05-05' });
 
-      // These stand for records decided before the stage history existed,
-      // so they carry no closed_at. Inserting one already-won makes
-      // c_stage_sync stamp closed_at with now(), which is correct for a
-      // transition happening now and wrong for history being described —
-      // the next test covers the case where a real closed_at is present.
-      await db.query('UPDATE quotations SET closed_at = NULL WHERE id = ANY($1::int[])',
-        [[won, lost, open]]);
-
+      // closed_at is left exactly as the stage sync set it — now() — because
+      // that is the production shape: a record imported in its final state
+      // carries the moment of the import. An earlier version of this test
+      // nulled it to make the assertion below pass, which hid the defect
+      // rather than finding it.
       await db.query(MIGRATION);
 
       const w = await row(db, 'quotations', won);
-      assert.equal(w.won_at.toISOString().slice(0, 10), '2025-06-10', 'estimated from quotation_date');
+      assert.equal(w.won_at.toISOString().slice(0, 10), '2025-06-10',
+        'estimated from quotation_date, even though closed_at is set to today');
       assert.equal(w.won_at_estimated, true, 'a sales cycle from this is zero days, which must be labelled');
 
       const l = await row(db, 'quotations', lost);
@@ -223,17 +221,55 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       assert.equal(e.decided_at_estimated, true, 'an enquiry has no closed_at to fall back on');
     }));
 
-  test('a real closed_at is preferred to a guess, and is not called an estimate', () =>
+  test('closed_at is not trusted: it is the import\'s clock, not the sale\'s', () =>
     withDatabase(async (db) => {
       await db.query(UNDO);
       const id = await quotation(db, { status: WON, date: '2025-06-10' });
-      await db.query("UPDATE quotations SET closed_at = '2025-09-30T12:00:00Z' WHERE id = $1", [id]);
+      // What a bulk import leaves behind: every row stamped with the moment
+      // the import ran, months after the deals themselves.
+      await db.query("UPDATE quotations SET closed_at = '2026-09-18T15:21:00Z' WHERE id = $1", [id]);
 
       await db.query(MIGRATION);
 
       const w = await row(db, 'quotations', id);
-      assert.equal(w.won_at.toISOString(), '2025-09-30T12:00:00.000Z', 'a real transition beats quotation_date');
-      assert.equal(w.won_at_estimated, false, 'and is not an estimate');
+      assert.equal(w.won_at.toISOString().slice(0, 10), '2025-06-10',
+        "the deal's own date, not the afternoon somebody imported it");
+      assert.equal(w.won_at_estimated, true, 'and it is labelled an estimate either way');
+    }));
+
+  test('a whole imported book does not collapse into the import minute', () =>
+    withDatabase(async (db) => {
+      await db.query(UNDO);
+      // The shape measured on a real database: deals spanning two years,
+      // every one of them carrying the same closed_at.
+      const ids = [];
+      for (const date of ['2025-01-16', '2025-08-04', '2026-03-31', '2026-09-16']) {
+        ids.push(await quotation(db, { status: WON, date }));
+      }
+      await db.query("UPDATE quotations SET closed_at = '2026-09-18T15:21:00Z' WHERE id = ANY($1::int[])", [ids]);
+
+      await db.query(MIGRATION);
+
+      const { rows } = await db.query(
+        'SELECT won_at::date::text AS d, won_at_estimated FROM quotations WHERE id = ANY($1::int[]) ORDER BY won_at',
+        [ids]);
+      assert.deepEqual(rows.map((r) => r.d), ['2025-01-16', '2025-08-04', '2026-03-31', '2026-09-16'],
+        'each deal keeps its own date; two years of intake must not land in one month');
+      assert.ok(rows.every((r) => r.won_at_estimated), 'and every one of them is flagged');
+    }));
+
+  test('closed_at is still the fallback when there is no quotation_date', () =>
+    withDatabase(async (db) => {
+      await db.query(UNDO);
+      const id = await quotation(db, { status: WON, date: '2025-06-10' });
+      await db.query(
+        "UPDATE quotations SET quotation_date = NULL, closed_at = '2025-09-30T12:00:00Z' WHERE id = $1", [id]);
+
+      await db.query(MIGRATION);
+
+      const w = await row(db, 'quotations', id);
+      assert.equal(w.won_at.toISOString(), '2025-09-30T12:00:00.000Z', 'the only thing left to go on');
+      assert.equal(w.won_at_estimated, true, 'still an estimate, because it still is one');
     }));
 
   test('a won quotation with nothing to infer from stays null rather than inventing a date', () =>

@@ -150,27 +150,43 @@ CREATE TRIGGER z_enquiry_decision_date BEFORE INSERT OR UPDATE ON enquiries
 -- is exactly zero days, which is obviously wrong and must be labelled
 -- rather than reported as a fact.
 --
--- `closed_at` is preferred where the stage sync happened to record one: it
--- is a real timestamp for a real transition, so it is not an estimate. Only
--- where there is nothing better does quotation_date stand in.
+-- Everything backfilled here is an estimate, and is labelled one.
+--
+-- An earlier draft trusted `closed_at` where it was set, on the reasoning
+-- that it is a real timestamp for a real transition. It is not. The stage
+-- sync writes `closed_at := now()` whenever a quotation's stage becomes
+-- won or lost — including on INSERT — so a record imported in its final
+-- state carries the moment of the import, not the moment of the sale.
+--
+-- Measured on a development database carrying imported data: 37 of the 40
+-- decided quotations share one `closed_at` minute, while their
+-- quotation_date spans January 2025 to September 2026. `quotation_stage_history`
+-- has no rows at all, so nothing corroborates any of them. Trusting
+-- `closed_at` would have collapsed two years of order intake into one
+-- afternoon and reported it as fact.
+--
+-- So quotation_date leads: it is at least the deal's own date. `closed_at`
+-- is the fallback for a record that has no quotation_date, where it is the
+-- only thing left. Either way the estimated flag is set, because neither is
+-- a recorded business event and #18 requires the difference to be visible.
 --
 -- Written with an UPDATE that sets the date explicitly, which the trigger's
 -- COALESCE then leaves alone. Ordinary DML, so it runs inside the migration
 -- runner's transaction like everything else.
 
 UPDATE quotations
-   SET won_at = COALESCE(closed_at, quotation_date::timestamptz),
-       won_at_estimated = (closed_at IS NULL)
+   SET won_at = COALESCE(quotation_date::timestamptz, closed_at),
+       won_at_estimated = true
  WHERE status = 'Won - PO Received'
    AND won_at IS NULL
-   AND COALESCE(closed_at, quotation_date::timestamptz) IS NOT NULL;
+   AND COALESCE(quotation_date::timestamptz, closed_at) IS NOT NULL;
 
 UPDATE quotations
-   SET lost_at = COALESCE(closed_at, quotation_date::timestamptz),
-       lost_at_estimated = (closed_at IS NULL)
+   SET lost_at = COALESCE(quotation_date::timestamptz, closed_at),
+       lost_at_estimated = true
  WHERE status = 'Lost'
    AND lost_at IS NULL
-   AND COALESCE(closed_at, quotation_date::timestamptz) IS NOT NULL;
+   AND COALESCE(quotation_date::timestamptz, closed_at) IS NOT NULL;
 
 -- An enquiry has no closed_at to fall back on, so every backfilled decision
 -- date is an estimate, and enquiry_date is the only thing to estimate from.
