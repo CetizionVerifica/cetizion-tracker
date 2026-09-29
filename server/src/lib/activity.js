@@ -37,7 +37,40 @@ export const ACTIONS = {
   OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
   TARGET_CREATED: 'target.created',
   TARGET_UPDATED: 'target.updated',
+
+  // The sales workflow (#18 §3). A status change is its own action rather
+  // than a field inside `*.updated`: "moved to Won" is what a timeline, a
+  // KPI and a handover argument all look for, and burying it in a generic
+  // edit means every reader has to parse metadata to find it.
+  ENQUIRY_CREATED: 'enquiry.created',
+  ENQUIRY_UPDATED: 'enquiry.updated',
+  ENQUIRY_STATUS_CHANGED: 'enquiry.status_changed',
+  QUOTATION_CREATED: 'quotation.created',
+  QUOTATION_UPDATED: 'quotation.updated',
+  QUOTATION_STATUS_CHANGED: 'quotation.status_changed',
+  QUOTATION_CONVERTED: 'quotation.converted',
+  PROJECT_CREATED: 'project.created',
+  PROJECT_UPDATED: 'project.updated',
+  PROJECT_STATUS_CHANGED: 'project.status_changed',
+  STAGE_INVOICED: 'stage.invoiced',
+  PAYMENT_RECORDED: 'payment.recorded',
 };
+
+/**
+ * Sign-in is deliberately NOT here.
+ *
+ * @Hayyan612's #83 review called missing sign-in events "the biggest gap"
+ * in this table, and on the face of it that is right. But `auth_events`
+ * (040) already records every success and failure with the address and the
+ * reason, and it is not a log the rate limiter happens to write — it is the
+ * limiter's own store, read by recentFailures() to decide a lockout.
+ * Copying those rows here would give one event two homes that can disagree,
+ * which is the shape of problem this codebase keeps refusing elsewhere.
+ *
+ * What 040 was genuinely missing is fixed in 065 instead: it keyed a
+ * sign-in to a typed username rather than to an account, and it recorded no
+ * sign-out at all.
+ */
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */
 export const SYSTEM_ACTOR = Object.freeze({ type: 'system', userId: null, name: null });

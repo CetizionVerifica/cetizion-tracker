@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import { ACTIONS, actorFrom } from '../lib/activity.js';
+import { logWorkflowEvent } from '../lib/salesActivity.js';
 import { z } from 'zod';
-import { query, transaction } from '../db.js';
+import { pool, query, transaction } from '../db.js';
 import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
@@ -254,6 +256,17 @@ quotationRouter.post('/:id/convert', async (req, res) => {
         [existingProject.project_id, quotation.id]
       );
 
+      await logWorkflowEvent(client, {
+        actor: actorFrom(req.user),
+        action: ACTIONS.QUOTATION_CONVERTED,
+        entityType: 'quotation',
+        entityId: quotation.quotation_no ?? String(quotation.id),
+        metadata: {
+          project_id: existingProject.project_id,
+          linked_to_existing: true,
+          owner_user_id: quotation.owner_user_id ?? null,
+        },
+      });
       return { project: existingProject, onboarding_steps_added: 0 };
     }
 
@@ -318,6 +331,20 @@ quotationRouter.post('/:id/convert', async (req, res) => {
       }
     }
 
+    // Recorded against the quotation, because that is the record a reader
+    // follows forward — "what became of this deal" — and the project's own
+    // creation is already logged by the shared writer.
+    await logWorkflowEvent(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.QUOTATION_CONVERTED,
+      entityType: 'quotation',
+      entityId: quotation.quotation_no ?? String(quotation.id),
+      metadata: {
+        project_id: project.project_id,
+        linked_to_existing: false,
+        owner_user_id: project.owner_user_id ?? null,
+      },
+    });
     return { project, onboarding_steps_added: steps };
   });
 
@@ -484,7 +511,7 @@ stageRouter.post('/:id/invoice', async (req, res) => {
     const params = [Number(req.params.id)];
     const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
     const { rows: [stage] } = await client.query(
-      `SELECT ps.id, ps.document_id FROM payment_stages ps
+      `SELECT ps.id, ps.document_id, ps.po_number FROM payment_stages ps
         WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,
       params
     );
@@ -507,6 +534,16 @@ stageRouter.post('/:id/invoice', async (req, res) => {
       'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
       [invoiceNo, body.invoice_date, documentId, stage.id]
     );
+    // Filed against the payment stage, which is the row that changed, with
+    // the PO alongside: a reader looking for "when did we invoice this
+    // order" is looking at the PO, not at stage 7431 (#18 §3).
+    await logWorkflowEvent(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.STAGE_INVOICED,
+      entityType: 'payment_stage',
+      entityId: String(stage.id),
+      metadata: { invoice_no: invoiceNo, invoice_date: body.invoice_date, po_number: stage.po_number ?? null },
+    });
     return { id: stage.id, replaced };
   });
 
@@ -564,6 +601,25 @@ stageRouter.post('/:id/payment', async (req, res) => {
         `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
     );
   }
+  // Recorded whether the receipt went in as a positive row or as a
+  // correction: "who reduced this by two lakh, and when" is exactly the
+  // question an audit trail on money exists to answer (#18 §3).
+  if (delta !== 0 || Number(body.tds_amount || 0) > 0) {
+    await logWorkflowEvent(pool, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.PAYMENT_RECORDED,
+      entityType: 'payment_stage',
+      entityId: String(stage.id),
+      metadata: {
+        amount: delta,
+        tds_amount: Number(body.tds_amount || 0),
+        received_on: body.payment_received_date ?? null,
+        mode: body.mode === 'set' ? 'set' : 'add',
+        adjustment: delta < 0,
+      },
+    });
+  }
+
   const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
   res.json({ data: full[0] });

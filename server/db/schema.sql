@@ -449,6 +449,16 @@ CREATE TABLE quotations (
   lost_notes             text,
   competitor             text,
   closed_at              timestamptz,
+  -- When it was decided, and whether we actually know (#18 §3, 064).
+  -- closed_at above is one column for both outcomes and is driven by the
+  -- pipeline stage; these are driven by `status`, which is the field #18 §5
+  -- defines the KPIs on, and they say which outcome the date belongs to.
+  -- The estimated flags carry the acceptance criterion that a won date
+  -- inferred from quotation_date is labelled rather than reported as fact.
+  won_at                 timestamptz,
+  won_at_estimated       boolean NOT NULL DEFAULT false,
+  lost_at                timestamptz,
+  lost_at_estimated      boolean NOT NULL DEFAULT false,
   -- Approvals (#46)
   discount_percent       numeric(5,2),
   approval_status        text NOT NULL DEFAULT 'not_needed'
@@ -470,6 +480,11 @@ CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
+-- Owner first: the KPI queries filter a half-open period and group by
+-- person, so a bare date index would be read for "won in Q2" and the rows
+-- then filtered by owner one at a time (064).
+CREATE INDEX quotations_won_at_idx  ON quotations (owner_user_id, won_at)  WHERE won_at IS NOT NULL;
+CREATE INDEX quotations_lost_at_idx ON quotations (owner_user_id, lost_at) WHERE lost_at IS NOT NULL;
 CREATE INDEX quotations_originating_user_id_idx ON quotations (originating_user_id);
 CREATE INDEX ON quotations (status);
 
@@ -552,6 +567,11 @@ CREATE TABLE enquiries (
   originating_user_id          int,
   originating_user_snapshot_id int,
   originating_user_name        text,
+  -- When the lead stopped being one, either way (#18 §3, 064). An enquiry
+  -- has no closed_at to fall back on, so every backfilled date here is an
+  -- estimate from enquiry_date.
+  decided_at           timestamptz,
+  decided_at_estimated boolean NOT NULL DEFAULT false,
   service            text,
   status             text NOT NULL DEFAULT 'New'
                        CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
@@ -579,6 +599,7 @@ CREATE INDEX enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX enquiries_owner_user_id_idx ON enquiries (owner_user_id);
+CREATE INDEX enquiries_decided_at_idx ON enquiries (owner_user_id, decided_at) WHERE decided_at IS NOT NULL;
 CREATE INDEX enquiries_originating_user_id_idx ON enquiries (originating_user_id);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
@@ -1102,6 +1123,78 @@ END $$ LANGUAGE plpgsql;
 -- Runs after the company link (a_) and before nothing else that matters: c_.
 CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
   FOR EACH ROW EXECUTE FUNCTION quotation_stage_sync();
+
+CREATE OR REPLACE FUNCTION quotation_decision_dates() RETURNS trigger AS $$
+BEGIN
+  -- Only on a real transition. An UPDATE that touches the value but not the
+  -- status — a price correction on a won deal — must not restamp the date
+  -- it was won, or every edit would drag the win into the current month.
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'Won - PO Received' THEN
+    -- COALESCE, so an explicit date survives. That is what lets an admin
+    -- correct a backfilled guess, and what lets the backfill below write a
+    -- date through this trigger without it being overwritten by now().
+    NEW.won_at := COALESCE(NEW.won_at, now());
+    NEW.lost_at := NULL;
+    NEW.lost_at_estimated := false;
+
+  ELSIF NEW.status = 'Lost' THEN
+    NEW.lost_at := COALESCE(NEW.lost_at, now());
+    NEW.won_at := NULL;
+    NEW.won_at_estimated := false;
+
+  ELSE
+    -- Reopened. A quotation back in negotiation has not been won and has
+    -- not been lost, and leaving a stale date behind would put it in a
+    -- period's order intake for ever. The stage history keeps what happened;
+    -- these two columns say only what is true now.
+    --
+    -- This is the same reasoning quotation_stage_sync applies to closed_at
+    -- and to lost_reason_id, deliberately: two columns describing one deal
+    -- that disagree about whether it is open is worse than either answer.
+    NEW.won_at := NULL;
+    NEW.lost_at := NULL;
+    NEW.won_at_estimated := false;
+    NEW.lost_at_estimated := false;
+  END IF;
+
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- BEFORE, so it writes to NEW rather than issuing a second UPDATE, and
+-- named to sort after quotation_stage_sync: that one can rewrite NEW.status
+-- from the pipeline stage, and this must read the status that actually
+-- lands. Postgres fires same-event triggers in name order.
+DROP TRIGGER IF EXISTS z_quotation_decision_dates ON quotations;
+CREATE TRIGGER z_quotation_decision_dates BEFORE INSERT OR UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_decision_dates();
+
+CREATE OR REPLACE FUNCTION enquiry_decision_date() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  -- Decided means it stopped being a lead, either way: quoted (Converted)
+  -- or turned down (Unqualified). The four open statuses since #24 — New,
+  -- Contacted, Qualified, Nurture — are all still in progress.
+  IF NEW.status IN ('Converted', 'Unqualified') THEN
+    NEW.decided_at := COALESCE(NEW.decided_at, now());
+  ELSE
+    NEW.decided_at := NULL;
+    NEW.decided_at_estimated := false;
+  END IF;
+
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_enquiry_decision_date ON enquiries;
+CREATE TRIGGER z_enquiry_decision_date BEFORE INSERT OR UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_decision_date();
+
 
 INSERT INTO settings (key, value, notes) VALUES
   ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
@@ -2475,11 +2568,19 @@ ON CONFLICT (key) DO NOTHING;
 CREATE TABLE IF NOT EXISTS auth_events (
   id          bigserial PRIMARY KEY,
   username    text,
+  -- Which account, once one was resolved (065). Null on a failure, because
+  -- nobody knows who a wrong password belongs to, and null on rows written
+  -- before 065. SET NULL rather than CASCADE for activity_log's reason:
+  -- deleting an account must not erase every sign-in it ever made.
+  user_id     integer REFERENCES users(id) ON DELETE SET NULL,
   ip          text,
   ok          boolean NOT NULL,
   reason      text,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS auth_events_user_idx
+  ON auth_events (user_id, created_at DESC) WHERE user_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DESC);
 

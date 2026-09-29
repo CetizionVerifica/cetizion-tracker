@@ -16,6 +16,51 @@ export const taskSummaryRouter = Router();
 const TOUCH = { call: 'Call', whatsapp: 'WhatsApp', meeting: 'Meeting', sms: 'SMS', email: 'Email', other: 'Contact' };
 const ENTITIES = new Set(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']);
 
+/**
+ * ownership_history keys on the numeric id and the plural table name; the
+ * timeline addresses a record by the reference a person reads. The three
+ * owner-scoped tables are the only ones with a handover to show.
+ */
+const OWNED = {
+  enquiry: { table: 'enquiries', key: 'enquiry_no' },
+  quotation: { table: 'quotations', key: 'quotation_no' },
+  project: { table: 'projects', key: 'project_id' },
+};
+
+const who = (name, id) => name || (id != null ? `user ${id}` : 'nobody');
+
+/** An activity row as a sentence, without making the reader parse metadata. */
+function describeActivity(row) {
+  const m = row.metadata || {};
+  switch (row.action) {
+    case 'quotation.status_changed':
+    case 'enquiry.status_changed':
+    case 'project.status_changed':
+      return { title: `Moved to ${m.to}`, detail: m.from ? `from ${m.from}` : null };
+    case 'quotation.converted':
+      return { title: `Registered as ${m.project_id}`, detail: m.linked_to_existing ? 'linked to an existing project' : null };
+    case 'stage.invoiced':
+      return { title: `Invoice ${m.invoice_no || ''}`.trim(), detail: m.invoice_date ? `dated ${m.invoice_date}` : null };
+    case 'payment.recorded':
+      return {
+        title: m.adjustment ? 'Payment corrected' : 'Payment received',
+        detail: [m.amount != null ? `${m.amount}` : null, m.received_on ? `on ${m.received_on}` : null].filter(Boolean).join(' '),
+      };
+    case 'quotation.created':
+    case 'enquiry.created':
+    case 'project.created':
+      return { title: 'Created', detail: m.status || null };
+    default: {
+      // An edit: name the fields rather than dumping the diff.
+      const fields = Object.keys(m.changes || {});
+      return {
+        title: fields.length ? `Edited ${fields.join(', ')}` : row.action,
+        detail: null,
+      };
+    }
+  }
+}
+
 /** The record's own dated milestones, as timeline events. */
 async function recordEvents(entity, id) {
   const events = [];
@@ -118,7 +163,7 @@ timelineRouter.get('/', async (req, res) => {
   const emailWhere = entity === 'company'
     ? `(entity = 'company' AND entity_id = $1) OR (entity = 'quotation' AND entity_id IN (SELECT quotation_no FROM quotations WHERE company_id = $1::int))`
     : `entity = $2 AND entity_id = $1`;
-  const [notes, tasks, files, emails, events, threads, touches] = await Promise.all([
+  const [notes, tasks, files, emails, events, threads, touches, activity, handovers] = await Promise.all([
     wants('note') ? query('SELECT id, body, author, pinned, created_at, updated_at FROM notes WHERE entity = $2 AND entity_id = $1', [id, entity]) : { rows: [] },
     // Every task this record is on, its own or linked (#22), with the other records it is on.
     wants('task') ? query(`SELECT t.*, (SELECT json_agg(json_build_object('entity', x.entity, 'entity_id', x.entity_id) ORDER BY x.entity, x.entity_id)
@@ -129,6 +174,23 @@ timelineRouter.get('/', async (req, res) => {
     wants('event') ? recordEvents(entity, id) : [],
     wants('email') ? query(`SELECT t.id AS thread_id, t.subject, t.message_count, t.last_message_at, t.last_direction, a.email AS mailbox, a.visibility, ct.name AS contact_name FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id LEFT JOIN contacts ct ON ct.id = t.contact_id WHERE ($2 = 'company' AND t.company_id::text = $1) OR (t.entity = $2 AND t.entity_id = $1)`, [id, entity]) : { rows: [] },
     wants('touch') ? query(`SELECT cm.*, ct.name AS contact_name FROM communications cm LEFT JOIN contacts ct ON ct.id = cm.contact_id WHERE (cm.entity = $2 AND cm.entity_id = $1) OR ($2 = 'company' AND cm.company_id::text = $1)`, [id, entity]) : { rows: [] },
+    // The acts, from the audit trail (#18 §3). No ownership predicate of
+    // its own, deliberately: the gate above already decided this caller may
+    // read this record, and a second rule here would be a second chance to
+    // get it wrong. /api/activity stays admin-only and unfiltered — that is
+    // the whole log; this is one record's slice of it.
+    wants('activity') ? query(
+      `SELECT a.action, a.metadata, a.created_at, a.actor_type, u.name AS actor_name
+         FROM activity_log a LEFT JOIN users u ON u.id = a.actor_user_id
+        WHERE a.entity_type = $2 AND a.entity_id = $1
+        ORDER BY a.id DESC LIMIT 200`, [id, entity]) : { rows: [] },
+    // Handovers (#18 §2). Joined through the record's own id, because the
+    // history keys on the serial and the timeline addresses the reference.
+    wants('handover') && OWNED[entity] ? query(
+      `SELECT h.* FROM ownership_history h
+         JOIN ${OWNED[entity].table} r ON r.id = h.entity_id
+        WHERE h.entity_type = $2 AND r.${OWNED[entity].key} = $1
+        ORDER BY h.id DESC LIMIT 100`, [id, OWNED[entity].table]) : { rows: [] },
   ]);
   const items = [
     ...notes.rows.map((n) => ({ kind: 'note', at: n.created_at, id: n.id, title: n.pinned ? 'Pinned note' : 'Note', detail: n.body, by: n.author, pinned: n.pinned, record: n })),
@@ -137,6 +199,22 @@ timelineRouter.get('/', async (req, res) => {
     ...emails.rows.map((e) => ({ kind: 'email', at: e.created_at, id: e.id, title: e.subject, detail: `to ${e.to_email} · ${e.status}${e.reason ? ` (${e.reason})` : ''}`, by: e.sent_by, record: e })),
     ...threads.rows.map((t) => ({ kind: 'email', at: t.last_message_at, id: `thread-${t.thread_id}`, thread_id: t.thread_id, title: t.visibility === 'metadata' ? `Email thread (${t.message_count})` : `${t.subject || '(no subject)'}${t.message_count > 1 ? ` (${t.message_count})` : ''}`, detail: `${t.last_direction === 'inbound' ? 'from' : 'to'} ${t.contact_name || 'the client'} · ${t.mailbox}`, by: null, record: t })),
     ...touches.rows.map((c) => ({ kind: 'touch', at: c.started_at, id: c.id, title: `${TOUCH[c.channel] || c.channel}${c.direction === 'inbound' ? ' from' : ' with'} ${c.contact_name || 'the client'}${c.outcome ? ` · ${c.outcome.replace('_', ' ')}` : ''}`, detail: [c.summary, c.duration_seconds ? `${Math.round(c.duration_seconds / 60)} min` : null, c.attendees ? `with ${c.attendees}` : null].filter(Boolean).join(' · '), by: c.username, record: c })),
+    ...activity.rows.map((a) => {
+      const { title, detail } = describeActivity(a);
+      return {
+        kind: 'activity', at: a.created_at, id: `act-${a.created_at}-${a.action}`,
+        action: a.action, title, detail,
+        by: a.actor_name || (a.actor_type === 'shared_admin' ? 'the shared administrator' : null),
+        record: a,
+      };
+    }),
+    ...handovers.rows.map((h) => ({
+      kind: 'handover', at: h.created_at, id: `own-${h.id}`,
+      title: `Owner: ${who(h.previous_owner_name, h.previous_owner_user_id)} → ${who(h.new_owner_name, h.new_owner_user_id)}`,
+      detail: h.reason,
+      by: h.changed_by_name || (h.actor_type === 'shared_admin' ? 'the shared administrator' : null),
+      record: h,
+    })),
     ...events,
   // Pinned notes head the history; everything else newest first.
   ].sort((a, b) => (b.pinned === true) - (a.pinned === true) || new Date(b.at) - new Date(a.at));
