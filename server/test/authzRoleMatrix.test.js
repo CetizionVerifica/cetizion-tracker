@@ -1,0 +1,664 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
+import test, { after, before, describe } from 'node:test';
+import pg from 'pg';
+import request from 'supertest';
+
+/**
+ * The authorisation role matrix (#89).
+ *
+ * Four callers — nobody, two different sales users, an administrator — put
+ * against every route the policy declares, in `AUTH_MODE=database`, which is
+ * the only mode with two kinds of user to tell apart.
+ *
+ * Two halves, and the split matters:
+ *
+ *   The sweep proves *refusal*. Every declared route is asked for by a
+ *   caller who should not have it, and the answer must be exactly 401 or
+ *   403. A 404, a 422 or a 500 is not a pass: those mean the request reached
+ *   something, and "it happened to fail" is not "it was refused".
+ *
+ *   The named tests below prove *permission and scope* — that the people who
+ *   should get through do, that one salesperson cannot touch another's row,
+ *   that the public routes are guarded by the mechanism the policy claims,
+ *   and that a refused write left the database as it was.
+ *
+ * Needs a Postgres it may create databases on: set TEST_DATABASE_URL. It
+ * creates one of its own, named authz_matrix_*, and drops only that.
+ */
+
+const ADMIN_URL = process.env.TEST_DATABASE_URL;
+const PASSWORD = 'a-good-long-test-password';
+const METRICS_TOKEN = 'metrics-token-for-the-role-matrix';
+const HOOK_SECRET = 'incoming-webhook-secret-for-the-role-matrix';
+
+/**
+ * Refuse to run against anything that might hold real records.
+ *
+ * The suite only ever creates and drops a database it names itself, but the
+ * connection it does that from is a real connection, and a mistyped
+ * TEST_DATABASE_URL pointing at production is the kind of mistake that is
+ * cheap to prevent and expensive to discover.
+ */
+function assertIsolatedTestDatabase(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error(`TEST_DATABASE_URL is not a URL: ${url}`); }
+  const name = parsed.pathname.replace(/^\//, '');
+  const forbidden = /^(cetizion[_-]?tracker.*|.*prod.*|.*live.*|.*staging.*)$/i;
+  if (forbidden.test(name)) {
+    throw new Error(
+      `TEST_DATABASE_URL points at the database "${name}", which looks like a business database. ` +
+      'Point it at an administrative database this suite may create throwaway databases on (CI uses "postgres").'
+    );
+  }
+  return name;
+}
+
+describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+  let dbUrl;
+  let testDbName;
+  let db;
+  let app;
+  let pool;
+  let createUser;
+  let resetLimiter;
+  let server;
+  let policy;
+  let declared;
+
+  let anonymous;
+  let salesA;
+  let salesB;
+  let admin;
+
+  before(async () => {
+    assertIsolatedTestDatabase(ADMIN_URL);
+
+    const adminClient = new pg.Client({ connectionString: ADMIN_URL });
+    await adminClient.connect();
+    // The only name this suite ever drops, built here and never taken from
+    // the environment.
+    testDbName = `authz_matrix_${process.pid}_${Date.now()}`;
+    await adminClient.query(`CREATE DATABASE ${testDbName}`);
+    await adminClient.end();
+
+    const u = new URL(ADMIN_URL);
+    u.pathname = `/${testDbName}`;
+    dbUrl = u.toString();
+
+    const dbDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
+    db = new pg.Client({ connectionString: dbUrl });
+    await db.connect();
+    await db.query(readFileSync(join(dbDir, 'schema.sql'), 'utf8'));
+    await db.query(readFileSync(join(dbDir, 'views.sql'), 'utf8'));
+
+    process.env.NODE_ENV = 'test';
+    process.env.DATABASE_URL = dbUrl;
+    process.env.AUTH_MODE = 'database';
+    process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
+    // Nothing leaves this process.
+    process.env.EMAIL_MODE = 'log';
+    process.env.METRICS_TOKEN = METRICS_TOKEN;
+    process.env.INCOMING_WEBHOOK_SECRET = HOOK_SECRET;
+
+    ({ default: app } = await import('../src/app.js'));
+    // One server for every request in this file, rather than supertest's
+    // default of a fresh ephemeral one per call.
+    //
+    // That default is not safe for a sweep of this size. Several hundred
+    // listen/close cycles churn through the ephemeral port range, and on a
+    // developer's machine another local process can take a port between
+    // supertest reading it and the request arriving. The answer then comes
+    // from that process, not from this application — during this work one
+    // such reply was a plain-text `403 Invalid CSRF token`, a string that
+    // appears nowhere in this repository or its dependencies. A security
+    // sweep that occasionally interviews the wrong server is worse than no
+    // sweep, because the failure looks exactly like a wrongly gated route.
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    ({ pool } = await import('../src/db.js'));
+    ({ createUser } = await import('../src/lib/users.js'));
+    policy = await import('../src/lib/authz/policy.js');
+    declared = policy.policyRoutes();
+
+    const { loginLimiter } = await import('../src/auth/routes.js');
+    resetLimiter = () => {
+      for (const ip of ['::ffff:127.0.0.1', '127.0.0.1', '::1']) {
+        try { loginLimiter.resetKey(ip); } catch { /* not a key this store knows */ }
+      }
+    };
+
+    const signIn = async (email) => {
+      resetLimiter();
+      const res = await request(server).post('/api/auth/login').send({ email, password: PASSWORD });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      return res.headers['set-cookie'];
+    };
+
+    const a = await createUser({ name: 'Ada Admin', email: 'ada@example.com', password: PASSWORD, role: 'admin' }, db);
+    const s1 = await createUser({ name: 'Sam Sales', email: 'sam@example.com', password: PASSWORD, role: 'sales' }, db);
+    const s2 = await createUser({ name: 'Bea Sales', email: 'bea@example.com', password: PASSWORD, role: 'sales' }, db);
+
+    admin = { label: 'administrator', user: a, cookie: await signIn(a.email) };
+    salesA = { label: 'sales user A', user: s1, cookie: await signIn(s1.email) };
+    salesB = { label: 'sales user B', user: s2, cookie: await signIn(s2.email) };
+    anonymous = { label: 'anonymous', user: null, cookie: null };
+  });
+
+  after(async () => {
+    await new Promise((resolve) => (server ? server.close(resolve) : resolve()));
+    await pool?.end();
+    await db?.end();
+    if (!testDbName) return;
+    const adminClient = new pg.Client({ connectionString: ADMIN_URL });
+    await adminClient.connect();
+    await adminClient.query(`DROP DATABASE IF EXISTS ${testDbName} WITH (FORCE)`);
+    await adminClient.end();
+  });
+
+  const as = (who) => (method, path) => {
+    const call = request(server)[method.toLowerCase()](path);
+    return who.cookie ? call.set('Cookie', who.cookie) : call;
+  };
+
+  // ------------------------------------------------------------- the sweep
+
+  /**
+   * A concrete URL for a declared path. The values only have to route to the
+   * same handler: refusal happens before any of them is looked up.
+   */
+  const SAMPLES = {
+    key: 'CTZ-QT-2026-001', poNumber: 'PO-1', projectId: 'PRJ-2026-001', travelId: 'TRV-1',
+    resource: 'quotations', report: 'summary', name: 'reminders.payment', kind: 'quotation',
+    no: 'CTZ-QT-2026-001', token: 'x'.repeat(48), id: '1',
+  };
+  const concrete = (path) => path.replace(/:([A-Za-z0-9_]+)/g, (_, p) => SAMPLES[p] ?? '1');
+
+  /** The routes the sweep drives: everything gated by the application session. */
+  const gated = () => declared.filter((r) => r.access !== 'public');
+
+  const dependencyNote = (entry) => (entry.blockedBy
+    ? ` — this is the Issue #${entry.blockedBy} fix, which is implemented in its own workspace and not yet integrated on this branch`
+    : '');
+
+  test('nobody signed in reaches nothing', async () => {
+    const wrong = [];
+    for (const entry of gated()) {
+      const res = await as(anonymous)(entry.method, concrete(entry.path));
+      if (res.status !== 401) {
+        wrong.push(`${entry.method} ${entry.path} answered ${res.status} to an anonymous caller; expected 401.`);
+      }
+    }
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  test('a sales user is refused every admin-only route', async () => {
+    const wrong = [];
+    for (const entry of gated().filter((r) => r.access === 'admin')) {
+      const res = await as(salesA)(entry.method, concrete(entry.path));
+      if (res.status !== 403) {
+        wrong.push(
+          `${entry.method} ${entry.path} answered ${res.status} to a sales user; expected 403 (${entry.why || 'admin only'})` +
+          `${dependencyNote(entry)}.`
+        );
+      }
+    }
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  test('an administrator is refused none of them', async () => {
+    // Not that every call succeeds — most need a real record — but that none
+    // is refused. 401 or 403 for an administrator is the failure.
+    const wrong = [];
+    for (const entry of gated().filter((r) => r.access === 'admin')) {
+      const res = await as(admin)(entry.method, concrete(entry.path));
+      if (res.status === 401 || res.status === 403) {
+        wrong.push(`${entry.method} ${entry.path} answered ${res.status} to an administrator. Body: ${JSON.stringify(res.body)}`);
+      }
+    }
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  /**
+   * Routes whose 403 is an object gate rather than a role gate: the row is
+   * somebody else's. A blanket sweep cannot tell those apart from a wrongly
+   * closed route, so they are excluded here and proved one by one in the
+   * named tests below, which is where a scoped rule can actually be checked.
+   */
+  const OBJECT_SCOPED = ['record-owner', 'mailbox-owner', 'self-only'];
+  const objectScoped = (entry) => (entry.restrictions || []).some((r) => OBJECT_SCOPED.includes(r));
+
+  test('a sales user reaches the routes open to any signed-in user', async () => {
+    const wrong = [];
+
+    for (const entry of gated().filter((r) => r.access === 'any' && !objectScoped(r))) {
+      const res = await as(salesA)(entry.method, concrete(entry.path));
+      if (res.status === 401 || res.status === 403) {
+        wrong.push(`${entry.method} ${entry.path} answered ${res.status} to a sales user; the policy says any signed-in user. Body: ${JSON.stringify(res.body)}`);
+      }
+    }
+
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  // ------------------------------------------------- object-level: accounts
+
+  describe('an account is its owner\'s, and the roster is the administrator\'s', () => {
+    test('a sales user cannot read the account list or change another account', async () => {
+      const list = await as(salesA)('get', '/api/users');
+      assert.equal(list.status, 403, JSON.stringify(list.body));
+
+      const demote = await as(salesA)('patch', `/api/users/${admin.user.id}`).send({ role: 'sales' });
+      assert.equal(demote.status, 403, JSON.stringify(demote.body));
+
+      const password = await as(salesA)('post', `/api/users/${salesB.user.id}/password`).send({ password: 'another-long-password' });
+      assert.equal(password.status, 403, JSON.stringify(password.body));
+
+      // Refused, not half-done.
+      const { rows } = await db.query('SELECT role FROM users WHERE id = $1', [admin.user.id]);
+      assert.equal(rows[0].role, 'admin', 'the administrator is still an administrator');
+    });
+
+    test('a sales user cannot promote themselves', async () => {
+      const res = await as(salesA)('patch', `/api/users/${salesA.user.id}`).send({ role: 'admin' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+      const { rows } = await db.query('SELECT role FROM users WHERE id = $1', [salesA.user.id]);
+      assert.equal(rows[0].role, 'sales', 'still a sales user');
+    });
+
+    test('an administrator may', async () => {
+      const res = await as(admin)('get', '/api/users');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+    });
+
+    test('each person sees themselves at /api/auth/me', async () => {
+      for (const who of [admin, salesA, salesB]) {
+        const res = await as(who)('get', '/api/auth/me');
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        assert.equal(res.body.data.email, who.user.email);
+        assert.equal(res.body.data.role, who.user.role);
+      }
+      const out = await as(anonymous)('get', '/api/auth/me');
+      assert.equal(out.status, 401);
+    });
+  });
+
+  // ----------------------------------- object-level: one salesperson's rows
+
+  describe('a saved reply belongs to whoever wrote it', () => {
+    let mine;
+
+    before(async () => {
+      const res = await as(salesA)('post', '/api/inbox/canned')
+        .send({ name: 'Sam\'s standard reply', body: 'Thank you for your enquiry.', shared: true });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      mine = res.body.data.id;
+    });
+
+    test('the other sales user cannot edit it', async () => {
+      const res = await as(salesB)('patch', `/api/inbox/canned/${mine}`).send({ body: 'Rewritten by somebody else.' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+
+      const { rows } = await db.query('SELECT body FROM canned_responses WHERE id = $1', [mine]);
+      assert.equal(rows[0].body, 'Thank you for your enquiry.', 'the text is untouched');
+    });
+
+    test('the other sales user cannot delete it', async () => {
+      const res = await as(salesB)('delete', `/api/inbox/canned/${mine}`);
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+
+      const { rows } = await db.query('SELECT 1 FROM canned_responses WHERE id = $1', [mine]);
+      assert.equal(rows.length, 1, 'the row is still there');
+    });
+
+    test('its author can', async () => {
+      const res = await as(salesA)('patch', `/api/inbox/canned/${mine}`).send({ body: 'Thank you for getting in touch.' });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+    });
+
+    test('and an administrator may tidy anybody\'s', async () => {
+      const res = await as(admin)('patch', `/api/inbox/canned/${mine}`).send({ body: 'Tidied.' });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+    });
+  });
+
+  describe('a notification addressed to one person is not another\'s', () => {
+    before(async () => {
+      await db.query(
+        `INSERT INTO notifications (kind, username, title, body) VALUES ('test', $1, 'For Sam only', 'A private line')`,
+        [salesA.user.email]
+      );
+    });
+
+    test('the addressee sees it', async () => {
+      const res = await as(salesA)('get', '/api/notifications');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.data.some((n) => n.title === 'For Sam only'));
+    });
+
+    test('the other sales user does not', async () => {
+      const res = await as(salesB)('get', '/api/notifications');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.ok(!res.body.data.some((n) => n.title === 'For Sam only'), 'it is not in somebody else\'s bell');
+    });
+  });
+
+  // ------------------------------------- refused writes change nothing
+
+  describe('a refused write leaves the database as it was', () => {
+    test('a sales user cannot add an exchange rate', async () => {
+      const before = await db.query('SELECT COUNT(*)::int AS n FROM exchange_rates');
+      const res = await as(salesA)('post', '/api/exchange-rates')
+        .send({ from_currency: 'USD', to_currency: 'INR', rate: 99, effective_from: '2026-06-01', source: 'manual' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+      const after = await db.query('SELECT COUNT(*)::int AS n FROM exchange_rates');
+      assert.equal(after.rows[0].n, before.rows[0].n, 'no rate was written');
+    });
+
+    test('a sales user cannot change a setting', async () => {
+      await db.query(
+        `INSERT INTO settings (key, value) VALUES ('margin_visible_to_sales', 'false')
+         ON CONFLICT (key) DO UPDATE SET value = 'false'`
+      );
+      const res = await as(salesA)('patch', '/api/settings/margin_visible_to_sales').send({ value: 'true' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+      const { rows } = await db.query(`SELECT value FROM settings WHERE key = 'margin_visible_to_sales'`);
+      assert.equal(rows[0].value, 'false', 'the setting is untouched');
+    });
+
+    test('a sales user cannot delete a company', async () => {
+      const made = await as(admin)('post', '/api/companies').send({ name: 'Untouchable Industries' });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      const id = made.body.data.id;
+
+      const res = await as(salesA)('delete', `/api/companies/${id}`);
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+
+      const { rows } = await db.query('SELECT 1 FROM companies WHERE id = $1', [id]);
+      assert.equal(rows.length, 1, 'the company is still there');
+    });
+
+    test('a sales user cannot issue themselves an API token', async () => {
+      const before = await db.query('SELECT COUNT(*)::int AS n FROM api_tokens');
+      const res = await as(salesA)('post', '/api/api-tokens').send({ name: 'mine', role: 'admin' });
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+      const after = await db.query('SELECT COUNT(*)::int AS n FROM api_tokens');
+      assert.equal(after.rows[0].n, before.rows[0].n, 'no token was issued');
+    });
+  });
+
+  // ----------------------------------------- public routes and their locks
+
+  describe('the public routes are guarded by what the policy says guards them', () => {
+    test('GET /api/health is open, and its deep answer is not', async () => {
+      const open = await as(anonymous)('get', '/api/health');
+      assert.equal(open.status, 200, JSON.stringify(open.body));
+
+      const deepAnonymous = await as(anonymous)('get', '/api/health?deep=1');
+      assert.equal(deepAnonymous.status, 401, JSON.stringify(deepAnonymous.body));
+
+      const deepSales = await as(salesA)('get', '/api/health?deep=1');
+      assert.equal(deepSales.status, 403, JSON.stringify(deepSales.body));
+
+      const deepAdmin = await as(admin)('get', '/api/health?deep=1');
+      assert.ok([200, 503].includes(deepAdmin.status), `administrator got ${deepAdmin.status}`);
+    });
+
+    test('GET /metrics needs the scrape token or an administrator', async () => {
+      const open = await request(server).get('/metrics');
+      assert.equal(open.status, 401, 'no token, no metrics');
+
+      const wrong = await request(server).get('/metrics').set('Authorization', 'Bearer not-the-token');
+      assert.equal(wrong.status, 401);
+
+      const token = await request(server).get('/metrics').set('Authorization', `Bearer ${METRICS_TOKEN}`);
+      assert.equal(token.status, 200);
+
+      const sales = await as(salesA)('get', '/metrics');
+      assert.equal(sales.status, 401, 'a sales session is not an administrator');
+
+      const asAdmin = await as(admin)('get', '/metrics');
+      assert.equal(asAdmin.status, 200);
+    });
+
+    test('POST /api/mcp needs an API token, and honours the one it is given', async () => {
+      const none = await request(server).post('/api/mcp').send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      assert.equal(none.status, 401, JSON.stringify(none.body));
+      assert.match(String(none.headers['www-authenticate'] || ''), /Bearer/);
+
+      const bogus = await request(server).post('/api/mcp')
+        .set('Authorization', `Bearer ctz_${'a'.repeat(40)}`)
+        .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      assert.equal(bogus.status, 401, 'a well-formed token nobody issued is still nobody');
+
+      const issued = await as(admin)('post', '/api/api-tokens').send({ name: 'matrix', role: 'admin', can_write: false });
+      assert.equal(issued.status, 201, JSON.stringify(issued.body));
+      const value = issued.body.data.token;
+
+      const good = await request(server).post('/api/mcp')
+        .set('Authorization', `Bearer ${value}`)
+        .set('Accept', 'application/json, text/event-stream')
+        .send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+      assert.equal(good.status, 200, JSON.stringify(good.body));
+
+      // A read-only token is offered no tool that writes.
+      const names = (good.body?.result?.tools || []).map((t) => t.name);
+      assert.ok(names.includes('search_records'), JSON.stringify(names));
+      assert.ok(!names.includes('add_note'), 'a token that may not write is not offered the write tools');
+
+      // Revoking bites at once: no cached session to outlive it.
+      const revoke = await as(admin)('post', `/api/api-tokens/${issued.body.data.id}/revoke`);
+      assert.equal(revoke.status, 200, JSON.stringify(revoke.body));
+      const after = await request(server).post('/api/mcp')
+        .set('Authorization', `Bearer ${value}`)
+        .send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+      assert.equal(after.status, 401, 'a revoked token is refused');
+    });
+
+    test('POST /api/hooks/enquiries needs the signature, not just the address', async () => {
+      const off = await request(server).post('/api/hooks/enquiries').send({ client_name: 'While switched off' });
+      assert.equal(off.status, 404, 'the route does not exist until Settings switches it on');
+
+      await db.query(
+        `INSERT INTO settings (key, value) VALUES ('incoming_enquiries_enabled', 'true')
+         ON CONFLICT (key) DO UPDATE SET value = 'true'`
+      );
+
+      const before = await db.query('SELECT COUNT(*)::int AS n FROM enquiries');
+
+      const unsigned = await request(server).post('/api/hooks/enquiries')
+        .set('Content-Type', 'application/json')
+        .send({ client_name: 'Unsigned Ltd' });
+      assert.equal(unsigned.status, 401, JSON.stringify(unsigned.body));
+
+      // t=<unix seconds>,v1=<hmac of "t.body">, as lib/webhooks.js signs it.
+      const header = (secret, body, at = Math.floor(Date.now() / 1000)) =>
+        `t=${at},v1=${crypto.createHmac('sha256', secret).update(`${at}.${body}`).digest('hex')}`;
+
+      const forged = JSON.stringify({ client_name: 'Forged Ltd' });
+      const wrong = await request(server).post('/api/hooks/enquiries')
+        .set('Content-Type', 'application/json')
+        .set('x-cetizion-signature', header('the-wrong-secret', forged))
+        .send(forged);
+      assert.equal(wrong.status, 401, JSON.stringify(wrong.body));
+
+      // The right secret over a different body is still not a signature for this one.
+      const tampered = JSON.stringify({ client_name: 'Tampered Ltd' });
+      const swapped = await request(server).post('/api/hooks/enquiries')
+        .set('Content-Type', 'application/json')
+        .set('x-cetizion-signature', header(HOOK_SECRET, forged))
+        .send(tampered);
+      assert.equal(swapped.status, 401, JSON.stringify(swapped.body));
+
+      // And a correctly signed call from an hour ago is a replay, not a caller.
+      const stale = JSON.stringify({ client_name: 'Replayed Ltd' });
+      const old = await request(server).post('/api/hooks/enquiries')
+        .set('Content-Type', 'application/json')
+        .set('x-cetizion-signature', header(HOOK_SECRET, stale, Math.floor(Date.now() / 1000) - 3600))
+        .send(stale);
+      assert.equal(old.status, 401, JSON.stringify(old.body));
+
+      const refused = await db.query('SELECT COUNT(*)::int AS n FROM enquiries');
+      assert.equal(refused.rows[0].n, before.rows[0].n, 'none of the four unsigned or stale calls wrote an enquiry');
+
+      const good = JSON.stringify({ client_name: 'Signed Ltd', service: 'Inspection' });
+      const signed = await request(server).post('/api/hooks/enquiries')
+        .set('Content-Type', 'application/json')
+        .set('x-cetizion-signature', header(HOOK_SECRET, good))
+        .send(good);
+      assert.ok([200, 201].includes(signed.status), JSON.stringify(signed.body));
+
+      const written = await db.query(`SELECT COUNT(*)::int AS n FROM enquiries WHERE client_name = 'Signed Ltd'`);
+      assert.equal(written.rows[0].n, 1, 'only the signed call wrote anything');
+    });
+
+    test('the acceptance link is the credential, and it is bound to one quotation', async () => {
+      const made = await as(salesA)('post', '/api/quotations')
+        .send({ client_name: 'Acceptance Test Ltd', quotation_value: 125000, currency: 'INR', quotation_date: '2026-01-15' });
+      assert.equal(made.status, 201, JSON.stringify(made.body));
+      const quotationNo = made.body.data.quotation_no;
+
+      const link = await as(salesA)('post', `/api/quotations/${encodeURIComponent(quotationNo)}/acceptance-link`).send({});
+      assert.equal(link.status, 201, JSON.stringify(link.body));
+      const token = link.body.data.url.split('/accept/')[1];
+      assert.ok(token?.length >= 40, 'a token came back once');
+
+      const guessed = await request(server).get(`/api/public/accept/${'z'.repeat(48)}`);
+      assert.equal(guessed.status, 404, 'a guessed token opens nothing');
+
+      const opened = await request(server).get(`/api/public/accept/${token}`);
+      assert.equal(opened.status, 200, JSON.stringify(opened.body));
+      assert.equal(opened.body.data.quotation.quotation_no, quotationNo);
+
+      // Bound to one quotation, and showing only the client's half of it.
+      assert.equal(opened.body.data.quotation.sales_person, undefined, 'no internal fields');
+      assert.equal(opened.body.data.quotation.probability, undefined, 'no internal fields');
+
+      // And it is not a way into the rest of the API.
+      const elsewhere = await request(server).get('/api/quotations').set('Authorization', `Bearer ${token}`);
+      assert.equal(elsewhere.status, 401, 'an acceptance token is not a session');
+    });
+
+    test('the portal has its own sign-in, and a staff session is not one', async () => {
+      const me = await request(server).get('/api/portal/me');
+      assert.equal(me.status, 401, JSON.stringify(me.body));
+
+      const asStaff = await as(admin)('get', '/api/portal/me');
+      assert.equal(asStaff.status, 401, 'a staff session is not a portal session');
+
+      const bogus = await request(server).post('/api/portal/login').send({ token: 'q'.repeat(48) });
+      assert.equal(bogus.status, 401, JSON.stringify(bogus.body));
+
+      // request-link answers the same sentence either way, so it confirms nothing.
+      const unknown = await request(server).post('/api/portal/request-link').send({ email: 'nobody@example.com' });
+      assert.equal(unknown.status, 200, JSON.stringify(unknown.body));
+      assert.match(unknown.body.data.message, /If that address belongs to a client/);
+    });
+
+    test('GET /api/auth/config says which question the form will ask, and nothing else', async () => {
+      const res = await request(server).get('/api/auth/config');
+      assert.equal(res.status, 200);
+      assert.deepEqual(Object.keys(res.body.data), ['mode']);
+      assert.equal(res.body.data.mode, 'database');
+    });
+  });
+
+  // ----------------------------------------------- travel finance (#85)
+
+  describe('travel finance is gated as Issue #85 specifies', () => {
+    let claimId;
+    let invoiceId;
+
+    before(async () => {
+      const trip = await as(salesA)('post', '/api/travel-logs')
+        .send({ travel_id: 'TRV-MATRIX-1', employee_name: 'Sam Sales', travel_date: '2026-02-01' });
+      // The trip is convenience, not the subject: the claim below is what matters.
+      assert.ok([201, 422].includes(trip.status), JSON.stringify(trip.body));
+
+      const claim = await as(salesA)('post', '/api/expense-claims').send({
+        claim_id: 'CLM-MATRIX-1', travel_id: 'TRV-MATRIX-1', expense_category: 'Meals',
+        amount_claimed: 5000, submission_date: '2026-02-02',
+      });
+      assert.equal(claim.status, 201, JSON.stringify(claim.body));
+      claimId = claim.body.data.id;
+
+      const invoice = await as(salesA)('post', '/api/vendor-invoices').send({
+        vendor_invoice_id: 'VIN-MATRIX-1', travel_id: 'TRV-MATRIX-1',
+        vendor_invoice_no: 'V-1', invoice_date: '2026-02-02', invoice_amount: 20000,
+      });
+      assert.equal(invoice.status, 201, JSON.stringify(invoice.body));
+      invoiceId = invoice.body.data.id;
+    });
+
+    test('admin and sales may both submit an ordinary claim', async () => {
+      const bySales = await as(salesB)('post', '/api/expense-claims').send({
+        claim_id: 'CLM-MATRIX-2', travel_id: 'TRV-MATRIX-1', expense_category: 'Travel',
+        amount_claimed: 2500, submission_date: '2026-02-03',
+      });
+      assert.equal(bySales.status, 201, JSON.stringify(bySales.body));
+
+      const byAdmin = await as(admin)('post', '/api/expense-claims').send({
+        claim_id: 'CLM-MATRIX-3', travel_id: 'TRV-MATRIX-1', expense_category: 'Travel',
+        amount_claimed: 1500, submission_date: '2026-02-03',
+      });
+      assert.equal(byAdmin.status, 201, JSON.stringify(byAdmin.body));
+    });
+
+    test('only an administrator may approve a claim', async () => {
+      const res = await as(salesA)('post', `/api/expense-claims/${claimId}/decide`)
+        .send({ approval_status: 'Approved', approved_by: 'Sam Sales' });
+      const { rows } = await db.query('SELECT approval_status FROM employee_expense_claims WHERE id = $1', [claimId]);
+      assert.equal(
+        res.status, 403,
+        `a sales user got ${res.status} approving their own claim, and the claim is now "${rows[0].approval_status}". ` +
+        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, implemented in its own workspace and not yet integrated on this branch.`
+      );
+      assert.equal(rows[0].approval_status, 'Submitted', 'the claim was not approved');
+    });
+
+    test('only an administrator may reimburse a claim', async () => {
+      const res = await as(salesA)('post', `/api/expense-claims/${claimId}/reimburse`).send({ amount_reimbursed: 5000 });
+      assert.equal(
+        res.status, 403,
+        `a sales user got ${res.status} reimbursing a claim. This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`
+      );
+    });
+
+    test('protected claim fields cannot be written through ordinary CRUD', async () => {
+      const res = await as(salesA)('patch', `/api/expense-claims/${claimId}`)
+        .send({ approval_status: 'Approved', approved_by: 'Sam Sales', amount_reimbursed: 5000 });
+      const { rows } = await db.query(
+        'SELECT approval_status, amount_reimbursed FROM employee_expense_claims WHERE id = $1', [claimId]
+      );
+      assert.notEqual(rows[0].approval_status, 'Approved',
+        `PATCH /api/expense-claims/:id approved the claim (${res.status}). An admin-only /decide route is decoration if PATCH can write approval_status. ` +
+        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`);
+      assert.equal(Number(rows[0].amount_reimbursed), 0, 'and it did not reimburse it either');
+    });
+
+    test('admin and sales may both record a vendor payment through its own route', async () => {
+      const bySales = await as(salesA)('post', `/api/vendor-invoices/${invoiceId}/pay`)
+        .send({ amount_paid: 10000, payment_date: '2026-02-05' });
+      assert.equal(bySales.status, 200, JSON.stringify(bySales.body));
+
+      const byAdmin = await as(admin)('post', `/api/vendor-invoices/${invoiceId}/pay`)
+        .send({ amount_paid: 20000, payment_date: '2026-02-06' });
+      assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+    });
+
+    test('protected vendor-payment fields cannot be written through ordinary CRUD', async () => {
+      const { rows: before } = await db.query('SELECT amount_paid FROM travel_vendor_invoices WHERE id = $1', [invoiceId]);
+      const res = await as(salesA)('patch', `/api/vendor-invoices/${invoiceId}`)
+        .send({ amount_paid: 999999, payment_date: '2026-03-01' });
+      const { rows: after } = await db.query('SELECT amount_paid FROM travel_vendor_invoices WHERE id = $1', [invoiceId]);
+      assert.equal(
+        Number(after[0].amount_paid), Number(before[0].amount_paid),
+        `PATCH /api/vendor-invoices/:id moved amount_paid (${res.status}). A payment is recorded through POST /api/vendor-invoices/:id/pay. ` +
+        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`
+      );
+    });
+  });
+});

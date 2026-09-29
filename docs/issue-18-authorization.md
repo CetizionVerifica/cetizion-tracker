@@ -1,7 +1,7 @@
 # Who may do what
 
 The access rules the API enforces, and why each one is where it is (#18
-Phase 1C).
+Phase 1C, extended by #89).
 
 Two roles exist: **admin** and **sales**. Everything below is enforced on
 the server. The front end hides what a sales user may not do, but hiding is
@@ -12,9 +12,36 @@ that the real accounts can be prepared before the cutover. In
 `AUTH_MODE=database` the role comes from the user's row and is re-read on
 every request, so a change of role is in force on the very next one.
 
+> **The tables in this document are generated.** They are written from
+> `server/src/lib/authz/policy.js` by `npm run authz:docs`, and
+> `server/test/authzDocs.test.js` fails the build when the file on disk no
+> longer matches the policy. Edit the policy, not the table.
+
 ---
 
-## The two mechanisms
+## The three answers
+
+Every route the application mounts has exactly one of these, declared in
+`server/src/lib/authz/policy.js`:
+
+| Answer | Means |
+| --- | --- |
+| `public` | Reachable without the normal application sign-in. Every one of these must name the mechanism that *does* guard it, or say why nothing does. |
+| `any` | Any signed-in application user, of either role. |
+| `admin` | An administrator. |
+
+Anything narrower than the route gate — this record is yours, this mailbox is
+yours, this field is not yours to write — is recorded on the same entry as a
+`restrictions` list, because a 200 from an `any` route can still be scoped to
+the caller inside the handler.
+
+**Rate limiting is not authentication.** A limiter bounds how fast a stranger
+may knock; it never says who they are. The policy records the two separately
+and a test asserts that no mechanism claiming to authenticate leans on one.
+
+---
+
+## The two enforcement mechanisms
 
 There is no separate permission system. Everything is `requireAdmin` from
 `auth/middleware.js`, applied in one of two places:
@@ -31,70 +58,314 @@ jobRouter.post('/:name/run', requireAdmin, handler);
 | --- | --- | --- |
 | `adminOnlyWrites` | POST, PATCH, DELETE | GET |
 | `adminOnlyDeletes` | DELETE | GET, POST, PATCH |
-| `protectedFields` | the named columns, on POST, PATCH and the MCP record import, **for everybody** | every other column |
 
 `adminOnlyWrites` implies `adminOnlyDeletes`: a resource only an admin may
 write is one only an admin may delete.
 
 Adding a rule means adding a flag in `lib/resources.js` or a middleware
-argument in a router — not a new abstraction.
+argument in a router — not a new abstraction. Adding a **route** or a
+**resource** additionally means adding an entry to the policy, because the
+coverage test refuses a route nobody has decided about.
+
+---
+
+## How this is kept honest (#89)
+
+| Piece | What it does |
+| --- | --- |
+| `src/lib/authz/routeInventory.js` | Enumerates every route the Express app actually mounts, by reading the app. It does not read the policy. |
+| `src/lib/authz/policy.js` | The declaration: an access level for every route, and a read/write/delete level for every CRUD resource. |
+| `src/lib/authz/check.js` | Holds the two against each other. Pure functions, so the coverage test can prove the check itself fails when it should. |
+| `test/authzPolicy.test.js` | Fails when a mounted route is undeclared, a declared route is gone, an entry is duplicated or invalid, a public route has no documented mechanism, a CRUD resource has no policy, or a resource has drifted from it. |
+| `test/authzRoleMatrix.test.js` | Drives anonymous, two sales users and an administrator against every declared route in `AUTH_MODE=database` on a throwaway database. |
+| `test/authzDocs.test.js` | Fails when this document no longer matches the policy. |
+
+The route inventory and the policy are deliberately separate files with no
+import between them in that direction. Generating one from the other would
+make a route nobody declared invisible, which is the failure the whole
+arrangement exists to prevent.
+
+---
+
+## Public routes and what guards them
+
+<!-- generated:public-routes -->
+| Public route | Authenticated? | What is checked |
+| --- | :--: | --- |
+| `GET /api/public/accept/:token`<br>`GET /api/public/accept/:token/pdf`<br>`POST /api/public/accept/:token/accept`<br>`POST /api/public/accept/:token/changes` | **yes** | A 40-60 character random token from the emailed link, SHA-256 hashed and matched against quotation_acceptances.token_hash, with expiry, revision and status checked on every use. |
+| `POST /api/mcp` | **yes** | An Authorization: Bearer ctz_... token, SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see. |
+| `POST /api/mail/notifications` | **yes** | Each notification must carry the clientState secret stored on the matching mail_folders subscription row; anything else is dropped. |
+| `POST /api/hooks/enquiries` | **yes** | An x-cetizion-signature header of the form t=<unix seconds>,v1=<HMAC-SHA256 of "t.body" under INCOMING_WEBHOOK_SECRET>, compared in constant time over the raw body, with timestamps more than five minutes old refused so a captured call cannot be replayed; the route is 404 unless the secret is set and the feature is switched on in Settings. |
+| `GET /metrics` | **yes** | Either a constant-time match against METRICS_TOKEN, or a staff session re-read from the database whose role is still admin. |
+| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`POST /api/portal/request-link`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
+| `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
+| `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
+| `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
+| `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
+| `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
+<!-- /generated:public-routes -->
+
+`GET /api/health?deep=1` is the one route whose answer changes with the
+caller: the plain answer is public, the detailed one resolves the session and
+refuses anybody who is not a current administrator.
 
 ---
 
 ## Routes
 
-| Action | Admin | Sales |
-| --- | :--: | :--: |
-| `GET /api/health`, `GET /api/auth/config` | public | public |
-| `POST /api/auth/login`, `/logout`, `GET /me` | ✅ | ✅ |
-| `GET/POST/PATCH /api/users`, `POST /api/users/:id/password` | ✅ | **403** |
-| `GET /api/settings` | ✅ | ✅ |
-| `PATCH /api/settings/:key` | ✅ | **403** |
-| `GET /api/emails`, `GET /api/emails/:id` | ✅ | ✅ |
-| `POST /api/emails/test` | ✅ | **403** |
-| `GET /api/jobs` | ✅ | ✅ |
-| `POST /api/jobs/:name/run` | ✅ | **403** |
-| `GET /api/companies/duplicates`, `/:id/full` | ✅ | ✅ |
-| `POST /api/companies/:id/merge` | ✅ | **403** |
-| everything under `/api/import` | ✅ | **403** |
-| `POST /api/quotations/:key/approval/request` | ✅ | ✅ |
-| `POST /api/quotations/:key/approval/decide` | ✅ | **403** |
-| `POST /api/expense-claims/:id/decide` | ✅ | **403** |
-| `POST /api/expense-claims/:id/reimburse` | ✅ | **403** |
-| `POST /api/expense-claims/:id/correct` | ✅ | **403** |
-| `POST /api/vendor-invoices/:id/pay` | ✅ | ✅ |
-| `GET /api/lookups`, `/api/dashboard`, `/api/export`, `/api/documents` | ✅ | ✅ |
+Everything below the generated CRUD routers. Anything under `/api` with no
+session is **401**, before any of these is considered.
 
-Anything under `/api` with no session is **401**, before any of the above is
-considered.
+<!-- generated:routes -->
+| Route | Access | Why, or what narrows it |
+| --- | :--: | --- |
+| **/api/accounting** | | |
+| `GET /api/accounting/entries` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/import` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/items` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/items/:id/accept` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/items/:id/resolve` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/log` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/mappings` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/mappings` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `DELETE /api/accounting/mappings/:id` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/reconcile` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/reports/gstr1-b2b.csv` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/reports/summary` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/reports/tds.csv` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/stages/:id/draft` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `POST /api/accounting/stages/:id/draft` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| `GET /api/accounting/status` | **admin** | The whole accounting router is admin-only: it is the books (#42). |
+| `POST /api/accounting/sync` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
+| **/api/activity** | | |
+| `GET /api/activity` | **admin** | The audit log: what everybody did and when. Read-only and admin-only (#18 Phase 1.5). |
+| **/api/api-tokens** | | |
+| `GET /api/api-tokens` | **admin** | A token is a key to the tracker, and one issued with the admin role reads the whole company through MCP (#50). |
+| `POST /api/api-tokens` | **admin** | Anybody who may issue a token may issue an admin one and read the whole company through MCP, whatever their own role is (#50). |
+| `POST /api/api-tokens/:id/revoke` | **admin** | Revoking is the same power pointed the other way. |
+| **/api/auth** | | |
+| `GET /api/auth/config` | public | none — The sign-in form is drawn before anybody is signed in and has to know whether to ask for a username or an email. It returns the mode and nothing else. |
+| `POST /api/auth/login` | public | staff-credentials — This is how a session is obtained. |
+| `POST /api/auth/logout` | public | none — It only clears the caller's own cookie. Requiring a valid session to sign out would strand anybody holding an expired one. |
+| `GET /api/auth/me` | public | staff-session-optional — Mounted before requireAuth so the front end can ask "am I signed in?" and get an answer rather than an error page. It resolves the session itself and 401s when there is none. |
+| **/api/cashflow** | | |
+| `GET /api/cashflow` | any |  |
+| **/api/client-errors** | | |
+| `POST /api/client-errors` | any | Mounted after requireAuth: browser errors are reported by signed-in people only. |
+| **/api/collections** | | |
+| `GET /api/collections` | any |  |
+| `GET /api/collections/log` | any |  |
+| `POST /api/collections/log` | any |  |
+| `POST /api/collections/stages/:id/hold` | **admin** | A hold takes a debt out of the chasing list and out of Due now. Deciding a debt is not chased is the admin's call. |
+| `GET /api/collections/stages/:id/payments` | any |  |
+| **/api/communications** | | |
+| `GET /api/communications` | any |  |
+| `POST /api/communications` | any |  |
+| `GET /api/communications/contacts` | any |  |
+| `GET /api/communications/no-contact` | any |  |
+| **/api/companies** | | |
+| `GET /api/companies/:id/full` | any |  |
+| `POST /api/companies/:id/merge` | **admin** | A merge folds every record of one client into another and deletes the loser. It cannot be undone from the UI. |
+| `GET /api/companies/duplicates` | any |  |
+| **/api/dashboard** | | |
+| `GET /api/dashboard/overview` | any |  |
+| `GET /api/dashboard/revenue-report` | any |  |
+| `GET /api/dashboard/sales-report` | any |  |
+| `GET /api/dashboard/travel` | any |  |
+| `GET /api/dashboard/worklist` | any |  |
+| **/api/deliverables** | | |
+| `GET /api/deliverables` | any |  |
+| `POST /api/deliverables` | any |  |
+| `DELETE /api/deliverables/:id` | any |  |
+| `GET /api/deliverables/:id` | any |  |
+| `PATCH /api/deliverables/:id` | any |  |
+| `POST /api/deliverables/:id/supersede` | any |  |
+| `POST /api/deliverables/:id/withdraw` | any |  |
+| **/api/documents** | | |
+| `POST /api/documents` | any |  |
+| `GET /api/documents/:id` | any |  |
+| **/api/emails** | | |
+| `GET /api/emails` | any |  |
+| `GET /api/emails/:id` | any |  |
+| `POST /api/emails/test` | **admin** | It sends real mail to an address the caller names — an effect outside the application. |
+| **/api/expense-claims** | | |
+| `POST /api/expense-claims/:id/decide` | **admin** | Approving, rejecting or holding an expense claim is the administrator's decision. An approval anybody can grant themselves is not an approval (#85). |
+| `POST /api/expense-claims/:id/reimburse` | **admin** | Reimbursement moves money out of the business (#85). |
+| **/api/export** | | |
+| `GET /api/export/:resource.csv` | any |  |
+| `GET /api/export/:resource.xlsx` | any |  |
+| `GET /api/export/sales-report.pdf` | any |  |
+| `GET /api/export/sales-report/:report.csv` | any |  |
+| **/api/health** | | |
+| `GET /api/health` | public | none — The platform needs somewhere to point a health check. It answers only that the database replied, when the process started, the environment name and the auth mode — the last of which /api/auth/config already tells any caller. ?deep=1 is checked inside the handler and needs an administrator. |
+| **/api/hooks** | | |
+| `POST /api/hooks/enquiries` | public | hmac-signature — An external form posts an enquiry (#49). Off entirely unless the secret is set and Settings enables it. |
+| **/api/import** | | |
+| `GET /api/import/batches` | **admin** | Import batches carry whole spreadsheets of other people's records. |
+| `POST /api/import/batches` | **admin** | Uploading a sheet to import. |
+| `DELETE /api/import/batches/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `GET /api/import/batches/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `POST /api/import/batches/:id/commit` | **admin** | A commit writes every row of the batch into the live tables. |
+| `POST /api/import/batches/:id/duplicates` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `POST /api/import/batches/:id/replan` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `PATCH /api/import/items/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
+| `GET /api/import/template.csv` | **admin** | The whole import router is admin-only: a commit writes records in bulk under somebody else's name. |
+| **/api/inbox** | | |
+| `GET /api/inbox` | any | Scoped: mailbox-delegate. |
+| `GET /api/inbox/:id` | any | Scoped: mailbox-delegate. |
+| `PATCH /api/inbox/:id` | any | Scoped: mailbox-delegate. |
+| `POST /api/inbox/:id/convert` | any | Scoped: mailbox-delegate. |
+| `POST /api/inbox/:id/reply` | any | Scoped: mailbox-delegate. |
+| `GET /api/inbox/canned` | any |  |
+| `POST /api/inbox/canned` | any |  |
+| `DELETE /api/inbox/canned/:id` | any | ownCanned: the author or an admin. |
+| `PATCH /api/inbox/canned/:id` | any | ownCanned: the author or an admin. |
+| `GET /api/inbox/inboxes` | any |  |
+| `POST /api/inbox/inboxes` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
+| `PATCH /api/inbox/inboxes/:id` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
+| `GET /api/inbox/summary` | any | Scoped: mailbox-delegate. |
+| **/api/jobs** | | |
+| `GET /api/jobs` | any |  |
+| `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |
+| **/api/lookups** | | |
+| `GET /api/lookups` | any |  |
+| `GET /api/lookups/next-id/:kind` | any |  |
+| **/api/mail** | | |
+| `POST /api/mail/notifications` | public | graph-client-state — Microsoft Graph posts here and has no session. A notification whose clientState does not match the stored subscription secret is ignored. |
+| `GET /api/mail/threads` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| `GET /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| `PATCH /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| `POST /api/mail/threads/:id/reply` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| **/api/mailboxes** | | |
+| `GET /api/mailboxes` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| `PATCH /api/mailboxes/:id` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/disconnect` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
+| `GET /api/mailboxes/blocklist` | any |  |
+| `POST /api/mailboxes/blocklist` | **admin** | The blocklist decides whose mail the application will never sync, for everybody. |
+| `DELETE /api/mailboxes/blocklist/:id` | **admin** | The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again. |
+| `GET /api/mailboxes/connect/microsoft` | any |  |
+| `GET /api/mailboxes/oauth/microsoft` | any |  |
+| `POST /api/mailboxes/test` | **admin** | Probes the Microsoft app registration — a credential check, not a mailbox action. |
+| **/api/mcp** | | |
+| `DELETE /api/mcp` | public | none — A fixed 405 with an empty body, for MCP clients that try to end a session this stateless server never opened. |
+| `GET /api/mcp` | public | none — A fixed 405 telling a client to use POST. It reads nothing and reveals nothing. |
+| `POST /api/mcp` | public | api-token — MCP clients authenticate with an API token instead of a session (#50). No token, no answer. |
+| **/api/notifications** | | |
+| `GET /api/notifications` | any | Scoped: record-owner. |
+| `POST /api/notifications/:id/read` | any | Scoped: record-owner. |
+| `POST /api/notifications/read-all` | any | Scoped: record-owner. |
+| `GET /api/notifications/summary` | any | Scoped: record-owner. |
+| `POST /api/notifications/sweep` | **admin** | The same work as the notifications.daily job. Running a job by hand is operational. |
+| **/api/payment-stages** | | |
+| `POST /api/payment-stages/:id/invoice` | any |  |
+| `POST /api/payment-stages/:id/payment` | any |  |
+| **/api/pipeline** | | |
+| `GET /api/pipeline` | any |  |
+| `POST /api/pipeline/:key/move` | any |  |
+| **/api/portal** | | |
+| `GET /api/portal/certificates` | public | portal-session — The client's own certificates. |
+| `GET /api/portal/documents` | public | portal-session — The client's own documents. |
+| `GET /api/portal/files/document/:id` | public | portal-session — A document file, checked against the session's company before it is served. |
+| `GET /api/portal/files/quotation/:no` | public | portal-session — A quotation PDF, checked against the session's company before it is served. |
+| `GET /api/portal/invoices` | public | portal-session — The client's own invoices. |
+| `GET /api/portal/invoices/statement.pdf` | public | portal-session — The client's own statement. |
+| `POST /api/portal/login` | public | portal-link-token — Exchanges the emailed single-use token for a portal session. |
+| `POST /api/portal/logout` | public | portal-session — Portal routes sit outside the staff sign-in and carry their own session. |
+| `GET /api/portal/me` | public | portal-session — Who the portal session belongs to. |
+| `GET /api/portal/messages` | public | portal-session — The client's own messages. |
+| `POST /api/portal/messages` | public | portal-session — The client writes to us. |
+| `GET /api/portal/projects` | public | portal-session — The client's own projects. |
+| `POST /api/portal/request-link` | public | none — A client asks for a sign-in link. It answers the same sentence whether or not the address belongs to a portal-enabled contact, so it confirms nothing. |
+| **/api/portal-admin** | | |
+| `GET /api/portal-admin/companies/:id` | **admin** | Who outside the company may see this client's records (#47). |
+| `PATCH /api/portal-admin/companies/:id` | **admin** | Switching the portal on and choosing its sections. |
+| `PATCH /api/portal-admin/contacts/:id` | **admin** | Granting or withdrawing a client contact's portal access. |
+| `POST /api/portal-admin/contacts/:id/invite` | **admin** | Emailing a sign-in link to somebody outside the company. |
+| **/api/profitability** | | |
+| `GET /api/profitability` | **admin** | Delivery cost against PO value is what the business earns (#39). |
+| `GET /api/profitability/projects/:id` | **admin** | One project's delivery cost against its PO value is what the business earns on it (#39). |
+| **/api/projects** | | |
+| `GET /api/projects/:projectId/full` | any |  |
+| `POST /api/projects/:projectId/onboarding/apply-template` | any |  |
+| **/api/public** | | |
+| `GET /api/public/accept/:token` | public | acceptance-link-token — A client opens the quotation addressed to them (#53) without an account. |
+| `POST /api/public/accept/:token/accept` | public | acceptance-link-token — The client accepts the quotation the token is bound to. |
+| `POST /api/public/accept/:token/changes` | public | acceptance-link-token — The client asks for changes to the quotation the token is bound to. |
+| `GET /api/public/accept/:token/pdf` | public | acceptance-link-token — The same quotation as a PDF. |
+| **/api/purchase-orders** | | |
+| `GET /api/purchase-orders/:poNumber/full` | any |  |
+| `POST /api/purchase-orders/:poNumber/stages` | any |  |
+| **/api/quotations** | | |
+| `POST /api/quotations/:id/convert` | any |  |
+| `POST /api/quotations/:key/accept` | any |  |
+| `POST /api/quotations/:key/acceptance-link` | any |  |
+| `GET /api/quotations/:key/acceptances` | any |  |
+| `POST /api/quotations/:key/acceptances/:id/revoke` | any |  |
+| `POST /api/quotations/:key/approval/decide` | **admin** | An approval you can grant yourself is not an approval. A discount past the threshold is decided by somebody else. |
+| `POST /api/quotations/:key/approval/request` | any |  |
+| `GET /api/quotations/:key/full` | any |  |
+| `GET /api/quotations/:key/pdf` | any |  |
+| `POST /api/quotations/:key/register` | any |  |
+| `POST /api/quotations/:key/revise` | any |  |
+| `POST /api/quotations/:key/send` | any |  |
+| **/api/renewals** | | |
+| `GET /api/renewals` | any |  |
+| `POST /api/renewals/:id/cancel` | any |  |
+| `POST /api/renewals/:id/open` | any |  |
+| `POST /api/renewals/discover` | **admin** | Running the discovery sweep by hand is an operational act; it creates renewal records across every client. |
+| `POST /api/renewals/manual` | any |  |
+| **/api/settings** | | |
+| `GET /api/settings` | any |  |
+| `PATCH /api/settings/:key` | **admin** | A setting re-aims the whole application: which mailbox syncs, whether margin is visible, whether incoming webhooks are on. |
+| **/api/tasks** | | |
+| `GET /api/tasks/summary` | any |  |
+| **/api/timeline** | | |
+| `GET /api/timeline` | any |  |
+| **/api/travel-logs** | | |
+| `GET /api/travel-logs/:travelId/full` | any |  |
+| **/api/users** | | |
+| `GET /api/users` | **admin** | The account list, including roles and who is switched off. |
+| `POST /api/users` | **admin** | Creating an account is handing out a key. |
+| `PATCH /api/users/:id` | **admin** | Changing a role or switching an account off. |
+| `POST /api/users/:id/password` | **admin** | Setting somebody's password. |
+| **/api/vendor-invoices** | | |
+| `POST /api/vendor-invoices/:id/pay` | any | Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id. |
+| **/api/visits** | | |
+| `GET /api/visits` | any |  |
+| `POST /api/visits` | any |  |
+| `DELETE /api/visits/:id` | any |  |
+| `GET /api/visits/:id` | any |  |
+| `PATCH /api/visits/:id` | any |  |
+| `POST /api/visits/:id/trip` | any |  |
+| `GET /api/visits/capacity` | any |  |
+| `POST /api/visits/check` | any |  |
+| `DELETE /api/visits/leave/:id` | **admin** | Removing somebody else's leave. |
+| `GET /api/visits/staff` | any |  |
+| `POST /api/visits/staff` | **admin** | The engineer roster is shared scheduling data; adding to it changes everybody's capacity figures. |
+| `PATCH /api/visits/staff/:id` | **admin** | The engineer roster is shared scheduling data; editing it changes everybody's capacity figures. |
+| `POST /api/visits/staff/:id/leave` | **admin** | Booking somebody else's leave. |
+| `GET /api/visits/today` | any |  |
+| **/api/webhooks** | | |
+| `GET /api/webhooks` | **admin** | The whole outgoing-webhook router is admin-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `POST /api/webhooks` | **admin** | The whole outgoing-webhook router is administrator-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `DELETE /api/webhooks/:id` | **admin** | The whole outgoing-webhook router is administrator-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `PATCH /api/webhooks/:id` | **admin** | The whole outgoing-webhook router is administrator-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `POST /api/webhooks/:id/rotate-secret` | **admin** | The whole outgoing-webhook router is administrator-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `POST /api/webhooks/:id/test` | **admin** | The whole outgoing-webhook router is administrator-only: an endpoint here sends this company's data to an address somebody types (#49). |
+| `GET /api/webhooks/deliveries` | **admin** | Delivery bodies contain the records that were sent. |
+| `POST /api/webhooks/deliveries/:id/replay` | **admin** | Re-sends data to the external endpoint. |
+| `POST /api/webhooks/run` | **admin** | Running the delivery job by hand. |
+| **/metrics** | | |
+| `GET /metrics` | public | metrics-token-or-admin-session — Mounted outside /api so a scraper can reach it with a bearer token, but it refuses anyone who is neither the token holder nor a current administrator. |
+| **the web app** | | |
+| `GET /{*splat}` | public | web-app-shell — The built single-page app is static files with no data in them; every figure it shows it fetches from /api, which is gated. |
+<!-- /generated:routes -->
 
-Reading is open in every row where writing is not. The lists, rates and logs
-fill the forms and answer the questions a sales user needs to do the job;
-the gate is on making something happen, not on looking.
-
----
-
-## The rest of the workflow routes (#85)
-
-The routes above are the ones where the **role** decides. These are the
-remaining registered workflow routes — the ones that move a quotation into a
-project, schedule a PO's billing, and raise and receive against it. Listed
-here because "not admin-only" is a decision, and an undocumented route reads
-like an oversight rather than a choice.
-
-Every one of them is open to **any authenticated user**. None carries
-`requireAdmin`; all sit behind the app-wide `requireAuth`, so signed out is
-still 401.
-
-| Action | Route | Admin | Sales | The check that does apply |
-| --- | --- | :--: | :--: | --- |
-| Quotation conversion | `POST /api/quotations/:id/convert` | ✅ | ✅ | Row locked `FOR UPDATE`; 422 if the quotation is already registered as a project. State, not role. |
-| Purchase-order stages | `POST /api/purchase-orders/:poNumber/stages` | ✅ | ✅ | The split must account for exactly what is left of the PO. A stage already invoiced or paid is never deleted by `replace`, so 150% cannot be scheduled. |
-| Invoice operations | `POST /api/payment-stages/:id/invoice` | ✅ | ✅ | Invoice number and date required; the attached document is claimed under lock and the replaced file purged only after commit. |
-| Payment operations | `POST /api/payment-stages/:id/payment` | ✅ | ✅ | See the note below — this route writes the `payments` ledger, which the generic form does not. |
-| Onboarding template | `POST /api/projects/:projectId/onboarding/apply-template` | ✅ | ✅ | — |
-| Register a PO | `POST /api/quotations/:key/register` | ✅ | ✅ | — |
-| Revise / send / accept a quotation | `POST /api/quotations/:key/revise`, `/send`, `/accept` | ✅ | ✅ | `send` is refused while an approval is pending. |
+Reading is open in most rows where writing is not. The lists, rates and logs
+fill the forms and answer the questions a sales user needs to do the job; the
+gate is on making something happen, not on looking.
 
 ### Two of these are worth saying out loud
 
@@ -121,26 +392,65 @@ see the limitation noted under `/correct`.)
 
 ## Resources
 
-| Resource | GET | POST / PATCH | DELETE |
-| --- | :--: | :--: | :--: |
-| enquiries | any | any | **any** |
-| quotations | any | any | **any** |
-| projects | any | any | **any** |
-| onboarding | any | any | **any** |
-| travel-logs | any | any | **any** |
-| vendor-invoices | any | any, **except the paid columns** | **any** |
-| expense-claims | any | any, **except the four below** | **any** |
-| companies | any | any | **admin** |
-| contacts | any | any | **admin** |
-| purchase-orders | any | any | **admin** |
-| po-services | any | any | **admin** |
-| payment-stages | any | any | **admin** |
-| services | any | **admin** | **admin** |
-| travel-vendors | any | **admin** | **admin** |
-| expense-categories | any | **admin** | **admin** |
-| exchange-rates | any | **admin** | **admin** |
+Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
+`GET /api/<name>/:id`, `POST /api/<name>`, `PATCH /api/<name>/:id` and
+`DELETE /api/<name>/:id`. "any" means any authenticated user, of either role.
 
-"any" means any authenticated user, of either role.
+<!-- generated:resources -->
+| Resource | GET | POST / PATCH | DELETE | Why |
+| --- | :--: | :--: | :--: | --- |
+| `attachments` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `companies` | any | any | **admin** | Shared master data. Every record that ever named this client points at it, and the link trigger creates one on its own. |
+| `contacts` | any | any | **admin** | Shared master data, created and referenced the same way. |
+| `engagements` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `enquiries` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `exchange-rates` | any | **admin** | **admin** | One rate re-values every historical deal in every report. |
+| `expense-categories` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `expense-claims` | any | any | any | Admin and sales both submit ordinary expense claims. Protected fields: `approval_status`, `approved_by`, `amount_reimbursed`, `reimbursement_date`. |
+| `lead-sources` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `lost-reasons` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `notes` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `onboarding` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `onboarding-template-lines` | any | **admin** | **admin** | The steps an onboarding template is made of, so editing one rewrites the plan of every project made from it. |
+| `onboarding-templates` | any | **admin** | **admin** | A template writes the onboarding steps of every project made from it. |
+| `payment-stages` | any | any | **admin** | The invoicing schedule: what has been raised, what is due, what has been paid. |
+| `payment-terms-template-lines` | any | **admin** | **admin** | The lines a payment-terms template is made of, so editing one rewrites the schedule of every PO made from it. |
+| `payment-terms-templates` | any | **admin** | **admin** | A template writes the payment schedule of every PO made from it. |
+| `payments` | any | **admin** | **admin** | The receipts ledger. A payment row is what says a client has paid. |
+| `pipeline-stages` | any | **admin** | **admin** | A stage's status mapping and probability rewrite quotation statuses and the whole forecast. |
+| `po-services` | any | any | **admin** | The lines a PO's value is made of. |
+| `project-costs` | any | **admin** | **admin** | Delivery cost is one half of what the business earns on a project (#39). |
+| `projects` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `purchase-orders` | any | any | **admin** | The PO value is what Due now, To bill and profitability are computed against, and deleting one takes its lines and stages with it. |
+| `quotation-lines` | any | any | any | The lines of a quotation, edited with it. |
+| `quotations` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `travel-vendors` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `vendor-invoices` | any | any | any | Sales enter vendor invoices as ordinary work. Protected fields: `amount_paid`, `payment_date`. |
+<!-- /generated:resources -->
+
+### Documents are not an endpoint
+
+Documents are never deleted directly. They go with the record that holds
+them, through `hasDocument` / `cascadeDocuments` on the resource, so they
+inherit whatever that resource's delete rule is — and the files leave
+Cloudinary only once the delete has committed.
+
+### Why a salesperson's own records are still deletable by anybody
+
+`enquiries`, `quotations`, `projects`, `onboarding`, `travel-logs`,
+`engagements`, `tasks`, `notes` and `attachments` are deletable by any
+authenticated user, and that is a decision rather than an oversight. The
+tracker cannot yet answer "whose record is this?" — there is no owner column
+and no row scoping — so the only rules available are "any authenticated user"
+and "admin only", and admin-only would mean a salesperson cannot remove a
+quotation they mistyped ten seconds ago.
+
+The rule these want is neither: it is "the person whose record it is, or an
+admin". **#18 Phase 2 is what settles it.** The policy entries above are what
+must change when ownership and row scoping land.
 
 ---
 
@@ -250,76 +560,41 @@ disagree with the record.
 
 ---
 
-## The delete inventory
+## Known gaps
 
-### Admin only — shared and financial data
+### Issue #18 Phase 2 — ownership, row scoping and the activity log
 
-| Endpoint | Why |
-| --- | --- |
-| `DELETE /api/companies/:id` | Shared master data. Every quotation, enquiry and project that ever named this client points at it, and the row is created by the link trigger the first time somebody types a new name. |
-| `DELETE /api/contacts/:id` | Shared master data, created the same way and referenced the same way. |
-| `DELETE /api/purchase-orders/:id` | A financial record. The PO value is what Due now, To bill and project profitability are computed against, and deleting one takes its service lines and payment stages with it. |
-| `DELETE /api/po-services/:id` | The lines a PO's value is made of, so removing one silently changes what the project is worth. |
-| `DELETE /api/payment-stages/:id` | The invoicing schedule — what has been raised, what is due, what has been paid. A deleted stage is an invoice the tracker stops accounting for. |
+Work on the other branches adds routes and narrows existing ones. When it is
+integrated, the policy needs:
 
-**Only the delete moved.** Creating and correcting these stays open to
-everybody, on purpose: companies and contacts appear on their own from a
-record's client name, and purchase orders, their lines and their stages are
-entered by sales as ordinary work. An admin in front of any of that would
-stop the job rather than protect anything.
-
-### Admin only — reference data
-
-`DELETE` on services, travel-vendors, expense-categories and exchange-rates,
-via `adminOnlyWrites`. These are the Settings lists: one edit re-labels or
-re-values every record that used the old value. Exchange rates reach
-furthest — a rate is what every report converts at.
-
-`DELETE /api/import/batches/:id` is admin-only because the whole import
-router is.
-
-### Open to any authenticated user — pending Phase 2
-
-| Endpoint | Status |
-| --- | --- |
-| `DELETE /api/enquiries/:id` | unchanged |
-| `DELETE /api/quotations/:id` | unchanged |
-| `DELETE /api/projects/:id` | unchanged |
-| `DELETE /api/onboarding/:id` | unchanged |
-| `DELETE /api/travel-logs/:id` | unchanged |
-| `DELETE /api/vendor-invoices/:id` | unchanged |
-| `DELETE /api/expense-claims/:id` | unchanged |
-
-These are a salesperson's own working records, and they stay deletable by
-any authenticated user **until Phase 2 introduces ownership and row-scoping**.
-
-That is the reason they are still open, and it is a real one rather than an
-oversight. Right now the tracker cannot answer "whose record is this?" —
-there is no owner column and no scoping. The only rules available are "any
-authenticated user" and "admin only", and admin-only would mean a
-salesperson cannot remove a quotation they mistyped ten seconds ago. So the
-conservative rule went where the data is shared or financial, and the
-permissive one stayed where the record belongs to the person working on it.
-
-**Phase 2 is what settles this.** When records have an owner, the rule these
-want is neither of the two above — it is "the person whose record it is, or
-an admin". Until that exists, narrowing them would trade a real cost for no
-gain.
-
-There is a test asserting each of these is still open, so narrowing one
-later is a deliberate change with a failing test behind it rather than
-silent drift.
-
-### Not an endpoint
-
-Documents are never deleted directly. They go with the record that holds
-them, through `hasDocument` / `cascadeDocuments` on the resource, so they
-inherit whatever that resource's delete rule is — and the files leave
-Cloudinary only once the delete has committed.
+- **Ownership and row scoping.** The nine resources listed above move from
+  `delete: 'any'` to an owner-or-admin rule, which is a fourth answer the
+  three-level vocabulary does not yet have. Expect a `record-owner`
+  restriction on their `PATCH` and `DELETE` entries and a matching role-matrix
+  test proving sales user B cannot delete sales user A's quotation.
+- **Assignment history and sales KPI routes.** Any route those add is a new
+  policy entry; the coverage test will name each one until it has one.
+- **The activity log.** `GET /api/activity` is already declared admin-only
+  here. Anything Phase 2 adds under it needs the same.
 
 ---
 
-## Tests
+## Running the checks
+
+```sh
+cd server
+npm test                       # includes the coverage and role-matrix tests
+npm run authz:docs             # rewrite the tables above from the policy
+npm run authz:docs -- --check  # fail if this document is out of date
+```
+
+The role matrix needs a Postgres it may create databases on:
+`TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres`. It
+creates one named `authz_matrix_*`, loads `db/schema.sql` and `db/views.sql`
+into it, and drops only that database afterwards. Without the variable the
+suite skips rather than passing quietly; CI sets it.
+
+### What the suites cover
 
 `server/test/authorization.test.js` covers all of the above in database
 mode, where there are two kinds of user to tell apart:
