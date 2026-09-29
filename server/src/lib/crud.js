@@ -106,6 +106,21 @@ function buildOrder(def, sortParam) {
  * columns through the ordinary form skips the same checks and leaves the
  * same blank in the audit trail; being allowed to make the change is not
  * the same as being allowed to make it invisibly.
+ *
+ * Called from validate(), which is the one place every generic write passes
+ * through: POST and PATCH on the resource, and the MCP record import, which
+ * reaches insertRecord/updateRecordRow without going near a route. Guarding
+ * the two route handlers instead left that third door open — the MCP import
+ * arrived after #85 was written and writes the same columns through the same
+ * functions. insertRecord and updateRecordRow are not the choke point either:
+ * PATCH builds its own UPDATE and never calls updateRecordRow.
+ *
+ * It must see the **request body**, not the parsed record. zod applies
+ * .default() inside .partial() as well as on a create, so approval_status and
+ * amount_reimbursed are present on parsed.data whether or not anybody sent
+ * them — checking that object would refuse every legitimate write. The test
+ * is "was this field in what the caller sent", which is Object.hasOwn on the
+ * raw body, and `{"approval_status": null}` is an attempt like any other.
  */
 function assertWorkflowFields(def, body) {
   if (!def.protectedFields?.length || !body || typeof body !== 'object') return;
@@ -128,6 +143,7 @@ function pickWritable(def, body) {
 }
 
 function validate(def, body, { partial }) {
+  assertWorkflowFields(def, body);
   const schema = partial ? def.schema.partial() : def.schema;
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
@@ -354,7 +370,6 @@ export function crudRouter(name, def) {
   });
 
   router.post('/', ...mayWrite, async (req, res) => {
-    assertWorkflowFields(def, req.body);
     const { values, input } = validate(def, req.body, { partial: false });
     // Who wrote it, taken from the session rather than the request body: a
     // note or a file with nobody's name on it is the timeline saying an
@@ -383,7 +398,6 @@ export function crudRouter(name, def) {
   });
 
   router.patch('/:id', ...mayWrite, async (req, res) => {
-    assertWorkflowFields(def, req.body);
     const { values, input } = validate(def, req.body, { partial: true });
     if (def.stampActor && !isAdmin(req)) delete values[def.stampActor];
     await assertVisible(def, req);

@@ -1,3 +1,28 @@
+/**
+ * STATUS (#85, after the rebase onto main): NOT RUNNABLE AS COMMITTED.
+ *
+ * These tests were written against the pre-shadcn UI and have not been
+ * re-pointed at the redesign. Two separate things are stale:
+ *
+ *   Selectors. Settings is now /settings/<pane> inside SettingsArea, not one
+ *   /settings page of `.card__title` cards; "+ Rate" is "Add a rate"; /emails
+ *   redirects to /settings/emails; the row crosses are icon Buttons with
+ *   aria-labels; and company merge is a Review dialog, not a per-pair button.
+ *
+ *   Bootstrap. The two helper scripts named in playwright.authz.config.js
+ *   (scratch/e2e-seed.mjs, scratch/e2e-api.mjs) were never committed, so there
+ *   is nothing to start the throwaway API this config expects.
+ *
+ * Kept rather than deleted: what each test asserts is still exactly right, and
+ * re-pointing them is less work than deciding the cases again. They are in
+ * their own testDir with their own config, so `npm run test:e2e` (testDir
+ * ./e2e) does not pick them up and CI is unaffected.
+ *
+ * The server-side equivalents of these rules are covered and passing in
+ * server/test/expenseClaimAuthorization.test.js, authorization.test.js and
+ * mcpProtectedFields.test.js. This suite is the courtesy layer on top.
+ */
+
 import { test, expect } from '@playwright/test';
 
 /**

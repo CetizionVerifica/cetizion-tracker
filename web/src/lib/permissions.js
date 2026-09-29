@@ -35,6 +35,10 @@ export const ADMIN_ONLY_WRITE = new Set([
   'travel-vendors',
   'expense-categories',
   'exchange-rates',
+  // Added to the registry after #85 was first written. The working-day counts
+  // every reminder and due date is computed from read this list, so it is
+  // adminOnlyWrites on the server too.
+  'holidays',
 ]);
 
 export const mayWriteResource = (resource, isAdmin) => isAdmin || !ADMIN_ONLY_WRITE.has(resource);

@@ -31,7 +31,7 @@ jobRouter.post('/:name/run', requireAdmin, handler);
 | --- | --- | --- |
 | `adminOnlyWrites` | POST, PATCH, DELETE | GET |
 | `adminOnlyDeletes` | DELETE | GET, POST, PATCH |
-| `protectedFields` | the named columns, on POST and PATCH, **for everybody** | every other column |
+| `protectedFields` | the named columns, on POST, PATCH and the MCP record import, **for everybody** | every other column |
 
 `adminOnlyWrites` implies `adminOnlyDeletes`: a resource only an admin may
 write is one only an admin may delete.
@@ -151,6 +151,15 @@ route of its own that checks who is asking, checks the record is in a state
 where the change makes sense, and writes an audit row in the same
 transaction. `protectedFields` on the resource closes the generic form
 against exactly those columns, so there is one way in rather than two.
+
+The check runs in `validate()` in `server/src/lib/crud.js`, which is the one
+place every generic write passes through: `POST` and `PATCH` on the resource,
+and the MCP `import_records` tool, which reaches the same tables through
+`insertRecord` / `updateRecordRow` without going near a route. It reads the
+request body rather than the parsed record, because zod fills `approval_status`
+and `amount_reimbursed` from their defaults whether or not anybody sent them —
+so the test is "was this field in what the caller sent", and an explicit `null`
+counts.
 
 | Resource | Columns closed on the form | The route that owns them | Who |
 | --- | --- | --- | :--: |
