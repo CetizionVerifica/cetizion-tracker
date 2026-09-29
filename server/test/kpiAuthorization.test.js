@@ -104,25 +104,25 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
     await setUp();
 
     // Sales A reads own /me -> 200
-    const resMe = await request(app).get('/api/kpis/me?year=2026').set('Cookie', salesA.cookie);
+    const resMe = await request(app).get('/api/kpis/me?period=calendar-year&on=2026-06-01').set('Cookie', salesA.cookie);
     assert.equal(resMe.status, 200);
-    assert.equal(resMe.body.data.salesperson.id, salesA.user.id);
+    assert.equal(resMe.body.data.user.id, salesA.user.id);
 
     // Sales A reads own /users/:id -> 200
     const resOwn = await request(app)
-      .get(`/api/kpis/users/${salesA.user.id}?year=2026`)
+      .get(`/api/kpis/users/${salesA.user.id}?period=calendar-year&on=2026-06-01`)
       .set('Cookie', salesA.cookie);
     assert.equal(resOwn.status, 200);
-    assert.equal(resOwn.body.data.salesperson.id, salesA.user.id);
+    assert.equal(resOwn.body.data.user.id, salesA.user.id);
 
     // Sales A attempts to read Sales B -> 403 Forbidden
     const resOther = await request(app)
-      .get(`/api/kpis/users/${salesB.user.id}?year=2026`)
+      .get(`/api/kpis/users/${salesB.user.id}?period=calendar-year&on=2026-06-01`)
       .set('Cookie', salesA.cookie);
     assert.equal(resOther.status, 403);
 
     // Sales A attempts to read /team -> 403 Forbidden
-    const resTeam = await request(app).get('/api/kpis/team?year=2026').set('Cookie', salesA.cookie);
+    const resTeam = await request(app).get('/api/kpis/team?period=calendar-year&on=2026-06-01').set('Cookie', salesA.cookie);
     assert.equal(resTeam.status, 403);
   });
 
@@ -130,14 +130,14 @@ describe('KPI authorization and conversion origin rules', { skip: !ADMIN_URL && 
     await setUp();
 
     const resIndiv = await request(app)
-      .get(`/api/kpis/users/${salesA.user.id}?year=2026`)
+      .get(`/api/kpis/users/${salesA.user.id}?period=calendar-year&on=2026-06-01`)
       .set('Cookie', admin.cookie);
     assert.equal(resIndiv.status, 200);
-    assert.equal(resIndiv.body.data.salesperson.id, salesA.user.id);
+    assert.equal(resIndiv.body.data.user.id, salesA.user.id);
 
-    const resTeam = await request(app).get('/api/kpis/team?year=2026').set('Cookie', admin.cookie);
+    const resTeam = await request(app).get('/api/kpis/team?period=calendar-year&on=2026-06-01').set('Cookie', admin.cookie);
     assert.equal(resTeam.status, 200);
-    assert(Array.isArray(resTeam.body.data.salespeople));
+    assert(Array.isArray(resTeam.body.data.people));
   });
 
   test('direct project creation captures origin when created by sales rep; unassigned when created by admin', async () => {

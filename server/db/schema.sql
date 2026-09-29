@@ -764,8 +764,27 @@ CREATE TABLE payments (
   reference    text,
   notes        text,
   recorded_by  text,
+  -- What kind of row this is (#18 §5, 067), so a collections figure can say
+  -- how much of itself it actually knows:
+  --
+  --   receipt          money arriving, on the date it arrived.
+  --   opening_balance  a cumulative total carried in from before #27, dated
+  --                    with the last receipt's date — so it lands in one
+  --                    period when it may have arrived across several. Any
+  --                    period figure containing one is an estimate.
+  --   adjustment       a negative row correcting a total typed too high.
+  --
+  -- A column rather than a match on `notes`: a KPI that decides whether a
+  -- figure is an estimate by comparing prose silently starts reporting
+  -- estimates as facts the day somebody edits that sentence.
+  origin       text NOT NULL DEFAULT 'receipt'
+                 CONSTRAINT payments_origin_check
+                 CHECK (origin IN ('receipt', 'opening_balance', 'adjustment')),
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS payments_received_on_idx
+  ON payments (received_on) WHERE received_on IS NOT NULL;
 
 CREATE INDEX payments_stage_idx ON payments (stage_id, received_on);
 
@@ -791,12 +810,13 @@ CREATE TRIGGER payments_changed AFTER INSERT OR UPDATE OR DELETE ON payments
 CREATE OR REPLACE FUNCTION payments_opening() RETURNS trigger AS $$
 DECLARE cur record;
 BEGIN
-  IF NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
+  IF NEW.origin = 'opening_balance' OR NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
   IF NOT EXISTS (SELECT 1 FROM payments WHERE stage_id = NEW.stage_id) THEN
     SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
     IF cur.amount_received > 0 THEN
-      INSERT INTO payments (stage_id, amount, received_on, mode, notes)
-      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other', 'Opening balance from the stage');
+      INSERT INTO payments (stage_id, amount, received_on, mode, notes, origin)
+      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other',
+              'Opening balance from the stage', 'opening_balance');
     END IF;
   END IF;
   RETURN NEW;
@@ -1197,7 +1217,10 @@ CREATE TRIGGER z_enquiry_decision_date BEFORE INSERT OR UPDATE ON enquiries
 
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
+  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.'),
+  -- #18 §5 leaves the number open and suggests 14. A settings row rather
+  -- than a constant, so it changes without a deploy.
+  ('stale_quotation_days', '14', 'Days without pipeline movement before an open quotation is reported as stale.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- enquiry stamps
@@ -2694,7 +2717,18 @@ CREATE INDEX IF NOT EXISTS ownership_history_prev_owner_idx
 CREATE TABLE IF NOT EXISTS sales_targets (
   id                          serial PRIMARY KEY,
   salesperson_user_id         integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  calendar_year               integer NOT NULL CHECK (calendar_year BETWEEN 2000 AND 2100),
+  -- The period a target covers, half-open [start, end), the same convention
+  -- every report uses (#18 §4, 066). A date range rather than a year number
+  -- because the business runs on the Indian financial year — the invoice
+  -- series is already numbered by it — and because §6 wants monthly intake
+  -- against target, which an annual figure cannot be decomposed into.
+  period_start                date NOT NULL,
+  period_end                  date NOT NULL,
+  period_type                 text NOT NULL,
+  -- Derived from period_start and kept for anything still reading it. 066
+  -- made it nullable: an April-to-March target has no single calendar year
+  -- to name, and forcing one would make the column lie about half its rows.
+  calendar_year               integer CHECK (calendar_year BETWEEN 2000 AND 2100),
   metric                      text NOT NULL CHECK (btrim(metric) <> ''),
   target_value                numeric(16,2) NOT NULL CHECK (target_value >= 0),
   unit                        text NOT NULL CHECK (unit IN ('count', 'currency', 'percentage')),
@@ -2719,17 +2753,36 @@ CREATE TABLE IF NOT EXISTS sales_targets (
   ),
   CONSTRAINT sales_targets_actor_needs_user CHECK (
     created_by_user_id IS NULL OR actor_type = 'user'
+  ),
+  CONSTRAINT sales_targets_period_ordered CHECK (period_end > period_start),
+  CONSTRAINT sales_targets_period_type_check CHECK (period_type IN ('month', 'quarter', 'year')),
+  -- Constrained rather than free text: a target on a metric nothing
+  -- computes is a progress bar that never moves and no error anybody sees.
+  CONSTRAINT sales_targets_metric_known CHECK (
+    metric IN (
+      'order_intake_value',
+      'won_quotations_count',
+      'quotations_sent_count',
+      'collections_value',
+      'enquiries_created_count',
+      'follow_up_completion_rate'
+    )
   )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS sales_targets_unique_idx
-  ON sales_targets (salesperson_user_id, calendar_year, metric, COALESCE(currency, ''));
+-- One target per person, per period, per metric. Keyed on the period, not
+-- the year: the old index would have forbidden twelve monthly intake
+-- targets in one year, which is the thing 066 exists to allow.
+--
+-- COALESCE on currency because a plain UNIQUE treats two NULLs as distinct,
+-- so it would let the same count target be created twice.
+CREATE UNIQUE INDEX IF NOT EXISTS sales_targets_period_unique_idx
+  ON sales_targets (salesperson_user_id, period_start, period_end, metric, COALESCE(currency, ''));
 
-CREATE INDEX IF NOT EXISTS sales_targets_lookup_idx
-  ON sales_targets (salesperson_user_id, calendar_year);
+-- The lookup every report makes: this person's targets inside a range.
+CREATE INDEX IF NOT EXISTS sales_targets_period_idx
+  ON sales_targets (salesperson_user_id, period_start, period_end);
 
-CREATE INDEX IF NOT EXISTS sales_targets_year_idx
-  ON sales_targets (calendar_year);
 
 CREATE TRIGGER sales_targets_set_updated_at BEFORE UPDATE ON sales_targets
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
