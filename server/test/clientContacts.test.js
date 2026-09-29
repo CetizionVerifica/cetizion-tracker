@@ -103,6 +103,20 @@ describe('client contact details from the forms', { skip: !ADMIN_URL && 'TEST_DA
     assert.equal(ravi.email, 'r.kumar@hetero.example', 'clearing an address belongs on the contact form');
   });
 
+  test('an address on its own is a save, now that quotations have an onSave', async () => {
+    // Before this change a quotation had no onSave, so a PATCH naming no
+    // column of its own was refused with "Nothing to update". contact_email
+    // is not a column of quotations, so that is exactly this request.
+    const list = await request(app).get('/api/quotations?q=Hetero').set('Cookie', cookie).expect(200);
+    const q = list.body.data[0];
+    await request(app).patch(`/api/quotations/${q.id}`).set('Cookie', cookie)
+      .send({ contact_phone: '+91 90000 11111' }).expect(200);
+
+    const [ravi] = await contactOf('Hetero Labs');
+    assert.equal(ravi.phone, '+91 90000 11111');
+    assert.equal(ravi.email, 'r.kumar@hetero.example', 'and nothing else moved');
+  });
+
   test('an address that is not one is refused, and nothing is saved', async () => {
     const res = await request(app).post('/api/enquiries').set('Cookie', cookie).send({
       client_name: 'Bad Address Ltd', enquiry_date: '2026-09-03', source: 'Website',

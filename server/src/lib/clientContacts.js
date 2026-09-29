@@ -12,6 +12,11 @@
  *
  * This is the other half. The fact still lives on the contact — one place,
  * as the README promises — and the forms write it there.
+ *
+ * Not built yet, from the same gap: the warning when an address already
+ * belongs to a contact at another company. It needs a lookup the form can
+ * call before saving, which is new API surface, so it is left out rather
+ * than half-done.
  */
 import { ApiError } from '../middleware/error.js';
 
@@ -47,25 +52,6 @@ export async function saveContactDetails(client, contactId, { email, phone } = {
   const { rows: [row] } = await client.query(
     `UPDATE contacts SET ${sets.join(', ')} WHERE id = $1 RETURNING id, name, email, phone`, params);
   return row || null;
-}
-
-/**
- * The same address on two people at different companies is usually one of
- * them being wrong — a shared reception mailbox typed onto a named contact,
- * or a client's address pasted onto the wrong record.
- *
- * A warning rather than a refusal. Two people really do share an address
- * (an assistant, a shared accounts inbox), and refusing the save would
- * leave somebody unable to record a true fact.
- */
-export async function contactEmailElsewhere(client, contactId, email) {
-  if (!sent(email)) return null;
-  const { rows } = await client.query(
-    `SELECT c.name, co.name AS company
-       FROM contacts c JOIN companies co ON co.id = c.company_id
-      WHERE lower(btrim(c.email)) = lower(btrim($1)) AND c.id <> $2
-      LIMIT 1`, [email.trim(), contactId || 0]);
-  return rows[0] || null;
 }
 
 /**

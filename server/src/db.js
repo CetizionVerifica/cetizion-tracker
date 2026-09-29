@@ -7,9 +7,24 @@ pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => (v === null ? null : Nu
 // Dates stay as plain YYYY-MM-DD — no timezone shifting on the way out.
 pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
 
+/**
+ * Ten connections is right for one server. It is wrong for the test suite.
+ *
+ * `node --test` runs one process per CPU — ten here — and 53 test files open
+ * a pool each, plus a pg.Client of their own to set the database up. Ten
+ * processes at ten connections is exactly Postgres' default max_connections
+ * of 100 before anything else connects, so the suite ran on the edge: a run
+ * would pass, and the next would fail somewhere unrelated with a 401 or a
+ * 404 because a connection could not be had. Each failure was in a different
+ * file and each file passed alone, which is what that looks like from the
+ * outside.
+ *
+ * A test process does not need ten. Three leaves room for every worker, the
+ * clients they open, and whatever else is talking to the database.
+ */
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
-  max: 10,
+  max: process.env.NODE_ENV === 'test' ? 3 : 10,
   idleTimeoutMillis: 30_000,
 });
 
