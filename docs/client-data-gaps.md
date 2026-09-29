@@ -1,7 +1,7 @@
 # Client data gaps
 
 What the tracker cannot record about a client today, what that breaks, and how
-to fill each gap. Written against commit `1b24e66`.
+to fill each gap. Written against commit `1b24e66`; reviewed and extended against `077710a`.
 
 ## The short answer
 
@@ -39,6 +39,8 @@ That is the largest gap. There are several related ones:
 | 7 | Companies have no state, PIN code, country or PAN | No place of supply without a GSTIN; no PAN for TDS on unregistered clients | Structured address and tax fields | P2 |
 | 8 | A company holds one GSTIN | A client with units in several states is invoiced against the wrong registration | GST registrations per company, chosen on the PO | P3 |
 | 9 | The company page's People list hides email and phone | Nobody sees which contacts are missing an email | Show them, and mark the missing ones | P3 |
+| 10 | Nothing records that one company belongs to another | A client's plants are either merged destructively or unrelated; no group view | `companies.parent_company_id`, offered from the duplicates group | P2 |
+| 11 | Payment terms live on the PO only | A client's standing terms are retyped on every PO | `companies.payment_terms_days`, defaulted into the PO | P3 |
 
 ## Where client contact data comes from today
 
@@ -187,7 +189,13 @@ never reach the database:
   unmapped columns are ignored (`docs/bulk-import.md:95`).
 - **Removed at upload.** "Pin Code" never reaches the mapper. `SECRET_HEADER`
   matches `\bpin\b` and removes the column as if it held a password
-  (`fields.js:179`).
+  (`fields.js:179`). Only the spaced spelling is affected — `\bpin\b` needs a
+  word boundary and "Pincode" has none, so that one comes through:
+
+  ```
+  "Pin Code" -> dropped as a secret: true
+  "Pincode"  -> dropped as a secret: false
+  ```
 
 **Fix.**
 
@@ -197,8 +205,9 @@ never reach the database:
 - **Fill blanks only.** On commit, write these to the contact and company the
   quotation linked to, as the webhook does (`COALESCE(existing, imported)`).
   An import never overwrites something a person typed.
-- **Stop removing PIN code columns.** Narrow `SECRET_HEADER` so "Pin code" and
-  "Pincode" are not treated as a PIN, for example `\bpin\b(?!\s*code)`.
+- **Stop removing PIN code columns.** Narrow `SECRET_HEADER` so "Pin code" is
+  not treated as a PIN, for example `\bpin\b(?!\s*code)`. A bank PIN on its
+  own still matches, which is the case the rule is for.
 - **Docs.** Update the field list in `docs/bulk-import.md`.
 
 ### 5. Who gets the payment reminder
@@ -320,6 +329,65 @@ after opening the contact.
 
 **Fix.** Show email and phone on each row, and mark "no email" where it is
 missing, so the gaps are visible where they are fixed.
+
+### 10. A client group has no place to live
+
+**Now.** `companies` has `name`, `sector`, `gstin`, `website`, `address`,
+`city` and `notes` (`schema.sql:310-325`). There is no parent, no group, no
+`parent_company_id` — nothing anywhere in the schema records that one company
+belongs to another.
+
+**What it breaks.** A client with several plants is several companies with no
+relationship between them. The duplicate detection added in #140 makes this
+visible rather than causing it: the Companies page groups "Hindalco",
+"Hindalco - Belur", "Hindalco FRP", "Hindalco - Kuppam" and "Aditya Birla -
+Hindalco" as sharing a brand, and then has to ask a person which of them are
+one client, because it cannot tell. Both answers available today are wrong:
+
+- **Merge them.** Every quotation, enquiry and project moves onto one name and
+  the others are deleted. But Belur and FRP are different plants that raise
+  their own POs, so this destroys a real distinction and cannot be undone.
+- **Leave them separate.** Correct per record, and there is then no way to ask
+  what Hindalco as a whole is worth, who owns the relationship, or how much
+  it owes.
+
+Gap 8 is the adjacent problem and not the same one: GST registrations answer
+*which entity do we invoice*, not *are these one client*.
+
+**Fix.**
+
+- **A parent.** Add `companies.parent_company_id` referencing `companies(id)`,
+  with a check that it is not itself, and a depth of one — a parent may not
+  have a parent, because a chain nobody asked for is a reporting problem
+  nobody can read.
+- **Offer it from the duplicates group.** The review dialog already lists the
+  spellings side by side. Beside "Merge", offer "These are one group" — which
+  sets the parent instead of destroying the rows.
+- **Roll up where it is asked for.** The company page shows its units and
+  their totals; Collections and the sales report can group by parent.
+
+Count the clients with more than one unit before building the roll-up. The
+column and the group action are worth having on their own.
+
+### 11. No standing payment terms for a client
+
+**Now.** `payment_terms_days` exists on `purchase_orders` (`schema.sql:560`)
+and on `travel_vendor_invoices` (`:827`). A company has none.
+
+**What it breaks.** A client whose terms are always 45 days has them typed on
+every PO, and a wrong one is only noticed when the invoice falls due on the
+wrong date. Gap 5 settles *who* gets chased; this is *when*.
+
+**Fix.** Add `companies.payment_terms_days`, default it into Register PO and
+the PO form, and leave the PO free to differ — the PO is still the contract.
+
+### 12. Worth asking, not yet a finding
+
+The schema has no client-issued vendor or supplier code
+(`grep -c vendor_code db/schema.sql` is 0). Several Indian clients require
+theirs on the invoice or it is not paid. Whether that matters here depends on
+how Cetizion actually invoices, which this document cannot tell from the code.
+Ask finance before adding a column.
 
 ## Suggested order
 

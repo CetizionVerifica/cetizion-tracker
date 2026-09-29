@@ -13,7 +13,7 @@ The list is built from four kinds of work the tracker already records:
 - invoices ready to raise
 - payments more than 7 days past due that need a chase
 
-Written against commit `25536f5`.
+Written against commit `25536f5`; reviewed against `077710a`.
 
 ## Why the existing screens are not this
 
@@ -124,6 +124,26 @@ on Wed 23 September, under Due today. If nobody logs a chase, it moves to Late
 on Mon 28 September, its third working day.
 
 ## Server
+
+### 0. Reuse the ownership rule, do not rewrite it
+
+"Mine" — assigned to me, or unassigned on a record I can see — is already
+written twice on the server:
+
+- `onRecordVisibleSql(req, table, params, { ownColumns })` in
+  `server/src/lib/scope.js`, which the tasks, notes and attachments resources
+  use through `visibleTo`.
+- `mine(scope, params)` in `server/src/lib/mcp/data.js`, which `list_tasks`
+  and `complete_task` use.
+
+Take one of them rather than writing a third. A rule stated in three places
+is a rule that will be applied in two: the MCP copy drifted from the web one
+within a day of being written — it matched `assignee` and `created_by` but
+not the record, so a task somebody raised on their own quotation and handed
+to a colleague vanished from their list (#136).
+
+`mine()` also strips the "(via MCP)" stamp before comparing. My Today does
+not need that, but it is the kind of detail a rewrite loses.
 
 ### 1. The rules as pure functions: `server/src/lib/myToday.js`
 
@@ -333,10 +353,18 @@ After any action, refetch the list and the sidebar count.
 - **Name matching.** Ownership is a free-text name compared with the
   account. "Ravi" on a deal and "Ravi Kumar" on the account do not match, and
   that deal's work shows on nobody's list. Step 4 above addresses this.
+
+  This is not hypothetical. `list_inbox` shipped comparing a token's person
+  against `inboxes.members` with `&&`, which is case-sensitive, while that
+  field holds names as somebody typed them — so a member of an inbox was
+  told it was empty, and the failure looked like a quiet day rather than a
+  bug (fixed in #136). Fold both sides the same way, and test with a
+  capitalised name: a fixture that stores `{asha}` against a person `asha`
+  is the one spelling where this class of bug is invisible.
 - **A flooded first day.** Imported and older data can put hundreds of rows
   under Late on day one:
   - Enquiries get a follow-up date automatically when created
-    (`server/db/schema.sql:1083`).
+    (`server/db/schema.sql:1084-1085`, `lead_follow_up_default_days`).
   - The importer turns "next follow-up" columns into tasks.
   Fold anything more than 30 days late into one "older" row with a count and
   a link to the full list, so the page stays usable while the backlog is
