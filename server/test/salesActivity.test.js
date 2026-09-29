@@ -286,6 +286,70 @@ describe('the sales workflow, logged', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal(Number(row.metadata.amount), -30000);
   });
 
+
+  test('a failed audit row takes the receipt down with it', async () => {
+    await setUp();
+    await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-ATOMIC', 'A Client')`);
+    await db.query(
+      `INSERT INTO purchase_orders (po_number, project_id, po_date, po_value)
+       VALUES ('PO-ATOMIC', 'PRJ-ATOMIC', '2026-04-01', 500000)`);
+    const { rows: [stage] } = await db.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent)
+       VALUES ('PO-ATOMIC', 1, 'Advance', 'On PO Registration', 1) RETURNING id`);
+
+    // Make the audit insert fail the way a disk or a constraint would.
+    await db.query(`
+      CREATE OR REPLACE FUNCTION fail_payment_audit() RETURNS trigger AS $fn$
+      BEGIN
+        IF NEW.action = 'payment.recorded' THEN RAISE EXCEPTION 'audit unavailable'; END IF;
+        RETURN NEW;
+      END $fn$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS trg_fail_payment_audit ON activity_log;
+      CREATE TRIGGER trg_fail_payment_audit BEFORE INSERT ON activity_log
+        FOR EACH ROW EXECUTE FUNCTION fail_payment_audit();`);
+
+    try {
+      const res = await request(app).post(`/api/payment-stages/${stage.id}/payment`)
+        .set('Cookie', admin.cookie).send({ amount_received: 200000 });
+      assert.equal(res.status, 500, 'the caller is told it failed');
+
+      const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM payments WHERE stage_id = $1', [stage.id]);
+      assert.equal(rows[0].n, 0,
+        'and no money was recorded — otherwise the obvious retry books the receipt twice');
+      const { rows: [s] } = await db.query('SELECT amount_received FROM payment_stages WHERE id = $1', [stage.id]);
+      assert.equal(Number(s.amount_received), 0);
+    } finally {
+      await db.query('DROP TRIGGER IF EXISTS trg_fail_payment_audit ON activity_log');
+    }
+  });
+
+  test('repeating a set-mode receipt does not record it twice', async () => {
+    await setUp();
+    await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-RETRY', 'A Client')`);
+    await db.query(
+      `INSERT INTO purchase_orders (po_number, project_id, po_date, po_value)
+       VALUES ('PO-RETRY', 'PRJ-RETRY', '2026-04-01', 500000)`);
+    const { rows: [stage] } = await db.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent)
+       VALUES ('PO-RETRY', 1, 'Advance', 'On PO Registration', 1) RETURNING id`);
+
+    const send = () => request(app).post(`/api/payment-stages/${stage.id}/payment`)
+      .set('Cookie', admin.cookie).send({ amount_received: 300000, payment_received_date: '2026-05-01' });
+
+    await send().expect(200);
+    await send().expect(200);
+
+    // 'set' says what the total should be, so a repeat measures against the
+    // total the first one produced and has nothing left to write.
+    const { rows: [s] } = await db.query('SELECT amount_received FROM payment_stages WHERE id = $1', [stage.id]);
+    assert.equal(Number(s.amount_received), 300000, 'the cumulative total is what was asked for, once');
+    const { rows: [c] } = await db.query('SELECT COUNT(*)::int AS n FROM payments WHERE stage_id = $1', [stage.id]);
+    assert.equal(c.n, 1, 'one receipt, not two');
+    const { rows: [a] } = await db.query(
+      "SELECT COUNT(*)::int AS n FROM activity_log WHERE action = 'payment.recorded'");
+    assert.equal(a.n, 1, 'and one audit row, because only one thing happened');
+  });
+
   // -------------------------------------------------------- the timeline
 
   test('the record timeline shows the acts and the handovers, to whoever may read it', async () => {

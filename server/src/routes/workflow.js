@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { ACTIONS, actorFrom } from '../lib/activity.js';
 import { logWorkflowEvent } from '../lib/salesActivity.js';
 import { z } from 'zod';
-import { pool, query, transaction } from '../db.js';
+import { query, transaction } from '../db.js';
 import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
@@ -575,53 +575,81 @@ stageRouter.post('/:id/payment', async (req, res) => {
   // takes its stage_id from the row it returned — so a stage this caller
   // cannot reach is indistinguishable from one that does not exist, and
   // nothing is ever written against it.
-  const params = [req.params.id];
-  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
-  const { rows: [stage] } = await query(
-    `SELECT ps.id, ps.amount_received FROM payment_stages ps
-      WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}`,
-    params
-  );
-  if (!stage) throw new ApiError(404, 'Payment stage not found');
-  const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
-  if (delta > 0 || Number(body.tds_amount || 0) > 0) {
-    await query(
-      `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
-       VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
-      [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
+  /**
+   * One transaction, and the stage locked inside it.
+   *
+   * Two things were wrong with doing this on the pool. The audit row was
+   * written after the receipt and outside any transaction, and logActivity
+   * throws — so a failed audit insert returned 500 on a payment that had
+   * already landed, and the obvious retry recorded the money a second time.
+   * And the read-compute-write of `set` mode was unsynchronised, so two
+   * requests arriving together both measured the same starting total and
+   * both wrote their difference.
+   *
+   * `FOR UPDATE` closes both. The second caller waits, then measures against
+   * the total the first one produced: for `set` — the default — that makes
+   * the delta zero and the retry writes nothing, which is what makes
+   * repeating a request safe. `add` is a delta by definition and repeating
+   * it is still a second receipt, as asked for.
+   *
+   * The cumulative semantics are untouched: the stage total is still the sum
+   * of its rows, kept by payments_changed, and a reduction is still a
+   * negative row rather than a figure written over the top.
+   */
+  const stageId = req.params.id;
+  const scope = scopeOf(req);
+  await transaction(async (client) => {
+    const params = [stageId];
+    const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
+    const { rows: [stage] } = await client.query(
+      `SELECT ps.id, ps.amount_received FROM payment_stages ps
+        WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}
+        FOR UPDATE OF ps`,
+      params
     );
-  } else if (body.mode === 'set' && delta !== 0) {
-    // Bringing the total down is a negative row in the ledger, not a figure
-    // written over the top of it: the stage total is computed from the rows,
-    // so anything written by hand is undone by the next receipt.
-    await query(
-      `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
-       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
-      [stage.id, delta, body.payment_received_date ?? null,
-        `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
-    );
-  }
-  // Recorded whether the receipt went in as a positive row or as a
-  // correction: "who reduced this by two lakh, and when" is exactly the
-  // question an audit trail on money exists to answer (#18 §3).
-  if (delta !== 0 || Number(body.tds_amount || 0) > 0) {
-    await logWorkflowEvent(pool, {
-      actor: actorFrom(req.user),
-      action: ACTIONS.PAYMENT_RECORDED,
-      entityType: 'payment_stage',
-      entityId: String(stage.id),
-      metadata: {
-        amount: delta,
-        tds_amount: Number(body.tds_amount || 0),
-        received_on: body.payment_received_date ?? null,
-        mode: body.mode === 'set' ? 'set' : 'add',
-        adjustment: delta < 0,
-      },
-    });
-  }
+    if (!stage) throw new ApiError(404, 'Payment stage not found');
 
-  const rows = [stage];
-  const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);
+    const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
+    if (delta > 0 || Number(body.tds_amount || 0) > 0) {
+      await client.query(
+        `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
+         VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
+        [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
+      );
+    } else if (body.mode === 'set' && delta !== 0) {
+      // Bringing the total down is a negative row in the ledger, not a figure
+      // written over the top of it: the stage total is computed from the rows,
+      // so anything written by hand is undone by the next receipt.
+      await client.query(
+        `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
+         VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
+        [stage.id, delta, body.payment_received_date ?? null,
+          `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
+      );
+    }
+
+    // Recorded whether the receipt went in as a positive row or as a
+    // correction: "who reduced this by two lakh, and when" is exactly the
+    // question an audit trail on money exists to answer (#18 §3). On the
+    // same client, so a failed audit row takes the receipt down with it.
+    if (delta !== 0 || Number(body.tds_amount || 0) > 0) {
+      await logWorkflowEvent(client, {
+        actor: actorFrom(req.user),
+        action: ACTIONS.PAYMENT_RECORDED,
+        entityType: 'payment_stage',
+        entityId: String(stage.id),
+        metadata: {
+          amount: delta,
+          tds_amount: Number(body.tds_amount || 0),
+          received_on: body.payment_received_date ?? null,
+          mode: body.mode === 'set' ? 'set' : 'add',
+          adjustment: delta < 0,
+        },
+      });
+    }
+  });
+
+  const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [stageId]);
   res.json({ data: full[0] });
 });
 
