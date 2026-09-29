@@ -18,11 +18,21 @@ const NAME = `mcp_test_${process.pid}`;
 let app; let pool; let staff;
 
 async function fixtures(client) {
+  // Asha and Ravi are accounts now, not spellings (#18 §2, 063). A sales
+  // token names a users row and the records carry owner_user_id, so what
+  // these tests assert — that one salesperson cannot read the other's work
+  // — is asked of the same column the web app asks it of. Under the old
+  // name match the two would also have to be spelled identically on every
+  // row for the scoping to hold, which is the fragility that change ended.
   await client.query(`
+    INSERT INTO users (id, name, email, password_hash, role, active) VALUES
+      (801, 'Asha', 'asha@example.test', 'not-a-real-hash', 'sales', true),
+      (802, 'Ravi', 'ravi@example.test', 'not-a-real-hash', 'sales', true);
+    SELECT setval('users_id_seq', 900, true);
     INSERT INTO companies (id, name) VALUES (1001, 'Asha Client Ltd'), (1002, 'Ravi Client Ltd');
-    INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
-      VALUES ('QT-ASHA', 'Asha Client Ltd', '2026-07-01', 100000, 'Submitted', 'Asha'), ('QT-RAVI', 'Ravi Client Ltd', '2026-07-01', 900000, 'Submitted', 'Ravi');
-    INSERT INTO projects (project_id, client_name, sales_person) VALUES ('PRJ-ASHA', 'Asha Client Ltd', 'Asha'), ('PRJ-RAVI', 'Ravi Client Ltd', 'Ravi');
+    INSERT INTO quotations (quotation_no, client_name, company_id, quotation_date, quotation_value, status, sales_person, owner_user_id)
+      VALUES ('QT-ASHA', 'Asha Client Ltd', 1001, '2026-07-01', 100000, 'Submitted', 'Asha', 801), ('QT-RAVI', 'Ravi Client Ltd', 1002, '2026-07-01', 900000, 'Submitted', 'Ravi', 802);
+    INSERT INTO projects (project_id, client_name, company_id, sales_person, owner_user_id) VALUES ('PRJ-ASHA', 'Asha Client Ltd', 1001, 'Asha', 801), ('PRJ-RAVI', 'Ravi Client Ltd', 1002, 'Ravi', 802);
     INSERT INTO purchase_orders (po_number, project_id, po_date, po_value) VALUES ('PO-ASHA', 'PRJ-ASHA', '2026-06-01', 100000), ('PO-RAVI', 'PRJ-RAVI', '2026-06-01', 900000);
     INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, invoice_no, invoice_date)
       VALUES ('PO-ASHA', 1, 'Advance', 'On PO Registration', 1, 'INV-ASHA', '2026-06-02'), ('PO-RAVI', 1, 'Advance', 'On PO Registration', 1, 'INV-RAVI', '2026-06-02');
@@ -196,9 +206,12 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const collections = await call(asha, 'list_collections', { overdue_only: false });
     assert.match(collections.text, /INV-ASHA/);
     assert.doesNotMatch(collections.text, /INV-RAVI/);
+    // Asking for somebody else's figures by name does not get them. The
+    // `person` argument is an admin's filter; for a sales token the scope
+    // is its own ownership and the argument is ignored rather than obeyed.
     const kpis = JSON.parse((await call(asha, 'get_kpis', { from: '2026-01-01', to: '2026-12-31', person: 'Ravi' })).text);
-    assert.equal(kpis.person, 'asha');
-    assert.equal(kpis.quotations_issued, 1);
+    assert.equal(kpis.scope, 'the records this token owns');
+    assert.equal(kpis.quotations_issued, 1, "Asha's one quotation, not Ravi's");
     assert.equal((await call(asha, 'list_activity', { entity: 'quotation', id: 'QT-RAVI' })).error, true);
     assert.equal((await call(asha, 'add_note', { entity: 'quotation', id: 'QT-RAVI', text: 'should not land' })).error, true);
   });

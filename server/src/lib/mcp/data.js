@@ -8,26 +8,23 @@ import { query, transaction } from '../../db.js';
 import { RATES } from '../salesReport.js';
 import { businessToday } from '../businessDate.ts';
 import { wake } from '../inbox.js';
-import { recordVisibleSql } from '../scope.js';
+import { ownerColumnSql, ownerCompanySql, recordVisibleSql } from '../scope.js';
 import { dataQuality } from '../dataQuality.js';
 import { BUCKETS, payablesSummary } from '../payables.js';
 
 export const isAdmin = (scope) => scope.role === 'admin';
 
-/** A WHERE fragment and its parameter for "this record belongs to the token's person". */
-export function own(scope, column, params) {
-  if (isAdmin(scope)) return 'TRUE';
-  params.push(scope.person);
-  return `lower(btrim(${column})) = lower(btrim($${params.length}))`;
-}
-export function ownCompany(scope, companyColumn, params) {
-  if (isAdmin(scope)) return 'TRUE';
-  params.push(scope.person);
-  const p = `$${params.length}`;
-  return `(EXISTS (SELECT 1 FROM quotations oq WHERE oq.company_id = ${companyColumn} AND lower(btrim(oq.sales_person)) = lower(btrim(${p})))
-        OR EXISTS (SELECT 1 FROM enquiries oe WHERE oe.company_id = ${companyColumn} AND lower(btrim(oe.sales_person)) = lower(btrim(${p})))
-        OR EXISTS (SELECT 1 FROM projects op WHERE op.company_id = ${companyColumn} AND lower(btrim(op.sales_person)) = lower(btrim(${p}))))`;
-}
+/**
+ * "This record belongs to the token's user", as a WHERE fragment.
+ *
+ * Both are thin re-exports of lib/scope.js, which is where the rule itself
+ * lives. They keep their old names and call shapes so the twenty-odd call
+ * sites below read as they did; what changed underneath is the column they
+ * compare — `owner_user_id` against a users.id, not `sales_person` against
+ * a name. See lib/scope.js for why a name was never a safe identity here.
+ */
+export const own = ownerColumnSql;
+export const ownCompany = ownerCompanySql;
 
 /**
  * How much of a list one call returns.
@@ -67,25 +64,25 @@ export async function searchRecords(scope, { text, types = ['company', 'quotatio
   if (types.includes('quotation')) {
     const params = [like];
     const { rows } = await query(`SELECT 'quotation' AS type, quotation_no AS id, client_name AS title, concat_ws(' · ', service_quoted, status) AS detail FROM quotations q
-                                   WHERE (quotation_no ILIKE $1 OR client_name ILIKE $1 OR service_quoted ILIKE $1) AND ${own(scope, 'q.sales_person', params)} ORDER BY quotation_date DESC NULLS LAST LIMIT ${limit}`, params);
+                                   WHERE (quotation_no ILIKE $1 OR client_name ILIKE $1 OR service_quoted ILIKE $1) AND ${own(scope, 'q.owner_user_id', params)} ORDER BY quotation_date DESC NULLS LAST LIMIT ${limit}`, params);
     out.push(...rows);
   }
   if (types.includes('enquiry')) {
     const params = [like];
     const { rows } = await query(`SELECT 'enquiry' AS type, enquiry_no AS id, client_name AS title, concat_ws(' · ', service, status) AS detail FROM enquiries e
-                                   WHERE (enquiry_no ILIKE $1 OR client_name ILIKE $1 OR service ILIKE $1) AND ${own(scope, 'e.sales_person', params)} ORDER BY created_at DESC LIMIT ${limit}`, params);
+                                   WHERE (enquiry_no ILIKE $1 OR client_name ILIKE $1 OR service ILIKE $1) AND ${own(scope, 'e.owner_user_id', params)} ORDER BY created_at DESC LIMIT ${limit}`, params);
     out.push(...rows);
   }
   if (types.includes('project')) {
     const params = [like];
     const { rows } = await query(`SELECT 'project' AS type, project_id AS id, client_name AS title, primary_service AS detail FROM projects p
-                                   WHERE (project_id ILIKE $1 OR client_name ILIKE $1 OR primary_service ILIKE $1) AND ${own(scope, 'p.sales_person', params)} ORDER BY project_id DESC LIMIT ${limit}`, params);
+                                   WHERE (project_id ILIKE $1 OR client_name ILIKE $1 OR primary_service ILIKE $1) AND ${own(scope, 'p.owner_user_id', params)} ORDER BY project_id DESC LIMIT ${limit}`, params);
     out.push(...rows);
   }
   if (types.includes('purchase_order')) {
     const params = [like];
     const { rows } = await query(`SELECT 'purchase_order' AS type, po.po_number AS id, p.client_name AS title, po.project_id AS detail FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id
-                                   WHERE (po.po_number ILIKE $1 OR p.client_name ILIKE $1) AND ${own(scope, 'p.sales_person', params)} ORDER BY po.po_date DESC NULLS LAST LIMIT ${limit}`, params);
+                                   WHERE (po.po_number ILIKE $1 OR p.client_name ILIKE $1) AND ${own(scope, 'p.owner_user_id', params)} ORDER BY po.po_date DESC NULLS LAST LIMIT ${limit}`, params);
     out.push(...rows);
   }
   // An object, not a bare array: the wire format wants one, and a count the
@@ -116,7 +113,7 @@ export async function getQuotation(scope, no) {
   const { rows: [q] } = await query(`SELECT quotation_no, revision, quotation_date, valid_until, client_name, company_id, contact_person, service_quoted, status, stage, probability,
                                             quotation_value, currency, subtotal, tax_total, total, sales_person, expected_close_date, next_step, sent_at, accepted_at, accepted_by_name,
                                             approval_status, lost_reason, competitor, project_id, last_contacted_at
-                                       FROM v_quotations q WHERE quotation_no = $1 AND ${own(scope, 'q.sales_person', params)}`, params);
+                                       FROM v_quotations q WHERE quotation_no = $1 AND ${own(scope, 'q.owner_user_id', params)}`, params);
   if (!q) return null;
   // Every column qualified: quotations carries discount_percent too (the
   // approval flow puts it there), so the unqualified list was ambiguous and
@@ -131,7 +128,7 @@ export async function getProject(scope, id) {
   const params = [id];
   const { rows: [p] } = await query(`SELECT project_id, client_name, company_id, primary_service, project_manager, sales_person, planned_start_date, planned_delivery_date, project_stage, payment_status,
                                             total_contract_value, total_invoiced, total_received, balance_due_now, actual_delivery_date, onboarding_done, onboarding_total
-                                       FROM v_projects p WHERE project_id = $1 AND ${own(scope, 'p.sales_person', params)}`, params);
+                                       FROM v_projects p WHERE project_id = $1 AND ${own(scope, 'p.owner_user_id', params)}`, params);
   if (!p) return null;
   const { rows: pos } = await query('SELECT po_number, po_date, po_value, currency, actual_delivery_date FROM purchase_orders WHERE project_id = $1 ORDER BY po_date', [id]);
   const { rows: visits } = await query(`SELECT title, type, status, starts_at, ends_at, city FROM visits WHERE project_id = $1 AND status IN ('planned','confirmed') ORDER BY starts_at`, [id]);
@@ -140,7 +137,7 @@ export async function getProject(scope, id) {
 
 export async function getPo(scope, no) {
   const params = [no];
-  const { rows: [po] } = await query(`SELECT v.* FROM v_purchase_orders v JOIN projects p ON p.project_id = v.project_id WHERE v.po_number = $1 AND ${own(scope, 'p.sales_person', params)}`, params);
+  const { rows: [po] } = await query(`SELECT v.* FROM v_purchase_orders v JOIN projects p ON p.project_id = v.project_id WHERE v.po_number = $1 AND ${own(scope, 'p.owner_user_id', params)}`, params);
   if (!po) return null;
   const { rows: stages } = await query(`SELECT stage_no, stage_name, trigger_event, stage_amount, stage_status, invoice_no, invoice_date, invoice_due_date, amount_received, days_overdue FROM v_payment_stages WHERE po_number = $1 ORDER BY stage_no`, [no]);
   return { ...po, stages };
@@ -149,7 +146,7 @@ export async function getPo(scope, no) {
 export async function listPipeline(scope, { stage, owner, from, to, limit, offset } = {}) {
   const win = page({ limit, offset });
   const params = [];
-  const where = ["ps.type IN ('open','paused')", own(scope, 'q.sales_person', params)];
+  const where = ["ps.type IN ('open','paused')", own(scope, 'q.owner_user_id', params)];
   if (stage) { params.push(`%${stage}%`); where.push(`ps.name ILIKE $${params.length}`); }
   if (owner && isAdmin(scope)) { params.push(owner); where.push(`lower(q.sales_person) = lower($${params.length})`); }
   if (from) { params.push(from); where.push(`q.expected_close_date >= $${params.length}`); }
@@ -175,7 +172,7 @@ export async function listPipeline(scope, { stage, owner, from, to, limit, offse
 export async function listCollections(scope, { overdue_only: overdueOnly = true, min_days: minDays = 0, limit, offset } = {}) {
   const win = page({ limit, offset });
   const params = [];
-  const where = ['s.invoice_no IS NOT NULL', "s.stage_status <> 'Paid'", own(scope, 'p.sales_person', params)];
+  const where = ['s.invoice_no IS NOT NULL', "s.stage_status <> 'Paid'", own(scope, 'p.owner_user_id', params)];
   if (overdueOnly) where.push(`s.stage_status = 'Overdue'`);
   if (minDays) { params.push(Number(minDays)); where.push(`s.days_overdue >= $${params.length}`); }
   const { rows } = await query(
@@ -188,17 +185,37 @@ export async function listCollections(scope, { overdue_only: overdueOnly = true,
   return paged(rows, win);
 }
 
+/**
+ * Scope first, filter second.
+ *
+ * These two are not the same question and must not share a parameter. The
+ * scope says which rows this token may see at all and is not optional; the
+ * filter is an admin narrowing a view they already have. Folding them into
+ * one nullable `$3` — as this did — meant a sales token whose identity did
+ * not resolve fell through to "no filter", which is every row in the
+ * company rather than none.
+ */
+function kpiScope(scope, person, params) {
+  const clauses = [own(scope, 'q.owner_user_id', params)];
+  if (person && isAdmin(scope)) {
+    params.push(person);
+    clauses.push(`lower(btrim(q.sales_person)) = lower(btrim($${params.length}))`);
+  }
+  return clauses.join(' AND ');
+}
+
 export async function getKpis(scope, { from, to, person } = {}) {
-  const who = isAdmin(scope) ? person || null : scope.person;
   const start = from || `${businessToday().slice(0, 4)}-01-01`;
   const end = to || businessToday();
-  const params = [start, end, who];
+
+  const params = [start, end];
+  const scoped = kpiScope(scope, person, params);
   const { rows: [k] } = await query(
     `WITH ${RATES},
      q AS (
        SELECT q.*, ps.type AS stage_type, q.quotation_value * r.rate AS value_inr
          FROM quotations q LEFT JOIN pipeline_stages ps ON ps.id = q.stage_id LEFT JOIN rates r ON r.currency = q.currency
-        WHERE ($3::text IS NULL OR lower(btrim(q.sales_person)) = lower(btrim($3)))
+        WHERE ${scoped}
      )
      SELECT
        COUNT(*) FILTER (WHERE quotation_date BETWEEN $1 AND $2)::int AS quotations_issued,
@@ -211,10 +228,24 @@ export async function getKpis(scope, { from, to, person } = {}) {
        round(AVG(EXTRACT(EPOCH FROM (closed_at - created_at)) / 86400) FILTER (WHERE stage_type = 'won' AND closed_at::date BETWEEN $1 AND $2))::int AS avg_days_to_win,
        COUNT(*) FILTER (WHERE value_inr IS NULL AND quotation_value IS NOT NULL)::int AS without_exchange_rate
      FROM q`, params);
+  // Its own parameter list: the fragment above has already consumed
+  // positions in `params`, and reusing them here would number the second
+  // query's placeholders against the first one's values.
+  const touchParams = [start, end];
+  const touchScoped = kpiScope(scope, person, touchParams);
   const { rows: [t] } = await query(
-    `SELECT COUNT(*)::int AS touches FROM communications WHERE started_at::date BETWEEN $1 AND $2 AND ($3::text IS NULL OR company_id IN (SELECT company_id FROM quotations WHERE lower(btrim(sales_person)) = lower(btrim($3))))`, params);
+    `SELECT COUNT(*)::int AS touches FROM communications c
+      WHERE c.started_at::date BETWEEN $1 AND $2
+        AND c.company_id IN (SELECT q.company_id FROM quotations q WHERE ${touchScoped})`, touchParams);
   const decided = k.won + k.lost;
-  return { period: { from: start, to: end }, person: who || 'everyone', ...k, win_rate_percent: decided ? Math.round((100 * k.won) / decided) : null, touches_logged: t.touches, definitions: KPI_DEFINITIONS };
+  return {
+    period: { from: start, to: end },
+    scope: isAdmin(scope) ? (person || 'everyone') : 'the records this token owns',
+    ...k,
+    win_rate_percent: decided ? Math.round((100 * k.won) / decided) : null,
+    touches_logged: t.touches,
+    definitions: KPI_DEFINITIONS,
+  };
 }
 
 export const KPI_DEFINITIONS = {
@@ -250,10 +281,10 @@ export async function canSee(scope, entity, id) {
   // Only the query for this entity is built, so only its parameter is added.
   const build = {
     company: () => `SELECT 1 FROM companies c WHERE c.id::text = $1 AND ${ownCompany(scope, 'c.id', params)}`,
-    quotation: () => `SELECT 1 FROM quotations q WHERE q.quotation_no = $1 AND ${own(scope, 'q.sales_person', params)}`,
-    enquiry: () => `SELECT 1 FROM enquiries e WHERE e.enquiry_no = $1 AND ${own(scope, 'e.sales_person', params)}`,
-    project: () => `SELECT 1 FROM projects p WHERE p.project_id = $1 AND ${own(scope, 'p.sales_person', params)}`,
-    purchase_order: () => `SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $1 AND ${own(scope, 'p.sales_person', params)}`,
+    quotation: () => `SELECT 1 FROM quotations q WHERE q.quotation_no = $1 AND ${own(scope, 'q.owner_user_id', params)}`,
+    enquiry: () => `SELECT 1 FROM enquiries e WHERE e.enquiry_no = $1 AND ${own(scope, 'e.owner_user_id', params)}`,
+    project: () => `SELECT 1 FROM projects p WHERE p.project_id = $1 AND ${own(scope, 'p.owner_user_id', params)}`,
+    purchase_order: () => `SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $1 AND ${own(scope, 'p.owner_user_id', params)}`,
   }[entity];
   const sql = build && build();
   if (!sql) return false;
@@ -479,12 +510,16 @@ export async function listTasks(scope, { assignee, overdue_only: overdueOnly = f
 function mine(scope, params) {
   params.push(scope.person || '');
   const p = `$${params.length}`;
-  params.push([String(scope.person || '').trim().toLowerCase()]);
-  const ids = `$${params.length}::text[]`;
+  // The record half of this asks about ownership, so it takes the token's
+  // users.id — an integer — where it used to take a lower-cased name array.
+  // The assignee half either side of it stays a name, because that is what
+  // the column holds; see the scope comment in routes/mcp.js.
+  params.push(scope.userId ?? null);
+  const uid = `$${params.length}::int`;
   const raisedBy = `regexp_replace(t.created_by, '\\s*\\(via MCP\\)$', '', 'i')`;
   return `(lower(btrim(t.assignee)) = lower(btrim(${p}))
     OR lower(btrim(${raisedBy})) = lower(btrim(${p}))
-    OR ${recordVisibleSql('t.entity', 't.entity_id', ids)})`;
+    OR ${recordVisibleSql('t.entity', 't.entity_id', uid)})`;
 }
 
 /**

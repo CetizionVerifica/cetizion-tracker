@@ -2426,13 +2426,31 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   -- change any of them. Off unless asked for: a token requested without
   -- saying otherwise is a reading token (#50).
   can_write     boolean NOT NULL DEFAULT false,
+  -- Whose records a sales token sees (063). CASCADE, unlike owner_user_id's
+  -- SET NULL on the record tables: a quotation is the company's history and
+  -- outlives whoever sold it, but a token is a credential belonging to one
+  -- person, and a credential whose owner is gone must stop working rather
+  -- than become an unowned key that still opens the door.
+  user_id       integer REFERENCES users(id) ON DELETE CASCADE,
+  -- The name the token was issued against. Kept beside user_id, not
+  -- replaced by it: it is what the tokens page has always shown and how an
+  -- admin recognises which token is whose. It is no longer an authorization
+  -- identity — see lib/scope.js.
   person        text,
   created_by    text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   last_used_at  timestamptz,
   revoked_at    timestamptz,
-  CHECK (role = 'admin' OR person IS NOT NULL)
+  CHECK (role = 'admin' OR person IS NOT NULL),
+  -- A live sales token has an account behind it. Revoked rows are exempt:
+  -- they are history, including tokens 063 revoked because no account could
+  -- be matched to their name.
+  CONSTRAINT api_tokens_sales_needs_user CHECK (
+    role = 'admin' OR user_id IS NOT NULL OR revoked_at IS NOT NULL
+  )
 );
+
+CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens (user_id);
 
 CREATE TABLE IF NOT EXISTS api_token_log (
   id          bigserial PRIMARY KEY,

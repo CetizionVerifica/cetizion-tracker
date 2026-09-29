@@ -39,14 +39,37 @@ async function authenticate(req) {
   if (!m) return null;
   const { rows: [t] } = await query('SELECT * FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL', [hash(m[1])]);
   if (!t) return null;
+  // A live sales token with no account behind it is refused outright,
+  // rather than admitted and then scoped to nothing. 063 revokes these and
+  // a CHECK constraint forbids new ones, so reaching here means something
+  // wrote the row around both — and the honest answer to a credential we
+  // cannot resolve to a person is "no", not "yes, but you will see an
+  // empty tracker and wonder why".
+  if (t.role !== 'admin' && !Number.isSafeInteger(t.user_id)) return null;
   query('UPDATE api_tokens SET last_used_at = now() WHERE id = $1', [t.id]).catch(() => {});
   return t;
 }
 
 function buildServer(token) {
-  const scope = { role: token.role, person: token.person };
+  /**
+   * Two identities, and they are not interchangeable.
+   *
+   *   userId   who owns a record. The only thing that authorizes access to
+   *            a quotation, enquiry, project, PO or payment stage, and the
+   *            same column the web app uses (063, lib/scope.js).
+   *   person   a display name, and the key for the three places the tracker
+   *            still models membership as text rather than as an account:
+   *            `inboxes.members`, `tasks.assignee` / `created_by`, and
+   *            `engagements.owner`. Those are a different question from
+   *            ownership — an inbox is a shared queue, not a record — and
+   *            converting them is #89's work, not this change's.
+   *
+   * Keeping both named is deliberate. Collapsing them is how `sales_person`
+   * became an authorization identity in the first place.
+   */
+  const scope = { role: token.role, userId: token.user_id ?? null, person: token.person };
   const server = new McpServer({ name: 'cetizion-tracker', version: '1.0.0' }, {
-    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only records where the sales person is ${token.person} — with two deliberate exceptions, the same two the web app makes: a task assigned to it or raised by it is readable wherever it sits, and an unassigned inbox conversation is anyone's to pick up.`} ${token.can_write ? 'It may add notes and tasks, and mark a task done.' : 'It may read only: nothing it does changes a record.'} The shared inbox is readable as subjects and status only, never message bodies. Vendor payables are in rupees.`,
+    instructions: `Cetizion Verifica's tracker: clients, quotations, projects, purchase orders, invoices and payments. Amounts are in the record's currency; INR totals use the exchange rates in Settings. ${token.role === 'admin' ? 'This token sees every record.' : `This token sees only the records owned by ${token.person || 'the account it was issued to'} — with two deliberate exceptions, the same two the web app makes: a task assigned to it or raised by it is readable wherever it sits, and an unassigned inbox conversation is anyone's to pick up.`} ${token.can_write ? 'It may add notes and tasks, and mark a task done.' : 'It may read only: nothing it does changes a record.'} The shared inbox is readable as subjects and status only, never message bodies. Vendor payables are in rupees.`,
   });
   /**
    * The result, twice: once as text for a client that only reads content,
@@ -384,7 +407,7 @@ apiTokenRouter.use(requireAdmin);
 
 apiTokenRouter.get('/', async (req, res) => {
   const { rows } = await query(
-    `SELECT t.id, t.name, t.token_prefix, t.role, t.can_write, t.person, t.created_by, t.created_at, t.last_used_at, t.revoked_at,
+    `SELECT t.id, t.name, t.token_prefix, t.role, t.can_write, t.user_id, t.person, t.created_by, t.created_at, t.last_used_at, t.revoked_at,
             (SELECT COUNT(*)::int FROM api_token_log l WHERE l.token_id = t.id) AS calls
        FROM api_tokens t ORDER BY t.revoked_at IS NOT NULL, t.created_at DESC`);
   const { rows: log } = await query(
@@ -392,16 +415,70 @@ apiTokenRouter.get('/', async (req, res) => {
   res.json({ data: rows, log });
 });
 
+/**
+ * A sales token now names an account, not a spelling (#18 §2, 063).
+ *
+ * `user_id` is required for a sales token and the request is refused
+ * without one. It is deliberately not inferred from `person`: a name that
+ * matches two accounts would have to pick one, and a token pointed at the
+ * wrong person reads somebody else's pipeline — the failure this whole
+ * change exists to end. The caller picks from the user list.
+ *
+ * `person` is still stored, from the account's own name rather than from
+ * the request body, so the tokens page keeps showing who a token is for and
+ * nobody can make it say somebody else.
+ */
 apiTokenRouter.post('/', async (req, res) => {
-  const parsed = z.object({ name: z.string().trim().min(1).max(120), role: z.enum(['admin', 'sales']), person: z.string().trim().max(120).optional(), can_write: z.boolean().optional().default(false) }).safeParse(req.body || {});
+  const parsed = z.object({
+    name: z.string().trim().min(1).max(120),
+    role: z.enum(['admin', 'sales']),
+    user_id: z.number().int().positive().optional(),
+    person: z.string().trim().max(120).optional(),
+    can_write: z.boolean().optional().default(false),
+  }).safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
   const v = parsed.data;
-  if (v.role === 'sales' && !v.person) throw new ApiError(422, 'Please check the highlighted fields', { fields: { person: 'Whose records may this token see?' } });
+
+  let person = null;
+  let userId = null;
+  if (v.role === 'sales') {
+    if (!v.user_id && !v.person) {
+      throw new ApiError(422, 'Please check the highlighted fields', { fields: { user_id: 'Which account may this token act as?' } });
+    }
+
+    // `user_id` is the way to ask for a token. A name is still accepted,
+    // because the tokens page has always offered one and this change must
+    // not take the feature away — but it is resolved to an account here
+    // and refused unless it names exactly one, rather than stored as the
+    // authorization identity it used to be. Two Rameshes is a question for
+    // a person: picking one would point a token at the wrong pipeline,
+    // which is the failure 063 exists to end.
+    const { rows: [u] } = v.user_id
+      ? await query('SELECT id, name, active, 1 AS matches FROM users WHERE id = $1', [v.user_id])
+      : await query(
+        `SELECT id, name, active, COUNT(*) OVER ()::int AS matches FROM users
+          WHERE lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))
+              = lower(regexp_replace(btrim($1), '\\s+', ' ', 'g'))`,
+        [v.person]
+      );
+    const field = v.user_id ? 'user_id' : 'person';
+    if (!u) throw new ApiError(422, 'Please check the highlighted fields', { fields: { [field]: v.user_id ? 'No such account' : 'No account carries that name. Create one under Settings → Users first.' } });
+    if (u.matches > 1) throw new ApiError(422, 'Please check the highlighted fields', { fields: { person: `${u.matches} accounts carry that name — choose one by user_id` } });
+    // An inactive account cannot sign in, and a token is a way in. Issuing
+    // one against a switched-off account would be a door beside the locked
+    // one — including against the attribution-only rows #18 creates for
+    // historical salespeople, which are switched off precisely because
+    // nobody should be able to act as them.
+    if (!u.active) throw new ApiError(422, 'Please check the highlighted fields', { fields: { [field]: 'That account is deactivated' } });
+    userId = u.id;
+    person = u.name;
+  }
+
   const token = `ctz_${crypto.randomBytes(32).toString('base64url')}`;
   const { rows: [t] } = await query(
-    `INSERT INTO api_tokens (name, token_hash, token_prefix, role, can_write, person, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)
-     RETURNING id, name, token_prefix, role, can_write, person, created_at`,
-    [v.name, hash(token), token.slice(0, 10), v.role, v.can_write, v.role === 'sales' ? v.person : null, req.user?.username || 'admin']);
+    `INSERT INTO api_tokens (name, token_hash, token_prefix, role, can_write, user_id, person, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING id, name, token_prefix, role, can_write, user_id, person, created_at`,
+    [v.name, hash(token), token.slice(0, 10), v.role, v.can_write, userId, person, req.user?.username || 'admin']);
   res.status(201).json({ data: { ...t, token } });
 });
 

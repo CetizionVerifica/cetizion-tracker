@@ -31,15 +31,15 @@ import { ownProjectSql } from '../scope.js';
  * admin: `user` is always set, and always with the role.
  */
 const SCOPED = {
-  quotations: (scope, params) => own(scope, 'sales_person', params),
-  enquiries: (scope, params) => own(scope, 'sales_person', params),
-  projects: (scope, params) => own(scope, 'sales_person', params),
+  quotations: (scope, params) => own(scope, 'owner_user_id', params),
+  enquiries: (scope, params) => own(scope, 'owner_user_id', params),
+  projects: (scope, params) => own(scope, 'owner_user_id', params),
   companies: (scope, params) => ownCompany(scope, 'id', params),
   'purchase-orders': (scope, params) => ownProjectSql(reqShim(scope), 'v_purchase_orders', params) || 'TRUE',
   'payment-stages': (scope, params) => ownProjectSql(reqShim(scope), 'v_payment_stages', params) || 'TRUE',
 };
 
-const reqShim = (scope) => ({ user: { role: scope.role, username: scope.person, name: scope.person } });
+const reqShim = (scope) => ({ user: { role: scope.role, userId: scope.userId ?? null } });
 
 const MEASURES = ['count', 'sum', 'avg', 'min', 'max'];
 export const aggregatable = () => Object.keys(resources).filter((k) => resources[k].schema);
