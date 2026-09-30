@@ -127,6 +127,38 @@ describe('client contact details from the forms', { skip: !ADMIN_URL && 'TEST_DA
     assert.equal(rows[0].n, 0, 'a refused save writes no enquiry either');
   });
 
+  test('the new checks find a client nothing can be sent to', async () => {
+    // A company whose only contact is a name — which is every contact the
+    // forms used to make — passed the old "has any contact" check.
+    await db.query(`INSERT INTO companies (name) VALUES ('Silent Ltd')`);
+    await db.query(`INSERT INTO contacts (company_id, name) SELECT id, 'Nobody Reachable' FROM companies WHERE name = 'Silent Ltd'`);
+
+    const res = await request(app).get('/api/dashboard/data-quality').set('Cookie', cookie).expect(200);
+    const by = Object.fromEntries(res.body.data.checks.map((c) => [c.key, c]));
+
+    assert.equal(by.companies_without_contact.count, 0, 'it has a contact, so the old check is happy');
+    assert.ok(by.companies_without_contact_email.count >= 1, 'and the new one is not');
+
+    // The rule for this page: the count and the list its link opens agree.
+    const link = by.companies_without_contact_email.link;
+    assert.equal(link, '/companies?contacts_all_without_email=1');
+    const list = await request(app).get('/api/companies?contacts_all_without_email=1').set('Cookie', cookie).expect(200);
+    assert.equal(list.body.data.length, by.companies_without_contact_email.count,
+      'a check whose link opens a different list is worse than no check');
+    assert.ok(list.body.data.some((c) => c.name === 'Silent Ltd'));
+  });
+
+  test('every new check\'s link opens exactly the rows it counted', async () => {
+    const res = await request(app).get('/api/dashboard/data-quality').set('Cookie', cookie).expect(200);
+    for (const check of res.body.data.checks) {
+      if (!['companies_without_contact_email', 'clients_without_billing_contact', 'open_quotations_without_contact_email'].includes(check.key)) continue;
+      const [path, qs] = check.link.split('?');
+      const list = await request(app).get(`/api${path}?${qs}`).set('Cookie', cookie);
+      assert.equal(list.status, 200, `${check.key} -> ${list.status} for ${check.link}`);
+      assert.equal(list.body.data.length, check.count, `${check.key}: counted ${check.count}, its link opens ${list.body.data.length}`);
+    }
+  });
+
   test('a record saved without naming anybody is still fine', async () => {
     const res = await request(app).post('/api/enquiries').set('Cookie', cookie)
       .send({ client_name: 'Nobody Named Ltd', enquiry_date: '2026-09-04', source: 'Website' });

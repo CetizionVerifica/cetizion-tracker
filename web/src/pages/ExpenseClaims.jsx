@@ -2,11 +2,16 @@ import { useState } from 'react';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge } from '../components/ui.jsx';
 import { ClaimDecisionDialog, ReimburseClaimDialog } from '../components/actions.jsx';
+import { useAuth } from '../lib/auth.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
 
 export default function ExpenseClaims() {
   const lookups = useLookups();
+  // Deciding a claim and paying it are the administrator's (#85). The server
+  // refuses either from anybody else; this keeps a sales user from being
+  // offered a button that would only come back 403.
+  const { isAdmin } = useAuth();
   const [dialog, setDialog] = useState(null);
   const [version, setVersion] = useState(0);
 
@@ -32,10 +37,10 @@ export default function ExpenseClaims() {
       align: 'right',
       render: (r) => (
         <div className="table__actions">
-          {r.status === 'Pending approval' && (
+          {isAdmin && r.status === 'Pending approval' && (
             <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'decide', row: r })}>Review</button>
           )}
-          {(r.status === 'Approved - to reimburse' || r.status === 'Partly reimbursed') && (
+          {isAdmin && (r.status === 'Approved - to reimburse' || r.status === 'Partly reimbursed') && (
             <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'reimburse', row: r })}>Reimburse</button>
           )}
         </div>
@@ -50,10 +55,11 @@ export default function ExpenseClaims() {
     { name: 'claim_month', label: 'Claim month', placeholder: 'Jul-2026' },
     { name: 'amount_claimed', label: 'Amount claimed', type: 'money', required: true },
     { name: 'submission_date', label: 'Submitted on', type: 'date' },
-    { name: 'approval_status', label: 'Approval status', type: 'select', options: lookups.enums?.approval || [], default: 'Submitted', required: true },
-    { name: 'approved_by', label: 'Approved by' },
-    { name: 'amount_reimbursed', label: 'Amount reimbursed', type: 'money', default: '0' },
-    { name: 'reimbursement_date', label: 'Reimbursed on', type: 'date' },
+    // approval_status, approved_by, amount_reimbursed and reimbursement_date
+    // are deliberately not here (#85). A new claim starts Submitted and is
+    // decided through Review and paid through Reimburse, which check the role
+    // and leave an audit row; the server refuses all four on this form, for
+    // administrators too, so offering them here would only produce a 403.
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 

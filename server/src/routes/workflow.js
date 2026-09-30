@@ -4,7 +4,9 @@ import { query, transaction } from '../db.js';
 import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
+import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
 import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
@@ -578,34 +580,136 @@ const vendorPaySchema = z.object({
   payment_date: dateStr,
 });
 
+/**
+ * Record what a travel vendor has been paid.
+ *
+ * Open to both roles, deliberately: arranging travel and settling the
+ * vendor's invoice is ordinary work, and there is no finance role for it to
+ * belong to. What changed in #85 is not who may do it but what is left
+ * behind — the figure now arrives with the account that recorded it, in the
+ * same transaction, and the two columns are no longer reachable through the
+ * ordinary edit form (see protectedFields on the resource).
+ *
+ * The total is set, not added to, exactly as before.
+ */
 vendorInvoiceRouter.post('/:id/pay', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Vendor invoice not found');
   const body = parse(vendorPaySchema, req.body || {});
-  const { rows } = await query(
-    `UPDATE travel_vendor_invoices
-        SET amount_paid = $1, payment_date = COALESCE($2, CURRENT_DATE)
-      WHERE id = $3 RETURNING id`,
-    [body.amount_paid, body.payment_date ?? null, req.params.id]
-  );
-  if (!rows.length) throw new ApiError(404, 'Vendor invoice not found');
-  const { rows: full } = await query('SELECT * FROM v_travel_vendor_invoices WHERE id = $1', [rows[0].id]);
+  const id = Number(req.params.id);
+
+  const paid = await transaction(async (client) => {
+    const { rows: [before] } = await client.query(
+      'SELECT id, vendor_invoice_id, amount_paid, payment_date FROM travel_vendor_invoices WHERE id = $1 FOR UPDATE',
+      [id]
+    );
+    if (!before) throw new ApiError(404, 'Vendor invoice not found');
+
+    const { rows: [after] } = await client.query(
+      `UPDATE travel_vendor_invoices
+          SET amount_paid = $1, payment_date = COALESCE($2, CURRENT_DATE)
+        WHERE id = $3 RETURNING id, amount_paid, payment_date`,
+      [body.amount_paid, body.payment_date ?? null, id]
+    );
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.VENDOR_INVOICE_PAID,
+      entityType: 'vendor_invoice',
+      entityId: before.vendor_invoice_id ?? String(before.id),
+      metadata: {
+        amount_paid_before: Number(before.amount_paid),
+        amount_paid_after: Number(after.amount_paid),
+        payment_date: after.payment_date,
+      },
+    });
+    return after;
+  });
+
+  const { rows: full } = await query('SELECT * FROM v_travel_vendor_invoices WHERE id = $1', [paid.id]);
   res.json({ data: full[0] });
 });
 
+// ---------------------------------------------------------------------
+// Expense claims — deciding one, and paying it (#85)
+//
+// Submitting a claim is ordinary work; both of the routes below are the
+// administrator's. Until #85 neither carried a role check at all, so any
+// signed-in person could approve a claim — their own included, since a
+// claim carries no owner to compare against — and then reimburse it, and
+// name whoever they liked as the approver. Three separate things fixed
+// together, because any one of them left alone still lets money out:
+//
+//   requireAdmin      who may decide and who may pay
+//   approved_by       taken from the session, never from the body
+//   protectedFields   the same columns, closed on the generic form
+//
+// A claim still has no link to the person who made it, so "an admin may not
+// approve their own claim" is not a rule this can enforce; that needs a
+// column the table does not have, and is deliberately left to its own
+// change. What is enforced is that only an admin decides, and that whoever
+// did is recorded where it cannot be edited.
+// ---------------------------------------------------------------------
+
 const claimDecisionSchema = z.object({
   approval_status: z.enum(['Submitted', 'Approved', 'Rejected', 'On Hold']),
-  approved_by: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
 });
 
-claimRouter.post('/:id/decide', async (req, res) => {
+claimRouter.post('/:id/decide', requireAdmin, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Claim not found');
   const body = parse(claimDecisionSchema, req.body || {});
-  const { rows } = await query(
-    `UPDATE employee_expense_claims
-        SET approval_status = $1, approved_by = COALESCE($2, approved_by)
-      WHERE id = $3 RETURNING id`,
-    [body.approval_status, body.approved_by ?? null, req.params.id]
-  );
-  if (!rows.length) throw new ApiError(404, 'Claim not found');
-  const { rows: full } = await query('SELECT * FROM v_employee_expense_claims WHERE id = $1', [rows[0].id]);
+  const id = Number(req.params.id);
+  // Whoever is signed in decided it. The body is not asked, so there is
+  // nothing to disagree with: the name on the record and the account in the
+  // audit row are the same person by construction.
+  const decidedBy = req.user?.name || req.user?.username || null;
+
+  const decided = await transaction(async (client) => {
+    const { rows: [before] } = await client.query(
+      `SELECT id, claim_id, approval_status, approved_by, amount_claimed, amount_reimbursed
+         FROM employee_expense_claims WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (!before) throw new ApiError(404, 'Claim not found');
+
+    // Money already paid against this claim is why the approval cannot
+    // simply be taken back. Rejecting a claim that has been part-reimbursed
+    // would leave the payment recorded and invisible — the claim's status is
+    // derived from approval_status first, so the reimbursement stops being
+    // counted anywhere while the money stays gone. Put the figure right
+    // first, through /correct, which says plainly that is what happened.
+    if (Number(before.amount_reimbursed) > 0
+        && before.approval_status === 'Approved'
+        && body.approval_status !== 'Approved') {
+      throw new ApiError(
+        409,
+        `${before.claim_id} has already been reimbursed ${Number(before.amount_reimbursed)}. `
+        + 'Correct the reimbursement first, then change the decision.'
+      );
+    }
+
+    const { rows: [after] } = await client.query(
+      `UPDATE employee_expense_claims
+          SET approval_status = $1, approved_by = COALESCE($2, approved_by)
+        WHERE id = $3 RETURNING id, approval_status, approved_by`,
+      [body.approval_status, decidedBy, id]
+    );
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.CLAIM_DECIDED,
+      entityType: 'expense_claim',
+      entityId: before.claim_id ?? String(before.id),
+      metadata: {
+        approval_status_before: before.approval_status,
+        approval_status_after: after.approval_status,
+        approved_by: after.approved_by,
+        amount_claimed: Number(before.amount_claimed),
+      },
+    });
+    return after;
+  });
+
+  const { rows: full } = await query('SELECT * FROM v_employee_expense_claims WHERE id = $1', [decided.id]);
   res.json({ data: full[0] });
 });
 
@@ -614,20 +718,176 @@ const reimburseSchema = z.object({
   reimbursement_date: dateStr,
 });
 
-claimRouter.post('/:id/reimburse', async (req, res) => {
+/**
+ * Record a reimbursement.
+ *
+ * `amount_reimbursed` is a running total, not the size of one payment, and
+ * it stays that way: the client sends what the total now comes to, and a
+ * part-payment is a smaller total followed later by a larger one. The view
+ * reads "Partly reimbursed" from that figure against amount_claimed, and
+ * the dialog adds this payment to what is already recorded before sending.
+ * Left exactly as it was — the only changes here are who may call it and
+ * what it writes down afterwards.
+ */
+claimRouter.post('/:id/reimburse', requireAdmin, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Claim not found');
   const body = parse(reimburseSchema, req.body || {});
-  const { rows } = await query(
-    `UPDATE employee_expense_claims
-        SET amount_reimbursed = COALESCE($1, amount_claimed),
-            reimbursement_date = COALESCE($2, CURRENT_DATE)
-      WHERE id = $3 AND approval_status = 'Approved'
-      RETURNING id`,
-    [body.amount_reimbursed ?? null, body.reimbursement_date ?? null, req.params.id]
-  );
-  if (!rows.length) {
-    throw new ApiError(409, 'Claim not found, or it has not been approved yet');
+  const id = Number(req.params.id);
+
+  const paid = await transaction(async (client) => {
+    const { rows: [before] } = await client.query(
+      `SELECT id, claim_id, amount_claimed, amount_reimbursed
+         FROM employee_expense_claims WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+
+    const { rows } = await client.query(
+      `UPDATE employee_expense_claims
+          SET amount_reimbursed = COALESCE($1, amount_claimed),
+              reimbursement_date = COALESCE($2, CURRENT_DATE)
+        WHERE id = $3 AND approval_status = 'Approved'
+        RETURNING id, amount_reimbursed, reimbursement_date`,
+      [body.amount_reimbursed ?? null, body.reimbursement_date ?? null, id]
+    );
+    // One message for "no such claim" and for "not approved yet", as before.
+    if (!rows.length) throw new ApiError(409, 'Claim not found, or it has not been approved yet');
+    const after = rows[0];
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.CLAIM_REIMBURSED,
+      entityType: 'expense_claim',
+      entityId: before?.claim_id ?? String(after.id),
+      metadata: {
+        amount_claimed: Number(before?.amount_claimed ?? 0),
+        amount_reimbursed_before: Number(before?.amount_reimbursed ?? 0),
+        amount_reimbursed_after: Number(after.amount_reimbursed),
+        reimbursement_date: after.reimbursement_date,
+      },
+    });
+    return after;
+  });
+
+  const { rows: full } = await query('SELECT * FROM v_employee_expense_claims WHERE id = $1', [paid.id]);
+  res.json({ data: full[0] });
+});
+
+const claimCorrectionSchema = z.object({
+  amount_reimbursed: money,
+  reimbursement_date: dateStr,
+  approval_status: z.enum(['Submitted', 'Approved', 'Rejected', 'On Hold']).optional(),
+  reason: z.preprocess(blank, z.string().trim().min(1, 'Say what is being corrected').max(500)),
+});
+
+/**
+ * Put a wrong figure right.
+ *
+ * The reimbursement dialog can only ever move the total up — it adds this
+ * payment to what is already there — so a mistyped amount has no way back
+ * through the ordinary route, and the ordinary form is closed to these
+ * columns on purpose. This is the way back: administrator only, bounded by
+ * what was claimed, and refused without a reason, which is recorded.
+ *
+ * It is not a second reimbursement route. Reimbursing is /reimburse; this
+ * says "the record is wrong" and is meant to be rare enough that every use
+ * is worth reading in the log.
+ */
+claimRouter.post('/:id/correct', requireAdmin, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Claim not found');
+  const body = parse(claimCorrectionSchema, req.body || {});
+  const id = Number(req.params.id);
+
+  // A blank field is preprocessed to null, so "absent" and "sent empty" both
+  // arrive as nothing to do — treat them the same rather than accepting a
+  // request that would quietly change nothing and report success.
+  const given = (v) => v !== undefined && v !== null;
+  if (!given(body.amount_reimbursed) && !given(body.reimbursement_date) && !given(body.approval_status)) {
+    throw new ApiError(422, 'Nothing to correct');
   }
-  const { rows: full } = await query('SELECT * FROM v_employee_expense_claims WHERE id = $1', [rows[0].id]);
+
+  const corrected = await transaction(async (client) => {
+    const { rows: [before] } = await client.query(
+      `SELECT id, claim_id, approval_status, approved_by, amount_claimed, amount_reimbursed, reimbursement_date
+         FROM employee_expense_claims WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (!before) throw new ApiError(404, 'Claim not found');
+
+    const amount = body.amount_reimbursed ?? null;
+    // A correction may not invent a reimbursement larger than the claim. The
+    // ordinary route has never checked this; the difference is that this one
+    // exists to fix figures, so accepting an impossible one would defeat it.
+    if (amount !== null && amount > Number(before.amount_claimed)) {
+      throw new ApiError(422, 'Please check the highlighted fields', {
+        fields: { amount_reimbursed: `More than the ${Number(before.amount_claimed)} claimed` },
+      });
+    }
+
+    // What the claim would look like afterwards, field by field, matching the
+    // COALESCE below: anything not sent keeps the value it already had.
+    const resultingAmount = amount !== null ? amount : Number(before.amount_reimbursed);
+    const resultingStatus = body.approval_status ?? before.approval_status;
+
+    // The same invariant /decide enforces, judged on the result rather than on
+    // the field that happens to be in the request.
+    //
+    // Money recorded against a claim that is not approved is money the tracker
+    // has stopped counting: the view reads the status from approval_status
+    // first, so the reimbursement disappears from every figure while the
+    // payment itself does not. /decide refuses to create that state; a
+    // correction that arrived at it by another route would be the same hole
+    // with a reason attached.
+    //
+    // Both fields can be sent together, so this costs no legitimate
+    // correction — rejecting a part-reimbursed claim is one call that says
+    // what happened to the money as well as what happened to the claim.
+    if (resultingStatus !== 'Approved' && resultingAmount > 0) {
+      throw new ApiError(422, 'Please check the highlighted fields', {
+        fields: {
+          approval_status: `${resultingAmount} is still recorded as reimbursed`,
+          amount_reimbursed: `Set this to 0 in the same correction to leave the claim ${resultingStatus}`,
+        },
+      });
+    }
+
+    const { rows: [after] } = await client.query(
+      `UPDATE employee_expense_claims
+          SET amount_reimbursed  = COALESCE($1, amount_reimbursed),
+              reimbursement_date = COALESCE($2, reimbursement_date),
+              approval_status    = COALESCE($3, approval_status)
+        WHERE id = $4
+        RETURNING id, approval_status, amount_reimbursed, reimbursement_date`,
+      [amount, body.reimbursement_date ?? null, body.approval_status ?? null, id]
+    );
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.CLAIM_CORRECTED,
+      entityType: 'expense_claim',
+      entityId: before.claim_id ?? String(before.id),
+      metadata: {
+        reason: body.reason,
+        amount_claimed: Number(before.amount_claimed),
+        amount_reimbursed_before: Number(before.amount_reimbursed),
+        amount_reimbursed_after: Number(after.amount_reimbursed),
+        // There is no reimbursement ledger on a claim — amount_reimbursed is
+        // one column, so lowering it overwrites the old figure rather than
+        // recording a reversal against it. This row is the only surviving
+        // record that the larger figure was ever there, and the flag makes
+        // the case worth reading greppable. Accounting for an actual refund,
+        // as opposed to fixing a typo, is not something this endpoint can
+        // claim to have done.
+        lowers_recorded_total: Number(after.amount_reimbursed) < Number(before.amount_reimbursed),
+        approval_status_before: before.approval_status,
+        approval_status_after: after.approval_status,
+        reimbursement_date_before: before.reimbursement_date,
+        reimbursement_date_after: after.reimbursement_date,
+      },
+    });
+    return after;
+  });
+
+  const { rows: full } = await query('SELECT * FROM v_employee_expense_claims WHERE id = $1', [corrected.id]);
   res.json({ data: full[0] });
 });
 

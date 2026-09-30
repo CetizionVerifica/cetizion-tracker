@@ -241,13 +241,15 @@ export function PayVendorDialog({ invoice, onClose, onDone }) {
 
 export function ClaimDecisionDialog({ claim, onClose, onDone }) {
   const [status, setStatus] = useState('Approved');
-  const [by, setBy] = useState('HR Team');
   const { busy, error, run } = useAction({ onDone, successMessage: 'Claim updated' });
 
+  // Who decided is no longer typed in (#85). The server takes it from the
+  // session, so the name on the claim is the account that pressed the button
+  // rather than whatever was in the box.
   const submit = async (e) => {
     e.preventDefault();
     const ok = await run(() =>
-      api.action(`/expense-claims/${claim.id}/decide`, { approval_status: status, approved_by: by })
+      api.action(`/expense-claims/${claim.id}/decide`, { approval_status: status })
     );
     if (ok) onClose();
   };
@@ -269,9 +271,6 @@ export function ClaimDecisionDialog({ claim, onClose, onDone }) {
           options={['Approved', 'Rejected', 'On Hold', 'Submitted']}
           onChange={(e) => setStatus(e.target.value)}
         />
-      </Field>
-      <Field label="Decided by">
-        <Input value={by} onChange={(e) => setBy(e.target.value)} />
       </Field>
     </ActionModal>
   );

@@ -214,6 +214,32 @@ function initials(name) {
 }
 
 /**
+ * A page only an administrator may open (#85).
+ *
+ * The sidebar does not list these, but a bookmark, a ⌘K result or a typed
+ * URL does not go through the sidebar, and the page behind one would
+ * otherwise render and then fill with 403s — which reads as the app being
+ * broken rather than as the page not being yours.
+ *
+ * Deliberately the same "not found" a bad URL gets. There is nothing to gain
+ * from telling a sales user which admin pages exist, and nothing to protect
+ * here either: the routes these pages call are guarded on the server, which
+ * is what actually decides.
+ *
+ * Used sparingly, and only where the server's answer is unconditional. The
+ * five pages Settings absorbed (import, emails, mailboxes, webhooks,
+ * templates) are not here: SettingsArea filters those panes out of both its
+ * rail and its Routes, so a sales user reaching /settings/import is
+ * redirected rather than refused. Profitability is not here either — its
+ * gate is conditional on the margin_visible_to_sales setting, so hiding the
+ * page outright would refuse what the server would have allowed.
+ */
+function AdminOnly({ children }) {
+  const { isAdmin } = useAuth();
+  return isAdmin ? children : <NotFound />;
+}
+
+/**
  * The sidebar's contents, rendered twice: inside a Sheet on a phone and
  * inside a fixed column above lg. One definition, so the drawer cannot
  * drift from the column.
@@ -500,7 +526,7 @@ export default function App() {
           <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
-          <Route path="/accounting" element={<Accounting />} />
+          <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/money/invoice-run" element={<InvoiceRun />} />
@@ -520,7 +546,7 @@ export default function App() {
           <Route path="/emails" element={<LegacyRedirect to="/settings/emails" />} />
           <Route path="/import" element={<LegacyRedirect to="/settings/import" />} />
           {/* A batch in progress is its own screen, not a settings pane. */}
-          <Route path="/import/:id" element={<ImportReviewPage />} />
+          <Route path="/import/:id" element={<AdminOnly><ImportReviewPage /></AdminOnly>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

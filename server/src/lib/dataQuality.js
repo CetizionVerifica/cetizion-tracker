@@ -72,6 +72,39 @@ export const CHECKS = [
     where: 'contacts = 0',
     link: '/companies?contacts=0',
   },
+  // The check above passes a company whose only contact is a name — which is
+  // every contact the enquiry and quotation forms used to make. So a client
+  // nothing could be sent to read as healthy (client-data-gaps.md, gap 2).
+  {
+    key: 'companies_without_contact_email',
+    label: 'Companies whose contacts have no email',
+    from: 'v_companies',
+    where: 'contacts_all_without_email = 1',
+    link: '/companies?contacts_all_without_email=1',
+  },
+  // Who a payment chaser is addressed to. With none marked, reminders fall
+  // back to whichever contact was created first, which can be the client's
+  // technical lead (gap 5).
+  {
+    key: 'clients_without_billing_contact',
+    label: 'Clients with a purchase order but no billing contact with an email',
+    from: 'v_companies',
+    where: 'needs_billing_contact = 1',
+    link: '/companies?needs_billing_contact=1',
+  },
+  // The quotation cannot be sent and the acceptance link cannot go out.
+  //
+  // Only deals that name somebody. A quotation with no contact at all is a
+  // different question with a different answer — "who is this deal with?"
+  // rather than "what is their address?" — and counting both here would
+  // give one number nobody can act on.
+  {
+    key: 'open_quotations_without_contact_email',
+    label: 'Open quotations that name a contact with no email',
+    from: 'v_quotations',
+    where: `stage_type = 'open' AND NULLIF(btrim(contact_person), '') IS NOT NULL AND NULLIF(btrim(contact_email), '') IS NULL`,
+    link: '/quotations?stage_type=open&contact_person=__any__&contact_email=__none__',
+  },
 ];
 
 /** Every check, in CHECKS order, as `{ key, label, count, link }`. */

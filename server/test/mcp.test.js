@@ -165,6 +165,59 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     assert.equal(second.total, first.total, 'the total is of the whole list, not of the page');
   });
 
+  /**
+   * A page past the end has no row to carry count(*) OVER (), and every list
+   * used to answer total 0 there: list_tasks({ offset: 100 }) on five tasks
+   * said there were none, and list_payables said "0 bills" beside the debt it
+   * had just totalled. The total is of the list, whichever page is asked for.
+   */
+  test('a page past the end still says how long the list is, on every list', async () => {
+    const t = (await token({ name: 'Past the end', role: 'admin', can_write: true })).token;
+    // An open task of its own: the schema check above closes the one it made.
+    await call(t, 'create_task', { entity: 'quotation', id: 'QT-ASHA', title: 'A task for the paging check' });
+
+    const lists = [
+      ['list_pipeline', {}, 'deals'],
+      ['list_collections', { overdue_only: false }, 'items'],
+      ['list_activity', { entity: 'quotation', id: 'QT-ASHA' }, 'items'],
+      ['list_inbox', {}, 'items'],
+      ['list_tasks', {}, 'items'],
+      ['list_payables', {}, 'items'],
+    ];
+    for (const [name, args, key] of lists) {
+      const first = JSON.parse((await call(t, name, args)).text);
+      assert.ok(first.total > 0, `${name}: the fixtures give it something to count`);
+
+      const past = await call(t, name, { ...args, offset: 100 });
+      assert.equal(past.error, false, `${name} -> ${past.text}`);
+      const page = JSON.parse(past.text);
+      assert.deepEqual(page[key], [], `${name}: nothing is left at offset 100`);
+      assert.equal(page.total, first.total, `${name}: the total is of the list, not of the empty page`);
+      assert.equal(page.has_more, false, `${name}: there is nothing after the end`);
+      assert.equal(page.offset, 100);
+    }
+  });
+
+  test('payables past the end count the same bills the outstanding total covers', async () => {
+    const t = (await token({ name: 'Payables past the end', role: 'admin' })).token;
+    const first = JSON.parse((await call(t, 'list_payables', {})).text);
+    const past = JSON.parse((await call(t, 'list_payables', { offset: 100 })).text);
+    // Was: total 0 beside a debt of ₹35,000 — no bills, yet money owed.
+    assert.equal(past.total, first.total);
+    assert.ok(past.total > 0);
+    for (const [k, v] of Object.entries(first)) {
+      if (!['items', 'offset', 'has_more'].includes(k)) assert.deepEqual(past[k], v, `${k} is the same whichever page is asked for`);
+    }
+  });
+
+  test('an empty list is still empty on the first page and past the end', async () => {
+    const t = (await token({ name: 'Nothing there', role: 'admin' })).token;
+    for (const offset of [0, 50]) {
+      const page = JSON.parse((await call(t, 'list_collections', { overdue_only: false, min_days_overdue: 100000, offset })).text);
+      assert.deepEqual([page.items, page.total, page.has_more], [[], 0, false], `offset ${offset}`);
+    }
+  });
+
   test('a caller cannot ask for a thousand rows', async () => {
     const t = (await token({ name: 'Ceiling', role: 'admin' })).token;
     const res = await call(t, 'list_pipeline', { limit: 1000 });
