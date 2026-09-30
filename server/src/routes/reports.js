@@ -14,12 +14,20 @@
  * Quarters are Indian financial quarters — Q1 is April to June — because
  * every other total on the screen is stated for a financial year, and two
  * definitions of "this quarter" on one page is one too many.
+ *
+ * Every route here counts quotations, and `quotations` is owner-scoped
+ * (#18 Phase 2C) — a sales user reaches only their own. An aggregate that
+ * ignored that would hand the whole company's book to anyone signed in,
+ * which is worse than the list it summarises, not better. So each query
+ * carries `ownerClause`, and an administrator, whose scope is
+ * unrestricted, gets the empty string and the same totals as before.
  */
 import { Router } from 'express';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { financialQuarter, recentQuarters } from '../lib/quarters.js';
+import { ownerClause, scopeOf } from '../auth/ownership.js';
 
 export const reportsRouter = Router();
 
@@ -38,14 +46,17 @@ reportsRouter.get('/win-rate', async (req, res) => {
   // stage change and then to the quotation date, so none is dropped for want
   // of a timestamp. The date is read where the business is: a deal closed at
   // 9pm on 31 March in Mumbai belongs to that quarter, not the next one.
+  const params = [wanted[0].starts_on, config.businessTimeZone];
+  const mine = ownerClause(scopeOf(req), params);
   const { rows } = await query(
     `SELECT stage_type,
             to_char((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2, 'YYYY-MM-DD') AS closed_on,
             quotation_value, currency
        FROM v_quotations
       WHERE stage_type IN ('won', 'lost')
-        AND ((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2)::date >= $1::date`,
-    [wanted[0].starts_on, config.businessTimeZone]);
+        AND ((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2)::date >= $1::date
+        ${mine ? `AND ${mine}` : ''}`,
+    params);
 
   const byKey = new Map(wanted.map((q) => [q.key, { ...q, won: 0, lost: 0, won_value: 0, lost_value: 0 }]));
   // The rate is a count, so a deal in another currency counts in it like any
@@ -98,6 +109,8 @@ reportsRouter.get('/conversion', async (req, res) => {
 
   // The column is chosen from a fixed map, never taken from the query, so
   // the only thing interpolated is one of three known identifiers.
+  const params = [MAX_ROWS];
+  const mine = ownerClause(scopeOf(req), params);
   const { rows } = await query(
     `SELECT COALESCE(NULLIF(btrim(${column}), ''), 'Not recorded') AS key,
             COUNT(*) FILTER (WHERE stage_type = 'won')::int  AS won,
@@ -105,10 +118,11 @@ reportsRouter.get('/conversion', async (req, res) => {
             COALESCE(SUM(quotation_value) FILTER (WHERE stage_type = 'won' AND currency = 'INR'), 0)::float8 AS won_value
        FROM v_quotations
       WHERE stage_type IN ('won', 'lost')
+        ${mine ? `AND ${mine}` : ''}
       GROUP BY 1
       ORDER BY (COUNT(*) FILTER (WHERE stage_type = 'won')) DESC, COUNT(*) DESC
       LIMIT $1`,
-    [MAX_ROWS]
+    params
   );
 
   const groups = rows.map((row) => {
@@ -137,6 +151,8 @@ reportsRouter.get('/quoted-won', async (req, res) => {
   const months = Math.min(Math.max(Number.isFinite(asked) ? Math.trunc(asked) : DEFAULT_MONTHS, MIN_MONTHS), MAX_MONTHS);
   const today = businessToday();
 
+  const params = [today, months];
+  const mine = ownerClause(scopeOf(req), params);
   const { rows } = await query(
     `SELECT to_char(date_trunc('month', quotation_date), 'YYYY-MM') AS month,
             COALESCE(SUM(quotation_value) FILTER (WHERE currency = 'INR'), 0)::float8 AS quoted,
@@ -145,8 +161,9 @@ reportsRouter.get('/quoted-won', async (req, res) => {
             COUNT(*) FILTER (WHERE currency <> 'INR')::int AS foreign_deals
        FROM v_quotations
       WHERE quotation_date >= (date_trunc('month', $1::date) - make_interval(months => $2::int - 1))
+        ${mine ? `AND ${mine}` : ''}
       GROUP BY 1 ORDER BY 1`,
-    [today, months]
+    params
   );
 
   // Months with nothing quoted are still months: a gap in the axis reads as
@@ -172,6 +189,8 @@ reportsRouter.get('/quoted-won', async (req, res) => {
  * only shows where it got to.
  */
 reportsRouter.get('/by-status', async (req, res) => {
+  const params = [];
+  const mine = ownerClause(scopeOf(req), params);
   const { rows } = await query(
     `SELECT COALESCE(NULLIF(btrim(status), ''), 'Not recorded') AS status,
             COUNT(*)::int AS deals,
@@ -179,7 +198,9 @@ reportsRouter.get('/by-status', async (req, res) => {
             COUNT(*) FILTER (WHERE currency <> 'INR')::int AS foreign_deals
        FROM v_quotations
       WHERE stage_type NOT IN ('won', 'lost')
-      GROUP BY 1 ORDER BY 2 DESC`
+        ${mine ? `AND ${mine}` : ''}
+      GROUP BY 1 ORDER BY 2 DESC`,
+    params
   );
   res.json({ data: { statuses: rows, foreign: rows.reduce((n, r) => n + r.foreign_deals, 0) } });
 });

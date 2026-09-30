@@ -358,11 +358,16 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
     let otherMilestone;
 
     before(async () => {
+      // owner_user_id, not sales_person. The milestone resource is scoped
+      // by its project's owner (resources.js: ownerScopedBy 'project'), and
+      // deliberately not by the project_manager/sales_person text columns —
+      // a name is not an identity. Seeding only the name left both projects
+      // unowned, which is admin-only, so salesA could not see their own.
       await db.query(
-        `INSERT INTO projects (project_id, client_name, sales_person) VALUES
-           ('PRJ-MATRIX-A', 'A Client', $1),
-           ('PRJ-MATRIX-B', 'B Client', $2)`,
-        [salesA.user.name, salesB.user.name]
+        `INSERT INTO projects (project_id, client_name, sales_person, owner_user_id) VALUES
+           ('PRJ-MATRIX-A', 'A Client', $1, $3),
+           ('PRJ-MATRIX-B', 'B Client', $2, $4)`,
+        [salesA.user.name, salesB.user.name, salesA.user.id, salesB.user.id]
       );
       const { rows } = await db.query(
         `INSERT INTO project_milestones (project_id, name) VALUES

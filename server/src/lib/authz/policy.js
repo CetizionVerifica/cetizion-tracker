@@ -203,7 +203,17 @@ export const routes = [
   { method: 'GET', path: '/api/search', access: signedIn, note: 'One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not.' },
 
   // -------------------------------------------------------------- reports
-  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, note: 'Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is.' },
+  //
+  // Each of these aggregates `quotations`, which is owner-scoped, so each
+  // carries ownerClause and a sales user sees the shape of their own book
+  // rather than the company's. The gate is open because the numbers are
+  // counts and quotation values a salesperson already sees on their own
+  // rows; none of them carries margin, which is what /api/profitability is
+  // gated for.
+  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, restrictions: ['record-owner'], note: 'Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped.' },
+  { method: 'GET', path: '/api/reports/conversion', access: signedIn, restrictions: ['record-owner'], note: 'Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string.' },
+  { method: 'GET', path: '/api/reports/quoted-won', access: signedIn, restrictions: ['record-owner'], note: 'Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today\'s rate into a month that has passed.' },
+  { method: 'GET', path: '/api/reports/by-status', access: signedIn, restrictions: ['record-owner'], note: 'Open deals by the status on the record, which is not always where its pipeline stage puts it.' },
 
   // --------------------------------------------------------- saved views
   //
@@ -458,6 +468,44 @@ export const routes = [
   {
     method: 'POST', path: '/api/expense-claims/:id/correct', access: mustBeAdmin,
     why: 'The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up.',
+  },
+
+  //
+  // Who a record belongs to is the administrator's to set. A salesperson may
+  // read their own work — that is what row scoping is for — but reassigning
+  // it is a decision about people, not about the record, and the handover
+  // history is the audit of those decisions.
+  {
+    method: 'PATCH', path: '/api/:resource/:id/owner', access: mustBeAdmin,
+    why: 'Assigning, reassigning or unassigning a record moves somebody else\'s pipeline. Sales users already see only their own rows, so letting one of them set owner_user_id would let them take a record off a colleague, or hand their own away to hide it (#18 Phase 3).',
+  },
+  {
+    method: 'GET', path: '/api/:resource/:id/ownership-history', access: mustBeAdmin,
+    why: 'The handover trail for one record: who owned it, who changed that, and when. It names accounts other than the caller\'s, which is the administrator\'s view of the team rather than a salesperson\'s view of their own work (#18 Phase 3).',
+  },
+
+  // -------------------------------------------------- sales KPIs (#18 §5)
+  //
+  // Everything here is mounted behind the router's own requireAuth. The
+  // split is between a person's own figures, which are theirs to read, and
+  // the team's, which are the administrator's — and between reading a target
+  // and setting one.
+  { method: 'GET', path: '/api/kpis/me', access: signedIn, restrictions: ['self-only'] },
+  {
+    method: 'GET', path: '/api/kpis/team', access: mustBeAdmin,
+    why: 'Every salesperson\'s figures side by side. That is the manager\'s view of the team, and one salesperson comparing themselves against a named colleague is not what these numbers are for (#18 §5).',
+  },
+  {
+    method: 'GET', path: '/api/kpis/users/:userId', access: signedIn, restrictions: ['self-only'],
+    note: 'The handler refuses another salesperson with 403 rather than an empty list: an empty list reads as "no work done", which is a different and worse answer than "not yours to see". An admin may read anybody\'s.',
+  },
+  {
+    method: 'GET', path: '/api/kpis/targets', access: signedIn, restrictions: ['self-only'],
+    note: 'A salesperson sees the targets set for them; asking after somebody else\'s is refused in the handler the same way as /users/:userId.',
+  },
+  {
+    method: 'PUT', path: '/api/kpis/users/:userId/targets/:metric', access: mustBeAdmin,
+    why: 'A target is what somebody is measured against, so setting your own would make the measurement meaningless (#18 §5).',
   },
 
   // -------------------------------------------------------- the web shell

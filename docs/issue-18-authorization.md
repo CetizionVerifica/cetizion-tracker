@@ -120,6 +120,9 @@ session is **401**, before any of these is considered.
 <!-- generated:routes -->
 | Route | Access | Why, or what narrows it |
 | --- | :--: | --- |
+| **/api/:resource** | | |
+| `PATCH /api/:resource/:id/owner` | **admin** | Assigning, reassigning or unassigning a record moves somebody else's pipeline. Sales users already see only their own rows, so letting one of them set owner_user_id would let them take a record off a colleague, or hand their own away to hide it (#18 Phase 3). |
+| `GET /api/:resource/:id/ownership-history` | **admin** | The handover trail for one record: who owned it, who changed that, and when. It names accounts other than the caller's, which is the administrator's view of the team rather than a salesperson's view of their own work (#18 Phase 3). |
 | **/api/accounting** | | |
 | `GET /api/accounting/entries` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
 | `POST /api/accounting/import` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
@@ -242,6 +245,12 @@ session is **401**, before any of these is considered.
 | **/api/jobs** | | |
 | `GET /api/jobs` | any |  |
 | `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |
+| **/api/kpis** | | |
+| `GET /api/kpis/me` | any | Scoped: self-only. |
+| `GET /api/kpis/targets` | any | A salesperson sees the targets set for them; asking after somebody else's is refused in the handler the same way as /users/:userId. |
+| `GET /api/kpis/team` | **admin** | Every salesperson's figures side by side. That is the manager's view of the team, and one salesperson comparing themselves against a named colleague is not what these numbers are for (#18 §5). |
+| `GET /api/kpis/users/:userId` | any | The handler refuses another salesperson with 403 rather than an empty list: an empty list reads as "no work done", which is a different and worse answer than "not yours to see". An admin may read anybody's. |
+| `PUT /api/kpis/users/:userId/targets/:metric` | **admin** | A target is what somebody is measured against, so setting your own would make the measurement meaningless (#18 §5). |
 | **/api/lookups** | | |
 | `GET /api/lookups` | any |  |
 | `GET /api/lookups/next-id/:kind` | any |  |
@@ -333,7 +342,10 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/discover` | **admin** | Running the discovery sweep by hand is an operational act; it creates renewal records across every client. |
 | `POST /api/renewals/manual` | any |  |
 | **/api/reports** | | |
-| `GET /api/reports/win-rate` | any | Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is. |
+| `GET /api/reports/by-status` | any | Open deals by the status on the record, which is not always where its pipeline stage puts it. |
+| `GET /api/reports/conversion` | any | Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string. |
+| `GET /api/reports/quoted-won` | any | Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today's rate into a month that has passed. |
+| `GET /api/reports/win-rate` | any | Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped. |
 | **/api/search** | | |
 | `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
 | **/api/settings** | | |
