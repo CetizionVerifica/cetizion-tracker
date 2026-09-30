@@ -2,6 +2,7 @@ import React from 'react';
 import './styles/globals.css';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { ThemeProvider } from 'next-themes';
 import App from './App.jsx';
 import { ToastProvider } from './components/ui.jsx';
 import AuthGate from './components/AuthGate.jsx';
@@ -23,18 +24,35 @@ const bannerRoot = document.createElement('div');
 document.body.prepend(bannerRoot);
 createRoot(bannerRoot).render(<EnvironmentBanner />);
 
+/**
+ * The theme, and who gets a choice about it.
+ *
+ * Staff pick: the toggle is in the sidebar footer and the choice is
+ * remembered per browser. Clients do not: the acceptance page and the
+ * portal are branded surfaces a client sees once, from a link, and C18
+ * draws them dark — so they are pinned dark rather than following a
+ * setting belonging to whoever last used this browser.
+ */
+const Theme = ({ children, forced }) => (
+  <ThemeProvider attribute="class" defaultTheme="dark" enableSystem storageKey="cetizion.theme" forcedTheme={forced}>
+    {children}
+  </ThemeProvider>
+);
+
 createRoot(document.getElementById('root')).render(
-  acceptToken ? <React.StrictMode><AcceptQuotation token={acceptToken} /></React.StrictMode> :
-  portalPath ? <Portal loginToken={portalPath[1]} /> :
+  acceptToken ? <React.StrictMode><Theme forced="dark"><AcceptQuotation token={acceptToken} /></Theme></React.StrictMode> :
+  portalPath ? <Theme forced="dark"><Portal loginToken={portalPath[1]} /></Theme> :
   <React.StrictMode>
-    <BrowserRouter>
-      <ToastProvider>
-        <AuthProvider>
-          <AuthGate>
-            <App />
-          </AuthGate>
-        </AuthProvider>
-      </ToastProvider>
-    </BrowserRouter>
+    <Theme>
+      <BrowserRouter>
+        <ToastProvider>
+          <AuthProvider>
+            <AuthGate>
+              <App />
+            </AuthGate>
+          </AuthProvider>
+        </ToastProvider>
+      </BrowserRouter>
+    </Theme>
   </React.StrictMode>
 );

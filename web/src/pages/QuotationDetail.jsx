@@ -223,7 +223,7 @@ export default function QuotationDetail() {
         mark={false}
         facts={[
           <span className="inline-flex min-w-0 items-center gap-2 text-foreground">
-            <span className="grid size-5 shrink-0 place-items-center rounded-[5px] bg-[#2a2a32] text-[9px] font-semibold text-settled">
+            <span className="grid size-5 shrink-0 place-items-center rounded-[5px] bg-secondary text-[9px] font-semibold text-settled">
               {initialsOf(q.client_name)}
             </span>
             {q.company_id

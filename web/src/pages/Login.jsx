@@ -68,7 +68,7 @@ const MARK = {
  */
 const PROVIDER_CLASS = {
   microsoft: 'h-11 w-full justify-center gap-3 bg-[#f4f4f6] text-[14px] font-semibold text-[#0a0a0c] hover:bg-[#e6e6ea]',
-  google: 'h-11 w-full justify-center gap-3 border border-[#33333a] bg-secondary text-[14px] font-semibold text-foreground hover:bg-accent',
+  google: 'h-11 w-full justify-center gap-3 border border-border-strong bg-secondary text-[14px] font-semibold text-foreground hover:bg-accent',
 };
 
 export default function Login() {
