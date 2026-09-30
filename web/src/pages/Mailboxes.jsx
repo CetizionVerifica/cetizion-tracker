@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Check, MoreHorizontal, X } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
 import { Alert, ConfirmDialog, Field, Modal, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
@@ -69,17 +69,28 @@ export default function Mailboxes() {
   const [busy, setBusy] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [tuning, setTuning] = useState(null);
+  const [rereading, setRereading] = useState(null);
 
   const rows = data?.data ?? [];
   const cfg = data?.configured;
   const blocked = block.data?.data ?? [];
 
-  async function run(id, fn, ok) {
-    setBusy(id);
+  /**
+   * `what` is running, not only where.
+   *
+   * busy used to be an id, so the only sign anything was happening was a
+   * button greying out — and a sync or a re-read is minutes of nothing,
+   * against a mailbox that looks idle. Naming the work lets the row say
+   * which of them it is doing.
+   */
+  async function run(id, fn, ok, what = 'Working…') {
+    setBusy({ id, what });
     try { const r = await fn(); if (ok) toast(ok(r), 'success'); refetch(); }
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(null); }
   }
+  /** What this mailbox is doing, or null if it is doing nothing. */
+  const doing = (id) => (busy?.id === id ? busy.what : null);
   const patch = (id, body) => run(id, () => api.raw(`/mailboxes/${id}`, { method: 'PATCH', body }), () => 'Saved');
 
   // Fires once, then clears the parameter so a refresh does not re-announce
@@ -117,6 +128,20 @@ export default function Mailboxes() {
     const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;
     if (!skipped.length) return head;
     return `${head} · skipped ${skipped.map(([why, n]) => `${n} ${why}`).join(', ')}`;
+  }
+
+  /**
+   * What a re-read actually did.
+   *
+   * "Done" would be useless here: the answer people need is whether it
+   * found anything, and if not, whether that is because there was nothing
+   * to fix or because it looked in the wrong window.
+   */
+  function rereadResult(x) {
+    const { updated = 0, seen = 0, messages_held: held = 0 } = x.data || {};
+    if (!seen) return 'The mailbox returned nothing for that window — try more days, or reconnect it.';
+    if (!updated) return `Nothing to update — the ${number(seen)} message${seen === 1 ? '' : 's'} it re-read are already current.`;
+    return `${number(updated)} of ${number(held)} stored message${held === 1 ? '' : 's'} rewritten with the sender's own styling.`;
   }
 
   /** What the "Synced" column says, which is mostly about whether it is still running. */
@@ -269,8 +294,8 @@ export default function Mailboxes() {
                         variant="secondary"
                         size="sm"
                         className={ROW_BUTTON}
-                        disabled={busy === row.id}
-                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult)}
+                        disabled={Boolean(doing(row.id))}
+                        onClick={() => run(row.id, () => api.action(`/mailboxes/${row.id}/sync`), syncResult, 'Fetching new mail…')}
                       >
                         Sync now
                       </Button>
@@ -285,6 +310,9 @@ export default function Mailboxes() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setTuning(row)}>
                             What this mailbox syncs…
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-[13px]" onSelect={() => setRereading(row)}>
+                            Re-read stored mail…
                           </DropdownMenuItem>
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setDisconnecting(row)}>
                             Disconnect this mailbox
@@ -303,6 +331,21 @@ export default function Mailboxes() {
                     'active', so the mailbox looked healthy while quietly
                     fetching nothing, and the one sentence explaining it was
                     stored and rendered to nobody. */}
+                {/* Sync and re-read both run for minutes against a mailbox
+                    that otherwise looks idle, and a greyed-out button is not
+                    an answer to "is it doing anything". It goes under the
+                    row rather than beside the button, because the action
+                    column is a few characters wide and the sentence was
+                    truncating to nothing. aria-live so it is announced and
+                    not only drawn; the spin stops entirely under
+                    prefers-reduced-motion, as all motion here does. */}
+                {doing(row.id) && (
+                  <p role="status" aria-live="polite" className="flex items-center gap-2 px-5 pb-3.5 text-[12.5px] text-secondary-text">
+                    <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" strokeWidth={2.2} aria-hidden="true" />
+                    {doing(row.id)}
+                  </p>
+                )}
+
                 {(broken || row.last_error) && (
                   <p className="px-5 pb-3.5 text-[12.5px]/[1.6] text-secondary-text @3xl:max-w-[80ch]">
                     <strong className={cn('font-semibold', broken ? 'text-foreground' : 'text-waiting')}>
@@ -382,6 +425,26 @@ export default function Mailboxes() {
         />
       )}
 
+      {rereading && (
+        <ConfirmDialog
+          tone="normal"
+          title={`Re-read stored mail for ${rereading.email}?`}
+          message={
+            'Mail already in the tracker was stripped of its styling by the old rules, and the original was never kept — so it is fetched from the mailbox again and stored as it really looks. '
+            + 'Only messages already here are updated: nothing new is imported, no conversation is opened or reopened, and a mailbox that shares only metadata still stores no subject and no body. '
+            + 'It reads the last 30 days and makes one request per message, so a busy mailbox will take a few minutes. Running it twice is running it once.'
+          }
+          confirmLabel="Re-read"
+          busy={Boolean(doing(rereading.id))}
+          onConfirm={async () => {
+            const row = rereading;
+            setRereading(null);
+            await run(row.id, () => api.action(`/mailboxes/${row.id}/refresh-bodies`, { days: 30 }), rereadResult,
+              'Re-reading stored mail…');
+          }}
+          onClose={() => setRereading(null)}
+        />
+      )}
       {disconnecting && (
         <ConfirmDialog
           title={`Disconnect ${disconnecting.email}?`}
@@ -390,12 +453,12 @@ export default function Mailboxes() {
             + 'Microsoft has no way for us to cancel the permission itself — to withdraw it, the mailbox’s owner removes Cetizion Tracker at myaccount.microsoft.com → Apps.'
           }
           confirmLabel="Disconnect"
-          busy={busy === disconnecting.id}
+          busy={Boolean(doing(disconnecting.id))}
           onClose={() => setDisconnecting(null)}
           onConfirm={async () => {
             const row = disconnecting;
             setDisconnecting(null);
-            await run(row.id, () => api.action(`/mailboxes/${row.id}/disconnect`, { remove_bodies: true }), (x) => `Disconnected — ${x.data.upstream}`);
+            await run(row.id, () => api.action(`/mailboxes/${row.id}/disconnect`, { remove_bodies: true }), (x) => `Disconnected — ${x.data.upstream}`, 'Disconnecting…');
           }}
         />
       )}

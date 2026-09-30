@@ -3,6 +3,7 @@ import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
+import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -94,6 +95,16 @@ export { LEGACY_ENQUIRY_STATUS, STATUS };
 // delete against the base table.
 // ---------------------------------------------------------------------
 
+/**
+ * A quotation had no onSave. It needs one now only to put the contact's
+ * email and phone where they live — on the contact the trigger linked.
+ */
+async function saveQuotationContact(client, { after, input }) {
+  assertEmailLooksReal(input.contact_email);
+  const saved = await saveContactDetails(client, after.contact_id, contactDetailsFrom(input));
+  return saved ? { contact: saved } : undefined;
+}
+
 export const resources = {
   companies: {
     // Shared master data: every quotation, enquiry and project that ever
@@ -156,7 +167,9 @@ export const resources = {
     // the policy is visible beside the resource rather than hidden in crud.js.
     ownerScoped: true,
     filterAliases: { status: LEGACY_ENQUIRY_STATUS },
-    view: null,
+    // The table plus the linked contact's email and phone, so the form can
+    // show the address it is about to change (client-data-gaps.md, gap 1).
+    view: 'v_enquiries',
     label: 'Enquiry',
     naturalKey: 'enquiry_no',
     // enquiry_no is assigned on create (CTZ/ENQ/2026/004) and never changed.
@@ -199,6 +212,10 @@ export const resources = {
       unqualified_notes: str(1000),
       services_interested: str(500),
       notes: str(2000),
+      // Not columns of enquiries — they belong to the linked contact, and
+      // onSave writes them there. Same route projects take for quotation_no.
+      contact_email: str(160),
+      contact_phone: str(40),
     }),
     onSave: saveEnquiry,
   },
@@ -256,7 +273,11 @@ export const resources = {
       lost_reason_id: int({ min: 1 }),
       lost_notes: str(1000),
       competitor: str(160),
+      // As on enquiries: the contact's own fields, written by onSave.
+      contact_email: str(160),
+      contact_phone: str(40),
     }),
+    onSave: saveQuotationContact,
   },
 
   projects: {

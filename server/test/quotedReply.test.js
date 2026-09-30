@@ -25,9 +25,35 @@ test('the markers a mail client leaves survive sanitising', () => {
   assert.match(stored, /type="cite"/);
 });
 
-test('and nothing else does: a class is a boundary marker, not a styling hook', () => {
-  const stored = cleanHtml('<div class="promo-banner tracking-42">Buy now</div>');
-  assert.doesNotMatch(stored, /class=/);
+test('and so does every other class, because a <style> block needs them', () => {
+  // This used to assert the opposite: classes other than the quote markers
+  // were dropped, on the reasoning that anything else was a styling hook.
+  // It is a styling hook, and that is now the point — a message's own
+  // <style> block reaches nothing without them, so a designed email
+  // arrived as bare paragraphs. What makes it safe is not this list: the
+  // body is rendered in an iframe under default-src 'none' (mailFrame.js),
+  // which is where CSS is stopped from reaching the network.
+  const stored = cleanHtml('<div class="promo-banner">Buy now</div>');
+  assert.match(stored, /class="promo-banner"/);
+});
+
+test('the styling a sender wrote survives, and the things that run do not', () => {
+  const stored = cleanHtml(
+    '<style>.btn{background:#0a7}</style>'
+    + '<table width="640" bgcolor="#ffffff" cellpadding="12"><tr><td align="center">'
+    + '<a href="https://x.test" class="btn" style="padding:10px 18px">Open</a>'
+    + '</td></tr></table>'
+    + '<script>alert(1)</script><img src=x onerror=alert(1)><iframe src="https://evil.test"></iframe>'
+  );
+  // The design.
+  assert.match(stored, /<style>/, 'the message\'s own stylesheet');
+  assert.match(stored, /style="padding:10px 18px"/, 'and its inline styling');
+  assert.match(stored, /width="640"/, 'email layout is built from these attributes');
+  assert.match(stored, /bgcolor="#ffffff"/);
+  // And nothing that executes, navigates or posts.
+  assert.doesNotMatch(stored, /<script/);
+  assert.doesNotMatch(stored, /onerror/);
+  assert.doesNotMatch(stored, /<iframe/);
 });
 
 test('a marked reply splits into what it says and what it quotes', () => {

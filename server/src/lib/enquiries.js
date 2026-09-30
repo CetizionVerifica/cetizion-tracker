@@ -1,4 +1,5 @@
 import { businessToday } from './businessDate.ts';
+import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 import { ApiError } from '../middleware/error.js';
 import { claimNextId } from './sequences.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
@@ -37,6 +38,11 @@ export function enquiryRuleErrors(before, after) {
 export async function saveEnquiry(client, ctx) {
   const fields = enquiryRuleErrors(ctx.before, ctx.after);
   if (fields) throw new ApiError(422, 'Please check the highlighted fields', { fields });
+  // The contact's own details, onto the contact the trigger linked. Before
+  // the quotation below, so a won enquiry's quotation inherits a contact
+  // that already has an address (client-data-gaps.md, gap 1).
+  assertEmailLooksReal(ctx.input?.contact_email);
+  await saveContactDetails(client, ctx.after.contact_id, contactDetailsFrom(ctx.input));
   return quoteWonEnquiry(client, ctx);
 }
 

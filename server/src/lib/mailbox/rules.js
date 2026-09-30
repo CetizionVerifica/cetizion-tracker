@@ -82,8 +82,33 @@ export function snippet(html, max = 240) {
  * defence, which is not where a defence should live.
  *
  * The allow-list is what an email legitimately is: text, lists, tables,
- * links, images. Everything else, and every attribute not named here, is
- * dropped rather than escaped, because a stored email is read, not edited.
+ * links, images, and the styling that makes it look like the message the
+ * sender actually wrote. Everything else, and every attribute not named
+ * here, is dropped rather than escaped, because a stored email is read,
+ * not edited.
+ *
+ * Styling used to be dropped with everything else, and the result was that
+ * a designed email — every marketing mail, every invoice, most things a
+ * client's system sends — arrived as bare paragraphs and a borderless
+ * table. It read as a broken page rather than as their message.
+ *
+ * What makes it safe to keep is not this list: it is where the body is
+ * rendered. web/src/lib/mailFrame.js puts it in an iframe under a content
+ * policy of `default-src 'none'`, and that is what answers every way CSS
+ * can be turned into a weapon:
+ *
+ *   @import url(https://…)        style-src names no host, so it is refused
+ *   background: url(https://…)    img-src is data: and cid: until somebody
+ *                                 asks for images, so the CSS tracking
+ *                                 pixel is blocked exactly as the <img>
+ *                                 one is
+ *   @font-face src: url(…)        font-src 'none'
+ *   url(javascript:…)             script-src 'none'
+ *   position: fixed, z-index      cannot leave the frame it is drawn in
+ *
+ * The iframe was always the isolation; it is only now being relied on for
+ * what it was built to do. Scripts, handlers, frames and forms are still
+ * dropped here, because those are not a rendering question.
  */
 const SANITIZE = {
   allowedTags: [
@@ -92,10 +117,22 @@ const SANITIZE = {
     'ul', 'ol', 'li', 'dl', 'dt', 'dd',
     'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'colgroup', 'col',
     'a', 'img', 'figure', 'figcaption',
+    // Email is written in 1999 HTML because that is what mail clients
+    // render: layout tables, <center>, <font>, and a <style> block that
+    // Gmail keeps and most senders still ship.
+    'style', 'center', 'font',
   ],
+  // sanitize-html calls <style> vulnerable, and in a page it is. This body
+  // is never in the page — see the note above the list.
+  allowVulnerableTags: true,
   allowedAttributes: {
+    // The styling itself. Kept unfiltered rather than whitelisted by
+    // property: a whitelist long enough to render real mail correctly is
+    // no smaller a surface, and it fails silently on whatever it forgot.
+    '*': ['style', 'class', 'id', 'align', 'valign', 'dir', 'lang', 'title', 'bgcolor', 'width', 'height'],
     a: ['href', 'title', 'name', 'target', 'rel'],
     img: ['src', 'alt', 'title', 'width', 'height'],
+    font: ['color', 'face', 'size'],
     // Where the quote starts, and nothing else.
     //
     // Mail clients mark the quoted history with a class, an id or
@@ -108,20 +145,22 @@ const SANITIZE = {
     // email cannot reach the app's own CSS.
     div: ['id'],
     blockquote: ['type'],
-    td: ['colspan', 'rowspan', 'align'],
-    th: ['colspan', 'rowspan', 'align', 'scope'],
+    td: ['colspan', 'rowspan', 'align', 'background'],
+    th: ['colspan', 'rowspan', 'align', 'scope', 'background'],
     col: ['span', 'width'],
-    table: ['border', 'cellpadding', 'cellspacing', 'width'],
+    table: ['border', 'cellpadding', 'cellspacing', 'width', 'background'],
   },
   // http, https and mailto only: no javascript:, no data: smuggled into a
   // link, no tel: that a click could dial.
   allowedSchemes: ['http', 'https', 'mailto'],
   allowedSchemesByTag: { img: ['http', 'https', 'cid', 'data'] },
   allowProtocolRelative: false,
-  // Only the class names that mark a quoted reply survive; every other
-  // class is dropped, so this is a boundary marker and not a way for an
-  // email to carry styling hooks into the frame.
-  allowedClasses: { '*': QUOTE_CLASSES },
+  // Every class survives now. It used to be only the ones marking a quoted
+  // reply, on the reasoning that anything else was a styling hook — which
+  // it is, and which is the point: a <style> block with no classes to
+  // reach styles nothing. The quote markers still matter and are still
+  // here, they are simply no longer the only ones (QUOTE_CLASSES).
+  allowedClasses: false,
   disallowedTagsMode: 'discard',
   // A link opened from a stored email opens away from the tracker, and
   // cannot reach back through window.opener.

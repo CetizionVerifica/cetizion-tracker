@@ -123,6 +123,92 @@ describe('a connected mailbox, and the door Microsoft knocks on', { skip: !ADMIN
     assert.equal(body.data.exclude_internal, false);
   });
 
+  /**
+   * The sanitiser learned to keep a sender's styling, and cleanHtml runs
+   * once — at ingest — so every mail already stored kept the bare version
+   * the old rules left of it. refreshBodies is how those catch up.
+   *
+   * The test provider hands each pushed message over once, so the sweep is
+   * given them again: a real provider still holds the mail, which is the
+   * whole premise. refreshBodies only ever UPDATEs, so handing it the same
+   * message twice is exactly what it is built for.
+   */
+  const shared = async (email, visibility = 'metadata') => {
+    const box = (await agent.post('/api/mailboxes/test').send({ email, shared: true }).expect(201)).body.data;
+    // Even a shared mailbox starts at metadata — its owner decides. A test
+    // that wants to read a body has to make that choice explicitly, which
+    // is the same thing a person does in Settings.
+    if (visibility !== 'metadata') await agent.patch(`/api/mailboxes/${box.id}`).send({ visibility }).expect(200);
+    return box;
+  };
+
+  const designed = '<style>.btn{background:#0a7}</style>'
+    + '<table width="640" bgcolor="#ffffff"><tr><td align="center">'
+    + '<a href="https://x.test" class="btn" style="padding:10px">Open</a></td></tr></table>';
+
+  const message = (to, providerId, html) => ({
+    folder: 'inbox', provider_id: providerId, conversation_id: `conv-${providerId}`,
+    from: { email: 'client@elsewhere.test', name: 'A Client' }, to: [{ email: to }],
+    subject: 'Designed message', body_html: html, sent_at: new Date().toISOString(),
+  });
+
+  test('a backfill re-reads stored mail under the sanitiser as it is now', async () => {
+    const box = await shared('refresh@cetizion.test', 'share_everything');
+    const { pushTestMessages } = await import('../src/lib/mailbox/sync.js');
+
+    pushTestMessages(box.id, [message('refresh@cetizion.test', 'refresh-1', designed)]);
+    await agent.post(`/api/mailboxes/${box.id}/sync`).expect(200);
+    const { rows: [stored] } = await db.query(`SELECT body_html FROM email_messages WHERE provider_id = 'refresh-1'`);
+    assert.ok(stored, 'the message was stored');
+
+    // Put it back the way the old sanitiser left it, which is what every
+    // message stored before the change actually looks like.
+    await db.query(`UPDATE email_messages SET body_html = $2 WHERE provider_id = $1`,
+      ['refresh-1', '<table><tr><td><a href="https://x.test">Open</a></td></tr></table>']);
+
+    pushTestMessages(box.id, [message('refresh@cetizion.test', 'refresh-1', designed)]);
+    const { body } = await agent.post(`/api/mailboxes/${box.id}/refresh-bodies`).send({}).expect(200);
+    assert.equal(body.data.updated, 1, `one message should have been rewritten: ${JSON.stringify(body.data)}`);
+
+    const { rows: [m] } = await db.query(`SELECT body_html FROM email_messages WHERE provider_id = 'refresh-1'`);
+    assert.match(m.body_html, /<style>/, "the sender's stylesheet is back");
+    assert.match(m.body_html, /width="640"/, 'and the layout it was built with');
+    assert.match(m.body_html, /class="btn"/);
+
+    // Running it again changes nothing, so it is safe to run twice.
+    pushTestMessages(box.id, [message('refresh@cetizion.test', 'refresh-1', designed)]);
+    const again = await agent.post(`/api/mailboxes/${box.id}/refresh-bodies`).send({}).expect(200);
+    assert.equal(again.body.data.updated, 0, 'a second pass has nothing to do');
+  });
+
+  test('a backfill never inserts what ingest chose not to keep', async () => {
+    const box = await shared('nothing-new@cetizion.test');
+    const { pushTestMessages } = await import('../src/lib/mailbox/sync.js');
+    // Never synced, so we hold nothing for it. The sweep sees it and must
+    // leave it alone rather than quietly adding mail nobody imported.
+    pushTestMessages(box.id, [message('nothing-new@cetizion.test', 'never-stored', designed)]);
+    const { body } = await agent.post(`/api/mailboxes/${box.id}/refresh-bodies`).send({}).expect(200);
+    assert.equal(body.data.updated, 0);
+    assert.equal(body.data.messages_held, 0, 'a backfill is not an import');
+  });
+
+  test('a backfill still obeys what the mailbox chose to share', async () => {
+    const box = await shared('quiet-refresh@cetizion.test');
+    const { pushTestMessages } = await import('../src/lib/mailbox/sync.js');
+    const secret = message('quiet-refresh@cetizion.test', 'refresh-2', '<p style="color:red">Commercially sensitive</p>');
+
+    pushTestMessages(box.id, [secret]);
+    await agent.post(`/api/mailboxes/${box.id}/sync`).expect(200);
+    await agent.patch(`/api/mailboxes/${box.id}`).send({ visibility: 'metadata' }).expect(200);
+
+    pushTestMessages(box.id, [secret]);
+    await agent.post(`/api/mailboxes/${box.id}/refresh-bodies`).send({}).expect(200);
+
+    const { rows: [m] } = await db.query(`SELECT subject, body_html FROM email_messages WHERE provider_id = 'refresh-2'`);
+    assert.equal(m.body_html, null, "a backfill is not a way round the owner's choice");
+    assert.equal(m.subject, null);
+  });
+
   test('disconnecting stops the mail, destroys the tokens and says what it could not do', async () => {
     const box = await testMailbox(`leaving-${Date.now()}@cetizionverifica.com`);
     await db.query(`UPDATE connected_accounts SET tokens_encrypted = 'pretend-token' WHERE id = $1`, [box.id]);

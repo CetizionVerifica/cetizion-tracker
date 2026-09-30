@@ -7,7 +7,7 @@
 BEGIN;
 
 DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
-  v_payment_stages, v_travel_logs, v_travel_vendor_invoices,
+  v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
 DROP TABLE IF EXISTS sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
@@ -543,15 +543,6 @@ CREATE TABLE enquiries (
   contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   sales_person       text,
   sales_person_email text,
-  -- The salesperson responsible for this record (#18 Phase 2A). Null
-  -- everywhere until Phase 2B decides the backfill; `sales_person` above
-  -- stays the free-text name the reports group by. See
-  -- migrations/059_record_ownership.sql. The foreign key is declared after
-  -- the users table below, which is created later in this file.
-  owner_user_id      int,
-  originating_user_id          int,
-  originating_user_snapshot_id int,
-  originating_user_name        text,
   service            text,
   status             text NOT NULL DEFAULT 'New'
                        CHECK (status IN ('New','Contacted','Qualified','Nurture','Converted','Unqualified')),
@@ -571,7 +562,27 @@ CREATE TABLE enquiries (
   converted_at           timestamptz,
   last_contacted_at      timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
-  updated_at         timestamptz NOT NULL DEFAULT now()
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  -- The salesperson responsible for this record (#18 Phase 2A). Null
+  -- everywhere until Phase 2B decides the backfill; `sales_person` above
+  -- stays the free-text name the reports group by. See
+  -- migrations/059_record_ownership.sql. The foreign key is declared after
+  -- the users table below, which is created later in this file.
+  --
+  -- Last in this table, and deliberately so. v_enquiries is `SELECT e.*`,
+  -- which records in the view's own definition the order the columns are in.
+  -- ALTER TABLE can only append, so every database upgraded through 059 and
+  -- 062 has these four here, at the end — and scripts/ci/check-migrations.sh
+  -- compares the view a fresh schema.sql builds against the view an upgraded
+  -- database has. Declaring them up beside sales_person, where they read
+  -- best, builds a v_enquiries that no real database matches.
+  --
+  -- quotations and projects keep theirs beside sales_person because no view
+  -- selects * from either of them.
+  owner_user_id      int,
+  originating_user_id          int,
+  originating_user_snapshot_id int,
+  originating_user_name        text
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);

@@ -12,7 +12,7 @@
 
 BEGIN;
 
-DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_projects, v_purchase_orders,
+DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices,
   v_employee_expense_claims CASCADE;
 
@@ -672,8 +672,13 @@ SELECT
     WHEN r.overdue_pos > 0        THEN 'Payment overdue - finance following up'
     WHEN r.to_invoice_pos > 0     THEN 'Awaiting finance invoice'
     WHEN r.outstanding <= 0 AND r.received > 0 THEN 'All stages paid'
-  END                                         AS payment_note
+  END                                         AS payment_note,
+  -- The linked contact's own details, so the form can show what it is about
+  -- to change rather than an empty box over a stored value.
+  ct.email                                    AS contact_email,
+  ct.phone                                    AS contact_phone
 FROM quotations q
+LEFT JOIN contacts ct ON ct.id = q.contact_id
 LEFT JOIN documents doc ON doc.id = q.document_id
 LEFT JOIN pipeline_stages st ON st.id = q.stage_id
 LEFT JOIN lost_reasons lr ON lr.id = q.lost_reason_id
@@ -827,4 +832,21 @@ FROM projects p JOIN totals t ON t.project_id = p.project_id;
 -- exist - the profitability page and the cost-alert job answering
 -- "relation does not exist" - and a failure in it left the earlier views
 -- committed with the file itself unrecorded.
+
+
+-- ---------------------------------------------------------------------
+-- Enquiries
+--   The table, plus the linked contact's email and phone. An enquiry form
+--   that can write an address has to be able to show the one already
+--   stored, and enquiries had no view to carry it.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_enquiries AS
+SELECT
+  e.*,
+  ct.email AS contact_email,
+  ct.phone AS contact_phone
+FROM enquiries e
+LEFT JOIN contacts ct ON ct.id = e.contact_id;
+
 COMMIT;

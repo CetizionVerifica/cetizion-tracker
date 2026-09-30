@@ -36,10 +36,12 @@ const OWNED = ['enquiries', 'quotations', 'projects'];
 // The views go first. Phase 2C added owner_user_id to v_quotations and
 // v_projects — the generic CRUD router reads those, and scoping has to be a
 // predicate in SQL — so the column can no longer be dropped while they
-// reference it. They are rebuilt after the migration, which is the order the
-// real runner uses anyway: migrations, then views.
+// reference it. v_enquiries is in the list for the same reason arrived at
+// differently: it is `SELECT e.*`, so it picks the column up on its own.
+// They are rebuilt after the migration, which is the order the real runner
+// uses anyway: migrations, then views.
 const UNDO_PHASE_2A = [
-  'DROP VIEW IF EXISTS v_quotations, v_projects CASCADE;',
+  'DROP VIEW IF EXISTS v_quotations, v_projects, v_enquiries CASCADE;',
   ...OWNED.map((t) => `ALTER TABLE ${t} DROP COLUMN owner_user_id;`),
 ].join('\n');
 

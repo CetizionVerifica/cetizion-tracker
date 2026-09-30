@@ -16,6 +16,12 @@ export function quotationFields(lookups) {
     { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors, hint: 'Pick from the list, or type a new sector' },
     { name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
     { name: 'contact_person', label: 'Contact person' },
+    // The address lives on the contact, and until now there was nowhere to
+    // type it: the contact this name creates held a name and nothing else,
+    // so sending the quotation, chasing payment, the portal and mailbox
+    // matching all had nobody to reach (docs/client-data-gaps.md, gap 1).
+    { name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
+    { name: 'contact_phone', label: 'Contact phone' },
     { name: 'service_quoted', label: 'Service quoted', type: 'combo', options: lookups.services, span: 2, hint: 'The subject line; price it on the quotation page as lines' },
     { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
     { name: 'sales_person_email', label: 'Sales person email', type: 'email' },

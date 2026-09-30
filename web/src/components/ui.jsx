@@ -585,7 +585,13 @@ export function ToastProvider({ children }) {
 
 /* ------------------------------------------------------------- confirm */
 
-export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfirm, onClose, busy }) {
+/**
+ * `tone` because not everything worth confirming is destructive. The
+ * button was always red, which is right for a delete and wrong for an
+ * action whose own message says it can be run twice — a red button and a
+ * calm sentence disagree, and the button is the one people read.
+ */
+export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfirm, onClose, busy, tone = 'danger' }) {
   return (
     <Modal
       title={title}
@@ -594,7 +600,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfi
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="destructive" size="sm" onClick={onConfirm} disabled={busy}>
+          <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy}>
             {busy ? 'Working…' : confirmLabel}
           </Button>
         </>
