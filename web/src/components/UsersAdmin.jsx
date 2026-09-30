@@ -107,7 +107,7 @@ export function UsersAdmin() {
                   <div className="flex min-w-0 items-center gap-2.5">
                     <span className={cn(
                       'grid size-7 flex-none place-items-center rounded-full text-[10.5px] font-semibold',
-                      attributionOnly ? 'border border-dashed border-[#3a3a42] bg-secondary text-muted-foreground' : 'bg-accent text-primary'
+                      attributionOnly ? 'border border-dashed border-border-strong bg-secondary text-muted-foreground' : 'bg-accent text-primary'
                     )}>
                       {initialsOf(user.name)}
                     </span>

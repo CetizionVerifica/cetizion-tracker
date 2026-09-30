@@ -37,6 +37,7 @@ import VendorInvoices from './pages/VendorInvoices.jsx';
 import Payables from './pages/Payables.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
+import { useTheme } from 'next-themes';
 import SettingsArea from './pages/SettingsArea.jsx';
 import ImportReview from './pages/ImportReview.jsx';
 import Inbox from './pages/Inbox.jsx';
@@ -102,7 +103,10 @@ import {
   Plane,
   PinOff,
   Search,
+  Monitor,
+  Moon,
   Settings as SettingsIcon,
+  Sun,
   UserRound,
 } from 'lucide-react';
 
@@ -244,6 +248,30 @@ function AdminOnly({ children }) {
  * inside a fixed column above lg. One definition, so the drawer cannot
  * drift from the column.
  */
+/**
+ * Light, dark, or whatever the machine says.
+ *
+ * `theme` is the stored choice and `resolvedTheme` is what that turns into
+ * once "system" has been asked — the radio has to show the choice, not the
+ * outcome, or picking System makes the dot jump to Light and look like it
+ * did not take.
+ */
+function ThemeChoice() {
+  const { theme, setTheme } = useTheme();
+  const [ready, setReady] = useState(false);
+  // Nothing is known about the stored choice until the client has mounted,
+  // so render the group only then rather than flashing the wrong dot.
+  useEffect(() => setReady(true), []);
+  if (!ready) return null;
+  return (
+    <DropdownMenuRadioGroup value={theme || 'dark'} onValueChange={setTheme}>
+      <DropdownMenuRadioItem value="light"><Sun className="size-4" aria-hidden="true" />Light</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="dark"><Moon className="size-4" aria-hidden="true" />Dark</DropdownMenuRadioItem>
+      <DropdownMenuRadioItem value="system"><Monitor className="size-4" aria-hidden="true" />Match the system</DropdownMenuRadioItem>
+    </DropdownMenuRadioGroup>
+  );
+}
+
 function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin, mode }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -357,6 +385,8 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
               <Search className="size-4" aria-hidden="true" />Search or do anything
               <span className="num ml-auto text-[10.5px] text-muted-foreground">⌘K</span>
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <ThemeChoice />
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={signOut}>
               <LogOut className="size-4" aria-hidden="true" />Sign out

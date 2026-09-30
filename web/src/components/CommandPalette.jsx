@@ -280,7 +280,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[14px] border-[#33333a] bg-[#16161a] p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
+        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[14px] border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
       >
         <DialogTitle className="sr-only">Search or do anything</DialogTitle>
         <DialogDescription className="sr-only">
@@ -304,7 +304,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
                 placeholder={picking ? step.picks.label : 'Search or do anything'}
                 className="flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
               />
-              <kbd className="rounded-[4px] bg-[#22222a] px-1.5 py-0.5 font-mono text-[10.5px] text-secondary-text">esc</kbd>
+              <kbd className="rounded-[4px] bg-secondary px-1.5 py-0.5 font-mono text-[10.5px] text-secondary-text">esc</kbd>
             </div>
 
             <Command.List className="max-h-[420px] overflow-y-auto p-2">
@@ -387,7 +387,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
               )}
             </Command.List>
 
-            <div className="flex h-9 items-center gap-5 border-t border-border bg-[#111114] px-5 text-[11.5px] text-muted-foreground">
+            <div className="flex h-9 items-center gap-5 border-t border-border bg-muted px-5 text-[11.5px] text-muted-foreground">
               <span><span className="font-mono text-secondary-text">↑↓</span> move</span>
               <span><span className="font-mono text-secondary-text">↵</span> run</span>
               <span className="ml-auto hidden sm:inline">Steps run here — the page never changes under you</span>

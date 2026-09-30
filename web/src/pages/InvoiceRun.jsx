@@ -309,7 +309,7 @@ export default function InvoiceRun() {
           )}
         </div>
 
-        <div className="overflow-hidden rounded-[10px] border border-[#33333a] bg-card">
+        <div className="overflow-hidden rounded-[10px] border border-border-strong bg-card">
           <div className="border-b border-border px-6 py-5">
             <div className="text-[15px] font-semibold text-foreground">Raise the invoice</div>
             <p className="mt-1 text-[12.5px] text-secondary-text">
@@ -358,7 +358,7 @@ export default function InvoiceRun() {
               </Label>
               <label
                 htmlFor="invoice-pdf"
-                className="block cursor-pointer rounded-[6px] border border-dashed border-[#3a3a42] p-4 text-center text-[12.5px] text-muted-foreground hover:border-primary hover:text-secondary-text"
+                className="block cursor-pointer rounded-[6px] border border-dashed border-border-strong p-4 text-center text-[12.5px] text-muted-foreground hover:border-primary hover:text-secondary-text"
               >
                 {file ? file.name : 'Drop a file, or browse'}
               </label>

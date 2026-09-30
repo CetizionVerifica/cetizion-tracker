@@ -144,7 +144,7 @@ function StageRung({ stage, action, last }) {
         'mono grid size-7 flex-none place-items-center rounded-full text-[12px] font-semibold',
         tone === 'late' ? 'border border-late/30 bg-late/12 text-late'
           : tone === 'waiting' ? 'border border-waiting/30 bg-waiting/12 text-waiting'
-          : 'border border-[#33333a] bg-secondary text-muted-foreground'
+          : 'border border-border-strong bg-secondary text-muted-foreground'
       )}>
         {stage.stage_no}
       </span>
