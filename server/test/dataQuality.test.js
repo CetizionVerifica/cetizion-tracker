@@ -96,7 +96,7 @@ describe(
 
     test('every check is listed, and complete records appear in no count', async () => {
       const [company] = (await exec(`INSERT INTO companies (name) VALUES ('Complete Co') RETURNING id`)).rows;
-      await exec(`INSERT INTO contacts (company_id, name) VALUES ($1, 'Meera')`, [company.id]);
+      await exec(`INSERT INTO contacts (company_id, name, email, is_billing) VALUES ($1, 'Meera', 'meera@complete.example', true)`, [company.id]);
       await exec(`
         INSERT INTO projects (project_id, client_name, primary_service, sales_person)
         VALUES ('PRJ-DQ-1', 'Complete Co', 'ESG Reporting', 'Asha')`);
@@ -136,6 +136,9 @@ describe(
         'vendor_invoices_without_amount',
         'payment_stages_without_document',
         'companies_without_contact',
+        'companies_without_contact_email',
+        'clients_without_billing_contact',
+        'open_quotations_without_contact_email',
       ]);
       for (const check of checks) {
         assert.equal(check.count, 0, `${check.key} counts a complete record`);

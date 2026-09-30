@@ -118,7 +118,7 @@ export const resources = {
     label: 'Company',
     defaultSort: 'name',
     search: ['name', 'sector', 'city', 'gstin'],
-    filters: ['sector', 'city', 'contacts'],
+    filters: ['sector', 'city', 'contacts', 'contacts_all_without_email', 'needs_billing_contact'],
     normalizedFilters: ['sector', 'city'],
     columns: ['name', 'sector', 'gstin', 'website', 'address', 'city', 'notes'],
     schema: z.object({
@@ -229,7 +229,7 @@ export const resources = {
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
     search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
-    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value'],
+    filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value', 'contact_email', 'contact_person', 'stage_type'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     columns: [
