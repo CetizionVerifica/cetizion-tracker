@@ -265,3 +265,65 @@ test('a message is cleaned in the browser, and a tracking pixel loses its src', 
   // And asking for them puts them back.
   expect(out.shown).toContain('tracker.invalid');
 });
+
+/**
+ * The settings menu beside the profile, opened.
+ *
+ * This is a regression test with a cause. The theme picker was added to
+ * this menu using DropdownMenuRadioGroup and DropdownMenuRadioItem, and
+ * neither was added to the file's import list — so both were undefined and
+ * rendering the menu threw, which unmounts the React tree and leaves the
+ * body's own background. On the dark theme that is a black screen, and no
+ * amount of navigating fixes it, because there is nothing left running to
+ * navigate.
+ *
+ * Nothing caught it. The bundler does not resolve JSX identifiers, tsc is
+ * set to checkJs:false so a .jsx file is never checked, there is no linter,
+ * and no test had ever opened this menu. That last one is the only gap a
+ * test can close, so this closes it: open the menu and read every item.
+ *
+ * It asserts on the items rather than on a screenshot because the failure
+ * was a crash, not a colour — an empty menu and a wrong shade of grey are
+ * different bugs, and only one of them is this one.
+ */
+test('the settings menu opens, with every item on it', async ({ page }) => {
+  const crashes = [];
+  page.on('pageerror', (err) => crashes.push(String(err)));
+
+  await signIn(page);
+  await page.getByRole('button', { name: 'Settings and sign out' }).click();
+
+  const menu = page.getByRole('menu');
+  await expect(menu).toBeVisible();
+  for (const name of ['Settings', 'Search or do anything', 'Sign out']) {
+    await expect(menu.getByRole('menuitem', { name })).toBeVisible();
+  }
+  // The three theme choices are radios, not plain items, and they are what
+  // was undefined.
+  for (const name of ['Light', 'Dark', 'Match the system']) {
+    await expect(menu.getByRole('menuitemradio', { name })).toBeVisible();
+  }
+
+  expect(crashes, 'rendering the menu threw').toEqual([]);
+});
+
+/**
+ * Light mode, end to end: choose it, and the document says so.
+ *
+ * The class on <html> is the whole mechanism — every token in globals.css
+ * hangs off `.dark` being present or absent — so this is the one assertion
+ * that cannot pass while the theme is broken.
+ */
+test('choosing light mode takes the dark class off the document', async ({ page }) => {
+  await signIn(page);
+  await expect(page.locator('html')).toHaveClass(/dark/);
+
+  await page.getByRole('button', { name: 'Settings and sign out' }).click();
+  await page.getByRole('menuitemradio', { name: 'Light' }).click();
+
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  // And it survives a reload, which is what the pre-paint script in
+  // index.html exists for.
+  await page.reload();
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+});
