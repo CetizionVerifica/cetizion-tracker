@@ -3,11 +3,21 @@ import { Alert, Badge, Card, DataTable, Field, Input, Modal, Select, useToast } 
 import { SettingsPane } from '../pages/SettingsArea.jsx';
 import { Button } from './ui/button';
 import { api } from '../lib/api.js';
+import { ago } from '../lib/format.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 
 /**
  * API tokens for the MCP server (#50): Claude and other assistants can read
  * the tracker with one. A sales token sees only that person's records.
+ *
+ * The call log below the tokens is the answer to "Claude cannot read our
+ * data" (#103). A failed tool call tells the assistant only that the tracker
+ * could not do it and that an administrator can see why — and the why is
+ * here, in the error the route has always sent and the page used to throw
+ * away. The list is the latest hundred calls across every token, newest
+ * first, because that is what the server returns: a log row names the token
+ * but carries no id, and two tokens may share a name, so sorting them under
+ * individual tokens would be guessing.
  */
 export function ApiTokens() {
   const toast = useToast();
@@ -38,6 +48,23 @@ export function ApiTokens() {
         { key: 'state', header: '', render: (r) => (r.revoked_at ? <Badge tone="danger">revoked</Badge> : <Badge tone="success">active</Badge>) },
         { key: 'act', header: '', align: 'right', render: (r) => !r.revoked_at && <button type="button" className="btn btn--sm btn--ghost" onClick={() => api.action(`/api-tokens/${r.id}/revoke`).then(() => { toast('Revoked', 'success'); refetch(); })}>Revoke</button> },
       ]} />
+      </Card>
+
+      <Card flush title="Recent calls" hint="The last hundred tool calls across every token, newest first. A failed call keeps the reason the assistant was not given.">
+        <DataTable rows={data?.log ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No calls yet.</div>} columns={[
+          { key: 'created_at', header: 'When', className: 'small', render: (r) => ago(r.created_at) },
+          { key: 'name', header: 'Token' },
+          { key: 'tool', header: 'Tool', className: 'small mono' },
+          // The word carries the state and the colour only agrees with it,
+          // which is this table's rule everywhere else. `ok` is a boolean
+          // column, so it is compared as one rather than tested for truth.
+          { key: 'ok', header: 'Result', render: (r) => (r.ok === true ? <Badge tone="success">ok</Badge> : <Badge tone="danger">failed</Badge>) },
+          // Capped at 500 characters where it is written, which is still far
+          // too long for a cell: the row shows what fits and the whole of it
+          // is on hover. Plain text, never markup — this is a database error
+          // and the page is read by the administrator who has to act on it.
+          { key: 'error', header: 'Why', className: 'small muted', render: (r) => (r.error ? <span className="block max-w-[320px] truncate" title={r.error}>{r.error}</span> : null) },
+        ]} />
       </Card>
 
       {form && (
