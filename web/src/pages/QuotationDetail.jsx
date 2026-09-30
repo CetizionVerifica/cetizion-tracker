@@ -17,6 +17,7 @@ import { AcceptanceLinks } from '../components/AcceptanceLinks.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
+import { withEmailResult } from '../lib/emailResult.js';
 import { date, money } from '../lib/format.js';
 import { quotationFields } from './Quotations.jsx';
 
@@ -435,7 +436,7 @@ export default function QuotationDetail() {
         <ReasonDialog title="Ask for approval" label="What needs approving" placeholder="Special payment terms: 100% on delivery" busy={busy} onClose={() => setRequesting(false)} onConfirm={async (reason) => { const r = await act('approval/request', { reason }, (x) => `Sent for approval${x.email ? ` (email ${x.email.status})` : ''}`); if (r) setRequesting(false); }} />
       )}
       {deciding && (
-        <ReasonDialog title={deciding === 'approved' ? 'Approve this quotation' : 'Reject this quotation'} label="Note" optional busy={busy} onClose={() => setDeciding(null)} onConfirm={async (note) => { const r = await act('approval/decide', { decision: deciding, note }, `Quotation ${deciding}`); if (r) setDeciding(null); }} />
+        <ReasonDialog title={deciding === 'approved' ? 'Approve this quotation' : 'Reject this quotation'} label="Note" optional busy={busy} onClose={() => setDeciding(null)} onConfirm={async (note) => { const r = await act('approval/decide', { decision: deciding, note }, (x) => withEmailResult(`Quotation ${deciding}`, x.email)); if (r) setDeciding(null); }} />
       )}
       {registering && (
         <RegisterPoDialog quotation={q} onClose={() => setRegistering(false)} onDone={() => { invalidateLookups(); refetch(); }} />
