@@ -5,6 +5,7 @@ import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
 import { claimNextId, financialYear } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
+import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
@@ -54,8 +55,24 @@ const requiredMoney = z.preprocess(
 
 projectRouter.get('/:projectId/full', async (req, res) => {
   const id = req.params.projectId;
-  const project = await query('SELECT * FROM v_projects WHERE project_id = $1', [id]);
+  const scope = scopeOf(req);
+  // Gate on the project itself (#18 Phase 2C). Everything below hangs off it,
+  // so a project this user may not open yields nothing rather than a header
+  // they are refused and a body they are not. 404, so the answer is the same
+  // as for a project that does not exist.
+  const headParams = [id];
+  const headMine = ownerClause(scope, headParams, { alias: 'p' });
+  const project = await query(
+    `SELECT p.* FROM v_projects p WHERE p.project_id = $1 ${headMine ? `AND ${headMine}` : ''}`,
+    headParams
+  );
   if (!project.rows.length) throw new ApiError(404, 'Project not found');
+
+  // A quotation linked to this project may still belong to somebody else, so
+  // that one list carries its own restriction rather than inheriting the
+  // project's.
+  const qParams = [id];
+  const qMine = ownerClause(scope, qParams, { alias: 'q' });
 
   const [pos, services, stages, onboarding, travel, quotations, milestones] = await Promise.all([
     query('SELECT * FROM v_purchase_orders WHERE project_id = $1 ORDER BY po_date NULLS LAST, po_number', [id]),
@@ -65,8 +82,11 @@ projectRouter.get('/:projectId/full', async (req, res) => {
     query('SELECT * FROM v_payment_stages WHERE project_id = $1 ORDER BY po_number, stage_no', [id]),
     query('SELECT * FROM onboarding_tasks WHERE project_id = $1 ORDER BY step_no', [id]),
     query('SELECT * FROM v_travel_logs WHERE project_id = $1 ORDER BY travel_start_date NULLS LAST', [id]),
-    query('SELECT * FROM v_quotations WHERE project_id = $1 ORDER BY quotation_date', [id]),
+    query(`SELECT q.* FROM v_quotations q WHERE q.project_id = $1 ${qMine ? `AND ${qMine}` : ''}
+            ORDER BY q.quotation_date`, qParams),
     // Each milestone with the stages it triggers and what they are worth (#26).
+    // No predicate of its own: the project was gated at the top of this
+    // handler, and a milestone belongs to its project.
     query(`SELECT m.*, COALESCE((SELECT json_agg(json_build_object('id', s.id, 'po_number', s.po_number, 'stage_name', s.stage_name,
                    'stage_amount', s.stage_amount, 'currency', s.currency, 'invoice_no', s.invoice_no) ORDER BY s.po_number, s.stage_no)
               FROM v_payment_stages s WHERE s.milestone_id = m.id), '[]'::json) AS stages
@@ -105,8 +125,16 @@ projectRouter.post('/:projectId/onboarding/apply-template', async (req, res) => 
   const id = req.params.projectId;
   const { owner = null, owner_email = null } = req.body || {};
 
+  const scope = scopeOf(req);
+
   const rows = await transaction(async (client) => {
-    const exists = await client.query('SELECT 1 FROM projects WHERE project_id = $1', [id]);
+    // The ownership predicate is part of the existence check, so a project
+    // this user cannot reach is indistinguishable from one that is not there
+    // (#18 Phase 2C).
+    const params = [id];
+    const mine = ownerClause(scope, params, { alias: 'p' });
+    const exists = await client.query(
+      `SELECT 1 FROM projects p WHERE p.project_id = $1 ${mine ? `AND ${mine}` : ''}`, params);
     if (!exists.rowCount) throw new ApiError(404, 'Project not found');
 
     const current = await client.query(
@@ -167,12 +195,21 @@ const convertSchema = z.object({
 quotationRouter.post('/:id/convert', async (req, res) => {
   const body = parse(convertSchema, req.body || {});
 
+  const scope = scopeOf(req);
+
   const data = await transaction(async (client) => {
+    // The ownership predicate rides along in the locking read, so a sales
+    // user cannot register somebody else's quotation — and cannot learn that
+    // it exists either (#18 Phase 2C).
+    const qParams = [req.params.id];
+    const qMine = ownerClause(scope, qParams, { alias: 'q' });
     const { rows: qrows } = await client.query(
       // Locked, so two "Register" clicks on the same quotation cannot both create a project:
       // the second waits, then sees the project the first one linked.
-      'SELECT * FROM quotations WHERE id = $1 OR quotation_no = $1::text FOR UPDATE',
-      [req.params.id]
+      `SELECT q.* FROM quotations q
+        WHERE (q.id = $1 OR q.quotation_no = $1::text) ${qMine ? `AND ${qMine}` : ''}
+        FOR UPDATE`,
+      qParams
     );
     if (!qrows.length) throw new ApiError(404, 'Quotation not found');
     const quotation = qrows[0];
@@ -186,9 +223,12 @@ quotationRouter.post('/:id/convert', async (req, res) => {
     // ------------------------------------------------------------------
     if (body.project_id) {
       // Confirm the project exists.  FOR SHARE prevents concurrent deletion.
+      const pParams = [body.project_id];
+      const pMine = ownerClause(scope, pParams, { alias: 'p' });
       const { rows: prows } = await client.query(
-        'SELECT project_id, client_name FROM projects WHERE project_id = $1 FOR SHARE',
-        [body.project_id]
+        `SELECT p.project_id, p.client_name FROM projects p
+          WHERE p.project_id = $1 ${pMine ? `AND ${pMine}` : ''} FOR SHARE`,
+        pParams
       );
       if (!prows.length) {
         throw new ApiError(422, `Project ${body.project_id} not found`);
@@ -230,15 +270,28 @@ quotationRouter.post('/:id/convert', async (req, res) => {
       : undefined;
     const projectId = await claimNextId('project', client, projectYear);
     const { rows: [project] } = await client.query(
+      // owner_user_id is inherited from the quotation, not taken from the
+      // session and not guessed from sales_person (#18 Phase 2C). The project
+      // is the same piece of work one step later; whoever was responsible for
+      // winning it is responsible for delivering it, and an admin registering
+      // somebody else's win must not become its owner. An unowned quotation
+      // produces an unowned project, which is the honest answer.
+      //
+      // Originating salesperson (#18 Phase 4): preserved only when the quotation
+      // has a verified originating salesperson.
       `INSERT INTO projects (project_id, client_name, primary_service, project_manager,
                              project_manager_email, sales_person, planned_start_date,
-                             planned_delivery_date, remarks)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+                             planned_delivery_date, remarks, owner_user_id,
+                             originating_user_id, originating_user_snapshot_id, originating_user_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         projectId, quotation.client_name, quotation.service_quoted,
         body.project_manager, body.project_manager_email, quotation.sales_person,
         body.planned_start_date ?? null, body.planned_delivery_date ?? null,
-        `Won from quotation ${quotation.quotation_no}`,
+        `Won from quotation ${quotation.quotation_no}`, quotation.owner_user_id,
+        quotation.originating_user_id ?? null,
+        quotation.originating_user_id ? (quotation.originating_user_snapshot_id ?? quotation.originating_user_id) : null,
+        quotation.originating_user_id ? (quotation.originating_user_name ?? null) : null,
       ]
     );
 
@@ -279,7 +332,14 @@ quotationRouter.post('/:id/convert', async (req, res) => {
 
 poRouter.get('/:poNumber/full', async (req, res) => {
   const po = decodeURIComponent(req.params.poNumber);
-  const header = await query('SELECT * FROM v_purchase_orders WHERE po_number = $1', [po]);
+  // A purchase order has no owner; it belongs to whoever owns the quotation
+  // it fulfils or the project it sits under (#18 Phase 2C).
+  const headParams = [po];
+  const mine = purchaseOrderClause(scopeOf(req), headParams, { alias: 'po' });
+  const header = await query(
+    `SELECT po.* FROM v_purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`,
+    headParams
+  );
   if (!header.rows.length) throw new ApiError(404, 'Purchase order not found');
 
   const [services, stages, travel] = await Promise.all([
@@ -320,8 +380,16 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
 
   const total = body.stages.reduce((sum, s) => sum + s.stage_percent, 0);
 
+  const scope = scopeOf(req);
+
   const { createdIds, removedDocuments } = await transaction(async (client) => {
-    const exists = await client.query('SELECT 1 FROM purchase_orders WHERE po_number = $1', [po]);
+    // A purchase order takes its access from the quotation it fulfils or the
+    // project it sits under, so the check is on the parent, in the same
+    // statement that proves the PO exists (#18 Phase 2C).
+    const params = [po];
+    const mine = parentClause(scope, params, { kind: 'purchase_order', alias: 'po' });
+    const exists = await client.query(
+      `SELECT 1 FROM purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`, params);
     if (!exists.rowCount) throw new ApiError(404, 'Purchase order not found');
 
     let removedDocuments = [];
@@ -411,10 +479,16 @@ const invoiceSchema = z.object({
 stageRouter.post('/:id/invoice', async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Payment stage not found');
   const body = parse(invoiceSchema, req.body || {});
+  const scope = scopeOf(req);
   const { id, replaced } = await transaction(async (client) => {
+    // Locked and scoped in one statement: the stage is only this user's if
+    // the purchase order above it is (#18 Phase 2C).
+    const params = [Number(req.params.id)];
+    const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
     const { rows: [stage] } = await client.query(
-      'SELECT id, document_id FROM payment_stages WHERE id = $1 FOR UPDATE',
-      [Number(req.params.id)]
+      `SELECT ps.id, ps.document_id FROM payment_stages ps
+        WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,
+      params
     );
     if (!stage) throw new ApiError(404, 'Payment stage not found');
 
@@ -459,7 +533,20 @@ stageRouter.post('/:id/payment', async (req, res) => {
   const body = parse(receiptSchema, req.body || {});
   // Since #27 every receipt is its own row; the stage total follows by trigger.
   // mode 'add' (or a receipt object) records a delta; 'set' records what brings the total to the figure.
-  const { rows: [stage] } = await query('SELECT id, amount_received FROM payment_stages WHERE id = $1', [req.params.id]);
+  //
+  // A payment stage has no owner of its own: it belongs to whoever owns the
+  // quotation or the project above the purchase order it sits under (#18
+  // Phase 2C). The predicate rides in this read, and every insert below
+  // takes its stage_id from the row it returned — so a stage this caller
+  // cannot reach is indistinguishable from one that does not exist, and
+  // nothing is ever written against it.
+  const params = [req.params.id];
+  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+  const { rows: [stage] } = await query(
+    `SELECT ps.id, ps.amount_received FROM payment_stages ps
+      WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}`,
+    params
+  );
   if (!stage) throw new ApiError(404, 'Payment stage not found');
   const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
   if (delta > 0 || Number(body.tds_amount || 0) > 0) {

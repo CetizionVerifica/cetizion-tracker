@@ -293,10 +293,18 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     let seq = 0;
     const unique = (prefix) => `${prefix}-${process.pid}-${++seq}`;
 
-    /** A project for the purchase orders to belong to. */
+    /**
+     * A project for the purchase orders to belong to.
+     *
+     * Created by the sales user, so it is theirs. These tests are about who
+     * may DELETE financial rows, not about who may see them, and from Phase
+     * 2C a purchase order takes its access from the project above it — a
+     * project belonging to nobody would make every row here unreachable and
+     * turn a delete test into an ownership test.
+     */
     const makeProject = async () => {
       const id = unique('PRJ');
-      const res = await as(admin.cookie)('post', '/api/projects')
+      const res = await as(sales.cookie)('post', '/api/projects')
         .send({ project_id: id, client_name: `Holder ${id}` });
       assert.equal(res.status, 201, `project: ${JSON.stringify(res.body)}`);
       return id;
@@ -687,16 +695,28 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     });
 
     test('a task records who made it, the way a note and a file already do', async () => {
+      // A task is filed against a record, and against one the filer may
+      // reach. This test used to name a quotation no fixture ever created,
+      // which only worked while nothing checked that entity_id pointed at
+      // anything at all. main hit the same stale fixture and fixed it by
+      // sales_person; ownership is owner_user_id, so the parent is Sam's by
+      // owner_user_id. sales_person is set too, as real data would have it,
+      // and is deliberately not what grants the access.
+      const no = 'CTZ/QT/2026/001';
       await db.query(
-        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
-         VALUES ('CTZ/QT/2026/001', 'Signed Copy Ltd', '2026-09-01', 50000, 'Submitted', $1) ON CONFLICT DO NOTHING`, [sales.user.name]);
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value,
+                                 status, sales_person, owner_user_id)
+         VALUES ($1, 'Signed Copy Ltd', '2026-09-01', 50000, 'Submitted', $2, $3)
+         ON CONFLICT (quotation_no) DO NOTHING`,
+        [no, sales.user.name, sales.user.id]);
+
       const made = await as(sales.cookie)('post', '/api/tasks')
-        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'Chase the signed copy' });
+        .send({ entity: 'quotation', entity_id: no, title: 'Chase the signed copy' });
       assert.equal(made.status, 201, JSON.stringify(made.body));
       assert.ok(made.body.data.created_by, 'a task with nobody\'s name on it is an anonymous timeline entry (#22)');
 
       const imported = await as(admin.cookie)('post', '/api/tasks')
-        .send({ entity: 'quotation', entity_id: 'CTZ/QT/2026/001', title: 'From the old sheet', created_by: 'Ramesh' });
+        .send({ entity: 'quotation', entity_id: no, title: 'From the old sheet', created_by: 'Ramesh' });
       assert.equal(imported.body.data.created_by, 'Ramesh', 'an author sent explicitly is kept, so an import carries its own');
     });
 
@@ -882,10 +902,16 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
     const THEIRS = 'CTZ/QT/2026/702';
 
     before(async () => {
+      // Ownership is owner_user_id, not the name in sales_person. Both are
+      // set, as real data has them: MINE is Sam's because its owner is Sam's
+      // user id, and THEIRS stays a colleague's for the same reason. The
+      // sales_person text is left matching on purpose — the tests below must
+      // still pass if it is the id, and not the name, that is doing the work.
       await db.query(
-        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
-         VALUES ($1, 'Own Deal Ltd', '2026-09-01', 10000, 'Submitted', $3), ($2, 'Other Deal Ltd', '2026-09-01', 20000, 'Submitted', 'Somebody Else')
-         ON CONFLICT DO NOTHING`, [MINE, THEIRS, sales.user.name]);
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person, owner_user_id)
+         VALUES ($1, 'Own Deal Ltd', '2026-09-01', 10000, 'Submitted', $3, $4),
+                ($2, 'Other Deal Ltd', '2026-09-01', 20000, 'Submitted', 'Somebody Else', NULL)
+         ON CONFLICT DO NOTHING`, [MINE, THEIRS, sales.user.name, sales.user.id]);
       await db.query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('quotation', $1, 'A colleague''s note', 'Somebody Else')`, [THEIRS]);
       await db.query(`INSERT INTO tasks (entity, entity_id, title, created_by) VALUES ('quotation', $1, 'A colleague''s task', 'Somebody Else')`, [THEIRS]);
     });

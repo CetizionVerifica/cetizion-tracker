@@ -1,28 +1,34 @@
 /**
- * Who may see which record (#18 scoping, as #22 asks of the timeline and of
- * tasks, notes and files).
+ * The two SQL fragments the MCP surface needs, and nothing else.
  *
- * An admin sees everything. A sales user sees a record whose sales person is
- * them — by the email they sign in with or the name on their account, the
- * same two identities the mail scoping (#94) matches on — and what hangs off
- * it: a PO through its project, a payment stage through its PO, a company
- * through any deal of theirs, a contact through that company. The rule is
- * applied in SQL, never by filtering rows afterwards.
+ * This file used to hold a second, parallel answer to "whose record is
+ * this?" — one that matched the free-text `sales_person` column against the
+ * signed-in name, wired into the staff routes through `def.visibleTo`,
+ * `canSeeRecord`, `onRecordVisibleSql`, `mayWriteOnRecords` and
+ * `assertVisible`. All of that is gone. For every session-authenticated
+ * route the one ownership truth is `owner_user_id`, in auth/ownership.js.
+ *
+ * What is left are the fragments MCP still reads: `recordVisibleSql`
+ * (lib/mcp/data.js) and `ownProjectSql` (lib/mcp/aggregate.js). MCP is an
+ * explicit, temporary exception — an API token carries `{ role, person }`,
+ * a name string with no link to users.id, so it has nothing else to match
+ * on. Both are unchanged from main, so MCP behaves exactly as it does
+ * there.
+ *
+ * `isAdmin` and `identities` are deliberately NOT exported: they are the
+ * inputs these two fragments need and nothing outside this file should be
+ * reaching for a name-based identity. Nothing outside server/src/lib/mcp/
+ * may import from here.
+ *
+ * Follow-up: bind MCP API tokens to users.id and migrate MCP authorization
+ * from sales_person to owner_user_id. When that lands, this file goes too.
  */
-import { query } from '../db.js';
-import { ApiError } from '../middleware/error.js';
 
-export const isAdmin = (req) => !req?.user || req.user.role === 'admin';
+const isAdmin = (req) => !req?.user || req.user.role === 'admin';
 
-/** The person's names, lowercased, for `= ANY($n)`. */
-export const identities = (req) => [...new Set([req?.user?.username, req?.user?.name]
+const identities = (req) => [...new Set([req?.user?.username, req?.user?.name]
   .filter(Boolean).map((s) => String(s).trim().toLowerCase()))];
 
-/**
- * SQL: may the person in placeholder `p` (a lowercased text[]) see the
- * record named by the two expressions? Qualify the expressions: they are
- * read inside subqueries.
- */
 export function recordVisibleSql(entityExpr, idExpr, p) {
   const mine = (col) => `lower(btrim(${col})) = ANY(${p})`;
   const ownsCompany = (companyExpr) => `(EXISTS (SELECT 1 FROM quotations sq WHERE sq.company_id = ${companyExpr} AND ${mine('sq.sales_person')})
@@ -39,47 +45,6 @@ export function recordVisibleSql(entityExpr, idExpr, p) {
     WHEN 'company' THEN EXISTS (SELECT 1 FROM companies s WHERE s.id::text = ${idExpr} AND ${ownsCompany('s.id')})
     WHEN 'contact' THEN EXISTS (SELECT 1 FROM contacts s WHERE s.id::text = ${idExpr} AND ${ownsCompany('s.company_id')})
     ELSE false END)`;
-}
-
-/** May this request see the record? Always true for an admin. */
-export async function canSeeRecord(req, entity, id, db = { query }) {
-  if (isAdmin(req)) return true;
-  const { rows } = await db.query(`SELECT ${recordVisibleSql('$1::text', '$2::text', '$3::text[]')} AS ok`,
-    [entity, String(id), identities(req)]);
-  return rows[0]?.ok === true;
-}
-
-/**
- * The visibility clause for a table of things hung on records (tasks,
- * notes, attachments): the record is visible, or the person's own name is in
- * one of `ownColumns` (the task is theirs to do, they wrote the note). Tasks
- * also count any other record they are on. Null for an admin.
- */
-export function onRecordVisibleSql(req, table, params, { ownColumns = [], taskTargets = false } = {}) {
-  if (isAdmin(req)) return null;
-  params.push(identities(req));
-  const p = `$${params.length}::text[]`;
-  const clauses = [recordVisibleSql(`${table}.entity`, `${table}.entity_id`, p)];
-  for (const col of ownColumns) clauses.push(`lower(btrim(${table}.${col})) = ANY(${p})`);
-  if (taskTargets) {
-    clauses.push(`EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = ${table}.id AND ${recordVisibleSql('tt.entity', 'tt.entity_id', p)})`);
-  }
-  return `(${clauses.join(' OR ')})`;
-}
-
-/**
- * Before a sales user hangs something on a record: they must be able to see
- * it, and every other record a task is put on. 404, not 403, so a record's
- * existence is not confirmed to someone who may not see it.
- */
-export async function mayWriteOnRecords(req, input, db = { query }) {
-  if (isAdmin(req)) return;
-  const targets = [];
-  if (input.entity && input.entity_id) targets.push([input.entity, input.entity_id]);
-  for (const t of input.targets || []) targets.push([t.entity, t.entity_id]);
-  for (const [entity, id] of targets) {
-    if (!(await canSeeRecord(req, entity, id, db))) throw new ApiError(404, 'Record not found');
-  }
 }
 
 /**

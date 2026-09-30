@@ -1,8 +1,10 @@
 import express, { Router } from 'express';
 import { config } from '../config.js';
 import {
-  fetchDocument, isDocumentOwner, isInlineType, purgeOrphanedDocuments, uploadDocument,
+  assertDocumentReadable, fetchDocument, isDocumentOwner, isInlineType,
+  purgeOrphanedDocuments, uploadDocument,
 } from '../lib/documents.js';
+import { scopeOf } from '../auth/ownership.js';
 import { ApiError } from '../middleware/error.js';
 
 export const documentRouter = Router();
@@ -82,6 +84,10 @@ documentRouter.post('/', receiveFile, async (req, res) => {
  */
 documentRouter.get('/:id', async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Document not found');
+  // A document has no owner of its own; it belongs to the record pointing
+  // at it. Checked before the file is fetched from storage, so an
+  // unauthorised request costs nothing and reveals nothing (#18 Phase 2C).
+  await assertDocumentReadable(scopeOf(req), Number(req.params.id));
 
   const { document, body } = await fetchDocument(Number(req.params.id));
   const inline = isInlineType(document.content_type);

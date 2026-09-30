@@ -1,3 +1,4 @@
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { IN_PERIOD, RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn } from './salesReport.js';
 import { monthRows } from './revenueReport.js';
@@ -146,6 +147,11 @@ export function enquiryPipeline(rows) {
  * cancelled: a revision does not move the day the contract was first won.
  * The enquiry and the quotation figures both use this, so an enquiry is
  * contracted exactly when its quotation is.
+ *
+ * Deliberately not narrowed by ownership: the day a deal became a contract
+ * is a fact about the deal, not about who is reading. Scoping it would date
+ * the same contract differently for two readers, or blank it for one. The
+ * rows this decorates are already only the ones the reader may see.
  */
 const contractDateOf = (quotationNo) => `CASE
       WHEN EXISTS (SELECT 1 FROM purchase_orders po
@@ -160,8 +166,10 @@ const contractDateOf = (quotationNo) => `CASE
  * enquiry read that order. contract_date is when the enquiry's linked
  * quotation became a contract (contractDateOf above).
  */
-const enquiryRows = ({ from, to }) =>
-  query(
+const enquiryRows = ({ from, to }, scope = UNRESTRICTED) => {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
+  return query(
     `SELECT e.enquiry_no,
             btrim(e.client_name)                   AS client,
             to_char(e.enquiry_date, 'YYYY-MM-DD')  AS enquiry_date,
@@ -172,11 +180,12 @@ const enquiryRows = ({ from, to }) =>
             e.sector,
             e.country,
             to_char(${contractDateOf('e.quotation_no')}, 'YYYY-MM-DD') AS contract_date
-       FROM enquiries e
+       FROM ${src.enquiries} e
       WHERE ${inPeriod('e.enquiry_date')}
       ORDER BY e.enquiry_date NULLS LAST, e.enquiry_no`,
-    [from, to]
+    params
   );
+};
 
 /**
  * Quotations in the period with the INR rate for their currency, oldest
@@ -184,8 +193,10 @@ const enquiryRows = ({ from, to }) =>
  * so a quotation is "contracted" here exactly when a PO is credited to it
  * in the won counts.
  */
-const quotationRows = ({ from, to }) =>
-  query(
+const quotationRows = ({ from, to }, scope = UNRESTRICTED) => {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
+  return query(
     `WITH ${RATES}
      SELECT q.quotation_no,
             btrim(q.client_name)                  AS client,
@@ -199,12 +210,13 @@ const quotationRows = ({ from, to }) =>
             q.sector,
             q.country,
             to_char(${contractDateOf('q.quotation_no')}, 'YYYY-MM-DD') AS contract_date
-       FROM quotations q
+       FROM ${src.quotations} q
        ${rateOn('r', 'q.currency', 'q.quotation_date')}
       WHERE ${IN_PERIOD}
       ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
-    [from, to]
+    params
   );
+};
 
 /**
  * Purchase orders (contracts) received in the period that count as a sale
@@ -214,13 +226,15 @@ const quotationRows = ({ from, to }) =>
  * by poQuotationNo (the same rule contract_date above uses), so each PO
  * resolves to at most one quotation and is never counted twice.
  */
-const purchaseOrderRows = ({ from, to }) =>
-  query(
+const purchaseOrderRows = ({ from, to }, scope = UNRESTRICTED) => {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
+  return query(
     `WITH ${RATES},
      po_quote AS (
        SELECT po.id AS po_id,
               ${poQuotationNo('po')} AS quotation_no
-         FROM purchase_orders po
+         FROM ${src.purchaseOrders} po
      )
      SELECT po.po_number,
             q.quotation_no,
@@ -235,14 +249,15 @@ const purchaseOrderRows = ({ from, to }) =>
             q.service_quoted                  AS service,
             q.sector,
             q.country
-       FROM purchase_orders po
+       FROM ${src.purchaseOrders} po
        JOIN po_quote pq ON pq.po_id = po.id
        LEFT JOIN quotations q ON q.quotation_no = pq.quotation_no
        ${rateOn('r', 'po.currency', 'po.po_date')}
       WHERE ${inPeriod('po.po_date')} AND ${poCountsAsSale('po')}
       ORDER BY po.po_date NULLS LAST, po.po_number`,
-    [from, to]
+    params
   );
+};
 
 /** How many contracts (POs) came in, their value, and how they split by service, sector and country. */
 export function contractPipeline(rows) {
@@ -271,14 +286,14 @@ export function contractPipeline(rows) {
   };
 }
 
-export async function contractReport(period) {
-  return contractPipeline((await purchaseOrderRows(period)).rows);
+export async function contractReport(period, scope = UNRESTRICTED) {
+  return contractPipeline((await purchaseOrderRows(period, scope)).rows);
 }
 
 /** The sections that share those rows, in three queries instead of six. */
-export async function salesReviewSections(period) {
+export async function salesReviewSections(period, scope = UNRESTRICTED) {
   const [quotations, enquiries, purchaseOrders] = await Promise.all([
-    quotationRows(period), enquiryRows(period), purchaseOrderRows(period),
+    quotationRows(period, scope), enquiryRows(period, scope), purchaseOrderRows(period, scope),
   ]);
   return {
     enquiries: enquirySummary(enquiries.rows, period),
@@ -288,8 +303,8 @@ export async function salesReviewSections(period) {
   };
 }
 
-export async function enquiryReport(period) {
-  return enquirySummary((await enquiryRows(period)).rows, period);
+export async function enquiryReport(period, scope = UNRESTRICTED) {
+  return enquirySummary((await enquiryRows(period, scope)).rows, period);
 }
 
 /**
@@ -363,9 +378,9 @@ export function serviceRows(quotations, enquiries, purchaseOrders = []) {
   };
 }
 
-export async function serviceReport(period) {
+export async function serviceReport(period, scope = UNRESTRICTED) {
   const [quotations, enquiries, purchaseOrders] = await Promise.all([
-    quotationRows(period), enquiryRows(period), purchaseOrderRows(period),
+    quotationRows(period, scope), enquiryRows(period, scope), purchaseOrderRows(period, scope),
   ]);
   return serviceRows(quotations.rows, enquiries.rows, purchaseOrders.rows);
 }
@@ -470,8 +485,8 @@ export function quotationStatusSummary(rows, period = {}) {
   };
 }
 
-export async function quotationStatusReport(period) {
-  return quotationStatusSummary((await quotationRows(period)).rows, period);
+export async function quotationStatusReport(period, scope = UNRESTRICTED) {
+  return quotationStatusSummary((await quotationRows(period, scope)).rows, period);
 }
 
 /**
@@ -491,12 +506,14 @@ export async function exchangeRates() {
 }
 
 /** Missing or inconsistent source data that limits the report. */
-export async function dataGaps({ from, to }) {
+export async function dataGaps({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const {
     rows: [gaps],
   } = await query(
-    `WITH q AS (SELECT * FROM quotations WHERE ${IN_PERIOD}),
-          e AS (SELECT * FROM enquiries WHERE ${inPeriod('enquiry_date')})
+    `WITH q AS (SELECT * FROM ${src.quotations} gq WHERE ${IN_PERIOD}),
+          e AS (SELECT * FROM ${src.enquiries} ge WHERE ${inPeriod('enquiry_date')})
      SELECT (SELECT COUNT(*) FROM q)::int                                              AS quotations,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL)::int                AS quotations_without_value,
             (SELECT COUNT(*) FROM q WHERE quotation_value IS NULL AND status = '${WON}')::int AS won_without_value,
@@ -504,7 +521,7 @@ export async function dataGaps({ from, to }) {
             -- to another quotation on the project does not cover this one.
             (SELECT COUNT(*) FROM q
               WHERE status = '${WON}'
-                AND NOT EXISTS (SELECT 1 FROM purchase_orders p
+                AND NOT EXISTS (SELECT 1 FROM ${src.purchaseOrders} p
                                  WHERE ${poQuotationNo('p')} = q.quotation_no
                                    AND ${poCountsAsSale('p')}))::int AS won_without_po,
             (SELECT COUNT(*) FROM q WHERE NULLIF(btrim(sector), '') IS NULL)::int       AS quotations_without_sector,
@@ -515,10 +532,10 @@ export async function dataGaps({ from, to }) {
               WHERE status = '${ENQUIRY_STATUS.quoted}' AND quotation_no IS NULL)::int AS quoted_enquiries_unlinked,
             -- Rows with no date only fall outside a period when one is chosen.
             (CASE WHEN $1::date IS NULL AND $2::date IS NULL THEN 0
-                  ELSE (SELECT COUNT(*) FROM quotations WHERE quotation_date IS NULL) END)::int AS undated_quotations,
+                  ELSE (SELECT COUNT(*) FROM ${src.quotations} uq WHERE quotation_date IS NULL) END)::int AS undated_quotations,
             (CASE WHEN $1::date IS NULL AND $2::date IS NULL THEN 0
-                  ELSE (SELECT COUNT(*) FROM enquiries WHERE enquiry_date IS NULL) END)::int   AS undated_enquiries`,
-    [from, to]
+                  ELSE (SELECT COUNT(*) FROM ${src.enquiries} ue WHERE enquiry_date IS NULL) END)::int   AS undated_enquiries`,
+    params
   );
   return gaps;
 }

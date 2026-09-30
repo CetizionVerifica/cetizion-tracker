@@ -82,16 +82,29 @@ export async function quoteWonEnquiry(client, { before, after }) {
   // A Draft (#24): nothing has gone to the client yet. Sending it makes it Submitted.
   const currency = after.currency || 'INR';
   const { rows: [q] } = await client.query(
+    // owner_user_id comes from the enquiry, not from whoever happened to save
+    // it and not from the free-text sales_person beside it (#18 Phase 2C).
+    // The quotation is the same piece of work one step on, so responsibility
+    // carries across; an unowned enquiry makes an unowned quotation, which is
+    // the honest answer rather than a guess.
+    //
+    // Originating salesperson (#18 Phase 4): preserved only when the enquiry
+    // has a verified originating salesperson.
     `INSERT INTO quotations (quotation_no, client_name, contact_person, service_quoted,
                              sector, sales_person, sales_person_email, quotation_date,
-                             status, remarks, quotation_value, currency)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+                             status, remarks, quotation_value, currency, owner_user_id,
+                             originating_user_id, originating_user_snapshot_id, originating_user_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
     [
       quotationNo, after.client_name, after.contact_person, after.service || after.services_interested,
       after.sector, after.sales_person, after.sales_person_email,
       quotationDate, QUOTATION_STATUS.draft,
       `From enquiry ${after.enquiry_no}`,
       after.estimated_value ?? null, currency,
+      after.owner_user_id ?? null,
+      after.originating_user_id ?? null,
+      after.originating_user_id ? (after.originating_user_snapshot_id ?? after.originating_user_id) : null,
+      after.originating_user_id ? (after.originating_user_name ?? null) : null,
     ]
   );
 

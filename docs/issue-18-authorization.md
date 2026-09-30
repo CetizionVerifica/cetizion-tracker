@@ -120,6 +120,9 @@ session is **401**, before any of these is considered.
 <!-- generated:routes -->
 | Route | Access | Why, or what narrows it |
 | --- | :--: | --- |
+| **/api/:resource** | | |
+| `PATCH /api/:resource/:id/owner` | **admin** | Assigning, reassigning or unassigning a record moves somebody else's pipeline. Sales users already see only their own rows, so letting one of them set owner_user_id would let them take a record off a colleague, or hand their own away to hide it (#18 Phase 3). |
+| `GET /api/:resource/:id/ownership-history` | **admin** | The handover trail for one record: who owned it, who changed that, and when. It names accounts other than the caller's, which is the administrator's view of the team rather than a salesperson's view of their own work (#18 Phase 3). |
 | **/api/accounting** | | |
 | `GET /api/accounting/entries` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
 | `POST /api/accounting/import` | **admin** | The whole accounting router is administrator-only: it is the books (#42). |
@@ -242,6 +245,12 @@ session is **401**, before any of these is considered.
 | **/api/jobs** | | |
 | `GET /api/jobs` | any |  |
 | `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |
+| **/api/kpis** | | |
+| `GET /api/kpis/me` | any | Scoped: self-only. |
+| `GET /api/kpis/targets` | any | A salesperson sees the targets set for them; asking after somebody else's is refused in the handler the same way as /users/:userId. |
+| `GET /api/kpis/team` | **admin** | Every salesperson's figures side by side. That is the manager's view of the team, and one salesperson comparing themselves against a named colleague is not what these numbers are for (#18 §5). |
+| `GET /api/kpis/users/:userId` | any | The handler refuses another salesperson with 403 rather than an empty list: an empty list reads as "no work done", which is a different and worse answer than "not yours to see". An admin may read anybody's. |
+| `PUT /api/kpis/users/:userId/targets/:metric` | **admin** | A target is what somebody is measured against, so setting your own would make the measurement meaningless (#18 §5). |
 | **/api/lookups** | | |
 | `GET /api/lookups` | any |  |
 | `GET /api/lookups/next-id/:kind` | any |  |
@@ -333,7 +342,7 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/discover` | **admin** | Running the discovery sweep by hand is an operational act; it creates renewal records across every client. |
 | `POST /api/renewals/manual` | any |  |
 | **/api/reports** | | |
-| `GET /api/reports/win-rate` | any | Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is. |
+| `GET /api/reports/win-rate` | any | Win rate by financial quarter. Scoped: this note used to justify the open gate by saying both roles see quotations anyway, which stopped being true the moment the list itself became owner-scoped. The gate stays open because the numbers are counts and quotation values a salesperson already sees on their own rows; it carries no margin, which is what /api/profitability is gated for. |
 | **/api/search** | | |
 | `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
 | **/api/settings** | | |
@@ -429,7 +438,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `companies` | any | any | **admin** | Shared master data. Every record that ever named this client points at it, and the link trigger creates one on its own. |
 | `contacts` | any | any | **admin** | Shared master data, created and referenced the same way. |
 | `engagements` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
-| `enquiries` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `enquiries` | any | any | any | A salesperson's own working record. An enquiry is the first record of a lead, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
 | `exchange-rates` | any | **admin** | **admin** | One rate re-values every historical deal in every report. |
 | `expense-categories` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `expense-claims` | any | any | any | Admin and sales both submit ordinary expense claims. Protected fields: `approval_status`, `approved_by`, `amount_reimbursed`, `reimbursement_date`. |
@@ -447,11 +456,11 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `pipeline-stages` | any | **admin** | **admin** | A stage's status mapping and probability rewrite quotation statuses and the whole forecast. |
 | `po-services` | any | any | **admin** | The lines a PO's value is made of. |
 | `project-costs` | any | **admin** | **admin** | Delivery cost is one half of what the business earns on a project (#39). |
-| `project-milestones` | any | any | any | What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: visibleTo scopes every read, update and delete to the caller's own projects (the review of #115, #119). Without that scoping an open PATCH here would let any signed-in user stamp another project's milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing. |
-| `projects` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `project-milestones` | any | any | any | What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: ownerScopedBy: 'project' scopes every read, update and delete to projects the caller owns, through the project's owner_user_id rather than the project_manager name column (the review of #115, #119; #18 Phase 2C). Without that scoping an open PATCH here would let any signed-in user stamp another project's milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing. |
+| `projects` | any | any | any | A salesperson's own working record. A project is the work won from one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
 | `purchase-orders` | any | any | **admin** | The PO value is what Due now, To bill and profitability are computed against, and deleting one takes its lines and stages with it. |
 | `quotation-lines` | any | any | any | The lines of a quotation, edited with it. |
-| `quotations` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `quotations` | any | any | any | A salesperson's own working record. A quotation is the offer made on one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |

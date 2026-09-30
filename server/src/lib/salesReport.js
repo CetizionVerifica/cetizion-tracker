@@ -1,3 +1,4 @@
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { businessToday } from './businessDate.ts';
@@ -82,7 +83,18 @@ export const poCountsAsSale = (po) => `(NOT ${po}.cancelled AND NOT EXISTS (
  * of 0) is treated as "no value", the same as a null quotation value
  * elsewhere — po_value itself is never null.
  */
-const PO_RESOLVED = `po_resolved AS (
+/**
+ * `src` narrows this to the purchase orders the reader may see (#18 Phase
+ * 2C) — a PO belongs to whoever owns the quotation it fulfils or the project
+ * it sits under.
+ *
+ * The lookups *inside* it stay unscoped on purpose. Which quotation a PO
+ * resolves to, and whether it was replaced by a revision, are facts about
+ * the PO, not about who is looking; scoping them would attribute the same
+ * order to one quotation for one reader and another for the next, and make
+ * a replaced PO count as a sale for some people only.
+ */
+const poResolved = (src) => `po_resolved AS (
   SELECT po.po_number,
          po.po_date,
          po.currency,
@@ -94,7 +106,7 @@ const PO_RESOLVED = `po_resolved AS (
          ${nameKey('pr.client_name')}                               AS client_key,
          NULLIF(btrim(q.sector), '')                                AS sector,
          NULLIF(${nameKey('q.sector')}, '')                         AS sector_key
-    FROM purchase_orders po
+    FROM ${src.purchaseOrders} po
     JOIN projects pr ON pr.project_id = po.project_id
     LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
    WHERE ${poCountsAsSale('po')}
@@ -105,9 +117,12 @@ const PO_RESOLVED = `po_resolved AS (
  * one is chosen they are in none of the PO figures; listed so the report can
  * say so rather than come out quietly short. Empty when no period is chosen.
  */
-async function undatedPurchaseOrders({ from, to }) {
+async function undatedPurchaseOrders({ from, to }, scope = UNRESTRICTED) {
   if (!from && !to) return [];
-  const { rows } = await query('SELECT po_number FROM purchase_orders WHERE po_date IS NULL ORDER BY po_number');
+  const params = [];
+  const src = scopedSources(scope, params);
+  const { rows } = await query(
+    `SELECT po_number FROM ${src.purchaseOrders} upo WHERE po_date IS NULL ORDER BY po_number`, params);
   return rows.map((row) => row.po_number);
 }
 
@@ -118,15 +133,17 @@ async function undatedPurchaseOrders({ from, to }) {
  * currency. The PO forms warn on save; this catches what was saved anyway.
  * Only the currency is compared: a PO for part of a quotation is normal.
  */
-async function currencyMismatchPurchaseOrders({ from, to }) {
+async function currencyMismatchPurchaseOrders({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
-    `WITH ${PO_RESOLVED}
+    `WITH ${poResolved(src)}
      SELECT po_number, currency, quotation_no, quotation_currency
        FROM po_resolved
       WHERE quotation_currency IS NOT NULL AND currency <> quotation_currency
         AND ${inPeriod('po_date')}
       ORDER BY po_number`,
-    [from, to]
+    params
   );
   return rows;
 }
@@ -258,10 +275,12 @@ function sumAmounts(lists) {
  * fulfils, so a project split into phase POs counts as one win, not one
  * per phase — lost is a count of quotations, and so is this.
  */
-export async function sectorReport({ from, to }) {
+export async function sectorReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES},
-     ${PO_RESOLVED},
+     ${poResolved(src)},
      po AS (
        SELECT * FROM po_resolved WHERE ${inPeriod('po_date')}
      ),
@@ -273,12 +292,12 @@ export async function sectorReport({ from, to }) {
               ${IN_PERIOD}                        AS in_period,
               quotation_no IN (SELECT quotation_no FROM po_resolved
                                 WHERE quotation_no IS NOT NULL) AS has_po
-         FROM quotations
+         FROM ${src.quotations} sq
      ),
      e AS (
        SELECT NULLIF(${nameKey('sector')}, '') AS sector_key,
               NULLIF(btrim(sector), '')         AS sector
-         FROM enquiries
+         FROM ${src.enquiries} se
         WHERE ${inPeriod('enquiry_date')}
      ),
      sectors AS (
@@ -358,7 +377,7 @@ export async function sectorReport({ from, to }) {
        LEFT JOIN enquired en ON en.sector_key IS NOT DISTINCT FROM s.sector_key
        LEFT JOIN converted co ON co.sector_key IS NOT DISTINCT FROM s.sector_key
       ORDER BY s.sector_key IS NULL, pos DESC, pipeline DESC, enquiries DESC, sector`,
-    [from, to]
+    params
   );
 
   // Deals won ÷ decided (won + lost). Open deals have no outcome yet, so they are left out.
@@ -374,8 +393,8 @@ export async function sectorReport({ from, to }) {
       lost: total('lost'),
       pipeline: total('pipeline'),
       won_without_po: total('won_without_po'),
-      undated_pos: await undatedPurchaseOrders({ from, to }),
-      currency_mismatch_pos: await currencyMismatchPurchaseOrders({ from, to }),
+      undated_pos: await undatedPurchaseOrders({ from, to }, scope),
+      currency_mismatch_pos: await currencyMismatchPurchaseOrders({ from, to }, scope),
       fx_deals: total('fx_deals'),
       win_rate: share(total('won_deals'), total('won_deals') + total('lost')),
       sectors: rows.filter((row) => !row.not_set && row.pos > 0).length,
@@ -391,10 +410,12 @@ export async function sectorReport({ from, to }) {
  * Purchase orders billed in a currency other than INR, per client, sector
  * and currency, with the INR value at the rate set in Settings.
  */
-export async function fxReport({ from, to }) {
+export async function fxReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES},
-     ${PO_RESOLVED},
+     ${poResolved(src)},
      po AS (
        SELECT * FROM po_resolved WHERE currency <> 'INR' AND ${inPeriod('po_date')}
      )
@@ -413,7 +434,7 @@ export async function fxReport({ from, to }) {
        ${rateOn('r', 'po.currency', 'po.po_date')}
       GROUP BY po.client_key, po.sector_key, po.currency, r.rate, r.effective_from
       ORDER BY currency, amount DESC, customer`,
-    [from, to]
+    params
   );
 
   const converted = rows.filter((row) => row.rate !== null);
@@ -448,10 +469,12 @@ export const CLIENT_TYPES = { repeat: 'Repeat client', single: 'Single enquiry c
  * on one quotation are one deal), so an order placed before the period
  * still counts; every other client is a single enquiry client.
  */
-export async function customerReport({ from, to }) {
+export async function customerReport({ from, to }, scope = UNRESTRICTED) {
+  const params = [from, to];
+  const src = scopedSources(scope, params);
   const { rows } = await query(
     `WITH ${RATES},
-     ${PO_RESOLVED},
+     ${poResolved(src)},
      po AS (
        SELECT *, ${inPeriod('po_date')} AS in_period, ${upToEnd('po_date')} AS up_to_end
          FROM po_resolved
@@ -461,12 +484,12 @@ export async function customerReport({ from, to }) {
               btrim(client_name)           AS client_name,
               status = '${QUOTATION_STATUS.lost}' AS is_lost,
               ${IN_PERIOD}                 AS in_period
-         FROM quotations
+         FROM ${src.quotations} cq
      ),
      e AS (
        SELECT ${nameKey('client_name')} AS client_key,
               btrim(client_name)         AS client_name
-         FROM enquiries
+         FROM ${src.enquiries} ce
         WHERE ${inPeriod('enquiry_date')}
      ),
      clients AS (
@@ -532,7 +555,7 @@ export async function customerReport({ from, to }) {
        LEFT JOIN lost l      ON l.client_key = c.client_key
        LEFT JOIN enquired en ON en.client_key = c.client_key
       ORDER BY deals_to_date DESC, pos_to_date DESC, won_value_inr DESC, enquiries DESC, client`,
-    [from, to]
+    params
   );
 
   for (const row of rows) {

@@ -11,12 +11,21 @@
  * Quarters are Indian financial quarters — Q1 is April to June — because
  * every other total on the screen is stated for a financial year, and two
  * definitions of "this quarter" on one page is one too many.
+ *
+ * The route counts quotations, and `quotations` is owner-scoped as of this
+ * change set — a sales user reaches only their own. An aggregate that
+ * ignored that would hand the whole company's book to anyone signed in,
+ * which is worse than the list it summarises, not better, because it never
+ * names a record the caller could not open. So the query carries
+ * `ownerClause`, and an administrator, whose scope is unrestricted, gets
+ * the empty string and the same totals as before.
  */
 import { Router } from 'express';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { financialQuarter, recentQuarters } from '../lib/quarters.js';
+import { ownerClause, scopeOf } from '../auth/ownership.js';
 
 export const reportsRouter = Router();
 
@@ -35,14 +44,17 @@ reportsRouter.get('/win-rate', async (req, res) => {
   // stage change and then to the quotation date, so none is dropped for want
   // of a timestamp. The date is read where the business is: a deal closed at
   // 9pm on 31 March in Mumbai belongs to that quarter, not the next one.
+  const params = [wanted[0].starts_on, config.businessTimeZone];
+  const mine = ownerClause(scopeOf(req), params);
   const { rows } = await query(
     `SELECT stage_type,
             to_char((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2, 'YYYY-MM-DD') AS closed_on,
             quotation_value, currency
        FROM v_quotations
       WHERE stage_type IN ('won', 'lost')
-        AND ((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2)::date >= $1::date`,
-    [wanted[0].starts_on, config.businessTimeZone]);
+        AND ((COALESCE(closed_at, stage_changed_at, quotation_date::timestamptz)) AT TIME ZONE $2)::date >= $1::date
+        ${mine ? `AND ${mine}` : ''}`,
+    params);
 
   const byKey = new Map(wanted.map((q) => [q.key, { ...q, won: 0, lost: 0, won_value: 0, lost_value: 0 }]));
   // The rate is a count, so a deal in another currency counts in it like any

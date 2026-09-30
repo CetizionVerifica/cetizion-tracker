@@ -17,6 +17,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { ownerClause, scopeOf } from '../auth/ownership.js';
 import { transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { lockAttachableDocument } from '../lib/documents.js';
@@ -56,10 +57,22 @@ registerRouter.post('/:key/register', async (req, res) => {
   // What the registration found worth saying, added to the response (#26).
   const checked = {};
 
+  const scope = scopeOf(req);
+
   const data = await transaction(async (client) => {
     const key = decodeURIComponent(req.params.key);
+    // Registering a PO marks the quotation won, creates or joins a project
+    // and builds the invoicing schedule, so it has to be a quotation this
+    // caller may reach (#18 Phase 2C). Scoped in the locking read, so the
+    // whole transaction works from a row they own. The key predicate is
+    // parenthesised first: an AND against the tail of that OR would have
+    // left the by-number path open.
+    const qParams = [key];
+    const qMine = ownerClause(scope, qParams, { alias: 'q' });
     const { rows: qrows } = await client.query(
-      'SELECT * FROM quotations WHERE quotation_no = $1 OR (id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)) FOR UPDATE', [key]);
+      `SELECT q.* FROM quotations q
+        WHERE (q.quotation_no = $1 OR (q.id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)))
+          ${qMine ? `AND ${qMine}` : ''} FOR UPDATE`, qParams);
     if (!qrows.length) throw new ApiError(404, 'Quotation not found');
     const q = qrows[0];
 
@@ -71,7 +84,14 @@ registerRouter.post('/:key/register', async (req, res) => {
     let projectId = b.project_id || q.project_id || null;
     let projectCreated = false;
     if (projectId) {
-      const { rows } = await client.query('SELECT project_id, company_id FROM projects WHERE project_id = $1', [projectId]);
+      // Joining an existing project needs the same reach as opening it, or a
+      // sales user could hang their PO off somebody else's project — and
+      // learn from the refusals below whose client it is. The same check
+      // /api/quotations/:id/convert already makes.
+      const pParams = [projectId];
+      const pMine = ownerClause(scope, pParams, { alias: 'p' });
+      const { rows } = await client.query(
+        `SELECT p.project_id, p.company_id FROM projects p WHERE p.project_id = $1 ${pMine ? `AND ${pMine}` : ''}`, pParams);
       if (!rows.length) throw new ApiError(422, 'Please check the highlighted fields', { fields: { project_id: 'No such project' } });
       if (rows[0].company_id && q.company_id && rows[0].company_id !== q.company_id) {
         throw new ApiError(422, 'Please check the highlighted fields', { fields: { project_id: 'That project belongs to a different client' } });
@@ -79,11 +99,23 @@ registerRouter.post('/:key/register', async (req, res) => {
     } else {
       projectId = await claimNextId('project', client);
       await client.query(
+        // Responsibility carries from the quotation to the project it
+        // becomes, exactly as /api/quotations/:id/convert does it (#18
+        // Phase 2C/4): taken from the quotation, never from whoever
+        // happened to click Register, and an unowned quotation makes an
+        // unowned project rather than a guessed one. Without this the
+        // project came out unowned and the salesperson who registered their
+        // own PO could not see the project it created.
         `INSERT INTO projects (project_id, client_name, primary_service, project_manager, project_manager_email, sales_person,
-                               planned_start_date, planned_delivery_date, remarks)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+                               planned_start_date, planned_delivery_date, remarks, owner_user_id,
+                               originating_user_id, originating_user_snapshot_id, originating_user_name)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [projectId, q.client_name, q.service_quoted, b.project_manager ?? null, b.project_manager_email ?? null, q.sales_person,
-         b.planned_start_date ?? null, b.planned_delivery_date ?? null, `Won from quotation ${q.quotation_no}`]
+         b.planned_start_date ?? null, b.planned_delivery_date ?? null, `Won from quotation ${q.quotation_no}`,
+         q.owner_user_id ?? null,
+         q.originating_user_id ?? null,
+         q.originating_user_id ? (q.originating_user_snapshot_id ?? q.originating_user_id) : null,
+         q.originating_user_id ? (q.originating_user_name ?? null) : null]
       );
       projectCreated = true;
     }

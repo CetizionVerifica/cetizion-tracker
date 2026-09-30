@@ -3,7 +3,6 @@ import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
-import { mayWriteOnRecords, onRecordVisibleSql, ownProjectSql } from './scope.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
 // ---------------------------------------------------------------------
@@ -163,6 +162,10 @@ export const resources = {
 
   enquiries: {
     table: 'enquiries',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     filterAliases: { status: LEGACY_ENQUIRY_STATUS },
     // The table plus the linked contact's email and phone, so the form can
     // show the address it is about to change (client-data-gaps.md, gap 1).
@@ -219,6 +222,10 @@ export const resources = {
 
   quotations: {
     table: 'quotations',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     view: 'v_quotations',
     label: 'Quotation',
     hasDocument: true,
@@ -275,6 +282,10 @@ export const resources = {
 
   projects: {
     table: 'projects',
+    // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
+    // the rows they own, and an unowned row is admin-only. Declared here so
+    // the policy is visible beside the resource rather than hidden in crud.js.
+    ownerScoped: true,
     view: 'v_projects',
     label: 'Project',
     naturalKey: 'project_id',
@@ -315,6 +326,12 @@ export const resources = {
   },
 
   'project-milestones': {
+    // A milestone belongs to its project, so the project's owner_user_id
+    // decides who may see or move it. Not project_manager: that is a name in
+    // a text column, not an identity. Marking a milestone reached makes
+    // every stage triggered "On Milestone" billable (views.sql), so this is
+    // a write worth gating properly rather than by a name match.
+    ownerScopedBy: 'project',
     // What a project has to reach before an On Milestone stage can be
     // invoiced (#26). Reaching one stamps its date on every stage it triggers.
     table: 'project_milestones',
@@ -339,10 +356,14 @@ export const resources = {
     // moment that is not null — so an open PATCH here let any signed-in
     // user move another project into the invoice run, the cash-flow
     // forecast and the ageing.
-    visibleTo: (req, params) => ownProjectSql(req, 'project_milestones', params),
   },
 
   'purchase-orders': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'purchase_order',
     // A financial record. The PO value is what every billing figure — Due
     // now, To bill, project profitability — is computed against, and
     // deleting one takes its services and payment stages with it. Entering
@@ -389,6 +410,11 @@ export const resources = {
   },
 
   'po-services': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'via_po',
     // The lines a PO's value is made of, so deleting one silently changes
     // what the project is worth. Admin-only to delete, like the PO itself.
     adminOnlyDeletes: true,
@@ -408,6 +434,11 @@ export const resources = {
   },
 
   'payment-stages': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C). A sales user reaches it only through a quotation or
+    // project they own; an unreachable parent means unknown ownership, which
+    // is admin-only.
+    ownerScopedBy: 'via_po',
     // The invoicing schedule: what has been raised, what is due and what has
     // been paid. A deleted stage is an invoice the tracker stops accounting
     // for. Sales users raise and record against stages as usual; only an
@@ -629,6 +660,10 @@ export const resources = {
     // Recording a receipt is ordinary work and goes through
     // POST /payment-stages/:id/payment; editing the ledger by hand is not.
     adminOnlyWrites: true,
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C), reached through a declared foreign key. An unreachable
+    // parent means unknown ownership, which is admin-only.
+    ownerScopedBy: 'via_stage',
     table: 'payments',
     view: null,
     label: 'Payment',
@@ -649,14 +684,22 @@ export const resources = {
   },
 
   tasks: {
+    // Ownership is not this row's own — it belongs to the record it is filed
+    // against (#18 Phase 2C), named as (entity, entity_id) text. A company
+    // or a contact is shared, so those stay open; the five sales records
+    // carry their owner's reach, and an unreachable parent means unknown
+    // ownership, which is admin-only.
+    // A task reaches its owner through the record it is filed against, and
+    // through any other record it stands on (task_targets, #22). Being the
+    // assignee or the author is deliberately NOT a way in: that would let a
+    // task somebody assigned me open a deal that is not mine.
+    ownerScopedBy: 'task_entity',
     table: 'tasks',
     stampActor: 'created_by',
     view: null,
     label: 'Task',
     // A sales user sees the tasks on their own records, and any task that is
     // theirs to do or that they set, wherever it sits (#22).
-    visibleTo: (req, params) => onRecordVisibleSql(req, 'tasks', params, { ownColumns: ['assignee', 'created_by'], taskTargets: true }),
-    authorize: (req, input) => mayWriteOnRecords(req, input),
     // The other records the task is on, besides its own (#22). Sent as the
     // whole list: what is not in it is taken off.
     onSave: async (client, { after, input }) => {
@@ -687,12 +730,16 @@ export const resources = {
   },
 
   notes: {
+    // Ownership is not this row's own — it belongs to the record it is filed
+    // against (#18 Phase 2C), named as (entity, entity_id) text. A company
+    // or a contact is shared, so those stay open; the five sales records
+    // carry their owner's reach, and an unreachable parent means unknown
+    // ownership, which is admin-only.
+    ownerScopedBy: 'entity',
     table: 'notes',
     stampActor: 'author',
     view: null,
     label: 'Note',
-    visibleTo: (req, params) => onRecordVisibleSql(req, 'notes', params, { ownColumns: ['author'] }),
-    authorize: (req, input) => mayWriteOnRecords(req, input),
     defaultSort: 'pinned DESC, created_at DESC',
     search: ['body'],
     filters: ['entity', 'entity_id'],
@@ -711,6 +758,10 @@ export const resources = {
     // moves the margin on a deal, so they belong to whoever owns the
     // numbers rather than to whoever sold it.
     adminOnlyWrites: true,
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C), reached through a declared foreign key. An unreachable
+    // parent means unknown ownership, which is admin-only.
+    ownerScopedBy: 'project',
     table: 'project_costs',
     view: null,
     label: 'Project cost',
@@ -735,6 +786,12 @@ export const resources = {
   },
 
   attachments: {
+    // Ownership is not this row's own — it belongs to the record it is filed
+    // against (#18 Phase 2C), named as (entity, entity_id) text. A company
+    // or a contact is shared, so those stay open; the five sales records
+    // carry their owner's reach, and an unreachable parent means unknown
+    // ownership, which is admin-only.
+    ownerScopedBy: 'entity',
     table: 'attachments',
     view: null,
     label: 'Attachment',
@@ -744,8 +801,6 @@ export const resources = {
     filters: ['entity', 'entity_id'],
     columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
     stampActor: 'uploaded_by',
-    visibleTo: (req, params) => onRecordVisibleSql(req, 'attachments', params, { ownColumns: ['uploaded_by'] }),
-    authorize: (req, input) => mayWriteOnRecords(req, input),
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
       entity_id: requiredStr(120),
@@ -884,6 +939,10 @@ export const resources = {
   },
 
   'quotation-lines': {
+    // Ownership is not this row's own — it belongs to the record above it
+    // (#18 Phase 2C), reached through a declared foreign key. An unreachable
+    // parent means unknown ownership, which is admin-only.
+    ownerScopedBy: 'quotation',
     table: 'quotation_lines',
     view: null,
     label: 'Quotation line',

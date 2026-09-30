@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
+import { ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
@@ -54,7 +55,11 @@ const linkSchema = z.object({
 
 acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
   const body = linkSchema.parse(req.body || {});
-  const q = await fullQuotation(req.params.key);
+  // Sending a client a link to a quotation is an act on that quotation, so
+  // it needs the same reach as opening it (#18 Phase 2C). The public routes
+  // further down are a different realm — a token, not a session — and are
+  // deliberately left alone.
+  const q = await fullQuotation(req.params.key, scopeOf(req));
   if (CLOSED.includes(q.status)) throw new ApiError(422, `The quotation is already ${q.status.toLowerCase()}`);
   if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
   if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
@@ -91,20 +96,30 @@ acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
   res.status(201).json({ data: { ...row, url, email: email && { status: email.status, reason: email.reason } } });
 });
 
+// Who the quotation was sent to and what the client did with it: the
+// quotation's own history, and read through the quotation it already joins,
+// so the predicate goes on that join rather than on a second statement.
 acceptanceRouter.get('/:key/acceptances', async (req, res) => {
+  const params = [decodeURIComponent(req.params.key)];
+  const mine = ownerClause(scopeOf(req), params, { alias: 'q' });
   const { rows } = await query(
     `SELECT a.id, a.revision, a.sent_to, a.status, a.expires_at, a.viewed_at, a.view_count, a.decided_at, a.decided_by_name,
             a.decided_by_email, a.comments, a.ip, a.pdf_sha256, a.pdf_document_id, a.created_by, a.created_at
        FROM quotation_acceptances a JOIN quotations q ON q.id = a.quotation_id
-      WHERE q.quotation_no = $1 ORDER BY a.created_at DESC`, [decodeURIComponent(req.params.key)]);
+      WHERE q.quotation_no = $1 ${mine ? `AND ${mine}` : ''} ORDER BY a.created_at DESC`, params);
   res.json({ data: rows });
 });
 
 acceptanceRouter.post('/:key/acceptances/:id/revoke', async (req, res) => {
+  // The predicate rides in the UPDATE itself, so there is no read for it to
+  // be true at and false by the time of the write.
+  const params = [decodeURIComponent(req.params.key), Number(req.params.id)];
+  const mine = ownerClause(scopeOf(req), params, { alias: 'q' });
   const { rows } = await query(
     `UPDATE quotation_acceptances a SET status = 'revoked' FROM quotations q
-      WHERE q.id = a.quotation_id AND q.quotation_no = $1 AND a.id = $2 AND a.status IN ('sent','viewed') RETURNING a.id, a.status`,
-    [decodeURIComponent(req.params.key), Number(req.params.id)]);
+      WHERE q.id = a.quotation_id AND q.quotation_no = $1 AND a.id = $2 AND a.status IN ('sent','viewed')
+        ${mine ? `AND ${mine}` : ''} RETURNING a.id, a.status`,
+    params);
   if (!rows.length) throw new ApiError(404, 'No open link to revoke');
   res.json({ data: rows[0] });
 });

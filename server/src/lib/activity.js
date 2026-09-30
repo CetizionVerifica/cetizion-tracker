@@ -32,6 +32,12 @@ export const ACTIONS = {
   COMPANY_MERGED: 'company.merged',
   JOB_RUN: 'job.run',
   EMAIL_TEST_SENT: 'email.test_sent',
+  // Who a record belongs to, and what it is measured against (#18).
+  OWNERSHIP_ASSIGNED: 'ownership.assigned',
+  OWNERSHIP_REASSIGNED: 'ownership.reassigned',
+  OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
+  TARGET_CREATED: 'target.created',
+  TARGET_UPDATED: 'target.updated',
   // Money (#85). An expense claim's approval and its reimbursement are the
   // two acts that turn a submitted claim into a payment, and a vendor
   // invoice's payment is the same act on the other side of a trip. Each is

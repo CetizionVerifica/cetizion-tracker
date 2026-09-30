@@ -95,10 +95,16 @@ describe('saved views', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, 
   });
 
   test('a count is the count of the list the view links to', async () => {
-    await exec(`INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status)
-                VALUES ('CTZ/QT/2026/801', 'A Ltd', '2026-04-01', 100000, 'Submitted'),
-                       ('CTZ/QT/2026/802', 'B Ltd', '2026-04-01', 100000, 'Under Negotiation'),
-                       ('CTZ/QT/2026/803', 'C Ltd', '2026-04-01', 100000, 'Lost')`);
+    // Owned by the reader, because since #18 Phase 2C a sales user's list
+    // holds what they own — an unassigned quotation is admin-only. Left
+    // unowned, as this fixture was, the list is empty and "the count is the
+    // count of the list" can only be checked against zero, which is the one
+    // number that proves nothing.
+    const [who] = await exec(`SELECT id FROM users WHERE email = 'sales@example.test'`);
+    await exec(`INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, owner_user_id)
+                VALUES ('CTZ/QT/2026/801', 'A Ltd', '2026-04-01', 100000, 'Submitted', $1),
+                       ('CTZ/QT/2026/802', 'B Ltd', '2026-04-01', 100000, 'Under Negotiation', $1),
+                       ('CTZ/QT/2026/803', 'C Ltd', '2026-04-01', 100000, 'Lost', $1)`, [who.id]);
 
     const views = await as(sales.cookie)('get', '/api/views?counts=1');
     const open = views.body.data.find((v) => v.name === 'Open deals');
@@ -109,6 +115,33 @@ describe('saved views', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, 
     // whole promise of the number in the sidebar.
     const list = await as(sales.cookie)('get', '/api/quotations?status=Submitted,Under Negotiation');
     assert.equal(list.body.data.length, 2);
+  });
+
+  /**
+   * The other half of that promise, and the reason the count carries the
+   * ownership predicate: a number in the sidebar that counted rows the
+   * reader cannot open would be telling them how many exist.
+   */
+  test('a count holds only what the reader may open', async () => {
+    await exec(`INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, owner_user_id)
+                VALUES ('CTZ/QT/2026/811', 'Nobody Ltd', '2026-04-01', 100000, 'Submitted', NULL)`);
+
+    const mine = await as(sales.cookie)('get', '/api/views?counts=1');
+    const open = mine.body.data.find((v) => v.name === 'Open deals');
+    const list = await as(sales.cookie)('get', '/api/quotations?status=Submitted,Under Negotiation');
+    assert.equal(open.count, list.body.data.length, 'the badge and the list still agree');
+    assert.ok(
+      !JSON.stringify(mine.body).includes('CTZ/QT/2026/811'),
+      'and the unassigned one is not in either');
+
+    const theirs = await as(admin.cookie)('get', '/api/views?counts=1');
+    assert.equal(
+      theirs.body.data.find((v) => v.name === 'Open deals').count, open.count + 1,
+      'the admin counts the unassigned one too');
+
+    // The tests in this file share one database and later ones count these
+    // same quotations, so the row this test needed goes away with it.
+    await exec(`DELETE FROM quotations WHERE quotation_no = 'CTZ/QT/2026/811'`);
   });
 
   test('a sales user may save a view for themselves', async () => {

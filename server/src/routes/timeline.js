@@ -6,9 +6,9 @@
  *   GET /api/tasks/summary                       counts for the sidebar and the Tasks page
  */
 import { Router } from 'express';
+import { assertRecordReachable, parentClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { canSeeRecord, onRecordVisibleSql } from '../lib/scope.js';
 
 export const timelineRouter = Router();
 export const taskSummaryRouter = Router();
@@ -99,8 +99,19 @@ timelineRouter.get('/', async (req, res) => {
   const entity = String(req.query.entity || '');
   const id = String(req.query.id || '');
   if (!ENTITIES.has(entity) || !id) throw new ApiError(422, 'entity and id are required');
-  // A sales user reads the history of their own records only (#22, #18).
-  if (!(await canSeeRecord(req, entity, id))) throw new ApiError(404, 'Record not found');
+  // One gate, in front of everything below (#22, #18 Phase 2C).
+  //
+  // This endpoint is a composite: seven reads about one record — its notes,
+  // tasks, files, emails, mail threads, touches and its own milestones. Put
+  // the ownership rule on each of them and it is seven chances to miss one,
+  // and the miss is silent. Put it on the record instead and the whole
+  // response follows: a quotation this caller may not open has no timeline,
+  // and the answer is the same 404 a quotation that does not exist gets.
+  //
+  // main asked the same question through canSeeRecord(), which matched the
+  // free-text sales_person against the signed-in name; ownership is
+  // owner_user_id, so the question is asked of that instead.
+  await assertRecordReachable(scopeOf(req), entity, id);
   const kinds = req.query.kind ? new Set(String(req.query.kind).split(',')) : null;
   const wants = (k) => !kinds || kinds.has(k);
   // Emails are logged against a company or a quotation; a company's timeline shows both.
@@ -132,14 +143,29 @@ timelineRouter.get('/', async (req, res) => {
   res.json({ data: items, open_tasks: tasks.rows.filter((t) => t.status !== 'done').length });
 });
 
+/**
+ * The counts behind the sidebar badge. Narrowed by exactly the rule
+ * /api/tasks is narrowed by (#18 Phase 2C), because the badge and the list
+ * it opens have to agree: a "3" over a page showing one task is a bug
+ * report, and the number would otherwise be counting records the reader
+ * cannot open.
+ *
+ * "Tasks on records I can reach" is what this counts. "Tasks assigned to
+ * me" is a different question — tasks carry a free-text assignee, not a
+ * user — and answering it would be a new rule, so it is not answered here.
+ */
 taskSummaryRouter.get('/summary', async (req, res) => {
   const params = [];
-  const scoped = onRecordVisibleSql(req, 'tasks', params, { ownColumns: ['assignee', 'created_by'], taskTargets: true });
+  // Counted through the same rule /api/tasks is listed by, so the badge and
+  // the list agree: the record a task is filed against, or any other record
+  // it stands on. Not the assignee — a task assigned to me on somebody
+  // else's deal is not a door into that deal.
+  const mine = parentClause(scopeOf(req), params, { kind: 'task_entity', alias: 't' });
   const { rows: [r] } = await query(
     `SELECT COUNT(*) FILTER (WHERE status <> 'done')::int AS open,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at < CURRENT_DATE)::int AS overdue,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at = CURRENT_DATE)::int AS today,
             COUNT(*) FILTER (WHERE status <> 'done' AND due_at > CURRENT_DATE AND due_at <= CURRENT_DATE + 7)::int AS this_week
-       FROM tasks ${scoped ? `WHERE ${scoped}` : ''}`, params);
+       FROM tasks t ${mine ? `WHERE ${mine}` : ''}`, params);
   res.json({ data: r });
 });

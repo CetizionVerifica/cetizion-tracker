@@ -358,11 +358,16 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
     let otherMilestone;
 
     before(async () => {
+      // sales_person and owner_user_id both, deliberately. #18 Phase 2C
+      // replaced the free-text name match with a predicate on owner_user_id,
+      // so the name is left here as the thing that must NOT be what decides:
+      // if the scoping ever regressed to matching it again, these rows would
+      // still pass and the regression would be invisible.
       await db.query(
-        `INSERT INTO projects (project_id, client_name, sales_person) VALUES
-           ('PRJ-MATRIX-A', 'A Client', $1),
-           ('PRJ-MATRIX-B', 'B Client', $2)`,
-        [salesA.user.name, salesB.user.name]
+        `INSERT INTO projects (project_id, client_name, sales_person, owner_user_id) VALUES
+           ('PRJ-MATRIX-A', 'A Client', $1, $3),
+           ('PRJ-MATRIX-B', 'B Client', $2, $4)`,
+        [salesA.user.name, salesB.user.name, salesA.user.id, salesB.user.id]
       );
       const { rows } = await db.query(
         `INSERT INTO project_milestones (project_id, name) VALUES

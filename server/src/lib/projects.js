@@ -1,5 +1,6 @@
 import { ApiError } from '../middleware/error.js';
 import { normalizeName } from './names.ts';
+import { ownerClause } from '../auth/ownership.js';
 import { QUOTATION_STATUS } from './statuses.js';
 
 const WON = QUOTATION_STATUS.won;
@@ -16,13 +17,24 @@ const WON = QUOTATION_STATUS.won;
  * Runs inside the save's transaction, so a quotation that cannot be linked
  * takes the project save down with it rather than leaving the two out of step.
  */
-export async function linkProjectQuotation(client, { after, input }) {
+export async function linkProjectQuotation(client, { after, input, scope }) {
   const quotationNo = input?.quotation_no;
   if (!quotationNo) return undefined;
 
+  // Only a quotation this saver may reach (#18 Phase 2C). Without this, a
+  // sales user could name any quotation number and learn its status, its
+  // client and which project it belongs to from the refusals below — and
+  // could attach somebody else's won quotation to their own project.
+  //
+  // Ownership is read, never written: linking does not transfer the
+  // quotation, and it does not change the project's owner either. The
+  // project already carries whoever created it.
+  const params = [quotationNo];
+  const mine = scope ? ownerClause(scope, params, { alias: 'q' }) : '';
   const { rows } = await client.query(
-    'SELECT quotation_no, status, project_id, client_name FROM quotations WHERE quotation_no = $1 FOR UPDATE',
-    [quotationNo]
+    `SELECT q.quotation_no, q.status, q.project_id, q.client_name
+       FROM quotations q WHERE q.quotation_no = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,
+    params
   );
   if (!rows.length) {
     throw new ApiError(422, 'Please check the highlighted fields', {

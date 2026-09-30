@@ -8,6 +8,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
+import { assertRecordReachable, scopeOf, scopedSources } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -40,6 +41,11 @@ export function phoneDigits(raw) {
 communicationsRouter.get('/contacts', async (req, res) => {
   const entity = String(req.query.entity || ''); const id = String(req.query.id || '');
   if (!ENTITIES.includes(entity) || !id) throw new ApiError(422, 'entity and id are required');
+  // Which record is being contacted about is the question ownership answers
+  // (#18 Phase 2C). The contacts themselves are the company's and stay
+  // shared; naming somebody else's quotation to find out who is behind it is
+  // what this refuses.
+  await assertRecordReachable(scopeOf(req), entity, id);
   const { company_id, contact_id } = await resolveParties(entity, id);
   if (!company_id) return res.json({ data: { company_id: null, contacts: [] } });
   const { rows } = await query(
@@ -84,6 +90,9 @@ communicationsRouter.post('/', async (req, res) => {
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
   const t = parsed.data;
   const who = req.user?.username || 'admin';
+  // A touch is logged against a record, so it may only be logged against a
+  // record this caller may reach (#18 Phase 2C).
+  await assertRecordReachable(scopeOf(req), t.entity, t.entity_id);
   const parties = await resolveParties(t.entity, t.entity_id);
   if (!parties.company_id && t.entity !== 'company') throw new ApiError(404, `No ${t.entity.replace('_', ' ')} ${t.entity_id}`);
   const contactId = t.contact_id ?? parties.contact_id ?? null;
@@ -114,6 +123,9 @@ communicationsRouter.post('/', async (req, res) => {
 communicationsRouter.get('/', async (req, res) => {
   const entity = String(req.query.entity || ''); const id = String(req.query.id || '');
   if (!ENTITIES.includes(entity) || !id) throw new ApiError(422, 'entity and id are required');
+  // What was said to a client about a deal is the deal's, so the same gate
+  // the timeline uses applies here (#18 Phase 2C).
+  await assertRecordReachable(scopeOf(req), entity, id);
   const { rows } = await query(
     `SELECT cm.*, ct.name AS contact_name FROM communications cm LEFT JOIN contacts ct ON ct.id = cm.contact_id
       WHERE (cm.entity = $1 AND cm.entity_id = $2) OR ($1 = 'company' AND cm.company_id::text = $2)
@@ -124,25 +136,35 @@ communicationsRouter.get('/', async (req, res) => {
 communicationsRouter.get('/no-contact', async (req, res) => {
   const { rows: [{ value }] } = await query(`SELECT COALESCE((SELECT value FROM settings WHERE key = 'no_contact_days'), '7') AS value`);
   const days = Math.max(1, Number(req.query.days) || Number(value) || 7);
+  // A worklist, not a report: every row is a record with its reference on
+  // it, to be chased. So it carries the same restriction the dashboard
+  // worklist and the record lists carry (#18 Phase 2C) — a salesperson is
+  // shown what to chase, not who else is behind. The relations are
+  // substituted rather than the queries rewritten, so what counts as "gone
+  // quiet" is unchanged. One params array per statement.
+  const scope = scopeOf(req);
+  const dealParams = [days]; const dealSrc = scopedSources(scope, dealParams);
+  const enqParams = [days]; const enqSrc = scopedSources(scope, enqParams);
+  const invParams = [days]; const invSrc = scopedSources(scope, invParams);
   const [deals, enquiries, invoices] = await Promise.all([
     query(`SELECT q.quotation_no AS ref, q.client_name, q.sales_person AS owner, q.status,
                   COALESCE(q.last_contacted_at, q.sent_at, q.quotation_date::timestamptz, q.created_at) AS last_touch
-             FROM quotations q JOIN pipeline_stages ps ON ps.id = q.stage_id
+             FROM ${dealSrc.quotations} q JOIN pipeline_stages ps ON ps.id = q.stage_id
             WHERE ps.type = 'open'
               AND COALESCE(q.last_contacted_at, q.sent_at, q.quotation_date::timestamptz, q.created_at) < now() - make_interval(days => $1)
-            ORDER BY last_touch`, [days]),
-    query(`SELECT enquiry_no AS ref, client_name, sales_person AS owner, status,
-                  COALESCE(last_contacted_at, enquiry_date::timestamptz, created_at) AS last_touch
-             FROM enquiries WHERE status IN ('New','Contacted','Qualified')
-              AND COALESCE(last_contacted_at, enquiry_date::timestamptz, created_at) < now() - make_interval(days => $1)
-            ORDER BY last_touch`, [days]),
+            ORDER BY last_touch`, dealParams),
+    query(`SELECT e.enquiry_no AS ref, e.client_name, e.sales_person AS owner, e.status,
+                  COALESCE(e.last_contacted_at, e.enquiry_date::timestamptz, e.created_at) AS last_touch
+             FROM ${enqSrc.enquiries} e WHERE e.status IN ('New','Contacted','Qualified')
+              AND COALESCE(e.last_contacted_at, e.enquiry_date::timestamptz, e.created_at) < now() - make_interval(days => $1)
+            ORDER BY last_touch`, enqParams),
     query(`SELECT s.id AS ref, s.invoice_no, s.po_number, s.client_name, s.days_overdue, c.last_contacted_at AS last_touch
-             FROM v_payment_stages s
+             FROM ${invSrc.vPaymentStages} s
              JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
              LEFT JOIN companies c ON c.id = p.company_id
             WHERE s.stage_status = 'Overdue'
               AND (c.last_contacted_at IS NULL OR c.last_contacted_at < now() - make_interval(days => $1))
-            ORDER BY s.days_overdue DESC`, [days]),
+            ORDER BY s.days_overdue DESC`, invParams),
   ]);
   res.json({ data: { days, quotations: deals.rows, enquiries: enquiries.rows, invoices: invoices.rows } });
 });

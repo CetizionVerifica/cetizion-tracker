@@ -14,6 +14,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
+import { resourceClause, scopeOf } from '../auth/ownership.js';
 import { buildWhere } from '../lib/crud.js';
 import { ApiError } from '../middleware/error.js';
 import { resources } from '../lib/resources.js';
@@ -97,13 +98,19 @@ function resourceOf(name) {
  * it. A view whose resource has gone is counted as null rather than
  * failing the whole request.
  */
-async function countOf(view) {
+async function countOf(view, scope) {
   const def = resources[view.resource];
   if (!def) return null;
   const params = [];
+  // The list endpoint counts through the ownership predicate (#18 Phase
+  // 2C); without the same predicate here the sidebar said "2" over a page
+  // showing none, and the number itself was the leak — how many records
+  // exist that this reader may not open.
+  const relation = def.view || def.table;
+  const scoped = resourceClause(def, scope, params, { alias: relation });
   // buildWhere returns the whole clause, `WHERE …` or the empty string.
-  const where = buildWhere(def, usable(def, view.filters), params);
-  const { rows } = await query(`SELECT count(*)::int AS n FROM ${def.view || def.table} ${where}`, params);
+  const where = buildWhere(def, usable(def, view.filters), params, scoped ? [scoped] : []);
+  const { rows } = await query(`SELECT count(*)::int AS n FROM "${relation}" ${where}`, params);
   return rows[0].n;
 }
 
@@ -118,7 +125,8 @@ viewRouter.get('/', async (req, res) => {
   // against its list — comes back as null rather than taking the sidebar
   // down with it, but it is logged, because a permanently uncountable
   // view is a bug somebody should see.
-  const counts = await Promise.all(rows.map((row) => countOf(row).catch((err) => {
+  const scope = scopeOf(req);
+  const counts = await Promise.all(rows.map((row) => countOf(row, scope).catch((err) => {
     console.error(`[views] cannot count "${row.name}" on ${row.resource}: ${err.message}`);
     return null;
   })));

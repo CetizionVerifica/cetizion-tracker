@@ -16,6 +16,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
+import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { approvalDecision, approvalRequest } from '../lib/emailTemplates.js';
@@ -24,8 +25,21 @@ import { notify } from '../lib/notify.js';
 
 export const approvalRouter = Router();
 
-async function load(key) {
-  const { rows } = await query('SELECT * FROM v_quotations WHERE quotation_no = $1 OR (id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1))', [decodeURIComponent(key)]);
+/**
+ * Asking for approval is the salesperson's own act on their own quotation,
+ * so it is scoped like every other read of one (#18 Phase 2C). Deciding is
+ * requireAdmin, and an admin's scope is unrestricted, so the same gate
+ * serves both without the approver losing sight of anything.
+ */
+async function load(key, scope = UNRESTRICTED) {
+  const params = [decodeURIComponent(key)];
+  const mine = ownerClause(scope, params, { alias: 'q' });
+  const { rows } = await query(
+    `SELECT q.* FROM v_quotations q
+      WHERE (q.quotation_no = $1 OR (q.id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)))
+        ${mine ? `AND ${mine}` : ''}`,
+    params
+  );
   if (!rows.length) throw new ApiError(404, 'Quotation not found');
   return rows[0];
 }
@@ -41,7 +55,7 @@ const requestSchema = z.object({ reason: z.string().trim().min(1, 'Say what need
 approvalRouter.post('/:key/approval/request', async (req, res) => {
   const parsed = requestSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: { reason: parsed.error.issues[0].message } });
-  const q = await load(req.params.key);
+  const q = await load(req.params.key, scopeOf(req));
   const { rows: [u] } = await query(
     `UPDATE quotations SET approval_status = 'pending', approval_reason = $2, approval_requested_at = now(), approval_requested_by = $3,
             approval_decided_at = NULL, approved_by = NULL, approval_note = NULL, approved_discount_percent = NULL
@@ -60,7 +74,7 @@ const decideSchema = z.object({ decision: z.enum(['approved', 'rejected']), note
 approvalRouter.post('/:key/approval/decide', requireAdmin, async (req, res) => {
   const parsed = decideSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Pick approved or rejected');
-  const q = await load(req.params.key);
+  const q = await load(req.params.key, scopeOf(req));
   if (q.approval_status !== 'pending') throw new ApiError(422, 'Nothing is waiting for approval on this quotation');
   const { rows: [u] } = await query(
     `UPDATE quotations SET approval_status = $2, approval_decided_at = now(), approved_by = $3, approval_note = $4,

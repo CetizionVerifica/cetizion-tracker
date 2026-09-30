@@ -47,9 +47,16 @@ export async function startSession({ userId, via = 'password', req }, db = pool)
  */
 export async function sessionIsLive(sessionId, userId) {
   if (typeof sessionId !== 'string' || !sessionId) return false;
+  // A failed query is NOT "no row". This read decides every authenticated
+  // request, and swallowing the error here turned a momentary database
+  // failure into a spurious 401 — the one answer currentUser's own comment
+  // says it must not give for anything but a session that really has ended.
+  // requireAuth already routes a thrown error to next(err), deliberately,
+  // so that a blip is a 500 nobody retries their way past rather than a
+  // sign-out. Letting it throw is what makes that work.
   const { rows: [row] } = await query(
     `SELECT revoked_at, last_seen_at FROM user_sessions WHERE id = $1 AND user_id = $2`,
-    [sessionId, userId]).catch(() => ({ rows: [] }));
+    [sessionId, userId]);
   if (!row || row.revoked_at) return false;
 
   if (Date.now() - new Date(row.last_seen_at).getTime() > TOUCH_AFTER_MS) {
@@ -73,10 +80,15 @@ export async function listSessions(userId) {
 
 /** End one. Returns false when it was not theirs to end. */
 export async function revokeSession(sessionId, userId) {
+  // Same reason as sessionIsLive, read the other way round: a swallowed
+  // error here reports "not yours to end" about a session that is still
+  // live, so somebody told to sign a lost phone out is told it was already
+  // gone. revokeAllSessions below never did this; these two were the
+  // outliers.
   const { rowCount } = await query(
     `UPDATE user_sessions SET revoked_at = now()
       WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
-    [sessionId, userId]).catch(() => ({ rowCount: 0 }));
+    [sessionId, userId]);
   return rowCount > 0;
 }
 

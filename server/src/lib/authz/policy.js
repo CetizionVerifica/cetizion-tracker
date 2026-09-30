@@ -203,7 +203,7 @@ export const routes = [
   { method: 'GET', path: '/api/search', access: signedIn, note: 'One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not.' },
 
   // -------------------------------------------------------------- reports
-  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, note: 'Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is.' },
+  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, restrictions: ['record-owner'], note: 'Win rate by financial quarter. Scoped: this note used to justify the open gate by saying both roles see quotations anyway, which stopped being true the moment the list itself became owner-scoped. The gate stays open because the numbers are counts and quotation values a salesperson already sees on their own rows; it carries no margin, which is what /api/profitability is gated for.' },
 
   // --------------------------------------------------------- saved views
   //
@@ -460,6 +460,45 @@ export const routes = [
     why: 'The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up.',
   },
 
+  // ------------------------------------------- record ownership (#18)
+  //
+  // Who a record belongs to is the administrator's to set. A salesperson may
+  // read their own work — that is what row scoping is for — but reassigning
+  // it is a decision about people, not about the record, and the handover
+  // history is the audit of those decisions.
+  {
+    method: 'PATCH', path: '/api/:resource/:id/owner', access: mustBeAdmin,
+    why: 'Assigning, reassigning or unassigning a record moves somebody else\'s pipeline. Sales users already see only their own rows, so letting one of them set owner_user_id would let them take a record off a colleague, or hand their own away to hide it (#18 Phase 3).',
+  },
+  {
+    method: 'GET', path: '/api/:resource/:id/ownership-history', access: mustBeAdmin,
+    why: 'The handover trail for one record: who owned it, who changed that, and when. It names accounts other than the caller\'s, which is the administrator\'s view of the team rather than a salesperson\'s view of their own work (#18 Phase 3).',
+  },
+
+  // -------------------------------------------------- sales KPIs (#18 §5)
+  //
+  // Everything here is mounted behind the router's own requireAuth. The
+  // split is between a person's own figures, which are theirs to read, and
+  // the team's, which are the administrator's — and between reading a target
+  // and setting one.
+  { method: 'GET', path: '/api/kpis/me', access: signedIn, restrictions: ['self-only'] },
+  {
+    method: 'GET', path: '/api/kpis/team', access: mustBeAdmin,
+    why: 'Every salesperson\'s figures side by side. That is the manager\'s view of the team, and one salesperson comparing themselves against a named colleague is not what these numbers are for (#18 §5).',
+  },
+  {
+    method: 'GET', path: '/api/kpis/users/:userId', access: signedIn, restrictions: ['self-only'],
+    note: 'The handler refuses another salesperson with 403 rather than an empty list: an empty list reads as "no work done", which is a different and worse answer than "not yours to see". An admin may read anybody\'s.',
+  },
+  {
+    method: 'GET', path: '/api/kpis/targets', access: signedIn, restrictions: ['self-only'],
+    note: 'A salesperson sees the targets set for them; asking after somebody else\'s is refused in the handler the same way as /users/:userId.',
+  },
+  {
+    method: 'PUT', path: '/api/kpis/users/:userId/targets/:metric', access: mustBeAdmin,
+    why: 'A target is what somebody is measured against, so setting your own would make the measurement meaningless (#18 §5).',
+  },
+
   // -------------------------------------------------------- the web shell
   {
     method: 'GET', path: '/{*splat}', access: 'public', mechanism: 'web-app-shell',
@@ -483,15 +522,26 @@ export const routes = [
  *   route with its own gate.
  *
  *   `restrictions` carries the same vocabulary as the explicit route entries,
- *   for a resource whose rows are narrower than its gate: `visibleTo` on the
- *   registry scopes the rows a caller may reach at all, so the gate being
- *   "any" does not mean "any row".
+ *   for a resource whose rows are narrower than its gate: `ownerScoped` and
+ *   `ownerScopedBy` on the registry scope the rows a caller may reach at all,
+ *   so the gate being "any" does not mean "any row". (#18 Phase 2C replaced
+ *   the earlier `visibleTo` hook, which matched the free-text sales_person,
+ *   with a predicate on owner_user_id.)
  */
 export const resourceAccess = {
   // --- a salesperson's own working records -------------------------------
-  enquiries: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  quotations: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  projects: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
+  enquiries: {
+    read: 'any', write: 'any', delete: 'any',
+    restrictions: ['record-owner'],
+    why: 'A salesperson\'s own working record. An enquiry is the first record of a lead, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
+  quotations: {
+    read: 'any', write: 'any', delete: 'any',
+    restrictions: ['record-owner'],
+    why: 'A salesperson\'s own working record. A quotation is the offer made on one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
+  projects: {
+    read: 'any', write: 'any', delete: 'any',
+    restrictions: ['record-owner'],
+    why: 'A salesperson\'s own working record. A project is the work won from one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
   onboarding: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   'travel-logs': { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   engagements: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
@@ -528,7 +578,7 @@ export const resourceAccess = {
   'project-milestones': {
     read: 'any', write: 'any', delete: 'any',
     restrictions: ['record-owner'],
-    why: 'What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: visibleTo scopes every read, update and delete to the caller\'s own projects (the review of #115, #119). Without that scoping an open PATCH here would let any signed-in user stamp another project\'s milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing.',
+    why: 'What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: ownerScopedBy: \'project\' scopes every read, update and delete to projects the caller owns, through the project\'s owner_user_id rather than the project_manager name column (the review of #115, #119; #18 Phase 2C). Without that scoping an open PATCH here would let any signed-in user stamp another project\'s milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing.',
   },
 
   // --- the Settings lists: one edit re-labels every record that used it --

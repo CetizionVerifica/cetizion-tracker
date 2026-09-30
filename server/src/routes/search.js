@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { resourceClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { resources } from '../lib/resources.js';
 import { nameKey, normalizeName } from '../lib/names.ts';
@@ -15,9 +16,13 @@ export const searchRouter = Router();
  * columns it is searched on, for its own list page, and those are the
  * columns somebody would type.
  *
- * Nothing here decides what a person may see. Each object is searched
- * through the same view its list endpoint reads, so search shows exactly
- * what opening that list would have shown and no more.
+ * Nothing here decides what a person may see, and that has to keep being
+ * true now records have owners (#18 Phase 2C). Each object is searched
+ * through the same view its list endpoint reads AND under the same ownership
+ * predicate that endpoint applies, so search shows exactly what opening that
+ * list would have shown and no more. Without the predicate the palette would
+ * be the way around row-level access: two characters and somebody else's
+ * quotation numbers, clients and project ids come back.
  */
 
 /**
@@ -108,7 +113,7 @@ const escapeLike = (q) => q.replace(/([\\%_])/g, '\\$1');
  * through normalizeName, the same rule in JavaScript, so "hetero  LABS"
  * finds "Hetero Labs" and "CTZ/QT/2026/064 " finds its quotation.
  */
-const key = (column) => nameKey(`"${column}"::text`);
+const key = (column) => nameKey(`s."${column}"::text`);
 
 /**
  * One object's hits, best first.
@@ -119,24 +124,33 @@ const key = (column) => nameKey(`"${column}"::text`);
  * use an index, which is fine at this size and is the reason for the
  * per-object limit — eight small scans, not one big one. One row past the
  * limit is read so the answer can say there were more.
+ *
+ * The relation is aliased `s` so the ownership predicate can name columns on
+ * it (#18 Phase 2C): the palette is the easiest place for row-level access to
+ * go missing and the worst place for it to, since one keystroke would
+ * otherwise return somebody else's quotation numbers and clients.
  */
-async function hits(entry, q, limit) {
+async function hits(entry, q, limit, scope) {
   const def = resources[entry.resource];
   if (!def?.search?.length) return { rows: [], more: false };
   const from = def.view || def.table;
-  const columns = columnsFor(entry).map((c) => `"${c}"`).join(', ');
+  const columns = columnsFor(entry).map((c) => `s."${c}"`).join(', ');
   const any = (test) => def.search.map((c) => `${key(c)} ${test}`).join(' OR ');
+  const params = [q, `${escapeLike(q)}%`, `%${escapeLike(q)}%`];
+  const mine = resourceClause(def, scope, params, { alias: 's' });
+  // The match is parenthesised: it is a chain of ORs, and ownership is an
+  // AND over the whole of it, not an alternative to the last column.
   const { rows } = await query(
     `SELECT ${columns},
             CASE WHEN ${key(entry.title)} = $1 THEN 0
                  WHEN ${any('= $1')} THEN 1
                  WHEN ${any(`LIKE $2 ESCAPE '\\'`)} THEN 2
                  ELSE 3 END AS rank
-       FROM ${from}
-      WHERE ${any(`LIKE $3 ESCAPE '\\'`)}
+       FROM "${from}" s
+      WHERE (${any(`LIKE $3 ESCAPE '\\'`)}) ${mine ? `AND ${mine}` : ''}
       ORDER BY rank, ${def.defaultSort}
       LIMIT ${limit + 1}`,
-    [q, `${escapeLike(q)}%`, `%${escapeLike(q)}%`]
+    params
   );
   return {
     more: rows.length > limit,
@@ -167,7 +181,8 @@ searchRouter.get('/', async (req, res) => {
   const limit = perType(req.query.limit);
   if (q.length < 2) return res.json({ data: [], meta: { q, limit, truncated: false } });
 
-  const found = await Promise.all(SEARCHABLE.map((entry) => hits(entry, q, limit)));
+  const scope = scopeOf(req);
+  const found = await Promise.all(SEARCHABLE.map((entry) => hits(entry, q, limit, scope)));
   // Best rank first across objects, and in SEARCHABLE order within a rank
   // (the sort is stable), so the palette, which groups by type in the order
   // the types arrive, opens on the group holding the exact reference.

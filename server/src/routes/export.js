@@ -3,6 +3,7 @@ import XLSX from 'xlsx';
 import { query } from '../db.js';
 import { buildWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
+import { resourceClause, scopeOf } from '../auth/ownership.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
@@ -36,14 +37,18 @@ function sendCsv(res, filename, rows) {
   res.send(toCsv(rows));
 }
 
+// Every builder here takes (period, scope) so the map can call them the same
+// way. revenueReport takes its scope in an options object, so it is adapted.
+const buildRevenue = (period, scope) => revenueReport(period, { scope });
+
 const SALES_REPORTS = {
   sectors: { build: sectorReport, toRows: sectorCsvRows },
   customers: { build: customerReport, toRows: customerCsvRows },
   fx: { build: fxReport, toRows: fxCsvRows },
-  orders: { build: revenueReport, toRows: ordersCsvRows },
-  invoicing: { build: revenueReport, toRows: invoicingCsvRows },
-  'payment-status': { build: revenueReport, toRows: paymentStatusCsvRows },
-  overdue: { build: revenueReport, toRows: overdueCsvRows },
+  orders: { build: buildRevenue, toRows: ordersCsvRows },
+  invoicing: { build: buildRevenue, toRows: invoicingCsvRows },
+  'payment-status': { build: buildRevenue, toRows: paymentStatusCsvRows },
+  overdue: { build: buildRevenue, toRows: overdueCsvRows },
 };
 
 // Report builders started at once for the PDF. The two that fan out the
@@ -80,14 +85,17 @@ async function runWithLimit(tasks, limit) {
 exportRouter.get('/sales-report.pdf', async (req, res) => {
   const period = reportPeriod(req.query);
 
+  // The PDF is a report of whatever the reader may see (#18 Phase 2C): a
+  // sales user's covers their own pipeline, an admin's covers everything.
+  const scope = scopeOf(req);
   const [sectors, customers, fx, revenue, review, gaps, rates] = await runWithLimit([
-    () => sectorReport(period),
-    () => customerReport(period),
-    () => fxReport(period),
+    () => sectorReport(period, scope),
+    () => customerReport(period, scope),
+    () => fxReport(period, scope),
     // The PDF has no year picker, so the query behind it is skipped.
-    () => revenueReport(period, { includeYears: false }),
-    () => salesReviewSections(period),
-    () => dataGaps(period),
+    () => revenueReport(period, { includeYears: false, scope }),
+    () => salesReviewSections(period, scope),
+    () => dataGaps(period, scope),
     () => exchangeRates(),
   ], REPORT_CONCURRENCY);
   const pdf = await salesReportPdf({
@@ -111,7 +119,7 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
 
   const period = reportPeriod(req.query);
   const report = SALES_REPORTS[name];
-  const rows = report.toRows(await report.build(period));
+  const rows = report.toRows(await report.build(period, scopeOf(req)));
 
   const span = period.from || period.to
     ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}`
@@ -124,16 +132,18 @@ async function listRows(req) {
   const def = resources[req.params.resource];
   if (!def) throw new ApiError(404, 'Unknown export');
   const params = [];
-  const filters = buildWhere(def, req.query, params);
   // The same rows the page would show this person, and no others.
   //
-  // This route reads the resource definitions but never asked them who may
-  // see a row, so #22's scoping stopped at the CRUD route: a sales user got
-  // a 404 on a colleague's note through /api/notes/:id and then downloaded
-  // every note in the company through /api/export/notes.csv. A control with
-  // a second door beside it is not a control.
-  const scoped = def.visibleTo?.(req, params);
-  const where = scoped ? (filters ? `${filters} AND ${scoped}` : `WHERE ${scoped}`) : filters;
+  // main found this door open from its side too: a sales user got a 404 on a
+  // colleague's note through /api/notes/:id and then downloaded every note in
+  // the company through /api/export/notes.csv. A control with a second door
+  // beside it is not a control. Ours was half-open the same way — it asked
+  // only about `ownerScoped`, so the parent-derived resources (notes, tasks,
+  // attachments, POs, stages, lines, payments, costs) walked straight out.
+  // resourceClause answers for every ownership shape, so both doors close.
+  const relation = def.view || def.table;
+  const scoped = resourceClause(def, scopeOf(req), params, { alias: relation });
+  const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
     params

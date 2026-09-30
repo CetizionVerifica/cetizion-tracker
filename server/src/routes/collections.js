@@ -6,10 +6,19 @@
  *   POST /api/collections/log                  { stage_id?, company_id?, channel, summary, promise_to_pay_date?, next_action_on?, happened_at? }
  *   POST /api/collections/stages/:id/hold      { on_hold, hold_reason? }   a dispute pauses reminders
  *   GET  /api/collections/stages/:id/payments  the receipts on a stage
+ *
+ * Row-level ownership (#18 Phase 2C) is applied to the one endpoint here
+ * that addresses a single record — the receipts on a stage, the same rows
+ * /api/payments serves. The ageing screen, the chasing log and the totals
+ * are the receivables book: whether a salesperson sees their own clients'
+ * debts or the whole ledger is a decision about what the collections
+ * function is, not something to settle with a predicate, so they are
+ * unchanged and the question is recorded rather than answered.
  */
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
+import { parentClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -127,7 +136,18 @@ collectionsRouter.post('/stages/:id/hold', requireAdmin, async (req, res) => {
   res.json({ data: rows[0] });
 });
 
+// The receipts on one stage. Same rows as /api/payments, which takes its
+// ownership from the purchase order above the stage (#18 Phase 2C) — so this
+// carries the same predicate rather than being the way around it.
+//
+// The ageing screen above is a different question and is deliberately left
+// whole; see the note at the top of this file.
 collectionsRouter.get('/stages/:id/payments', async (req, res) => {
-  const { rows } = await query('SELECT * FROM payments WHERE stage_id = $1 ORDER BY received_on DESC, id DESC', [Number(req.params.id)]);
+  const params = [Number(req.params.id)];
+  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+  const { rows } = await query(
+    `SELECT p.* FROM payments p JOIN payment_stages ps ON ps.id = p.stage_id
+      WHERE p.stage_id = $1 ${mine ? `AND ${mine}` : ''}
+      ORDER BY p.received_on DESC, p.id DESC`, params);
   res.json({ data: rows });
 });
