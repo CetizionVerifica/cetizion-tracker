@@ -390,14 +390,35 @@ inboxRouter.post('/:id/convert', async (req, res) => {
         v.service || c.subject || null, src?.id ?? null, v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, c.first_response_at]);
     await db.query('UPDATE inbox_conversations SET enquiry_no = $2, company_id = COALESCE(company_id, $3) WHERE id = $1', [c.id, e.enquiry_no, e.company_id]);
     await db.query(`UPDATE email_threads SET entity = 'enquiry', entity_id = $2, company_id = COALESCE(company_id, $3) WHERE id = $1`, [c.thread_id, e.enquiry_no, e.company_id]);
-    // A sender we had no contact for becomes one, so the next email matches.
-    if (e.company_id && c.from_email && !c.contact_id) {
-      const { rows: [ct] } = await db.query(
-        `INSERT INTO contacts (company_id, name, email, notes) VALUES ($1,$2,$3,'Added from the inbox')
-         ON CONFLICT (company_id, lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))) DO UPDATE SET email = COALESCE(contacts.email, EXCLUDED.email) RETURNING id`,
-        [e.company_id, (c.from_name || c.from_email.split('@')[0]).slice(0, 160), c.from_email]);
-      await db.query('UPDATE inbox_conversations SET contact_id = $2 WHERE id = $1', [c.id, ct.id]);
-      await db.query('UPDATE email_threads SET contact_id = $2 WHERE id = $1', [c.thread_id, ct.id]);
+    // The sender's address, onto the contact this enquiry is actually
+    // linked to.
+    //
+    // This used to insert a contact under the sender's *display* name. The
+    // enquiry above had already made one under whatever name was typed, and
+    // whoever converts the thread often corrects it — "Ravi K" in the From
+    // line becomes "Ravi Kumar". Contacts are unique by name within a
+    // company, so those are two rows: one with the email and one the
+    // enquiry and every quotation made from it point at, without it. The
+    // address was recorded and then not used, which is worse than not
+    // recording it (client-data-gaps.md, gap 2).
+    //
+    // So: fill the linked contact's blank, and only create one when the
+    // enquiry linked to nobody.
+    let contactId = e.contact_id || null;
+    if (e.company_id && c.from_email) {
+      if (contactId) {
+        await db.query(
+          `UPDATE contacts SET email = COALESCE(NULLIF(btrim(email), ''), $2) WHERE id = $1`,
+          [contactId, c.from_email]);
+      } else {
+        const { rows: [ct] } = await db.query(
+          `INSERT INTO contacts (company_id, name, email, notes) VALUES ($1,$2,$3,'Added from the inbox')
+           ON CONFLICT (company_id, lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))) DO UPDATE SET email = COALESCE(contacts.email, EXCLUDED.email) RETURNING id`,
+          [e.company_id, (c.from_name || c.from_email.split('@')[0]).slice(0, 160), c.from_email]);
+        contactId = ct.id;
+      }
+      await db.query('UPDATE inbox_conversations SET contact_id = $2 WHERE id = $1', [c.id, contactId]);
+      await db.query('UPDATE email_threads SET contact_id = $2 WHERE id = $1', [c.thread_id, contactId]);
     }
     return e;
   });
