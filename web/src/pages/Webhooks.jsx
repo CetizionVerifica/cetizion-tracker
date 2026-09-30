@@ -9,6 +9,7 @@ import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
+import { turnedOnMessage } from '../lib/webhookToggle.js';
 
 /**
  * Webhooks (#49), on C12's shape.
@@ -142,7 +143,7 @@ export default function Webhooks() {
                   </Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setEndpoint(String(row.id))}>View log</Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setForm({ ...row, min_value: row.min_value ?? '', sector: row.sector || '' })}>Edit</Button>
-                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => run(() => api.raw(`/webhooks/${row.id}`, { method: 'PATCH', body: { active: !row.active } }), row.active ? 'Turned off' : 'Turned on')}>
+                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => run(() => api.raw(`/webhooks/${row.id}`, { method: 'PATCH', body: { active: !row.active } }), row.active ? 'Turned off' : (x) => turnedOnMessage(x.data?.released))}>
                     {row.active ? 'Turn off' : 'Turn on'}
                   </Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={async () => { const x = await run(() => api.action(`/webhooks/${row.id}/rotate-secret`)); if (x) setSecret({ name: row.name, secret: x.data.secret }); }}>
