@@ -11,7 +11,7 @@ import { useFetch } from '../lib/hooks.js';
 import { money, number, percent } from '../lib/format.js';
 
 /**
- * Reports (#22): four charts, each with a table twin, each bar a link into
+ * Reports (#22): seven charts, each with a table twin, each bar a link into
  * the list it counts.
  *
  * Every figure here is INR. A deal or an invoice in another currency is not
@@ -52,11 +52,15 @@ const inr = (value) => money(value, 'INR', { compact: true });
 export default function Reports() {
   const navigate = useNavigate();
   const [horizon, setHorizon] = useState('6');
+  const [dimension, setDimension] = useState('owner');
 
   const pipeline = useFetch(() => api.raw('/pipeline'), []);
   const collections = useFetch(() => api.raw('/collections'), []);
   const cashflow = useFetch(() => api.raw(`/cashflow?months=${horizon}`), [horizon]);
   const winRate = useFetch(() => api.raw('/reports/win-rate?quarters=5'), []);
+  const conversion = useFetch(() => api.raw(`/reports/conversion?by=${dimension}`), [dimension]);
+  const quotedWon = useFetch(() => api.raw(`/reports/quoted-won?months=${horizon}`), [horizon]);
+  const byStatus = useFetch(() => api.raw('/reports/by-status'), []);
 
   const financialYear = useMemo(() => {
     const today = winRate.data?.data?.today || cashflow.data?.data?.today;
@@ -66,7 +70,7 @@ export default function Reports() {
     return `${start}–${String((start + 1) % 100).padStart(2, '0')}`;
   }, [winRate.data, cashflow.data]);
 
-  const errors = [pipeline.error, collections.error, cashflow.error, winRate.error].filter(Boolean);
+  const errors = [pipeline.error, collections.error, cashflow.error, winRate.error, conversion.error, quotedWon.error, byStatus.error].filter(Boolean);
 
   return (
     <>
@@ -74,13 +78,25 @@ export default function Reports() {
         title="Reports"
         subtitle={`${financialYear ? `Financial year ${financialYear} · ` : ''}All figures in ₹, at the rate on each record's own date. Every bar links into the list behind it.`}
         actions={(
-          <Select
-            value={horizon}
-            placeholder={null}
-            aria-label="Cash-flow horizon"
-            options={[{ value: '3', label: 'Cash: 3 months' }, { value: '6', label: 'Cash: 6 months' }, { value: '12', label: 'Cash: 12 months' }]}
-            onChange={(e) => setHorizon(e.target.value)}
-          />
+          <>
+            {/* Two controls, and each one genuinely reframes a chart: the
+                horizon moves the cash bands and the months on quoted-vs-won,
+                the dimension regroups the win-rate bars. */}
+            <Select
+              value={horizon}
+              placeholder={null}
+              aria-label="Months shown"
+              options={[{ value: '3', label: 'Months: 3' }, { value: '6', label: 'Months: 6' }, { value: '12', label: 'Months: 12' }]}
+              onChange={(e) => setHorizon(e.target.value)}
+            />
+            <Select
+              value={dimension}
+              placeholder={null}
+              aria-label="Win rate grouped by"
+              options={[{ value: 'owner', label: 'Win rate by: owner' }, { value: 'sector', label: 'Win rate by: sector' }, { value: 'service', label: 'Win rate by: service' }]}
+              onChange={(e) => setDimension(e.target.value)}
+            />
+          </>
         )}
       />
       <div className="page stack">
@@ -98,6 +114,9 @@ export default function Reports() {
             <AgeingChart state={collections} onOpen={(bucket) => navigate(`/collections?bucket=${encodeURIComponent(bucket)}`)} />
             <CashChart state={cashflow} horizon={horizon} onOpen={(month) => navigate(`/cashflow?month=${month}`)} />
             <WinRateChart state={winRate} />
+            <QuotedWonChart state={quotedWon} horizon={horizon} onOpen={(month) => navigate(`/quotations?month=${month}`)} />
+            <ConversionChart state={conversion} />
+            <StatusChart state={byStatus} onOpen={(status) => navigate(`/quotations?status=${encodeURIComponent(status)}`)} />
           </div>
         </div>
       </div>
@@ -288,6 +307,126 @@ function WinRateChart({ state }) {
               fontSize={12}
               valueAccessor={(entry) => (entry.payload.win_rate === null ? 'none closed' : `${entry.payload.rate}%`)}
             />
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* ------------------------------------------------- quoted against won */
+
+/**
+ * Two series, because the gap between them is the finding.
+ *
+ * A month where both fell is a quiet month; a month where quoting held and
+ * winning fell is a problem, and one bar cannot tell you which it was.
+ */
+function QuotedWonChart({ state, horizon, onOpen }) {
+  const d = state.data?.data;
+  const rows = (d?.months || []).map((m) => ({ ...m, label: monthLabel(m.month) }));
+  const quoted = rows.reduce((sum, m) => sum + Number(m.quoted || 0), 0);
+  const won = rows.reduce((sum, m) => sum + Number(m.won || 0), 0);
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title="Quoted against won"
+      meta={`The last ${horizon} months · quoted in the lighter bar, won in the accent`}
+      height={280}
+      columns={['Month', 'Deals', 'Quoted', 'Won', 'Share won']}
+      rows={rows.map((m) => ({
+        key: m.month,
+        href: `/quotations?month=${m.month}`,
+        cells: [m.label, number(m.deals), inr(m.quoted), inr(m.won), m.quoted > 0 ? percent(m.won / m.quoted) : '—'],
+      }))}
+      footnote={`${inr(won)} won of ${inr(quoted)} quoted over the period.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+    >
+      <ChartContainer config={{ quoted: { label: 'Quoted' }, won: { label: 'Won' } }} className="h-full w-full aspect-auto">
+        <BarChart data={rows} barGap={2} margin={{ left: 4, right: 4, top: 16, bottom: 4 }}>
+          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
+          <YAxis hide />
+          <ChartTooltip content={<ChartTooltipContent formatter={(value) => inr(value)} />} />
+          <Bar dataKey="quoted" radius={3} minPointSize={ZERO_BAR} fill="var(--forecast)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
+          <Bar dataKey="won" radius={3} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* ------------------------------------------------------- win rate by X */
+
+/**
+ * The quarterly rate says whether the team is improving. This says where it
+ * is already winning, which is the question asked before deciding what to
+ * chase next.
+ */
+function ConversionChart({ state }) {
+  const d = state.data?.data;
+  const rows = (d?.groups || []).map((g) => ({ ...g, label: g.key, rate: g.win_rate === null ? 0 : g.win_rate * 100 }));
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title={`Win rate by ${d?.label?.toLowerCase() || 'owner'}`}
+      meta="Decided deals only — won over won plus lost"
+      height={ROW_CHART(rows.length)}
+      columns={[d?.label || 'Owner', 'Won', 'Lost', 'Win rate']}
+      rows={rows.map((g) => ({ key: g.key, cells: [g.key, number(g.won), number(g.lost), g.win_rate === null ? '—' : percent(g.win_rate)] }))}
+      footnote="A rate is a count, so a deal in any currency counts in it."
+    >
+      <ChartContainer config={Object.fromEntries(rows.map((g) => [g.key, { label: g.key }]))} className="h-full w-full aspect-auto">
+        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 96, top: 4, bottom: 4 }}>
+          <XAxis type="number" dataKey="rate" domain={[0, 100]} hide />
+          <YAxis type="category" dataKey="label" width={116} tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
+          <ChartTooltip content={<ChartTooltipContent formatter={(value) => `${Math.round(value)}%`} />} />
+          <Bar dataKey="rate" radius={3} minPointSize={ZERO_BAR} fill="var(--primary)">
+            <LabelList
+              position="right"
+              fill="var(--foreground)"
+              fontSize={12}
+              valueAccessor={(entry) => (entry?.payload ? `${Math.round(entry.payload.rate)}% · ${entry.payload.won}W ${entry.payload.lost}L` : '')}
+            />
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* --------------------------------------------------- open deals by status */
+
+/**
+ * The pipeline chart is by stage — where the team moved a deal to. This is
+ * by status, which is what the record says it is. They drift, and a deal
+ * parked at On Hold is invisible on a board that only shows progress.
+ */
+function StatusChart({ state, onOpen }) {
+  const d = state.data?.data;
+  const rows = (d?.statuses || []).map((r) => ({ ...r, label: r.status }));
+  const total = rows.reduce((sum, r) => sum + Number(r.deals || 0), 0);
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title="Open deals by status"
+      meta="What each record says it is, which is not always where its stage puts it"
+      height={ROW_CHART(rows.length)}
+      columns={['Status', 'Deals', 'Value']}
+      rows={rows.map((r) => ({ key: r.status, href: `/quotations?status=${encodeURIComponent(r.status)}`, cells: [r.status, number(r.deals), inr(r.value)] }))}
+      footnote={`${number(total)} open deals.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+    >
+      <ChartContainer config={Object.fromEntries(rows.map((r) => [r.status, { label: r.status }]))} className="h-full w-full aspect-auto">
+        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
+          <XAxis type="number" dataKey="deals" hide />
+          <YAxis type="category" dataKey="label" width={136} tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          <Bar dataKey="deals" radius={3} minPointSize={ZERO_BAR} fill="var(--info)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.status)}>
+            <LabelList dataKey="deals" position="right" formatter={number} fill="var(--foreground)" fontSize={12} />
           </Bar>
         </BarChart>
       </ChartContainer>

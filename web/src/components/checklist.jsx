@@ -37,7 +37,7 @@ function StepMark({ status }) {
         'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full',
         done && 'border border-settled/40 bg-settled/15',
         moving && 'border border-waiting/45 bg-waiting/12',
-        !done && !moving && 'border border-[#3a3a42]'
+        !done && !moving && 'border border-border-strong'
       )}
       aria-hidden="true"
     >
