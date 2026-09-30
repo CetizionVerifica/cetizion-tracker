@@ -32,14 +32,31 @@ const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '064_decision_dates.sq
 const WON = 'Won - PO Received';
 const LOST = 'Lost';
 
-/** The table as it was before 064, so the migration is run against it. */
+/**
+ * The table as it was before 064, so the migration is run against it.
+ *
+ * v_enquiries goes first. It is `SELECT e.*`, so once 064 has run it
+ * depends on decided_at like any other column of the table, and Postgres
+ * refuses to drop a column a view selects. `apply064` rebuilds it after,
+ * which is the order the migration runner uses anyway: migrations, then
+ * views. Nothing else needs dropping — v_companies reads enquiries, but
+ * only company_id and enquiry_date, and no view selects the quotation
+ * columns below.
+ */
 const UNDO = `
+  DROP VIEW IF EXISTS v_enquiries CASCADE;
   DROP TRIGGER IF EXISTS z_quotation_decision_dates ON quotations;
   DROP TRIGGER IF EXISTS z_enquiry_decision_date ON enquiries;
   ALTER TABLE quotations DROP COLUMN IF EXISTS won_at, DROP COLUMN IF EXISTS won_at_estimated,
                          DROP COLUMN IF EXISTS lost_at, DROP COLUMN IF EXISTS lost_at_estimated;
   ALTER TABLE enquiries  DROP COLUMN IF EXISTS decided_at, DROP COLUMN IF EXISTS decided_at_estimated;
 `;
+
+/** 064 as the runner applies it: the migration, then views.sql on top. */
+const apply064 = async (db) => {
+  await db.query(MIGRATION);
+  await db.query(VIEWS);
+};
 
 async function withDatabase(fn) {
   const name = `decdates_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
@@ -202,7 +219,7 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       // carries the moment of the import. An earlier version of this test
       // nulled it to make the assertion below pass, which hid the defect
       // rather than finding it.
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const w = await row(db, 'quotations', won);
       assert.equal(w.won_at.toISOString().slice(0, 10), '2025-06-10',
@@ -229,7 +246,7 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       // the import ran, months after the deals themselves.
       await db.query("UPDATE quotations SET closed_at = '2026-09-18T15:21:00Z' WHERE id = $1", [id]);
 
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const w = await row(db, 'quotations', id);
       assert.equal(w.won_at.toISOString().slice(0, 10), '2025-06-10',
@@ -248,7 +265,7 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       }
       await db.query("UPDATE quotations SET closed_at = '2026-09-18T15:21:00Z' WHERE id = ANY($1::int[])", [ids]);
 
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const { rows } = await db.query(
         'SELECT won_at::date::text AS d, won_at_estimated FROM quotations WHERE id = ANY($1::int[]) ORDER BY won_at',
@@ -265,7 +282,7 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       await db.query(
         "UPDATE quotations SET quotation_date = NULL, closed_at = '2025-09-30T12:00:00Z' WHERE id = $1", [id]);
 
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const w = await row(db, 'quotations', id);
       assert.equal(w.won_at.toISOString(), '2025-09-30T12:00:00.000Z', 'the only thing left to go on');
@@ -278,7 +295,7 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
       const id = await quotation(db, { status: WON });
       await db.query('UPDATE quotations SET quotation_date = NULL, closed_at = NULL WHERE id = $1', [id]);
 
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const w = await row(db, 'quotations', id);
       assert.equal(w.won_at, null, 'null is the honest answer for a record that never said');
@@ -289,12 +306,12 @@ describe('decision dates', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
     withDatabase(async (db) => {
       await db.query(UNDO);
       const id = await quotation(db, { status: WON, date: '2025-06-10' });
-      await db.query(MIGRATION);
+      await apply064(db);
 
       // An admin corrects the guess to the real date.
       await db.query(
         "UPDATE quotations SET won_at = '2025-06-25T09:00:00Z', won_at_estimated = false WHERE id = $1", [id]);
-      await db.query(MIGRATION);
+      await apply064(db);
 
       const w = await row(db, 'quotations', id);
       assert.equal(w.won_at.toISOString(), '2025-06-25T09:00:00.000Z', 'a correction is not undone by a re-run');

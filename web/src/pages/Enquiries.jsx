@@ -52,6 +52,12 @@ export default function Enquiries() {
     { name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
 
     { name: 'contact_person', label: 'Contact person' },
+    // The address lives on the contact, and until now there was nowhere to
+    // type it: the contact this name creates held a name and nothing else,
+    // so sending the quotation, chasing payment, the portal and mailbox
+    // matching all had nobody to reach (docs/client-data-gaps.md, gap 1).
+    { name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
+    { name: 'contact_phone', label: 'Contact phone' },
     { name: 'source_id', label: 'Source', type: 'select', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })), hint: 'Where this enquiry came from' },
     { name: 'service', label: 'Service asked for', type: 'combo', options: lookups.services },
     { name: 'services_interested', label: 'Other services of interest' },

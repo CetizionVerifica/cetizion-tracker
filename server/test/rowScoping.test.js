@@ -203,6 +203,71 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     });
   });
 
+  // ============================= the enquiries view, read under scoping
+
+  /**
+   * Enquiries began reading through v_enquiries only after this branch was
+   * written (client-data-gaps.md, gap 1), so ownership scoping and that view
+   * met for the first time in the merge that brought them together.
+   *
+   * Two suites pass today without noticing the join: the tests above prove
+   * isolation but never look at a column the view adds, and
+   * clientContacts.test.js proves the view's columns but signs in as one
+   * person, so nothing there is scoped. Between them, a regression that took
+   * the view out of the read path — or took owner_user_id out of the view —
+   * could stay hidden. This is the assertion that both hold at once.
+   */
+  describe('the enquiries view, read under scoping', () => {
+    /**
+     * A contact with an address, on one enquiry. Written straight to the
+     * database: this is a test about the read path, so the write path is
+     * deliberately not part of it. `tag` keeps each test's company its own,
+     * because setUp() clears the records but not the companies they name.
+     */
+    const linkContact = async (enquiryId, who, tag, email, phone) => {
+      const { rows: [company] } = await db.query(
+        'INSERT INTO companies (name) VALUES ($1) RETURNING id', [`${who} ${tag} Ltd`]);
+      const { rows: [contact] } = await db.query(
+        'INSERT INTO contacts (company_id, name, email, phone) VALUES ($1,$2,$3,$4) RETURNING id',
+        [company.id, who, email, phone]);
+      // link_contact leaves a contact_id that is already set alone, so this
+      // is not undone by the trigger.
+      await db.query('UPDATE enquiries SET contact_id = $1 WHERE id = $2', [contact.id, enquiryId]);
+    };
+
+    test('a scoped list comes from the view, and still holds only the reader’s rows', async () => {
+      await setUp();
+      await linkContact(rows.enquiries.a, 'Anita', 'list', 'anita@a.example', '+91 90000 00001');
+      await linkContact(rows.enquiries.b, 'Bhaskar', 'list', 'bhaskar@b.example', '+91 90000 00002');
+
+      const res = await get(salesA.cookie, '/api/enquiries');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.deepEqual(idsOf(res.body), [rows.enquiries.a], 'only A’s enquiry');
+      // contact_email exists on v_enquiries and not on enquiries, so its
+      // presence is what proves the scoped read came from the view.
+      assert.equal(res.body.data[0].contact_email, 'anita@a.example', 'read back through v_enquiries');
+      assert.equal(res.body.data[0].contact_phone, '+91 90000 00001');
+      assert.equal(res.body.total, 1, 'and the count is the count of that list');
+      assert.ok(!text(res).includes('bhaskar@b.example'), 'nothing of B’s comes with it');
+    });
+
+    test('a scoped detail read comes from the view; another user’s is 404', async () => {
+      await setUp();
+      await linkContact(rows.enquiries.a, 'Anita', 'detail', 'anita@a.example', '+91 90000 00001');
+      await linkContact(rows.enquiries.b, 'Bhaskar', 'detail', 'bhaskar@b.example', '+91 90000 00002');
+
+      const own = await get(salesA.cookie, `/api/enquiries/${rows.enquiries.a}`);
+      assert.equal(own.status, 200, JSON.stringify(own.body));
+      assert.equal(own.body.data.contact_email, 'anita@a.example',
+        'the view’s own column survives the ownership predicate');
+
+      // 404 and not 403, as everywhere else: the answer must not confirm
+      // that B’s enquiry exists.
+      assert.equal((await get(salesA.cookie, `/api/enquiries/${rows.enquiries.b}`)).status, 404);
+      assert.equal((await get(salesA.cookie, `/api/enquiries/${rows.enquiries.none}`)).status, 404);
+    });
+  });
+
   // ============================================================== writes
 
   describe('writes', () => {
@@ -350,6 +415,53 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
       const [made] = (await db.query(
         `SELECT owner_user_id FROM projects WHERE remarks LIKE 'Won from quotation%'`)).rows;
       assert.equal(made.owner_user_id, salesA.user.id, 'the quotation’s owner, not the registrar');
+    });
+
+    /**
+     * Where the two features actually meet. Since client-data-gaps.md gap 1,
+     * saveEnquiry writes the contact's address and *then* converts, both in
+     * the one transaction. Each half is covered alone — clientContacts.test.js
+     * for the address, the tests above for the responsibility that carries
+     * across — but nothing ever sent an address through a conversion, so
+     * nothing proved the two survive each other.
+     */
+    test('a won enquiry writes the contact’s address and still carries origin across', async () => {
+      await setUp();
+      // The fixture's enquiries are owned but unattributed, and origin is
+      // what Phase 4 preserves rather than invents — so give this one a
+      // verified originator for the conversion to carry.
+      await db.query(
+        `UPDATE enquiries SET originating_user_id = $1, originating_user_snapshot_id = $1,
+                              originating_user_name = 'Sam' WHERE id = $2`,
+        [salesA.user.id, rows.enquiries.a]);
+
+      const res = await request(app).patch(`/api/enquiries/${rows.enquiries.a}`)
+        .set('Cookie', salesA.cookie)
+        .send({
+          status: 'Won - Quotation Sent',
+          contact_person: 'Ravi Kumar',
+          contact_email: 'ravi@clienta.example',
+          contact_phone: '+91 98765 43210',
+        });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+
+      // main's half: the address landed on the contact the trigger linked.
+      const [contact] = (await db.query(
+        `SELECT c.email, c.phone FROM contacts c
+           JOIN enquiries e ON e.contact_id = c.id WHERE e.id = $1`, [rows.enquiries.a])).rows;
+      assert.ok(contact, 'the trigger linked a contact for the address to land on');
+      assert.equal(contact.email, 'ravi@clienta.example', 'the address is on the contact');
+      assert.equal(contact.phone, '+91 98765 43210');
+
+      // #141's half: the quotation the same transaction went on to create.
+      const [made] = (await db.query(
+        `SELECT owner_user_id, originating_user_id, originating_user_snapshot_id, originating_user_name
+           FROM quotations WHERE remarks LIKE 'From enquiry%'`)).rows;
+      assert.ok(made, 'the conversion still happened');
+      assert.equal(made.owner_user_id, salesA.user.id, 'responsibility carried across');
+      assert.equal(made.originating_user_id, salesA.user.id, 'and so did the verified origin');
+      assert.equal(made.originating_user_snapshot_id, salesA.user.id);
+      assert.equal(made.originating_user_name, 'Sam');
     });
   });
 
