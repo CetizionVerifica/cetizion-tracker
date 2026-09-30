@@ -203,7 +203,7 @@ export const routes = [
   { method: 'GET', path: '/api/search', access: signedIn, note: 'One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not.' },
 
   // -------------------------------------------------------------- reports
-  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, note: 'Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is.' },
+  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, restrictions: ['record-owner'], note: 'Win rate by financial quarter. Scoped: this note used to justify the open gate by saying both roles see quotations anyway, which stopped being true the moment the list itself became owner-scoped. The gate stays open because the numbers are counts and quotation values a salesperson already sees on their own rows; it carries no margin, which is what /api/profitability is gated for.' },
 
   // --------------------------------------------------------- saved views
   //
