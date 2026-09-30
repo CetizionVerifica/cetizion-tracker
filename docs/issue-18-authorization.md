@@ -97,7 +97,8 @@ arrangement exists to prevent.
 | `POST /api/mail/notifications` | **yes** | Each notification must carry the clientState secret stored on the matching mail_folders subscription row; anything else is dropped. |
 | `POST /api/hooks/enquiries` | **yes** | An x-cetizion-signature header of the form t=<unix seconds>,v1=<HMAC-SHA256 of "t.body" under INCOMING_WEBHOOK_SECRET>, compared in constant time over the raw body, with timestamps more than five minutes old refused so a captured call cannot be replayed; the route is 404 unless the secret is set and the feature is switched on in Settings. |
 | `GET /metrics` | **yes** | Either a constant-time match against METRICS_TOKEN, or a staff session re-read from the database whose role is still admin. |
-| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`POST /api/portal/request-link`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
+| `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
+| `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
 | `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
@@ -144,10 +145,19 @@ session is **401**, before any of these is considered.
 | `POST /api/api-tokens` | **admin** | Anybody who may issue a token may issue an admin one and read the whole company through MCP, whatever their own role is (#50). |
 | `POST /api/api-tokens/:id/revoke` | **admin** | Revoking is the same power pointed the other way. |
 | **/api/auth** | | |
+| `GET /api/auth/account` | any | Scoped: self-only. |
+| `PATCH /api/auth/account` | any | Scoped: self-only. |
+| `DELETE /api/auth/account/identities/:provider` | any | Scoped: self-only. |
+| `POST /api/auth/account/password` | any | Scoped: self-only. |
+| `DELETE /api/auth/account/sessions/:id` | any | Scoped: self-only. |
+| `POST /api/auth/account/sessions/revoke-all` | any | Scoped: self-only. |
 | `GET /api/auth/config` | public | none — The sign-in form is drawn before anybody is signed in and has to know whether to ask for a username or an email. It returns the mode and nothing else. |
 | `POST /api/auth/login` | public | staff-credentials — This is how a session is obtained. |
 | `POST /api/auth/logout` | public | none — It only clears the caller's own cookie. Requiring a valid session to sign out would strand anybody holding an expired one. |
 | `GET /api/auth/me` | public | staff-session-optional — Mounted before requireAuth so the front end can ask "am I signed in?" and get an answer rather than an error page. It resolves the session itself and 401s when there is none. |
+| `GET /api/auth/oauth/:provider/callback` | public | oauth-provider-code — The provider redirects the browser here. There is no session yet — the handshake cookie, the state and the PKCE verifier are the credential. |
+| `GET /api/auth/oauth/:provider/start` | public | none — The first leg of signing in with a provider: it mints a signed handshake cookie and redirects. It reads nothing, answers 404 for a provider that is not switched on, and the `next` it is given is refused unless it is a same-site path. |
+| `GET /api/auth/providers` | **admin** | Which sign-in methods are configured, and how. It reports the provider set-up of the deployment, not the caller's own identities — those are on GET /api/auth/account. Carries its own requireAuth and requireAdmin because it is mounted before the /api gate. |
 | **/api/cashflow** | | |
 | `GET /api/cashflow` | any |  |
 | **/api/client-errors** | | |
@@ -168,7 +178,9 @@ session is **401**, before any of these is considered.
 | `POST /api/companies/:id/merge` | **admin** | A merge folds every record of one client into another and deletes the loser. It cannot be undone from the UI. |
 | `GET /api/companies/duplicates` | any |  |
 | **/api/dashboard** | | |
+| `GET /api/dashboard/data-quality` | any |  |
 | `GET /api/dashboard/overview` | any |  |
+| `GET /api/dashboard/payables` | any | What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill. |
 | `GET /api/dashboard/revenue-report` | any |  |
 | `GET /api/dashboard/sales-report` | any |  |
 | `GET /api/dashboard/travel` | any |  |
@@ -189,11 +201,13 @@ session is **401**, before any of these is considered.
 | `GET /api/emails/:id` | any |  |
 | `POST /api/emails/test` | **admin** | It sends real mail to an address the caller names — an effect outside the application. |
 | **/api/expense-claims** | | |
+| `POST /api/expense-claims/:id/correct` | **admin** | The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up. |
 | `POST /api/expense-claims/:id/decide` | **admin** | Approving, rejecting or holding an expense claim is the administrator's decision. An approval anybody can grant themselves is not an approval (#85). |
 | `POST /api/expense-claims/:id/reimburse` | **admin** | Reimbursement moves money out of the business (#85). |
 | **/api/export** | | |
 | `GET /api/export/:resource.csv` | any |  |
 | `GET /api/export/:resource.xlsx` | any |  |
+| `GET /api/export/payables.csv` | any | The same rows as GET /api/dashboard/payables, so it carries the same answer. |
 | `GET /api/export/sales-report.pdf` | any |  |
 | `GET /api/export/sales-report/:report.csv` | any |  |
 | **/api/health** | | |
@@ -222,6 +236,7 @@ session is **401**, before any of these is considered.
 | `PATCH /api/inbox/canned/:id` | any | ownCanned: the author or an admin. |
 | `GET /api/inbox/inboxes` | any |  |
 | `POST /api/inbox/inboxes` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
+| `DELETE /api/inbox/inboxes/:id` | **admin** | Removing a shared inbox decides where a client's mail stops landing, for everybody. |
 | `PATCH /api/inbox/inboxes/:id` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
 | `GET /api/inbox/summary` | any | Scoped: mailbox-delegate. |
 | **/api/jobs** | | |
@@ -240,6 +255,7 @@ session is **401**, before any of these is considered.
 | `GET /api/mailboxes` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `PATCH /api/mailboxes/:id` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/disconnect` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/refresh-bodies` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
 | `GET /api/mailboxes/blocklist` | any |  |
@@ -316,6 +332,10 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/:id/open` | any |  |
 | `POST /api/renewals/discover` | **admin** | Running the discovery sweep by hand is an operational act; it creates renewal records across every client. |
 | `POST /api/renewals/manual` | any |  |
+| **/api/reports** | | |
+| `GET /api/reports/win-rate` | any | Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is. |
+| **/api/search** | | |
+| `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
 | **/api/settings** | | |
 | `GET /api/settings` | any |  |
 | `PATCH /api/settings/:key` | **admin** | A setting re-aims the whole application: which mailbox syncs, whether margin is visible, whether incoming webhooks are on. |
@@ -332,6 +352,12 @@ session is **401**, before any of these is considered.
 | `POST /api/users/:id/password` | **admin** | Setting somebody's password. |
 | **/api/vendor-invoices** | | |
 | `POST /api/vendor-invoices/:id/pay` | any | Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id. |
+| **/api/views** | | |
+| `GET /api/views` | any | Scoped: record-owner. |
+| `POST /api/views` | any | Scoped: record-owner. |
+| `DELETE /api/views/:id` | any | Scoped: record-owner. |
+| `PATCH /api/views/:id` | any | Scoped: record-owner. |
+| `POST /api/views/order` | any | Scoped: record-owner. |
 | **/api/visits** | | |
 | `GET /api/visits` | any |  |
 | `POST /api/visits` | any |  |
@@ -407,6 +433,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `exchange-rates` | any | **admin** | **admin** | One rate re-values every historical deal in every report. |
 | `expense-categories` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `expense-claims` | any | any | any | Admin and sales both submit ordinary expense claims. Protected fields: `approval_status`, `approved_by`, `amount_reimbursed`, `reimbursement_date`. |
+| `holidays` | any | **admin** | **admin** | The working calendar. A holiday decides which days count towards a reply clock, a follow-up deadline and every "working days" figure, so one edit moves what the whole company is judged late by. Correcting the dates that move each year is an administrator's job (adminOnlyWrites). |
 | `lead-sources` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `lost-reasons` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `notes` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
@@ -420,6 +447,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `pipeline-stages` | any | **admin** | **admin** | A stage's status mapping and probability rewrite quotation statuses and the whole forecast. |
 | `po-services` | any | any | **admin** | The lines a PO's value is made of. |
 | `project-costs` | any | **admin** | **admin** | Delivery cost is one half of what the business earns on a project (#39). |
+| `project-milestones` | any | any | any | What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: visibleTo scopes every read, update and delete to the caller's own projects (the review of #115, #119). Without that scoping an open PATCH here would let any signed-in user stamp another project's milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing. |
 | `projects` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `purchase-orders` | any | any | **admin** | The PO value is what Due now, To bill and profitability are computed against, and deleting one takes its lines and stages with it. |
 | `quotation-lines` | any | any | any | The lines of a quotation, edited with it. |

@@ -180,10 +180,6 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
   /** The routes the sweep drives: everything gated by the application session. */
   const gated = () => declared.filter((r) => r.access !== 'public');
 
-  const dependencyNote = (entry) => (entry.blockedBy
-    ? ` — this is the Issue #${entry.blockedBy} fix, which is implemented in its own workspace and not yet integrated on this branch`
-    : '');
-
   test('nobody signed in reaches nothing', async () => {
     const wrong = [];
     for (const entry of gated()) {
@@ -201,8 +197,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       const res = await as(salesA)(entry.method, concrete(entry.path));
       if (res.status !== 403) {
         wrong.push(
-          `${entry.method} ${entry.path} answered ${res.status} to a sales user; expected 403 (${entry.why || 'admin only'})` +
-          `${dependencyNote(entry)}.`
+          `${entry.method} ${entry.path} answered ${res.status} to a sales user; expected 403 (${entry.why || 'admin only'}).`
         );
       }
     }
@@ -347,6 +342,74 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
   });
 
   // ------------------------------------- refused writes change nothing
+
+  // ------------------------------------- object-level: project milestones
+
+  /**
+   * `project-milestones` is declared `any` on all three operations with a
+   * `record-owner` restriction, so the blanket sweep above skips it. That skip
+   * has to be paid for here, because the scoping is the whole control: #119
+   * was this resource shipped without one. Marking a milestone reached stamps
+   * milestone_reached_on on every payment stage pointing at it, and a stage
+   * triggered "On Milestone" is ready to invoice the moment that is not null.
+   */
+  describe('a milestone belongs to whoever is on the project', () => {
+    let ownMilestone;
+    let otherMilestone;
+
+    before(async () => {
+      await db.query(
+        `INSERT INTO projects (project_id, client_name, sales_person) VALUES
+           ('PRJ-MATRIX-A', 'A Client', $1),
+           ('PRJ-MATRIX-B', 'B Client', $2)`,
+        [salesA.user.name, salesB.user.name]
+      );
+      const { rows } = await db.query(
+        `INSERT INTO project_milestones (project_id, name) VALUES
+           ('PRJ-MATRIX-A', 'Kick-off'), ('PRJ-MATRIX-B', 'Kick-off')
+         RETURNING id, project_id`
+      );
+      ownMilestone = rows.find((r) => r.project_id === 'PRJ-MATRIX-A').id;
+      otherMilestone = rows.find((r) => r.project_id === 'PRJ-MATRIX-B').id;
+    });
+
+    test('the person on the project sees theirs and not the other', async () => {
+      const res = await as(salesA)('get', '/api/project-milestones');
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const ids = res.body.data.map((m) => m.id);
+      assert.ok(ids.includes(ownMilestone), 'their own project\'s milestone is missing');
+      assert.ok(!ids.includes(otherMilestone), 'somebody else\'s project\'s milestone is listed');
+    });
+
+    test('reading another project\'s milestone directly is refused', async () => {
+      const res = await as(salesA)('get', `/api/project-milestones/${otherMilestone}`);
+      assert.equal(res.status, 404, `expected the row to be out of reach, got ${res.status}`);
+    });
+
+    test('marking another project\'s milestone reached does not reach it', async () => {
+      const res = await as(salesA)('patch', `/api/project-milestones/${otherMilestone}`)
+        .send({ reached_on: '2026-03-01' });
+      const { rows } = await db.query('SELECT reached_on FROM project_milestones WHERE id = $1', [otherMilestone]);
+      assert.equal(rows[0].reached_on, null,
+        `PATCH answered ${res.status} and stamped another project's milestone. That is a stage into the invoice run (#119).`);
+    });
+
+    test('deleting another project\'s milestone does not reach it either', async () => {
+      const res = await as(salesA)('delete', `/api/project-milestones/${otherMilestone}`);
+      const { rows } = await db.query('SELECT 1 FROM project_milestones WHERE id = $1', [otherMilestone]);
+      assert.equal(rows.length, 1, `DELETE answered ${res.status} and removed somebody else's milestone`);
+    });
+
+    test('their own they may mark, and an administrator may mark anybody\'s', async () => {
+      const own = await as(salesA)('patch', `/api/project-milestones/${ownMilestone}`)
+        .send({ reached_on: '2026-03-02' });
+      assert.equal(own.status, 200, JSON.stringify(own.body));
+
+      const byAdmin = await as(admin)('patch', `/api/project-milestones/${otherMilestone}`)
+        .send({ reached_on: '2026-03-03' });
+      assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+    });
+  });
 
   describe('a refused write leaves the database as it was', () => {
     test('a sales user cannot add an exchange rate', async () => {
@@ -534,8 +597,20 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(opened.body.data.quotation.quotation_no, quotationNo);
 
       // Bound to one quotation, and showing only the client's half of it.
-      assert.equal(opened.body.data.quotation.sales_person, undefined, 'no internal fields');
-      assert.equal(opened.body.data.quotation.probability, undefined, 'no internal fields');
+      //
+      // The whole key set rather than a couple of absences: clientView() in
+      // routes/acceptance.js is an allow-list, and this is what holds it to
+      // that. `sales_person` is on it deliberately — the email carrying the
+      // link is already signed with that name — so the guarantee is not "no
+      // owner" but "nothing the client was not sent".
+      assert.deepEqual(Object.keys(opened.body.data.quotation).sort(), [
+        'client_name', 'contact_name', 'currency', 'lines', 'quotation_date', 'quotation_no',
+        'revision', 'sales_person', 'service_quoted', 'subtotal', 'tax_total', 'terms',
+        'total', 'valid_until',
+      ], 'the public acceptance view grew a field; add it here only if a client may see it');
+      for (const internal of ['probability', 'stage_id', 'notes', 'cost', 'margin', 'approved_by']) {
+        assert.equal(opened.body.data.quotation[internal], undefined, `${internal} is internal`);
+      }
 
       // And it is not a way into the rest of the API.
       const elsewhere = await request(server).get('/api/quotations').set('Authorization', `Bearer ${token}`);
@@ -561,14 +636,23 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
     test('GET /api/auth/config says which question the form will ask, and nothing else', async () => {
       const res = await request(server).get('/api/auth/config');
       assert.equal(res.status, 200);
-      assert.deepEqual(Object.keys(res.body.data), ['mode']);
+      // `providers` arrived with OAuth sign-in (#71): the form has to know
+      // which buttons to draw. It is still "nothing else" that matters, so
+      // the shape is pinned here as well as the key set — a provider entry
+      // is a label to click, never a client id or a secret.
+      assert.deepEqual(Object.keys(res.body.data).sort(), ['mode', 'providers']);
       assert.equal(res.body.data.mode, 'database');
+      assert.ok(Array.isArray(res.body.data.providers));
+      for (const provider of res.body.data.providers) {
+        assert.deepEqual(Object.keys(provider).sort(), ['id', 'label'],
+          'a provider entry may carry what to draw and nothing more');
+      }
     });
   });
 
   // ----------------------------------------------- travel finance (#85)
 
-  describe('travel finance is gated as Issue #85 specifies', () => {
+  describe('travel finance is gated as Issue #85 leaves it', () => {
     let claimId;
     let invoiceId;
 
@@ -614,7 +698,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(
         res.status, 403,
         `a sales user got ${res.status} approving their own claim, and the claim is now "${rows[0].approval_status}". ` +
-        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, implemented in its own workspace and not yet integrated on this branch.`
+        'requireAdmin on POST /api/expense-claims/:id/decide is the Issue #85 fix and it is in the history below this commit; losing it puts the live hole back.'
       );
       assert.equal(rows[0].approval_status, 'Submitted', 'the claim was not approved');
     });
@@ -623,7 +707,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       const res = await as(salesA)('post', `/api/expense-claims/${claimId}/reimburse`).send({ amount_reimbursed: 5000 });
       assert.equal(
         res.status, 403,
-        `a sales user got ${res.status} reimbursing a claim. This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`
+        `a sales user got ${res.status} reimbursing a claim. requireAdmin on POST /api/expense-claims/:id/reimburse is the Issue #85 fix; losing it lets a salesperson pay themselves.`
       );
     });
 
@@ -635,7 +719,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       );
       assert.notEqual(rows[0].approval_status, 'Approved',
         `PATCH /api/expense-claims/:id approved the claim (${res.status}). An admin-only /decide route is decoration if PATCH can write approval_status. ` +
-        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`);
+        'protectedFields for expense-claims is enforced in validate() in lib/crud.js (#85).');
       assert.equal(Number(rows[0].amount_reimbursed), 0, 'and it did not reimburse it either');
     });
 
@@ -657,7 +741,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(
         Number(after[0].amount_paid), Number(before[0].amount_paid),
         `PATCH /api/vendor-invoices/:id moved amount_paid (${res.status}). A payment is recorded through POST /api/vendor-invoices/:id/pay. ` +
-        `This is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, not yet integrated on this branch.`
+        'protectedFields for vendor-invoices is enforced in validate() in lib/crud.js (#85).'
       );
     });
   });

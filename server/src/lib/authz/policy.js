@@ -73,6 +73,11 @@ export const AUTH_MECHANISMS = {
     proof: 'An x-cetizion-signature header of the form t=<unix seconds>,v1=<HMAC-SHA256 of "t.body" under INCOMING_WEBHOOK_SECRET>, compared in constant time over the raw body, with timestamps more than five minutes old refused so a captured call cannot be replayed; the route is 404 unless the secret is set and the feature is switched on in Settings.',
     description: 'Incoming enquiry webhooks (#49).',
   },
+  'oauth-provider-code': {
+    authenticates: true,
+    proof: 'The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued.',
+    description: 'The OAuth sign-in callback. Open because it is how a session is obtained; the handshake cookie is what stops a code obtained elsewhere being redeemed here.',
+  },
   'api-token': {
     authenticates: true,
     proof: 'An Authorization: Bearer ctz_... token, SHA-256 hashed and matched against a non-revoked api_tokens row, which also carries the role and person the token may see.',
@@ -130,6 +135,22 @@ export const routes = [
   { method: 'POST', path: '/api/auth/logout', access: 'public', mechanism: 'none', openBecause: 'It only clears the caller\'s own cookie. Requiring a valid session to sign out would strand anybody holding an expired one.' },
   { method: 'GET', path: '/api/auth/me', access: 'public', mechanism: 'staff-session-optional', openBecause: 'Mounted before requireAuth so the front end can ask "am I signed in?" and get an answer rather than an error page. It resolves the session itself and 401s when there is none.', restrictions: ['self-only'] },
 
+  // The OAuth handshake (#71). Both sit outside the /api requireAuth, because
+  // signing in is what they are for.
+  { method: 'GET', path: '/api/auth/oauth/:provider/start', access: 'public', mechanism: 'none', openBecause: 'The first leg of signing in with a provider: it mints a signed handshake cookie and redirects. It reads nothing, answers 404 for a provider that is not switched on, and the `next` it is given is refused unless it is a same-site path.' },
+  { method: 'GET', path: '/api/auth/oauth/:provider/callback', access: 'public', mechanism: 'oauth-provider-code', openBecause: 'The provider redirects the browser here. There is no session yet — the handshake cookie, the state and the PKCE verifier are the credential.' },
+
+  // The personal account page (#71). Mounted outside the /api requireAuth,
+  // so accountRouter carries its own: requireAuth, then a database-mode
+  // check that 404s a deployment signing in with one shared account.
+  { method: 'GET', path: '/api/auth/account', access: signedIn, restrictions: ['self-only'] },
+  { method: 'PATCH', path: '/api/auth/account', access: signedIn, restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/auth/account/password', access: signedIn, restrictions: ['self-only'] },
+  { method: 'DELETE', path: '/api/auth/account/identities/:provider', access: signedIn, restrictions: ['self-only'] },
+  { method: 'DELETE', path: '/api/auth/account/sessions/:id', access: signedIn, restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/auth/account/sessions/revoke-all', access: signedIn, restrictions: ['self-only'] },
+  { method: 'GET', path: '/api/auth/providers', access: mustBeAdmin, why: 'Which sign-in methods are configured, and how. It reports the provider set-up of the deployment, not the caller\'s own identities — those are on GET /api/auth/account. Carries its own requireAuth and requireAdmin because it is mounted before the /api gate.' },
+
   // ------------------------------------------------ public quotation link
   { method: 'GET', path: '/api/public/accept/:token', access: 'public', mechanism: 'acceptance-link-token', openBecause: 'A client opens the quotation addressed to them (#53) without an account.', restrictions: ['parent-owner'] },
   { method: 'GET', path: '/api/public/accept/:token/pdf', access: 'public', mechanism: 'acceptance-link-token', openBecause: 'The same quotation as a PDF.', restrictions: ['parent-owner'] },
@@ -175,6 +196,25 @@ export const routes = [
   { method: 'GET', path: '/api/dashboard/sales-report', access: signedIn },
   { method: 'GET', path: '/api/dashboard/revenue-report', access: signedIn },
   { method: 'GET', path: '/api/dashboard/travel', access: signedIn },
+  { method: 'GET', path: '/api/dashboard/data-quality', access: signedIn },
+  { method: 'GET', path: '/api/dashboard/payables', access: signedIn, note: 'What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill.' },
+
+  // --------------------------------------------------------------- search
+  { method: 'GET', path: '/api/search', access: signedIn, note: 'One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not.' },
+
+  // -------------------------------------------------------------- reports
+  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, note: 'Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is.' },
+
+  // --------------------------------------------------------- saved views
+  //
+  // A view is its owner\'s or it is shared (owner IS NULL). The handler
+  // decides which: a listing returns the caller\'s own and the shared ones,
+  // and writing or removing a shared view needs an administrator.
+  { method: 'GET', path: '/api/views', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'POST', path: '/api/views', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'PATCH', path: '/api/views/:id', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'DELETE', path: '/api/views/:id', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'POST', path: '/api/views/order', access: signedIn, restrictions: ['record-owner'] },
 
   // -------------------------------------------------- lookups / settings
   { method: 'GET', path: '/api/lookups', access: signedIn },
@@ -186,6 +226,7 @@ export const routes = [
   { method: 'GET', path: '/api/export/sales-report.pdf', access: signedIn },
   { method: 'GET', path: '/api/export/sales-report/:report.csv', access: signedIn },
   { method: 'GET', path: '/api/export/:resource.csv', access: signedIn },
+  { method: 'GET', path: '/api/export/payables.csv', access: signedIn, note: 'The same rows as GET /api/dashboard/payables, so it carries the same answer.' },
   { method: 'GET', path: '/api/export/:resource.xlsx', access: signedIn },
 
   // --------------------------------------------------------------- import
@@ -277,6 +318,7 @@ export const routes = [
   { method: 'POST', path: '/api/mailboxes/:id/test-messages', access: mustBeAdmin, why: 'Writes sample messages into a real connected mailbox.' },
   { method: 'PATCH', path: '/api/mailboxes/:id', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/sync', access: signedIn, restrictions: ['mailbox-owner'] },
+  { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'GET', path: '/api/mailboxes/blocklist', access: signedIn },
   { method: 'POST', path: '/api/mailboxes/blocklist', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody.' },
@@ -298,6 +340,7 @@ export const routes = [
   { method: 'GET', path: '/api/inbox/inboxes', access: signedIn },
   { method: 'POST', path: '/api/inbox/inboxes', access: mustBeAdmin, why: 'An inbox and its membership decide whose queue a client\'s mail lands in.' },
   { method: 'PATCH', path: '/api/inbox/inboxes/:id', access: mustBeAdmin, why: 'An inbox and its membership decide whose queue a client\'s mail lands in.' },
+  { method: 'DELETE', path: '/api/inbox/inboxes/:id', access: mustBeAdmin, why: 'Removing a shared inbox decides where a client\'s mail stops landing, for everybody.' },
   { method: 'GET', path: '/api/inbox/canned', access: signedIn },
   { method: 'POST', path: '/api/inbox/canned', access: signedIn },
   { method: 'PATCH', path: '/api/inbox/canned/:id', access: signedIn, restrictions: ['record-owner'], note: 'ownCanned: the author or an admin.' },
@@ -396,24 +439,25 @@ export const routes = [
 
   // --------------------------------------------- travel finance (#85)
   //
-  // These three are where this branch and the intended policy differ. The
-  // policy is written as #85 specifies it, and the tests assert the policy.
-  // Until #85 is integrated they fail, and they are meant to: see
-  // `BLOCKED_BY_ISSUE_85` below.
+  // #85 is in the history below this commit, so these describe what the code
+  // does rather than what it should do. The four claim columns and the two
+  // vendor-invoice ones are closed on the generic form by `protectedFields`
+  // and move only through the routes here.
   {
     method: 'POST', path: '/api/vendor-invoices/:id/pay', access: signedIn,
-    blockedBy: 85,
     note: 'Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id.',
   },
   {
     method: 'POST', path: '/api/expense-claims/:id/decide', access: mustBeAdmin,
     why: 'Approving, rejecting or holding an expense claim is the administrator\'s decision. An approval anybody can grant themselves is not an approval (#85).',
-    blockedBy: 85,
   },
   {
     method: 'POST', path: '/api/expense-claims/:id/reimburse', access: mustBeAdmin,
     why: 'Reimbursement moves money out of the business (#85).',
-    blockedBy: 85,
+  },
+  {
+    method: 'POST', path: '/api/expense-claims/:id/correct', access: mustBeAdmin,
+    why: 'The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up.',
   },
 
   // -------------------------------------------------------- the web shell
@@ -437,6 +481,11 @@ export const routes = [
  *   `protectedFields` are columns the resource's schema accepts but which
  *   must not be writable through ordinary CRUD — they belong to a workflow
  *   route with its own gate.
+ *
+ *   `restrictions` carries the same vocabulary as the explicit route entries,
+ *   for a resource whose rows are narrower than its gate: `visibleTo` on the
+ *   registry scopes the rows a caller may reach at all, so the gate being
+ *   "any" does not mean "any row".
  */
 export const resourceAccess = {
   // --- a salesperson's own working records -------------------------------
@@ -456,15 +505,13 @@ export const resourceAccess = {
     read: 'any', write: 'any', delete: 'any',
     why: 'Sales enter vendor invoices as ordinary work.',
     protectedFields: ['amount_paid', 'payment_date'],
-    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that will be audited. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85).',
-    blockedBy: 85,
+    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85).',
   },
   'expense-claims': {
     read: 'any', write: 'any', delete: 'any',
     why: 'Admin and sales both submit ordinary expense claims.',
     protectedFields: ['approval_status', 'approved_by', 'amount_reimbursed', 'reimbursement_date'],
-    protectedBecause: 'Approval and reimbursement go through POST /api/expense-claims/:id/decide and /reimburse, which are administrator-only. If PATCH can write approval_status the admin-only gate on those routes is decoration: anybody could approve and reimburse their own claim in one request (#85).',
-    blockedBy: 85,
+    protectedBecause: 'Approval and reimbursement go through POST /api/expense-claims/:id/decide, /reimburse and /correct, which are administrator-only. If PATCH can write approval_status the admin-only gate on those routes is decoration: anybody could approve and reimburse their own claim in one request (#85). The check lives in validate() in lib/crud.js — the one place every generic write passes, so the MCP import_records tool inherits it without going near a route — and it reads the request body rather than the parsed record, because zod fills approval_status and amount_reimbursed from their defaults whether or not the caller sent them. An explicit null counts as an attempt.',
   },
 
   // --- shared master data: anybody may add and correct, admin deletes ----
@@ -478,12 +525,19 @@ export const resourceAccess = {
   payments: { read: 'any', write: 'admin', delete: 'admin', why: 'The receipts ledger. A payment row is what says a client has paid.' },
   'project-costs': { read: 'any', write: 'admin', delete: 'admin', why: 'Delivery cost is one half of what the business earns on a project (#39).' },
 
+  'project-milestones': {
+    read: 'any', write: 'any', delete: 'any',
+    restrictions: ['record-owner'],
+    why: 'What a project must reach before an On Milestone stage can be invoiced (#26). Entering and reaching milestones is ordinary delivery work, so the gate is open — but it is not open on every project: visibleTo scopes every read, update and delete to the caller\'s own projects (the review of #115, #119). Without that scoping an open PATCH here would let any signed-in user stamp another project\'s milestone as reached and push it into the invoice run, the cash-flow forecast and the ageing.',
+  },
+
   // --- the Settings lists: one edit re-labels every record that used it --
   'pipeline-stages': { read: 'any', write: 'admin', delete: 'admin', why: 'A stage\'s status mapping and probability rewrite quotation statuses and the whole forecast.' },
   services: { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'expense-categories': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'exchange-rates': { read: 'any', write: 'admin', delete: 'admin', why: 'One rate re-values every historical deal in every report.' },
+  holidays: { read: 'any', write: 'admin', delete: 'admin', why: 'The working calendar. A holiday decides which days count towards a reply clock, a follow-up deadline and every "working days" figure, so one edit moves what the whole company is judged late by. Correcting the dates that move each year is an administrator\'s job (adminOnlyWrites).' },
   'lead-sources': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'lost-reasons': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'payment-terms-templates': { read: 'any', write: 'admin', delete: 'admin', why: 'A template writes the payment schedule of every PO made from it.' },
@@ -501,7 +555,7 @@ export function crudRoutesFor(name, access) {
     { method: 'POST', path: base, access: access.write, resource: name, operation: 'create' },
     { method: 'PATCH', path: `${base}/:id`, access: access.write, resource: name, operation: 'update' },
     { method: 'DELETE', path: `${base}/:id`, access: access.delete, resource: name, operation: 'delete' },
-  ].map((r) => ({ ...r, why: access.why, blockedBy: access.blockedBy }));
+  ].map((r) => ({ ...r, why: access.why, ...(access.restrictions ? { restrictions: access.restrictions } : {}) }));
 }
 
 export const crudRoutes = () =>
@@ -509,9 +563,3 @@ export const crudRoutes = () =>
 
 /** Every declared route: the explicit ones and the generated CRUD ones. */
 export const policyRoutes = () => [...routes, ...crudRoutes()];
-
-/**
- * What #85 has not yet delivered on this branch. Named so that a failing
- * test can say which issue to integrate rather than just "expected 403".
- */
-export const BLOCKED_BY_ISSUE_85 = 85;

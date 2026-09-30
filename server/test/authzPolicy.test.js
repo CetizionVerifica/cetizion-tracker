@@ -236,8 +236,10 @@ describe('protected fields cannot be written through ordinary CRUD', () => {
   });
 
   test('the policy declares protected fields for the travel finance resources', () => {
-    // The declaration is this branch's own work and must hold regardless of
-    // whether the enforcement has landed.
+    // The declaration and the enforcement now sit in the same history: #85 is
+    // below this commit. The two are still checked separately, because a
+    // declaration that drifts from what crud.js refuses is the failure this
+    // pair exists to catch.
     assert.deepEqual(policy.resourceAccess['expense-claims'].protectedFields,
       ['approval_status', 'approved_by', 'amount_reimbursed', 'reimbursement_date']);
     assert.deepEqual(policy.resourceAccess['vendor-invoices'].protectedFields,
@@ -245,10 +247,11 @@ describe('protected fields cannot be written through ordinary CRUD', () => {
   });
 
   test('every protected field is actually protected', () => {
-    // A field counts as protected when the resource either does not accept
-    // it as a writable column at all, or lists it in `protectedFields` for
-    // lib/crud.js to refuse. Until #85 is integrated neither is true of the
-    // travel finance columns, so this fails — deliberately. Weakening it to
+    // A field counts as protected when the resource either does not accept it
+    // as a writable column at all, or lists it in `protectedFields` for
+    // lib/crud.js to refuse. #85 makes the second true of the travel finance
+    // columns, and validate() is where it is refused — so this holds for the
+    // MCP import_records path as well as for POST and PATCH. Weakening it to
     // make the suite green would be declaring an approval anybody can grant
     // themselves to be the intended design.
     const gaps = check.unenforcedProtectedFields(policy.resourceAccess);
@@ -257,8 +260,8 @@ describe('protected fields cannot be written through ordinary CRUD', () => {
       .join('\n');
     assert.equal(
       gaps.length, 0,
-      `\n${detail}\n\nThis is the Issue #${policy.BLOCKED_BY_ISSUE_85} fix, which is implemented in its own workspace and not yet integrated here. ` +
-      'Integrate it; do not relax this test.\n'
+      `\n${detail}\n\nThese columns are closed by the Issue #85 fix in the history below this commit. ` +
+      'Restore the enforcement; do not relax this test.\n'
     );
   });
 });
