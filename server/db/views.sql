@@ -710,6 +710,28 @@ SELECT
   c.created_at,
   c.updated_at,
   (SELECT COUNT(*)::int FROM contacts ct WHERE ct.company_id = c.id)                       AS contacts,
+  -- A contact with no address is not a contact anything can reach, and the
+  -- only check the Data Quality page had was "has any contact at all", which
+  -- a name-only row passes (client-data-gaps.md, gap 2).
+  (SELECT COUNT(*)::int FROM contacts ct WHERE ct.company_id = c.id
+     AND NULLIF(btrim(ct.email), '') IS NOT NULL)                                          AS contacts_with_email,
+  (SELECT COUNT(*)::int FROM contacts ct WHERE ct.company_id = c.id
+     AND ct.is_billing AND NULLIF(btrim(ct.email), '') IS NOT NULL)                        AS billing_contacts_with_email,
+  (SELECT COUNT(*)::int FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id
+    WHERE p.company_id = c.id)                                                             AS purchase_orders,
+  -- One flag per Data Quality check, because the page's rule is that a
+  -- check's count and the list its link opens are the same rows. A list
+  -- filter is an equality, so "has contacts but none with an email" has to
+  -- be a column, not two comparisons a query string cannot express.
+  (CASE WHEN EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id
+                          AND NULLIF(btrim(ct.email), '') IS NOT NULL)
+        THEN 1 ELSE 0 END)                                                                 AS contacts_all_without_email,
+  (CASE WHEN EXISTS (SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id
+                      WHERE p.company_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id
+                          AND ct.is_billing AND NULLIF(btrim(ct.email), '') IS NOT NULL)
+        THEN 1 ELSE 0 END)                                                                 AS needs_billing_contact,
   (SELECT COUNT(*)::int FROM enquiries e WHERE e.company_id = c.id)                        AS enquiries,
   (SELECT COUNT(*)::int FROM quotations q WHERE q.company_id = c.id)                       AS quotations,
   (SELECT COUNT(*)::int FROM quotations q WHERE q.company_id = c.id

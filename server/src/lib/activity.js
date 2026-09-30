@@ -37,6 +37,15 @@ export const ACTIONS = {
   OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
   TARGET_CREATED: 'target.created',
   TARGET_UPDATED: 'target.updated',
+  // Money (#85). An expense claim's approval and its reimbursement are the
+  // two acts that turn a submitted claim into a payment, and a vendor
+  // invoice's payment is the same act on the other side of a trip. Each is
+  // recorded with the account that performed it, in the same transaction as
+  // the change itself, so the trail cannot disagree with the record.
+  CLAIM_DECIDED: 'claim.decided',
+  CLAIM_REIMBURSED: 'claim.reimbursed',
+  CLAIM_CORRECTED: 'claim.corrected',
+  VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */
