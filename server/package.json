@@ -21,6 +21,7 @@
     "fx:today": "node scripts/fx.js today",
     "fx:backfill": "node scripts/fx.js backfill",
     "fx:status": "node scripts/fx.js status",
+    "authz:docs": "node scripts/authz-docs.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
