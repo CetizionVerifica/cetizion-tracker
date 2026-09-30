@@ -60,6 +60,12 @@ export default function Settings() {
  * changes what last year's deals were worth.
  */
 export function ExchangeRates() {
+  // One rate decides what every historical deal in that currency is reported to
+  // be worth, so exchange-rates is adminOnlyWrites on the server (#85). Sales
+  // users still read them — the same rows drive their figures, and /settings
+  // deliberately lands them on this pane — so the pane stays open and only the
+  // three controls that change a rate are the admin's.
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const lookups = useLookups();
   const { rows, loading, refetch } = useList('exchange-rates', { limit: 500 });
@@ -96,7 +102,7 @@ export function ExchangeRates() {
     <SettingsPane
       title="Exchange rates"
       description="INR for one unit, from the date it took effect. Reports convert each figure at the rate in force on its own date, so a restated rate never rewrites history."
-      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a rate</Button>}
+      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a rate</Button>}
     >
       <Card flush>
         {missing.length > 0 && (
@@ -128,8 +134,12 @@ export function ExchangeRates() {
               align: 'right',
               render: (r) => (
                 <div className="table__actions">
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Edit</button>
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => remove(r)}>Delete</button>
+                  {isAdmin && (
+                    <>
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>Edit</button>
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => remove(r)}>Delete</button>
+                    </>
+                  )}
                 </div>
               ),
             },
@@ -344,6 +354,9 @@ function shown(item, value) {
 }
 
 export function Assumptions() {
+  // The thresholds every report and reminder is computed from. Readable by
+  // everyone, changed by an admin (#85) — PATCH /api/settings is requireAdmin.
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const { data, loading, refetch } = useFetch(() => api.raw('/settings'));
   const [editing, setEditing] = useState(null);
@@ -433,14 +446,16 @@ export function Assumptions() {
                     ) : (
                       <span className="mono text-[13px] text-foreground">{display}</span>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-3 text-[12.5px]"
-                      onClick={() => { setEditing(item.key); setDraft(row.value); }}
-                    >
-                      Edit
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-3 text-[12.5px]"
+                        onClick={() => { setEditing(item.key); setDraft(row.value); }}
+                      >
+                        Edit
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -537,6 +552,9 @@ export function Holidays() {
 }
 
 export function Catalogue({ resource, label, title, hint }) {
+  // A Settings list: an admin curates it, everybody reads it, because the same
+  // rows fill the dropdowns sales users work in (#85).
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const { rows, loading, refetch } = useList(resource, {});
   const [editing, setEditing] = useState(null);
@@ -555,7 +573,7 @@ export function Catalogue({ resource, label, title, hint }) {
     <SettingsPane
       title={title}
       description={hint}
-      actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</Button>}
+      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</Button>}
     >
       <Card flush>
         <DataTable
@@ -576,10 +594,17 @@ export function Catalogue({ resource, label, title, hint }) {
               align: 'right',
               render: (r) => (
                 <div className="table__actions">
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' ? 'Edit' : 'Rename'}</button>
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
-                    {r.active ? 'Hide' : 'Restore'}
-                  </button>
+                  {/* A Settings list: an admin curates it, everybody reads it,
+                      because the same rows fill the dropdowns sales users work
+                      in (#85). These resources are adminOnlyWrites on the server. */}
+                  {isAdmin && (
+                    <>
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' ? 'Edit' : 'Rename'}</button>
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
+                        {r.active ? 'Hide' : 'Restore'}
+                      </button>
+                    </>
+                  )}
                 </div>
               ),
             },

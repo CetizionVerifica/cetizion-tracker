@@ -9,9 +9,9 @@ import { Timeline } from '../components/Timeline.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { PortalSettings } from '../components/PortalSettings.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
-import { useAuth } from '../lib/auth.jsx';
 
 /**
  * One client, on one page.
@@ -60,11 +60,11 @@ function relationship(c) {
 }
 
 export default function CompanyDetail() {
+  const { isAdmin } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
   const lookups = useLookups();
-  const { isAdmin } = useAuth();
   const [editing, setEditing] = useState(null);
   const [contact, setContact] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -282,7 +282,12 @@ export default function CompanyDetail() {
           fields={contactFields}
           onClose={() => setContact(null)}
           onSaved={() => { setContact(null); refetch(); }}
-          onDelete={contact !== 'new' ? () => { setRemoving(contact); setContact(null); } : undefined}
+          // Adding a contact and correcting one is ordinary work; removing one is
+          // not (#85). A contact is named on every quotation and enquiry that ever
+          // used it, so contacts is adminOnlyDeletes on the server. The row cross
+          // this used to gate is gone in the redesign — the dialog's Delete is the
+          // only way in now, so the gate belongs here.
+          onDelete={isAdmin && contact !== 'new' ? () => { setRemoving(contact); setContact(null); } : undefined}
         />
       )}
       {removing && (

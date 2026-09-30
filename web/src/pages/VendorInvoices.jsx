@@ -49,8 +49,9 @@ export default function VendorInvoices() {
     { name: 'invoice_date', label: 'Invoice date', type: 'date' },
     { name: 'invoice_amount', label: 'Invoice amount', type: 'money' },
     { name: 'payment_terms_days', label: 'Payment terms (days)', type: 'number', default: '30' },
-    { name: 'amount_paid', label: 'Amount paid', type: 'money', default: '0' },
-    { name: 'payment_date', label: 'Payment date', type: 'date' },
+    // amount_paid and payment_date are recorded through Pay, which validates
+    // the figure and notes who recorded it (#85). Both roles may still pay a
+    // vendor invoice — only the door changed, not the permission.
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 
