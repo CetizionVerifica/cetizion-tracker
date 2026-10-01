@@ -471,8 +471,13 @@ export function crudRouter(name, def) {
     // keyed on the free-text sales_person; ownership is owner_user_id and
     // only owner_user_id, so the predicate comes from the resource's
     // declared ownership instead. One engine, one truth.
-    const scoped = resourceClause(def, scopeOf(req), params, { alias: readFrom });
-    const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
+    const scope = scopeOf(req);
+    const scoped = resourceClause(def, scope, params, { alias: readFrom });
+    // Filters that are not a column: a resource may work them out itself
+    // (the quotations "follow-up overdue" filter runs the follow-up rules)
+    // and hand back parameterised clauses.
+    const computed = def.listClauses ? await def.listClauses(req.query, { scope, params }) : [];
+    const where = buildWhere(def, req.query, params, [...(scoped ? [scoped] : []), ...computed]);
     const order = buildOrder(def, req.query.sort);
     const limit = Math.min(Number(req.query.limit) || 500, MAX_LIMIT);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
