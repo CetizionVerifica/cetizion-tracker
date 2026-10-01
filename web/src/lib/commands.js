@@ -228,6 +228,7 @@ export const JUMPS = [
   { id: 'go-schedule', verb: 'Schedule', to: '/schedule', icon: 'waiting', keywords: 'calendar visits audits diary schedule' },
   { id: 'go-certificates', verb: 'Certificates', to: '/deliverables', icon: 'done', keywords: 'certificates deliverables reports issued' },
   { id: 'go-tasks', verb: 'Tasks', to: '/tasks', icon: 'done', keywords: 'tasks todo' },
+  { id: 'go-follow-ups', verb: 'Follow-ups', to: '/follow-ups', icon: 'waiting', keywords: 'follow ups reminders escalated escalation missed chase respond' },
   { id: 'go-sales-report', verb: 'Sales reports', to: '/sales-report', icon: 'today', keywords: 'reports sales funnel analysis' },
   { id: 'go-profitability', verb: 'Profitability', to: '/profitability', icon: 'money', adminOnly: true, keywords: 'margin profit cost' },
   { id: 'go-accounting', verb: 'Accounting', to: '/accounting', icon: 'money', adminOnly: true, keywords: 'books zoho tally reconcile' },

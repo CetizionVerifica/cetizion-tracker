@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Alert, Badge, useToast } from '../components/ui.jsx';
+import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
+import { TouchDialog } from '../components/Timeline.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 
@@ -18,6 +21,12 @@ export default function Enquiries() {
   const lookups = useLookups();
   const toast = useToast();
   const [params] = useSearchParams();
+  // A follow-up email links here as ?q=<enquiry no>&log=1. Enquiries have no
+  // page of their own, so the banner and the log dialog sit on the list.
+  const enquiryNo = params.get('q') || '';
+  const [touching, setTouching] = useState(false);
+  const [logged, setLogged] = useState(0);
+  useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
   const responseHours = Number(lookups.settings?.lead_first_response_hours || 24);
@@ -82,6 +91,7 @@ export default function Enquiries() {
   ];
 
   return (
+    <>
     <ListPage
       title="Enquiries"
       subtitle="Every lead, from first contact to quotation: source, owner, next follow-up, and what happened"
@@ -105,14 +115,19 @@ export default function Enquiries() {
         { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...sectors] },
         { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
       ]}
-      banner={(rows) => { const { dueRows, late } = attention(rows); return (dueRows.length > 0 || late.length > 0) && (
+      banner={(rows) => { const { dueRows, late } = attention(rows); return <>
+        {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}
+        {(dueRows.length > 0 || late.length > 0) && (
         <Alert tone="warning">
           <span>
             {dueRows.length > 0 && <><strong>{dueRows.length} follow-up{dueRows.length === 1 ? '' : 's'} due:</strong> {dueRows.slice(0, 6).map((e) => `${e.client_name} (${date(e.next_follow_up_at)})`).join(', ')}{dueRows.length > 6 ? ` and ${dueRows.length - 6} more` : ''}. </>}
             {late.length > 0 && <><strong>{late.length} new enquir{late.length === 1 ? 'y has' : 'ies have'} waited over {responseHours} hours</strong> for a first contact: {late.slice(0, 4).map((e) => e.client_name).join(', ')}.</>}
           </span>
         </Alert>
-      ); }}
+        )}
+      </>; }}
     />
+    {touching && <TouchDialog entity="enquiry" id={enquiryNo} start={{ channel: 'call', contact_id: null }} onClose={() => setTouching(false)} onSaved={() => { setTouching(false); setLogged((n) => n + 1); }} />}
+    </>
   );
 }
