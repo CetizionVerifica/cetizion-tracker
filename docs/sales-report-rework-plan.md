@@ -181,7 +181,7 @@ screen, CSV and PDF all call.
   only when `source_id` is null.
 - **Scope:** `src.enquiries` from `scopedSources`.
 
-### 4.2 Enquiry outcome
+### 4.2 Enquiry outcome (four slices)
 
 **Decided:** a *lost* enquiry is one that was **never converted into a
 quotation**, i.e. it was closed (status `Unqualified`) with no
@@ -431,18 +431,17 @@ N more, see CSV".
 3. **"Lost" enquiries** are those **never converted into a quotation**:
    closed as Unqualified with no quotation. Quoted enquiries that did not
    win are a separate "Quoted, not won" slice (§4.2).
+4. **"Quoted, not won"** stays its own slice next to Converted to PO, In
+   pipeline and Lost. It is never counted inside the pipeline (§4.2).
 
 ### Still open (defaults given; the build can start with them)
 
-4. **Bundled services** (one PO covering several services). Default: use
+5. **Bundled services** (one PO covering several services). Default: use
    the actual split from the PO's services. If there is none, split
    equally, so totals add up. Today the full value is counted in each
    line.
-5. **"New customer".** Default: first-ever PO falls in the period. The
+6. **"New customer".** Default: first-ever PO falls in the period. The
    alternative is that the company record was created in the period.
-6. **Calendar or financial year** for the presets. Default: both are
+7. **Calendar or financial year** for the presets. Default: both are
    offered; This FY is listed first, since Reports already uses Indian FY
    quarters.
-7. **Where "Quoted, not won" goes.** Default: its own slice next to the
-   three you asked for. The alternative is to count it inside "In
-   pipeline".
