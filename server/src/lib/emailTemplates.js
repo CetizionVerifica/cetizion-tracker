@@ -176,7 +176,7 @@ function whyDue(i) {
   if (i.entity === 'enquiry') {
     return i.why === 'follow_up_date' ? `follow-up date ${date(i.due_on)}` : `no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
   }
-  if (i.entity === 'quotation') return `sent ${date(i.sent_on)}, no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
+  if (i.entity === 'quotation') return `${{ dated: 'dated', entered: 'entered' }[i.sent_basis] || 'sent'} ${date(i.sent_on)}, no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
   return `${inr(i.amount, i.currency || 'INR')} overdue ${plural(Number(i.days_overdue || 0), 'day', 'days')}`;
 }
 

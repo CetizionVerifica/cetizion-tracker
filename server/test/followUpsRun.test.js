@@ -386,6 +386,16 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     assert.equal(result.escalated, 50);
   });
 
+  test('an imported quotation with no sent date is chased from its quotation date', async () => {
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, status, quotation_date, owner_user_id) VALUES ('Q-IMP', 'Midal', 'Under Negotiation', '2026-09-20', $1)`, [people.asha]);
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, status, quotation_date, owner_user_id) VALUES ('Q-DRAFT', 'Midal', 'Draft', '2026-09-20', $1)`, [people.asha]);
+    const send = sender();
+    await run('2026-10-05', { send });
+    assert.equal(send.calls.length, 1);
+    assert.match(send.calls[0].text, /Q-IMP · Midal · dated 20 Sep 2026, no contact for/);
+    assert.doesNotMatch(send.calls[0].text, /Q-DRAFT/);
+  });
+
   test('tasks: the earliest open dated task on a record, also through task_targets, is its follow-up date', async () => {
     const { loadRecords } = await import('../src/lib/followUps.js');
     await quotation('Q-1', people.asha, '2026-10-01T06:00:00Z');

@@ -104,7 +104,9 @@ export function closedReason(rec, today) {
   if (rec.entity === 'enquiry') return OPEN_ENQUIRY_STATUSES.includes(rec.status) ? null : 'closed';
   if (rec.entity === 'quotation') {
     if (rec.status === 'On Hold') return 'on_hold';
-    if (!OPEN_QUOTATION_STATUSES.includes(rec.status) || !rec.sent_at || rec.accepted_at || rec.closed_at) return 'closed';
+    // Not sent from the tracker is still open: Submitted or Under
+    // Negotiation says it went to the client (see quotationStart).
+    if (!OPEN_QUOTATION_STATUSES.includes(rec.status) || rec.accepted_at || rec.closed_at) return 'closed';
     return null;
   }
   if (rec.entity === 'payment_stage') {
@@ -171,12 +173,24 @@ export function dueInfo(rec, lastActivityOn, { today, settings, holidays = [] })
   // Nobody set a date, or every date was acted on: due once the record has
   // gone quiet for its idle limit.
   if (rec.entity === 'enquiry') return idleFrom(later(rec.enquiry_date, dateOf(rec.created_at)), s.followup_enquiry_idle_days, 'idle');
-  if (rec.entity === 'quotation') return idleFrom(dateOf(rec.sent_at), s.followup_quotation_idle_days, 'idle');
+  if (rec.entity === 'quotation') return idleFrom(quotationStart(rec).on, s.followup_quotation_idle_days, 'idle');
   if (rec.entity === 'payment_stage') {
     const idle = idleFrom(rec.invoice_due_date, s.followup_invoice_idle_days, 'overdue');
     return idle ? { ...idle, due_on: later(idle.due_on, overdueOn) } : null;
   }
   return null;
+}
+
+/**
+ * When a quotation went to the client, for the quiet-period count: the day it
+ * was sent from the tracker, else its quotation date, else the day it was
+ * entered. Imported and hand-typed quotations are never "sent" from the
+ * tracker, and their status is the evidence that they went out.
+ */
+export function quotationStart(rec) {
+  if (rec.sent_at) return { on: dateOf(rec.sent_at), basis: 'sent' };
+  if (rec.quotation_date) return { on: rec.quotation_date, basis: 'dated' };
+  return { on: dateOf(rec.created_at), basis: 'entered' };
 }
 
 /** The person a reminder can go to: an active user with an email, or null. */
@@ -225,7 +239,8 @@ export function planFollowUps({ records = [], open = [], activity = new Map(), t
       why: due?.why ?? null,
       since_on: since,
       last_activity_on: lastOn,
-      sent_on: rec.entity === 'quotation' ? dateOf(rec.sent_at) : undefined,
+      sent_on: rec.entity === 'quotation' ? quotationStart(rec).on : undefined,
+      sent_basis: rec.entity === 'quotation' ? quotationStart(rec).basis : undefined,
       task_title: due?.why === 'task' ? rec.next_task_title ?? null : undefined,
       idle_days: since ? workingDaysBetween(since, today, holidays) : null,
     };
@@ -419,10 +434,10 @@ export async function loadRecords(db, keys = []) {
     ),
     db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
-              q.sent_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
+              q.sent_at, q.quotation_date, q.created_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
               COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}, nt.*
          FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id ${NEXT_TASK('quotation', 'q.quotation_no')}
-        WHERE (q.status = ANY($1::text[]) AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL AND q.closed_at IS NULL)
+        WHERE (q.status = ANY($1::text[]) AND q.accepted_at IS NULL AND q.closed_at IS NULL)
            OR q.quotation_no = ANY($2::text[])`,
       [OPEN_QUOTATION_STATUSES, ids('quotation')]
     ),

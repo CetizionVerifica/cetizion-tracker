@@ -109,6 +109,16 @@ Notes:
   chased is a decision for the lead (§11, D3). The plan assumes **no**: raising
   an invoice is finance's job, and My Today already lists them.
 
+#### As built: quotations not sent from the tracker
+
+`sent_at` is only set by **Send to the client** (or an acceptance link), so
+imported and hand-typed quotations never have it. Requiring it would leave
+almost every open quotation unchased. A quotation is open on its status alone
+(Submitted or Under Negotiation, not accepted, not closed), and the quiet
+period counts from `sent_at`, else `quotation_date`, else the day it was
+entered. The email says "sent", "dated" or "entered" accordingly. Drafts are
+never chased.
+
 #### As built: tasks are the follow-up date
 
 Quotations and invoices have no follow-up date of their own, and adding one

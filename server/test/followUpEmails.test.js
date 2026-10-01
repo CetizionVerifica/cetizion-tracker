@@ -107,3 +107,8 @@ test('an escalation of unowned items only does not claim anyone was reminded', (
   const mixed = followUpEscalation({ today, appUrl, escalated: [escalated()], unowned: [inv({ owner_name: null, owner_user_id: null })] });
   assert.match(mixed.text, /The rest have no owner to remind/);
 });
+
+test('a quotation never sent from the tracker reads "dated", not "sent"', () => {
+  const { text } = followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items: [quo({ sent_basis: 'dated', sent_on: '2026-09-20', idle_days: 11 })] });
+  assert.match(text, /Q-1 · Midal · dated 20 Sep 2026, no contact for 11 working days/);
+});

@@ -79,8 +79,19 @@ test('U-Q03: a touch restarts the count', () => {
   assert.equal(isDue(q, '2026-10-09', { activity, holidays: [HOLIDAY] }).due_on, '2026-10-09');
 });
 
-test('U-Q04/05: never sent, accepted, closed or decided quotations are never due', () => {
-  assert.equal(isDue(quotation({ sent_at: null }), '2026-10-05'), null);
+test('U-Q04: a quotation never sent from the tracker counts from its quotation date, else the day it was entered', () => {
+  // Imported or typed in: Submitted is the evidence it went to the client.
+  const dated = isDue(quotation({ sent_at: null, quotation_date: '2026-09-28' }), '2026-10-05');
+  assert.equal(dated.due_on, '2026-10-05');
+  assert.equal(isDue(quotation({ sent_at: null, quotation_date: '2026-09-30' }), '2026-10-05'), null);
+  assert.equal(isDue(quotation({ sent_at: null, quotation_date: null, created_at: '2026-09-28T05:00:00Z' }), '2026-10-05').due_on, '2026-10-05');
+  // Sent from the tracker wins over the quotation date.
+  assert.equal(isDue(quotation({ sent_at: '2026-10-01T06:00:00Z', quotation_date: '2026-09-01' }), '2026-10-05'), null);
+  const p = plan([quotation({ sent_at: null, quotation_date: '2026-09-28' })]);
+  assert.deepEqual([p.remind[0].items[0].sent_on, p.remind[0].items[0].sent_basis], ['2026-09-28', 'dated']);
+});
+
+test('U-Q05: accepted, closed or decided quotations are never due', () => {
   assert.equal(isDue(quotation({ accepted_at: '2026-09-30T05:00:00Z' }), '2026-10-05'), null);
   assert.equal(isDue(quotation({ closed_at: '2026-09-30T05:00:00Z' }), '2026-10-05'), null);
   for (const status of ['Won - PO Received', 'Lost', 'On Hold', 'Draft']) assert.equal(isDue(quotation({ status }), '2026-10-05'), null, status);

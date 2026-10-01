@@ -140,7 +140,7 @@ File: `server/test/followUps.test.js`. Pure functions, no database.
 | U-Q01 | Quotation `Submitted`, sent `2026-09-28`, no activity, today `2026-10-05` | Due (5 working days) |
 | U-Q02 | Same, with the holiday on 2 October | Due on `2026-10-06`, not on 5 October |
 | U-Q03 | `Under Negotiation`, last touch `2026-10-01` | Not due until `2026-10-08` (`2026-10-09` with the holiday) |
-| U-Q04 | `sent_at` is null (typed in or imported, never sent) | Never due |
+| U-Q04 | `sent_at` is null (typed in or imported, never sent) | Counted from `quotation_date` (else the day it was entered): due on 5 Oct for a quotation dated 28 Sep. The email says "dated". A Draft is never due. (As built; the plan first said never due.) |
 | U-Q05 | `accepted_at` set, `closed_at` set, or status `Won - PO Received`, `Lost`, `On Hold` or `Draft` | Never due |
 | U-I01 | Invoice `Overdue`, 15 days overdue, no chase ever | Due |
 | U-I02 | `Overdue`, last human chase 2 working days ago | Not due |
