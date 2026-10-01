@@ -2640,7 +2640,9 @@ CREATE TABLE IF NOT EXISTS follow_up_cycles (
   entity               text NOT NULL CHECK (entity IN ('enquiry','quotation','payment_stage')),
   entity_id            text NOT NULL,
   due_on               date NOT NULL,
-  owner_user_id        int REFERENCES users(id) ON DELETE SET NULL,
+  -- The person the reminder went to, as things stood then. Not the record's
+  -- owner (that is owner_user_id on the record): a reassignment ends the cycle.
+  reminded_user_id     int REFERENCES users(id) ON DELETE SET NULL,
   owner_name           text,
   reminded_at          timestamptz,
   reminder_email_id    int REFERENCES email_log(id) ON DELETE SET NULL,
@@ -2658,8 +2660,8 @@ CREATE TABLE IF NOT EXISTS follow_up_cycles (
 -- One open cycle per record.
 CREATE UNIQUE INDEX IF NOT EXISTS follow_up_cycles_open_key
   ON follow_up_cycles (entity, entity_id) WHERE resolved_at IS NULL;
-CREATE INDEX IF NOT EXISTS follow_up_cycles_owner_idx
-  ON follow_up_cycles (owner_user_id, resolved_at);
+CREATE INDEX IF NOT EXISTS follow_up_cycles_reminded_user_idx
+  ON follow_up_cycles (reminded_user_id, resolved_at);
 
 INSERT INTO settings (key, value, notes) VALUES
   ('followup_enabled', 'false', 'Email owners about due follow-ups and escalate to management when nothing is logged.'),

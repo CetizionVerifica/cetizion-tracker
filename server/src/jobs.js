@@ -6,6 +6,7 @@
 import { query } from './db.js';
 import { purgeOrphanedDocuments } from './lib/documents.js';
 import { runFinanceDigest, runPaymentReminders } from './lib/reminders.js';
+import { runFollowUps } from './lib/followUps.js';
 import { runExchangeRateSync } from './lib/fx.ts';
 import { runRenewals } from './lib/renewals.js';
 import { runDigests, runNotifications, runWeeklyDigest, sendNotificationEmails } from './lib/notify.js';
@@ -112,6 +113,14 @@ export const JOBS = {
     description: 'Email the notifications people asked to get by email, outside their quiet hours',
     cron: '*/10 * * * *',
     run: (opts) => sendNotificationEmails(opts),
+  },
+  'followups.daily': {
+    description: 'Email owners about enquiries, quotations and invoices due a follow-up; tell management about the ones nobody acted on',
+    // After reminders.payment (09:00) so today's client reminders are already
+    // marked automated, and after the 08:00 notification sweep. Holidays are
+    // skipped by the run itself.
+    cron: '15 9 * * 1-5',
+    run: (opts) => runFollowUps(opts),
   },
   'finance.digest': {
     description: 'Morning summary to finance: stages to invoice, overdue invoices, reminders sent',
