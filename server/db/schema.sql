@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -805,7 +805,9 @@ CREATE TABLE collection_log (
   summary              text NOT NULL,
   promise_to_pay_date  date,
   next_action_on       date,
-  created_at           timestamptz NOT NULL DEFAULT now()
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  -- Written by the payment-reminder job, not a person: not a follow-up.
+  automated            boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX collection_log_stage_idx ON collection_log (stage_id, happened_at DESC);
@@ -2625,6 +2627,51 @@ CREATE INDEX IF NOT EXISTS sales_targets_year_idx
 
 CREATE TRIGGER sales_targets_set_updated_at BEFORE UPDATE ON sales_targets
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ------------------------------------------------------- follow_up_cycles
+-- Follow-up reminders to owners and escalation to management
+-- (docs/follow-up-escalation-plan.md).
+-- A follow-up cycle: one record, one reminder, at most one open at a time.
+-- These are events that happened (an email went, a deadline passed), not
+-- values derived from other columns, so they are stored, the same way
+-- payment_stages.reminder_sent_on is.
+CREATE TABLE IF NOT EXISTS follow_up_cycles (
+  id                   serial PRIMARY KEY,
+  entity               text NOT NULL CHECK (entity IN ('enquiry','quotation','payment_stage')),
+  entity_id            text NOT NULL,
+  due_on               date NOT NULL,
+  owner_user_id        int REFERENCES users(id) ON DELETE SET NULL,
+  owner_name           text,
+  reminded_at          timestamptz,
+  reminder_email_id    int REFERENCES email_log(id) ON DELETE SET NULL,
+  respond_by           date,
+  escalated_at         timestamptz,
+  last_escalated_on    date,
+  escalation_count     int NOT NULL DEFAULT 0,
+  escalation_email_id  int REFERENCES email_log(id) ON DELETE SET NULL,
+  resolved_at          timestamptz,
+  resolved_reason      text CHECK (resolved_reason IN
+                         ('activity','closed','paid','on_hold','promised','rescheduled','reassigned','disabled')),
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+-- One open cycle per record.
+CREATE UNIQUE INDEX IF NOT EXISTS follow_up_cycles_open_key
+  ON follow_up_cycles (entity, entity_id) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS follow_up_cycles_owner_idx
+  ON follow_up_cycles (owner_user_id, resolved_at);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('followup_enabled', 'false', 'Email owners about due follow-ups and escalate to management when nothing is logged.'),
+  ('followup_enquiry_idle_days', '3', 'Working days an enquiry with no follow-up date may go untouched.'),
+  ('followup_quotation_idle_days', '5', 'Working days a sent quotation may go untouched.'),
+  ('followup_invoice_overdue_days', '1', 'Days overdue before the owner is asked to follow up an invoice.'),
+  ('followup_invoice_idle_days', '5', 'Working days an overdue invoice may go unchased.'),
+  ('followup_grace_days', '2', 'Working days after a reminder before management is told.'),
+  ('followup_reescalate_days', '5', 'Working days before an escalated item is listed again.'),
+  ('followup_escalation_emails', '', 'Management addresses for escalations, besides admin accounts. Comma-separated.'),
+  ('followup_cc_owner_on_escalation', 'true', 'Tell the owner when one of their follow-ups is escalated.')
+ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------
 -- Saved views: the pinned list in the sidebar, and every report.
