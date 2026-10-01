@@ -1076,6 +1076,19 @@ export const ONBOARDING_TEMPLATE = [
 const MONTH = /^\d{4}-\d{2}$/;
 
 /**
+ * The scope the Insights rules run with: the reader's own, or, for an admin
+ * following a bar for one owner, that owner's (`owner=none` is the records
+ * nobody owns). Not a column filter: owner_user_id stays out of the generic
+ * filters until ownership is a list filter everywhere.
+ */
+function ruleScope(scope, owner) {
+  if (!scope.unrestricted || !owner) return { scope, unowned: false };
+  if (owner === 'none') return { scope, unowned: true };
+  const id = Number(owner);
+  return Number.isInteger(id) && id > 0 ? { scope: { unrestricted: false, ownerId: id }, unowned: false } : { scope, unowned: false };
+}
+
+/**
  * The record numbers the Insights rules pick out, as a clause. Loaded on
  * demand: insights.js reaches the follow-up and mail modules, which reach
  * back here, and a static import would make that a cycle.
@@ -1093,6 +1106,7 @@ async function numbersClause(column, params, pick) {
 /**
  *   ?follow_up=overdue        open quotations past their follow-up date
  *   &overdue_days=8-14 | 15+  …and overdue by that many days
+ *   &owner=<user id> | none   …and, for an admin, one owner's
  *   ?close_month=YYYY-MM      expected to close that month
  *   ?month=YYYY-MM            quoted that month (Reports' quoted-vs-won bars)
  */
@@ -1111,21 +1125,23 @@ async function quotationListClauses(q, { scope, params }) {
     const range = parseDayRange(q.overdue_days);
     out.push(await numbersClause('quotation_no', params, async (db, ctx) => {
       const { overdueFollowUps } = await import('./insights.js');
-      const items = await overdueFollowUps(db, scope, ctx);
+      const who = ruleScope(scope, q.owner);
+      const items = (await overdueFollowUps(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
       return items.filter((i) => !range || (i.days_overdue >= range.lo && i.days_overdue <= range.hi)).map((i) => i.number);
     }));
   }
   return out;
 }
 
-/** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle */
+/** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */
 async function enquiryListClauses(q, { scope, params }) {
   if (!q.risk) return [];
   const { RISK_REASONS } = await import('./enquiryRisk.js');
   const reason = RISK_REASONS.includes(q.risk) ? q.risk : null;
   return [await numbersClause('enquiry_no', params, async (db, ctx) => {
     const { enquiriesAtRisk } = await import('./insights.js');
-    const items = await enquiriesAtRisk(db, scope, ctx);
+    const who = ruleScope(scope, q.owner);
+    const items = (await enquiriesAtRisk(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
     return items.filter((i) => !reason || i.reasons.some((r) => r.reason === reason)).map((i) => i.number);
   })];
 }

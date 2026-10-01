@@ -197,6 +197,32 @@ test('every report chart has a table twin, and its rows link into the list', asy
 });
 
 /**
+ * Insights (docs/insights-dashboard-plan.md §7): five questions, each with a
+ * table twin a screen reader gets without asking, and every row a link into
+ * the list that counts the same records. The expected count comes from the
+ * API, so the test holds whatever the database has in it.
+ */
+test('Insights answers five questions, and a bar opens the list it counted', async ({ page }) => {
+  await signIn(page);
+  await page.getByRole('link', { name: 'Insights', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Insights', exact: true })).toBeVisible();
+  for (const question of [/past their follow-up date/, /What do clients owe us/, /enquiries need handling/, /about to become POs/, /expect each period/]) {
+    await expect(page.getByRole('heading', { name: question })).toBeVisible();
+  }
+  // The twins are in the tree before anyone presses a toggle.
+  await expect(page.getByRole('table', { name: /By days past the date/ })).toBeAttached();
+  await expect(page.getByRole('table', { name: /Unpaid invoices by age/ })).toBeAttached();
+
+  const data = (await (await page.request.get('/api/insights')).json()).data;
+  const band = data.follow_ups.buckets.find((b) => b.count > 0) ?? data.follow_ups.buckets[0];
+  const card = page.locator('[data-slot="card"]').filter({ hasText: 'By days past the date' });
+  await card.getByRole('button', { name: 'Open as table' }).click();
+  await card.getByRole('link', { name: band.label }).click();
+  await expect(page).toHaveURL(new RegExp(`/quotations\\?follow_up=overdue&overdue_days=${band.key.replace('+', '%2B')}`));
+  await expect(page.getByText(`${band.count} of ${band.count}`)).toBeVisible();
+});
+
+/**
  * The project record (C15): the checklist is the page, and the steps
  * another record owns are not ticked by hand.
  */

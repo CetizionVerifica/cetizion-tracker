@@ -221,6 +221,9 @@ describe('insights API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' },
     await db.query(`UPDATE quotations SET expected_close_date = '2026-12-15' WHERE quotation_no = 'Q-B1'`);
     assert.deepEqual(await list('meera', '/api/quotations?close_month=2026-12'), ['Q-B1']);
     assert.deepEqual(await list('asha', '/api/quotations?close_month=2026-12'), [], 'still scoped');
+    assert.deepEqual(await list('meera', `/api/quotations?follow_up=overdue&owner=${ids.ben}`), ['Q-B1'], 'an admin following one owner');
+    assert.deepEqual(await list('ben', `/api/quotations?follow_up=overdue&owner=${ids.asha}`), ['Q-B1'], 'owner= is an admin\'s only');
+    assert.deepEqual(await list('meera', '/api/enquiries?risk=at_risk&owner=none'), [], 'every enquiry here has an owner');
   });
 
   test('IN-08: nonsense options fall back to the defaults', async () => {

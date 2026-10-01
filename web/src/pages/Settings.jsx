@@ -297,6 +297,9 @@ const GROUPS = [
       // accounts, so this list (or the daily digest address) is everyone.
       { key: 'followup_escalation_emails', label: 'Management addresses, besides admins', type: 'list' },
       { key: 'followup_cc_owner_on_escalation', label: 'Tell the owner when escalated', type: 'bool' },
+      // When Insights counts an open enquiry as at risk.
+      { key: 'enquiry_reply_days', label: 'Enquiry at risk with no reply after', unit: 'working days' },
+      { key: 'enquiry_decision_warn_days', label: 'Or with no quotation this close to its decision date', unit: 'working days' },
     ],
   },
   {

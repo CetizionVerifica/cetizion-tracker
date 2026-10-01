@@ -375,7 +375,7 @@ async function monthlyTargets(db, scope, years) {
 async function revenueSection(db, scope, ctx, { granularity, horizon, basis }) {
   const first = ctx.today.slice(0, 7);
   if (basis === 'order') return orderBasis(db, scope, ctx, { granularity, horizon, first });
-  const months = windowMonths(first, horizon, granularity);
+  const months = Math.max(windowMonths(first, horizon, granularity), 3);
   const cf = await cashflow({ months, scope, convert: true, db, today: ctx.today });
   const dated = cf.months.filter((m) => /^\d{4}-\d{2}$/.test(m.month));
   const extra = (key) => cf.months.find((m) => m.month === key);
@@ -384,6 +384,8 @@ async function revenueSection(db, scope, ctx, { granularity, horizon, basis }) {
     basis: 'cash',
     periods: rollUp(dated, granularity, ['received', 'invoiced', 'scheduled', 'pipeline'])
       .map((p) => ({ ...p, received: round2(p.received), invoiced: round2(p.invoiced), scheduled: round2(p.scheduled), pipeline: round2(p.pipeline), target: null })),
+    // Firm money in the first three months, for the tile, whatever the period.
+    next_three_months: round2(dated.slice(0, 3).reduce((n, m) => n + m.received + m.invoiced + m.scheduled, 0)),
     later: pick(extra('later')),
     unscheduled: pick(extra('unscheduled')),
     unconverted: cf.foreign.length,
