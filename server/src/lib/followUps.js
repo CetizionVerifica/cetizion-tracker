@@ -122,6 +122,25 @@ export function closedReason(rec, today) {
 }
 
 /**
+ * The follow-up dates a person has set on a record: an enquiry's own
+ * next_follow_up_at, and the earliest open task with a due date on the record
+ * (the "Next step … by" of Log a touch creates one). Earliest first.
+ */
+export const scheduledDates = (rec) => [rec.entity === 'enquiry' ? rec.next_follow_up_at : null, rec.next_task_due ?? null]
+  .filter(Boolean).sort();
+
+/**
+ * Where a record's schedule stands today: `missed`, the earliest date that has
+ * come with nothing logged on or after it; or `planned`, a date still ahead;
+ * or neither, when nobody set one.
+ */
+export function scheduleState(rec, lastActivityOn, today) {
+  const dates = scheduledDates(rec);
+  const missed = dates.find((d) => d <= today && !(lastActivityOn && lastActivityOn >= d)) ?? null;
+  return { missed, planned: !missed && dates.some((d) => d > today) };
+}
+
+/**
  * When an open record became due, or null if it is not due today (§4.1).
  * Returns { due_on, since_on, why } where since_on is the day the quiet
  * spell being counted began.
@@ -136,21 +155,26 @@ export function dueInfo(rec, lastActivityOn, { today, settings, holidays = [] })
     const dueOn = addWorkingDays(since, days, holidays);
     return dueOn <= today ? { due_on: dueOn, since_on: since, why } : null;
   };
-  if (rec.entity === 'enquiry') {
-    const dated = rec.next_follow_up_at;
-    if (dated && dated > today) return null;
-    // The follow-up date has come and nothing was logged on or after it.
-    if (dated && !(lastActivityOn && lastActivityOn >= dated)) return { due_on: dated, since_on: dated, why: 'follow_up_date' };
-    // No date, or the date came and was acted on without a new one being
-    // set: it is due again once it has gone quiet for the idle limit.
-    return idleFrom(later(rec.enquiry_date, dateOf(rec.created_at)), s.followup_enquiry_idle_days, 'idle');
+  // An invoice is never the owner's to chase before it is overdue enough.
+  if (rec.entity === 'payment_stage' && Number(rec.days_overdue || 0) < s.followup_invoice_overdue_days) return null;
+  const overdueOn = rec.entity === 'payment_stage' ? addDays(rec.invoice_due_date, s.followup_invoice_overdue_days) : null;
+
+  // A date the owner set comes first: due on it if nothing was logged on or
+  // after it, and left alone while it is still ahead.
+  const { missed, planned } = scheduleState(rec, lastActivityOn, today);
+  if (missed) {
+    const why = missed === rec.next_task_due ? 'task' : 'follow_up_date';
+    return { due_on: later(missed, overdueOn), since_on: missed, why };
   }
+  if (planned) return null;
+
+  // Nobody set a date, or every date was acted on: due once the record has
+  // gone quiet for its idle limit.
+  if (rec.entity === 'enquiry') return idleFrom(later(rec.enquiry_date, dateOf(rec.created_at)), s.followup_enquiry_idle_days, 'idle');
   if (rec.entity === 'quotation') return idleFrom(dateOf(rec.sent_at), s.followup_quotation_idle_days, 'idle');
   if (rec.entity === 'payment_stage') {
-    if (Number(rec.days_overdue || 0) < s.followup_invoice_overdue_days) return null;
     const idle = idleFrom(rec.invoice_due_date, s.followup_invoice_idle_days, 'overdue');
-    if (!idle) return null;
-    return { ...idle, due_on: later(idle.due_on, addDays(rec.invoice_due_date, s.followup_invoice_overdue_days)) };
+    return idle ? { ...idle, due_on: later(idle.due_on, overdueOn) } : null;
   }
   return null;
 }
@@ -202,6 +226,7 @@ export function planFollowUps({ records = [], open = [], activity = new Map(), t
       since_on: since,
       last_activity_on: lastOn,
       sent_on: rec.entity === 'quotation' ? dateOf(rec.sent_at) : undefined,
+      task_title: due?.why === 'task' ? rec.next_task_title ?? null : undefined,
       idle_days: since ? workingDaysBetween(since, today, holidays) : null,
     };
   };
@@ -234,8 +259,9 @@ export function planFollowUps({ records = [], open = [], activity = new Map(), t
       const ref = ms(cycle.reminded_at ?? cycle.escalated_at ?? cycle.created_at);
       const act = ms(lastAt(key));
       if (act !== null && ref !== null && act > ref) { plan.resolve.push({ id: cycle.id, key, reason: 'activity' }); continue; }
-      if (rec.entity === 'enquiry' && rec.next_follow_up_at && rec.next_follow_up_at > today) {
-        // Moved to a later date with no contact logged (decision D2).
+      if (scheduleState(rec, dateOf(lastAt(key)), today).planned) {
+        // Moved to a later date (the enquiry's, or a task's) with no contact
+        // logged (decision D2).
         plan.resolve.push({ id: cycle.id, key, reason: 'rescheduled' }); continue;
       }
       const since = dateOf(lastAt(key)) ?? cycle.due_on;
@@ -355,6 +381,27 @@ export async function lastActivity(db, keys) {
 const OWNER = `u.name AS owner_name, u.email AS owner_email, u.active AS owner_active`;
 
 /**
+ * The earliest open task with a due date on one record, as a LATERAL join
+ * aliased `nt` (next_task_due, next_task_title). A task counts on its own
+ * record and on every record in task_targets.
+ */
+const NEXT_TASK = (entity, idExpr) => `
+  LEFT JOIN LATERAL (
+    SELECT t.due_at AS next_task_due, t.title AS next_task_title
+      FROM tasks t
+     WHERE t.completed_at IS NULL AND t.due_at IS NOT NULL
+       AND ((t.entity = '${entity}' AND t.entity_id = ${idExpr})
+         OR EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = '${entity}' AND tt.entity_id = ${idExpr}))
+     ORDER BY t.due_at, t.id LIMIT 1
+  ) nt ON true`;
+
+/** The next follow-up task on one record, or null; for the record banner. */
+export async function nextTask(db, entity, id) {
+  const { rows: [row] } = await db.query(`SELECT nt.* FROM (SELECT $1::text AS id) r ${NEXT_TASK(entity, 'r.id')} WHERE nt.next_task_due IS NOT NULL`, [String(id)]);
+  return row ? { due_at: row.next_task_due, title: row.next_task_title } : null;
+}
+
+/**
  * Every open record of the three kinds, plus the records named in `keys`
  * (those with an open cycle) whatever their state, so the plan can tell why
  * a cycle should close.
@@ -365,16 +412,16 @@ export async function loadRecords(db, keys = []) {
     db.query(
       `SELECT 'enquiry' AS entity, e.enquiry_no AS entity_id, e.enquiry_no AS number, e.status, e.next_follow_up_at,
               e.enquiry_date, e.created_at, e.client_name AS client, e.service AS detail,
-              e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id, ${OWNER}
-         FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id
+              e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id, ${OWNER}, nt.*
+         FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id ${NEXT_TASK('enquiry', 'e.enquiry_no')}
         WHERE e.status = ANY($1::text[]) OR e.enquiry_no = ANY($2::text[])`,
       [OPEN_ENQUIRY_STATUSES, ids('enquiry')]
     ),
     db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
               q.sent_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
-              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}
-         FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id
+              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}, nt.*
+         FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id ${NEXT_TASK('quotation', 'q.quotation_no')}
         WHERE (q.status = ANY($1::text[]) AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL AND q.closed_at IS NULL)
            OR q.quotation_no = ANY($2::text[])`,
       [OPEN_QUOTATION_STATUSES, ids('quotation')]
@@ -383,10 +430,10 @@ export async function loadRecords(db, keys = []) {
       `SELECT 'payment_stage' AS entity, ps.id::text AS entity_id, ps.invoice_no AS number, ps.stage_status,
               ps.invoice_no, ps.invoice_due_date, ps.days_overdue, ps.on_hold, ps.promise_to_pay_date,
               ps.client_name AS client, ps.po_number || ' · ' || ps.stage_name AS detail,
-              ps.due_now_amount AS amount, ps.currency, pr.company_id, pr.owner_user_id, ${OWNER}
+              ps.due_now_amount AS amount, ps.currency, pr.company_id, pr.owner_user_id, ${OWNER}, nt.*
          FROM v_payment_stages ps
          JOIN projects pr ON pr.project_id = ps.project_id
-         LEFT JOIN users u ON u.id = pr.owner_user_id
+         LEFT JOIN users u ON u.id = pr.owner_user_id ${NEXT_TASK('payment_stage', 'ps.id::text')}
         WHERE ps.stage_status IN ('Overdue', 'Partially Paid') OR ps.id::text = ANY($1::text[])`,
       [ids('payment_stage')]
     ),

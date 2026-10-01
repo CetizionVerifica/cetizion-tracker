@@ -262,3 +262,47 @@ test('a re-escalation setting of 0 still lets the grace period escalate', () => 
   assert.deepEqual(p.escalate.map((e) => e.cycle.id), [1]);
   assert.deepEqual(p.resolve, []);
 });
+
+// ------------------------------------------------- tasks as follow-up dates
+
+test('T-01: a quotation is due the day its next task falls due, even inside the quiet period', () => {
+  const q = quotation({ sent_at: '2026-10-01T06:00:00Z', next_task_due: '2026-10-05', next_task_title: 'Send revised quote' });
+  const due = isDue(q, '2026-10-05');
+  assert.deepEqual([due.due_on, due.why], ['2026-10-05', 'task']);
+  const p = plan([q]);
+  assert.equal(p.remind[0].items[0].task_title, 'Send revised quote');
+});
+
+test('T-02: a task still ahead means the follow-up is planned: no idle nagging before it', () => {
+  // Sent in early September and quiet since, which would be due on the idle rule alone.
+  assert.equal(isDue(quotation({ sent_at: '2026-09-01T06:00:00Z', next_task_due: '2026-10-12' }), '2026-10-05'), null);
+  assert.equal(isDue(invoice({ next_task_due: '2026-10-12' }), '2026-10-05'), null);
+});
+
+test('T-03: activity on or after the task date meets it; the quiet rule takes over from there', () => {
+  const q = quotation({ sent_at: '2026-09-01T06:00:00Z', next_task_due: '2026-10-01' });
+  assert.equal(isDue(q, '2026-10-05', { activity: '2026-10-02T06:00:00Z' }), null);
+  assert.equal(isDue(q, '2026-10-09', { activity: '2026-10-02T06:00:00Z' }).why, 'idle');
+});
+
+test('T-04: an enquiry takes the earliest missed date, its own or a task\'s', () => {
+  const e = enquiry({ next_follow_up_at: '2026-10-12', next_task_due: '2026-10-01' });
+  assert.deepEqual([isDue(e, '2026-10-05').due_on, isDue(e, '2026-10-05').why], ['2026-10-01', 'task']);
+  const f = enquiry({ next_follow_up_at: '2026-10-02', next_task_due: '2026-10-12' });
+  assert.equal(isDue(f, '2026-10-05').why, 'follow_up_date');
+});
+
+test('T-05: a task does not make an invoice due before it is overdue enough', () => {
+  assert.equal(isDue(invoice({ days_overdue: 0, next_task_due: '2026-10-01' }), '2026-10-05'), null);
+  const due = isDue(invoice({ next_task_due: '2026-10-02' }), '2026-10-05');
+  assert.deepEqual([due.why, due.due_on], ['task', '2026-10-02']);
+});
+
+test('T-06: moving the task to a later date with no contact resolves the cycle as rescheduled', () => {
+  const c = cycle({ entity: 'quotation', entity_id: 'Q-1' });
+  const p = plan([quotation({ sent_at: '2026-09-01T06:00:00Z', next_task_due: '2026-10-14' })], [c], '2026-10-06');
+  assert.deepEqual(p.resolve.map((r) => r.reason), ['rescheduled']);
+  // Still overdue: the cycle stands and escalates as usual.
+  const q = plan([quotation({ sent_at: '2026-09-01T06:00:00Z', next_task_due: '2026-10-05' })], [c], '2026-10-08');
+  assert.equal(q.escalate.length, 1);
+});

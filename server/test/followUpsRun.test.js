@@ -386,6 +386,26 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     assert.equal(result.escalated, 50);
   });
 
+  test('tasks: the earliest open dated task on a record, also through task_targets, is its follow-up date', async () => {
+    const { loadRecords } = await import('../src/lib/followUps.js');
+    await quotation('Q-1', people.asha, '2026-10-01T06:00:00Z');
+    await enquiry('ENQ-1', people.asha, null);
+    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('quotation', 'Q-1', 'Later', '2026-10-20'), ('quotation', 'Q-1', 'Send revised quote', '2026-10-05')`);
+    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at, status) VALUES ('quotation', 'Q-1', 'Already done', '2026-09-30', 'done')`);
+    const { rows: [t] } = await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('enquiry', 'ENQ-9', 'Shared call', '2026-10-02') RETURNING id`);
+    await db.query(`INSERT INTO task_targets (task_id, entity, entity_id) VALUES ($1, 'enquiry', 'ENQ-1')`, [t.id]);
+    const recs = await loadRecords(db);
+    const q = recs.find((r) => r.entity_id === 'Q-1');
+    assert.deepEqual([q.next_task_due, q.next_task_title], ['2026-10-05', 'Send revised quote']);
+    assert.equal(recs.find((r) => r.entity_id === 'ENQ-1').next_task_due, '2026-10-02');
+
+    // Sent four days ago, so not due on the quiet rule; due because of its task.
+    const send = sender();
+    await run('2026-10-05', { send });
+    const toAsha = send.calls.find((c) => c.to === 'asha@qa.example');
+    assert.match(toAsha.text, /Q-1 · Midal · task "Send revised quote" due 05 Oct 2026/);
+  });
+
   test('I-14: two runs at once: one works, the other stands aside', async () => {
     await seedFour();
     const send = sender();

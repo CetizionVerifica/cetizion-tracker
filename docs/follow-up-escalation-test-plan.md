@@ -153,6 +153,19 @@ File: `server/test/followUps.test.js`. Pure functions, no database.
 | U-S01 | A setting that is blank, `'abc'` or negative | The default is used, and the test documents which one |
 | U-S02 | Today is Saturday `2026-10-03`, or the holiday `2026-10-02` | `planFollowUps` returns nothing to do and gives the reason `not a working day` |
 
+### Tasks as follow-up dates (as built, plan §4.1)
+
+| ID | Case | Expected |
+| --- | --- | --- |
+| T-01 | Quotation sent 1 Oct (inside the quiet period), open task due 5 Oct, today 5 Oct | Due on 5 Oct, reason `task`, the task's title in the email |
+| T-02 | Quotation or invoice quiet for weeks, open task due 12 Oct, today 5 Oct | Not due: the follow-up is planned |
+| T-03 | Task due 1 Oct, a touch on 2 Oct | Not due on 5 Oct; due on the quiet rule from 2 Oct (9 Oct) |
+| T-04 | Enquiry date 12 Oct and a task due 1 Oct; and the reverse | Due on the earliest missed date, with its reason |
+| T-05 | Invoice 0 days overdue with a task due 1 Oct | Not due until it is overdue enough |
+| T-06 | Open cycle, task moved to a later date with no contact | Resolved as `rescheduled`; a task still overdue escalates as usual |
+| T-07 | Two open tasks, one done task, one task attached through `task_targets` | The earliest open dated task counts, on every record it stands on; a done task does not |
+| T-08 | `GET /api/follow-ups/record` on a record with a planned task | `next_task` gives its date and title, with or without an open cycle |
+
 ## 5. Unit tests: the cycle (§4.3)
 
 Same file. Input: due candidates, open cycles, the activity map and today.

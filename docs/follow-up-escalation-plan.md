@@ -109,6 +109,29 @@ Notes:
   chased is a decision for the lead (§11, D3). The plan assumes **no**: raising
   an invoice is finance's job, and My Today already lists them.
 
+#### As built: tasks are the follow-up date
+
+Quotations and invoices have no follow-up date of their own, and adding one
+would be a second place to type the same intention. The date is the **earliest
+open task with a due date** on the record (on the task's own record or any
+record in `task_targets`). "Log a touch" → *Next step … by* creates exactly
+that task. For an enquiry, its own `next_follow_up_at` is a second such date.
+
+For every kind, before the rules in the table above:
+
+1. **A date has come and nothing was logged on or after it** → due on that
+   date (the earliest such date). An invoice must still be overdue by
+   `followup_invoice_overdue_days`.
+2. **Every date is still ahead** → not due: the owner has planned the
+   follow-up, so the quiet-period rule does not nag before it.
+3. **No date, or every date was met by activity** → the quiet-period rule in
+   the table applies.
+
+With an open cycle, moving the date that made it due to a later day with no
+contact logged resolves it as `rescheduled` (D2), for a task as for an
+enquiry's own date. Completing the task counts as activity. The record banner
+shows the next planned task when no follow-up is open.
+
 ### 4.2 What counts as activity
 
 Activity on a record is any of these, made by a **person** (not a job), on

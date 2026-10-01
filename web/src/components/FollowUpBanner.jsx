@@ -25,7 +25,20 @@ export function FollowUpBanner({ entity, id, version = 0, onLog, logLabel = 'Log
     [entity, id, version, enabled]
   );
   const c = data?.data;
-  if (!c) return null;
+  const next = data?.next_task;
+  if (!c) {
+    // Nothing overdue: say what is planned, so the owner can see the date the
+    // reminder will go by. A task with a due date is the follow-up date.
+    if (!next) return null;
+    return (
+      <div className={className}>
+        <p className="m-0 text-[12.5px] text-muted-foreground">
+          Next follow-up: <span className="font-medium text-foreground">{date(next.due_at)}</span>
+          {next.title && <> · {next.title}</>} <span>(task)</span>
+        </p>
+      </div>
+    );
+  }
 
   const escalated = Boolean(c.escalated_at);
   return (
@@ -35,6 +48,7 @@ export function FollowUpBanner({ entity, id, version = 0, onLog, logLabel = 'Log
           <span>
             <strong>Follow-up due since {date(c.due_on)}.</strong>{' '}
             {c.reminded_at && <>Reminder sent {date(c.reminded_at)}. </>}
+          {next && <>Next task: {next.title ? `${next.title}, ` : ''}due {date(next.due_at)}. </>}
             {escalated
               ? (c.reminded_at
                 ? <>Nothing was logged by {date(c.respond_by)}, so it went to management on {date(c.last_escalated_on || c.escalated_at)}.</>
