@@ -169,10 +169,14 @@ const recordLink = (appUrl, item) => {
 
 /** Why an item needs a follow-up, in a few words. */
 function whyDue(i) {
+  if (i.why === 'task') {
+    const task = `task${i.task_title ? ` "${i.task_title}"` : ''} due ${date(i.due_on)}`;
+    return i.entity === 'payment_stage' ? `${inr(i.amount, i.currency || 'INR')} overdue ${plural(Number(i.days_overdue || 0), 'day', 'days')}; ${task}` : task;
+  }
   if (i.entity === 'enquiry') {
     return i.why === 'follow_up_date' ? `follow-up date ${date(i.due_on)}` : `no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
   }
-  if (i.entity === 'quotation') return `sent ${date(i.sent_on)}, no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
+  if (i.entity === 'quotation') return `${{ dated: 'dated', entered: 'entered' }[i.sent_basis] || 'sent'} ${date(i.sent_on)}, no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
   return `${inr(i.amount, i.currency || 'INR')} overdue ${plural(Number(i.days_overdue || 0), 'day', 'days')}`;
 }
 
@@ -253,6 +257,11 @@ const escalationRow = (appUrl, i) => [
   i.reminded_on ? date(i.reminded_on) : '—', i.respond_by ? date(i.respond_by) : '—', i.idle_days === null || i.idle_days === undefined ? '' : String(i.idle_days),
 ];
 const ESCALATION_HEADERS = ['Record', 'Client', 'Value', 'Reminded', 'Respond by', 'Working days quiet'];
+const UNOWNED_HEADERS = ['Record', 'Client', 'Value', 'Previous owner', 'Working days quiet'];
+const unownedRow = (appUrl, i) => [
+  label(i), recordLink(appUrl, i), i.client || '', i.amount === null || i.amount === undefined ? '' : inr(i.amount, i.currency || 'INR'),
+  i.owner_name || '—', i.idle_days === null || i.idle_days === undefined ? '' : String(i.idle_days),
+];
 
 /**
  * The daily escalation to management: follow-ups nobody acted on after a
@@ -265,14 +274,20 @@ export function followUpEscalation({ today, escalated = [], stillOpen = [], unow
   if (stillOpen.length) parts.push(`${stillOpen.length} still open`);
   if (unowned.length) parts.push(`${unowned.length} with no owner`);
   const subject = `Follow-ups missed: ${parts.join(', ')}`;
+  // Say what actually happened: nobody was reminded about an unowned record.
+  const reminded = escalated.length + stillOpen.length;
+  const intro = reminded && unowned.length
+    ? 'The owner was reminded about the first of these and nothing has been logged since. The rest have no owner to remind.'
+    : reminded ? 'The owner was reminded and nothing has been logged on these since.'
+    : 'These are due a follow-up and have no owner to remind.';
 
-  const textRow = (i) => `  - ${label(i)} · ${i.client || ''}${i.amount === null || i.amount === undefined ? '' : ` · ${inr(i.amount, i.currency || 'INR')}`} · reminded ${i.reminded_on ? date(i.reminded_on) : '—'} · respond by ${i.respond_by ? date(i.respond_by) : '—'} · ${i.idle_days ?? '?'} working days quiet\n    ${recordLink(appUrl, i)}`;
+  const textRow = (i) => `  - ${label(i)} · ${i.client || ''}${i.amount === null || i.amount === undefined ? '' : ` · ${inr(i.amount, i.currency || 'INR')}`}${i.reminded_on ? ` · reminded ${date(i.reminded_on)} · respond by ${date(i.respond_by)}` : ''} · ${i.idle_days ?? '?'} working days quiet\n    ${recordLink(appUrl, i)}`;
   const textGrouped = (title, items) => (items.length
     ? `${title} (${items.length})\n${groupByOwner(items).map(([owner, rows]) => `${owner}\n${rows.map(textRow).join('\n')}`).join('\n')}\n\n`
     : '');
   const text = `Follow-ups missed, ${date(today)}
 
-The owner was reminded and nothing has been logged on these since.
+${intro}
 
 ${textGrouped('MISSED', escalated)}${textGrouped('STILL OPEN AFTER AN EARLIER ESCALATION', stillOpen)}${unowned.length ? `NO OWNER (${unowned.length})\nNobody could be reminded. Assign an owner in the tracker.\n${unowned.map((i) => `${textRow(i)}${i.owner_name ? ` (was ${i.owner_name})` : ''}`).join('\n')}\n` : ''}`;
 
@@ -280,8 +295,8 @@ ${textGrouped('MISSED', escalated)}${textGrouped('STILL OPEN AFTER AN EARLIER ES
     ? `<h3 style="font-size:14px;margin:16px 0 4px">${esc(title)} (${items.length})</h3>${groupByOwner(items).map(([owner, rows]) => `<p style="margin:8px 0 0"><strong>${esc(owner)}</strong></p>${linkTable(ESCALATION_HEADERS, rows.map((i) => escalationRow(appUrl, i)))}`).join('')}`
     : '');
   const html = layout(`Follow-ups missed, ${date(today)}`, `
-<p>The owner was reminded and nothing has been logged on these since.</p>
-${htmlGrouped('Missed', escalated)}${htmlGrouped('Still open after an earlier escalation', stillOpen)}${unowned.length ? `<h3 style="font-size:14px;margin:16px 0 4px">No owner (${unowned.length})</h3><p>Nobody could be reminded. Assign an owner in the tracker.</p>${linkTable(ESCALATION_HEADERS, unowned.map((i) => escalationRow(appUrl, i)))}` : ''}`);
+<p>${esc(intro)}</p>
+${htmlGrouped('Missed', escalated)}${htmlGrouped('Still open after an earlier escalation', stillOpen)}${unowned.length ? `<h3 style="font-size:14px;margin:16px 0 4px">No owner (${unowned.length})</h3><p>Nobody could be reminded. Assign an owner in the tracker.</p>${linkTable(UNOWNED_HEADERS, unowned.map((i) => unownedRow(appUrl, i)))}` : ''}`);
   return { subject, text, html };
 }
 

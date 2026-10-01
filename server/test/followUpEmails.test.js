@@ -91,3 +91,24 @@ test('E-10: the text and HTML versions carry the same records', () => {
     assert.ok(html.includes(i.number), `html has ${i.number}`);
   }
 });
+
+test('a task-driven item names the task and its date', () => {
+  const { text } = followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items: [quo({ why: 'task', due_on: '2026-10-05', task_title: 'Send revised quote' }), inv({ why: 'task', due_on: '2026-10-02', task_title: 'Call accounts' })] });
+  assert.match(text, /Q-1 · Midal · task "Send revised quote" due 05 Oct 2026/);
+  assert.match(text, /₹1,20,000 overdue 12 days; task "Call accounts" due 02 Oct 2026/);
+});
+
+test('an escalation of unowned items only does not claim anyone was reminded', () => {
+  const only = followUpEscalation({ today, appUrl, unowned: [inv({ owner_name: null, owner_user_id: null, idle_days: 67 })] });
+  assert.doesNotMatch(only.text, /was reminded/);
+  assert.match(only.text, /These are due a follow-up and have no owner to remind/);
+  assert.doesNotMatch(only.text, /reminded —|respond by —/);
+  assert.doesNotMatch(only.html, /Respond by/);
+  const mixed = followUpEscalation({ today, appUrl, escalated: [escalated()], unowned: [inv({ owner_name: null, owner_user_id: null })] });
+  assert.match(mixed.text, /The rest have no owner to remind/);
+});
+
+test('a quotation never sent from the tracker reads "dated", not "sent"', () => {
+  const { text } = followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items: [quo({ sent_basis: 'dated', sent_on: '2026-09-20', idle_days: 11 })] });
+  assert.match(text, /Q-1 · Midal · dated 20 Sep 2026, no contact for 11 working days/);
+});

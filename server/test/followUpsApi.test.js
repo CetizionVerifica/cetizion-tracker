@@ -133,6 +133,14 @@ describe('follow-ups API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
     assert.deepEqual(numbers(await get('asha', `/api/follow-ups?status=open&owner=${ids.ben}`)), ['ENQ-A', 'Q-A']);
   });
 
+  test('the record endpoint returns the next planned task', async () => {
+    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('quotation', 'Q-B', 'Call back', '2026-10-15')`);
+    const res = await get('ben', '/api/follow-ups/record?entity=quotation&id=Q-B');
+    assert.deepEqual(res.body.next_task, { due_at: '2026-10-15', title: 'Call back' });
+    const none = await get('asha', '/api/follow-ups/record?entity=enquiry&id=ENQ-A');
+    assert.equal(none.body.next_task, null);
+  });
+
   test('A-08: a touch since the reminder hides the banner before the job runs', async () => {
     await db.query(`INSERT INTO communications (channel, outcome, entity, entity_id, started_at) VALUES ('call', 'connected', 'quotation', 'Q-A', now())`);
     const res = await get('asha', '/api/follow-ups/record?entity=quotation&id=Q-A');

@@ -320,7 +320,7 @@ export function TouchDialog({ entity, id, start, onClose, onSaved }) {
         {v.channel === 'meeting' && <Field label="Attendees"><Input value={v.attendees} onChange={(e) => set('attendees', e.target.value)} /></Field>}
         <div className="span-all"><Field label="Notes"><Textarea rows={3} value={v.summary} onChange={(e) => set('summary', e.target.value)} placeholder="What was agreed" autoFocus /></Field></div>
         <Field label="Next step"><Input value={v.next_title} onChange={(e) => set('next_title', e.target.value)} placeholder="Send revised quote" /></Field>
-        <Field label="By"><Input type="date" value={v.next_due} onChange={(e) => set('next_due', e.target.value)} /></Field>
+        <Field label="By" hint="Sets the next follow-up date: the owner is reminded on it if nothing is logged"><Input type="date" value={v.next_due} onChange={(e) => set('next_due', e.target.value)} /></Field>
       </form>
     </Modal>
   );

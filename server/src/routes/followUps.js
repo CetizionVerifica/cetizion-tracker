@@ -15,7 +15,7 @@ import { assertRecordReachable, parentClause, scopeOf } from '../auth/ownership.
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
-import { dateOf, keyOf, lastActivity, recordLink } from '../lib/followUps.js';
+import { dateOf, keyOf, lastActivity, nextTask, recordLink } from '../lib/followUps.js';
 
 export const followUpsRouter = Router();
 
@@ -107,16 +107,20 @@ followUpsRouter.get('/record', async (req, res) => {
   if (!id) throw new ApiError(422, 'id is required');
   await assertRecordReachable(scopeOf(req), entity, id);
 
-  const { rows: [cycle] } = await query(
-    `SELECT c.*, ${STATUS} AS status FROM follow_up_cycles c
-      WHERE c.entity = $1 AND c.entity_id = $2 AND c.resolved_at IS NULL`,
-    [entity, id]
-  );
-  if (!cycle) return res.json({ data: null });
+  const [{ rows: [cycle] }, next] = await Promise.all([
+    query(
+      `SELECT c.*, ${STATUS} AS status FROM follow_up_cycles c
+        WHERE c.entity = $1 AND c.entity_id = $2 AND c.resolved_at IS NULL`,
+      [entity, id]
+    ),
+    // The next follow-up the owner has planned, shown whether or not one is overdue.
+    nextTask({ query }, entity, id),
+  ]);
+  if (!cycle) return res.json({ data: null, next_task: next });
   const last = (await lastActivity({ query }, [keyOf(cycle)])).get(keyOf(cycle));
   const since = cycle.reminded_at ?? cycle.escalated_at ?? cycle.created_at;
-  if (last && new Date(last) > new Date(since)) return res.json({ data: null, acted: true });
-  res.json({ data: cycle });
+  if (last && new Date(last) > new Date(since)) return res.json({ data: null, acted: true, next_task: next });
+  res.json({ data: cycle, next_task: next });
 });
 
 followUpsRouter.get('/summary', requireAdmin, async (req, res) => {
