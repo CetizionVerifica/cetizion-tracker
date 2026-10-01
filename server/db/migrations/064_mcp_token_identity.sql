@@ -1,4 +1,4 @@
--- 063 — an MCP token is a person, not a spelling (#18 §2, and #89).
+-- 064 — an MCP token is a person, not a spelling (#18 §2, and #89).
 --
 -- 038 gave a sales token a `person`: the free-text sales-person name used
 -- on records, because when it was written there were no accounts to point

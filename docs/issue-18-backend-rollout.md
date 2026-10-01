@@ -25,33 +25,33 @@ is reversible and changes nothing anybody can see.
 | `060_backfill_record_ownership.sql` | Assigns an owner where the data names one beyond doubt. DML only. | no, but it only ever fills a null |
 | `061_ownership_history.sql` | `ownership_history`, the handover record. | yes |
 | `062_sales_targets_and_origin.sql` | `sales_targets`, and the originating-salesperson columns. | yes |
-| `063_mcp_token_identity.sql` | `api_tokens.user_id`; binds existing tokens, revokes what it cannot bind. | column yes; **the revocations are not** |
-| `064_decision_dates.sql` | `won_at`, `lost_at`, `enquiries.decided_at` and their estimated flags, plus the trigger that keeps them. Backfills from `closed_at` or `quotation_date`. | yes |
-| `065_auth_events_identity.sql` | `auth_events.user_id`, so a sign-in names an account. | yes |
-| `066_target_periods.sql` | `sales_targets` keyed on a period rather than a calendar year; seeds the stale-quotation threshold. | yes |
-| `067_payment_origin.sql` | `payments.origin`, so a receipt can be told from a balance carried in. | yes |
+| `064_mcp_token_identity.sql` | `api_tokens.user_id`; binds existing tokens, revokes what it cannot bind. | column yes; **the revocations are not** |
+| `065_decision_dates.sql` | `won_at`, `lost_at`, `enquiries.decided_at` and their estimated flags, plus the trigger that keeps them. Backfills from `closed_at` or `quotation_date`. | yes |
+| `066_auth_events_identity.sql` | `auth_events.user_id`, so a sign-in names an account. | yes |
+| `067_target_periods.sql` | `sales_targets` keyed on a period rather than a calendar year; seeds the stale-quotation threshold. | yes |
+| `068_payment_origin.sql` | `payments.origin`, so a receipt can be told from a balance carried in. | yes |
 
 Two of these change what somebody sees the moment they run:
 
-- **063 revokes MCP tokens** whose `person` matches no account, or more than
+- **064 revokes MCP tokens** whose `person` matches no account, or more than
   one. Anybody using such a token gets a 401 on their next call. That is
-  deliberate — see `db/migrations/063_mcp_token_identity.sql` — but it is
+  deliberate — see `db/migrations/064_mcp_token_identity.sql` — but it is
   the one migration that can interrupt someone's day, so run it knowing who
   holds a token. `SELECT name, person FROM api_tokens WHERE revoked_at IS
   NULL AND role = 'sales'` before, and re-issue afterwards from Settings.
-- **064 stamps decision dates** on every won and lost quotation. Figures
+- **065 stamps decision dates** on every won and lost quotation. Figures
   derived from a guess carry `won_at_estimated` / `lost_at_estimated`; a
   report that does not surface that flag will show a sales cycle of zero
   days for historical deals and look broken rather than approximate.
 
 Two more change shape rather than behaviour, and are worth knowing about:
 
-- **066 re-keys `sales_targets`** from `calendar_year` to a period. Existing
+- **067 re-keys `sales_targets`** from `calendar_year` to a period. Existing
   annual targets keep their value and become a January–January range;
   `calendar_year` is kept beside them and becomes nullable. Nothing anybody
   set is lost, but any client posting `calendar_year` must now post a
   period — see the API note below.
-- **067 labels existing `payments` rows** by what they are. It only ever
+- **068 labels existing `payments` rows** by what they are. It only ever
   relabels rows the trigger itself wrote, and the arithmetic
   `payments_changed` does is untouched: the stage total is still the sum of
   its rows.
@@ -77,8 +77,8 @@ looks like data, so it is reported separately instead.
 
 ### 1. Take a backup
 
-The cutover writes nothing irreversible, but 060 and 064 write data and
-063 revokes tokens. This is the cheapest moment to have one.
+The cutover writes nothing irreversible, but 060 and 065 write data and
+064 revokes tokens. This is the cheapest moment to have one.
 
 ### 2. Run the migrations
 
@@ -166,7 +166,7 @@ asking for ids one at a time.
 
 ### 6. Re-issue MCP tokens
 
-Check what 063 revoked and issue replacements against accounts:
+Check what 064 revoked and issue replacements against accounts:
 
 ```
 GET  /api/api-tokens

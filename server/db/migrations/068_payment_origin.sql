@@ -1,4 +1,4 @@
--- 067 — telling a receipt from a balance brought forward (#18 §5).
+-- 068 — telling a receipt from a balance brought forward (#18 §5).
 --
 -- §5 wants "Invoiced / collected" per person per period. Both are
 -- computable today, and the KPI engine's claim that they are not —

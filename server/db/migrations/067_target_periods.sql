@@ -1,4 +1,4 @@
--- 066 — a target belongs to a period, not to a calendar year (#18 §4).
+-- 067 — a target belongs to a period, not to a calendar year (#18 §4).
 --
 -- 062 keyed sales_targets on `calendar_year`. Issue #18 §4 asks for
 -- `period` (month), and the difference is not cosmetic:

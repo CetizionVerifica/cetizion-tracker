@@ -1,4 +1,4 @@
--- 065 — a sign-in belongs to an account, and a sign-out is an event (#18 §3).
+-- 066 — a sign-in belongs to an account, and a sign-out is an event (#18 §3).
 --
 -- @Hayyan612's review of #83 called missing sign-in events "the biggest
 -- gap" in the activity log, "for a table whose stated purpose is the

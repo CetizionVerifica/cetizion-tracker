@@ -449,7 +449,7 @@ CREATE TABLE quotations (
   lost_notes             text,
   competitor             text,
   closed_at              timestamptz,
-  -- When it was decided, and whether we actually know (#18 §3, 064).
+  -- When it was decided, and whether we actually know (#18 §3, 065).
   -- closed_at above is one column for both outcomes and is driven by the
   -- pipeline stage; these are driven by `status`, which is the field #18 §5
   -- defines the KPIs on, and they say which outcome the date belongs to.
@@ -482,7 +482,7 @@ CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
 -- Owner first: the KPI queries filter a half-open period and group by
 -- person, so a bare date index would be read for "won in Q2" and the rows
--- then filtered by owner one at a time (064).
+-- then filtered by owner one at a time (065).
 CREATE INDEX quotations_won_at_idx  ON quotations (owner_user_id, won_at)  WHERE won_at IS NOT NULL;
 CREATE INDEX quotations_lost_at_idx ON quotations (owner_user_id, lost_at) WHERE lost_at IS NOT NULL;
 CREATE INDEX quotations_originating_user_id_idx ON quotations (originating_user_id);
@@ -587,7 +587,7 @@ CREATE TABLE enquiries (
   -- Last in this table, and deliberately so. v_enquiries is `SELECT e.*`,
   -- which records in the view's own definition the order the columns are in.
   -- ALTER TABLE can only append, so every database upgraded through 059,
-  -- 062 and 064 has these six here, at the end — and scripts/ci/check-migrations.sh
+  -- 062 and 065 has these six here, at the end — and scripts/ci/check-migrations.sh
   -- compares the view a fresh schema.sql builds against the view an upgraded
   -- database has. Declaring them up beside sales_person, where they read
   -- best, builds a v_enquiries that no real database matches.
@@ -598,11 +598,11 @@ CREATE TABLE enquiries (
   originating_user_id          int,
   originating_user_snapshot_id int,
   originating_user_name        text,
-  -- When the lead stopped being one, either way (#18 §3, 064). An enquiry
+  -- When the lead stopped being one, either way (#18 §3, 065). An enquiry
   -- has no closed_at to fall back on, so every backfilled date here is an
   -- estimate from enquiry_date.
   --
-  -- After the four above, and for the same reason: 064 is an ALTER TABLE
+  -- After the four above, and for the same reason: 065 is an ALTER TABLE
   -- too, so this is the order an upgraded database has, and so the order
   -- v_enquiries must expand `e.*` into on both sides of the check.
   decided_at           timestamptz,
@@ -779,7 +779,7 @@ CREATE TABLE payments (
   reference    text,
   notes        text,
   recorded_by  text,
-  -- What kind of row this is (#18 §5, 067), so a collections figure can say
+  -- What kind of row this is (#18 §5, 068), so a collections figure can say
   -- how much of itself it actually knows:
   --
   --   receipt          money arriving, on the date it arrived.
@@ -2557,7 +2557,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   -- change any of them. Off unless asked for: a token requested without
   -- saying otherwise is a reading token (#50).
   can_write     boolean NOT NULL DEFAULT false,
-  -- Whose records a sales token sees (063). CASCADE, unlike owner_user_id's
+  -- Whose records a sales token sees (064). CASCADE, unlike owner_user_id's
   -- SET NULL on the record tables: a quotation is the company's history and
   -- outlives whoever sold it, but a token is a credential belonging to one
   -- person, and a credential whose owner is gone must stop working rather
@@ -2574,7 +2574,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   revoked_at    timestamptz,
   CHECK (role = 'admin' OR person IS NOT NULL),
   -- A live sales token has an account behind it. Revoked rows are exempt:
-  -- they are history, including tokens 063 revoked because no account could
+  -- they are history, including tokens 064 revoked because no account could
   -- be matched to their name.
   CONSTRAINT api_tokens_sales_needs_user CHECK (
     role = 'admin' OR user_id IS NOT NULL OR revoked_at IS NOT NULL
@@ -2606,9 +2606,9 @@ ON CONFLICT (key) DO NOTHING;
 CREATE TABLE IF NOT EXISTS auth_events (
   id          bigserial PRIMARY KEY,
   username    text,
-  -- Which account, once one was resolved (065). Null on a failure, because
+  -- Which account, once one was resolved (066). Null on a failure, because
   -- nobody knows who a wrong password belongs to, and null on rows written
-  -- before 065. SET NULL rather than CASCADE for activity_log's reason:
+  -- before 066. SET NULL rather than CASCADE for activity_log's reason:
   -- deleting an account must not erase every sign-in it ever made.
   user_id     integer REFERENCES users(id) ON DELETE SET NULL,
   ip          text,
@@ -2733,14 +2733,14 @@ CREATE TABLE IF NOT EXISTS sales_targets (
   id                          serial PRIMARY KEY,
   salesperson_user_id         integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   -- The period a target covers, half-open [start, end), the same convention
-  -- every report uses (#18 §4, 066). A date range rather than a year number
+  -- every report uses (#18 §4, 067). A date range rather than a year number
   -- because the business runs on the Indian financial year — the invoice
   -- series is already numbered by it — and because §6 wants monthly intake
   -- against target, which an annual figure cannot be decomposed into.
   period_start                date NOT NULL,
   period_end                  date NOT NULL,
   period_type                 text NOT NULL,
-  -- Derived from period_start and kept for anything still reading it. 066
+  -- Derived from period_start and kept for anything still reading it. 067
   -- made it nullable: an April-to-March target has no single calendar year
   -- to name, and forcing one would make the column lie about half its rows.
   calendar_year               integer CHECK (calendar_year BETWEEN 2000 AND 2100),
@@ -2787,7 +2787,7 @@ CREATE TABLE IF NOT EXISTS sales_targets (
 
 -- One target per person, per period, per metric. Keyed on the period, not
 -- the year: the old index would have forbidden twelve monthly intake
--- targets in one year, which is the thing 066 exists to allow.
+-- targets in one year, which is the thing 067 exists to allow.
 --
 -- COALESCE on currency because a plain UNIQUE treats two NULLs as distinct,
 -- so it would let the same count target be created twice.

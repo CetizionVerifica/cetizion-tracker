@@ -1,4 +1,4 @@
--- 064 — when a deal was decided, not just that it was (#18 §3).
+-- 065 — when a deal was decided, not just that it was (#18 §3).
 --
 -- Issue #18: "Quotations keep only their current status, quotation_date and
 -- updated_at. We can't tell when a quotation was won or lost, or who

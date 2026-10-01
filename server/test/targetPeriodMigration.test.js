@@ -6,7 +6,7 @@ import test, { describe } from 'node:test';
 import pg from 'pg';
 
 /**
- * Migrations 066 and 067, run against the shape they are written for.
+ * Migrations 067 and 068, run against the shape they are written for.
  *
  * Both are tested by putting the tables back the way they were and then
  * running the file, because a migration only ever run against the schema it
@@ -24,11 +24,11 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 const VIEWS = readFileSync(join(DB_DIR, 'views.sql'), 'utf8');
-const M066 = readFileSync(join(DB_DIR, 'migrations', '066_target_periods.sql'), 'utf8');
-const M067 = readFileSync(join(DB_DIR, 'migrations', '067_payment_origin.sql'), 'utf8');
+const M067 = readFileSync(join(DB_DIR, 'migrations', '067_target_periods.sql'), 'utf8');
+const M068 = readFileSync(join(DB_DIR, 'migrations', '068_payment_origin.sql'), 'utf8');
 
 /** sales_targets as 062 left it: keyed on a calendar year. */
-const UNDO_066 = `
+const UNDO_067 = `
   DROP INDEX IF EXISTS sales_targets_period_unique_idx;
   DROP INDEX IF EXISTS sales_targets_period_idx;
   ALTER TABLE sales_targets
@@ -45,12 +45,12 @@ const UNDO_066 = `
 `;
 
 /** payments as #27 left it: no origin column, opening balances known only by their notes. */
-const UNDO_067 = `
+const UNDO_068 = `
   DROP INDEX IF EXISTS payments_received_on_idx;
   ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_origin_check;
   ALTER TABLE payments DROP COLUMN IF EXISTS origin;
 
-  -- The trigger has to go back too. schema.sql now ships 067's version,
+  -- The trigger has to go back too. schema.sql now ships 068's version,
   -- which sets NEW.origin; leaving it beside a dropped column would be a
   -- state no real database was ever in, and every insert would fail with
   -- "record new has no field origin" before the migration got a chance.
@@ -98,16 +98,16 @@ const salesperson = async (db, name = 'Ramesh') => (await db.query(
   [name, `${name.toLowerCase()}@example.com`]
 )).rows[0].id;
 
-describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+describe('migration 067 — targets by period', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   test('an existing annual target keeps its value and gains the year as a range', () =>
-    withDatabase('m066_keep', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_keep', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
       await db.query(
         `INSERT INTO sales_targets (salesperson_user_id, calendar_year, metric, target_value, unit, currency)
          VALUES ($1, 2026, 'order_intake_value', 5000000, 'currency', 'INR')`, [uid]);
 
-      await db.query(M066);
+      await db.query(M067);
 
       const { rows: [t] } = await db.query(
         'SELECT target_value, period_start::text, period_end::text, period_type, calendar_year FROM sales_targets');
@@ -119,10 +119,10 @@ describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_
     }));
 
   test('twelve monthly targets in one year become possible', () =>
-    withDatabase('m066_monthly', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_monthly', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
-      await db.query(M066);
+      await db.query(M067);
 
       for (let m = 1; m <= 12; m += 1) {
         const start = `2026-${String(m).padStart(2, '0')}-01`;
@@ -137,10 +137,10 @@ describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_
     }));
 
   test('the same person, period and metric is still refused twice', () =>
-    withDatabase('m066_unique', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_unique', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
-      await db.query(M066);
+      await db.query(M067);
       const insert = () => db.query(
         `INSERT INTO sales_targets (salesperson_user_id, period_start, period_end, period_type, metric, target_value, unit)
          VALUES ($1, '2026-04-01', '2026-05-01', 'month', 'won_quotations_count', 5, 'count')`, [uid]);
@@ -149,10 +149,10 @@ describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_
     }));
 
   test('a metric nothing computes cannot be stored', () =>
-    withDatabase('m066_metric', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_metric', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
-      await db.query(M066);
+      await db.query(M067);
       await assert.rejects(
         () => db.query(
           `INSERT INTO sales_targets (salesperson_user_id, period_start, period_end, period_type, metric, target_value, unit)
@@ -163,10 +163,10 @@ describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_
     }));
 
   test('a period that ends before it starts is refused', () =>
-    withDatabase('m066_ordered', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_ordered', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
-      await db.query(M066);
+      await db.query(M067);
       await assert.rejects(
         () => db.query(
           `INSERT INTO sales_targets (salesperson_user_id, period_start, period_end, period_type, metric, target_value, unit)
@@ -176,29 +176,29 @@ describe('migration 066 — targets by period', { skip: !ADMIN_URL && 'set TEST_
     }));
 
   test('it seeds the stale-quotation threshold #18 §5 leaves open', () =>
-    withDatabase('m066_setting', async (db) => {
-      await db.query(UNDO_066);
-      await db.query(M066);
+    withDatabase('m067_setting', async (db) => {
+      await db.query(UNDO_067);
+      await db.query(M067);
       const { rows: [s] } = await db.query("SELECT value FROM settings WHERE key = 'stale_quotation_days'");
       assert.equal(s.value, '14', 'the number #18 suggests, changeable without a deploy');
     }));
 
   test('is idempotent', () =>
-    withDatabase('m066_twice', async (db) => {
-      await db.query(UNDO_066);
+    withDatabase('m067_twice', async (db) => {
+      await db.query(UNDO_067);
       const uid = await salesperson(db);
       await db.query(
         `INSERT INTO sales_targets (salesperson_user_id, calendar_year, metric, target_value, unit)
          VALUES ($1, 2026, 'won_quotations_count', 40, 'count')`, [uid]);
-      await db.query(M066);
-      await db.query(M066);
+      await db.query(M067);
+      await db.query(M067);
       const { rows } = await db.query('SELECT period_start, target_value FROM sales_targets');
       assert.equal(rows.length, 1);
       assert.equal(Number(rows[0].target_value), 40);
     }));
 });
 
-describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+describe('migration 068 — telling a receipt from a balance', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   async function stage(db) {
     await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-1', 'A Client')`);
     await db.query(
@@ -210,8 +210,8 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
   }
 
   test('existing rows are classified by the marks they already carry', () =>
-    withDatabase('m067_classify', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_classify', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
       await db.query(
         `INSERT INTO payments (stage_id, amount, received_on, mode, notes) VALUES
@@ -219,7 +219,7 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
           ($1, 100000, '2026-06-01', 'bank_transfer', NULL),
           ($1, -25000, '2026-06-05', 'other', 'Adjusted: total set to 275000')`, [id]);
 
-      await db.query(M067);
+      await db.query(M068);
 
       const { rows } = await db.query('SELECT amount, origin FROM payments ORDER BY id');
       assert.deepEqual(rows.map((r) => r.origin), ['opening_balance', 'receipt', 'adjustment'],
@@ -227,10 +227,10 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
     }));
 
   test('a new receipt defaults to being a receipt', () =>
-    withDatabase('m067_default', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_default', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
-      await db.query(M067);
+      await db.query(M068);
       await db.query(
         `INSERT INTO payments (stage_id, amount, received_on, mode) VALUES ($1, 50000, '2026-07-01', 'upi')`, [id]);
       const { rows: [p] } = await db.query("SELECT origin FROM payments WHERE amount = 50000");
@@ -238,10 +238,10 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
     }));
 
   test('the trigger marks a balance it carries in, without relying on the notes', () =>
-    withDatabase('m067_trigger', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_trigger', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
-      await db.query(M067);
+      await db.query(M068);
 
       // A stage paid before receipts were itemised, then receipted again.
       await db.query(
@@ -257,10 +257,10 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
     }));
 
   test('an unknown origin is refused', () =>
-    withDatabase('m067_check', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_check', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
-      await db.query(M067);
+      await db.query(M068);
       await assert.rejects(
         () => db.query(
           `INSERT INTO payments (stage_id, amount, mode, origin) VALUES ($1, 1, 'upi', 'guesswork')`, [id]),
@@ -269,10 +269,10 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
     }));
 
   test('the stage total is still the sum of its rows, whatever their origin', () =>
-    withDatabase('m067_total', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_total', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
-      await db.query(M067);
+      await db.query(M068);
       await db.query(
         `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, origin) VALUES
           ($1, 90000, 10000, '2026-06-01', 'bank_transfer', 'receipt'),
@@ -280,18 +280,18 @@ describe('migration 067 — telling a receipt from a balance', { skip: !ADMIN_UR
 
       const { rows: [s] } = await db.query('SELECT amount_received FROM payment_stages WHERE id = $1', [id]);
       assert.equal(Number(s.amount_received), 80000,
-        'payments_changed is untouched: 067 adds a label, it does not change the arithmetic');
+        'payments_changed is untouched: 068 adds a label, it does not change the arithmetic');
     }));
 
   test('is idempotent', () =>
-    withDatabase('m067_twice', async (db) => {
-      await db.query(UNDO_067);
+    withDatabase('m068_twice', async (db) => {
+      await db.query(UNDO_068);
       const id = await stage(db);
       await db.query(
         `INSERT INTO payments (stage_id, amount, received_on, mode, notes)
          VALUES ($1, 200000, '2026-05-01', 'other', 'Opening balance from the stage')`, [id]);
-      await db.query(M067);
-      await db.query(M067);
+      await db.query(M068);
+      await db.query(M068);
       const { rows } = await db.query('SELECT origin FROM payments');
       assert.deepEqual(rows.map((r) => r.origin), ['opening_balance']);
     }));

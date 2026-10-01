@@ -7,14 +7,14 @@ import pg from 'pg';
 import request from 'supertest';
 
 /**
- * An MCP token is a person, not a spelling (#18 §2, migration 063).
+ * An MCP token is a person, not a spelling (#18 §2, migration 064).
  *
  * Two things are proved here, and they are different questions.
  *
  * The migration: an existing database's tokens are bound to the account
  * their name names, where exactly one account carries it, and revoked where
  * none or several do. This is tested by putting api_tokens back into its
- * pre-063 shape and running the file, because a migration that is only ever
+ * pre-064 shape and running the file, because a migration that is only ever
  * run against the schema it already produced proves nothing about the
  * databases it is written for.
  *
@@ -31,10 +31,10 @@ const PASSWORD = 'a-good-long-test-password';
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 const VIEWS = readFileSync(join(DB_DIR, 'views.sql'), 'utf8');
-const MIGRATION_063 = readFileSync(join(DB_DIR, 'migrations', '063_mcp_token_identity.sql'), 'utf8');
+const MIGRATION_064 = readFileSync(join(DB_DIR, 'migrations', '064_mcp_token_identity.sql'), 'utf8');
 
 /** api_tokens as 038 left it: a `person` name, and no account behind it. */
-const UNDO_063 = `
+const UNDO_064 = `
   ALTER TABLE api_tokens DROP CONSTRAINT IF EXISTS api_tokens_sales_needs_user;
   ALTER TABLE api_tokens DROP COLUMN IF EXISTS user_id;
 `;
@@ -62,7 +62,7 @@ async function withDatabase(prefix, fn) {
   }
 }
 
-describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+describe('migration 064 — binding MCP tokens to accounts', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   const legacy = async (db, { name, role = 'sales', person = null, revoked = false }) => {
     const { rows } = await db.query(
       `INSERT INTO api_tokens (name, token_hash, token_prefix, role, person, revoked_at)
@@ -75,15 +75,15 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     (await db.query('SELECT * FROM api_tokens WHERE id = $1', [id])).rows[0];
 
   test('binds a token whose name matches exactly one account', () =>
-    withDatabase('mig063_bind', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_bind', async (db) => {
+      await db.query(UNDO_064);
       const { rows: [u] } = await db.query(
         `INSERT INTO users (name, email, password_hash, role, active)
          VALUES ('Ramesh Kumar', 'ramesh@example.com', 'x', 'sales', true) RETURNING id`);
       // Typed with different case and spacing, the way the old field was.
       const id = await legacy(db, { name: 'Ramesh token', person: '  ramesh   kumar ' });
 
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, id);
       assert.equal(t.user_id, u.id, 'the same normalisation rule 060 uses');
@@ -92,11 +92,11 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     }));
 
   test('revokes a token whose name matches nobody', () =>
-    withDatabase('mig063_nobody', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_nobody', async (db) => {
+      await db.query(UNDO_064);
       const id = await legacy(db, { name: 'Ghost token', person: 'Nobody At All' });
 
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, id);
       assert.equal(t.user_id, null);
@@ -104,14 +104,14 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     }));
 
   test('revokes rather than guesses when two accounts share the name', () =>
-    withDatabase('mig063_ambiguous', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_ambiguous', async (db) => {
+      await db.query(UNDO_064);
       await db.query(`INSERT INTO users (name, email, password_hash, role, active) VALUES
         ('Ramesh', 'ramesh.a@example.com', 'x', 'sales', true),
         ('ramesh', 'ramesh.b@example.com', 'x', 'sales', true)`);
       const id = await legacy(db, { name: 'Contested', person: 'Ramesh' });
 
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, id);
       assert.equal(t.user_id, null, 'pointing it at the wrong pipeline is the failure being fixed');
@@ -119,11 +119,11 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     }));
 
   test('leaves admin tokens alone: they carry no person and never did', () =>
-    withDatabase('mig063_admin', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_admin', async (db) => {
+      await db.query(UNDO_064);
       const id = await legacy(db, { name: 'Admin token', role: 'admin' });
 
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, id);
       assert.equal(t.revoked_at, null, 'an admin token sees everything by role; there is nothing to bind');
@@ -131,29 +131,29 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     }));
 
   test('an already-revoked token is not resurrected, and does not block the constraint', () =>
-    withDatabase('mig063_revoked', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_revoked', async (db) => {
+      await db.query(UNDO_064);
       const before = new Date('2026-01-01T00:00:00Z');
       const { rows: [r] } = await db.query(
         `INSERT INTO api_tokens (name, token_hash, token_prefix, role, person, revoked_at)
          VALUES ('Old', 'hash-old', 'ctz_old', 'sales', 'Nobody', $1) RETURNING id`, [before]);
 
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, r.id);
       assert.equal(t.revoked_at.toISOString(), before.toISOString(), 'history is not rewritten');
     }));
 
   test('is idempotent', () =>
-    withDatabase('mig063_twice', async (db) => {
-      await db.query(UNDO_063);
+    withDatabase('mig064_twice', async (db) => {
+      await db.query(UNDO_064);
       const { rows: [u] } = await db.query(
         `INSERT INTO users (name, email, password_hash, role, active)
          VALUES ('Solo', 'solo@example.com', 'x', 'sales', true) RETURNING id`);
       const id = await legacy(db, { name: 'Solo token', person: 'Solo' });
 
-      await db.query(MIGRATION_063);
-      await db.query(MIGRATION_063);
+      await db.query(MIGRATION_064);
+      await db.query(MIGRATION_064);
 
       const t = await tokenRow(db, id);
       assert.equal(t.user_id, u.id);
@@ -161,7 +161,7 @@ describe('migration 063 — binding MCP tokens to accounts', { skip: !ADMIN_URL 
     }));
 
   test('from here on, a live sales token must name an account', () =>
-    withDatabase('mig063_check', async (db) => {
+    withDatabase('mig064_check', async (db) => {
       await assert.rejects(
         () => db.query(
           `INSERT INTO api_tokens (name, token_hash, token_prefix, role, person)
