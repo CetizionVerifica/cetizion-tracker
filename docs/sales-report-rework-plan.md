@@ -49,7 +49,7 @@ revenue and fixes (`salesReportPdf.js:1164-1171`).
 | Question | What exists | Gap |
 | --- | --- | --- |
 | 1. Enquiries per day/week/month | Monthly series only, from `enquiryRows` / `enquirySummary` (`salesReviewData.js:61,169`) by `enquiry_date`, plus counts by source and sector. | No **daily** or **weekly** bucketing. Enquiries with no `enquiry_date` are dropped from a dated period. |
-| 2. Status: converted / pipeline / lost | `enquiryPipeline` gives contracted / declined / pending. `contractDateOf()` links an enquiry to its PO through `enquiries.quotation_no`, then the quotation, then `purchase_orders`. | "Lost" counts only `Unqualified` enquiries. An enquiry whose **quotation was lost** shows as "pending". No percentages on screen. |
+| 2. Status: converted / pipeline / lost | `enquiryPipeline` gives contracted / declined / pending. `contractDateOf()` links an enquiry to its PO through `enquiries.quotation_no`, then the quotation, then `purchase_orders`. | "Pending" mixes enquiries still being worked on with enquiries whose **quotation was lost or expired**. No percentages on screen. |
 | 3. Sector-wise POs | `sectorReport` (`salesReport.js:278`) counts real PO rows by the sector of their quotation, ignoring case and spacing. | Sector is **free text**; only the suggestions in `routes/lookups.js:14` match the four requested. Spelling variants become separate sectors. "Other" is not a roll-up. |
 | 4. Service-wise sales | `lib/serviceLines.js` sorts free-text `quotations.service_quoted` with 8 regex buckets. | The buckets don't match the requested list: **no ESIA**, and ISO / ASI / social audits are separate. A bundle counts its **full value in each line** it names. The structured data (`quotation_lines.service_id`, `po_services`) is not used. |
 | 5. New vs repeat customers | `customerReport` (`salesReport.js:472`) labels a client "repeat" when it has 2 or more won deals, otherwise "single". | No **"new customer"** idea (first PO in the period). There is no list of enquiries from new versus existing customers. Clients are grouped by spelling of `client_name`, not by `company_id`. |
@@ -72,7 +72,8 @@ enquiry status names (lines 93-94). Fix these in the same PR as §6 step 6.
 3. Daily and weekly enquiry series. The bucket size is chosen from the
    period length, and the user can override it.
 4. A **three-way enquiry outcome** (Converted to PO / In pipeline / Lost)
-   that takes into account what happened to the enquiry's quotation.
+   in which "Lost" means closed without ever becoming a quotation. Quoted
+   enquiries that did not win are shown separately (§4.2).
 5. **Controlled sector and service categories** for reporting, mapped from
    the existing free text without rewriting history.
 6. "New" and "existing" customers defined by first PO date, keyed by
@@ -103,12 +104,13 @@ enquiry status names (lines 93-94). Fix these in the same PR as §6 step 6.
 │ ── Summary strip: Enquiries 142 │ Converted to PO 31 (22%) │ POs 34 · ₹1.8Cr │ New clients 9 ── │
 ├──────────────────────────────────────────┬─────────────────────────────────────────────────────┤
 │ 1. How many enquiries did we receive?    │ 2. What happened to them?                          │
-│   column chart per day/week/month        │   donut: Converted to PO / Pipeline / Lost (% + n) │
+│   column chart per day/week/month        │   donut: Converted to PO / Pipeline / Lost / Quoted–not won (% + n) │
 │   split by source (stacked, toggle)      │   + bar per month (stacked 100%)                    │
 ├──────────────────────────────────────────┼─────────────────────────────────────────────────────┤
 │ 3. Which sectors gave us POs?            │ 4. Which services sell best?                       │
 │   horizontal bars: count + value (INR)   │   horizontal bars ranked by PO value, count label  │
-│   Metal · Agri · Pharma · Others ▸       │   EcoVadis · ESIA · Climate · ESG · HSE · Sust · Other │
+│   Metal · Agri · Pharma · Others ▸       │   EcoVadis · ESIA · Climate · ESG · HSE · Sust ·    │
+│                                          │   ISO · ASI · Social audits · Other                 │
 ├──────────────────────────────────────────┴─────────────────────────────────────────────────────┤
 │ 5. New vs existing customers                                                                     │
 │   tiles: new customers · repeat orders · repeat share of value                                  │
@@ -179,18 +181,28 @@ screen, CSV and PDF all call.
   only when `source_id` is null.
 - **Scope:** `src.enquiries` from `scopedSources`.
 
-### 4.2 Enquiry outcome (three-way)
+### 4.2 Enquiry outcome
+
+**Decided:** a *lost* enquiry is one that was **never converted into a
+quotation**, i.e. it was closed (status `Unqualified`) with no
+`quotation_no`. An enquiry that did become a quotation is never "lost",
+whatever happened to the quotation afterwards.
 
 Every enquiry in the period has exactly one outcome:
 
 | Outcome | Rule (first match wins) |
 | --- | --- |
 | **Converted to PO** | `contractDateOf()` finds a PO that counts as a sale (`poCountsAsSale`: not cancelled, not replaced) through `enquiries.quotation_no`. |
-| **Lost** | status is `Unqualified`, **or** the linked quotation's `stage_type = 'lost'` (status `Lost`), **or** the quotation expired with no PO (`v_quotations.expired`). Break this down by `lost_reason_id` for the table. |
-| **In pipeline** | everything else: open enquiry statuses (New / Contacted / Qualified / Nurture), or Converted to a quotation that is still open. Break it down into "not yet quoted" and "quoted, awaiting decision". |
+| **Lost** | status is `Unqualified` and `quotation_no IS NULL`: closed without a quotation. |
+| **In pipeline** | still being worked on. Two sub-rows: *not yet quoted* (open statuses New / Contacted / Qualified / Nurture, no quotation) and *quoted, awaiting decision* (linked quotation still open). |
+| **Quoted, not won** | linked quotation is `Lost` (`stage_type = 'lost'`) or expired with no PO (`v_quotations.expired`). Shown as its own slice, broken down by `lost_reason_id`, so these enquiries neither inflate the pipeline nor count as lost enquiries. |
+
+An `Unqualified` enquiry that *does* have a `quotation_no` (the status was
+set after quoting) follows its quotation: pipeline, quoted-not-won or
+converted. It is listed as a data-quality note.
 
 Percentages use the enquiries received in the period as the denominator.
-They are computed with `share()` from `reportMath.ts`, so the three add up
+They are computed with `share()` from `reportMath.ts`, so the slices add up
 to 100% after rounding.
 
 The outcome is judged **as of the end of the period**. A PO received after
@@ -215,9 +227,11 @@ The outcome is judged **as of the end of the period**. A PO received after
 
 ### 4.4 Service
 
-- **Reporting categories:** EcoVadis, ESIA, Climate Change, ESG, HSE,
-  Sustainability and Other. Keep them in a `report_service_lines` setting,
-  ordered.
+- **Reporting categories (decided):** EcoVadis, ESIA, Climate Change, ESG,
+  HSE, Sustainability, **ISO certification**, **ASI / Copper Mark / LME**,
+  **Social & supply-chain audits**, and Other. ISO, ASI and social audits
+  are their own lines and are **never counted in Other**. Keep the list in a
+  `report_service_lines` setting, ordered.
 - **Source of truth, in order of preference:**
   1. **`po_services`** rows for the PO, giving the actual value split per
      service at registration. This removes the double-counting problem.
@@ -232,8 +246,13 @@ The outcome is judged **as of the end of the period**. A PO received after
   storing it is allowed. Rework `SERVICE_LINES` regexes to the new
   categories:
   - add ESIA: `/\besia\b|environmental\s+(and\s+)?social\s+impact/i`
-  - fold ISO, ASI and social audits into **Other**, or keep them as extra
-    lines. This is a decision for you (§8).
+  - rename "Climate & environment (GHG / LCA / CBAM)" to **Climate Change**,
+    "Sustainability reporting & assurance" to **Sustainability**,
+    "HSE / process safety" to **HSE** and "ESG strategy & advisory" to
+    **ESG**, keeping their patterns
+  - keep the ISO, ASI / Copper Mark / LME and social-audit patterns as
+    their own lines
+  - **Other** is only what matches none of the above
 - **Ranking:** by PO value in INR. Show the PO count as a label. A toggle
   ranks by count instead.
 - **Seed check:** the services ESIA, Climate Change and HSE are **not in the
@@ -263,13 +282,16 @@ The outcome is judged **as of the end of the period**. A PO received after
 
 ### 4.6 Monthly revenue
 
-Define **revenue = value of counting POs (excluding GST), by `po_date`, in
-INR at the PO-date rate.** This is the order basis, and it agrees with
-sections 3, 4 and 5.
+**Decided:** revenue = **value of counting POs including GST** (`po_value`
+as stored, `register.js:144`), by `po_date`, in INR at the PO-date rate.
+This is the order basis, and it agrees with sections 3, 4 and 5.
 
-- `po_value` includes GST (`register.js:144`). Derive the pre-GST value from
-  `po_services` / quotation lines. A PO with no breakdown is shown gross and
-  footnoted.
+- No GST derivation is needed: `po_value` is already gross. Label the chart
+  and PDF "PO value incl. GST" so nobody reads it as net.
+- Sections 3 and 4 use the same gross value, so a sector or service total
+  adds up to the revenue total. `po_services.service_value` is already
+  grossed up to the PO value at registration (`register.js:139-160`), so
+  the service split also sums to `po_value`.
 - Show **invoiced** and **received** per month alongside, as lines on the
   chart, from the existing `revenueReport` invoicing half. These are the
   "billing" and "cash" views of revenue.
@@ -371,8 +393,9 @@ N more, see CSV".
 - **Pure** (`server/test/reportRules.test.js`, extend it):
   - `periodRows` for day, week and month: week crossing a year end, a
     period starting midweek, empty buckets.
-  - Outcome precedence: Unqualified with a PO counts as Converted; a lost
-    quotation counts as Lost; an expired quotation counts as Lost.
+  - Outcome precedence: Unqualified with a PO counts as Converted;
+    Unqualified with no quotation counts as Lost; a lost or expired
+    quotation counts as Quoted, not won (never Lost).
   - `share()` sums to 100.
   - Service split: one line, a bundle split equally, `po_services`
     preferred.
@@ -397,27 +420,29 @@ N more, see CSV".
 
 ---
 
-## 8. Decisions for the product owner
+## 8. Decisions
 
-Defaults are given; the build can start with them.
+### Decided by the product owner
 
-1. **What is "revenue"?** Default: **PO value excluding GST, by PO date**
-   (order basis). Invoiced and received are shown alongside. The
-   alternatives are invoiced (billing basis) or received (cash basis) as
-   the headline figure.
-2. **Service categories.** Default: exactly the seven you listed. ISO,
-   ASI/CopperMark and social/supply-chain audits go into **Other**, and
-   the table can expand Other to show them. The alternative is to keep
-   them as their own lines.
-3. **Bundled services** (one PO covering several services). Default: use
+1. **Revenue** is PO value **including GST**, by PO date (order basis).
+   Invoiced and received are shown alongside (§4.6).
+2. **ISO, ASI / Copper Mark / LME and social & supply-chain audits** are
+   their own service lines and are **not counted in Other** (§4.4).
+3. **"Lost" enquiries** are those **never converted into a quotation**:
+   closed as Unqualified with no quotation. Quoted enquiries that did not
+   win are a separate "Quoted, not won" slice (§4.2).
+
+### Still open (defaults given; the build can start with them)
+
+4. **Bundled services** (one PO covering several services). Default: use
    the actual split from the PO's services. If there is none, split
    equally, so totals add up. Today the full value is counted in each
    line.
-4. **"Lost" enquiries.** Default: Unqualified **plus** enquiries whose
-   quotation was lost or expired. The alternative is Unqualified only, as
-   today.
 5. **"New customer".** Default: first-ever PO falls in the period. The
    alternative is that the company record was created in the period.
 6. **Calendar or financial year** for the presets. Default: both are
    offered; This FY is listed first, since Reports already uses Indian FY
    quarters.
+7. **Where "Quoted, not won" goes.** Default: its own slice next to the
+   three you asked for. The alternative is to count it inside "In
+   pipeline".
