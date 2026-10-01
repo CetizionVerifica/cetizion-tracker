@@ -286,5 +286,5 @@ PR merged to main ─▶ CI runs every check on main
 | Webhooks into n8n | [docs/webhooks-n8n.md](docs/webhooks-n8n.md) |
 | TypeScript migration rules | [docs/typescript.md](docs/typescript.md) |
 | Sales reports and KPIs | [docs/SALES-REPORTS.md](docs/SALES-REPORTS.md) |
-| Follow-up reminders and escalation (plan) | [docs/follow-up-escalation-plan.md](docs/follow-up-escalation-plan.md) |
+| Follow-up reminders and escalation (plan, tests) | [docs/follow-up-escalation-plan.md](docs/follow-up-escalation-plan.md), [docs/follow-up-escalation-test-plan.md](docs/follow-up-escalation-test-plan.md) |
 | Quotation/PO documents (Cloudinary) | [DOCUMENTS.md](DOCUMENTS.md) |
