@@ -648,5 +648,7 @@ can be changed through Settings or a small follow-up.
 - Every email is in `email_log`; every run is in `job_runs` with a readable
   summary.
 - A sales user sees only their own cycles; admins see all.
+- Every test in [follow-up-escalation-test-plan.md](follow-up-escalation-test-plan.md)
+  exists and passes, and its workflow walkthrough (§10) is signed off.
 - All CI checks in PROJECT-CONTEXT §4.5 pass; README, PROGRESS.md and
   ISSUE-PLAN.md are updated.
