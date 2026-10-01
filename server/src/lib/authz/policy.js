@@ -305,6 +305,11 @@ export const routes = [
   { method: 'POST', path: '/api/notifications/:id/read', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/notifications/sweep', access: mustBeAdmin, why: 'The same work as the notifications.daily job. Running a job by hand is operational.' },
 
+  // ----------------------------------------------------------- follow-ups
+  { method: 'GET', path: '/api/follow-ups', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/record', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/summary', access: mustBeAdmin, why: 'How each salesperson answers their reminders is a management view of the whole team.' },
+
   // ------------------------------------------------------- communications
   { method: 'GET', path: '/api/communications', access: signedIn },
   { method: 'POST', path: '/api/communications', access: signedIn },
