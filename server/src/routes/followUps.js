@@ -79,7 +79,9 @@ followUpsRouter.get('/', async (req, res) => {
   if (req.query.owner && scope.unrestricted) {
     if (req.query.owner === 'none') where.push('ou.id IS NULL');
     else {
-      params.push(Number(req.query.owner));
+      const owner = Number(req.query.owner);
+      if (!Number.isSafeInteger(owner) || owner <= 0) throw new ApiError(422, 'owner must be a user id or none');
+      params.push(owner);
       where.push(`ou.id = $${params.length}`);
     }
   }

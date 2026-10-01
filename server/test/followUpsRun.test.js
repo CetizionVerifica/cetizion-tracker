@@ -73,7 +73,7 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
 
   beforeEach(async () => {
     for (const t of ['follow_up_cycles', 'notifications', 'webhook_events', 'webhook_endpoints', 'email_log', 'job_runs', 'communications', 'collection_log',
-      'notes', 'tasks', 'email_messages', 'email_threads', 'connected_accounts', 'quotation_stage_history', 'quotation_revisions',
+      'notes', 'task_targets', 'tasks', 'email_messages', 'email_threads', 'connected_accounts', 'quotation_stage_history', 'quotation_revisions',
       'payment_stages', 'po_services', 'purchase_orders', 'enquiries', 'quotations', 'projects', 'holidays', 'users']) {
       await db.query(`DELETE FROM ${t}`);
     }
@@ -187,6 +187,20 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     assert.equal(await at('quotation:Q-1'), '2026-10-02T05:00:00.000Z');
     await db.query(`INSERT INTO quotation_revisions (quotation_id, revision, snapshot, created_at) VALUES ($1, 1, '{}', '2026-10-03T05:00:00Z')`, [q.id]);
     assert.equal(await at('quotation:Q-1'), '2026-10-03T05:00:00.000Z');
+
+    // A completed task counts on every record it stands on, not only its first.
+    const { rows: [t] } = await db.query(`INSERT INTO tasks (entity, entity_id, title, status, completed_at) VALUES ('enquiry', 'ENQ-9', 'shared', 'done', '2026-10-04T08:00:00Z') RETURNING id`);
+    await db.query(`INSERT INTO task_targets (task_id, entity, entity_id) VALUES ($1, 'quotation', 'Q-1')`, [t.id]);
+    assert.equal(await at('quotation:Q-1'), '2026-10-04T08:00:00.000Z');
+
+    // A chase logged against the whole client covers each of its invoices.
+    const { rows: [co] } = await db.query(`INSERT INTO companies (name) VALUES ('Client chased whole') RETURNING id`);
+    await db.query(`UPDATE projects SET company_id = $1 WHERE project_id = 'P-1'`, [co.id]);
+    await db.query(`INSERT INTO collection_log (company_id, channel, summary, happened_at) VALUES ($1, 'call', 'Chased the client', '2026-10-04T09:00:00Z')`, [co.id]);
+    assert.equal(await at(`payment_stage:${stageId}`), '2026-10-04T09:00:00.000Z');
+    // ...but not when the reminder job wrote it.
+    await db.query(`INSERT INTO collection_log (company_id, channel, summary, automated, happened_at) VALUES ($1, 'email', 'auto', true, '2026-10-05T09:00:00Z')`, [co.id]);
+    assert.equal(await at(`payment_stage:${stageId}`), '2026-10-04T09:00:00.000Z');
   });
 
   test('U-A15: 500 keys in one query', async () => {
@@ -257,6 +271,8 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
   test('I-07/08: no escalation inside grace; after it, one digest per recipient, marked, in the bell and to n8n', async () => {
     await db.query(`INSERT INTO webhook_endpoints (name, url, events, secret) VALUES ('n8n', 'https://n8n.example/hook', '{follow_up.escalated}', 's')`);
     await seedFour();
+    const { rows: [{ id: companyId }] } = await db.query(`INSERT INTO companies (name) VALUES ('Client with a sector') RETURNING id`);
+    await db.query(`UPDATE projects SET company_id = $1`, [companyId]);
     await run('2026-10-05', { send: sender() });
     for (const today of ['2026-10-06', '2026-10-07']) {
       const send = sender();
@@ -281,6 +297,9 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     assert.equal(n, 4);
     const { rows: events } = await db.query(`SELECT * FROM webhook_events WHERE event = 'follow_up.escalated'`);
     assert.equal(events.length, 4);
+    // The company rides along, so a sector-filtered endpoint can match it.
+    const stageEvent = events.find((e) => e.entity === 'payment_stage');
+    assert.equal(stageEvent.company_id, companyId);
     assert.ok(events.every((e) => !JSON.stringify(e.data).includes('@')), 'no addresses in webhook payloads');
   });
 
@@ -335,6 +354,36 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     assert.ok((await cycles())[0].escalated_at);
     const { rows } = await db.query(`SELECT to_email, status FROM email_log WHERE template = 'follow_up_escalation' ORDER BY id`);
     assert.ok(rows.some((r) => r.to_email === 'md@qa.example' && r.status === 'failed'));
+  });
+
+  test('I-13b: a recipient whose send throws does not undo another who got it', async () => {
+    await enquiry('ENQ-1', people.asha);
+    await run('2026-10-05', { send: sender() });
+    const send = sender((m) => (m.template === 'follow_up_escalation' && m.to === 'md@qa.example' ? 'throw' : 'sent'));
+    const result = await run('2026-10-08', { send });
+    assert.equal(result.escalation.marked, true);
+    assert.ok(result.escalation.recipients.some((r) => r.to === 'md@qa.example' && r.status === 'error'));
+    assert.ok((await cycles())[0].escalated_at);
+    const again = sender();
+    await run('2026-10-09', { send: again });
+    assert.equal(again.calls.length, 0, 'not sent to management a second time');
+  });
+
+  test('a digest of more than 50 starts cycles only for the 50 listed; the rest lead the next one', async () => {
+    for (let n = 0; n < 55; n += 1) await enquiry(`ENQ-${String(n).padStart(2, '0')}`, people.asha);
+    const first = sender();
+    await run('2026-10-05', { send: first });
+    assert.equal(first.calls.length, 1);
+    assert.match(first.calls[0].text, /5 more are due as well/);
+    assert.equal((await open()).length, 50);
+    const second = sender();
+    await run('2026-10-06', { send: second });
+    assert.equal(second.calls[0].subject, 'Follow up today: 5 enquiries');
+    assert.equal((await open()).length, 55);
+    // Nothing unseen is escalated: on 8 October only the first 50 are past respond-by.
+    const third = sender();
+    const result = await run('2026-10-08', { send: third });
+    assert.equal(result.escalated, 50);
   });
 
   test('I-14: two runs at once: one works, the other stands aside', async () => {

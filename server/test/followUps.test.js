@@ -114,6 +114,9 @@ test('U-S01: a blank, non-numeric or negative setting uses its default', () => {
   assert.equal(readSettings({ followup_grace_days: '4' }).followup_grace_days, 4);
   assert.equal(readSettings({ followup_grace_days: '0' }).followup_grace_days, 0);
   assert.equal(readSettings({}).followup_enabled, false);
+  // Re-escalating after 0 days would stop escalation altogether (review on #156).
+  assert.equal(readSettings({ followup_reescalate_days: '0' }).followup_reescalate_days, 5);
+  assert.equal(readSettings({ followup_reescalate_days: '1' }).followup_reescalate_days, 1);
   assert.equal(readSettings({ followup_enabled: 'true' }).followup_enabled, true);
 });
 
@@ -252,4 +255,10 @@ test('record links are encoded: a quotation number with slashes is one path segm
   assert.equal(recordLink('quotation', 'CTZ/QT/2026/005'), '/quotations/CTZ%2FQT%2F2026%2F005');
   assert.equal(recordLink('enquiry', 'ENQ 1&2'), '/enquiries?q=ENQ%201%262');
   assert.equal(recordLink('payment_stage', '7'), '/collections?stage=7');
+});
+
+test('a re-escalation setting of 0 still lets the grace period escalate', () => {
+  const p = plan([enquiry()], [cycle()], '2026-10-08', { raw: { followup_reescalate_days: '0' } });
+  assert.deepEqual(p.escalate.map((e) => e.cycle.id), [1]);
+  assert.deepEqual(p.resolve, []);
 });

@@ -190,10 +190,12 @@ function linkTable(headers, rows) {
  * already reminded and still inside their grace period.
  * items/waiting: plan items from lib/followUps.js planFollowUps().
  */
-export function followUpReminder({ ownerName, today, items, waiting = [], respondBy, appUrl = '', cap = 50 }) {
+export function followUpReminder({ ownerName, today, items, more: notListed = 0, waiting = [], respondBy, appUrl = '', cap = 50 }) {
+  // The subject and the respond-by date cover only the listed items; the
+  // rest come in the next reminder, with their own date.
   const shown = items.slice(0, cap);
-  const more = items.length - shown.length;
-  const counts = KIND_ORDER.map((k) => [k, items.filter((i) => i.entity === k).length]).filter(([, n]) => n);
+  const more = notListed + items.length - shown.length;
+  const counts = KIND_ORDER.map((k) => [k, shown.filter((i) => i.entity === k).length]).filter(([, n]) => n);
   const subject = `Follow up today: ${counts.map(([k, n]) => plural(n, ...KIND_NAMES[k])).join(', ')}`;
   const footer = `Log a call, email, meeting or note on the record by ${date(respondBy)} or this goes to management.`;
   const bell = 'This email is separate from the follow-up notifications in the tracker\'s bell, and goes whatever your notification settings say.';
@@ -210,7 +212,7 @@ export function followUpReminder({ ownerName, today, items, waiting = [], respon
 
 These need a follow-up from you today.
 
-${textSections}${more > 0 ? `\nAnd ${more} more in the tracker.\n` : ''}${textWaiting}
+${textSections}${more > 0 ? `\n${more} more ${more === 1 ? 'is' : 'are'} due as well. ${more === 1 ? 'It comes' : 'They come'} in your next reminder, with ${more === 1 ? 'its' : 'their'} own respond-by date.\n` : ''}${textWaiting}
 ${footer}
 
 ${bell}
@@ -229,7 +231,7 @@ ${linkTable(['Record', 'Client', 'Respond by'], waiting.map((i) => [label(i), re
   const html = layout(`Follow up today, ${date(today)}`, `
 <p>Hello ${esc(ownerName || '')},</p>
 <p>These need a follow-up from you today.</p>
-${htmlSections}${more > 0 ? `<p>And ${more} more in the tracker.</p>` : ''}${htmlWaiting}
+${htmlSections}${more > 0 ? `<p>${more} more ${more === 1 ? 'is' : 'are'} due as well. ${more === 1 ? 'It comes' : 'They come'} in your next reminder, with ${more === 1 ? 'its' : 'their'} own respond-by date.</p>` : ''}${htmlWaiting}
 <p><strong>${esc(footer)}</strong></p>
 <p style="color:#64748b;font-size:12px">${esc(bell)}</p>`);
   return { subject, text, html };

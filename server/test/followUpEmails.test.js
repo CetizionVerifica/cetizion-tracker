@@ -68,9 +68,12 @@ test('E-08: an owner digest is capped at 50 rows', () => {
   const items = Array.from({ length: 60 }, (_, n) => enq({ entity_id: `ENQ-${n}`, number: `ENQ-${n}` }));
   const { text, html } = followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items });
   assert.equal(text.match(/^- ENQ-/gm).length, 50);
-  assert.match(text, /And 10 more in the tracker/);
-  assert.match(html, /And 10 more in the tracker/);
-  assert.match(followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items }).subject, /60 enquiries/);
+  assert.match(text, /10 more are due as well\. They come in your next reminder/);
+  assert.match(html, /10 more are due as well/);
+  // The subject counts what is listed, not what was held back.
+  assert.equal(followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items }).subject, 'Follow up today: 50 enquiries');
+  // The runner caps the list itself and says how many it held back.
+  assert.match(followUpReminder({ ownerName: 'Asha', today, respondBy, appUrl, items: items.slice(0, 2), more: 1 }).text, /1 more is due as well\. It comes in your next reminder/);
 });
 
 test('E-09: the owner notice lists only the items it is given', () => {

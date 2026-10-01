@@ -32,6 +32,13 @@ export const DEFAULTS = {
   followup_reescalate_days: 5,
 };
 
+/**
+ * Values below these fall back to the default. Re-escalating after 0 days
+ * would make the "switched off and on again" sweep in planFollowUps match on
+ * the very day escalation is due, so nothing would ever reach management.
+ */
+const MINIMUMS = { followup_reescalate_days: 1 };
+
 /** An owner digest lists at most this many new items (pitfall 6). */
 export const DIGEST_CAP = 50;
 
@@ -45,7 +52,7 @@ export function readSettings(raw = {}) {
   for (const [key, fallback] of Object.entries(DEFAULTS)) {
     const v = String(raw[key] ?? '').trim();
     const n = Number(v);
-    out[key] = v !== '' && Number.isInteger(n) && n >= 0 ? n : fallback;
+    out[key] = v !== '' && Number.isInteger(n) && n >= (MINIMUMS[key] ?? 0) ? n : fallback;
   }
   out.followup_enabled = String(raw.followup_enabled ?? '').trim().toLowerCase() === 'true';
   out.followup_cc_owner_on_escalation = String(raw.followup_cc_owner_on_escalation ?? 'true').trim().toLowerCase() !== 'false';
@@ -303,6 +310,16 @@ export async function lastActivity(db, keys) {
          FROM collection_log l JOIN k ON k.entity = 'payment_stage' AND k.entity_id = l.stage_id::text
         WHERE NOT l.automated
        UNION ALL
+       -- A chase logged against the whole client (Collections, client row)
+       -- covers every invoice of that client.
+       SELECT 'payment_stage', ps.id::text, l.happened_at
+         FROM collection_log l
+         JOIN projects pr ON pr.company_id = l.company_id
+         JOIN purchase_orders po ON po.project_id = pr.project_id
+         JOIN payment_stages ps ON ps.po_number = po.po_number
+         JOIN k ON k.entity = 'payment_stage' AND k.entity_id = ps.id::text
+        WHERE l.stage_id IS NULL AND NOT l.automated
+       UNION ALL
        SELECT t.entity, t.entity_id, m.sent_at
          FROM email_messages m JOIN email_threads t ON t.id = m.thread_id
          JOIN k ON k.entity = t.entity AND k.entity_id = t.entity_id
@@ -313,6 +330,12 @@ export async function lastActivity(db, keys) {
        UNION ALL
        SELECT t.entity, t.entity_id, t.completed_at
          FROM tasks t JOIN k ON k.entity = t.entity AND k.entity_id = t.entity_id
+        WHERE t.completed_at IS NOT NULL
+       UNION ALL
+       -- A task can stand on several records at once (task_targets).
+       SELECT tt.entity, tt.entity_id, t.completed_at
+         FROM task_targets tt JOIN tasks t ON t.id = tt.task_id
+         JOIN k ON k.entity = tt.entity AND k.entity_id = tt.entity_id
         WHERE t.completed_at IS NOT NULL
        UNION ALL
        SELECT 'quotation', q.quotation_no, h.changed_at
@@ -342,7 +365,7 @@ export async function loadRecords(db, keys = []) {
     db.query(
       `SELECT 'enquiry' AS entity, e.enquiry_no AS entity_id, e.enquiry_no AS number, e.status, e.next_follow_up_at,
               e.enquiry_date, e.created_at, e.client_name AS client, e.service AS detail,
-              e.estimated_value AS amount, e.currency, e.owner_user_id, ${OWNER}
+              e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id, ${OWNER}
          FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id
         WHERE e.status = ANY($1::text[]) OR e.enquiry_no = ANY($2::text[])`,
       [OPEN_ENQUIRY_STATUSES, ids('enquiry')]
@@ -350,7 +373,7 @@ export async function loadRecords(db, keys = []) {
     db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
               q.sent_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
-              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.owner_user_id, ${OWNER}
+              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}
          FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id
         WHERE (q.status = ANY($1::text[]) AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL AND q.closed_at IS NULL)
            OR q.quotation_no = ANY($2::text[])`,
@@ -360,7 +383,7 @@ export async function loadRecords(db, keys = []) {
       `SELECT 'payment_stage' AS entity, ps.id::text AS entity_id, ps.invoice_no AS number, ps.stage_status,
               ps.invoice_no, ps.invoice_due_date, ps.days_overdue, ps.on_hold, ps.promise_to_pay_date,
               ps.client_name AS client, ps.po_number || ' · ' || ps.stage_name AS detail,
-              ps.due_now_amount AS amount, ps.currency, pr.owner_user_id, ${OWNER}
+              ps.due_now_amount AS amount, ps.currency, pr.company_id, pr.owner_user_id, ${OWNER}
          FROM v_payment_stages ps
          JOIN projects pr ON pr.project_id = ps.project_id
          LEFT JOIN users u ON u.id = pr.owner_user_id
@@ -444,11 +467,15 @@ async function run(db, { raw, settings, today, startedBy, send, now, authMode, a
   //    clock; anything else is retried on the next run, so nobody is
   //    escalated over a reminder they never got.
   for (const g of plan.remind) {
-    const email = followUpReminder({ ownerName: g.owner_name, today, items: g.items, waiting: g.waiting, respondBy, appUrl });
+    // A long list is capped, and only what the owner was shown starts a grace
+    // period; the rest are still due and lead the next reminder.
+    const shown = g.items.slice(0, DIGEST_CAP);
+    const more = g.items.length - shown.length;
+    const email = followUpReminder({ ownerName: g.owner_name, today, items: shown, more, waiting: g.waiting, respondBy, appUrl, cap: DIGEST_CAP });
     const log = await send({ ...email, to: g.owner_email, template: 'follow_up_reminder', entity: 'user', entityId: g.owner_user_id, sentBy: startedBy }, db);
-    const entry = { owner_user_id: g.owner_user_id, items: g.items.map((i) => i.key), waiting: g.waiting.length, status: log.status, email_id: log.id ?? null };
+    const entry = { owner_user_id: g.owner_user_id, items: shown.map((i) => i.key), deferred: more, waiting: g.waiting.length, status: log.status, email_id: log.id ?? null };
     if (log.status === 'sent') {
-      for (const i of g.items) {
+      for (const i of shown) {
         await db.query(
           `INSERT INTO follow_up_cycles (entity, entity_id, due_on, reminded_user_id, owner_name, reminded_at, reminder_email_id, respond_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -495,8 +522,14 @@ async function escalate(db, { plan, raw, settings, today, startedBy, send, now, 
   const email = followUpEscalation({ today, escalated, stillOpen, unowned, appUrl });
   const sends = [];
   for (const to of recipients) {
-    const log = await send({ ...email, to, template: 'follow_up_escalation', entity: 'digest', entityId: today, sentBy: startedBy }, db);
-    sends.push({ to, status: log.status, email_id: log.id ?? null });
+    // One recipient's error must not stop the others, or leave a digest that
+    // did go out unrecorded and sent again tomorrow.
+    try {
+      const log = await send({ ...email, to, template: 'follow_up_escalation', entity: 'digest', entityId: today, sentBy: startedBy }, db);
+      sends.push({ to, status: log.status, email_id: log.id ?? null });
+    } catch (err) {
+      sends.push({ to, status: 'error', email_id: null, error: String(err?.message || err) });
+    }
   }
   const first = sends.find((s) => s.status === 'sent');
   // One recipient is enough: management has been told. A failure to the
@@ -541,7 +574,8 @@ async function escalate(db, { plan, raw, settings, today, startedBy, send, now, 
     }
     if (fresh) {
       await emit('follow_up.escalated', {
-        entity: item.entity, entityId: item.entity_id, value: item.amount ?? null,
+        // The company is what a sector-filtered endpoint matches on.
+        entity: item.entity, entityId: item.entity_id, value: item.amount ?? null, companyId: item.company_id ?? null,
         data: { cycle_id: id, owner_user_id: item.owner_user_id ?? null, due_on: item.due_on, unowned: !item.owner_user_id },
       }, db);
     }

@@ -145,5 +145,7 @@ describe('follow-ups API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' 
     assert.equal((await get('asha', '/api/follow-ups/record?entity=quotation')).status, 422);
     assert.equal((await get('asha', '/api/follow-ups?status=whatever')).status, 422);
     assert.equal((await get('asha', '/api/follow-ups?entity=company')).status, 422);
+    // An admin's owner filter that is not a user id is the caller's mistake, not a 500.
+    assert.equal((await get('meera', '/api/follow-ups?owner=abc')).status, 422);
   });
 });
