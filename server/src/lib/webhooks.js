@@ -16,7 +16,7 @@ import { isStaging } from './ops/environment.js';
 export const EVENT_TYPES = [
   'enquiry.created', 'quotation.sent', 'quotation.stage_changed', 'quotation.won', 'quotation.lost',
   'po.received', 'project.delivered', 'invoice.issued', 'invoice.overdue', 'payment.received',
-  'visit.scheduled', 'renewal.opened', 'task.overdue',
+  'visit.scheduled', 'renewal.opened', 'task.overdue', 'follow_up.escalated',
 ];
 
 // Minutes to wait after each failed attempt: about 22 hours in all.

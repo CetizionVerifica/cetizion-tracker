@@ -22,6 +22,7 @@ export const GROUPS = {
   money: { label: 'Overdue invoices and cost alerts', kinds: ['invoice_overdue', 'cost_alert'] },
   inbox: { label: 'Mail waiting for a reply', kinds: ['inbox'] },
   visits: { label: 'Audit and site visits', kinds: ['visit'] },
+  follow_up_escalations: { label: 'Follow-ups escalated to management', kinds: ['follow_up_escalated'] },
 };
 export const CHANNELS = ['in_app', 'email', 'both', 'off'];
 

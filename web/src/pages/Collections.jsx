@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
 import { RecordPaymentDialog } from '../components/actions.jsx';
+import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch } from '../lib/hooks.js';
@@ -32,6 +33,15 @@ export default function Collections() {
   const d = raw && band
     ? { ...raw, clients: raw.clients.filter((c) => c.buckets[band.key] > 0).map((c) => ({ ...c, stages: c.stages.filter((s) => s.bucket === band.key) })) }
     : raw;
+  // A follow-up email links here as ?stage=<id>&log=1: open that client's
+  // invoices, show the follow-up, and open "Log a chase".
+  const stageId = params.get('stage');
+  const [chased, setChased] = useState(0);
+  const target = stageId && raw
+    ? raw.clients.flatMap((c) => c.stages.map((s) => ({ stage: s, key: c.company_id ?? c.company }))).find((x) => String(x.stage.id) === stageId)
+    : null;
+  useEffect(() => { if (target) setOpen(target.key); }, [target?.key]);
+  useLogParam(() => setChase({ stage: target.stage }), Boolean(target));
 
   async function lift(stage) {
     try { await api.action(`/collections/stages/${stage.id}/hold`, { on_hold: false }); toast('Hold lifted', 'success'); refetch(); }
@@ -51,6 +61,7 @@ export default function Collections() {
           </Alert>
         )}
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
+        {stageId && <FollowUpBanner entity="payment_stage" id={stageId} version={chased} logLabel="Log a chase" onLog={target ? () => setChase({ stage: target.stage }) : undefined} />}
         {d && (
           <div className="auto-grid--stats">
             <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
@@ -107,7 +118,7 @@ export default function Collections() {
         ))}
       </div>
 
-      {chase && <ChaseDialog target={chase} onClose={() => setChase(null)} onSaved={() => { setChase(null); refetch(); }} />}
+      {chase && <ChaseDialog target={chase} onClose={() => setChase(null)} onSaved={() => { setChase(null); setChased((n) => n + 1); refetch(); }} />}
       {hold && <HoldDialog stage={hold} onClose={() => setHold(null)} onSaved={() => { setHold(null); refetch(); }} />}
       {paying && <RecordPaymentDialog stage={paying} onClose={() => setPaying(null)} onDone={() => { setPaying(null); refetch(); }} />}
       {logFor && <LogDialog stage={logFor} onClose={() => setLogFor(null)} />}

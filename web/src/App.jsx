@@ -5,6 +5,7 @@ import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
 import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
+import FollowUps from './pages/FollowUps.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
@@ -537,6 +538,7 @@ export default function App() {
           <Route path="/worklist" element={<Worklist />} />
           <Route path="/data-quality" element={<DataQuality />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/follow-ups" element={<FollowUps />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/deliverables" element={<Deliverables />} />

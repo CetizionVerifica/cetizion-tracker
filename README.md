@@ -337,12 +337,13 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | `notifications.digest` | 08:30 weekdays | Each person's digest of what is waiting for them |
 | `renewals.daily` | 08:45 daily | Opens renewal quotations inside the lead time |
 | `reminders.payment` | 09:00 weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |
+| `followups.daily` | 09:15 weekdays | Emails each owner the enquiries, quotations and overdue invoices due a follow-up; tells management about the ones with nothing logged by the respond-by date. Off until `followup_enabled` is `true`; skips holidays |
 | `notifications.weekly` | 09:00 Mondays | The admins' week in notifications |
 | `finance.digest` | 09:30 weekdays | Summary to `finance_email`: stages to invoice, overdue invoices, reminders sent today |
 | `visits.reminders` | 17:00 daily | Reminds the team, and the client where chosen, before a visit |
 | `exchange.rates` | 21:00 weekdays | Fetches the ECB reference rates; hand-entered rates are left alone |
 
-The finance digest runs after the payment reminders, so its count covers the same morning.
+The finance digest runs after the payment reminders, so its count covers the same morning. The follow-up run comes after the payment reminders too, so the client reminders sent that morning are already marked as automated and do not count as someone following up (docs/follow-up-escalation-plan.md).
 
 ---
 

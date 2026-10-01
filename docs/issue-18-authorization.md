@@ -213,6 +213,10 @@ session is **401**, before any of these is considered.
 | `GET /api/export/payables.csv` | any | The same rows as GET /api/dashboard/payables, so it carries the same answer. |
 | `GET /api/export/sales-report.pdf` | any |  |
 | `GET /api/export/sales-report/:report.csv` | any |  |
+| **/api/follow-ups** | | |
+| `GET /api/follow-ups` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/record` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/summary` | **admin** | How each salesperson answers their reminders is a management view of the whole team. |
 | **/api/health** | | |
 | `GET /api/health` | public | none — The platform needs somewhere to point a health check. It answers only that the database replied, when the process started, the environment name and the auth mode — the last of which /api/auth/config already tells any caller. ?deep=1 is checked inside the handler and needs an administrator. |
 | **/api/hooks** | | |

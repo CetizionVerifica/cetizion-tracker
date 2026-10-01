@@ -30,6 +30,27 @@
    since when, what users should do meanwhile, and when you will update.
    Afterwards, write down what happened and what will stop it next time.
 
+## An owner says they were escalated unfairly
+
+Follow-ups (`followups.daily`) only escalate after a reminder **left the
+server**, so first find that reminder:
+
+1. Emails & jobs → the email log, template `follow_up_reminder`, sent to the
+   owner. Its status must be `sent`; anything else would not have started the
+   clock. The body lists the respond-by date.
+2. The cycle: `SELECT * FROM follow_up_cycles WHERE entity = '<kind>' AND
+   entity_id = '<number>' ORDER BY id DESC;` shows `reminded_at`,
+   `respond_by`, `escalated_at` and how it ended (`resolved_reason`).
+3. What counts as activity, and its time: a touch, a chase typed by a person
+   (not the reminder job: `collection_log.automated`), an outbound email on a
+   linked thread, a note, a completed task, or a quotation's stage change or
+   revision. It must be later than `reminded_at`. Editing the record or moving
+   a date does not count.
+
+If the escalation was wrong, the cycle resolves on the next run once anything
+is logged on the record. To stop every follow-up email at once, set
+`followup_enabled` to `false` in Settings.
+
 ## Error tracking
 
 Set `SENTRY_DSN` (Sentry's free tier, or a self-hosted GlitchTip, which
