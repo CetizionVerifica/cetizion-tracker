@@ -130,6 +130,10 @@ branches:
 - **#86** (sales report and country fields) merged on 21 September, taking 017
   and 018, so these branches were rebased onto it and renumbered once more.
 
+**Follow-up reminders and escalation** (no issue number yet): built on
+`feat/follow-up-escalation` from docs/follow-up-escalation-plan.md, off by
+default. Open the issue and put its number in the PR before review.
+
 **Not in these branches:** the follow-up reminder workflows asked for
 separately on 20 September are held back on a local branch until these are
 merged, and the country and turnaround fields built on 20 September were

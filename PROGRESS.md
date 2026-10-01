@@ -241,6 +241,24 @@ is replaced by a fake one. It cannot send email or reach any outside system,
 is password-protected, and says STAGING on every page. The lead creates it in
 Dokploy with the written steps.
 
+### Follow-up reminders and escalation (in review)
+
+**What it does.** Every working morning, the owner of an open enquiry, a sent
+quotation or an overdue invoice gets one email listing what needs a follow-up
+from them. They have two working days to log something on the record: a call,
+an email, a meeting, a note or a chase. If nothing is logged, the management
+team gets one email naming the record, the owner and how long it has gone
+untouched, and it is repeated weekly while nothing happens. Records with no
+owner go straight to management so someone assigns them.
+
+**Where to see it.** A Follow-ups screen lists what is waiting, what was
+escalated and what was resolved, with a count per salesperson for admins.
+Each record shows a banner while a follow-up is open, and the link in the
+email opens the record with the logging form ready.
+
+**Before it goes live.** It is switched off. The lead chooses the management
+addresses in Settings, tries it in test mode, then switches it on.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -283,6 +301,10 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-01: Follow-up reminders to owners and escalation to management
+  built on `feat/follow-up-escalation`, switched off until the lead turns
+  it on. Waiting for review.
 
 - 2026-09-17: Bulk import merged with the team's latest code (invoice
   documents, migrations on start-up, CI/CD). All checks green. Plan and

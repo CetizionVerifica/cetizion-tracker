@@ -270,7 +270,7 @@ that records each call and returns a configurable status.
 | M-02 | Apply 063 to a database holding `collection_log` rows written by the old reminder job | Those rows get `automated = true`. Rows typed by a person stay `false`. |
 | M-03 | Apply 063 twice (`IF NOT EXISTS`) and to an empty database | No error |
 | M-04 | Insert two open cycles for the same record | Rejected by `follow_up_cycles_open_key`. A second cycle after the first is resolved is allowed. |
-| M-05 | Delete a user who owns cycles | Cycles stay, `owner_user_id` becomes null and `owner_name` is kept |
+| M-05 | Delete a user who owns cycles | Cycles stay, `reminded_user_id` becomes null and `owner_name` is kept |
 | M-06 | `v_enquiries` and every other view | Unchanged (no column added to `enquiries`) |
 
 ### Authorization and API
