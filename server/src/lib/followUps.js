@@ -65,6 +65,17 @@ export function uniqueAddresses(list) {
 
 export const keyOf = (r) => `${r.entity}:${r.entity_id}`;
 
+/**
+ * Where a record opens in the app, the paths notify.js already uses. Encoded:
+ * a quotation number like CTZ/QT/2026/005 is otherwise four path segments.
+ */
+export function recordLink(entity, id) {
+  const enc = encodeURIComponent(String(id));
+  if (entity === 'enquiry') return `/enquiries?q=${enc}`;
+  if (entity === 'quotation') return `/quotations/${enc}`;
+  return `/collections?stage=${enc}`;
+}
+
 /** A timestamp (Date or ISO) as the business date it happened on; a plain date as itself. */
 export function dateOf(v) {
   if (v === null || v === undefined || v === '') return null;
@@ -323,7 +334,7 @@ const OWNER = `u.name AS owner_name, u.email AS owner_email, u.active AS owner_a
 /**
  * Every open record of the three kinds, plus the records named in `keys`
  * (those with an open cycle) whatever their state, so the plan can tell why
- * a cycle should close. Links are the paths notify.js already uses.
+ * a cycle should close.
  */
 export async function loadRecords(db, keys = []) {
   const ids = (entity) => keys.filter((k) => k.startsWith(`${entity}:`)).map((k) => k.slice(entity.length + 1));
@@ -331,8 +342,7 @@ export async function loadRecords(db, keys = []) {
     db.query(
       `SELECT 'enquiry' AS entity, e.enquiry_no AS entity_id, e.enquiry_no AS number, e.status, e.next_follow_up_at,
               e.enquiry_date, e.created_at, e.client_name AS client, e.service AS detail,
-              e.estimated_value AS amount, e.currency, e.owner_user_id, ${OWNER},
-              '/enquiries?q=' || e.enquiry_no AS link
+              e.estimated_value AS amount, e.currency, e.owner_user_id, ${OWNER}
          FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id
         WHERE e.status = ANY($1::text[]) OR e.enquiry_no = ANY($2::text[])`,
       [OPEN_ENQUIRY_STATUSES, ids('enquiry')]
@@ -340,8 +350,7 @@ export async function loadRecords(db, keys = []) {
     db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
               q.sent_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
-              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.owner_user_id, ${OWNER},
-              '/quotations/' || q.quotation_no AS link
+              COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.owner_user_id, ${OWNER}
          FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id
         WHERE (q.status = ANY($1::text[]) AND q.sent_at IS NOT NULL AND q.accepted_at IS NULL AND q.closed_at IS NULL)
            OR q.quotation_no = ANY($2::text[])`,
@@ -351,8 +360,7 @@ export async function loadRecords(db, keys = []) {
       `SELECT 'payment_stage' AS entity, ps.id::text AS entity_id, ps.invoice_no AS number, ps.stage_status,
               ps.invoice_no, ps.invoice_due_date, ps.days_overdue, ps.on_hold, ps.promise_to_pay_date,
               ps.client_name AS client, ps.po_number || ' · ' || ps.stage_name AS detail,
-              ps.due_now_amount AS amount, ps.currency, pr.owner_user_id, ${OWNER},
-              '/collections?stage=' || ps.id AS link
+              ps.due_now_amount AS amount, ps.currency, pr.owner_user_id, ${OWNER}
          FROM v_payment_stages ps
          JOIN projects pr ON pr.project_id = ps.project_id
          LEFT JOIN users u ON u.id = pr.owner_user_id
@@ -360,7 +368,7 @@ export async function loadRecords(db, keys = []) {
       [ids('payment_stage')]
     ),
   ]);
-  return [...enquiries.rows, ...quotations.rows, ...stages.rows];
+  return [...enquiries.rows, ...quotations.rows, ...stages.rows].map((r) => ({ ...r, link: recordLink(r.entity, r.entity_id) }));
 }
 
 async function readAll(db) {

@@ -15,7 +15,7 @@ import { assertRecordReachable, parentClause, scopeOf } from '../auth/ownership.
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
-import { dateOf, keyOf, lastActivity } from '../lib/followUps.js';
+import { dateOf, keyOf, lastActivity, recordLink } from '../lib/followUps.js';
 
 export const followUpsRouter = Router();
 
@@ -29,9 +29,6 @@ const ROWS = `
          CASE c.entity WHEN 'payment_stage' THEN COALESCE(ps.invoice_no, c.entity_id) ELSE c.entity_id END AS number,
          CASE c.entity WHEN 'payment_stage' THEN ps.po_number || ' · ' || ps.stage_name
                        WHEN 'quotation' THEN q.service_quoted ELSE e.service END AS detail,
-         CASE c.entity WHEN 'enquiry' THEN '/enquiries?q=' || c.entity_id
-                       WHEN 'quotation' THEN '/quotations/' || c.entity_id
-                       ELSE '/collections?stage=' || c.entity_id END AS link,
          ou.id AS owner_user_id, COALESCE(ou.name, c.owner_name) AS owner
     FROM follow_up_cycles c
     LEFT JOIN enquiries e ON c.entity = 'enquiry' AND e.enquiry_no = c.entity_id
@@ -52,7 +49,7 @@ async function withIdleDays(rows) {
   return rows.map((r) => {
     const last = activity.get(keyOf(r)) ?? null;
     const since = dateOf(last) ?? r.due_on;
-    return { ...r, last_activity_at: last, idle_days: r.resolved_at ? null : workingDaysBetween(since, today, holidays) };
+    return { ...r, link: recordLink(r.entity, r.entity_id), last_activity_at: last, idle_days: r.resolved_at ? null : workingDaysBetween(since, today, holidays) };
   });
 }
 

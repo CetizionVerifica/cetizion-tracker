@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addWorkingDays } from '../src/lib/businessDate.ts';
-import { closedReason, dueInfo, planFollowUps, readSettings, uniqueAddresses } from '../src/lib/followUps.js';
+import { closedReason, dueInfo, planFollowUps, readSettings, recordLink, uniqueAddresses } from '../src/lib/followUps.js';
 
 // The rules behind follow-up reminders and escalation; none of these needs a
 // database. IDs match docs/follow-up-escalation-test-plan.md §4 and §5.
@@ -246,4 +246,10 @@ test('U-C24: the same input gives the same output, whatever its order', () => {
 
 test('management addresses are de-duplicated without regard to case', () => {
   assert.deepEqual(uniqueAddresses(['meera@qa.example', 'md@qa.example', 'Meera@QA.example']), ['meera@qa.example', 'md@qa.example']);
+});
+
+test('record links are encoded: a quotation number with slashes is one path segment', () => {
+  assert.equal(recordLink('quotation', 'CTZ/QT/2026/005'), '/quotations/CTZ%2FQT%2F2026%2F005');
+  assert.equal(recordLink('enquiry', 'ENQ 1&2'), '/enquiries?q=ENQ%201%262');
+  assert.equal(recordLink('payment_stage', '7'), '/collections?stage=7');
 });
