@@ -9,6 +9,7 @@ import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { ago, number } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
+import { turnedOnMessage } from '../lib/webhookToggle.js';
 
 /**
  * Webhooks (#49), on C12's shape.
@@ -107,7 +108,7 @@ export default function Webhooks() {
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {row.events.map((event) => (
-                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-[6px] border border-[#33333a] bg-secondary px-2 text-[11px] font-medium text-secondary-text">
+                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-[6px] border border-border-strong bg-secondary px-2 text-[11px] font-medium text-secondary-text">
                       {event}
                     </span>
                   ))}
@@ -142,7 +143,7 @@ export default function Webhooks() {
                   </Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setEndpoint(String(row.id))}>View log</Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setForm({ ...row, min_value: row.min_value ?? '', sector: row.sector || '' })}>Edit</Button>
-                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => run(() => api.raw(`/webhooks/${row.id}`, { method: 'PATCH', body: { active: !row.active } }), row.active ? 'Turned off' : 'Turned on')}>
+                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => run(() => api.raw(`/webhooks/${row.id}`, { method: 'PATCH', body: { active: !row.active } }), row.active ? 'Turned off' : (x) => turnedOnMessage(x.data?.released))}>
                     {row.active ? 'Turn off' : 'Turn on'}
                   </Button>
                   <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={async () => { const x = await run(() => api.action(`/webhooks/${row.id}/rotate-secret`)); if (x) setSecret({ name: row.name, secret: x.data.secret }); }}>

@@ -152,3 +152,154 @@ export function approvalDecision({ quotation: q, decision, note, decidedBy }) {
   const text = `Quotation ${q.quotation_no} for ${q.client_name} was ${decision}${decidedBy ? ` by ${decidedBy}` : ''}.${note ? `\n\nNote: ${note}` : ''}${decision === 'approved' ? '\n\nIt can now be sent to the client.' : '\n\nRevise the discount or terms and ask again.'}`;
   return { subject, text, html: layout(`Quotation ${decision}`, `<p>${esc(text).replace(/\n/g, '<br>')}</p>`) };
 }
+
+// ------------------------------------------------- follow-ups and escalation
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const KIND_NAMES = { enquiry: ['enquiry', 'enquiries'], quotation: ['quotation', 'quotations'], payment_stage: ['invoice', 'invoices'] };
+const KIND_ORDER = ['enquiry', 'quotation', 'payment_stage'];
+const SECTION = { enquiry: 'Enquiries', quotation: 'Quotations', payment_stage: 'Invoices' };
+
+/** Where a follow-up email link lands: the record, with its "Log a touch" dialog open. */
+const recordLink = (appUrl, item) => {
+  if (!item.link) return '';
+  const base = String(appUrl || '').replace(/\/+$/, '');
+  return `${base}${item.link}${item.link.includes('?') ? '&' : '?'}log=1`;
+};
+
+/** Why an item needs a follow-up, in a few words. */
+function whyDue(i) {
+  if (i.entity === 'enquiry') {
+    return i.why === 'follow_up_date' ? `follow-up date ${date(i.due_on)}` : `no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
+  }
+  if (i.entity === 'quotation') return `sent ${date(i.sent_on)}, no contact for ${plural(i.idle_days ?? 0, 'working day', 'working days')}`;
+  return `${inr(i.amount, i.currency || 'INR')} overdue ${plural(Number(i.days_overdue || 0), 'day', 'days')}`;
+}
+
+const label = (i) => i.number || i.entity_id;
+
+/** A table whose first cell is a link; every value escaped. */
+function linkTable(headers, rows) {
+  const th = headers.map((h) => `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#64748b">${esc(h)}</th>`).join('');
+  const tr = rows.map(([first, href, ...rest]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${href ? `<a href="${esc(href)}">${esc(first)}</a>` : esc(first)}</td>${rest.map((c) => `<td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${esc(c)}</td>`).join('')}</tr>`).join('');
+  return `<table style="border-collapse:collapse;width:100%;margin:12px 0"><tr>${th}</tr>${tr}</table>`;
+}
+
+/**
+ * One owner's follow-ups for the day: new items by kind, then the ones
+ * already reminded and still inside their grace period.
+ * items/waiting: plan items from lib/followUps.js planFollowUps().
+ */
+export function followUpReminder({ ownerName, today, items, more: notListed = 0, waiting = [], respondBy, appUrl = '', cap = 50 }) {
+  // The subject and the respond-by date cover only the listed items; the
+  // rest come in the next reminder, with their own date.
+  const shown = items.slice(0, cap);
+  const more = notListed + items.length - shown.length;
+  const counts = KIND_ORDER.map((k) => [k, shown.filter((i) => i.entity === k).length]).filter(([, n]) => n);
+  const subject = `Follow up today: ${counts.map(([k, n]) => plural(n, ...KIND_NAMES[k])).join(', ')}`;
+  const footer = `Log a call, email, meeting or note on the record by ${date(respondBy)} or this goes to management.`;
+  const bell = 'This email is separate from the follow-up notifications in the tracker\'s bell, and goes whatever your notification settings say.';
+
+  const textSections = KIND_ORDER.map((k) => {
+    const rows = shown.filter((i) => i.entity === k);
+    if (!rows.length) return '';
+    return `${SECTION[k].toUpperCase()} (${rows.length})\n${rows.map((i) => `- ${label(i)} · ${i.client || ''} · ${whyDue(i)} · respond by ${date(respondBy)}\n  ${recordLink(appUrl, i)}`).join('\n')}\n`;
+  }).filter(Boolean).join('\n');
+  const textWaiting = waiting.length
+    ? `\nSTILL WAITING (${waiting.length})\n${waiting.map((i) => `- ${label(i)} · ${i.client || ''} · respond by ${date(i.respond_by)}\n  ${recordLink(appUrl, i)}`).join('\n')}\n`
+    : '';
+  const text = `Hello ${ownerName || ''},
+
+These need a follow-up from you today.
+
+${textSections}${more > 0 ? `\n${more} more ${more === 1 ? 'is' : 'are'} due as well. ${more === 1 ? 'It comes' : 'They come'} in your next reminder, with ${more === 1 ? 'its' : 'their'} own respond-by date.\n` : ''}${textWaiting}
+${footer}
+
+${bell}
+`;
+
+  const htmlSections = KIND_ORDER.map((k) => {
+    const rows = shown.filter((i) => i.entity === k);
+    if (!rows.length) return '';
+    return `<h3 style="font-size:14px;margin:16px 0 4px">${esc(SECTION[k])} (${rows.length})</h3>
+${linkTable(['Record', 'Client', 'Why', 'Respond by'], rows.map((i) => [label(i), recordLink(appUrl, i), i.client || '', whyDue(i), date(respondBy)]))}`;
+  }).join('');
+  const htmlWaiting = waiting.length
+    ? `<h3 style="font-size:14px;margin:16px 0 4px">Still waiting (${waiting.length})</h3>
+${linkTable(['Record', 'Client', 'Respond by'], waiting.map((i) => [label(i), recordLink(appUrl, i), i.client || '', date(i.respond_by)]))}`
+    : '';
+  const html = layout(`Follow up today, ${date(today)}`, `
+<p>Hello ${esc(ownerName || '')},</p>
+<p>These need a follow-up from you today.</p>
+${htmlSections}${more > 0 ? `<p>${more} more ${more === 1 ? 'is' : 'are'} due as well. ${more === 1 ? 'It comes' : 'They come'} in your next reminder, with ${more === 1 ? 'its' : 'their'} own respond-by date.</p>` : ''}${htmlWaiting}
+<p><strong>${esc(footer)}</strong></p>
+<p style="color:#64748b;font-size:12px">${esc(bell)}</p>`);
+  return { subject, text, html };
+}
+
+/** Rows grouped under each owner's name, in the order given. */
+function groupByOwner(items) {
+  const groups = new Map();
+  for (const i of items) {
+    const name = i.owner_name || 'Unknown';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(i);
+  }
+  return [...groups.entries()];
+}
+
+const escalationRow = (appUrl, i) => [
+  label(i), recordLink(appUrl, i), i.client || '', i.amount === null || i.amount === undefined ? '' : inr(i.amount, i.currency || 'INR'),
+  i.reminded_on ? date(i.reminded_on) : '—', i.respond_by ? date(i.respond_by) : '—', i.idle_days === null || i.idle_days === undefined ? '' : String(i.idle_days),
+];
+const ESCALATION_HEADERS = ['Record', 'Client', 'Value', 'Reminded', 'Respond by', 'Working days quiet'];
+
+/**
+ * The daily escalation to management: follow-ups nobody acted on after a
+ * reminder, ones still open since an earlier escalation, and ones with no
+ * owner to remind.
+ */
+export function followUpEscalation({ today, escalated = [], stillOpen = [], unowned = [], appUrl = '' }) {
+  const parts = [];
+  if (escalated.length) parts.push(`${escalated.length} new`);
+  if (stillOpen.length) parts.push(`${stillOpen.length} still open`);
+  if (unowned.length) parts.push(`${unowned.length} with no owner`);
+  const subject = `Follow-ups missed: ${parts.join(', ')}`;
+
+  const textRow = (i) => `  - ${label(i)} · ${i.client || ''}${i.amount === null || i.amount === undefined ? '' : ` · ${inr(i.amount, i.currency || 'INR')}`} · reminded ${i.reminded_on ? date(i.reminded_on) : '—'} · respond by ${i.respond_by ? date(i.respond_by) : '—'} · ${i.idle_days ?? '?'} working days quiet\n    ${recordLink(appUrl, i)}`;
+  const textGrouped = (title, items) => (items.length
+    ? `${title} (${items.length})\n${groupByOwner(items).map(([owner, rows]) => `${owner}\n${rows.map(textRow).join('\n')}`).join('\n')}\n\n`
+    : '');
+  const text = `Follow-ups missed, ${date(today)}
+
+The owner was reminded and nothing has been logged on these since.
+
+${textGrouped('MISSED', escalated)}${textGrouped('STILL OPEN AFTER AN EARLIER ESCALATION', stillOpen)}${unowned.length ? `NO OWNER (${unowned.length})\nNobody could be reminded. Assign an owner in the tracker.\n${unowned.map((i) => `${textRow(i)}${i.owner_name ? ` (was ${i.owner_name})` : ''}`).join('\n')}\n` : ''}`;
+
+  const htmlGrouped = (title, items) => (items.length
+    ? `<h3 style="font-size:14px;margin:16px 0 4px">${esc(title)} (${items.length})</h3>${groupByOwner(items).map(([owner, rows]) => `<p style="margin:8px 0 0"><strong>${esc(owner)}</strong></p>${linkTable(ESCALATION_HEADERS, rows.map((i) => escalationRow(appUrl, i)))}`).join('')}`
+    : '');
+  const html = layout(`Follow-ups missed, ${date(today)}`, `
+<p>The owner was reminded and nothing has been logged on these since.</p>
+${htmlGrouped('Missed', escalated)}${htmlGrouped('Still open after an earlier escalation', stillOpen)}${unowned.length ? `<h3 style="font-size:14px;margin:16px 0 4px">No owner (${unowned.length})</h3><p>Nobody could be reminded. Assign an owner in the tracker.</p>${linkTable(ESCALATION_HEADERS, unowned.map((i) => escalationRow(appUrl, i)))}` : ''}`);
+  return { subject, text, html };
+}
+
+/** A short note to an owner whose follow-ups were escalated. */
+export function followUpEscalatedNotice({ ownerName, items, appUrl = '' }) {
+  const subject = `Sent to management: ${plural(items.length, 'follow-up', 'follow-ups')} with nothing logged`;
+  const text = `Hello ${ownerName || ''},
+
+Nothing was logged on ${items.length === 1 ? 'this record' : 'these records'} by the respond-by date, so ${items.length === 1 ? 'it has' : 'they have'} been listed for management today:
+
+${items.map((i) => `- ${label(i)} · ${i.client || ''} · respond by ${date(i.respond_by)}\n  ${recordLink(appUrl, i)}`).join('\n')}
+
+Logging a call, email, meeting or note on the record closes it.
+`;
+  const html = layout('Sent to management', `
+<p>Hello ${esc(ownerName || '')},</p>
+<p>Nothing was logged on ${items.length === 1 ? 'this record' : 'these records'} by the respond-by date, so ${items.length === 1 ? 'it has' : 'they have'} been listed for management today:</p>
+${linkTable(['Record', 'Client', 'Respond by'], items.map((i) => [label(i), recordLink(appUrl, i), i.client || '', date(i.respond_by)]))}
+<p>Logging a call, email, meeting or note on the record closes it.</p>`);
+  return { subject, text, html };
+}

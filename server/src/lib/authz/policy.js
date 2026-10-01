@@ -203,7 +203,17 @@ export const routes = [
   { method: 'GET', path: '/api/search', access: signedIn, note: 'One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not.' },
 
   // -------------------------------------------------------------- reports
-  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, note: 'Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is.' },
+  //
+  // Each of these aggregates `quotations`, which is owner-scoped, so each
+  // carries ownerClause and a sales user sees the shape of their own book
+  // rather than the company's. The gate is open because the numbers are
+  // counts and quotation values a salesperson already sees on their own
+  // rows; none of them carries margin, which is what /api/profitability is
+  // gated for.
+  { method: 'GET', path: '/api/reports/win-rate', access: signedIn, restrictions: ['record-owner'], note: 'Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped.' },
+  { method: 'GET', path: '/api/reports/conversion', access: signedIn, restrictions: ['record-owner'], note: 'Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string.' },
+  { method: 'GET', path: '/api/reports/quoted-won', access: signedIn, restrictions: ['record-owner'], note: 'Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today\'s rate into a month that has passed.' },
+  { method: 'GET', path: '/api/reports/by-status', access: signedIn, restrictions: ['record-owner'], note: 'Open deals by the status on the record, which is not always where its pipeline stage puts it.' },
 
   // --------------------------------------------------------- saved views
   //
@@ -294,6 +304,11 @@ export const routes = [
   { method: 'POST', path: '/api/notifications/read-all', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/notifications/:id/read', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/notifications/sweep', access: mustBeAdmin, why: 'The same work as the notifications.daily job. Running a job by hand is operational.' },
+
+  // ----------------------------------------------------------- follow-ups
+  { method: 'GET', path: '/api/follow-ups', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/record', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/summary', access: mustBeAdmin, why: 'How each salesperson answers their reminders is a management view of the whole team.' },
 
   // ------------------------------------------------------- communications
   { method: 'GET', path: '/api/communications', access: signedIn },

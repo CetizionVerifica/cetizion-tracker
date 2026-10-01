@@ -213,7 +213,7 @@ export function FlowStep({ label, state = 'future', since }) {
         'grid size-[18px] place-items-center rounded-full',
         done && 'border border-settled/40 bg-settled/15',
         current && 'bg-settled ring-4 ring-settled/20',
-        !done && !current && 'border border-[#3a3a42]'
+        !done && !current && 'border border-border-strong'
       )}>
         {done && <Check className="size-[11px] text-settled" strokeWidth={3.2} aria-hidden="true" />}
       </span>
@@ -267,7 +267,7 @@ export function RecordFlow({ steps = [], verdict, actions, note }) {
             {/* The connector is lit when the step behind it is done, so the
                 colour stops exactly where the record stopped. */}
             {i > 0 && (
-              <span className={cn('mb-[22px] h-px flex-1', steps[i - 1].state === 'done' ? 'bg-settled/30' : 'bg-[#2a2a32]')} />
+              <span className={cn('mb-[22px] h-px flex-1', steps[i - 1].state === 'done' ? 'bg-settled/30' : 'bg-border-strong')} />
             )}
             <FlowStep {...step} />
           </Fragment>
@@ -342,7 +342,7 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
         {menu && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="secondary" size="icon-sm" aria-label="More actions" className="shrink-0 border border-[#33333a] text-secondary-text hover:text-foreground">
+              <Button variant="secondary" size="icon-sm" aria-label="More actions" className="shrink-0 border border-border-strong text-secondary-text hover:text-foreground">
                 <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>

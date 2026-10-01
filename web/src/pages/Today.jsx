@@ -156,7 +156,7 @@ function StartHere({ overdue }) {
           {/* The one primary action on the page. */}
           <Link
             to="/collections"
-            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-primary bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-colors duration-150 hover:bg-[#57e8c6]"
+            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-primary bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
           >
             {overdue.length === 1 ? 'Chase it' : `Chase all ${overdue.length}`}
             <ArrowRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
@@ -187,7 +187,7 @@ function Queue({ item }) {
       </div>
       <Link
         to={item.to}
-        className="inline-flex h-control shrink-0 items-center rounded-[6px] border border-[#33333a] bg-secondary px-3.5 text-[13px] font-medium text-foreground transition-colors duration-150 hover:border-muted-foreground"
+        className="inline-flex h-control shrink-0 items-center rounded-[6px] border border-border-strong bg-secondary px-3.5 text-[13px] font-medium text-foreground transition-colors duration-150 hover:border-muted-foreground"
       >
         {item.action}
       </Link>
@@ -312,7 +312,7 @@ export default function Today() {
           <button
             type="button"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-[#33333a] bg-secondary px-3.5 text-[13px] font-medium text-foreground hover:border-muted-foreground"
+            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-3.5 text-[13px] font-medium text-foreground hover:border-muted-foreground"
           >
             <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
             New

@@ -9,9 +9,14 @@
 /**
  * Cetizion, from the v2 redesign (design project "Cetizion Tracker UI Mockups").
  *
- * The design is dark and only dark, so its palette is the root palette and
- * `.dark` repeats it rather than inverting: a stray `dark` class cannot make
- * the app light, and neither can a user's system setting.
+ * The design is drawn dark, and dark is the default. Light is not an
+ * inversion of it — inverting a palette built on layered near-blacks gives
+ * you five greys nobody can tell apart. It is derived from the one light
+ * surface the design does specify: the quotation PDF header in C21, which
+ * fixes the ink (#151517), the body (#3d3d45), the meta (#5d5d66), the rule
+ * (#e2e2de) and the brand on paper (#0f7a66). The four state colours are
+ * re-picked for a white ground at 4.5:1 or better, because the dark ones
+ * are pastels chosen to glow on near-black and wash out on white.
  *
  * Its own rules, kept here because they are the thing that makes the screens
  * look like one product:
@@ -54,6 +59,12 @@
      the text quietly inherited whatever was above it. */
   --color-secondary-text: var(--secondary-text);
 
+  /* The outline one step brighter than --border: a dashed drop zone, a
+     hollow step on the flow rail, the edge of a secondary button. It was
+     written as #33333a in nine files, which is the same as saying "dark
+     only" nine times. */
+  --color-border-strong: var(--border-strong);
+
   /* The four states the tracker actually has. Named for what they mean,
      not for their hue, because the hue is the least of what says it. */
   --color-late: var(--late);
@@ -93,6 +104,70 @@
 
 :root {
   --radius: 10px;
+  color-scheme: light;
+
+  --background: #f4f4f6;         /* ground */
+  --foreground: #151517;         /* ink, the design's own on paper */
+  --card: #ffffff;
+  --card-foreground: #151517;
+  --popover: #ffffff;
+  --popover-foreground: #151517;
+
+  /* #2ee0b8 is a mint chosen to glow on near-black; on white it reads at
+     1.6:1 and cannot carry text or an edge. The design already picked the
+     brand's paper form for the PDF header, so this is that. */
+  --primary: #0f7a66;
+  --primary-foreground: #ffffff;
+
+  --secondary: #e9e9ed;
+  --secondary-foreground: #151517;
+
+  --muted: #eeeef1;              /* canvas, one step back from the card */
+  --muted-foreground: #5d5d66;   /* meta, 6.6:1 — never load-bearing */
+
+  --accent: #e3e3e8;             /* hover surface, not the brand accent */
+  --accent-foreground: #151517;
+
+  --destructive: #c2334d;
+  --destructive-foreground: #ffffff;
+
+  --border: #e2e2de;             /* rule */
+  --input: #d7d7dc;
+  --ring: #0f7a66;
+
+  /* The four states, re-picked for a white ground. Each is 4.5:1 or better
+     as text, so a chip still says its word when the colour is taken away. */
+  --late: #c2334d;
+  --late-foreground: #ffffff;
+  --waiting: #8a5300;
+  --waiting-foreground: #ffffff;
+  --settled: #0f7a66;
+  --settled-foreground: #ffffff;
+  --info: #1f5fd0;
+  --info-foreground: #ffffff;
+
+  /* Same intent as the dark forecast band: the quietest thing that is still
+     a thing, held at 3:1 against the card it sits on. */
+  --forecast: #9a9aa6;
+  --forecast-foreground: #151517;
+
+  /* Body text: #3d3d45 at 10.3:1. Not muted — muted is the meta line. */
+  --secondary-text: #3d3d45;
+
+  --border-strong: #c9c9d0;
+
+  --sidebar: #eeeef1;
+  --sidebar-foreground: #3d3d45;
+  --sidebar-primary: #0f7a66;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e3e3e8;
+  --sidebar-accent-foreground: #151517;
+  --sidebar-border: #e2e2de;
+  --sidebar-ring: #0f7a66;
+}
+
+.dark {
+  color-scheme: dark;
 
   --background: #050506;         /* ground */
   --foreground: #f4f4f6;
@@ -147,12 +222,9 @@
   --sidebar-accent-foreground: #f4f4f6;
   --sidebar-border: #26262b;
   --sidebar-ring: #2ee0b8;
+  --border-strong: #33333a;
 }
 
-/* Dark is the only mode, so the class changes nothing. */
-.dark {
-  color-scheme: dark;
-}
 
 @layer base {
   /* Motion is 120-180ms by the design's own rule at the top of this file;

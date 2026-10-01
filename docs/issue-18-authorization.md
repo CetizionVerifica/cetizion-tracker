@@ -213,6 +213,10 @@ session is **401**, before any of these is considered.
 | `GET /api/export/payables.csv` | any | The same rows as GET /api/dashboard/payables, so it carries the same answer. |
 | `GET /api/export/sales-report.pdf` | any |  |
 | `GET /api/export/sales-report/:report.csv` | any |  |
+| **/api/follow-ups** | | |
+| `GET /api/follow-ups` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/record` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/summary` | **admin** | How each salesperson answers their reminders is a management view of the whole team. |
 | **/api/health** | | |
 | `GET /api/health` | public | none — The platform needs somewhere to point a health check. It answers only that the database replied, when the process started, the environment name and the auth mode — the last of which /api/auth/config already tells any caller. ?deep=1 is checked inside the handler and needs an administrator. |
 | **/api/hooks** | | |
@@ -347,7 +351,10 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/discover` | **admin** | Running the discovery sweep by hand is an operational act; it creates renewal records across every client. |
 | `POST /api/renewals/manual` | any |  |
 | **/api/reports** | | |
-| `GET /api/reports/win-rate` | any | Win rate by quarter. Counts and ratios of quotations, which both roles already see; it carries no margin, so it is not gated the way /api/profitability is. |
+| `GET /api/reports/by-status` | any | Open deals by the status on the record, which is not always where its pipeline stage puts it. |
+| `GET /api/reports/conversion` | any | Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string. |
+| `GET /api/reports/quoted-won` | any | Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today's rate into a month that has passed. |
+| `GET /api/reports/win-rate` | any | Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped. |
 | **/api/search** | | |
 | `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
 | **/api/settings** | | |

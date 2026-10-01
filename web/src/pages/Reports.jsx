@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bar, BarChart, Cell, LabelList, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
 import { PageHeader } from '../App.jsx';
-import { ChartCard } from '../components/charts.jsx';
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from '../components/ui/chart.tsx';
+import { AXIS, BAR, BAR_LABEL, ChartCard, ChartTip, GRID, HOVER } from '../components/charts.jsx';
+import { ChartContainer, ChartTooltip } from '../components/ui/chart.tsx';
 import { Alert, Select } from '../components/ui.jsx';
 import { Skeleton } from '../components/ui/skeleton.tsx';
 import { api } from '../lib/api.js';
@@ -11,7 +11,7 @@ import { useFetch } from '../lib/hooks.js';
 import { money, number, percent } from '../lib/format.js';
 
 /**
- * Reports (#22): four charts, each with a table twin, each bar a link into
+ * Reports (#22): seven charts, each with a table twin, each bar a link into
  * the list it counts.
  *
  * Every figure here is INR. A deal or an invoice in another currency is not
@@ -52,11 +52,15 @@ const inr = (value) => money(value, 'INR', { compact: true });
 export default function Reports() {
   const navigate = useNavigate();
   const [horizon, setHorizon] = useState('6');
+  const [dimension, setDimension] = useState('owner');
 
   const pipeline = useFetch(() => api.raw('/pipeline'), []);
   const collections = useFetch(() => api.raw('/collections'), []);
   const cashflow = useFetch(() => api.raw(`/cashflow?months=${horizon}`), [horizon]);
   const winRate = useFetch(() => api.raw('/reports/win-rate?quarters=5'), []);
+  const conversion = useFetch(() => api.raw(`/reports/conversion?by=${dimension}`), [dimension]);
+  const quotedWon = useFetch(() => api.raw(`/reports/quoted-won?months=${horizon}`), [horizon]);
+  const byStatus = useFetch(() => api.raw('/reports/by-status'), []);
 
   const financialYear = useMemo(() => {
     const today = winRate.data?.data?.today || cashflow.data?.data?.today;
@@ -66,7 +70,7 @@ export default function Reports() {
     return `${start}–${String((start + 1) % 100).padStart(2, '0')}`;
   }, [winRate.data, cashflow.data]);
 
-  const errors = [pipeline.error, collections.error, cashflow.error, winRate.error].filter(Boolean);
+  const errors = [pipeline.error, collections.error, cashflow.error, winRate.error, conversion.error, quotedWon.error, byStatus.error].filter(Boolean);
 
   return (
     <>
@@ -74,13 +78,25 @@ export default function Reports() {
         title="Reports"
         subtitle={`${financialYear ? `Financial year ${financialYear} · ` : ''}All figures in ₹, at the rate on each record's own date. Every bar links into the list behind it.`}
         actions={(
-          <Select
-            value={horizon}
-            placeholder={null}
-            aria-label="Cash-flow horizon"
-            options={[{ value: '3', label: 'Cash: 3 months' }, { value: '6', label: 'Cash: 6 months' }, { value: '12', label: 'Cash: 12 months' }]}
-            onChange={(e) => setHorizon(e.target.value)}
-          />
+          <>
+            {/* Two controls, and each one genuinely reframes a chart: the
+                horizon moves the cash bands and the months on quoted-vs-won,
+                the dimension regroups the win-rate bars. */}
+            <Select
+              value={horizon}
+              placeholder={null}
+              aria-label="Months shown"
+              options={[{ value: '3', label: 'Months: 3' }, { value: '6', label: 'Months: 6' }, { value: '12', label: 'Months: 12' }]}
+              onChange={(e) => setHorizon(e.target.value)}
+            />
+            <Select
+              value={dimension}
+              placeholder={null}
+              aria-label="Win rate grouped by"
+              options={[{ value: 'owner', label: 'Win rate by: owner' }, { value: 'sector', label: 'Win rate by: sector' }, { value: 'service', label: 'Win rate by: service' }]}
+              onChange={(e) => setDimension(e.target.value)}
+            />
+          </>
         )}
       />
       <div className="page stack">
@@ -98,6 +114,9 @@ export default function Reports() {
             <AgeingChart state={collections} onOpen={(bucket) => navigate(`/collections?bucket=${encodeURIComponent(bucket)}`)} />
             <CashChart state={cashflow} horizon={horizon} onOpen={(month) => navigate(`/cashflow?month=${month}`)} />
             <WinRateChart state={winRate} />
+            <QuotedWonChart state={quotedWon} horizon={horizon} onOpen={(month) => navigate(`/quotations?month=${month}`)} />
+            <ConversionChart state={conversion} />
+            <StatusChart state={byStatus} onOpen={(status) => navigate(`/quotations?status=${encodeURIComponent(status)}`)} />
           </div>
         </div>
       </div>
@@ -138,11 +157,12 @@ function PipelineChart({ state, onOpen }) {
         className="h-full w-full aspect-auto"
       >
         <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
-          <XAxis type="number" dataKey="weighted" hide />
-          <YAxis type="category" dataKey="label" width={116} tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
-          <ChartTooltip content={<ChartTooltipContent formatter={(value) => inr(value)} />} />
-          <Bar dataKey="weighted" radius={3} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.id)}>
-            <LabelList dataKey="weighted" position="right" formatter={inr} fill="var(--foreground)" fontSize={12} />
+          <CartesianGrid {...GRID} horizontal={false} />
+          <XAxis type="number" dataKey="weighted" {...AXIS} tickFormatter={inr} />
+          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ weighted: 'weighted' }} />} />
+          <Bar dataKey="weighted" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.id)}>
+            <LabelList dataKey="weighted" position="right" formatter={inr} {...BAR_LABEL} />
           </Bar>
         </BarChart>
       </ChartContainer>
@@ -178,12 +198,13 @@ function AgeingChart({ state, onOpen }) {
     >
       <ChartContainer config={{ amount: { label: 'Outstanding' } }} className="h-full w-full aspect-auto">
         <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
-          <XAxis type="number" dataKey="amount" hide />
-          <YAxis type="category" dataKey="label" width={116} tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
-          <ChartTooltip content={<ChartTooltipContent formatter={(value) => inr(value)} />} />
-          <Bar dataKey="amount" radius={3} minPointSize={ZERO_BAR} cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.key)}>
+          <CartesianGrid {...GRID} horizontal={false} />
+          <XAxis type="number" dataKey="amount" {...AXIS} tickFormatter={inr} />
+          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ amount: 'outstanding' }} />} />
+          <Bar dataKey="amount" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.key)}>
             {rows.map((b) => <Cell key={b.key} fill={AGE_COLOUR[b.key] || 'var(--forecast)'} />)}
-            <LabelList dataKey="amount" position="right" formatter={inr} fill="var(--foreground)" fontSize={12} />
+            <LabelList dataKey="amount" position="right" formatter={inr} {...BAR_LABEL} />
           </Bar>
         </BarChart>
       </ChartContainer>
@@ -219,17 +240,24 @@ function CashChart({ state, horizon, onOpen }) {
         config={Object.fromEntries(CASH_BANDS.map((b) => [b.key, { label: b.label, color: b.colour }]))}
         className="h-full w-full aspect-auto"
       >
-        <BarChart data={rows} margin={{ left: 4, right: 4, top: 16, bottom: 4 }}>
-          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
-          <YAxis hide />
-          <ChartTooltip content={<ChartTooltipContent formatter={(value, name) => `${CASH_BANDS.find((b) => b.key === name)?.label ?? name}: ${inr(value)}`} />} />
+        <BarChart data={rows} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
+          <CartesianGrid {...GRID} vertical={false} />
+          <XAxis dataKey="label" {...AXIS} interval={0} />
+          <YAxis {...AXIS} width={56} tickFormatter={inr} />
+          <ChartTooltip
+            cursor={HOVER}
+            content={<ChartTip format={inr} names={Object.fromEntries(CASH_BANDS.map((b) => [b.key, b.label.toLowerCase()]))} />}
+          />
           {CASH_BANDS.map((band, i) => (
             <Bar
               key={band.key}
               dataKey={band.key}
               stackId="cash"
               fill={band.colour}
-              radius={i === CASH_BANDS.length - 1 ? [3, 3, 0, 0] : 0}
+              maxBarSize={BAR.size}
+              // Only the top band is rounded: a stack is one bar, so the
+              // corners belong to the column, not to each band in it.
+              radius={i === CASH_BANDS.length - 1 ? BAR.up : 0}
               // The top band carries the month's total, so it keeps a
               // sliver even at zero — otherwise an empty month is a gap
               // with no number, which reads as missing rather than nil.
@@ -240,8 +268,7 @@ function CashChart({ state, horizon, onOpen }) {
               {i === CASH_BANDS.length - 1 && (
                 <LabelList
                   position="top"
-                  fill="var(--foreground)"
-                  fontSize={12}
+                  {...BAR_LABEL}
                   valueAccessor={(entry) => inr(entry.payload.received + entry.payload.invoiced + entry.payload.scheduled)}
                 />
               )}
@@ -274,20 +301,147 @@ function WinRateChart({ state }) {
       footnote={`Bars, not a line — five points is too few for a trend to be honest. The current quarter is the only coloured one.${d?.foreign ? ` ${d.foreign} closed deal${d.foreign === 1 ? '' : 's'} quoted in another currency count here but not in any rupee total.` : ''}`}
     >
       <ChartContainer config={{ rate: { label: 'Win rate' } }} className="h-full w-full aspect-auto">
-        <BarChart data={rows} margin={{ left: 4, right: 4, top: 16, bottom: 4 }}>
-          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--secondary-text)', fontSize: 12 }} />
-          <YAxis hide domain={[0, 100]} />
-          <ChartTooltip content={<ChartTooltipContent formatter={(value) => `${value}%`} />} />
-          <Bar dataKey="rate" radius={3} minPointSize={ZERO_BAR}>
+        <BarChart data={rows} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
+          <CartesianGrid {...GRID} vertical={false} />
+          {/* No interval={0} here. sales-tracker forces every tick because its
+              labels are three characters; "Q2 FY25-26" is ten, and forcing
+              them made five quarters run into one another at sidebar width.
+              Letting Recharts drop every other label is the honest fallback:
+              a tick it cannot fit is a tick nobody can read. */}
+          <XAxis dataKey="label" {...AXIS} />
+          <YAxis {...AXIS} width={40} domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={(value) => `${value}%`} names={{ rate: 'win rate' }} />} />
+          <Bar dataKey="rate" maxBarSize={BAR.size} radius={BAR.up} minPointSize={ZERO_BAR}>
             {rows.map((q) => <Cell key={q.key} fill={q.current ? 'var(--primary)' : 'var(--forecast)'} />)}
             {/* No bar and no percentage for a quarter that closed nothing:
                 "0%" would read as "we lost them all". */}
             <LabelList
               position="top"
-              fill="var(--foreground)"
-              fontSize={12}
+              {...BAR_LABEL}
               valueAccessor={(entry) => (entry.payload.win_rate === null ? 'none closed' : `${entry.payload.rate}%`)}
             />
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* ------------------------------------------------- quoted against won */
+
+/**
+ * Two series, because the gap between them is the finding.
+ *
+ * A month where both fell is a quiet month; a month where quoting held and
+ * winning fell is a problem, and one bar cannot tell you which it was.
+ */
+function QuotedWonChart({ state, horizon, onOpen }) {
+  const d = state.data?.data;
+  const rows = (d?.months || []).map((m) => ({ ...m, label: monthLabel(m.month) }));
+  const quoted = rows.reduce((sum, m) => sum + Number(m.quoted || 0), 0);
+  const won = rows.reduce((sum, m) => sum + Number(m.won || 0), 0);
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title="Quoted against won"
+      meta={`The last ${horizon} months · quoted in the lighter bar, won in the accent`}
+      height={280}
+      columns={['Month', 'Deals', 'Quoted', 'Won', 'Share won']}
+      rows={rows.map((m) => ({
+        key: m.month,
+        href: `/quotations?month=${m.month}`,
+        cells: [m.label, number(m.deals), inr(m.quoted), inr(m.won), m.quoted > 0 ? percent(m.won / m.quoted) : '—'],
+      }))}
+      footnote={`${inr(won)} won of ${inr(quoted)} quoted over the period.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+    >
+      <ChartContainer config={{ quoted: { label: 'Quoted' }, won: { label: 'Won' } }} className="h-full w-full aspect-auto">
+        <BarChart data={rows} barGap={2} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
+          <CartesianGrid {...GRID} vertical={false} />
+          <XAxis dataKey="label" {...AXIS} interval={0} />
+          <YAxis {...AXIS} width={56} tickFormatter={inr} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ quoted: 'quoted', won: 'won' }} />} />
+          <Bar dataKey="quoted" maxBarSize={BAR.paired} radius={BAR.up} minPointSize={ZERO_BAR} fill="var(--forecast)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
+          <Bar dataKey="won" maxBarSize={BAR.paired} radius={BAR.up} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* ------------------------------------------------------- win rate by X */
+
+/**
+ * The quarterly rate says whether the team is improving. This says where it
+ * is already winning, which is the question asked before deciding what to
+ * chase next.
+ */
+function ConversionChart({ state }) {
+  const d = state.data?.data;
+  const rows = (d?.groups || []).map((g) => ({ ...g, label: g.key, rate: g.win_rate === null ? 0 : g.win_rate * 100 }));
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title={`Win rate by ${d?.label?.toLowerCase() || 'owner'}`}
+      meta="Decided deals only — won over won plus lost"
+      height={ROW_CHART(rows.length)}
+      columns={[d?.label || 'Owner', 'Won', 'Lost', 'Win rate']}
+      rows={rows.map((g) => ({ key: g.key, cells: [g.key, number(g.won), number(g.lost), g.win_rate === null ? '—' : percent(g.win_rate)] }))}
+      footnote="A rate is a count, so a deal in any currency counts in it."
+    >
+      <ChartContainer config={Object.fromEntries(rows.map((g) => [g.key, { label: g.key }]))} className="h-full w-full aspect-auto">
+        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 96, top: 4, bottom: 4 }}>
+          <CartesianGrid {...GRID} horizontal={false} />
+          <XAxis type="number" dataKey="rate" domain={[0, 100]} {...AXIS} tickFormatter={(value) => `${value}%`} />
+          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={(value) => `${Math.round(value)}%`} names={{ rate: 'win rate' }} />} />
+          <Bar dataKey="rate" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--primary)">
+            <LabelList
+              position="right"
+              {...BAR_LABEL}
+              valueAccessor={(entry) => (entry?.payload ? `${Math.round(entry.payload.rate)}% · ${entry.payload.won}W ${entry.payload.lost}L` : '')}
+            />
+          </Bar>
+        </BarChart>
+      </ChartContainer>
+    </ChartCard>
+  );
+}
+
+/* --------------------------------------------------- open deals by status */
+
+/**
+ * The pipeline chart is by stage — where the team moved a deal to. This is
+ * by status, which is what the record says it is. They drift, and a deal
+ * parked at On Hold is invisible on a board that only shows progress.
+ */
+function StatusChart({ state, onOpen }) {
+  const d = state.data?.data;
+  const rows = (d?.statuses || []).map((r) => ({ ...r, label: r.status }));
+  const total = rows.reduce((sum, r) => sum + Number(r.deals || 0), 0);
+
+  if (state.loading && !d) return <Loading height={320} />;
+
+  return (
+    <ChartCard
+      title="Open deals by status"
+      meta="What each record says it is, which is not always where its stage puts it"
+      height={ROW_CHART(rows.length)}
+      columns={['Status', 'Deals', 'Value']}
+      rows={rows.map((r) => ({ key: r.status, href: `/quotations?status=${encodeURIComponent(r.status)}`, cells: [r.status, number(r.deals), inr(r.value)] }))}
+      footnote={`${number(total)} open deals.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+    >
+      <ChartContainer config={Object.fromEntries(rows.map((r) => [r.status, { label: r.status }]))} className="h-full w-full aspect-auto">
+        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
+          <CartesianGrid {...GRID} horizontal={false} />
+          <XAxis type="number" dataKey="deals" {...AXIS} allowDecimals={false} />
+          <YAxis type="category" dataKey="label" width={136} {...AXIS} />
+          <ChartTooltip cursor={HOVER} content={<ChartTip format={number} names={{ deals: 'open deals' }} />} />
+          <Bar dataKey="deals" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--info)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.status)}>
+            <LabelList dataKey="deals" position="right" formatter={number} {...BAR_LABEL} />
           </Bar>
         </BarChart>
       </ChartContainer>

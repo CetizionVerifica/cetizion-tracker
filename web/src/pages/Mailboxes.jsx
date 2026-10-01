@@ -388,7 +388,7 @@ export default function Mailboxes() {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {blocked.map((b) => (
-                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-[6px] border border-[#33333a] bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
                     {b.pattern}
                     <button
                       type="button"

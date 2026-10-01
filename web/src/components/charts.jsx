@@ -113,5 +113,86 @@ export function ChartCard({ title, meta, columns, rows, footnote, children, heig
   );
 }
 
-/** Recharts calls this per tick; a category axis that truncates is a lie. */
-export const axisTick = { fill: 'var(--secondary-text)', fontSize: 12 };
+/* ------------------------------------------------------------- chart style
+ *
+ * The shared look for every chart on Reports, ported from sales-tracker's
+ * chart-kit so the two products' dashboards read the same way. Four
+ * decisions, and the reason each one is not a matter of taste:
+ *
+ *   recessive axes   a tick label is a reference, not content. They sit at
+ *                    --muted-foreground with no axis line and no tick mark,
+ *                    so the bars are the only thing with weight.
+ *   one grid, one    gridlines run across the value axis only — the
+ *   direction        category axis gets none, because a line between two
+ *                    named rows implies an order that is not there.
+ *   square baseline  a bar is rounded at the data end and square where it
+ *                    meets the axis. Rounding both ends detaches it from
+ *                    its own baseline and makes small values look larger.
+ *   value first      in the tooltip the number leads and the series name
+ *                    follows, muted, because the number is what was asked
+ *                    for. The colour key is a 2px rule, not a filled
+ *                    swatch, so it reads as a line on a chart.
+ *
+ * These are objects rather than a component because Recharts wants props:
+ * `<XAxis {...AXIS} />` is the whole point.
+ */
+
+/** Axis ticks: readable, and nothing else. */
+export const AXIS = {
+  tick: { fill: 'var(--muted-foreground)', fontSize: 12 },
+  axisLine: false,
+  tickLine: false,
+};
+
+/** Gridlines. Pass `horizontal={false}` or `vertical={false}` to pick one. */
+export const GRID = { stroke: 'var(--border)', strokeWidth: 1 };
+
+/**
+ * Bar geometry. `up` for columns, `right` for rows; `size` caps the width
+ * so four bars in a wide card do not become four slabs, and `paired` is the
+ * narrower cap for a chart showing two series per category.
+ */
+export const BAR = {
+  size: 24,
+  paired: 16,
+  up: [4, 4, 0, 0],
+  right: [0, 4, 4, 0],
+};
+
+/** The band under the pointer. Named so a chart cannot invent its own. */
+export const HOVER = { fill: 'var(--accent)' };
+
+/** A value label sitting off the end of a bar. */
+export const BAR_LABEL = { fill: 'var(--muted-foreground)', fontSize: 11 };
+
+/**
+ * The tooltip: the value in full, then what it is.
+ *
+ * Recharts hands this `active`, `payload` and `label`. `format` turns a
+ * value into its display string, and `names` renames a series where the
+ * dataKey is not what a person would call it. A series whose value is null
+ * is dropped rather than shown as an empty line.
+ */
+export function ChartTip({ active, payload, label, format = (value) => value, names = {}, title }) {
+  if (!active || !payload?.length) return null;
+  const shown = payload.filter((item) => item?.value !== null && item?.value !== undefined);
+  if (!shown.length) return null;
+
+  return (
+    <div className="rounded-[var(--radius)] border bg-popover px-3 py-2 text-[13px] text-popover-foreground shadow-md">
+      <p className="mb-1 text-muted-foreground">{title ?? label}</p>
+      {shown.map((item) => {
+        const key = item.dataKey ?? item.name;
+        return (
+          <p key={key} className="flex items-center gap-2">
+            {item.color && (
+              <span aria-hidden="true" className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: item.color }} />
+            )}
+            <span className="num font-semibold">{format(item.value, key, item.payload)}</span>
+            <span className="text-muted-foreground">{names[key] ?? item.name ?? key}</span>
+          </p>
+        );
+      })}
+    </div>
+  );
+}

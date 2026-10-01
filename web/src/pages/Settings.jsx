@@ -283,6 +283,23 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Follow-ups',
+    hint: 'an email to the owner, then to management if nothing is logged; separate from the bell',
+    items: [
+      { key: 'followup_enabled', label: 'Send follow-up reminders and escalations', type: 'bool' },
+      { key: 'followup_enquiry_idle_days', label: 'Enquiry untouched for', unit: 'working days' },
+      { key: 'followup_quotation_idle_days', label: 'Sent quotation untouched for', unit: 'working days' },
+      { key: 'followup_invoice_overdue_days', label: 'Invoice overdue by', unit: 'days' },
+      { key: 'followup_invoice_idle_days', label: 'Overdue invoice unchased for', unit: 'working days' },
+      { key: 'followup_grace_days', label: 'Then tell management after', unit: 'working days' },
+      { key: 'followup_reescalate_days', label: 'Remind management again every', unit: 'working days' },
+      // Admins always get it. With the shared sign-in there are no admin
+      // accounts, so this list (or the daily digest address) is everyone.
+      { key: 'followup_escalation_emails', label: 'Management addresses, besides admins', type: 'list' },
+      { key: 'followup_cc_owner_on_escalation', label: 'Tell the owner when escalated', type: 'bool' },
+    ],
+  },
+  {
     title: 'What counts as a problem',
     hint: 'the thresholds behind the red and amber on every page',
     items: [
@@ -336,7 +353,7 @@ const KNOWN = new Set(GROUPS.flatMap((g) => g.items.map((i) => i.key)));
 /** "1 days" is the tell that nobody read the screen. */
 function unitFor(unit, value) {
   if (!unit || Number(value) !== 1) return unit;
-  return unit.replace(/^(day|hour|minute|tr(y|ie))s\b/, (m) => (m === 'tries' ? 'try' : m.slice(0, -1)));
+  return unit.replace(/^(working )?(days|hours|minutes|tries)\b/, (m, working = '', word) => working + (word === 'tries' ? 'try' : word.slice(0, -1)));
 }
 
 /** A value as somebody would read it, rather than as it is stored. */
