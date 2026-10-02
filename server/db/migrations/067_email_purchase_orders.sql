@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   from_email           text,
   received_at          timestamptz,
   outcome              text NOT NULL CHECK (outcome IN
-                         ('registered','linked','review','not_po','registered_by_hand','dismissed')),
+                         ('registered','linked','review','not_po','registered_by_hand','dismissed',
+                          -- live mail the AI could not read (an error, or the day's ceiling):
+                          -- read again by pos.backfill, and sent to review after a week
+                          'retry')),
   document_type        text,
   review_reason        text CHECK (review_reason IN
                          ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
@@ -53,6 +56,8 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   -- ceiling counts by.
   decided_by           text,
   settled_at           timestamptz,
+  -- When it was first left for a retry; a week later it goes to review.
+  retry_since          timestamptz,
   decided_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
@@ -120,6 +125,15 @@ CREATE INDEX IF NOT EXISTS email_invoice_decisions_message_idx ON email_invoice_
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_stage_idx ON email_invoice_decisions (stage_id) WHERE stage_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_review_idx ON email_invoice_decisions (decided_at) WHERE outcome = 'review';
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_waiting_idx ON email_invoice_decisions (decided_at) WHERE outcome = 'waiting';
+
+-- AI calls made outside any decision: a review item read again for its
+-- dialog. Counted against the same daily ceiling (aiCallsToday).
+CREATE TABLE IF NOT EXISTS email_ai_calls (
+  id       serial PRIMARY KEY,
+  purpose  text NOT NULL,
+  made_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS email_ai_calls_made_idx ON email_ai_calls (made_at);
 
 CREATE TABLE IF NOT EXISTS mailbox_invoice_backfills (
   account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,

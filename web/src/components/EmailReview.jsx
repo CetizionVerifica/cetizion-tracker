@@ -225,7 +225,7 @@ export function InvoiceReviewList() {
       render: (r) => (
         <div className="table__actions">
           <OpenEmail threadId={r.thread_id} />
-          <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id || !r.po_number} title={r.po_number ? undefined : 'Register its PO first'} onClick={() => setChoosing(r)}>Record against…</Button>
+          <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
           <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</Button>
         </div>
       ),
@@ -264,27 +264,45 @@ export function InvoiceReviewList() {
   );
 }
 
-/** Which stage the invoice is for, then a fresh read of the email for the dialog. */
+/**
+ * Which stage the invoice is for, then a fresh read of the email for the
+ * dialog. An item matched to no PO (its PO was not in the tracker, or
+ * several fitted) asks for the PO first.
+ */
 function ChooseStage({ row, onClose, onReady }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [read, setRead] = useState(null);
   const [stageId, setStageId] = useState('');
-  const open = row.stages.filter((s) => !s.invoice_no);
+  const [poNumber, setPoNumber] = useState(row.po_number || '');
+  const [stages, setStages] = useState(row.po_number ? row.stages : null);
+  const open = (stages || []).filter((s) => !s.invoice_no);
+
+  async function loadPo() {
+    const { data } = await api.raw(`/purchase-orders/${encodeURIComponent(poNumber.trim())}/full`);
+    return data.payment_stages;
+  }
 
   async function readAgain() {
     setBusy(true); setError(null);
     try {
+      const list = stages || await loadPo();
+      setStages(list);
       const { data } = await api.action(`/payment-stages/invoice-review/${row.id}/record`);
       setRead(data);
-      setStageId(String(data.suggested_stage_id || open[0]?.id || ''));
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+      const openNow = list.filter((s) => !s.invoice_no);
+      // Only an open stage is ever chosen for you: one with an invoice would be overwritten.
+      const suggested = openNow.find((s) => s.id === data.suggested_stage_id);
+      setStageId(String(suggested?.id || openNow[0]?.id || ''));
+    } catch (err) {
+      setError(err.status === 404 ? `There is no purchase order ${poNumber} you can open` : err.message);
+    } finally { setBusy(false); }
   }
 
   async function go(e) {
     e.preventDefault();
     if (!read) return readAgain();
+    if (!open.some((s) => String(s.id) === stageId)) return;
     setBusy(true); setError(null);
     try {
       const { data: stage } = await api.get('payment-stages', stageId);
@@ -298,20 +316,25 @@ function ChooseStage({ row, onClose, onReady }) {
   return (
     <Modal
       title="Record this invoice against…"
-      subtitle={`${row.invoice_no || 'Invoice'} · PO ${row.po_number}`}
+      subtitle={`${row.invoice_no || 'Invoice'}${row.po_number ? ` · PO ${row.po_number}` : ''}`}
       onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="choose-stage" className="btn btn--primary" disabled={busy || (read && !stageId)}>{busy ? 'Reading the invoice again…' : read ? 'Continue' : 'Read the invoice'}</button></>}
+      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="choose-stage" className="btn btn--primary" disabled={busy || (!read && !poNumber.trim()) || (read && !stageId)}>{busy ? 'Reading the invoice again…' : read ? 'Continue' : 'Read the invoice'}</button></>}
     >
       <form id="choose-stage" onSubmit={go} className="stack">
         {error && <Alert tone="danger">{error}</Alert>}
         {read?.note && <Alert tone="warning">{read.note}</Alert>}
         {!read && <Alert>The invoice is read again from the email, and the invoice dialog is filled in. Nothing is saved until you record it.</Alert>}
+        {!read && !row.po_number && (
+          <Field label="Purchase order" hint="This invoice was matched to no PO: name the one it bills. Register the PO first if it is not in the tracker.">
+            <Input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="4500012345" autoFocus />
+          </Field>
+        )}
         {read && (
           <>
             {total != null && !open.some(fits) && (
               <Alert tone="warning">
                 The invoice is for {money(total, read.prefill.currency)}, which is none of this PO's open stages.
-                Re-split the stages on the <Link to={`/purchase-orders/${encodeURIComponent(row.po_number)}`}>PO's page</Link> first if the invoice covers a different share.
+                Re-split the stages on the <Link to={`/purchase-orders/${encodeURIComponent(poNumber)}`}>PO's page</Link> first if the invoice covers a different share.
               </Alert>
             )}
             <Field label="Stage">

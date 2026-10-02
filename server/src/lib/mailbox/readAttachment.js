@@ -15,6 +15,7 @@ import { providerFor } from './sync.js';
  *                          scan (the file goes instead), '' with no PDF
  *   parse(raw)             the AI's answer in its fixed shape
  *   fileName               a name for the file when it has none
+ *   requirePdf             true: no PDF attached means no AI call; returns { noPdf: true }
  * Returns
  *   { verdict, sourceText, allText, pdf, ai_calls }   read
  *   { unreadable: true, ai_calls: 0 }                 an encrypted or broken PDF
@@ -22,7 +23,7 @@ import { providerFor } from './sync.js';
  * sourceText is what amounts are checked against: the PDF's text, the
  * email's when the email is the document, or null for a scan.
  */
-export async function readWithAi(account, cand, ctx, chat, { rank, prompt, parse, fileName = 'document.pdf' }) {
+export async function readWithAi(account, cand, ctx, chat, { rank, prompt, parse, fileName = 'document.pdf', requirePdf = false }) {
   const { m } = cand;
   let chosen = null; let text = null;
   if (m.has_attachments) {
@@ -45,6 +46,9 @@ export async function readWithAi(account, cand, ctx, chat, { rank, prompt, parse
     if (chosen && !chosen.pages) return { unreadable: true, ai_calls: 0 };
     if (chosen) text = chosen.pages.join('\n\n');
   }
+  // Only the mailbox knows what is attached: a live message says only that
+  // something is. An image or a spreadsheet is not worth an AI call.
+  if (requirePdf && !chosen) return { noPdf: true, ai_calls: 0 };
   const scanned = chosen && (text || '').replace(/\s+/g, '').length < SCANNED_BELOW;
   const bodyText = mainText(m.body_html || '', 30_000);
   const { system, user } = prompt({ pdfText: chosen ? (scanned ? null : text) : '' });

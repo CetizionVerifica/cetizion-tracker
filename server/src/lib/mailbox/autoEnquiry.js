@@ -66,7 +66,8 @@ export async function aiCallsToday(db = { query }) {
     `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' AS start)
      SELECT (SELECT COALESCE(sum(ai_calls), 0) FROM email_enquiry_decisions, day WHERE decided_at >= day.start)::int
           + (SELECT COALESCE(sum(ai_calls), 0) FROM email_po_decisions, day WHERE decided_at >= day.start)::int
-          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_invoice_decisions, day WHERE decided_at >= day.start)::int AS n`);
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_invoice_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT count(*) FROM email_ai_calls, day WHERE made_at >= day.start)::int AS n`);
   return r.n;
 }
 
@@ -140,7 +141,9 @@ async function factsFor(account, cand, settings = {}) {
   // enquiry (plan §3.8), which quotationEnquiry() works out.
   const onRecord = c.direction === 'inbound' && await linkedByNumber(cand);
   const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped };
-  if (c.direction === 'inbound' && settings.poReader) {
+  // Only while the PO reader can read: without an AI it reads nothing, and
+  // holding PO-looking mail back for it would hide it from everyone.
+  if (c.direction === 'inbound' && settings.poReader && (await import('./autoPurchaseOrder.js')).poReaderCanRead()) {
     // A PO email is the PO reader's, until it has decided otherwise.
     const { rows: [po] } = await query(
       `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND outcome IN ('not_po','dismissed')`, [account.id, m.provider_id]);

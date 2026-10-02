@@ -355,11 +355,12 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     await deliver(box, [words]);
     assert.equal(calls.length, 0);
     assert.equal(await decision(box.id, words.provider_id), undefined);
-    // The AI failing leaves it undecided, to be read again.
+    // The AI failing keeps it for a retry: nothing registered, nothing lost.
     autoPo.deps.chat = async () => { throw new Error('timeout'); };
     const failed = poEmail({ from: { email: 'anil@acme-words.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ buyer: 'Acme Words Ltd' }) }] });
     await deliver(box, [failed]);
-    assert.equal(await decision(box.id, failed.provider_id), undefined);
+    assert.equal((await decision(box.id, failed.provider_id)).outcome, 'retry');
+    await db.query(`UPDATE email_po_decisions SET outcome = 'dismissed' WHERE account_id = $1 AND provider_id = $2`, [box.id, failed.provider_id]);
     // Low confidence: review.
     const unsure = poEmail({ from: { email: 'anil@acme-words.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500999001', buyer: 'Acme Words Ltd' }) }] });
     ai(reading({ po_number: '4500999001', confidence: 0.6 }));
@@ -551,5 +552,104 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     await db.query(`UPDATE email_po_decisions SET decided_at = now() - interval '2 days' WHERE account_id = $1`, [box.id]);
     const { body: rerun } = await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).send({ kind: 'pos' }).expect(200);
     assert.deepEqual([rerun.data.kind, rerun.data.decisions_cleared], ['pos', 1]);
+  });
+  // ------------------------------------------------------------ review fixes
+
+  test('live mail the AI could not read is kept, held from the enquiry reader, read again by the job, and reviewed after a week', async () => {
+    await db.query(`UPDATE email_po_decisions SET outcome = 'dismissed' WHERE outcome = 'retry'`);
+    const box = await mailbox();
+    await client('Acme Retry Ltd', 'anil@acme-retry.co.in');
+    await quotation('Acme Retry Ltd');
+    autoPo.deps.chat = async () => { throw new Error('upstream timeout'); };
+    const msg = poEmail({ from: { email: 'anil@acme-retry.co.in' }, subject: 'Purchase order for EcoVadis',
+      attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500888001', buyer: 'Acme Retry Ltd' }) }] });
+    await deliver(box, [msg]);
+    let d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.ai_calls], ['retry', 1]);
+    assert.ok(d.retry_since);
+    const { rows: judged } = await db.query('SELECT 1 FROM email_enquiry_decisions WHERE provider_id = $1', [msg.provider_id]);
+    assert.equal(judged.length, 0, 'still the PO reader\'s: not made an enquiry');
+
+    ai(reading({ po_number: '4500888001', buyer: { company_name: 'Acme Retry Ltd' } }));
+    const run = await autoPo.runPoBackfills();
+    assert.equal(run.retried.registered, 1);
+    d = await decision(box.id, msg.provider_id);
+    assert.equal(d.outcome, 'registered');
+    assert.ok(await poRow('4500888001'));
+
+    autoPo.deps.chat = async () => { throw new Error('still down'); };
+    const stuck = poEmail({ from: { email: 'anil@acme-retry.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500888002', buyer: 'Acme Retry Ltd' }) }] });
+    await deliver(box, [stuck]);
+    await db.query(`UPDATE email_po_decisions SET retry_since = now() - interval '8 days' WHERE account_id = $1 AND provider_id = $2`, [box.id, stuck.provider_id]);
+    await autoPo.runPoBackfills();
+    d = await decision(box.id, stuck.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'unreadable']);
+  });
+
+  test('with no AI, PO-looking mail is not held back: the enquiry reader judges it as before', async () => {
+    const box = await mailbox();
+    await client('Acme NoAi Ltd', 'anil@acme-noai.co.in');
+    autoPo.deps.chat = null;
+    const msg = poEmail({ from: { email: 'anil@acme-noai.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ buyer: 'Acme NoAi Ltd' }) }] });
+    await deliver(box, [msg]);
+    assert.equal(await decision(box.id, msg.provider_id), undefined);
+    const { rows } = await db.query('SELECT 1 FROM email_enquiry_decisions WHERE provider_id = $1', [msg.provider_id]);
+    assert.equal(rows.length, 1);
+  });
+
+  test('a past PO with no quotation on file fires no webhook at all, enquiry.created included', async () => {
+    await db.query(`INSERT INTO webhook_endpoints (name, url, events, secret) VALUES ('n8n-hist', 'https://example.test/hook', ARRAY['enquiry.created','po.received','quotation.won'], 's')`);
+    try {
+      const box = await mailbox();
+      const msg = poEmail({ from: { email: 'buyer@old-new-client.com' }, sent_at: at(150),
+        attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'ONC/77', buyer: 'Old New Client Ltd' }) }] });
+      ai(reading({ po_number: 'ONC/77', buyer: { company_name: 'Old New Client Ltd' }, po_date: day(151) }));
+      await deliver(box, [msg]);
+      const d = await decision(box.id, msg.provider_id);
+      assert.deepEqual([d.outcome, d.mode, d.created_quotation], ['registered', 'history', true]);
+      const { rows: [e] } = await db.query('SELECT enquiry_no FROM enquiries WHERE quotation_no = $1', [d.quotation_no]);
+      const { rows: hooks } = await db.query('SELECT event FROM webhook_events WHERE entity_id IN ($1, $2, $3)', [e.enquiry_no, d.quotation_no, 'ONC/77']);
+      assert.deepEqual(hooks, []);
+    } finally {
+      await db.query(`DELETE FROM webhook_endpoints WHERE name = 'n8n-hist'`);
+    }
+  });
+
+  test('a PO with no basic value whose lines add up to the total makes a quotation of that total, not 18% more', async () => {
+    const box = await mailbox();
+    const msg = poEmail({ from: { email: 'buyer@gross-lines.com' },
+      attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'GL/1', buyer: 'Gross Lines Ltd' }) }] });
+    ai(reading({ po_number: 'GL/1', buyer: { company_name: 'Gross Lines Ltd' }, basic_value: null,
+      lines: [{ description: 'EcoVadis assessment', qty: 1, rate: '2,95,000.00', amount: '2,95,000.00' }] }));
+    await deliver(box, [msg]);
+    const po = await poRow('GL/1');
+    const { rows: [q] } = await db.query('SELECT total::float, subtotal::float FROM quotations WHERE quotation_no = $1', [po.quotation_no]);
+    assert.deepEqual([q.subtotal, q.total], [250000, 295000]);
+  });
+
+  test('two registrations of one PO number in two spellings at once: one gets in', async () => {
+    await client('Acme Race Ltd', 'anil@acme-race.co.in');
+    const a = await quotation('Acme Race Ltd');
+    const b = await quotation('Acme Race Ltd');
+    const results = await Promise.all([
+      agent.post(`/api/quotations/${encodeURIComponent(a.quotation_no)}/register`).send({ po_number: 'RACE-777', po_date: day(1) }),
+      agent.post(`/api/quotations/${encodeURIComponent(b.quotation_no)}/register`).send({ po_number: 'race 777', po_date: day(1) }),
+    ]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [201, 422]);
+    const { rows } = await db.query(`SELECT 1 FROM purchase_orders WHERE lower(regexp_replace(po_number, '[^a-zA-Z0-9]', '', 'g')) = 'race777'`);
+    assert.equal(rows.length, 1);
+  });
+
+  test('reading a review item again counts against the daily AI ceiling', async () => {
+    const box = await mailbox();
+    await client('Acme Count Ltd', 'anil@acme-count.co.in');
+    await quotation('Acme Count Ltd');
+    ai(reading({ po_number: '4500777001', confidence: 0.5 }));
+    const msg = poEmail({ from: { email: 'anil@acme-count.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500777001', buyer: 'Acme Count Ltd' }) }] });
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    const before = await autoEnquiry.aiCallsToday();
+    await agent.post(`/api/purchase-orders/review/${d.id}/register`).expect(200);
+    assert.equal(await autoEnquiry.aiCallsToday(), before + 1);
   });
 });

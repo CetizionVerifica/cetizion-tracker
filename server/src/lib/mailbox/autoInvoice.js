@@ -95,13 +95,14 @@ export async function processInvoiceCandidates(account, candidates, { ctx: given
 async function saveDecision(db, account, cand, d) {
   const { m, c } = cand;
   const values = [d.outcome, d.document_type || null, d.review_reason || null, d.mode || null, d.confidence ?? null, d.method || 'ai',
-    d.stage_id ?? null, d.po_number || null, d.invoice_no || null, Boolean(d.document_kept_existing), d.outcome === 'waiting' ? JSON.stringify(d.reading) : null,
+    d.stage_id ?? null, d.po_number || null, d.invoice_no || null, Boolean(d.document_kept_existing), d.outcome === 'waiting' && d.reading ? JSON.stringify(d.reading) : null,
     d.thread_id ?? cand.threadId ?? null];
   if (cand.decisionId) {
     await db.query(
       `UPDATE email_invoice_decisions SET outcome = $2, document_type = $3, review_reason = $4, mode = $5, confidence = $6, method = $7,
-              stage_id = $8, po_number = $9, invoice_no = $10, document_kept_existing = $11, reading = $12, thread_id = COALESCE($13, thread_id)
-        WHERE id = $1 AND outcome = 'waiting'`, [cand.decisionId, ...values]);
+              stage_id = $8, po_number = $9, invoice_no = $10, document_kept_existing = $11, reading = $12, thread_id = COALESCE($13, thread_id),
+              ai_calls = ai_calls + $14
+        WHERE id = $1 AND outcome = 'waiting'`, [cand.decisionId, ...values, cand.retry ? d.ai_calls || 0 : 0]);
     return;
   }
   await db.query(
@@ -122,11 +123,13 @@ const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.pa
 export async function decideInvoice(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || c.direction !== 'outbound') return 'incomplete';
-  const { rows: [seen] } = await query('SELECT 1 FROM email_invoice_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  const { rows: [seen] } = await query(
+    `SELECT 1 FROM email_invoice_decisions WHERE account_id = $1 AND provider_id = $2 AND NOT (outcome = 'waiting' AND $3)`, [account.id, m.provider_id, Boolean(cand.retry)]);
   if (seen) return 'seen';
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''), 2000);
-  const pf = invoicePrefilter({ direction: 'outbound', subject: m.subject, text, external: c.external, attachments: m.attachments, has_attachments: m.has_attachments });
+  // A retry was a candidate when it was sent; its stored copy may hold no text.
+  const pf = cand.retry ? { candidate: true } : invoicePrefilter({ direction: 'outbound', subject: m.subject, text, external: c.external, attachments: m.attachments, has_attachments: m.has_attachments });
   if (!pf.candidate) {
     if (pf.reason === 'proforma') {
       // Decided by the rules: a proforma is never recorded, and never uses up a number.
@@ -140,7 +143,7 @@ export async function decideInvoice(account, cand, ctx) {
 
   // The same email, read in another mailbox (sales@ and accounts@ both on
   // the thread): no second AI call, and never a second record.
-  if (m.internet_message_id) {
+  if (m.internet_message_id && !cand.retry) {
     const { rows: [other] } = await query(
       `SELECT outcome, stage_id, po_number, invoice_no FROM email_invoice_decisions
         WHERE lower(internet_message_id) = lower($1) AND account_id <> $2 ORDER BY id LIMIT 1`, [m.internet_message_id, account.id]);
@@ -155,15 +158,34 @@ export async function decideInvoice(account, cand, ctx) {
   const chat = chatFn();
   // No AI, or the day's ceiling reached: left undecided, so the backfill reads it once it can.
   if (!chat) { ctx.skipped += 1; return 'no_ai'; }
-  if (ctx.aiUsed >= ctx.settings.dailyAiLimit) { if (ctx.backfill) ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+  if (ctx.aiUsed >= ctx.settings.dailyAiLimit) {
+    // The backfill reads the page again tomorrow; live mail is handed over
+    // once, so it waits, unread, for invoices.backfill to read it.
+    if (ctx.backfill && !cand.retry) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+    if (!cand.retry) await saveDecision({ query }, account, cand, { outcome: 'waiting', reading: null, ai_calls: 0 });
+    ctx.waiting += 1;
+    return 'waiting';
+  }
 
   const read = await readWithAi(account, cand, ctx, chat, {
-    rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf',
+    rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf', requirePdf: true,
     prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external }),
   });
-  if (read.error) { ctx.errors += 1; return 'error'; }
+  if (read.error) {
+    ctx.errors += 1;
+    // Read again later, as for the day's ceiling; the call is counted.
+    if (cand.retry) await query('UPDATE email_invoice_decisions SET ai_calls = ai_calls + 1 WHERE id = $1', [cand.decisionId]);
+    else await saveDecision({ query }, account, cand, { outcome: 'waiting', reading: null, ai_calls: read.ai_calls ?? 1 });
+    return 'waiting';
+  }
+  if (read.noPdf) {
+    // Decided by the rules, with no AI call: an invoice is a PDF.
+    await saveDecision({ query }, account, cand, { outcome: 'not_invoice', method: 'rules' });
+    ctx.notInvoice += 1;
+    return 'not_invoice';
+  }
   const base = { method: 'ai', ai_calls: read.ai_calls, confidence: read.verdict?.confidence ?? null, document_type: read.verdict?.document_type ?? null };
-  if (read.unreadable || !read.pdf) return toReview({ query }, account, cand, ctx, { ...base, review_reason: 'unreadable' });
+  if (read.unreadable) return toReview({ query }, account, cand, ctx, { ...base, review_reason: 'unreadable' });
 
   const checked = checkInvoice(read.verdict, {
     emailDate: m.sent_at, sourceText: read.sourceText, minConfidence: ctx.settings.minConfidence,
@@ -200,7 +222,8 @@ async function settle(account, cand, ctx, inv, base, pdf) {
     if (daysBetween(istDay(firstRead), businessToday()) >= ctx.settings.waitDays) {
       return toReview({ query }, account, cand, ctx, { ...decision, review_reason: 'po_not_found' });
     }
-    if (!cand.decisionId) await saveDecision({ query }, account, cand, { ...decision, outcome: 'waiting', reading: inv });
+    // Read just now (first time, or a retry of an unread one): keep what was read.
+    if (!cand.decisionId || cand.retry) await saveDecision({ query }, account, cand, { ...decision, outcome: 'waiting', reading: inv });
     ctx.waiting += 1;
     return 'waiting';
   }
@@ -405,7 +428,16 @@ export async function retryWaiting(ctx, { limit = 200 } = {}) {
     };
     const before = { recorded: ctx.recorded.length, review: ctx.review.length };
     try {
-      await settle(account, cand, ctx, d.reading, { method: 'ai', confidence: d.confidence, document_type: d.document_type }, null);
+      if (d.reading) {
+        await settle(account, cand, ctx, d.reading, { method: 'ai', confidence: d.confidence, document_type: d.document_type }, null);
+      } else if (daysBetween(istDay(d.decided_at), businessToday()) >= ctx.settings.waitDays) {
+        // Never read in a week: a person looks.
+        await toReview({ query }, account, cand, ctx, { method: 'ai', review_reason: 'unreadable' });
+      } else if (ctx.aiUsed < ctx.settings.dailyAiLimit) {
+        // Never read (an AI error, or the day's ceiling): read it now.
+        const { rows: [msg] } = await query('SELECT subject, body_html FROM email_messages WHERE account_id = $1 AND provider_id = $2', [d.account_id, d.provider_id]);
+        await decideInvoice(account, { ...cand, retry: true, m: { ...cand.m, subject: msg?.subject ?? null, body_html: msg?.body_html ?? null } }, ctx);
+      }
     } catch (err) {
       ctx.errors += 1;
       console.error('[auto-invoice] retry', d.id, err.message);

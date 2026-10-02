@@ -180,7 +180,11 @@ export async function registerPurchaseOrder(client, b, { scope = { unrestricted:
   const { rows: [held] } = await client.query('SELECT po_number FROM purchase_orders WHERE quotation_no = $1 LIMIT 1', [q.quotation_no]);
   if (held) throw new ApiError(409, `Quotation ${q.quotation_no} already has PO ${held.po_number}. Add another PO from its project.`);
 
-  // "PO-123" and "po 123" are one PO, however it was typed or printed.
+  // "PO-123" and "po 123" are one PO, however it was typed or printed. The
+  // lock makes two registrations of one number queue — a person in the
+  // dialog and the email reader, or two mailboxes — so the second one sees
+  // the first; the index on the normalised number is not unique.
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`po-number:${normalisePoNumber(b.po_number)}`]);
   const { rows: [same] } = await client.query(
     `SELECT po_number FROM purchase_orders WHERE ${NORMALISED_PO} = $1 LIMIT 1`, [normalisePoNumber(b.po_number)]);
   if (same) {

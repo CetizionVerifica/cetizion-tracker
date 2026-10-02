@@ -106,4 +106,17 @@ describe('the PO review queue is scoped', { skip: !ADMIN_URL && 'set TEST_DATABA
     await request(app).post(`/api/payment-stages/invoice-review/${invoice.bea}/record`).set('Cookie', cookie.sam).expect(404);
     await request(app).post(`/api/payment-stages/invoice-review/${invoice.sam}/dismiss`).set('Cookie', cookie.sam).expect(200);
   });
+  test('a salesperson is offered only their own quotations among an item\'s suggestions', async () => {
+    const { rows: [box] } = await db.query(`SELECT id FROM connected_accounts LIMIT 1`);
+    const { rows: qs } = await db.query(`SELECT quotation_no, (SELECT email FROM users u WHERE u.id = q.owner_user_id) AS owner FROM quotations q WHERE owner_user_id IS NOT NULL`);
+    const sams = qs.find((q) => q.owner === 'sam@example.com').quotation_no;
+    const beas = qs.find((q) => q.owner === 'bea@example.com').quotation_no;
+    const { rows: [d] } = await db.query(
+      `INSERT INTO email_po_decisions (account_id, provider_id, outcome, review_reason, method, suggested_quotations)
+       VALUES ($1, 'm-shared', 'review', 'several_matches', 'ai', $2) RETURNING id`, [box.id, [sams, beas]]);
+    const rowFor = async (who) => (await request(app).get('/api/purchase-orders/review').set('Cookie', cookie[who]).expect(200)).body.data.find((r) => r.id === d.id);
+    assert.deepEqual((await rowFor('sam')).suggested.map((q) => q.quotation_no), [sams]);
+    assert.deepEqual((await rowFor('bea')).suggested.map((q) => q.quotation_no), [beas]);
+    assert.equal((await rowFor('alice')).suggested.length, 2);
+  });
 });

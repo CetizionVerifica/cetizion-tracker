@@ -398,4 +398,58 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     const { body: after } = await agent.get('/api/payment-stages/invoice-review').expect(200);
     assert.ok(!after.data.some((r) => [first.id, second.id].includes(r.id)));
   });
+  // ------------------------------------------------------------ review fixes
+
+  test('an invoice email with no PDF costs no AI call, and is decided by the rules', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme NoPdf Ltd', '4500041041');
+    const calls = ai(reading());
+    const msg = invoiceEmail(box, client.email, { no: 'X-1', buyer: 'Acme NoPdf Ltd' });
+    msg.attachments = [{ name: 'invoice-sheet.xlsx', contentType: 'application/vnd.ms-excel', content: Buffer.from('not a pdf') }];
+    delete msg.attachments[0]._pdf;
+    // The live mailbox says only that something is attached: the files stay
+    // with the provider, the message carries no list.
+    sync.pushTestMessages(box.id, [msg]);
+    delete msg.attachments;
+    await sync.syncAccount(box.id);
+    assert.equal(calls.length, 0);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.method], ['not_invoice', 'rules']);
+  });
+
+  test('a live invoice the AI could not read waits unread, and the job reads it later', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Unread Ltd', '4500042042');
+    autoInvoice.deps.chat = async () => { throw new Error('timeout'); };
+    const msg = invoiceEmail(box, client.email, { no: 'INV-42', buyer: 'Acme Unread Ltd', po: '4500042042' });
+    await deliver(box, [msg]);
+    let d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.reading, d.ai_calls], ['waiting', null, 1]);
+    ai(reading({ invoice_no: 'INV-42', buyer: { company_name: 'Acme Unread Ltd' }, po_reference: '4500042042' }));
+    await autoInvoice.runInvoiceBackfills();
+    d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.ai_calls], ['recorded', 2]);
+    assert.equal((await stagesOf('4500042042'))[0].invoice_no, 'INV-42');
+  });
+
+  test('a review item naming an invoiced stage suggests an open one; one with no PO is recorded by hand on the PO chosen', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Suggest Ltd', '4500043043');
+    const [s1, s2] = await stagesOf('4500043043');
+    await agent.post(`/api/payment-stages/${s1.id}/invoice`).send({ invoice_no: 'INV-43', invoice_date: day(3) }).expect(200);
+    const { rows: [revised] } = await db.query(
+      `INSERT INTO email_invoice_decisions (account_id, provider_id, outcome, review_reason, method, po_number, stage_id, invoice_no)
+       VALUES ($1, $2, 'review', 'revised', 'ai', '4500043043', $3, 'INV-43') RETURNING id`, [box.id, uid('rev'), s1.id]);
+    ai(reading({ invoice_no: 'INV-43', buyer: { company_name: 'Acme Suggest Ltd' } }));
+    const { body } = await agent.post(`/api/payment-stages/invoice-review/${revised.id}/record`).expect(200);
+    assert.equal(body.data.suggested_stage_id, s2.id, 'never the stage that already has an invoice');
+
+    const { rows: [noPo] } = await db.query(
+      `INSERT INTO email_invoice_decisions (account_id, provider_id, outcome, review_reason, method, invoice_no)
+       VALUES ($1, $2, 'review', 'po_not_found', 'ai', 'INV-43B') RETURNING id`, [box.id, uid('nopo')]);
+    await agent.post(`/api/payment-stages/${s2.id}/invoice`).send({ invoice_no: 'INV-43B', invoice_date: day(1), review_id: noPo.id }).expect(200);
+    const settled = (await db.query('SELECT outcome, po_number, stage_id FROM email_invoice_decisions WHERE id = $1', [noPo.id])).rows[0];
+    assert.deepEqual(settled, { outcome: 'recorded_by_hand', po_number: '4500043043', stage_id: s2.id });
+    void client;
+  });
 });

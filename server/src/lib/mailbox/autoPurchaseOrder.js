@@ -69,6 +69,9 @@ export async function poSettings(db = { query }) {
 
 const chatFn = () => deps.chat || (aiConfig.enabled ? (system, user, opts) => chatJSON(system, user, { title: 'Cetizion Tracker email purchase orders', ...opts }) : null);
 
+/** Can POs be read at all? Not without an AI: there is no rules-only way. */
+export const poReaderCanRead = () => Boolean(chatFn());
+
 export async function poRunContext({ backfill = false } = {}) {
   return { settings: await poSettings(), backfill, aiUsed: await aiCallsToday(), registered: [], review: [], linked: 0, notPo: 0, skipped: 0, errors: 0, stopped: null };
 }
@@ -100,16 +103,18 @@ export async function processPoCandidates(account, candidates, { ctx: given = nu
 
 async function logDecision(db, account, cand, d) {
   const { m } = cand;
+  // A retry's row is replaced by what the retry decided.
+  if (cand.retrySince) await db.query(`DELETE FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND outcome = 'retry'`, [account.id, m.provider_id]);
   await db.query(
     `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, conversation_id, thread_id, from_email, received_at,
                                      outcome, document_type, review_reason, mode, confidence, method, ai_calls, po_number, quotation_no,
-                                     suggested_quotations, created_quotation, stages_source)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+                                     suggested_quotations, created_quotation, stages_source, retry_since)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      ON CONFLICT (account_id, provider_id) DO NOTHING`,
     [account.id, m.provider_id, m.internet_message_id || null, m.conversation_id || null, d.thread_id ?? cand.threadId ?? null,
       m.from?.email || null, m.sent_at || null, d.outcome, d.document_type || null, d.review_reason || null, d.mode || null,
       d.confidence ?? null, d.method || 'ai', d.ai_calls || 0, d.po_number || null, d.quotation_no || null,
-      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null]);
+      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null]);
 }
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -122,12 +127,17 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export async function decidePo(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || c.direction !== 'inbound') return 'incomplete';
-  const { rows: [seen] } = await query('SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  const { rows: [seen] } = await query(
+    `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND NOT (outcome = 'retry' AND $3)`, [account.id, m.provider_id, Boolean(cand.retrySince)]);
   if (seen) return 'seen';
 
-  const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''), 3000);
+  // The same text the enquiry reader's prefilter reads (mainText's default
+  // length), so the two always agree on which emails are PO candidates. The
+  // prompt cuts it down for the AI.
+  const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
   const input = { direction: 'inbound', subject: m.subject, text, from: m.from, attachments: m.attachments, has_attachments: m.has_attachments };
-  const pf = poPrefilter(input, { portalSenders: ctx.settings.portalSenders });
+  // A retry was a candidate when it arrived; its stored copy may hold no text.
+  const pf = cand.retrySince ? { candidate: true } : poPrefilter(input, { portalSenders: ctx.settings.portalSenders });
   if (!pf.candidate) { ctx.skipped += 1; return 'skipped'; }
 
   // The same email, read in another mailbox: no second AI call.
@@ -135,13 +145,23 @@ export async function decidePo(account, cand, ctx) {
   if (elsewhere) return transaction((db) => joinElsewhere(db, account, cand, elsewhere, ctx));
 
   const chat = chatFn();
-  // No AI, or the day's ceiling reached: left undecided, so the backfill
-  // reads it once it can. There is no rules-only way to read a PO.
+  // No AI: nothing is read, and the enquiry reader judges the email instead
+  // (poReaderCanRead). There is no rules-only way to read a PO.
   if (!chat) { ctx.skipped += 1; return 'no_ai'; }
-  if (ctx.aiUsed >= ctx.settings.dailyAiLimit) { if (ctx.backfill) ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+  if (ctx.aiUsed >= ctx.settings.dailyAiLimit) {
+    // The backfill stops and reads the page again tomorrow; live mail is not
+    // handed over twice, so it is kept for a retry.
+    if (ctx.backfill && !cand.retrySince) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+    await keepForRetry(account, cand, 0);
+    return 'retry';
+  }
 
   const read = await readPo(account, cand, ctx, chat, text);
-  if (read.error) { ctx.errors += 1; return 'error'; }
+  if (read.error) {
+    ctx.errors += 1;
+    await keepForRetry(account, cand, 1);
+    return 'retry';
+  }
   const decision = { confidence: read.verdict?.confidence ?? null, document_type: read.verdict?.document_type ?? null, method: 'ai', ai_calls: read.ai_calls };
   if (read.unreadable) return review(account, cand, ctx, { ...decision, review_reason: 'unreadable' }, null);
 
@@ -377,7 +397,8 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auto-po-msg:${m.internet_message_id || m.provider_id}`]);
   const company = await resolveCompany(db, po, cand);
   await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auto-po:${po.po_number_norm}:${company?.id ?? ''}`]);
-  const { rows: [again] } = await db.query('SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  const { rows: [again] } = await db.query(
+    `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND outcome <> 'retry'`, [account.id, m.provider_id]);
   if (again) return 'seen';
   const meanwhile = await sameEmailElsewhere(db, m, account.id);
   if (meanwhile) return joinElsewhere(db, account, cand, meanwhile, ctx);
@@ -414,6 +435,10 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   let quotation = match.quotation;
   let threadId = cand.threadId;
   let created = false;
+  // A past PO is not news to n8n: quiet before anything is written, the
+  // enquiry and quotation made from it included (registerPurchaseOrder
+  // sets the same again).
+  if (decision.mode === 'history') await db.query(`SELECT set_config('app.suppress_webhooks', 'on', true)`);
   if (match.create) {
     ({ quotation, threadId } = await quotationFromPo(db, account, cand, po, company));
     created = true;
@@ -491,7 +516,19 @@ async function quotationFromPo(db, account, cand, po, company) {
   const basic = po.basic_value ?? (po.tax_value !== null && po.total_value ? round2(po.total_value - po.tax_value) : round2(po.total_value / 1.18));
   const tax = po.tax_value ?? (po.gst_extra ? null : (po.total_value ? round2(po.total_value - basic) : null));
   const gstRate = basic > 0 && tax !== null ? Math.round((tax / basic) * 10000) / 100 : 18;
-  const lines = po.linesOk ? po.lines.map((l) => ({ description: l.description, rate: l.amount, service: l.service })) : [{ description: 'As per purchase order', rate: basic, service: null }];
+  // The lines carry the basic value. Lines that add up to the total
+  // instead (a PO printing no basic value) are scaled down to it, or the
+  // tax would be added twice.
+  const lineSum = po.linesOk ? po.lines.reduce((n, l) => n + Number(l.amount), 0) : 0;
+  const scale = lineSum > 0 ? basic / lineSum : 1;
+  const lines = po.linesOk
+    ? po.lines.map((l) => ({ description: l.description, rate: round2(Number(l.amount) * scale), service: l.service }))
+    : [{ description: 'As per purchase order', rate: basic, service: null }];
+  if (po.linesOk && lines.length) {
+    // Rounding leaves a paisa or two; it belongs on the last line.
+    const residual = round2(basic - lines.reduce((n, l) => n + l.rate, 0));
+    lines[lines.length - 1].rate = round2(lines[lines.length - 1].rate + residual);
+  }
   const services = [...new Set(po.lines.map((l) => l.service).filter(Boolean))].join(', ') || null;
 
   const no = await claimNextId('quotation', db, po.po_date.slice(0, 4));
@@ -584,6 +621,61 @@ export async function decidedNotPo(db, accountId, providerId) {
   return Boolean(d);
 }
 
+
+// ------------------------------------------------------------ retries
+
+/**
+ * Live mail the AI could not read — an error, or the day's ceiling — is
+ * kept, by its ids only, for pos.backfill to read again. Without this it was
+ * lost: live mail is handed over once, and the enquiry reader holds PO mail
+ * back for the PO reader.
+ */
+async function keepForRetry(account, cand, aiCalls) {
+  if (cand.retrySince) {
+    // Still unreadable: the AI calls are counted; the clock keeps its start.
+    if (aiCalls) await query(`UPDATE email_po_decisions SET ai_calls = ai_calls + $3 WHERE account_id = $1 AND provider_id = $2 AND outcome = 'retry'`, [account.id, cand.m.provider_id, aiCalls]);
+    return;
+  }
+  await logDecision({ query }, account, cand, { outcome: 'retry', method: 'ai', ai_calls: aiCalls, retry_since: new Date().toISOString() });
+}
+
+/**
+ * Read the kept emails again; after a week, a person decides (review,
+ * 'unreadable'). The message is rebuilt from what the tracker stores; the
+ * PDF comes from the mailbox.
+ */
+export async function retryPoReads(ctx, { limit = 100 } = {}) {
+  await query(
+    `UPDATE email_po_decisions SET outcome = 'review', review_reason = 'unreadable'
+      WHERE outcome = 'retry' AND retry_since < now() - interval '7 days'`);
+  const { rows } = await query(
+    `SELECT d.*, m.subject, m.body_html, m.has_attachments, m.from_name FROM email_po_decisions d
+       JOIN connected_accounts a ON a.id = d.account_id AND a.status = 'active'
+       LEFT JOIN email_messages m ON m.account_id = d.account_id AND m.provider_id = d.provider_id
+      WHERE d.outcome = 'retry' ORDER BY d.retry_since LIMIT $1`, [limit]);
+  const tally = { retried: 0, registered: 0, review: 0 };
+  for (const d of rows) {
+    if (ctx.aiUsed >= ctx.settings.dailyAiLimit) break;
+    const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [d.account_id]);
+    const cand = {
+      m: { provider_id: d.provider_id, internet_message_id: d.internet_message_id, conversation_id: d.conversation_id, sent_at: d.received_at,
+        subject: d.subject, body_html: d.body_html, has_attachments: d.has_attachments ?? true, from: { email: d.from_email, name: d.from_name } },
+      c: { direction: 'inbound', external: d.from_email ? [{ email: d.from_email, name: d.from_name }] : [] },
+      threadId: d.thread_id, retrySince: d.retry_since,
+    };
+    const before = { registered: ctx.registered.length, review: ctx.review.length };
+    tally.retried += 1;
+    try {
+      await decidePo(account, cand, ctx);
+    } catch (err) {
+      ctx.errors += 1;
+      console.error('[auto-po] retry', d.id, err.message);
+    }
+    tally.registered += ctx.registered.length - before.registered;
+    tally.review += ctx.review.length - before.review;
+  }
+  return tally;
+}
 
 // ------------------------------------------------------------ past mail (§3.9)
 
@@ -702,6 +794,9 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
 export async function runPoBackfills({ budgetMs = PO_BACKFILL_BUDGET_MS } = {}) {
   const ctx = await poRunContext({ backfill: true });
   if (!ctx.settings.enabled) return { skipped: 'switched off', registered: 0, errors: 0 };
+  const retried = poReaderCanRead() ? await retryPoReads(ctx) : { retried: 0, registered: 0, review: 0 };
+  // The retries were live mail: whoever would have heard of them then hears now.
+  await notifyReview({ backfill: false, review: ctx.review.splice(0) });
   const { rows } = await query(
     `SELECT a.* FROM connected_accounts a
        JOIN mailbox_enquiry_backfills e ON e.account_id = a.id AND e.finished_at IS NOT NULL
@@ -716,7 +811,8 @@ export async function runPoBackfills({ budgetMs = PO_BACKFILL_BUDGET_MS } = {}) 
     results.push(await backfillPoAccount(account, ctx, { budgetMs: left, enquiryCtx }));
   }
   return {
-    mailboxes: results.length, registered: results.reduce((t, r) => t + r.registered, 0), review: results.reduce((t, r) => t + r.review, 0),
+    retried, mailboxes: results.length, registered: results.reduce((t, r) => t + r.registered, 0) + retried.registered,
+    review: results.reduce((t, r) => t + r.review, 0) + retried.review,
     errors: results.filter((r) => r.error).length + ctx.errors, stopped: ctx.stopped, results,
   };
 }

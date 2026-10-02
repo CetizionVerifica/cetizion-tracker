@@ -22,6 +22,7 @@ import { aiConfig, chatJSON } from '../lib/ai.js';
 import { mainText } from '../lib/mailbox/enquiryDetect.js';
 import { buildInvoicePrompt, parseInvoiceVerdict, rankInvoicePdfs } from '../lib/mailbox/invoiceDetect.js';
 import { readWithAi } from '../lib/mailbox/readAttachment.js';
+import { countAiCalls } from './poReview.js';
 
 export const invoiceReviewRouter = Router();
 
@@ -67,9 +68,12 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
   const d = await item(req, req.params.id);
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [d.account_id]);
   const { rows: [msg] } = await query('SELECT * FROM email_messages WHERE account_id = $1 AND provider_id = $2', [d.account_id, d.provider_id]);
+  // The stage the item names, while it is still open; else the PO's first
+  // open one. A stage that already has an invoice is never suggested: saving
+  // onto it would overwrite that invoice.
   const { rows: [open] } = await query(
-    `SELECT id FROM payment_stages WHERE po_number = $1 AND invoice_no IS NULL ORDER BY stage_no LIMIT 1`, [d.po_number]);
-  const base = { review_id: d.id, po_number: d.po_number, suggested_stage_id: d.stage_id ?? open?.id ?? null, prefill: null };
+    `SELECT id FROM payment_stages WHERE po_number = $1 AND invoice_no IS NULL ORDER BY (id = $2) DESC, stage_no LIMIT 1`, [d.po_number, d.stage_id ?? 0]);
+  const base = { review_id: d.id, po_number: d.po_number, suggested_stage_id: open?.id ?? null, prefill: null };
 
   const chat = autoInvoice.deps.chat || (aiConfig.enabled ? (system, user, opts) => chatJSON(system, user, { title: 'Cetizion Tracker email invoices', ...opts }) : null);
   if (!chat || !account) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'The invoice could not be read again: enter it from the email.' } });
@@ -78,10 +82,12 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
   if (ctx.aiUsed >= settings.dailyAiLimit) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'Today\'s AI limit is reached: enter the invoice from the email.' } });
 
   const m = { provider_id: d.provider_id, subject: msg?.subject || null, body_html: msg?.body_html || null, sent_at: d.sent_at, has_attachments: true };
+  const before = ctx.aiUsed;
   const read = await readWithAi(account, { m, c: { direction: 'outbound', external: [] } }, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf',
     prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', 2000), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })) }),
   });
+  await countAiCalls(ctx.aiUsed - before, 'invoice_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'The invoice could not be read again: enter it from the email.' } });
   const v = read.verdict;
   let documentId = null;

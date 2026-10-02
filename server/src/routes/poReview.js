@@ -27,6 +27,11 @@ import { mainText } from '../lib/mailbox/enquiryDetect.js';
 
 export const poReviewRouter = Router();
 
+/** A review item read again is an AI call like any other: counted against the shared daily ceiling. */
+export async function countAiCalls(n, purpose) {
+  for (let i = 0; i < n; i += 1) await query('INSERT INTO email_ai_calls (purpose) VALUES ($1)', [purpose]);
+}
+
 /** The review rows this caller may see: admins all, sales the ones on their quotations. */
 function scoped(req, params) {
   const scope = scopeOf(req);
@@ -48,13 +53,16 @@ async function item(req, id) {
 poReviewRouter.get('/review', async (req, res) => {
   const params = [];
   const mine = scoped(req, params);
+  // A salesperson is offered only their own quotations: another person's
+  // suggested for the same PO stays out of sight (#18 row scoping).
+  const ownSuggestions = mine ? `AND q.owner_user_id = $${params.length}` : '';
   const { rows } = await query(
     `SELECT d.id, d.received_at, d.from_email, d.review_reason, d.document_type, d.confidence, d.thread_id, d.mode,
             a.email AS mailbox,
             COALESCE((SELECT json_agg(json_build_object('quotation_no', q.quotation_no, 'client_name', q.client_name,
                                                         'total', COALESCE(q.total, q.quotation_value), 'currency', q.currency, 'status', q.status)
                                       ORDER BY q.id)
-                        FROM quotations q WHERE q.quotation_no = ANY(COALESCE(d.suggested_quotations, '{}'))), '[]') AS suggested
+                        FROM quotations q WHERE q.quotation_no = ANY(COALESCE(d.suggested_quotations, '{}')) ${ownSuggestions}), '[]') AS suggested
        FROM email_po_decisions d JOIN connected_accounts a ON a.id = d.account_id
       WHERE d.outcome = 'review' ${mine}
       ORDER BY d.received_at DESC NULLS LAST, d.id DESC`, params);
@@ -87,7 +95,9 @@ poReviewRouter.post('/review/:id/register', async (req, res) => {
     // Not stored for a dropped email: ask the mailbox.
     has_attachments: msg ? msg.has_attachments : true,
   };
+  const before = ctx.aiUsed;
   const read = await autoPo.readPo(account, { m, c: { direction: 'inbound', external: [] } }, ctx, chat, mainText(m.body_html || '', 3000));
+  await countAiCalls(ctx.aiUsed - before, 'po_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, note: 'The PO could not be read again: enter it from the email.' } });
   const v = read.verdict;
 
