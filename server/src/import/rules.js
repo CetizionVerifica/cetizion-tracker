@@ -202,7 +202,8 @@ function sheetChanges(existing, payload, was) {
 const WON_STATUS = 'Won - PO Received';
 // "ISO 14001" and "ISO9001" alike: a digit may follow straight on (#23).
 const ISO = /\bISO(?![a-z])/i;
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// How two references are compared: "PO-123" and "po 123" are the same.
+export const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** The quotation status a sheet's deal stage reads as, or null. See stages.js. */
 export function mapStage(raw) {
