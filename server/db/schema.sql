@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -232,7 +232,10 @@ CREATE TABLE services (
   renewal_interval_months int,
   renewal_lead_days       int NOT NULL DEFAULT 60,
   onboarding_template_id    int REFERENCES onboarding_templates(id) ON DELETE SET NULL,
-  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL
+  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL,
+  -- The Reports section's service line for this entry (064). Blank: the
+  -- name is matched against the keyword rules in lib/serviceLines.js.
+  report_line               text
 );
 
 CREATE TABLE travel_vendors (
@@ -2798,3 +2801,31 @@ CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF amount_received ON payme
   FOR EACH ROW EXECUTE FUNCTION payment_stage_resolves_notifications();
 CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON inbox_conversations
   FOR EACH ROW EXECUTE FUNCTION conversation_resolves_notifications();
+
+-- ------------------------------------------------------ report categories
+-- The categories the Reports section groups free-text sectors and services
+-- into (064, docs/sales-report-rework-plan.md §4.3, §4.4). services.report_line
+-- is declared with the services table above.
+CREATE TABLE IF NOT EXISTS sector_aliases (
+  id     serial PRIMARY KEY,
+  alias  text NOT NULL CHECK (name_key(alias) IS NOT NULL),
+  sector text NOT NULL CHECK (name_key(sector) IS NOT NULL)
+);
+
+-- One alias per spelling, ignoring case and spacing the way every report does.
+CREATE UNIQUE INDEX IF NOT EXISTS sector_aliases_alias_key ON sector_aliases (name_key(alias));
+
+INSERT INTO sector_aliases (alias, sector) VALUES
+  ('Metal', 'Metal Industry'), ('Metals', 'Metal Industry'), ('Steel', 'Metal Industry'),
+  ('Aluminium', 'Metal Industry'), ('Aluminum', 'Metal Industry'), ('Copper', 'Metal Industry'),
+  ('Mining & Metals', 'Metal Industry'),
+  ('Agri', 'Agriculture'), ('Agro', 'Agriculture'), ('Agrochemicals', 'Agriculture'),
+  ('Pharma', 'Pharmaceutical'), ('Pharmaceuticals', 'Pharmaceutical')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('report_sectors', '["Metal Industry","Agriculture","Pharmaceutical"]',
+   'Headline sectors on the Reports page, in order. Everything else is Other. Edit under Settings -> Reports.'),
+  ('report_service_lines', '["EcoVadis","ESIA","Climate Change","ESG","HSE","Sustainability","ISO certification","ASI / Copper Mark / LME","Social & supply-chain audits"]',
+   'Service lines on the Reports page, in order. Everything else is Other. Edit under Settings -> Reports.')
+ON CONFLICT (key) DO NOTHING;

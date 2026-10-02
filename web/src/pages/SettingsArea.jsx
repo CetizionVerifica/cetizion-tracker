@@ -13,6 +13,7 @@ import Webhooks from './Webhooks.jsx';
 import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
 import BulkImport from './BulkImport.jsx';
+import ReportCategories from './ReportCategories.jsx';
 
 /**
  * One Settings area, with a rail grouped by what a setting is about.
@@ -86,6 +87,7 @@ const GROUPS = [
         to: key, label: c.title, element: <Catalogue key={key} {...c} />,
       })),
       { to: 'templates', label: 'Templates', element: <Templates />, adminOnly: true },
+      { to: 'reports', label: 'Report categories', element: <ReportCategories />, adminOnly: true },
     ],
   },
   {

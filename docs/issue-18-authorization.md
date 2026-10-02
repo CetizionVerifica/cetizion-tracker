@@ -347,6 +347,7 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/manual` | any |  |
 | **/api/reports** | | |
 | `GET /api/reports/by-status` | any | Open deals by the status on the record, which is not always where its pipeline stage puts it. |
+| `GET /api/reports/categories` | **admin** | Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller's own records. |
 | `GET /api/reports/conversion` | any | Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string. |
 | `GET /api/reports/quoted-won` | any | Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today's rate into a month that has passed. |
 | `GET /api/reports/sales` | any | The Reports section's questions for a period (enquiries received, their outcome, monthly revenue). Every query reads the scoped sources; ?owner= narrows an admin's view to one salesperson and is ignored for a sales user. |
@@ -469,6 +470,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `purchase-orders` | any | any | **admin** | The PO value is what Due now, To bill and profitability are computed against, and deleting one takes its lines and stages with it. |
 | `quotation-lines` | any | any | any | The lines of a quotation, edited with it. |
 | `quotations` | any | any | any | A salesperson's own working record. A quotation is the offer made on one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
+| `sector-aliases` | any | **admin** | **admin** | Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |

@@ -9,6 +9,8 @@
  *   GET /api/reports/sales?from=&to=&grain=&owner=
  *                                            the Reports section's questions for a period
  *                                            (lib/reportDefinitions.js)
+ *   GET /api/reports/categories              admin: the sector and service categories, and
+ *                                            what every spelling in use counts under
  *
  * Pipeline by stage comes from /api/pipeline, ageing from /api/collections
  * and the cash bands from /api/cashflow. Only win rate had nowhere to come
@@ -30,7 +32,8 @@ import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { financialQuarter, recentQuarters } from '../lib/quarters.js';
-import { reportGrain, reportScope, salesReport } from '../lib/reportDefinitions.js';
+import { categoryUsage, reportGrain, reportScope, salesReport } from '../lib/reportDefinitions.js';
+import { requireAdmin } from '../auth/middleware.js';
 import { reportPeriod } from '../lib/salesReport.js';
 import { ownerClause, scopeOf } from '../auth/ownership.js';
 
@@ -219,4 +222,14 @@ reportsRouter.get('/sales', async (req, res) => {
   const period = reportPeriod(req.query);
   const grain = reportGrain(req.query, period);
   res.json({ data: await salesReport(period, { grain, scope: reportScope(scopeOf(req), req.query) }) });
+});
+
+/**
+ * Settings → Reports: the category lists, the aliases, and where every sector
+ * spelling and catalogue service lands today. Admin-only: it names sectors
+ * from every record, not just the caller's. The lists themselves are saved
+ * through /api/settings, /api/sector-aliases and /api/services.
+ */
+reportsRouter.get('/categories', requireAdmin, async (req, res) => {
+  res.json({ data: await categoryUsage() });
 });

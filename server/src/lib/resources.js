@@ -895,6 +895,21 @@ export const resources = {
     schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
+  'sector-aliases': {
+    // A Settings list (064): a spelling of a sector that the Reports section
+    // counts under one of its headline sectors ("Steel" -> Metal Industry).
+    // Nothing on a quotation or enquiry changes. Admins curate it.
+    adminOnlyWrites: true,
+    table: 'sector_aliases',
+    view: null,
+    label: 'Sector alias',
+    defaultSort: 'sector, alias',
+    search: ['alias', 'sector'],
+    filters: ['sector'],
+    columns: ['alias', 'sector'],
+    schema: z.object({ alias: requiredStr(120), sector: requiredStr(120) }),
+  },
+
   'lost-reasons': {
     // A Settings list. Deleting one blanks it on every lost quotation and
     // unqualified enquiry, through ON DELETE SET NULL.
@@ -919,7 +934,7 @@ export const resources = {
     defaultSort: 'sort_order, name',
     search: ['name'],
     filters: ['active'],
-    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id', 'report_line'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
@@ -935,6 +950,8 @@ export const resources = {
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
       onboarding_template_id: int({ min: 1 }),
       payment_terms_template_id: int({ min: 1 }),
+      // The Reports section's service line (064); blank = matched by name.
+      report_line: str(120),
     }),
   },
 

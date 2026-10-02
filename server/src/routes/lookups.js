@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
+import { CATEGORY_SETTINGS, parseCategoryList } from '../lib/reportDefinitions.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
 import { isSequence, nextId, yearFor } from '../lib/sequences.js';
@@ -178,9 +179,14 @@ settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
       error: { message: 'Enter a value', fields: { value: 'Required' } },
     });
   }
+  // The Reports section's category lists are JSON (lib/reportDefinitions.js):
+  // saved cleaned, or refused with the reason, never stored half-readable.
+  const stored = Object.hasOwn(CATEGORY_SETTINGS, req.params.key)
+    ? JSON.stringify(parseCategoryList(value))
+    : value.trim();
   const { rows } = await query(
     'UPDATE settings SET value = $1 WHERE key = $2 RETURNING key, value, notes',
-    [value.trim(), req.params.key]
+    [stored, req.params.key]
   );
   if (!rows.length) return res.status(404).json({ error: { message: 'Unknown setting' } });
   res.json({ data: rows[0] });

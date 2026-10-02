@@ -36,16 +36,21 @@ import { compactInr, plural } from '../src/lib/reportFormat.js';
 
 test('free-text services map to service lines, bundles to each line', () => {
   assert.deepEqual(serviceLinesFor('Ecovadis & Other Services'), ['EcoVadis']);
-  assert.deepEqual(serviceLinesFor('EcoVadis, ISO 37001'), ['EcoVadis', 'ISO certification & management systems']);
-  assert.deepEqual(serviceLinesFor('ISO9001'), ['ISO certification & management systems']);
-  assert.deepEqual(serviceLinesFor('ISO14001 certification'), ['ISO certification & management systems']);
+  assert.deepEqual(serviceLinesFor('EcoVadis, ISO 37001'), ['EcoVadis', 'ISO certification']);
+  assert.deepEqual(serviceLinesFor('ISO9001'), ['ISO certification']);
+  assert.deepEqual(serviceLinesFor('ISO14001 certification'), ['ISO certification']);
   assert.deepEqual(serviceLinesFor('isolation study'), [OTHER_SERVICE]);
   assert.deepEqual(serviceLinesFor('Copper mark Assurance'), ['ASI / Copper Mark / LME']);
-  assert.deepEqual(serviceLinesFor('Reasonable Assurance for SR Report'), ['Sustainability reporting & assurance']);
-  assert.deepEqual(serviceLinesFor('GHG Verification & SR Assurance Limited Level'), ['Sustainability reporting & assurance', 'Climate & environment (GHG / LCA / CBAM)']);
+  assert.deepEqual(serviceLinesFor('Reasonable Assurance for SR Report'), ['Sustainability']);
+  assert.deepEqual(serviceLinesFor('GHG Verification & SR Assurance Limited Level'), ['Climate Change', 'Sustainability']);
   assert.deepEqual(serviceLinesFor('PSCI'), ['Social & supply-chain audits']);
-  assert.deepEqual(serviceLinesFor('HAZOP Study'), ['HSE / process safety']);
-  assert.deepEqual(serviceLinesFor('ESG project'), ['ESG strategy & advisory']);
+  assert.deepEqual(serviceLinesFor('HAZOP Study'), ['HSE']);
+  assert.deepEqual(serviceLinesFor('ESG project'), ['ESG']);
+  // ESIA is its own line, and not a social audit for saying "social".
+  assert.deepEqual(serviceLinesFor('ESIA for a greenfield plant'), ['ESIA']);
+  assert.deepEqual(serviceLinesFor('Environmental and Social Impact Assessment'), ['ESIA']);
+  assert.deepEqual(serviceLinesFor('Environmental & Social Impact Assessment'), ['ESIA']);
+  assert.deepEqual(serviceLinesFor('Social audit'), ['Social & supply-chain audits']);
   assert.deepEqual(serviceLinesFor('Something new'), [OTHER_SERVICE]);
   assert.deepEqual(serviceLinesFor('  '), [NO_SERVICE]);
 });

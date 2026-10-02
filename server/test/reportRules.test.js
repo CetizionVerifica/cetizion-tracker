@@ -239,3 +239,92 @@ test('an admin can narrow a report to one owner; a sales user cannot widen their
   assert.equal(defs.reportScope(admin, {}), admin);
   assert.equal(defs.reportScope(sales, { owner: '3' }), sales);
 });
+
+test('a sector maps to its category by name or alias, ignoring case and spacing', () => {
+  const map = defs.sectorMapper(['Metal Industry', 'Agriculture', 'Pharmaceutical'], [
+    { alias: 'Steel', sector: 'Metal Industry' },
+    { alias: 'pharma', sector: 'pharmaceutical' },
+    // Points at a sector the list no longer names: Other, not a category of its own.
+    { alias: 'Textiles', sector: 'Textile Industry' },
+  ]);
+  assert.equal(map('  metal   industry '), 'Metal Industry');
+  assert.equal(map('STEEL'), 'Metal Industry');
+  assert.equal(map('Pharma '), 'Pharmaceutical');
+  assert.equal(map('Textiles'), 'Other');
+  assert.equal(map('Retail'), 'Other');
+  assert.equal(map('  '), 'Not set');
+  assert.equal(map(null), 'Not set');
+});
+
+test('the sector section lists every category, then Other with its spellings, and adds up', () => {
+  const map = defs.sectorMapper(['Metal Industry', 'Agriculture'], [{ alias: 'steel', sector: 'Metal Industry' }]);
+  const section = defs.sectorSection([
+    { sector: 'Steel', po_value_inr: 100 }, { sector: 'Metal Industry', po_value_inr: 50 },
+    { sector: 'Retail', po_value_inr: 10 }, { sector: 'retail ', po_value_inr: 5 }, { sector: null, po_value_inr: 1 },
+  ], ['Metal Industry', 'Agriculture'], map);
+  assert.deepEqual(section.rows.map((r) => [r.sector, r.pos, r.value_inr]),
+    [['Metal Industry', 2, 150], ['Agriculture', 0, 0], ['Other', 2, 15], ['Not set', 1, 1]]);
+  assert.deepEqual(section.rows[2].raw, [{ name: 'Retail', pos: 2, value_inr: 15 }]);
+  assert.equal(section.total.value_inr, section.rows.reduce((n, r) => n + r.value_inr, 0));
+  assert.equal(section.not_set, 1);
+});
+
+test('category lists: a JSON list of distinct names, never Other', () => {
+  assert.deepEqual(defs.parseCategoryList('[" Metal  Industry ", "Agriculture"]'), ['Metal Industry', 'Agriculture']);
+  for (const bad of ['Metal, Agri', '[]', '["A", "a"]', '["Other"]', '[1]', '{"a":1}']) {
+    assert.throws(() => defs.parseCategoryList(bad), (err) => err.status === 422, bad);
+  }
+  assert.deepEqual(defs.readCategoryList('not json', ['X']), ['X']);
+});
+
+test('a service maps to its catalogue line when assigned, else by keyword; unknown lines are Other', () => {
+  const linesOf = defs.serviceMapper(['EcoVadis', 'ESIA', 'HSE', 'ESG'], [
+    { name: 'Plant safety review', report_line: 'HSE' },
+    { name: 'Retired thing', report_line: 'Something removed' },
+  ]);
+  assert.deepEqual(linesOf('plant safety  review'), ['HSE']);
+  assert.deepEqual(linesOf('Retired thing'), ['Other']);
+  assert.deepEqual(linesOf('EcoVadis and ESIA'), ['EcoVadis', 'ESIA']);
+  // ISO is a keyword line, but not one this list names.
+  assert.deepEqual(linesOf('ISO 9001'), ['Other']);
+  assert.deepEqual(linesOf('EcoVadis, ISO 9001'), ['EcoVadis']);
+  assert.deepEqual(linesOf(''), ['Other']);
+});
+
+test('a PO splits by po_services first, then quotation lines, then keywords — equally across a bundle', () => {
+  const linesOf = defs.serviceMapper(['EcoVadis', 'ESIA', 'HSE'], []);
+  const byLine = (split) => Object.fromEntries(split.shares.map((s) => [s.line, s.value_inr]));
+
+  const fromPo = defs.serviceSplit({
+    po_value_inr: 1000,
+    services: [{ service: 'EcoVadis', value: 750 }, { service: 'HAZOP', value: 250 }],
+    lines: [{ text: 'ESIA', value: 1 }], service: 'ESIA',
+  }, linesOf);
+  assert.equal(fromPo.source, 'po_services');
+  assert.deepEqual(byLine(fromPo), { EcoVadis: 750, HSE: 250 });
+
+  const fromLines = defs.serviceSplit({ po_value_inr: 900, services: [], lines: [{ text: 'ESIA', value: 200 }, { text: 'EcoVadis', value: 100 }] }, linesOf);
+  assert.equal(fromLines.source, 'quotation_lines');
+  assert.deepEqual(byLine(fromLines), { ESIA: 600, EcoVadis: 300 });
+
+  const fromText = defs.serviceSplit({ po_value_inr: 1000, services: [], lines: [], service: 'EcoVadis + ESIA' }, linesOf);
+  assert.equal(fromText.source, 'keywords');
+  assert.deepEqual(byLine(fromText), { EcoVadis: 500, ESIA: 500 });
+
+  // No value on a PO: still allocated, with no rupees.
+  assert.deepEqual(byLine(defs.serviceSplit({ po_value_inr: null, service: 'HSE audit' }, linesOf)), { HSE: null });
+});
+
+test('the service section counts a bundle in each line but splits its value, so values add up', () => {
+  const linesOf = defs.serviceMapper(['EcoVadis', 'ESIA', 'HSE'], []);
+  const section = defs.serviceSection([
+    { po_value_inr: 1000, service: 'EcoVadis + ESIA' },
+    { po_value_inr: 300, service: 'ESIA' },
+    { po_value_inr: 50, service: 'Something new' },
+  ], ['EcoVadis', 'ESIA', 'HSE'], linesOf);
+  assert.deepEqual(section.rows.map((r) => [r.line, r.pos, r.value_inr]),
+    [['ESIA', 2, 800], ['EcoVadis', 1, 500], ['HSE', 0, 0], ['Other', 1, 50]]);
+  assert.equal(section.rows.reduce((n, r) => n + r.value_inr, 0), section.total.value_inr);
+  assert.deepEqual(section.sources, { po_services: 0, quotation_lines: 0, keywords: 3 });
+  assert.equal(section.bundled, 1);
+});

@@ -230,6 +230,8 @@ function RateHistoryChart({ rows, currencies }) {
 const MOVED = new Set([
   'company_name', 'company_address', 'company_gstin', 'company_state_code', 'finance_email',
   'quotation_terms_default', 'emails_enabled',
+  // Settings -> Report categories: JSON lists with their own editor.
+  'report_sectors', 'report_service_lines',
 ]);
 
 /**

@@ -48,7 +48,9 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
       INSERT INTO users (id, name, role, active) VALUES (101, 'Asha', 'sales', false), (102, 'Bilal', 'sales', false);
       INSERT INTO exchange_rates (from_currency, rate, effective_from) VALUES ('USD', 90, '2026-01-01');
 
-      INSERT INTO projects (project_id, client_name, owner_user_id) VALUES ('P-1', 'Acme', 101), ('P-2', 'Beta', 102);
+      -- Beta's POs name no quotation, so their sector comes from the company.
+      INSERT INTO companies (id, name, name_key, sector) VALUES (501, 'Beta', 'beta', 'pharma ');
+      INSERT INTO projects (project_id, client_name, owner_user_id, company_id) VALUES ('P-1', 'Acme', 101, NULL), ('P-2', 'Beta', 102, 501);
 
       INSERT INTO quotations (quotation_no, client_name, status, quotation_date, valid_until, closed_at,
                               lost_reason_id, project_id, quotation_value, currency, sector, service_quoted, owner_user_id) VALUES
@@ -71,6 +73,13 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
         ('PO-OCT', 'P-2', NULL,  '2026-10-01', 700,    'INR');
       UPDATE purchase_orders SET cancelled = true WHERE po_number = 'PO-1C';
       UPDATE purchase_orders SET replaces_po_number = 'PO-2' WHERE po_number = 'PO-2R';
+
+      -- PO-1's split was recorded at registration; PO-2R has none, so it
+      -- reads Q-1's lines; PO-USD and PO-EUR have neither, and no service text.
+      INSERT INTO po_services (po_number, service, service_value) VALUES
+        ('PO-1', 'EcoVadis', 88500), ('PO-1', 'HAZOP study', 29500);
+      INSERT INTO quotation_lines (quotation_id, description, rate) VALUES
+        ((SELECT id FROM quotations WHERE quotation_no = 'Q-1'), 'ESIA baseline', 1000);
 
       -- PO-1 invoiced in September, paid in October.
       INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no, invoice_date,
@@ -163,11 +172,53 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
     assert.deepEqual(month.detail.map((d) => d.po_number), ['PO-1', 'PO-2R', 'PO-USD', 'PO-EUR']);
     const po1 = month.detail[0];
     assert.deepEqual([po1.client, po1.sector, po1.service, po1.owner, po1.invoiced_inr, po1.received_inr],
-      ['Acme', 'Steel', 'EcoVadis', 'Asha', 118000, 118000]);
+      ['Acme', 'Metal Industry', 'EcoVadis, HSE', 'Asha', 118000, 118000]);
     // Billing by its own dates: invoiced in September, received in October.
     assert.deepEqual([month.invoiced_inr, month.received_inr], [118000, 0]);
     assert.ok(report.notes.some((n) => n.key === 'po_unconverted'));
     assert.match(report.narrative.revenue, /1,28,500 from 4 POs/);
+  });
+
+  test('sector-wise POs: quotation sector, else the company\'s, through the aliases', async () => {
+    const { sectors } = await defs.salesReport(SEPT, { today: TODAY });
+    assert.deepEqual(sectors.rows.map((r) => [r.sector, r.pos, r.value_inr]),
+      [['Metal Industry', 2, 119500], ['Agriculture', 0, 0], ['Pharmaceutical', 2, 9000], ['Other', 0, 0]]);
+    assert.equal(sectors.total.value_inr, 128500);
+  });
+
+  test('service-wise sales: the recorded split, then quotation lines, then text — adding up to revenue', async () => {
+    const report = await defs.salesReport(SEPT, { today: TODAY });
+    const byLine = Object.fromEntries(report.services.rows.map((r) => [r.line, [r.pos, r.value_inr]]));
+    assert.deepEqual(byLine.EcoVadis, [1, 88500]);
+    assert.deepEqual(byLine.HSE, [1, 29500]);
+    assert.deepEqual(byLine.ESIA, [1, 1500]);
+    assert.deepEqual(byLine.Other, [2, 9000]);
+    assert.equal(report.services.rows.reduce((n, r) => n + r.value_inr, 0), report.revenue.total.po_value_inr);
+    assert.deepEqual(report.services.sources, { po_services: 1, quotation_lines: 1, keywords: 2 });
+    assert.ok(report.notes.some((n) => n.key === 'services_by_keywords'));
+    // The best-selling named line, not Other.
+    assert.match(report.narrative.services, /^EcoVadis sold the most/);
+  });
+
+  test('an admin\'s category changes take effect on the next report', async () => {
+    await db.query(`UPDATE settings SET value = '["Pharmaceutical","Metal Industry"]' WHERE key = 'report_sectors'`);
+    await db.query(`INSERT INTO services (name, report_line) VALUES ('Board briefing', 'ESG'), ('HAZOP study', NULL)`);
+    await db.query(`INSERT INTO sector_aliases (alias, sector) VALUES ('Widgets', 'Pharmaceutical')`);
+    try {
+      const { sectors } = await defs.salesReport(SEPT, { today: TODAY });
+      assert.deepEqual(sectors.rows.map((r) => r.sector), ['Pharmaceutical', 'Metal Industry', 'Other']);
+      const usage = await defs.categoryUsage();
+      assert.equal(usage.sector_usage.find((u) => u.name === 'Steel').category, 'Metal Industry');
+      const service = (name) => usage.services.find((sv) => sv.name === name);
+      assert.deepEqual([service('Board briefing').lines, service('Board briefing').assigned], [['ESG'], true]);
+      assert.deepEqual([service('HAZOP study').lines, service('HAZOP study').assigned], [['HSE'], false]);
+      // A spelling twice, in another case, is refused by the index.
+      await assert.rejects(db.query(`INSERT INTO sector_aliases (alias, sector) VALUES (' widgets', 'Metal Industry')`), /sector_aliases_alias_key/);
+    } finally {
+      await db.query(`UPDATE settings SET value = '["Metal Industry","Agriculture","Pharmaceutical"]' WHERE key = 'report_sectors'`);
+      await db.query(`DELETE FROM services WHERE name IN ('Board briefing', 'HAZOP study')`);
+      await db.query(`DELETE FROM sector_aliases WHERE alias = 'Widgets'`);
+    }
   });
 
   test('a sales user sees only their own records', async () => {

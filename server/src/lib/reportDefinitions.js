@@ -2,10 +2,13 @@ import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
+import { ApiError } from '../middleware/error.js';
+import { nameKey, normalizeName } from './names.ts';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2 } from './reportMath.ts';
 import { RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn, staleAmong } from './salesReport.js';
 import { monthLabel } from './revenueReport.js';
+import { SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
 /**
@@ -17,6 +20,8 @@ import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
  *
  *   1. How many enquiries did we receive, per day, week or month?   §4.1
  *   2. What happened to them: converted, pipeline, lost, quoted–not–won? §4.2
+ *   3. Which sectors gave us POs?                                   §4.3
+ *   4. Which services sell best?                                    §4.4
  *   6. What is the revenue each month, and which sales make it up?  §4.6
  *
  * The pure functions at the top take rows and return figures, so the rules
@@ -322,6 +327,217 @@ export function outcomeSummary(rows, period) {
 }
 
 // ---------------------------------------------------------------------
+// 3 and 4. Categories: sectors and service lines (§4.3, §4.4)
+// ---------------------------------------------------------------------
+
+export const OTHER = 'Other';
+export const NOT_SET = 'Not set';
+
+/** The settings rows that hold the headline categories, and what they start as. */
+export const CATEGORY_SETTINGS = {
+  report_sectors: ['Metal Industry', 'Agriculture', 'Pharmaceutical'],
+  report_service_lines: SERVICE_LINES.map((line) => line.name),
+};
+
+const MAX_CATEGORIES = 20;
+
+/**
+ * A category list as an admin saves it: a JSON array of distinct, non-blank
+ * names. "Other" is never in it — it is whatever the list does not name.
+ * Returns the cleaned list, or throws a 422 saying what is wrong.
+ */
+export function parseCategoryList(value) {
+  let list;
+  try { list = JSON.parse(value); } catch { list = null; }
+  if (!Array.isArray(list) || !list.every((name) => typeof name === 'string')) {
+    throw new ApiError(422, 'Send the categories as a list of names', { fields: { value: 'A JSON list of names' } });
+  }
+  const names = list.map((name) => name.trim().replace(/\s+/g, ' ')).filter(Boolean);
+  if (!names.length) throw new ApiError(422, 'Name at least one category', { fields: { value: 'Required' } });
+  if (names.length > MAX_CATEGORIES) throw new ApiError(422, `At most ${MAX_CATEGORIES} categories`, { fields: { value: 'Too many' } });
+  if (names.some((name) => name.length > 120)) throw new ApiError(422, 'A category name is too long', { fields: { value: 'At most 120 characters' } });
+  const keys = names.map(normalizeName);
+  if (new Set(keys).size !== keys.length) throw new ApiError(422, 'A category is listed twice', { fields: { value: 'Each name once' } });
+  if (keys.includes(normalizeName(OTHER)) || keys.includes(normalizeName(NOT_SET))) {
+    throw new ApiError(422, `"${OTHER}" and "${NOT_SET}" are added by the report itself`, { fields: { value: 'Leave them out' } });
+  }
+  return names;
+}
+
+/** A stored category list, or the default when it is missing or unreadable. */
+export function readCategoryList(value, fallback) {
+  try { return parseCategoryList(value); } catch { return fallback; }
+}
+
+/**
+ * The headline sector a free-text sector counts under: the category of that
+ * name, or the one an alias points to, ignoring case and spacing; anything
+ * else is Other, and a blank is Not set. An alias pointing at a sector the
+ * list no longer names counts as Other, not as a category of its own.
+ */
+export function sectorMapper(categories, aliases = []) {
+  const byKey = new Map(categories.map((name) => [normalizeName(name), name]));
+  for (const { alias, sector } of aliases) {
+    const target = byKey.get(normalizeName(sector));
+    const key = normalizeName(alias);
+    if (target && key && !byKey.has(key)) byKey.set(key, target);
+  }
+  return (raw) => {
+    const key = normalizeName(raw);
+    if (!key) return NOT_SET;
+    return byKey.get(key) ?? OTHER;
+  };
+}
+
+/**
+ * POs per headline sector: how many, and their value in INR. Other lists the
+ * spellings behind it so nothing is hidden. Every category is listed, even at
+ * zero, then Other, then Not set; so the rows add up to the revenue total.
+ *
+ * `pos`: { sector (raw), po_value_inr } — the revenue section's PO rows.
+ */
+export function sectorSection(pos, categories, mapSector) {
+  const rows = new Map([...categories, OTHER, NOT_SET].map((name) => [name, { sector: name, pos: 0, value_inr: 0, raw: new Map() }]));
+  for (const po of pos) {
+    const row = rows.get(mapSector(po.sector));
+    row.pos += 1;
+    row.value_inr += po.po_value_inr ?? 0;
+    if (row.sector === OTHER) {
+      const key = normalizeName(po.sector);
+      const raw = row.raw.get(key) ?? { name: po.sector.trim(), pos: 0, value_inr: 0 };
+      raw.pos += 1;
+      raw.value_inr += po.po_value_inr ?? 0;
+      row.raw.set(key, raw);
+    }
+  }
+  const list = [...rows.values()]
+    .filter((row) => row.sector !== NOT_SET || row.pos)
+    .map((row) => ({
+      sector: row.sector,
+      other: row.sector === OTHER || row.sector === NOT_SET,
+      pos: row.pos,
+      value_inr: r2(row.value_inr),
+      raw: [...row.raw.values()]
+        .map((r) => ({ ...r, value_inr: r2(r.value_inr) }))
+        .sort((a, b) => b.pos - a.pos || b.value_inr - a.value_inr || a.name.localeCompare(b.name)),
+    }));
+  const pct = percentages(list.map((row) => row.pos));
+  return {
+    rows: list.map((row, i) => ({ ...row, pct: pct[i] })),
+    total: { pos: pos.length, value_inr: r2(pos.reduce((n, po) => n + (po.po_value_inr ?? 0), 0)) },
+    not_set: rows.get(NOT_SET).pos,
+  };
+}
+
+/**
+ * The service lines a piece of service text counts under: the catalogue
+ * entry of that name and its report_line when an admin has set one, else the
+ * keyword rules (lib/serviceLines.js). A line the report does not list, and
+ * text matching none, is Other. Never empty.
+ */
+export function serviceMapper(categories, catalogue = []) {
+  const listed = new Map(categories.map((name) => [normalizeName(name), name]));
+  const byName = new Map(catalogue.filter((s) => s.report_line).map((s) => [normalizeName(s.name), s.report_line]));
+  const cache = new Map();
+  const linesOf = (text) => {
+    const key = normalizeName(text);
+    if (cache.has(key)) return cache.get(key);
+    let lines;
+    const assigned = byName.get(key);
+    if (assigned) lines = [listed.get(normalizeName(assigned)) ?? OTHER];
+    else {
+      lines = [...new Set(serviceLinesFor(text).map((name) => listed.get(normalizeName(name)) ?? OTHER))];
+      // "Other" beside a real line adds nothing: the value goes to the line.
+      if (lines.length > 1) lines = lines.filter((name) => name !== OTHER);
+    }
+    cache.set(key, lines);
+    return lines;
+  };
+  return linesOf;
+}
+
+/**
+ * How one PO's value splits across service lines, in order of preference:
+ *
+ *   1. po_services — the split recorded when the PO was registered
+ *   2. its quotation's lines, by line value (incl. GST), each by its
+ *      catalogue service where it has one
+ *   3. the quotation's service text, by keywords
+ *
+ * A piece naming several lines is split equally between them, never counted
+ * in full in each, so the lines add up to the PO. Returns
+ * { source, shares: [{ line, value_inr }] } — value_inr null when the PO has
+ * no INR value.
+ *
+ * `po`: { po_value_inr, services: [{ service, value }],
+ *         lines: [{ text, value }], service }
+ */
+export function serviceSplit(po, linesOf) {
+  let source;
+  let pieces;
+  if (po.services?.length) {
+    source = 'po_services';
+    pieces = po.services.map((s) => ({ text: s.service, weight: s.value }));
+  } else if (po.lines?.length) {
+    source = 'quotation_lines';
+    pieces = po.lines.map((l) => ({ text: l.text, weight: l.value }));
+  } else {
+    source = 'keywords';
+    pieces = [{ text: po.service, weight: 1 }];
+  }
+  // A piece with no value of its own (or all at zero) weighs the same as the rest.
+  const valued = pieces.every((p) => Number(p.weight) > 0);
+  const weights = pieces.map((p) => (valued ? Number(p.weight) : 1));
+  const whole = weights.reduce((n, w) => n + w, 0);
+
+  const totals = new Map();
+  for (const [i, piece] of pieces.entries()) {
+    const lines = linesOf(piece.text);
+    for (const line of lines) totals.set(line, (totals.get(line) || 0) + weights[i] / whole / lines.length);
+  }
+  return {
+    source,
+    shares: [...totals].map(([line, fraction]) => ({
+      line,
+      fraction,
+      value_inr: po.po_value_inr == null ? null : po.po_value_inr * fraction,
+    })),
+  };
+}
+
+/**
+ * PO value per service line, ranked by value. A PO counts once in each line
+ * it touches (so the PO counts can add up to more than the POs), while its
+ * value is split (so the values add up to the revenue total). Every listed
+ * line appears, even at zero; Other last.
+ */
+export function serviceSection(pos, categories, linesOf) {
+  const rows = new Map([...categories, OTHER].map((name) => [name, { line: name, pos: 0, value_inr: 0 }]));
+  const sources = { po_services: 0, quotation_lines: 0, keywords: 0 };
+  let bundled = 0;
+  for (const po of pos) {
+    const split = serviceSplit(po, linesOf);
+    sources[split.source] += 1;
+    if (split.shares.length > 1) bundled += 1;
+    for (const share of split.shares) {
+      const row = rows.get(share.line);
+      row.pos += 1;
+      row.value_inr += share.value_inr ?? 0;
+    }
+  }
+  const list = [...rows.values()]
+    .map((row) => ({ ...row, other: row.line === OTHER, value_inr: r2(row.value_inr) }))
+    .sort((a, b) => a.other - b.other || b.value_inr - a.value_inr || b.pos - a.pos || categories.indexOf(a.line) - categories.indexOf(b.line));
+  const pct = percentages(list.map((row) => row.value_inr));
+  return {
+    rows: list.map((row, i) => ({ ...row, pct: pct[i] })),
+    total: { pos: pos.length, value_inr: r2(pos.reduce((n, po) => n + (po.po_value_inr ?? 0), 0)) },
+    sources,
+    bundled,
+  };
+}
+
+// ---------------------------------------------------------------------
 // 6. Monthly revenue (§4.6)
 // ---------------------------------------------------------------------
 
@@ -487,8 +703,10 @@ function outcomeRows({ from, to }, scope = UNRESTRICTED, today = businessToday()
  * POs that count as a sale, dated in the period, with what each was worth in
  * INR on its PO date and what has been invoiced and received against it
  * (each stage converted on its own invoice or payment date). Client comes
- * from the project, sector and service from the quotation it fulfils, the
- * owner from that quotation or else the project.
+ * from the project, sector and service from the quotation it fulfils (sector
+ * falling back to the company's), the owner from that quotation or else the
+ * project. The sector and service sections split these same rows, so their
+ * totals are the revenue total.
  */
 function revenueRows({ from, to }, scope = UNRESTRICTED) {
   const params = [from, to];
@@ -498,7 +716,9 @@ function revenueRows({ from, to }, scope = UNRESTRICTED) {
      SELECT po.po_number,
             to_char(po.po_date, 'YYYY-MM-DD')        AS date,
             btrim(pr.client_name)                    AS client,
-            NULLIF(btrim(q.sector), '')              AS sector,
+            q.id                                     AS quotation_id,
+            -- The quotation's sector, else the company's (§4.3).
+            COALESCE(NULLIF(btrim(q.sector), ''), NULLIF(btrim(c.sector), '')) AS sector,
             NULLIF(btrim(q.service_quoted), '')      AS service,
             COALESCE(u.name, NULLIF(btrim(q.sales_person), ''), NULLIF(btrim(pr.sales_person), '')) AS owner,
             po.currency,
@@ -510,6 +730,7 @@ function revenueRows({ from, to }, scope = UNRESTRICTED) {
        FROM ${src.purchaseOrders} po
        JOIN projects pr ON pr.project_id = po.project_id
        LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
+       LEFT JOIN companies c ON c.id = COALESCE(pr.company_id, q.company_id)
        LEFT JOIN users u ON u.id = COALESCE(q.owner_user_id, pr.owner_user_id)
        ${rateOn('r', 'po.currency', 'po.po_date')}
        CROSS JOIN LATERAL (
@@ -553,6 +774,86 @@ function billingRows({ from, to }, scope = UNRESTRICTED) {
   );
 }
 
+/**
+ * What each PO's value is made of, for the service split: its po_services
+ * rows, and its quotation's lines (by value incl. GST, named by their
+ * catalogue service where they have one). Keyed by the rows' own PO numbers
+ * and quotation ids, which are already only the ones the reader may see.
+ */
+async function servicePieces(poRows) {
+  const poNumbers = poRows.map((row) => row.po_number);
+  const quotationIds = [...new Set(poRows.map((row) => row.quotation_id).filter(Boolean))];
+  const [services, lines] = await Promise.all([
+    query(
+      `SELECT po_number, service, service_value::float8 AS value
+         FROM po_services WHERE po_number = ANY($1::text[]) ORDER BY po_number, id`,
+      [poNumbers]
+    ),
+    query(
+      `SELECT ql.quotation_id, COALESCE(s.name, ql.description) AS text,
+              (ql.amount * (1 + ql.gst_rate / 100))::float8 AS value
+         FROM quotation_lines ql
+         LEFT JOIN services s ON s.id = ql.service_id
+        WHERE ql.quotation_id = ANY($1::int[])
+        ORDER BY ql.quotation_id, ql.sort_order, ql.id`,
+      [quotationIds]
+    ),
+  ]);
+  const group = (rows, key) => {
+    const map = new Map();
+    for (const row of rows) map.set(row[key], [...(map.get(row[key]) ?? []), row]);
+    return map;
+  };
+  return { services: group(services.rows, 'po_number'), lines: group(lines.rows, 'quotation_id') };
+}
+
+/** The headline sectors and service lines, the sector aliases and the catalogue's assignments. */
+export async function reportCategories() {
+  const [settings, aliases, catalogue] = await Promise.all([
+    query(`SELECT key, value FROM settings WHERE key = ANY($1::text[])`, [Object.keys(CATEGORY_SETTINGS)]),
+    query('SELECT id, alias, sector FROM sector_aliases ORDER BY sector, alias'),
+    query('SELECT id, name, active, report_line FROM services ORDER BY sort_order, name'),
+  ]);
+  const stored = Object.fromEntries(settings.rows.map((row) => [row.key, row.value]));
+  return {
+    sectors: readCategoryList(stored.report_sectors, CATEGORY_SETTINGS.report_sectors),
+    service_lines: readCategoryList(stored.report_service_lines, CATEGORY_SETTINGS.report_service_lines),
+    aliases: aliases.rows,
+    services: catalogue.rows,
+  };
+}
+
+/**
+ * What the Settings → Reports pane shows beside the lists: every sector
+ * spelling in use and the category it counts under now (so an admin can see
+ * what lands in Other and alias it), and every catalogue service with the
+ * line it counts under and whether that is assigned or matched by keyword.
+ * Reads every record, unscoped: it is an admin's view of the whole book.
+ */
+export async function categoryUsage() {
+  const categories = await reportCategories();
+  const { rows } = await query(
+    `SELECT mode() WITHIN GROUP (ORDER BY name) AS name, COUNT(*)::int AS records
+       FROM (SELECT btrim(sector) AS name FROM quotations
+             UNION ALL SELECT btrim(sector) FROM enquiries
+             UNION ALL SELECT btrim(sector) FROM companies) s
+      WHERE NULLIF(name, '') IS NOT NULL
+      GROUP BY ${nameKey('name')}
+      ORDER BY records DESC, 1`
+  );
+  const mapSector = sectorMapper(categories.sectors, categories.aliases);
+  const linesOf = serviceMapper(categories.service_lines, categories.services);
+  return {
+    ...categories,
+    sector_usage: rows.map((row) => ({ ...row, category: mapSector(row.name) })),
+    services: categories.services.map((service) => ({
+      ...service,
+      lines: linesOf(service.name),
+      assigned: Boolean(service.report_line),
+    })),
+  };
+}
+
 /** POs with no PO date: in no month once a period is chosen, so named. */
 async function undatedPos({ from, to }, scope) {
   if (!from && !to) return [];
@@ -572,7 +873,7 @@ async function undatedPos({ from, to }, scope) {
 const fmtInr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
 /** One plain sentence per section, from the figures alone. */
-export function narrate({ enquiries, outcomes, revenue }) {
+export function narrate({ enquiries, outcomes, sectors, services, revenue }) {
   const out = {};
   if (!enquiries.total) out.enquiries = 'No enquiries in this period.';
   else {
@@ -588,6 +889,21 @@ export function narrate({ enquiries, outcomes, revenue }) {
       + `${slice.pipeline.count} still in the pipeline, ${slice.quoted_not_won.count} quoted but not won, `
       + `${slice.lost.count} lost before a quotation.`;
   }
+  const named = (rows) => rows.filter((row) => !row.other && row.pos);
+  if (!sectors.total.pos) out.sectors = 'No POs in this period.';
+  else {
+    const best = named(sectors.rows).sort((a, b) => b.pos - a.pos || b.value_inr - a.value_inr)[0];
+    out.sectors = best
+      ? `${best.sector} gave the most POs (${best.pos} of ${sectors.total.pos}, ${fmtInr(best.value_inr)}).`
+      : `None of the ${sectors.total.pos} POs came from a headline sector.`;
+  }
+  if (!services.total.pos) out.services = 'No POs in this period.';
+  else {
+    const best = named(services.rows)[0];
+    out.services = best && best.value_inr > 0
+      ? `${best.line} sold the most: ${fmtInr(best.value_inr)} (${best.pct}% of PO value) across ${best.pos} PO${best.pos === 1 ? '' : 's'}.`
+      : 'No PO value fell in a listed service line.';
+  }
   if (!revenue.total.pos) out.revenue = 'No POs in this period.';
   else {
     const best = revenue.months.filter((m) => m.key).reduce((a, m) => (m.po_value_inr > (a?.po_value_inr ?? 0) ? m : a), null);
@@ -602,16 +918,32 @@ export function narrate({ enquiries, outcomes, revenue }) {
  * screen, the CSV export and the PDF all read this.
  */
 export async function salesReport(period, { grain, scope = UNRESTRICTED, today = businessToday() } = {}) {
-  const [enquiryRows, poRows, billing, undated] = await Promise.all([
+  const [enquiryRows, poRows, billing, undated, categories] = await Promise.all([
     outcomeRows(period, scope, today), revenueRows(period, scope), billingRows(period, scope), undatedPos(period, scope),
+    reportCategories(),
   ]);
+  const pieces = await servicePieces(poRows.rows);
+  const mapSector = sectorMapper(categories.sectors, categories.aliases);
+  const linesOf = serviceMapper(categories.service_lines, categories.services);
+  const pos = poRows.rows.map((row) => ({
+    ...row,
+    services: pieces.services.get(row.po_number) ?? [],
+    lines: pieces.lines.get(row.quotation_id) ?? [],
+  }));
   const dates = enquiryRows.rows.map((row) => row.date).filter(Boolean);
   const wanted = grain || defaultGrain(period);
   const used = fitGrain(period.from || dates[0], period.to || dates.at(-1), wanted);
 
   const enquiries = enquiriesReceived(enquiryRows.rows, period, used);
   const outcomes = outcomeSummary(enquiryRows.rows, period);
-  const revenue = monthlyRevenue(poRows.rows, billing.rows, period);
+  const sectors = sectorSection(pos, categories.sectors, mapSector);
+  const services = serviceSection(pos, categories.service_lines, linesOf);
+  // The PO list behind each month says which category each PO counted in.
+  const revenue = monthlyRevenue(pos.map((row) => ({
+    ...row,
+    sector: mapSector(row.sector),
+    service: serviceSplit(row, linesOf).shares.map((share) => share.line).join(', '),
+  })), billing.rows, period);
 
   const notes = [];
   if (used !== wanted) notes.push({ key: 'grain', text: `Too many ${wanted}s to chart; shown by ${used}.` });
@@ -632,12 +964,20 @@ export async function salesReport(period, { grain, scope = UNRESTRICTED, today =
     const n = revenue.total.billing_unconverted;
     notes.push({ key: 'billing_unconverted', count: n, text: `${n} invoice or payment amount${n === 1 ? '' : 's'} could not be converted to INR and ${n === 1 ? 'is' : 'are'} left out of invoiced / received.` });
   }
+  if (sectors.not_set) {
+    const n = sectors.not_set;
+    notes.push({ key: 'po_without_sector', count: n, href: '/quotations?sector=__none__', text: `${n} PO${n === 1 ? ' has' : 's have'} no sector on its quotation or company.` });
+  }
+  if (services.sources.keywords) {
+    const n = services.sources.keywords;
+    notes.push({ key: 'services_by_keywords', count: n, text: `${n} PO${n === 1 ? ' has' : 's have'} no service lines recorded; ${n === 1 ? 'its' : 'their'} service was read from the quotation's service text${services.bundled ? ', and a PO naming several services is split equally between them' : ''}.` });
+  }
   if (undated.length) {
     notes.push({ key: 'undated_pos', count: undated.length, href: '/purchase-orders', text: `${undated.length} PO${undated.length === 1 ? ' has' : 's have'} no PO date and ${undated.length === 1 ? 'is' : 'are'} in no month: ${undated.join(', ')}.` });
   }
   const currencies = poRows.rows.map((row) => ({ currency: row.currency }));
   const stale = await staleAmong(currencies, { period, today });
 
-  const sections = { enquiries, outcomes, revenue };
+  const sections = { enquiries, outcomes, sectors, services, revenue };
   return { period, grain: used, ...sections, notes, stale_rates: stale, narrative: narrate(sections) };
 }

@@ -206,7 +206,7 @@ test('figures carry through: sectors, services, clients and revenue', () => {
     // Sector won value in INR: ₹1,00,000 and €10,700 × 110.43.
     '₹1,00,000', '₹11,81,601', '₹12,81,601',
     // Services: the bundled EcoVadis + ISO quotation counts in both lines.
-    'EcoVadis', 'ISO certification & management systems', 'ASI / Copper Mark / LME', 'Other services', 'Total (each quotation once)',
+    'EcoVadis', 'ISO certification', 'ASI / Copper Mark / LME', 'Other services', 'Total (each quotation once)',
     '1 quotation names more than one service',
     // Clients.
     'Clients with repeat orders: ', 'Hetero (2 deals)',
