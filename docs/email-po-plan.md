@@ -931,17 +931,12 @@ Derived, not stored:
 6. **Invoices we email to clients** are recorded on the right payment
    stage, and their PDF is uploaded to it, for a PO or a project (§3.10).
 
-### Still open for invoices (defaults given; the build can start with them)
-
-7. **Proforma invoices.** Default: never recorded, since they are not tax
-   invoices. The alternative is to log them as a note on the PO.
-8. **Invoice amount that is not a stage.** Default: **review**, and the
-   reviewer re-splits the stages. The alternative is to re-split the PO's
-   remaining stages automatically to fit the invoice.
-9. **Client payment reminders for past invoices.** Default: **off** until
-   a person has touched the stage, so clients are never asked to pay an
-   invoice they may already have paid. The alternative is to chase them
-   like any overdue invoice.
-10. **An existing invoice document on the stage.** Default: **keep it**.
-    The alternative is to replace it with the emailed PDF.
-
+7. **Proforma invoices:** never recorded. They are not tax invoices, and
+   are logged `not_invoice` (§3.10.5).
+8. **Invoice amount that is not a stage:** goes to **review**, and the
+   reviewer re-splits the stages, then records the invoice (§3.10.3).
+9. **Client payment reminders for past invoices:** **off** until someone
+   has looked at the stage, either by recording a payment or by marking
+   the PO checked (§3.10.4).
+10. **An existing invoice document on the stage:** **kept**. The emailed
+    PDF never replaces it (§3.10.4).
