@@ -11,6 +11,7 @@
  * workflow router so these paths win.
  */
 import { Router } from 'express';
+import { readFromEmail } from '../lib/mailbox/autoQuotation.js';
 import { z } from 'zod';
 import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
@@ -73,6 +74,7 @@ export async function fullQuotation(key, scope = UNRESTRICTED) {
     || (q.place_of_supply_state || '').match(/^\d{2}/)?.[0]
     || null;
   return {
+    read_from_email: await readFromEmail(q.quotation_no),
     ...q, lines: lines.rows, revisions: revisions.rows, company: theirs, contact: contact.rows[0] || null,
     enquiry: enquiry.rows[0] || null, project: project.rows[0] || null, purchase_orders: pos.rows,
     gst: gstBreakdown(lines.rows, { ourState, theirState, currency: q.currency }),

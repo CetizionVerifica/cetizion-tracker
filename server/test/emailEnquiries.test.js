@@ -404,4 +404,152 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.equal((await enquiriesFrom(box.id)).length, 1);
   });
 });
+
+  describe('quotations read from PDFs', () => {
+    let pdfmake;
+    before(async () => { ({ default: pdfmake } = await import('../src/lib/pdf.js')); });
+    const pdf = (lines, opts = {}) => pdfmake.createPdf({ content: lines, ...opts }).getBuffer();
+    const quotePdf = (no = 'CV/Q/2025/045', rev = '') => pdf(['QUOTATION', `Quotation No: ${no} ${rev}`, 'To: Acme Steel Ltd, Kind attn: Ravi Kumar',
+      'EcoVadis assessment 1 2,50,000.00', 'Sub-total 2,50,000.00', 'GST 18% 45,000.00', 'Total 2,95,000.00']);
+
+    const extraction = (over = {}) => ({
+      quotation_no_printed: 'CV/Q/2025/045', revision: 0, quotation_date: at(1).slice(0, 10), valid_until: null,
+      client: { company_name: 'Acme Steel Ltd', contact_name: 'Ravi Kumar' }, currency: 'INR',
+      lines: [{ description: 'EcoVadis assessment', qty: 1, rate: '2,50,000.00', gst_rate: 18, service: 'EcoVadis' }],
+      subtotal: '2,50,000.00', tax_total: '45,000.00', total: '2,95,000.00', confidence: 0.93, ...over,
+    });
+    /** The fake AI: a classification for the covering email, the given extraction for the PDF. */
+    const fakeAi = (answers, seen = []) => async (system, user) => {
+      if (/You read a quotation/.test(system)) { seen.push(typeof user === 'string' ? user : JSON.stringify(user)); return answers.shift(); }
+      return { kind: 'quotation_sent', confidence: 0.95, company_name: 'Acme Steel Ltd', contact_name: 'Ravi Kumar', service: 'EcoVadis' };
+    };
+    const sendQuote = async (box, { to = 'ravi@acme-steel-pdf.co.in', attachments, subject = 'Quotation for EcoVadis', sent = at(0) } = {}) => deliver(box, [rfq({
+      folder: 'sentitems', from: { email: box.email }, to: [{ email: to, name: 'Ravi Kumar' }], subject,
+      body_html: '<p>Dear Ravi, please find attached our quotation.</p>', has_attachments: true, sent_at: sent, attachments,
+    })]);
+    const byNo = async (no) => (await db.query('SELECT q.*, ps.name AS stage FROM quotations q LEFT JOIN pipeline_stages ps ON ps.id = q.stage_id WHERE quotation_no = $1', [no])).rows[0];
+
+    test('16. a text PDF whose lines add up: a Submitted quotation on Sent, its printed number, totals from the lines, and a Converted enquiry', async () => {
+      const box = await mailbox();
+      auto.deps.chat = fakeAi([extraction()]);
+      await sendQuote(box, { attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf() }] });
+      const q = await byNo('CV/Q/2025/045');
+      assert.ok(q, 'the printed number is kept');
+      assert.equal(q.status, 'Submitted');
+      assert.equal(q.stage, 'Sent');
+      assert.ok(q.sent_at);
+      assert.equal(Number(q.subtotal), 250000);
+      assert.equal(Number(q.total), 295000);
+      const { rows: lines } = await db.query('SELECT * FROM quotation_lines WHERE quotation_id = $1', [q.id]);
+      assert.equal(lines.length, 1);
+      const [e] = await enquiriesFrom(box.id);
+      assert.equal(e.status, 'Converted');
+      assert.equal(e.quotation_no, 'CV/Q/2025/045');
+      const [d] = (await decisions(box.id)).filter((x) => x.outcome === 'created');
+      assert.equal(d.quotation_extraction, 'created');
+      assert.equal(d.ai_calls, 2, 'one call to judge the email, one to read the PDF');
+      assert.equal(Number(d.printed_total), 295000);
+    });
+
+    test('17. lines that do not add up: no lines, the printed totals, and the quotation says so', async () => {
+      const box = await mailbox();
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CV/Q/2025/046', lines: [{ description: 'Audit', qty: 1, rate: '2,00,000' }] })]);
+      await sendQuote(box, { to: 'p@seventeen-co.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CV/Q/2025/046') }] });
+      const q = await byNo('CV/Q/2025/046');
+      const { rows: lines } = await db.query('SELECT 1 FROM quotation_lines WHERE quotation_id = $1', [q.id]);
+      assert.equal(lines.length, 0);
+      assert.deepEqual([q.subtotal, q.tax_total, q.total, q.quotation_value].map(Number), [250000, 45000, 295000, 295000]);
+      const { body } = await agent.get(`/api/quotations/${q.id}/full`).expect(200);
+      assert.equal(body.data.read_from_email?.no_lines, true);
+    });
+
+    test('17a. the PDF\'s totals survive a revision, give way to real lines, and come back when the lines go', async () => {
+      const q = await byNo('CV/Q/2025/046');
+      await agent.post(`/api/quotations/${q.id}/revise`).send({ note: 'new version' }).expect(200);
+      let now = await byNo('CV/Q/2025/046');
+      assert.deepEqual([now.subtotal, now.tax_total, now.total, now.quotation_value].map(Number), [250000, 45000, 295000, 295000]);
+
+      const { rows: [line] } = await db.query(`INSERT INTO quotation_lines (quotation_id, description, qty, rate, gst_rate) VALUES ($1, 'Typed in', 1, 100000, 18) RETURNING id`, [q.id]);
+      now = await byNo('CV/Q/2025/046');
+      assert.deepEqual([now.subtotal, now.total].map(Number), [100000, 118000], 'the lines take over');
+
+      await db.query('DELETE FROM quotation_lines WHERE id = $1', [line.id]);
+      now = await byNo('CV/Q/2025/046');
+      assert.deepEqual([now.subtotal, now.tax_total, now.total, now.quotation_value].map(Number), [250000, 45000, 295000, 295000], 'the PDF\'s figures, not blank');
+    });
+
+    test('17b. a quotation built in the tracker with no lines still gets blank totals', async () => {
+      const { rows: [q] } = await db.query(`INSERT INTO quotations (quotation_no, client_name, quotation_value, subtotal, tax_total, total) VALUES ('CTZ/QT/2026/990', 'Plain Ltd', 5000, 1, 2, 3) RETURNING id`);
+      await db.query('SELECT quotation_totals($1)', [q.id]);
+      const { rows: [after1] } = await db.query('SELECT subtotal, tax_total, total, quotation_value FROM quotations WHERE id = $1', [q.id]);
+      assert.deepEqual({ ...after1, quotation_value: Number(after1.quotation_value) }, { subtotal: null, tax_total: null, total: null, quotation_value: 5000 });
+    });
+
+    test('18. a clashing printed number takes a tracker number; a free one in our series moves the counter', async () => {
+      await db.query(`INSERT INTO quotations (quotation_no, client_name) VALUES ('CTZ/QT/2026/777', 'Somebody Else Ltd')`);
+      const box = await mailbox();
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CTZ/QT/2026/777', quotation_date: '2026-09-30' })]);
+      await sendQuote(box, { to: 'p@clash-co.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CTZ/QT/2026/777') }], sent: '2026-10-01T05:00:00Z' });
+      const [e] = await enquiriesFrom(box.id);
+      assert.notEqual(e.quotation_no, 'CTZ/QT/2026/777');
+      const q = await byNo(e.quotation_no);
+      assert.match(q.remarks, /Printed number: CTZ\/QT\/2026\/777/);
+
+      const box2 = await mailbox();
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CTZ/QT/2026/850', quotation_date: '2026-09-30' })]);
+      await sendQuote(box2, { to: 'p@free-number.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CTZ/QT/2026/850') }], sent: '2026-10-01T05:00:00Z' });
+      assert.ok(await byNo('CTZ/QT/2026/850'));
+      const { rows: [c] } = await db.query(`SELECT last_n FROM sequence_counters WHERE kind = 'quotation' AND year = '2026'`);
+      assert.ok(c.last_n >= 850, 'the tracker will not issue 850 again');
+    });
+
+    test('19. the same printed number with Rev 1 revises the quotation; the old version is kept, nothing new is made', async () => {
+      const box = await mailbox();
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CV/Q/2025/700' })]);
+      await sendQuote(box, { to: 'p@rev-co.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CV/Q/2025/700') }], sent: at(2) });
+      const before1 = await byNo('CV/Q/2025/700');
+      assert.ok(before1);
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CV/Q/2025/700', revision: 'Rev 1' })]);
+      await sendQuote(box, { to: 'p@rev-co.com', subject: 'Revised quotation', attachments: [{ name: 'Quotation R1.pdf', contentType: 'application/pdf', content: await quotePdf('CV/Q/2025/700', 'Rev 1') }], sent: at(1) });
+      const q = await byNo('CV/Q/2025/700');
+      assert.equal(q.revision, 1);
+      const { rows: revs } = await db.query('SELECT revision FROM quotation_revisions WHERE quotation_id = $1', [q.id]);
+      assert.deepEqual(revs.map((r) => r.revision), [0]);
+      assert.equal((await enquiriesFrom(box.id)).length, 1);
+      const ds = await decisions(box.id);
+      assert.deepEqual(ds.map((d) => [d.outcome, d.quotation_extraction]), [['created', 'created'], ['linked', 'revised']]);
+    });
+
+    test('20. an encrypted PDF, or low confidence: a Contacted enquiry, no quotation, a task, and the reason', async () => {
+      const box = await mailbox();
+      auto.deps.chat = fakeAi([]);
+      const locked = await pdf(['secret'], { userPassword: 'x', ownerPassword: 'y', permissions: {} });
+      await sendQuote(box, { to: 'p@locked-co.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: locked }] });
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CV/Q/2025/800', confidence: 0.4 })]);
+      await sendQuote(box, { to: 'p@unsure-co.com', attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CV/Q/2025/800') }] });
+      const made = await enquiriesFrom(box.id);
+      assert.equal(made.length, 2);
+      assert.ok(made.every((e) => e.status === 'Contacted' && e.quotation_no === null));
+      assert.equal(await byNo('CV/Q/2025/800'), undefined);
+      const ds = (await decisions(box.id)).filter((d) => d.outcome === 'created');
+      assert.deepEqual(ds.map((d) => [d.quotation_extraction, d.extraction_reason]), [['failed', 'encrypted'], ['failed', 'low_confidence']]);
+      const { rows: tasks } = await db.query(`SELECT 1 FROM tasks WHERE entity = 'enquiry' AND entity_id = ANY($1)`, [made.map((e) => e.enquiry_no)]);
+      assert.equal(tasks.length, 2);
+    });
+
+    test('21. a brochure and a quotation: the quotation is the one read', async () => {
+      const box = await mailbox();
+      const seen = [];
+      auto.deps.chat = fakeAi([extraction({ quotation_no_printed: 'CV/Q/2025/900' })], seen);
+      const brochure = await pdf(Array.from({ length: 40 }, () => 'About Cetizion Verifica: our services, our team and our clients across India.'));
+      await sendQuote(box, { to: 'p@two-pdfs.com', attachments: [
+        { name: 'Company profile.pdf', contentType: 'application/pdf', content: brochure },
+        { name: 'Quotation.pdf', contentType: 'application/pdf', content: await quotePdf('CV/Q/2025/900') },
+      ] });
+      assert.equal(seen.length, 1);
+      assert.match(seen[0], /CV\/Q\/2025\/900/);
+      assert.doesNotMatch(seen[0], /our services, our team/);
+      assert.ok(await byNo('CV/Q/2025/900'));
+    });
+  });
 });

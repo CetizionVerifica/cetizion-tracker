@@ -24,7 +24,11 @@ const key = () => config.microsoft.tokenKey;
 const testBoxes = new Map();
 /** How many messages the test provider's page() returns at once; tests lower it to exercise resuming. */
 export const testPaging = { size: 50 };
+const testAttachments = new Map();
 export function pushTestMessages(accountId, messages) {
+  for (const m of messages) {
+    if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
+  }
   const box = testBoxes.get(accountId) || [];
   box.push(...messages);
   testBoxes.set(accountId, box);
@@ -43,6 +47,9 @@ function testProvider(account) {
   return {
     tokens: () => null,
     async delta(folder, deltaLink) { return { messages: take(folder), deltaLink: deltaLink || `test:${folder}` }; },
+    async attachments(providerId) {
+      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
+    },
     async page(folder, { sinceIso, cursor = null } = {}) {
       const past = (testBoxes.get(account.id) || [])
         .filter((m) => m.history && (m.folder || 'inbox') === folder && new Date(m.sent_at) >= new Date(sinceIso))

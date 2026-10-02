@@ -125,6 +125,29 @@ export function microsoftProvider(account, tokens) {
       const j = await graph(url, { headers: { Prefer: 'outlook.body-content-type="html"' } });
       return { messages: (j.value || []).filter((m) => !m.isDraft).map(toMessage), next: j['@odata.nextLink'] || null };
     },
+    /**
+     * A message's file attachments, as buffers. Graph returns small files
+     * inline as base64; one larger than about 3 MB comes without its bytes
+     * and is fetched from its $value. Mail.ReadWrite already covers this.
+     */
+    async attachments(providerId, { maxBytes = 15 * 1024 * 1024 } = {}) {
+      const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size`);
+      const out = [];
+      for (const a of j.value || []) {
+        if (a['@odata.type'] && a['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
+        if (a.size > maxBytes) { out.push({ name: a.name, contentType: a.contentType, size: a.size, content: null }); continue; }
+        let content = null;
+        const full = await graph(`${who}/messages/${providerId}/attachments/${a.id}`).catch(() => null);
+        if (full?.contentBytes) content = Buffer.from(full.contentBytes, 'base64');
+        else {
+          current = await freshTokens(current);
+          const r = await fetch(`${GRAPH}${who}/messages/${providerId}/attachments/${a.id}/$value`, { headers: { Authorization: `Bearer ${current.access_token}` }, signal: AbortSignal.timeout(60_000) });
+          if (r.ok) content = Buffer.from(await r.arrayBuffer());
+        }
+        out.push({ name: a.name, contentType: a.contentType, size: a.size, content });
+      }
+      return out;
+    },
     /** Reply in the same conversation; Outlook keeps it in Sent Items. */
     async reply(providerId, html, { replyAll = true } = {}) {
       await graph(`${who}/messages/${providerId}/${replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: { comment: html } });

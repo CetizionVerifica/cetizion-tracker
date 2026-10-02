@@ -27,12 +27,13 @@ import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
 import { domainOf } from './rules.js';
+import * as autoQuotation from './autoQuotation.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, so no test reaches the
  * network; `readQuotation` reads the quotation PDF we sent (autoQuotation.js).
  */
-export const deps = { chat: null, readQuotation: null };
+export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
@@ -299,6 +300,7 @@ export async function decide(account, cand, ctx) {
 
   // The quotation PDF is read before the transaction too: it may call the AI.
   const prepared = wanted === 'quotation_sent' ? await prepareQuotation(account, cand, verdict, ctx) : null;
+  if (prepared?.stop) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
 
   const result = await transaction(async (db) => {
     // Live sync and the backfill can meet on one email, and two emails from
@@ -499,7 +501,7 @@ async function prepareQuotation(account, cand, verdict, ctx) {
   }
   if (!deps.readQuotation?.prepare) return { ok: false, reason: 'no_pdf' };
   try {
-    return await deps.readQuotation.prepare(account, cand, verdict, ctx);
+    return await deps.readQuotation.prepare(account, cand, verdict, ctx, chatFn());
   } catch (err) {
     console.warn('[auto-enquiry] quotation PDF not read:', err.message);
     return { ok: false, reason: 'unreadable' };
