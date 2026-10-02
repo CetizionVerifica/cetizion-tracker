@@ -425,3 +425,75 @@ async function pdfText(buffer) {
   }
   return pages.join(' ').replace(/\s+/g, ' ').replace(/(\d)\. +/g, '$1. ');
 }
+
+/**
+ * The database the API runs on, for the two tests below that start from an
+ * email the reader has already judged: without an AI key, no email can be
+ * judged here, so the decision is written as the reader would write it.
+ */
+async function withDatabase(fn) {
+  const { createRequire } = await import('node:module');
+  const pg = createRequire(join(here, '..', '..', 'server', 'package.json'))('pg');
+  const client = new pg.Client({ connectionString: process.env.E2E_DATABASE_URL || env.DATABASE_URL });
+  await client.connect();
+  try { return await fn(client); } finally { await client.end(); }
+}
+
+/** A quotation through the API, with one priced line: what a PO is registered against. */
+async function quotationFor(page, client) {
+  const { data: q } = await (await page.request.post('/api/quotations', { data: { client_name: client, service_quoted: 'EcoVadis', quotation_date: new Date().toISOString().slice(0, 10) } })).json();
+  await page.request.post('/api/quotation-lines', { data: { quotation_id: q.id, description: 'EcoVadis assessment', qty: 1, rate: 250000, gst_rate: 18 } });
+  return q;
+}
+
+test('a PO from email waiting for review is registered by hand, and the PO says where it came from', async ({ page }) => {
+  await signIn(page);
+  const client = `E2E PO Client ${stamp}`;
+  const q = await quotationFor(page, client);
+  await withDatabase(async (db) => {
+    const { rows: [box] } = await db.query(`INSERT INTO connected_accounts (username, provider, email) VALUES ('admin', 'test', $1) RETURNING id`, [`po-${stamp}@cetizionverifica.com`]);
+    await db.query(
+      `INSERT INTO email_po_decisions (account_id, provider_id, from_email, received_at, outcome, review_reason, method, suggested_quotations)
+       VALUES ($1, $2, 'buyer@e2e-client.com', now(), 'review', 'several_matches', 'ai', $3)`, [box.id, `po-${stamp}`, [q.quotation_no]]);
+  });
+
+  await page.goto('/purchase-orders?tab=review');
+  const row = page.locator('table tbody tr', { hasText: 'buyer@e2e-client.com' });
+  await expect(row).toContainText('More than one quotation could be it');
+  await expect(row).toContainText(q.quotation_no);
+  await row.getByRole('button', { name: 'Register against…' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  // No AI key here: the dialog opens empty, and says so.
+  await expect(page.getByText('The PO could not be read again')).toBeVisible();
+  await page.getByLabel('PO number').fill(`E2E-PO-${stamp}`);
+  await page.getByRole('button', { name: 'Register PO and project' }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/purchase-orders/E2E-PO-${stamp}$`));
+  await expect(page.getByText('Registered from the client\'s PO emailed')).toBeVisible();
+  await page.goto('/purchase-orders?tab=review');
+  await expect(page.locator('table tbody tr', { hasText: 'buyer@e2e-client.com' })).toHaveCount(0);
+});
+
+test('a PO registered from email carries a banner until somebody marks it checked', async ({ page }) => {
+  await signIn(page);
+  const q = await quotationFor(page, `E2E Banner Client ${stamp}`);
+  const poNumber = `E2E-AUTO-${stamp}`;
+  await page.request.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`, { data: { po_number: poNumber } });
+  await withDatabase(async (db) => {
+    const { rows: [box] } = await db.query(`INSERT INTO connected_accounts (username, provider, email) VALUES ('admin', 'test', $1) RETURNING id`, [`auto-${stamp}@cetizionverifica.com`]);
+    await db.query(
+      `INSERT INTO email_po_decisions (account_id, provider_id, from_email, received_at, outcome, mode, method, po_number, quotation_no, stages_source)
+       VALUES ($1, $2, 'buyer@e2e-banner.com', now(), 'registered', 'live', 'ai', $3, $4, 'po_terms')`, [box.id, `auto-${stamp}`, poNumber, q.quotation_no]);
+  });
+
+  await page.goto(`/purchase-orders/${poNumber}`);
+  await expect(page.getByText('Registered automatically from the client\'s PO emailed on')).toBeVisible();
+  await page.getByRole('button', { name: 'Mark checked' }).click();
+  await expect(page.getByRole('button', { name: 'Mark checked' })).toHaveCount(0);
+  await expect(page.getByText('Registered automatically from the client\'s PO emailed').first()).toBeVisible();
+
+  // And the list finds it as one registered from email.
+  await page.goto('/purchase-orders?from_email=1');
+  await expect(page.locator('table')).toContainText(poNumber);
+});

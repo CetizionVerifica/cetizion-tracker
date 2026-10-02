@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { PageHeader } from '../App.jsx';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
+import { Badge, Alert, DocumentLink, Tabs } from '../components/ui.jsx';
+import { InvoiceReviewList, useReviewCount } from '../components/EmailReview.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, percent } from '../lib/format.js';
@@ -13,8 +15,11 @@ import { money, date, percent } from '../lib/format.js';
  */
 export default function PaymentStages() {
   const lookups = useLookups();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState(null);
+  // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
+  const tab = params.get('tab') === 'invoice-review' ? 'invoice-review' : 'all';
+  const toReview = useReviewCount('/payment-stages/invoice-review');
   const [version, setVersion] = useState(0);
 
   const refresh = () => {
@@ -85,6 +90,26 @@ export default function PaymentStages() {
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ];
 
+  const pastMail = params.get('from_past_po') === '1';
+  const tabs = (
+    <Tabs
+      active={tab}
+      onChange={(key) => setParams(key === 'invoice-review' ? { tab: 'invoice-review' } : {})}
+      tabs={[{ key: 'all', label: 'All stages' }, { key: 'invoice-review', label: 'Invoices to review', count: toReview || undefined }]}
+    />
+  );
+  if (tab === 'invoice-review') {
+    return (
+      <>
+        <PageHeader title="Payment schedule" subtitle="Invoices we emailed that were not recorded automatically" />
+        <div className="page stack">
+          {tabs}
+          <InvoiceReviewList />
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <ListPage
@@ -103,14 +128,29 @@ export default function PaymentStages() {
           { name: 'trigger_event', label: 'Trigger', options: lookups.enums?.trigger || [] },
           { name: 'invoice_no', label: 'Invoice', options: [{ value: '__any__', label: 'Raised' }, { value: '__none__', label: 'Not raised' }] },
           { name: 'document_id', label: 'Invoice document', options: [{ value: '__none__', label: 'Missing' }, { value: '__any__', label: 'Attached' }] },
+          { name: 'from_email', label: 'Source', options: [{ value: '1', label: 'Invoice recorded from email' }] },
+          { name: 'from_past_po', label: 'Past mail', options: [{ value: '1', label: 'Past POs and invoices to settle' }] },
         ]}
         banner={
-          <Alert>
-            <span>
-              <strong>To Invoice</strong> means the trigger has happened and finance should bill now.
-              <strong> Overdue</strong> means the invoice due date has passed — follow up strictly.
-            </span>
-          </Alert>
+          <>
+            {tabs}
+            {pastMail ? (
+              <Alert tone="warning">
+                <span>
+                  <strong>Past POs and invoices to settle.</strong> These stages come from POs or invoices read from the past year of email.
+                  Their invoices and payments very likely happened outside the tracker: record them here and each stage leaves this list once a payment is recorded.
+                  Until then, neither clients nor owners are chased about the invoices read from past mail.
+                </span>
+              </Alert>
+            ) : (
+              <Alert>
+                <span>
+                  <strong>To Invoice</strong> means the trigger has happened and finance should bill now.
+                  <strong> Overdue</strong> means the invoice due date has passed — follow up strictly.
+                </span>
+              </Alert>
+            )}
+          </>
         }
       />
 

@@ -378,14 +378,42 @@ mailboxRouter.delete('/blocklist/:id', requireAdmin, async (req, res) => {
 
 /**
  * Where a record came from, when it was made from an email: the date, the
- * mailbox, and the thread when the caller may read it. ?entity=enquiry&id=
- * or ?entity=quotation&id=. Nothing when it did not come from email, or
+ * mailbox, and the thread when the caller may read it. ?entity=enquiry&id=,
+ * ?entity=quotation&id=, ?entity=purchase_order&id= or ?entity=payment_stage&id=. Nothing when it did not come from email, or
  * when the record is not the caller's to see.
  */
 mailThreadRouter.get('/origin', async (req, res) => {
   const { entity, id } = req.query;
-  if (!['enquiry', 'quotation'].includes(entity) || !id) throw new ApiError(422, 'entity (enquiry or quotation) and id are required');
-  const { scopeOf, ownerClause } = await import('../auth/ownership.js');
+  if (!['enquiry', 'quotation', 'purchase_order', 'payment_stage'].includes(entity) || !id) {
+    throw new ApiError(422, 'entity (enquiry, quotation, purchase_order or payment_stage) and id are required');
+  }
+  const { scopeOf, ownerClause, purchaseOrderClause, parentClause } = await import('../auth/ownership.js');
+  if (entity === 'purchase_order' || entity === 'payment_stage') {
+    // A PO registered from the client's email, or an invoice recorded from
+    // ours (docs/email-po-plan.md): reachable through the PO, as the PO is.
+    const params = [String(id)];
+    const mine = entity === 'purchase_order'
+      ? purchaseOrderClause(scopeOf(req), params, { alias: 'po' })
+      : parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+    const { rows: [record] } = await query(entity === 'purchase_order'
+      ? `SELECT 1 FROM purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`
+      : `SELECT 1 FROM payment_stages ps WHERE ps.id::text = $1 ${mine ? `AND ${mine}` : ''}`, params);
+    if (!record) return res.json({ data: null });
+    const { rows: [d] } = await query(entity === 'purchase_order'
+      ? `SELECT d.received_at, d.mode, d.thread_id, d.outcome, a.email AS mailbox FROM email_po_decisions d JOIN connected_accounts a ON a.id = d.account_id
+          WHERE d.po_number = $1 AND d.outcome IN ('registered','registered_by_hand') ORDER BY d.decided_at LIMIT 1`
+      : `SELECT d.sent_at AS received_at, d.mode, d.thread_id, d.outcome, a.email AS mailbox FROM email_invoice_decisions d JOIN connected_accounts a ON a.id = d.account_id
+          WHERE d.stage_id::text = $1 AND d.outcome IN ('recorded','recorded_by_hand') ORDER BY d.decided_at LIMIT 1`, [String(id)]);
+    if (!d) return res.json({ data: null });
+    let threadId = null;
+    if (d.thread_id) {
+      const scope = readableThread(req, 'a', 't', 2);
+      const { rows: [t] } = await query(
+        `SELECT t.id FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id WHERE t.id = $1 AND ${scope.clause}`, [d.thread_id, ...scope.params]);
+      threadId = t?.id ?? null;
+    }
+    return res.json({ data: { received_at: d.received_at, mode: d.mode, mailbox: d.mailbox, thread_id: threadId, by_hand: d.outcome.endsWith('_by_hand') } });
+  }
   const params = [String(id)];
   const mine = ownerClause(scopeOf(req), params);
   const table = entity === 'enquiry' ? 'enquiries' : 'quotations';

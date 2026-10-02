@@ -526,6 +526,8 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     const key = encodeURIComponent('AB/PO/77');
     const { body: full } = await agent.get(`/api/purchase-orders/${key}/full`).expect(200);
     assert.deepEqual([full.data.from_email.from_email, full.data.from_email.mode, full.data.from_email.checked], ['anil@acme-banner.co.in', 'live', false]);
+    const { body: origin } = await agent.get(`/api/mail/origin?entity=purchase_order&id=${key}`).expect(200);
+    assert.deepEqual([origin.data.mailbox, origin.data.mode, origin.data.by_hand], [box.email, 'live', false]);
     const { body: checked } = await agent.post(`/api/purchase-orders/${key}/email-read-checked`).expect(200);
     assert.equal(checked.data.checked, true);
     // A PO typed in by hand has no banner to check.

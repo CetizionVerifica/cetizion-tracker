@@ -160,6 +160,10 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal(s2.invoice_no, null);
     const d = await decision(box.id, msg.provider_id);
     assert.deepEqual([d.outcome, d.mode, d.stage_id, d.po_number, d.invoice_no], ['recorded', 'live', s1.id, '4500016016', no]);
+    const { body: origin } = await agent.get(`/api/mail/origin?entity=payment_stage&id=${s1.id}`).expect(200);
+    assert.equal(origin.data.mailbox, box.email);
+    const { body: fromEmail } = await agent.get('/api/payment-stages?from_email=1').expect(200);
+    assert.deepEqual(fromEmail.data.map((s) => s.id), [s1.id], 'Source → Invoice recorded from email');
     const { rows: hooks } = await db.query(`SELECT 1 FROM webhook_events WHERE event = 'invoice.issued' AND entity_id = $1`, [String(s1.id)]);
     assert.equal(hooks.length, 1, 'live: invoice.issued fires');
     const { rows: [note] } = await db.query(`SELECT title FROM notifications WHERE kind = 'invoice_recorded' AND entity_id = '4500016016'`);

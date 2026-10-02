@@ -466,8 +466,8 @@ export const resources = {
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
-    computedFilters: ['from_past_po'],
-    listClauses: async (q) => fromPastPoClause(q),
+    computedFilters: ['from_past_po', 'from_email'],
+    listClauses: async (q) => [...fromPastPoClause(q), ...fromEmailClause('payment-stages', q)],
     // The invoice document: replaced on edit, deleted from Cloudinary with the stage.
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
@@ -1181,6 +1181,8 @@ async function quotationListClauses(q, { scope, params }) {
 function fromEmailClause(resource, q) {
   if (!['1', 'true', 'yes'].includes(String(q.from_email ?? '').toLowerCase())) return [];
   // POs registered automatically from a client's email (docs/email-po-plan.md).
+  // Invoices recorded automatically from one we emailed (§3.10).
+  if (resource === 'payment-stages') return [`id IN (SELECT stage_id FROM email_invoice_decisions WHERE outcome = 'recorded' AND stage_id IS NOT NULL)`];
   if (resource === 'purchase-orders') return [`po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND po_number IS NOT NULL)`];
   return resource === 'enquiries'
     ? [`enquiry_no IN (SELECT enquiry_no FROM email_enquiry_decisions WHERE outcome = 'created' AND enquiry_no IS NOT NULL)`]
