@@ -75,15 +75,14 @@ function mayWrite(req, row) {
  * than a page that will not load.
  */
 function usable(def, filters) {
-  const allowed = new Set([...(def.filters || []), 'q']);
+  // Filters the resource works out itself (Insights' follow-up and risk
+  // filters) are kept too, or a view saved from one would count everything.
+  const allowed = new Set([...(def.filters || []), ...(def.computedFilters || []), 'q']);
   // A list with a date column takes `from` and `to` as well, and they are
   // not in `filters`. Without them a view like "invoiced this quarter"
   // would be counted across all time, and the number in the sidebar would
   // not be the number of rows you get when you click it.
   if (def.dateFilter) { allowed.add('from'); allowed.add('to'); }
-  // A list a Reports chart opened ("Lost enquiries, last month") saves the
-  // report's keys, and counts by the same rules.
-  for (const key of def.listKeys || []) allowed.add(key);
   return Object.fromEntries(Object.entries(filters || {}).filter(([key]) => allowed.has(key)));
 }
 

@@ -310,6 +310,9 @@ export const routes = [
   { method: 'GET', path: '/api/follow-ups/record', access: signedIn, restrictions: ['record-owner'] },
   { method: 'GET', path: '/api/follow-ups/summary', access: mustBeAdmin, why: 'How each salesperson answers their reminders is a management view of the whole team.' },
 
+  // ------------------------------------------------------------- insights
+  { method: 'GET', path: '/api/insights', access: signedIn, restrictions: ['record-owner'], note: 'Five questions on one screen (docs/insights-dashboard-plan.md). Every section is narrowed to the reader\'s records; ?owner= is honoured for an admin only.' },
+
   // ------------------------------------------------------- communications
   { method: 'GET', path: '/api/communications', access: signedIn },
   { method: 'POST', path: '/api/communications', access: signedIn },

@@ -102,7 +102,7 @@ export default function Enquiries() {
       formTitle="enquiry"
       formIntro={`New → Contacted → Qualified → ${CONVERTED}. Set "${CONVERTED}" and a quotation is created with these details, or link one that exists. Drop a lead with "Unqualified" and a reason; "Nurture" parks it for later.`}
       searchPlaceholder="Search client, enquiry no, service, sector…"
-      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
+      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
       dateFilterLabel="Enquiry date"
       onSaved={(saved) => {
@@ -114,6 +114,14 @@ export default function Enquiries() {
         { name: 'source_id', label: 'Source', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })) },
         { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...sectors] },
         { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
+        // Insights links its at-risk bars here (server/src/lib/enquiryRisk.js).
+        { name: 'risk', label: 'At risk', options: [
+          { value: 'at_risk', label: 'Any reason' },
+          { value: 'decision_near', label: 'Decision near, no quotation' },
+          { value: 'no_reply', label: 'No reply yet' },
+          { value: 'follow_up_missed', label: 'Follow-up date missed' },
+          { value: 'idle', label: 'Gone quiet' },
+        ] },
       ]}
       banner={(rows) => { const { dueRows, late } = attention(rows); return <>
         {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}

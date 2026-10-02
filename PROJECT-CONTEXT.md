@@ -196,7 +196,7 @@ CI rebuilds production's schema from the migrations and diffs it against
 `schema.sql`, so the two must always agree.
 
 - Add a **new** `server/db/migrations/<next number>_<name>.sql`. The latest
-  is `062`.
+  is `064`.
 - Make the same change in `schema.sql`, and in `views.sql` if a view changes.
 - Don't put `BEGIN`/`COMMIT` in a migration; the runner wraps each one in a
   transaction and refuses a file that has them.

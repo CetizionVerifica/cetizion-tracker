@@ -27,6 +27,8 @@ import Account from './pages/account/index.jsx';
 // the bundle. Loaded when someone asks for it, so every other page is not
 // paying for it on first visit.
 const Reports = lazy(() => import('./pages/Reports.jsx'));
+// Insights draws charts too, so it is loaded the same way.
+const Insights = lazy(() => import('./pages/Insights.jsx'));
 import Profitability from './pages/Profitability.jsx';
 import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
@@ -92,6 +94,7 @@ import {
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
   BarChart3,
+  Lightbulb,
   Building2,
   ClipboardList,
   FileText,
@@ -129,6 +132,8 @@ function ImportReviewPage() {
 const NAV_TOP = [
   { to: '/', icon: Home, label: 'Today', end: true },
   { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
+  // A landing screen, like Reports: the five questions to start a day on.
+  { to: '/insights', icon: Lightbulb, label: 'Insights' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
 ];
 
@@ -558,6 +563,7 @@ export default function App() {
           <Route path="/cashflow" element={<Cashflow />} />
           <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
+          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Insights /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />

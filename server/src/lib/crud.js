@@ -84,8 +84,9 @@ export function buildWhere(def, reqQuery, params, extra = []) {
 
 /**
  * The whole WHERE for a list read: the ownership predicate, the filters a
- * resource works out itself (`listClauses`, e.g. the records behind a
- * Reports chart, which runs the report's rules), then the column filters.
+ * resource works out itself (`listClauses`: the quotations "follow-up
+ * overdue" filter, which runs the follow-up rules, or the records behind a
+ * Reports chart, which runs the report's), then the column filters.
  *
  * The list, its CSV/Excel export and a saved view's count all come through
  * here, so the rows downloaded or counted are the rows the page shows.
