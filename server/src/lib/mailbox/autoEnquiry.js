@@ -620,7 +620,7 @@ async function pastCandidates(account, judge, messages) {
     if (c.skip) continue;
     const { rows: [stored] } = await query(
       `SELECT t.id AS thread_id,
-              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3) AS first
+              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3 AND o.filtered_as IS NULL) AS first
          FROM email_threads t WHERE t.account_id = $1 AND t.conversation_id = $2`, [account.id, m.conversation_id, m.sent_at]);
     out.push(stored
       ? { m, c, threadId: stored.thread_id, newThread: stored.first, dropped: false }

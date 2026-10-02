@@ -1884,6 +1884,9 @@ CREATE TABLE IF NOT EXISTS email_messages (
   company_id           int REFERENCES companies(id) ON DELETE SET NULL,
   contact_id           int REFERENCES contacts(id) ON DELETE SET NULL,
   sent_from_tracker_by text,
+  -- Kept only because its mailbox feeds an Inbox: the filter that would
+  -- have dropped it ('internal only', 'blocked sender'), else NULL.
+  filtered_as          text,
   created_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
@@ -1974,6 +1977,9 @@ CREATE TABLE IF NOT EXISTS inbox_conversations (
   -- can be read and left deliberately unassigned.
   first_opened_at    timestamptz,
   first_opened_by    text,
+  -- The filter that would have dropped it ('internal only', 'blocked sender'),
+  -- NULL for client mail. Shown, but no reply clock, notification or enquiry.
+  filtered_as        text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );

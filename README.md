@@ -329,7 +329,7 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | Job | When | What it does |
 | --- | --- | --- |
 | `webhooks.deliver` | every minute | Sends webhook events to their endpoints and retries failed ones |
-| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes, registers the purchase orders clients send and records the invoices we send (docs/email-po-plan.md), and creates enquiries from new client requests (docs/email-enquiries.md) |
+| `mail.sync` | every 5 minutes | A backstop: the API itself also pulls mail every minute (`MAIL_AUTOSYNC_SECONDS`), so the Inbox fills without anybody pressing Sync. Pulls new client email from connected mailboxes, registers the purchase orders clients send and records the invoices we send (docs/email-po-plan.md), and creates enquiries from new client requests (docs/email-enquiries.md) |
 | `enquiries.backfill` | every 10 minutes | Reads each mailbox's past year of mail once, in runs of about four minutes, and creates the enquiries it finds |
 | `pos.backfill` | every 10 minutes | Once a mailbox's enquiries are read, reads its past year of inbox mail once more for purchase orders, registering them without notifications or webhooks |
 | `invoices.backfill` | every 10 minutes | Records the invoices we emailed whose PO has since arrived; once a mailbox's POs are read, reads its past year of sent mail once for the invoices in it, quietly and with no client reminders |

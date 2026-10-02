@@ -86,7 +86,9 @@ export const JOBS = {
     run: () => runVisitReminders(),
   },
   'mail.sync': {
-    description: 'Pull new client email from connected mailboxes and keep push subscriptions alive',
+    // The API also pulls mail every minute on its own (lib/mailbox/autoSync.js);
+    // this run is the backstop, and the per-mailbox lock keeps the two apart.
+    description: 'Pull new email from connected mailboxes and keep push subscriptions alive',
     cron: '*/5 * * * *',
     quiet: (r) => r.results.some((x) => x.stored > 0 || x.error),
     run: () => syncAll(),
