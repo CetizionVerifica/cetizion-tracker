@@ -60,7 +60,7 @@ export default function Reports() {
   const today = localToday();
   const { from, to, grain, owner, preset } = readReportQuery(searchParams, today);
   const [custom, setCustom] = useState(preset === 'custom');
-  const scope = { from, to, owner };
+  const scope = { from, to, owner, grain };
 
   const query = new URLSearchParams({ from, to, ...(grain && { grain }), ...(owner && { owner }) });
   const report = useFetch(() => api.raw(`/reports/sales?${query}`), [query.toString()]);
@@ -115,7 +115,14 @@ export default function Reports() {
                 onChange={(e) => update({ owner: e.target.value })}
               />
             )}
-            <a className="btn" href={api.reportPdfUrl({ from, to })} download title="The sales report for this period as a PDF">Download PDF</a>
+            <a
+              className="btn"
+              href={api.reportPdfUrl({ from, to, ...(grain && { grain }), ...(owner && { owner }), tz: Intl.DateTimeFormat().resolvedOptions().timeZone })}
+              download
+              title="These six questions for this period, as a PDF"
+            >
+              Download PDF
+            </a>
           </>
         )}
       />

@@ -1016,6 +1016,13 @@ async function undatedPos({ from, to }, scope) {
 
 const fmtInr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
+/** "on 15 Sep", "in the week of 5 Oct", "in Oct 2026". */
+const BUSIEST_ON = {
+  day: (b) => `on ${b.label}`,
+  week: (b) => `in the week of ${b.label.replace(/^w\/c /, '')}`,
+  month: (b) => `in ${b.label}`,
+};
+
 /** One plain sentence per section, from the figures alone. */
 export function narrate({ enquiries, outcomes, sectors, services, customers, revenue }) {
   const out = {};
@@ -1023,7 +1030,7 @@ export function narrate({ enquiries, outcomes, sectors, services, customers, rev
   else {
     const top = enquiries.sources[0];
     out.enquiries = `${enquiries.total} enquir${enquiries.total === 1 ? 'y' : 'ies'} received`
-      + (enquiries.busiest && enquiries.buckets.length > 1 ? `, the most in ${enquiries.busiest.label} (${enquiries.busiest.enquiries})` : '')
+      + (enquiries.busiest && enquiries.buckets.length > 1 ? `, the most ${BUSIEST_ON[enquiries.grain](enquiries.busiest)} (${enquiries.busiest.enquiries})` : '')
       + (top && top.name !== NO_SOURCE ? `. ${top.name} brought the most (${top.enquiries}).` : '.');
   }
   if (!outcomes.total) out.outcomes = 'No enquiries in this period.';

@@ -20,6 +20,7 @@ const REPEAT_CLIENT = 'Repeat client';
 export { money };
 
 const { navy: NAVY, blue: BLUE, sky: SKY, green: GREEN, gold: GOLD, red: RED } = COLORS;
+export const INK = { 900: '#0f172a', 700: '#334155', 500: '#64748b', 200: '#e2e8f0', 50: '#f8fafc' };
 const INK_900 = '#0f172a';
 const INK_700 = '#334155';
 const INK_500 = '#64748b';
@@ -35,7 +36,7 @@ const TONES = {
   note: { bar: INK_500, fg: INK_700, bg: INK_50 },
 };
 
-const MARGIN_X = 42;
+export const MARGIN_X = 42;
 const W = Math.floor(595.28 - MARGIN_X * 2); // A4 portrait less the side margins
 const WON = QUOTATION_STATUS.won;
 const MONTHS = MONTH_NAMES;
@@ -44,13 +45,13 @@ const MONTHS = MONTH_NAMES;
 // Dates
 // ---------------------------------------------------------------------
 
-function dateLabel(value) {
+export function dateLabel(value) {
   if (!value) return '—';
   const [y, m, d] = String(value).slice(0, 10).split('-');
   return `${d} ${MONTHS[Number(m) - 1]} ${y}`;
 }
 
-function periodLabel({ from, to } = {}) {
+export function periodLabel({ from, to } = {}) {
   if (from && to) return `${dateLabel(from)} – ${dateLabel(to)}`;
   if (from) return `From ${dateLabel(from)}`;
   if (to) return `Up to ${dateLabel(to)}`;
@@ -69,7 +70,7 @@ export function reportTimeZone(value) {
   }
 }
 
-function generatedStamp(date, timeZone) {
+export function generatedStamp(date, timeZone) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-GB', {
       timeZone, day: '2-digit', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
@@ -119,7 +120,7 @@ const lines = (main, ...notes) => {
  * optional bold Total row. column.value(row) and column.total(total) return
  * a string or a pdfmake node.
  */
-function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact = false }) {
+export function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact = false }) {
   if (!rows.length) return { text: empty, style: 'empty' };
   const cell = (content, col) =>
     content !== null && typeof content === 'object'
@@ -144,13 +145,13 @@ function reportTable({ columns, rows, total, empty = '', fontSize = 8, compact =
   };
 }
 
-const rule = (margin = [0, 3, 0, 7]) => ({
+export const rule = (margin = [0, 3, 0, 7]) => ({
   canvas: [{ type: 'line', x1: 0, y1: 0, x2: W, y2: 0, lineWidth: 0.8, lineColor: INK_200 }],
   margin,
 });
 
 /** A numbered section. Its heading, lead and first block stay on one page. */
-function section(no, title, lead, first = []) {
+export function section(no, title, lead, first = []) {
   return {
     stack: [
       { text: [{ text: `${no}.`, color: BLUE }, `  ${title}`], style: 'h1' },
@@ -169,7 +170,7 @@ function subsection(title, lead, content, rowCount) {
   return rowCount <= 14 ? { stack: block, unbreakable: true } : { stack: block };
 }
 
-function figure(no, caption, chart, emptyText) {
+export function figure(no, caption, chart, emptyText) {
   if (!chart) return { text: emptyText, style: 'empty' };
   return {
     stack: [{ svg: chart.svg, width: chart.width }, { text: `Figure ${no} — ${caption}`, style: 'caption' }],
@@ -179,7 +180,7 @@ function figure(no, caption, chart, emptyText) {
 }
 
 /** A coloured analysis box: TAG and the finding, as in a management review. */
-function callout({ tag, tone, text }) {
+export function callout({ tag, tone, text }) {
   const c = TONES[tone] ?? TONES.note;
   return {
     table: {
@@ -218,7 +219,7 @@ const measureTable = (rows) =>
     rows,
   });
 
-function tile(value, label, meta) {
+export function tile(value, label, meta) {
   return {
     stack: [
       { text: value, style: 'tileValue' },
@@ -228,6 +229,30 @@ function tile(value, label, meta) {
     margin: [10, 8, 10, 8],
   };
 }
+
+/** The review's type styles, shared with the Reports section's PDF (reportPdf.js). */
+export const PDF_STYLES = {
+    brandTag: { fontSize: 7.5, bold: true, color: '#c9dbf0', characterSpacing: 1.2 },
+    title: { fontSize: 21, bold: true, color: '#ffffff', margin: [0, 4, 0, 4] },
+    subtitle: { fontSize: 8.5, color: '#dbe5f2' },
+    kicker: { fontSize: 8, bold: true, color: BLUE, characterSpacing: 1.2, margin: [0, 12, 0, 5] },
+    h1: { fontSize: 13.5, bold: true, color: NAVY },
+    h2: { fontSize: 9.5, bold: true, color: NAVY, margin: [0, 12, 0, 3] },
+    chartTitle: { fontSize: 8.5, bold: true, color: NAVY, margin: [96, 0, 0, 4] },
+    body: { fontSize: 9, color: INK_700, lineHeight: 1.35, margin: [0, 0, 0, 6] },
+    lead: { fontSize: 7.5, color: INK_500, margin: [0, 0, 0, 5] },
+    caption: { fontSize: 7.5, italics: true, color: INK_500, margin: [0, 3, 0, 0] },
+    small: { fontSize: 7.5, color: INK_500, lineHeight: 1.3 },
+    th: { bold: true, color: '#ffffff', fontSize: 7.5 },
+    cellNote: { fontSize: 6.5, color: INK_500 },
+    warnNote: { fontSize: 6.5, color: WARN_FG },
+    tileValue: { fontSize: 17, bold: true, color: NAVY },
+    tileLabel: { fontSize: 7.5, bold: true, color: INK_700, margin: [0, 2, 0, 0] },
+    tileMeta: { fontSize: 7, color: INK_500, margin: [0, 1, 0, 0] },
+    runningHead: { fontSize: 7, color: INK_500, characterSpacing: 0.4 },
+    footer: { fontSize: 7, color: INK_500 },
+    empty: { fontSize: 8, italics: true, color: INK_500, margin: [0, 2, 0, 8] },
+};
 
 // ---------------------------------------------------------------------
 // The document
@@ -1171,28 +1196,7 @@ export function salesReportDocDefinition(data) {
       ...fixSection,
       ...appendix,
     ].filter(Boolean),
-    styles: {
-      brandTag: { fontSize: 7.5, bold: true, color: '#c9dbf0', characterSpacing: 1.2 },
-      title: { fontSize: 21, bold: true, color: '#ffffff', margin: [0, 4, 0, 4] },
-      subtitle: { fontSize: 8.5, color: '#dbe5f2' },
-      kicker: { fontSize: 8, bold: true, color: BLUE, characterSpacing: 1.2, margin: [0, 12, 0, 5] },
-      h1: { fontSize: 13.5, bold: true, color: NAVY },
-      h2: { fontSize: 9.5, bold: true, color: NAVY, margin: [0, 12, 0, 3] },
-      chartTitle: { fontSize: 8.5, bold: true, color: NAVY, margin: [96, 0, 0, 4] },
-      body: { fontSize: 9, color: INK_700, lineHeight: 1.35, margin: [0, 0, 0, 6] },
-      lead: { fontSize: 7.5, color: INK_500, margin: [0, 0, 0, 5] },
-      caption: { fontSize: 7.5, italics: true, color: INK_500, margin: [0, 3, 0, 0] },
-      small: { fontSize: 7.5, color: INK_500, lineHeight: 1.3 },
-      th: { bold: true, color: '#ffffff', fontSize: 7.5 },
-      cellNote: { fontSize: 6.5, color: INK_500 },
-      warnNote: { fontSize: 6.5, color: WARN_FG },
-      tileValue: { fontSize: 17, bold: true, color: NAVY },
-      tileLabel: { fontSize: 7.5, bold: true, color: INK_700, margin: [0, 2, 0, 0] },
-      tileMeta: { fontSize: 7, color: INK_500, margin: [0, 1, 0, 0] },
-      runningHead: { fontSize: 7, color: INK_500, characterSpacing: 0.4 },
-      footer: { fontSize: 7, color: INK_500 },
-      empty: { fontSize: 8, italics: true, color: INK_500, margin: [0, 2, 0, 8] },
-    },
+    styles: PDF_STYLES,
   };
 }
 

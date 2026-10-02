@@ -5,6 +5,7 @@ import { AXIS, BAR, BAR_LABEL, ChartCard, ChartTip, GRID, HOVER } from './charts
 import { ChartContainer, ChartTooltip } from './ui/chart.tsx';
 import { Alert, Card, DataTable, Empty, Stat } from './ui.jsx';
 import { Button } from './ui/button.tsx';
+import { api } from '../lib/api.js';
 import { date, money, number } from '../lib/format.js';
 import { bucketEnd, bucketStart, drillLink } from '../lib/reportPeriods.js';
 
@@ -56,13 +57,23 @@ export function SummaryStrip({ report, scope }) {
   );
 }
 
-/** A question, the answer in a sentence, and what shows it. */
-function Section({ n, question, answer, children, wide = false }) {
+/** The section CSVs for the report on screen: same period, grain and owner. */
+const csvHref = (name, scope) => api.reportCsvUrl(name, {
+  from: scope.from, to: scope.to, ...(scope.grain && { grain: scope.grain }), ...(scope.owner && { owner: scope.owner }),
+});
+
+/** A question, the answer in a sentence, its CSVs, and what shows it. */
+function Section({ n, question, answer, children, wide = false, scope, csv = [] }) {
   return (
     <section className={wide ? '@3xl:col-span-2 flex flex-col gap-3' : 'flex flex-col gap-3'} aria-labelledby={`q${n}`}>
-      <div>
-        <h2 id={`q${n}`} className="text-[15px] font-semibold text-foreground">{n}. {question}</h2>
-        {answer && <p className="mt-0.5 text-[13px] text-muted-foreground">{answer}</p>}
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+        <div className="min-w-0 flex-1">
+          <h2 id={`q${n}`} className="text-[15px] font-semibold text-foreground">{n}. {question}</h2>
+          {answer && <p className="mt-0.5 text-[13px] text-muted-foreground">{answer}</p>}
+        </div>
+        {csv.map(([name, label]) => (
+          <a key={name} className="text-[12.5px]" href={csvHref(name, scope)} download>{label}</a>
+        ))}
       </div>
       {children}
     </section>
@@ -82,7 +93,7 @@ export function EnquiriesSection({ report, scope }) {
   const sources = enquiries.sources.map((s) => `${s.name} ${number(s.enquiries)}`).join(' · ');
 
   return (
-    <Section n={1} question="How many enquiries did we receive?" answer={report.narrative.enquiries}>
+    <Section n={1} scope={scope} csv={[['enquiries', 'CSV']]} question="How many enquiries did we receive?" answer={report.narrative.enquiries}>
       <ChartCard
         title={`Enquiries per ${grain}`}
         meta={`${number(enquiries.total)} in the period${enquiries.average_per_bucket != null ? ` · ${enquiries.average_per_bucket} a ${grain} on average` : ''}`}
@@ -118,7 +129,7 @@ export function OutcomesSection({ report, scope }) {
   const months = outcomes.months.filter((m) => m.key && m.enquiries);
 
   return (
-    <Section n={2} question="What happened to them?" answer={report.narrative.outcomes}>
+    <Section n={2} scope={scope} csv={[['outcomes', 'CSV']]} question="What happened to them?" answer={report.narrative.outcomes}>
       <ChartCard
         title="Enquiry outcome"
         meta="As things stood at the end of the period. Lost means closed without a quotation."
@@ -163,7 +174,7 @@ export function SectorsSection({ report, scope }) {
   const open = (sector) => navigate(drillLink('purchase-orders', scope, { sector }));
 
   return (
-    <Section n={3} question="Which sectors gave us POs?" answer={report.narrative.sectors}>
+    <Section n={3} scope={scope} csv={[['sector-pos', 'CSV']]} question="Which sectors gave us POs?" answer={report.narrative.sectors}>
       <ChartCard
         title="POs by sector"
         meta="Count, with PO value incl. GST"
@@ -208,7 +219,7 @@ export function ServicesSection({ report, scope }) {
   const source = services.sources;
 
   return (
-    <Section n={4} question="Which services sell best?" answer={report.narrative.services}>
+    <Section n={4} scope={scope} csv={[['services', 'CSV']]} question="Which services sell best?" answer={report.narrative.services}>
       <ChartCard
         title={`Service lines by ${by === 'value' ? 'PO value' : 'number of POs'}`}
         meta="A PO naming several services splits its value between them"
@@ -251,7 +262,7 @@ export function CustomersSection({ report, scope }) {
   const { customers } = report;
   const t = customers.tiles;
   return (
-    <Section n={5} question="New and existing customers" answer={report.narrative.customers} wide>
+    <Section n={5} scope={scope} csv={[['new-customers', 'New-customer enquiries CSV'], ['repeat-orders', 'Repeat orders CSV']]} question="New and existing customers" answer={report.narrative.customers} wide>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="New customers" value={number(t.new_customers)} meta="first-ever PO in the period" to={drillLink('purchase-orders', scope, { customer: 'new' })} />
         <Stat label="Existing customers" value={number(t.existing_customers)} meta="ordered before the period too" to={drillLink('purchase-orders', scope, { customer: 'existing' })} />
@@ -313,7 +324,7 @@ export function RevenueSection({ report, scope }) {
   const open = (month) => navigate(drillLink('purchase-orders', scope, { month }));
 
   return (
-    <Section n={6} question="Monthly revenue" answer={report.narrative.revenue} wide>
+    <Section n={6} scope={scope} csv={[['revenue', 'Months CSV'], ['revenue-pos', 'POs CSV']]} question="Monthly revenue" answer={report.narrative.revenue} wide>
       <ChartCard
         title="PO value incl. GST, per month"
         meta="Counting POs by PO date, in ₹ at the rate on the PO date. Not net of GST."
