@@ -14,6 +14,7 @@ import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { AcceptanceLinks } from '../components/AcceptanceLinks.jsx';
+import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -260,6 +261,21 @@ export default function QuotationDetail() {
           />
         }
       >
+        {/* Read from the PDF we emailed (docs/email-enquiries.md): a person
+            checks it against that PDF once, and says so. */}
+        {q.read_from_email && !q.read_from_email.checked && (
+          <Alert tone="warning">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span>
+                <strong>Check the lines and totals against the PDF</strong>{q.document_id ? '' : ' (the PDF itself could not be stored)'}: they were read automatically.{' '}
+                {q.read_from_email.no_lines ? 'Lines could not be read, so the totals are the ones printed on the PDF.' : ''}
+              </span>
+              <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy} onClick={() => act('email-read-checked', {}, 'Marked checked')}>Mark checked</Button>
+            </span>
+          </Alert>
+        )}
+        <EmailOrigin entity="quotation" id={q.quotation_no} />
+
         {q.approval_status === 'approved' && (
           <Alert tone="success">
             <span><strong>Approved</strong>{q.approved_by ? ` by ${q.approved_by}` : ''}{q.approval_decided_at ? ` on ${new Date(q.approval_decided_at).toLocaleDateString()}` : ''}{q.approval_note ? `: ${q.approval_note}` : ''}.</span>

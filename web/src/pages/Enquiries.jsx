@@ -4,6 +4,7 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Alert, Badge, useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
+import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 
@@ -102,7 +103,7 @@ export default function Enquiries() {
       formTitle="enquiry"
       formIntro={`New → Contacted → Qualified → ${CONVERTED}. Set "${CONVERTED}" and a quotation is created with these details, or link one that exists. Drop a lead with "Unqualified" and a reason; "Nurture" parks it for later.`}
       searchPlaceholder="Search client, enquiry no, service, sector…"
-      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
+      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
       dateFilterLabel="Enquiry date"
       onSaved={(saved) => {
@@ -114,6 +115,8 @@ export default function Enquiries() {
         { name: 'source_id', label: 'Source', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })) },
         { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...sectors] },
         { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
+        // Made by the email reader, for the team to review (docs/email-enquiries.md).
+        { name: 'from_email', label: 'Created from email', options: [{ value: '1', label: 'Created from email' }] },
         // Insights links its at-risk bars here (server/src/lib/enquiryRisk.js).
         { name: 'risk', label: 'At risk', options: [
           { value: 'at_risk', label: 'Any reason' },
@@ -124,6 +127,7 @@ export default function Enquiries() {
         ] },
       ]}
       banner={(rows) => { const { dueRows, late } = attention(rows); return <>
+        {enquiryNo && <EmailOrigin entity="enquiry" id={enquiryNo} />}
         {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}
         {(dueRows.length > 0 || late.length > 0) && (
         <Alert tone="warning">

@@ -22,23 +22,42 @@ const key = () => config.microsoft.tokenKey;
 // A mailbox that lives in memory, for local runs and tests (provider 'test',
 // never in production). Sent mail comes back on the next sync, like Outlook.
 const testBoxes = new Map();
+/** How many messages the test provider's page() returns at once; tests lower it to exercise resuming. */
+export const testPaging = { size: 50 };
+const testAttachments = new Map();
 export function pushTestMessages(accountId, messages) {
+  for (const m of messages) {
+    if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
+  }
   const box = testBoxes.get(accountId) || [];
   box.push(...messages);
   testBoxes.set(accountId, box);
   return box.length;
 }
 function testProvider(account) {
+  // Messages pushed with `history: true` are the mailbox's past: delta
+  // never hands them over, page() does, and they stay in the mailbox.
   const take = (folder) => {
     const box = testBoxes.get(account.id) || [];
-    const mine = box.filter((m) => (m.folder || 'inbox') === folder);
-    testBoxes.set(account.id, box.filter((m) => (m.folder || 'inbox') !== folder));
+    const mine = box.filter((m) => !m.history && (m.folder || 'inbox') === folder);
+    testBoxes.set(account.id, box.filter((m) => m.history || (m.folder || 'inbox') !== folder));
     return mine;
   };
   const sent = (m) => pushTestMessages(account.id, [{ folder: 'sentitems', provider_id: `sent-${crypto.randomUUID()}`, from: { email: account.email, name: account.display_name }, sent_at: new Date().toISOString(), ...m }]);
   return {
     tokens: () => null,
     async delta(folder, deltaLink) { return { messages: take(folder), deltaLink: deltaLink || `test:${folder}` }; },
+    async attachments(providerId) {
+      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
+    },
+    async page(folder, { sinceIso, cursor = null } = {}) {
+      const past = (testBoxes.get(account.id) || [])
+        .filter((m) => m.history && (m.folder || 'inbox') === folder && new Date(m.sent_at) >= new Date(sinceIso))
+        .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
+      const from = Number(cursor || 0);
+      const to = from + testPaging.size;
+      return { messages: past.slice(from, to), next: to < past.length ? String(to) : null };
+    },
     async reply(providerId, html) {
       const { rows: [m] } = await query('SELECT m.*, t.conversation_id FROM email_messages m JOIN email_threads t ON t.id = m.thread_id WHERE m.account_id = $1 AND m.provider_id = $2', [account.id, providerId]);
       sent({ conversation_id: m.conversation_id, subject: `RE: ${m.subject || ''}`, body_html: html, to: [{ email: m.direction === 'inbound' ? m.from_email : m.to_emails[0] }], cc: [] });
@@ -63,7 +82,7 @@ export function providerFor(account) {
   throw new Error(`Provider ${account.provider} is not supported yet`);
 }
 
-async function saveTokens(account, provider) {
+export async function saveTokens(account, provider) {
   const t = provider.tokens();
   if (!t) return;
   await query('UPDATE connected_accounts SET tokens_encrypted = $2, token_expires_at = $3 WHERE id = $1', [account.id, sealTokens(t, key()), t.expires_at || null]);
@@ -137,49 +156,82 @@ async function linkRecord(db, subject, companyId) {
 /** Hooks run for each stored message (the shared inbox, #30, registers one). */
 export const messageHooks = [];
 
+/** The rules every message is classified under, for one account. */
+export async function ingestRules(account, db = { query }) {
+  const rules = await settingsFor(db);
+  return (m) => classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
+}
+
+/**
+ * Store one classified message, inside the caller's transaction.
+ *
+ * Returns { skipped: reason } or { thread, message, newThread }.
+ * `forceCompanyId` keeps a message a personal mailbox would drop as
+ * "no matching client": the enquiry reader (autoEnquiry.js) passes the
+ * company it has just created, once the email has turned out to be one.
+ */
+export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null } = {}) {
+  const { rows: [dupe] } = await db.query('SELECT id FROM email_messages WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  if (dupe) return { skipped: 'already synced' };
+  let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
+  const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts });
+  if (!who.company_id) {
+    // A record number in the subject names the client even from a free-mail address.
+    const named = await linkRecord(db, m.subject, null);
+    if (named.entity) Object.assign(who, { company_id: (await resolveParties(named.entity, named.entity_id, db)).company_id || null });
+  }
+  if (!who.company_id && forceCompanyId) who.company_id = forceCompanyId;
+  const newThread = !thread;
+  if (!thread) {
+    // A personal mailbox keeps only client mail; a shared one keeps everything external (new leads).
+    if (!who.company_id && !account.is_shared) return { skipped: 'no matching client' };
+    const link = await linkRecord(db, m.subject, who.company_id);
+    ({ rows: [thread] } = await db.query(
+      `INSERT INTO email_threads (account_id, conversation_id, subject, company_id, contact_id, entity, entity_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [account.id, m.conversation_id, account.visibility === 'metadata' ? null : m.subject, who.company_id, who.contact_id, link.entity, link.entity_id]));
+  } else if (!thread.company_id && who.company_id) {
+    const link = thread.entity ? { entity: thread.entity, entity_id: thread.entity_id } : await linkRecord(db, m.subject, who.company_id);
+    await db.query('UPDATE email_threads SET company_id = $2, contact_id = $3, entity = $4, entity_id = $5 WHERE id = $1', [thread.id, who.company_id, who.contact_id, link.entity, link.entity_id]);
+  }
+  const html = cleanHtml(m.body_html);
+  const row = applyVisibility({ subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html }, account.visibility);
+  const { rows: [saved] } = await db.query(
+    `INSERT INTO email_messages (account_id, thread_id, provider_id, internet_message_id, direction, from_email, from_name, to_emails, cc_emails,
+                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+    [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
+      (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
+      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy]);
+  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external });
+  return { thread, message: saved, newThread };
+}
+
+/**
+ * Store a batch of messages, each in its own transaction.
+ *
+ * Also returns `candidates`: the messages the enquiry reader should look
+ * at (autoEnquiry.js), held in memory only — a new conversation started
+ * in this call, anything we sent, and anything a personal mailbox dropped
+ * for not matching a client. Nothing extra is written for them here.
+ */
 export async function ingest(account, messages, { sentBy = null } = {}) {
-  const rules = await settingsFor({ query });
-  const result = { stored: 0, skipped: {}, threads: new Set() };
+  const judge = await ingestRules(account);
+  const result = { stored: 0, skipped: {}, threads: new Set(), candidates: [] };
   const skip = (why) => { result.skipped[why] = (result.skipped[why] || 0) + 1; };
   for (const m of messages.sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))) {
     if (!m.provider_id || !m.conversation_id || m.draft) { skip('incomplete'); continue; }
-    const c = classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
+    const c = judge(m);
     if (c.skip) { skip(c.skip); continue; }
-    await transaction(async (db) => {
-      const { rows: [dupe] } = await db.query('SELECT id FROM email_messages WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
-      if (dupe) { skip('already synced'); return; }
-      let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
-      const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts });
-      if (!who.company_id) {
-        // A record number in the subject names the client even from a free-mail address.
-        const named = await linkRecord(db, m.subject, null);
-        if (named.entity) Object.assign(who, { company_id: (await resolveParties(named.entity, named.entity_id, db)).company_id || null });
-      }
-      if (!thread) {
-        // A personal mailbox keeps only client mail; a shared one keeps everything external (new leads).
-        if (!who.company_id && !account.is_shared) { skip('no matching client'); return; }
-        const link = await linkRecord(db, m.subject, who.company_id);
-        ({ rows: [thread] } = await db.query(
-          `INSERT INTO email_threads (account_id, conversation_id, subject, company_id, contact_id, entity, entity_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-          [account.id, m.conversation_id, account.visibility === 'metadata' ? null : m.subject, who.company_id, who.contact_id, link.entity, link.entity_id]));
-      } else if (!thread.company_id && who.company_id) {
-        const link = thread.entity ? { entity: thread.entity, entity_id: thread.entity_id } : await linkRecord(db, m.subject, who.company_id);
-        await db.query('UPDATE email_threads SET company_id = $2, contact_id = $3, entity = $4, entity_id = $5 WHERE id = $1', [thread.id, who.company_id, who.contact_id, link.entity, link.entity_id]);
-      }
-      const html = cleanHtml(m.body_html);
-      const row = applyVisibility({ subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html }, account.visibility);
-      const { rows: [saved] } = await db.query(
-        `INSERT INTO email_messages (account_id, thread_id, provider_id, internet_message_id, direction, from_email, from_name, to_emails, cc_emails,
-                                     subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
-        [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
-          (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
-          m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy]);
-      for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external });
-      result.stored += 1;
-      result.threads.add(thread.id);
-    });
+    const r = await transaction((db) => ingestOne(db, account, m, c, { sentBy }));
+    if (r.skipped) {
+      skip(r.skipped);
+      if (r.skipped === 'no matching client') result.candidates.push({ m, c, threadId: null, newThread: false, dropped: true });
+      continue;
+    }
+    result.stored += 1;
+    result.threads.add(r.thread.id);
+    if (c.direction === 'outbound' || r.newThread) result.candidates.push({ m, c, threadId: r.thread.id, newThread: r.newThread, dropped: false });
   }
   return { ...result, threads: result.threads.size };
 }
@@ -189,6 +241,7 @@ export async function syncAccount(id) {
   if (!account || account.status !== 'active') return { id, skipped: 'not active' };
   const provider = providerFor(account);
   const out = { id, email: account.email, stored: 0, skipped: {} };
+  const candidates = [];
   try {
     for (const folder of FOLDERS) {
       const { rows: [f] } = await query(
@@ -196,12 +249,21 @@ export async function syncAccount(id) {
       const since = f.delta_link ? null : new Date(Date.now() - account.import_days * 864e5).toISOString();
       const { messages, deltaLink } = await provider.delta(folder, f.delta_link, since);
       const r = await ingest(account, messages);
+      candidates.push(...r.candidates);
       out.stored += r.stored;
       for (const [k, v] of Object.entries(r.skipped)) out.skipped[k] = (out.skipped[k] || 0) + v;
       await query('UPDATE mail_folders SET delta_link = $2 WHERE id = $1', [f.id, deltaLink]);
     }
     await saveTokens(account, provider);
     await query('UPDATE connected_accounts SET last_synced_at = now(), last_error = NULL WHERE id = $1', [account.id]);
+    // After the mail is stored, never inside its transactions: judging an
+    // email may call the AI. Inbox first, then Sent Items — FOLDERS' order —
+    // so a quotation answering an emailed enquiry finds it already made.
+    if (candidates.length) {
+      const { processCandidates } = await import('./autoEnquiry.js');
+      const e = await processCandidates(account, candidates, { provider });
+      if (e) out.enquiries = e;
+    }
   } catch (err) {
     await query(`UPDATE connected_accounts SET last_error = $2, status = CASE WHEN $3 THEN 'needs_reconnect' ELSE status END WHERE id = $1`, [account.id, String(err.message).slice(0, 500), Boolean(err.reconnect)]);
     out.error = err.message;
@@ -388,6 +450,8 @@ export async function disconnect(id, { removeBodies = true } = {}) {
   }
   await query(`UPDATE connected_accounts SET status = 'disconnected', tokens_encrypted = NULL, token_expires_at = NULL, last_error = $2 WHERE id = $1`, [id, upstream]);
   await query('DELETE FROM mail_folders WHERE account_id = $1', [id]);
+  // Its sweep of past mail stops with it; the decisions stay, for the record.
+  await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
   return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };
 }

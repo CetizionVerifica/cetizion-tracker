@@ -260,6 +260,7 @@ session is **401**, before any of these is considered.
 | `GET /api/lookups/next-id/:kind` | any |  |
 | **/api/mail** | | |
 | `POST /api/mail/notifications` | public | graph-client-state — Microsoft Graph posts here and has no session. A notification whose clientState does not match the stored subscription secret is ignored. |
+| `GET /api/mail/origin` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/threads` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `PATCH /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
@@ -267,10 +268,12 @@ session is **401**, before any of these is considered.
 | **/api/mailboxes** | | |
 | `GET /api/mailboxes` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `PATCH /api/mailboxes/:id` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/auto-enquiries/rerun` | **admin** | Has a mailbox's mail judged again for enquiries, which spends the AI budget everybody shares. |
 | `POST /api/mailboxes/:id/disconnect` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/refresh-bodies` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
+| `GET /api/mailboxes/auto-enquiries` | **admin** | Counts what every mailbox's mail was judged to be, the whole team's included. |
 | `GET /api/mailboxes/blocklist` | any |  |
 | `POST /api/mailboxes/blocklist` | **admin** | The blocklist decides whose mail the application will never sync, for everybody. |
 | `DELETE /api/mailboxes/blocklist/:id` | **admin** | The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again. |
@@ -334,6 +337,7 @@ session is **401**, before any of these is considered.
 | `POST /api/quotations/:key/acceptances/:id/revoke` | any |  |
 | `POST /api/quotations/:key/approval/decide` | **admin** | An approval you can grant yourself is not an approval. A discount past the threshold is decided by somebody else. |
 | `POST /api/quotations/:key/approval/request` | any |  |
+| `POST /api/quotations/:key/email-read-checked` | any |  |
 | `GET /api/quotations/:key/full` | any |  |
 | `GET /api/quotations/:key/pdf` | any |  |
 | `POST /api/quotations/:key/register` | any |  |

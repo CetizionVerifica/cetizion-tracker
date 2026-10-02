@@ -11,6 +11,8 @@
  * workflow router so these paths win.
  */
 import { Router } from 'express';
+import { readFromEmail } from '../lib/mailbox/autoQuotation.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { z } from 'zod';
 import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
@@ -73,6 +75,7 @@ export async function fullQuotation(key, scope = UNRESTRICTED) {
     || (q.place_of_supply_state || '').match(/^\d{2}/)?.[0]
     || null;
   return {
+    read_from_email: await readFromEmail(q.quotation_no),
     ...q, lines: lines.rows, revisions: revisions.rows, company: theirs, contact: contact.rows[0] || null,
     enquiry: enquiry.rows[0] || null, project: project.rows[0] || null, purchase_orders: pos.rows,
     gst: gstBreakdown(lines.rows, { ourState, theirState, currency: q.currency }),
@@ -126,6 +129,19 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
     return updated;
   });
   res.json({ data });
+});
+
+/**
+ * A quotation read from the PDF we emailed has been checked against that
+ * PDF by a person. An event, so it goes in the activity log; the banner on
+ * the quotation reads it back (readFromEmail).
+ */
+quotationDocRouter.post('/:key/email-read-checked', async (req, res) => {
+  const q = await loadQuotation(req.params.key, { query }, scopeOf(req));
+  const origin = await readFromEmail(q.quotation_no);
+  if (!origin) throw new ApiError(422, 'This quotation was not read from an email');
+  await logActivity(undefined, { actor: actorFrom(req.user), action: ACTIONS.QUOTATION_EMAIL_READ_CHECKED, entityType: 'quotation', entityId: q.quotation_no });
+  res.json({ data: await readFromEmail(q.quotation_no) });
 });
 
 const sendSchema = z.object({

@@ -12,6 +12,7 @@ import { runRenewals } from './lib/renewals.js';
 import { runDigests, runNotifications, runWeeklyDigest, sendNotificationEmails } from './lib/notify.js';
 import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
+import { runBackfills } from './lib/mailbox/autoEnquiry.js';
 import { runVisitReminders } from './lib/visits.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
@@ -87,6 +88,12 @@ export const JOBS = {
     cron: '*/5 * * * *',
     quiet: (r) => r.results.some((x) => x.stored > 0 || x.error),
     run: () => syncAll(),
+  },
+  'enquiries.backfill': {
+    description: 'Read back through each connected mailbox\'s past year of mail, once, and create the enquiries it finds',
+    cron: '*/10 * * * *',
+    quiet: (r) => r.created > 0 || r.errors > 0,
+    run: () => runBackfills(),
   },
   'deliverables.daily': {
     description: 'Mark expired certificates and deliverables; remind owners before expiry with a task',

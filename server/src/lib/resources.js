@@ -184,8 +184,8 @@ export const resources = {
     dateFilter: 'enquiry_date',
     // Insights' filters (?risk=, ?owner=) and the records behind a Reports
     // chart (?report_from=&report_outcome=…), each worked out by its own rules.
-    listClauses: async (q, ctx) => [...await enquiryListClauses(q, ctx), ...await reportListClauses('enquiries', q, ctx)],
-    computedFilters: ['risk', 'owner', ...REPORT_LIST_KEYS],
+    listClauses: async (q, ctx) => [...await enquiryListClauses(q, ctx), ...fromEmailClause('enquiries', q), ...await reportListClauses('enquiries', q, ctx)],
+    computedFilters: ['risk', 'owner', 'from_email', ...REPORT_LIST_KEYS],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -245,8 +245,8 @@ export const resources = {
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
     // Insights opens this list on what it counted (docs/insights-dashboard-plan.md §5.3).
-    listClauses: quotationListClauses,
-    computedFilters: ['follow_up', 'overdue_days', 'close_month', 'month', 'owner'],
+    listClauses: async (q, ctx) => [...await quotationListClauses(q, ctx), ...fromEmailClause('quotations', q)],
+    computedFilters: ['follow_up', 'overdue_days', 'close_month', 'month', 'owner', 'from_email'],
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
@@ -1166,6 +1166,19 @@ async function quotationListClauses(q, { scope, params }) {
     }));
   }
   return out;
+}
+
+/**
+ * ?from_email=1   enquiries created automatically from an email, or
+ *                 quotations read from a PDF we emailed — derived from the
+ *                 decision log (docs/email-enquiries-plan.md), not stored on
+ *                 the record.
+ */
+function fromEmailClause(resource, q) {
+  if (!['1', 'true', 'yes'].includes(String(q.from_email ?? '').toLowerCase())) return [];
+  return resource === 'enquiries'
+    ? [`enquiry_no IN (SELECT enquiry_no FROM email_enquiry_decisions WHERE outcome = 'created' AND enquiry_no IS NOT NULL)`]
+    : [`quotation_no IN (SELECT quotation_no FROM email_enquiry_decisions WHERE quotation_extraction IN ('created','revised') AND quotation_no IS NOT NULL)`];
 }
 
 /** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */

@@ -13,7 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { ago, number } from '../lib/format.js';
+import { ago, date, number } from '../lib/format.js';
+import { useAuth } from '../lib/auth.jsx';
 
 /**
  * Connected mailboxes (#29), as C10 draws it.
@@ -360,6 +361,8 @@ export default function Mailboxes() {
           })}
         </div>
 
+        <AutoEnquiries />
+
         <div className="grid gap-4 @3xl:grid-cols-2">
           <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
@@ -547,5 +550,95 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
         </label>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Enquiries made from email (docs/email-enquiries.md): the switch, the AI
+ * budget, and per mailbox how far the read of past mail has got and what
+ * it found. Admin only — it counts every mailbox's mail.
+ */
+function AutoEnquiries() {
+  const { isAdmin } = useAuth();
+  const toast = useToast();
+  const { data, refetch } = useFetch(() => (isAdmin ? api.raw('/mailboxes/auto-enquiries') : Promise.resolve(null)), [isAdmin]);
+  const [busy, setBusy] = useState(null);
+  const [rerunning, setRerunning] = useState(null);
+  const s = data?.data;
+  if (!isAdmin || !s) return null;
+
+  async function act(key, fn, ok) {
+    setBusy(key);
+    try { await fn(); toast(ok, 'success'); refetch(); }
+    catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+  const toggle = () => act('switch', () => api.update('settings', 'auto_enquiries_enabled', { value: s.enabled ? 'false' : 'true' }),
+    s.enabled ? 'Automatic enquiries are off' : 'Automatic enquiries are on');
+
+  /** "212 of 365 days read", from the date the sweep has reached. */
+  function progress(m) {
+    if (!m.since) return 'Past mail: waiting for the first run';
+    if (m.finished_at) return `Past mail: ${s.backfill_days} days read`;
+    const span = (Date.now() - new Date(m.since).getTime()) / 864e5;
+    const done = m.reached ? Math.max(0, Math.min(span, (new Date(m.reached).getTime() - new Date(m.since).getTime()) / 864e5)) : 0;
+    return `Past mail: ${m.folder === 'sentitems' ? 'Inbox read; Sent Items ' : ''}${Math.round(done)} of ${Math.round(span)} days read`;
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[14px] font-semibold text-foreground">Automatic enquiries</div>
+          <p className="text-[12.5px]/[1.6] text-secondary-text">
+            A client email asking for new work becomes an enquiry by itself, and so does a quotation we email in a conversation with no enquiry.
+            Each mailbox's past {s.backfill_days} days are read once. Only the enquiry's own fields are kept, never the email's text.
+          </p>
+        </div>
+        <Button size="sm" variant={s.enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
+          {s.enabled ? 'Switch off' : 'Switch on'}
+        </Button>
+      </div>
+      <p className="text-[12px] text-muted-foreground">
+        {s.enabled ? 'On.' : 'Off: nothing new is read; what was created stays.'}{' '}
+        {s.ai.configured
+          ? `AI reads the emails that pass the rules: ${number(s.ai.used_today)} of ${number(s.ai.daily_limit)} calls used today.`
+          : 'No AI key is set, so rules alone decide, with a stricter bar.'}
+      </p>
+      {s.mailboxes.length === 0 ? (
+        <p className="text-[12px] text-muted-foreground">No mailboxes connected.</p>
+      ) : (
+        <div className="flex flex-col divide-y divide-border">
+          {s.mailboxes.map((m) => (
+            <div key={m.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-medium text-foreground">{m.email}{m.is_shared && <span className="text-muted-foreground"> · shared</span>}</div>
+                <div className="text-[12px] text-secondary-text">
+                  {progress(m)} · {number(m.created)} created · {number(m.linked)} linked
+                  {m.quotations_read > 0 && <> · {number(m.quotations_read)} quotation{m.quotations_read === 1 ? '' : 's'} read from PDFs</>}
+                  {m.quotations_failed > 0 && <> · {number(m.quotations_failed)} PDF{m.quotations_failed === 1 ? '' : 's'} not read</>}
+                </div>
+                {m.last_error && <div className="text-[12px] text-waiting">Last error {m.updated_at ? ago(m.updated_at) : ''}: {m.last_error}</div>}
+              </div>
+              <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === m.id} onClick={() => setRerunning(m)}>Re-run</Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {rerunning && (
+        <ConfirmDialog
+          title={`Read ${rerunning.email} again?`}
+          message={`Emails judged not to be enquiries are judged again, and the past ${s.backfill_days} days are read again from the start. Enquiries already created or linked are kept, so nothing is made twice. With an AI key, this uses the shared daily AI budget.`}
+          confirmLabel="Re-run"
+          tone="default"
+          onClose={() => setRerunning(null)}
+          onConfirm={() => { const m = rerunning; setRerunning(null); act(m.id, () => api.action(`/mailboxes/${m.id}/auto-enquiries/rerun`), `${m.email} will be read again on the next run`); }}
+        />
+      )}
+      <p className="text-[11.5px] text-muted-foreground">
+        Started {s.mailboxes.some((m) => m.started_at) ? date(s.mailboxes.filter((m) => m.started_at).map((m) => m.started_at).sort()[0]) : 'on the next run'}.
+        {' '}Review what was made under Enquiries → Created from email.
+      </p>
+    </div>
   );
 }
