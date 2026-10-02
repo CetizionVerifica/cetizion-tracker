@@ -159,6 +159,21 @@ describe('bulk import of any reasonable sales sheet', { skip: !ADMIN_URL && 'set
     batch = (await agent.post(`/api/import/batches/${batchId}/commit`).expect(200)).body.data;
     assert.equal(batch.status, 'committed');
 
+    // The Import screen shares commitBatch with the MCP sheet importer, and
+    // until the actor was threaded through neither wrote a line to the
+    // audit trail (#18 §3). Shared mode has no users row behind the
+    // administrator, so the actor is `shared_admin` — the same
+    // classification an admin MCP token gets, for the same reason.
+    const { rows: logged } = await db.query(
+      `SELECT entity_id, actor_type, actor_user_id, metadata FROM activity_log
+        WHERE action = 'quotation.created' ORDER BY id`);
+    assert.equal(logged.length, 4, 'one row for each quotation the commit created');
+    for (const row of logged) {
+      assert.equal(row.actor_type, 'shared_admin');
+      assert.equal(row.actor_user_id, null, 'there is no account to point at in shared mode');
+      assert.equal(row.metadata.actor_name, 'admin', 'the name from the session, not from the sheet');
+    }
+
     const { rows: quotes } = await db.query(`SELECT client_name, status, currency, quotation_value::float AS value, quotation_date::text AS date FROM quotations ORDER BY client_name`);
     assert.deepEqual(quotes.map((q) => [q.client_name, q.status, q.currency]), [
       ['Suite Aster', 'Won - PO Received', 'USD'],

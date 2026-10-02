@@ -130,8 +130,23 @@ async function recentFailures(ip, username) {
  * nothing to forward, so the address stands.
  */
 const addressIsTheCallers = (req) => config.trustProxy > 0 || !req.headers['x-forwarded-for'];
-const record = (who, ip, ok, reason) =>
-  query('INSERT INTO auth_events (username, ip, ok, reason) VALUES ($1,$2,$3,$4)', [String(who || '').slice(0, 120), ip, ok, reason]).catch(() => {});
+/**
+ * `userId` is which account it turned out to be, once one was resolved
+ * (065). Null on a failure, because nobody knows who a wrong password
+ * belongs to, and null in shared mode, where there is no users row to point
+ * at. `username` stays beside it: for a failure it is the only thing there
+ * is, and it is what the lockout counts on.
+ *
+ * Still .catch(() => {}) — a sign-in that succeeded must not be turned into
+ * a 500 because the audit insert failed. That is the opposite of
+ * logActivity's rule, and deliberately: there the write is the thing being
+ * audited and can be rolled back, whereas here the session already exists.
+ */
+const record = (who, ip, ok, reason, userId = null) =>
+  query(
+    'INSERT INTO auth_events (username, ip, ok, reason, user_id) VALUES ($1,$2,$3,$4,$5)',
+    [String(who || '').slice(0, 120), ip, ok, reason, userId]
+  ).catch(() => {});
 
 function sharedLogin(body) {
   const { username, password } = parse(sharedCredentials, body);
@@ -221,7 +236,9 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
     }
     throw err;
   }
-  await record(who, req.ip, true, null);
+  // The account it resolved to, not the spelling that was typed. In shared
+  // mode there is none, and null is the honest answer rather than an id.
+  await record(who, req.ip, true, null, result.body?.id ?? null);
   const { payload, body, expiresAt } = result;
 
   const token = signSession(payload, authConfig.sessionSecret);
@@ -260,8 +277,17 @@ authRouter.get('/providers', requireAuth, requireAdmin, (req, res) => {
 authRouter.use('/oauth', oauthRouter);
 authRouter.use('/account', accountRouter);
 
-authRouter.post('/logout', (req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  // Read before the cookie is cleared, so the row can say whose session
+  // ended. A session's end was invisible until 065, which left "were they
+  // still signed in at 19:40?" with no answer either way.
+  const user = await currentUser(req).catch(() => null);
   res.clearCookie(authConfig.cookieName, cookieOptions());
+  // ok = true: signing out is a success, not a failed sign-in. The lockout
+  // counts rows with `ok` false and takes MAX(created_at) WHERE ok as the
+  // point to count from, so a sign-out reads as "they got in", which is
+  // true and is what clears the failure count anyway.
+  await record(user?.name ?? user?.username ?? null, req.ip, true, 'signed out', user?.id ?? null);
   res.status(204).end();
 });
 

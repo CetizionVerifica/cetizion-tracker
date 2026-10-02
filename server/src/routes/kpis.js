@@ -3,75 +3,113 @@ import { requireAuth, requireAdmin } from '../auth/middleware.js';
 import { ApiError } from '../middleware/error.js';
 import { actorFrom } from '../lib/activity.js';
 import { transaction } from '../db.js';
-import { businessYear } from '../lib/businessDate.ts';
 import { isUnrestricted } from '../auth/ownership.js';
-import { getSalespersonKpis, getTeamSalesKpis } from '../lib/salesKpis.js';
-import { listSalesTargets, upsertSalesTarget } from '../lib/salesTargets.js';
+import { KPI_DEFINITIONS, getSalespersonKpis, getTeamSalesKpis } from '../lib/salesKpis.js';
+import { SUPPORTED_TARGET_UNITS, listSalesTargets, upsertSalesTarget } from '../lib/salesTargets.js';
 
 export const kpiRouter = Router();
 
-// All KPI endpoints require authentication
 kpiRouter.use(requireAuth);
 
 /**
- * GET /api/kpis/me?year=2026
- * Returns personal KPIs and targets for the authenticated sales user.
+ * How a caller says which period it wants.
+ *
+ * `from`/`to` is the explicit half-open range from #18's API sketch; the
+ * presets are for the period buttons §7 asks for. Parsed in one place so
+ * every endpoint accepts the same vocabulary and a person comparing two
+ * pages is comparing the same dates.
+ */
+const periodFrom = (q) => ({
+  from: q.from,
+  to: q.to,
+  preset: q.period,
+  anchor: q.on,
+  quarter: q.quarter,
+});
+
+const dimensionsFrom = (q) => ({
+  sector: q.sector ? String(q.sector) : null,
+  service: q.service ? String(q.service) : null,
+});
+
+/** `?compare=false` turns off the previous-period comparison. */
+const comparing = (q) => q.compare !== 'false' && q.compare !== '0';
+
+/**
+ * GET /api/kpis/me?from&to  (or ?period=month|quarter|fy|calendar-year)
+ *
+ * The signed-in salesperson's own figures.
  */
 kpiRouter.get('/me', async (req, res) => {
   if (req.user.mode === 'shared') {
     throw new ApiError(
       400,
-      'The personal /me endpoint is for database users. As a shared administrator, use /api/kpis/team.'
+      'The personal view is for database accounts. As a shared administrator, use /api/kpis/team.'
     );
   }
-
   if (req.user.role !== 'sales') {
     throw new ApiError(
       400,
-      'The personal /me endpoint is for sales accounts. Administrators should use /api/kpis/team or /api/kpis/users/:userId.'
+      'The personal view is for sales accounts. Administrators should use /api/kpis/team or /api/kpis/users/:userId.'
     );
   }
 
-  const year = req.query.year || businessYear();
-  const data = await getSalespersonKpis({ userId: req.user.id, year });
-  res.json({ data });
+  const data = await getSalespersonKpis({
+    userId: req.user.id,
+    period: periodFrom(req.query),
+    compare: comparing(req.query),
+    ...dimensionsFrom(req.query),
+  });
+  res.json({ data, definitions: KPI_DEFINITIONS });
 });
 
 /**
- * GET /api/kpis/team?year=2026
- * Returns team-wide sales KPIs, unassigned pipeline, and unattributed performance.
- * Admin-only (database admin and shared admin).
+ * GET /api/kpis/team?from&to&sector&service
+ *
+ * Everybody, their totals, and the same figures per person. Admin only:
+ * this is the one endpoint that names other people's numbers.
  */
 kpiRouter.get('/team', requireAdmin, async (req, res) => {
-  const year = req.query.year || businessYear();
-  const data = await getTeamSalesKpis({ year });
-  res.json({ data });
+  const data = await getTeamSalesKpis({
+    period: periodFrom(req.query),
+    compare: comparing(req.query),
+    ...dimensionsFrom(req.query),
+  });
+  res.json({ data, definitions: KPI_DEFINITIONS });
 });
 
 /**
- * GET /api/kpis/users/:userId?year=2026
- * Returns individual salesperson KPIs.
- * Sales users may only inspect their own userId.
+ * GET /api/kpis/users/:userId
+ *
+ * One person's figures. An admin may ask about anyone — this is §7's
+ * drill-down, "clicking a person opens their My sales view, read-only".
+ * A sales user may only ask about themselves, and asking about somebody
+ * else is refused rather than quietly answered about themselves.
  */
 kpiRouter.get('/users/:userId', async (req, res) => {
   const targetId = Number(req.params.userId);
   if (!Number.isSafeInteger(targetId) || targetId <= 0) {
-    throw new ApiError(422, 'Invalid userId parameter');
+    throw new ApiError(422, 'Invalid userId');
+  }
+  if (!isUnrestricted(req.user) && req.user.id !== targetId) {
+    throw new ApiError(403, "You do not have access to another salesperson's KPIs");
   }
 
-  const unrestricted = isUnrestricted(req.user);
-  if (!unrestricted && req.user.id !== targetId) {
-    throw new ApiError(403, 'You do not have access to another salesperson\'s KPIs');
-  }
-
-  const year = req.query.year || businessYear();
-  const data = await getSalespersonKpis({ userId: targetId, year });
-  res.json({ data });
+  const data = await getSalespersonKpis({
+    userId: targetId,
+    period: periodFrom(req.query),
+    compare: comparing(req.query),
+    ...dimensionsFrom(req.query),
+  });
+  res.json({ data, definitions: KPI_DEFINITIONS });
 });
 
 /**
- * GET /api/kpis/targets?year=2026&salesperson_user_id=123
- * List targets scoped by role.
+ * GET /api/kpis/targets?from&to&salesperson_user_id=
+ *
+ * Scoped like everything else: a sales user sees their own and asking for
+ * somebody else's is a 403, not an empty list — an empty list reads as
+ * "they have no targets", which is a different and untrue statement.
  */
 kpiRouter.get('/targets', async (req, res) => {
   const unrestricted = isUnrestricted(req.user);
@@ -80,50 +118,52 @@ kpiRouter.get('/targets', async (req, res) => {
     : null;
 
   if (!unrestricted) {
-    // Sales users can only see their own targets
     if (salespersonUserId !== null && salespersonUserId !== req.user.id) {
-      throw new ApiError(403, 'You do not have access to another salesperson\'s targets');
+      throw new ApiError(403, "You do not have access to another salesperson's targets");
     }
     salespersonUserId = req.user.id;
   }
 
-  const calendarYear = req.query.year ? Number(req.query.year) : null;
-  const data = await listSalesTargets(undefined, { salespersonUserId, calendarYear });
+  const { from = null, to = null } = req.query;
+  const data = await listSalesTargets(undefined, { salespersonUserId, from, to });
   res.json({ data });
 });
 
 /**
  * PUT /api/kpis/users/:userId/targets/:metric
- * Create or update an annual sales target for a salesperson.
- * Admin-only.
+ *
+ * Set one target for one person for one period. Admin only — a target you
+ * set for yourself is not a target.
+ *
+ * The period is given the same way a report's is, so "the target for March"
+ * and "March's figures" cannot end up describing different months.
  */
 kpiRouter.put('/users/:userId/targets/:metric', requireAdmin, async (req, res) => {
   const targetId = Number(req.params.userId);
   if (!Number.isSafeInteger(targetId) || targetId <= 0) {
-    throw new ApiError(422, 'Invalid userId parameter');
+    throw new ApiError(422, 'Invalid userId');
   }
 
-  const metric = req.params.metric;
-  const { target_value, unit, currency } = req.body || {};
-  const calendarYear = req.body?.calendar_year || req.query.year;
-
-  if (!calendarYear) {
-    throw new ApiError(422, 'calendar_year is required in request body or query');
+  const body = req.body || {};
+  const { target_value: targetValue, unit, currency = null } = body;
+  if (!SUPPORTED_TARGET_UNITS.includes(unit)) {
+    throw new ApiError(422, `unit must be one of: ${SUPPORTED_TARGET_UNITS.join(', ')}`);
   }
 
-  const actor = actorFrom(req.user);
+  const period = body.period ?? periodFrom({ ...req.query, ...body });
+  if (!period.from && !period.preset) {
+    throw new ApiError(422, 'Say which period this target covers: from and to, or period=month with on=YYYY-MM-DD');
+  }
 
-  const { target, isCreated } = await transaction(async (client) => {
-    return upsertSalesTarget(client, {
-      salespersonUserId: targetId,
-      calendarYear,
-      metric,
-      targetValue: target_value,
-      unit,
-      currency,
-      actor,
-    });
-  });
+  const { target, isCreated } = await transaction((client) => upsertSalesTarget(client, {
+    salespersonUserId: targetId,
+    period,
+    metric: req.params.metric,
+    targetValue,
+    unit,
+    currency,
+    actor: actorFrom(req.user),
+  }));
 
   res.status(isCreated ? 201 : 200).json({ data: target });
 });

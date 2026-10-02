@@ -18,11 +18,21 @@ const NAME = `mcp_test_${process.pid}`;
 let app; let pool; let staff;
 
 async function fixtures(client) {
+  // Asha and Ravi are accounts now, not spellings (#18 §2, 063). A sales
+  // token names a users row and the records carry owner_user_id, so what
+  // these tests assert — that one salesperson cannot read the other's work
+  // — is asked of the same column the web app asks it of. Under the old
+  // name match the two would also have to be spelled identically on every
+  // row for the scoping to hold, which is the fragility that change ended.
   await client.query(`
+    INSERT INTO users (id, name, email, password_hash, role, active) VALUES
+      (801, 'Asha', 'asha@example.test', 'not-a-real-hash', 'sales', true),
+      (802, 'Ravi', 'ravi@example.test', 'not-a-real-hash', 'sales', true);
+    SELECT setval('users_id_seq', 900, true);
     INSERT INTO companies (id, name) VALUES (1001, 'Asha Client Ltd'), (1002, 'Ravi Client Ltd');
-    INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
-      VALUES ('QT-ASHA', 'Asha Client Ltd', '2026-07-01', 100000, 'Submitted', 'Asha'), ('QT-RAVI', 'Ravi Client Ltd', '2026-07-01', 900000, 'Submitted', 'Ravi');
-    INSERT INTO projects (project_id, client_name, sales_person) VALUES ('PRJ-ASHA', 'Asha Client Ltd', 'Asha'), ('PRJ-RAVI', 'Ravi Client Ltd', 'Ravi');
+    INSERT INTO quotations (quotation_no, client_name, company_id, quotation_date, quotation_value, status, sales_person, owner_user_id)
+      VALUES ('QT-ASHA', 'Asha Client Ltd', 1001, '2026-07-01', 100000, 'Submitted', 'Asha', 801), ('QT-RAVI', 'Ravi Client Ltd', 1002, '2026-07-01', 900000, 'Submitted', 'Ravi', 802);
+    INSERT INTO projects (project_id, client_name, company_id, sales_person, owner_user_id) VALUES ('PRJ-ASHA', 'Asha Client Ltd', 1001, 'Asha', 801), ('PRJ-RAVI', 'Ravi Client Ltd', 1002, 'Ravi', 802);
     INSERT INTO purchase_orders (po_number, project_id, po_date, po_value) VALUES ('PO-ASHA', 'PRJ-ASHA', '2026-06-01', 100000), ('PO-RAVI', 'PRJ-RAVI', '2026-06-01', 900000);
     INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, invoice_no, invoice_date)
       VALUES ('PO-ASHA', 1, 'Advance', 'On PO Registration', 1, 'INV-ASHA', '2026-06-02'), ('PO-RAVI', 1, 'Advance', 'On PO Registration', 1, 'INV-RAVI', '2026-06-02');
@@ -249,9 +259,12 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
     const collections = await call(asha, 'list_collections', { overdue_only: false });
     assert.match(collections.text, /INV-ASHA/);
     assert.doesNotMatch(collections.text, /INV-RAVI/);
+    // Asking for somebody else's figures by name does not get them. The
+    // `person` argument is an admin's filter; for a sales token the scope
+    // is its own ownership and the argument is ignored rather than obeyed.
     const kpis = JSON.parse((await call(asha, 'get_kpis', { from: '2026-01-01', to: '2026-12-31', person: 'Ravi' })).text);
-    assert.equal(kpis.person, 'asha');
-    assert.equal(kpis.quotations_issued, 1);
+    assert.equal(kpis.scope, 'the records this token owns');
+    assert.equal(kpis.quotations_issued, 1, "Asha's one quotation, not Ravi's");
     assert.equal((await call(asha, 'list_activity', { entity: 'quotation', id: 'QT-RAVI' })).error, true);
     assert.equal((await call(asha, 'add_note', { entity: 'quotation', id: 'QT-RAVI', text: 'should not land' })).error, true);
   });
@@ -472,6 +485,171 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       assert.equal((await call(t, 'commit_sheet_import', { batch_id: batchId, confirm: true })).error, true);
     });
 
+
+    /**
+     * A committed sheet reaches the activity log (#18 §3).
+     *
+     * commitBatch is a second writer — its own insert/update helpers, not
+     * crud.js's — so wiring the record importer did nothing for it. The
+     * actor is hooked into those two helpers rather than at each of the ten
+     * call sites, so a step added to the importer later is audited without
+     * anybody remembering to audit it.
+     *
+     * The sheet names a salesperson in a column ("Sales Person": Asha,
+     * Ravi). That is data the sheet is entitled to carry and #18 keeps the
+     * column for exactly that reason. What it must not do is decide who the
+     * audit trail says acted, which is what the last test here pins.
+     */
+    const activityRows = async (action) => (await pool.query(
+      `SELECT action, entity_type, entity_id, actor_type, actor_user_id, metadata
+         FROM activity_log WHERE action = $1 ORDER BY id`, [action])).rows;
+
+    /**
+     * These tests commit real records into the database this whole file
+     * shares, and a later test aggregates over every quotation in it. So
+     * each one clears up after itself. The activity rows are left where
+     * they are — the table is append-only by design and nothing counts it
+     * except the assertions above, which measure a delta.
+     */
+    const cleanupAudited = async () => {
+      await pool.query("DELETE FROM purchase_orders WHERE project_id IN (SELECT project_id FROM projects WHERE client_name ILIKE 'Audited %')");
+      await pool.query("DELETE FROM projects WHERE client_name ILIKE 'Audited %'");
+      await pool.query("DELETE FROM quotations WHERE client_name ILIKE 'Audited %'");
+    };
+
+    const commitSheet = async (t, rows, sheetName) => {
+      const plan = JSON.parse((await call(t, 'plan_sheet_import', { rows, sheet_name: sheetName })).text);
+      const done = await call(t, 'commit_sheet_import', { batch_id: plan.batch_id, confirm: true });
+      assert.equal(done.error, false, done.text);
+      return { plan, done: JSON.parse(done.text) };
+    };
+
+    test('committing a sheet records every quotation it creates', async () => {
+      const t = await token({ name: 'Sheet create', role: 'admin', can_write: true });
+      const before = (await activityRows('quotation.created')).length;
+
+      await commitSheet(t.token, [
+        { 'S.No': 1, 'Client Name': 'Audited Sheet Co', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'Audit trail', 'Proposal Sent Date': '03.09.2026', 'PO Amount': '', 'Sales Person': 'Asha' },
+      ], 'Audited create');
+
+      const rows = await activityRows('quotation.created');
+      assert.equal(rows.length, before + 1, 'the commit wrote one quotation and one row for it');
+      const row = rows[rows.length - 1];
+      assert.equal(row.entity_type, 'quotation');
+      assert.match(row.entity_id, /^CTZ\/QT\//, 'named by the reference a person would look up');
+      assert.equal(row.actor_type, 'shared_admin', 'an admin token has no account to point at');
+      assert.equal(row.metadata.actor_name, 'Sheet create');
+      await cleanupAudited();
+    });
+
+    test('a re-upload that changes a deal records the edit, with what it changed from', async () => {
+      const t = await token({ name: 'Sheet update', role: 'admin', can_write: true });
+      const row = (stage, amount) => ({
+        'S.No': 1, 'Client Name': 'Audited Revisit Ltd', 'Deal Stage': stage,
+        'Proposal Name': 'Revisited', 'Proposal Sent Date': '04.09.2026',
+        'PO Amount': amount, 'Sales Person': 'Asha',
+      });
+
+      await commitSheet(t.token, [row('Proposal Sent', '1,00,000/-')], 'Audited first');
+      const { rows: [q] } = await pool.query(
+        "SELECT quotation_no, quotation_value FROM quotations WHERE client_name ILIKE '%Audited Revisit%'");
+      assert.ok(q, 'the first upload created it');
+
+      const beforeEdits = (await activityRows('quotation.updated')).length;
+      await commitSheet(t.token, [row('Proposal Sent', '2,50,000/-')], 'Audited second');
+
+      const edits = await activityRows('quotation.updated');
+      assert.equal(edits.length, beforeEdits + 1, 'the second upload is an edit, not a second create');
+      const edit = edits[edits.length - 1];
+      assert.equal(edit.entity_id, q.quotation_no);
+      assert.equal(edit.actor_type, 'shared_admin');
+      assert.equal(edit.metadata.actor_name, 'Sheet update');
+      assert.ok(edit.metadata.changes.quotation_value, `the value change is named: ${JSON.stringify(edit.metadata.changes)}`);
+      assert.equal(Number(edit.metadata.changes.quotation_value.from), Number(q.quotation_value));
+      await cleanupAudited();
+    });
+
+    test('a deal that becomes won records the move, and the date it was won', async () => {
+      const t = await token({ name: 'Sheet won', role: 'admin', can_write: true });
+      const deal = (stage, extra = {}) => ({
+        'S.No': 1, 'Client Name': 'Audited Won Ltd', 'Deal Stage': stage,
+        'Proposal Name': 'Won deal', 'Proposal Sent Date': '06.08.2026',
+        'Sales Person': 'Ravi', 'PO Amount': '', ...extra,
+      });
+
+      // Open first. A sheet that arrives already won creates the quotation
+      // in that state, and creating something is not moving it — the create
+      // row carries the status, which the first test here covers.
+      await commitSheet(t.token, [deal('Proposal Sent')], 'Audited won open');
+      const before = (await activityRows('quotation.status_changed')).length;
+
+      // Then won. This is the write that used to escape the audit entirely:
+      // the importer marks it won with its own UPDATE while linking the
+      // project, outside the helper every other write goes through.
+      await commitSheet(t.token,
+        [deal('Closed Won (100%)', { 'PO Number': '4500777222', 'PO Amount': '5,00,000/-' })],
+        'Audited won closed');
+
+      const moves = await activityRows('quotation.status_changed');
+      assert.equal(moves.length, before + 1, 'the move is recorded');
+      const move = moves[moves.length - 1];
+      assert.equal(move.metadata.to, 'Won - PO Received');
+      assert.ok(move.metadata.won_at, 'and 064\'s derived date travels with it');
+      assert.equal(move.metadata.actor_name, 'Sheet won');
+
+      const { rows: [q] } = await pool.query(
+        "SELECT won_at, won_at_estimated FROM quotations WHERE client_name ILIKE '%Audited Won%'");
+      assert.ok(q.won_at, 'the record itself carries the won date');
+      assert.equal(q.won_at_estimated, false, 'watched happen, so not an estimate');
+      await cleanupAudited();
+    });
+
+    test('an unconfirmed commit writes no activity, as it writes nothing', async () => {
+      const t = await token({ name: 'Sheet dry', role: 'admin', can_write: true });
+      const before = (await activityRows('quotation.created')).length;
+
+      const plan = JSON.parse((await call(t.token, 'plan_sheet_import', {
+        rows: [{ 'S.No': 1, 'Client Name': 'Audited Dry Run Ltd', 'Deal Stage': 'Proposal Sent', 'Proposal Name': 'Never written', 'Proposal Sent Date': '07.09.2026', 'PO Amount': '', 'Sales Person': 'Asha' }],
+        sheet_name: 'Audited dry',
+      })).text);
+
+      const unconfirmed = await call(t.token, 'commit_sheet_import', { batch_id: plan.batch_id });
+      assert.equal(unconfirmed.error, true, 'confirm is required');
+
+      assert.equal((await activityRows('quotation.created')).length, before,
+        'planning and refusing to confirm leave the trail untouched');
+      const { rows } = await pool.query("SELECT 1 FROM quotations WHERE client_name ILIKE '%Audited Dry Run%'");
+      assert.equal(rows.length, 0, 'and no record either');
+      await cleanupAudited();
+    });
+
+    test('a sheet cannot sign somebody else’s name to the audit trail', async () => {
+      const t = await token({ name: 'Sheet spoof', role: 'admin', can_write: true });
+
+      await commitSheet(t.token, [
+        {
+          'S.No': 1, 'Client Name': 'Audited Spoof Ltd', 'Deal Stage': 'Proposal Sent',
+          'Proposal Name': 'Whose name', 'Proposal Sent Date': '08.09.2026', 'PO Amount': '',
+          // The column a caller might hope decides who gets the credit.
+          'Sales Person': 'Somebody Else',
+        },
+      ], 'Audited spoof');
+
+      const rows = await activityRows('quotation.created');
+      const row = rows[rows.length - 1];
+      assert.equal(row.actor_type, 'shared_admin');
+      assert.equal(row.actor_user_id, null, 'no cell in the sheet can put an id here');
+      assert.equal(row.metadata.actor_name, 'Sheet spoof',
+        'the actor is the credential that called, never the content it carried');
+
+      // The record still keeps what the sheet said — that is what the column
+      // is for — and naming somebody does not hand them the record either.
+      const { rows: [saved] } = await pool.query(
+        "SELECT sales_person, owner_user_id FROM quotations WHERE client_name ILIKE '%Audited Spoof%'");
+      assert.equal(saved.sales_person, 'Somebody Else');
+      assert.equal(saved.owner_user_id, null, 'ownership is owner_user_id, and a sheet does not set it');
+      await cleanupAudited();
+    });
     test('a batch uploaded on the Import screen is not this server\'s to commit', async () => {
       const t = await admin();
       const { rows: [own] } = await pool.query(
@@ -673,6 +851,101 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       ] })).text);
       assert.equal(res.rejected, 1, 'the schema is the form\'s, so the answer is the form\'s');
       assert.ok(JSON.stringify(res.rows[0].why).includes('currency'));
+    });
+
+
+    /**
+     * Records written through MCP were invisible to the activity log until
+     * now: importRecords calls the same insertRecord/updateRecordRow every
+     * form post goes through, but passed no actor, so logRecordSaved
+     * returned early and the trail simply had nothing for them (#18 §3).
+     *
+     * The actor comes from the bearer token. An admin token has no users
+     * row behind it — nothing to point actor_user_id at — so it is recorded
+     * as `shared_admin`, the same classification the legacy shared login
+     * gets and for the same reason. A sales token carries its users.id
+     * since 063; import_records is admin-only today, so that branch is
+     * exercised by the unit test on actorFromToken rather than here.
+     */
+    const activityFor = async (entityId) => (await pool.query(
+      `SELECT action, actor_type, actor_user_id, metadata FROM activity_log
+        WHERE entity_type = 'enquiry' AND entity_id = $1 ORDER BY id`, [entityId])).rows;
+
+    test('a record created through MCP reaches the activity log', async () => {
+      const t = await token({ name: 'Audited create', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-create`;
+      const done = JSON.parse((await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{ enquiry_no: ref, client_name: 'Audited Client Ltd', enquiry_date: '2026-05-01' }],
+        dry_run: false,
+      })).text);
+      assert.equal(done.created, 1, JSON.stringify(done));
+
+      const rows = await activityFor(ref);
+      assert.equal(rows.length, 1, 'one create, one row');
+      assert.equal(rows[0].action, 'enquiry.created');
+      assert.equal(rows[0].actor_type, 'shared_admin', 'an admin token has no account to point at');
+      assert.equal(rows[0].actor_user_id, null);
+      assert.equal(rows[0].metadata.actor_name, 'Audited create',
+        "the token's own name, so one integration is distinguishable from another");
+    });
+
+    test('a record updated through MCP reaches it too, with what changed', async () => {
+      const t = await token({ name: 'Audited update', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-update`;
+      const send = (rows) => call(t.token, 'import_records', { entity: 'enquiries', rows, dry_run: false });
+
+      await send([{ enquiry_no: ref, client_name: 'Audited Client Ltd', estimated_value: 100000, currency: 'INR' }]);
+      await send([{ enquiry_no: ref, client_name: 'Audited Client Ltd', estimated_value: 250000, currency: 'INR' }]);
+
+      const rows = await activityFor(ref);
+      assert.deepEqual(rows.map((r) => r.action), ['enquiry.created', 'enquiry.updated'],
+        'a re-import that changes a value is an edit, not a second create');
+      const change = rows[1].metadata.changes.estimated_value;
+      assert.equal(Number(change.from), 100000);
+      assert.equal(Number(change.to), 250000, 'and it says what it changed from');
+    });
+
+    test('a dry run writes no activity, as it writes nothing', async () => {
+      const t = await token({ name: 'Audited dry', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-dry`;
+      await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{ enquiry_no: ref, client_name: 'Audited Client Ltd' }],
+      });
+      assert.deepEqual(await activityFor(ref), []);
+    });
+
+    test('the sheet cannot sign somebody else\'s name to the audit trail', async () => {
+      const t = await token({ name: 'Audited spoof', role: 'admin', can_write: true });
+      const ref = `CTZ/ENQ/MCP/${id}-spoof`;
+      await call(t.token, 'import_records', {
+        entity: 'enquiries',
+        rows: [{
+          enquiry_no: ref,
+          client_name: 'Audited Client Ltd',
+          // Every field a caller might hope decides who gets the credit.
+          sales_person: 'Somebody Else',
+          sales_person_email: 'somebody@elsewhere.test',
+        }],
+        dry_run: false,
+      });
+
+      const [row] = await activityFor(ref);
+      assert.equal(row.actor_type, 'shared_admin');
+      assert.equal(row.actor_user_id, null, 'no row in the payload can put an id here');
+      assert.equal(row.metadata.actor_name, 'Audited spoof',
+        'the actor is the credential that called, never the content it carried');
+
+      // The free-text salesperson is a different thing and a sheet may
+      // legitimately carry its own — #18 keeps that column precisely so
+      // historical attribution survives. What it must not do is decide who
+      // the audit trail says acted, and since 059 it does not decide
+      // ownership either.
+      const { rows: [saved] } = await pool.query(
+        'SELECT sales_person, owner_user_id FROM enquiries WHERE enquiry_no = $1', [ref]);
+      assert.equal(saved.sales_person, 'Somebody Else', 'the record still records what the sheet said');
+      assert.equal(saved.owner_user_id, null, 'and naming somebody does not hand them the record');
     });
 
     test('a sales token is not offered it, nor allowed it', async () => {

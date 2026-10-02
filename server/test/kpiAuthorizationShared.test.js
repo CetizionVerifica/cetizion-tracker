@@ -79,7 +79,7 @@ describe('KPI authorization in shared mode', { skip: !ADMIN_URL && 'set TEST_DAT
 
   test('shared admin receives 400 on /me with explanatory message', async () => {
     const res = await request(app)
-      .get('/api/kpis/me?year=2026')
+      .get('/api/kpis/me?period=calendar-year&on=2026-06-01')
       .set('Cookie', sharedCookie);
     assert.equal(res.status, 400);
     assert.match(res.body.error.message, /shared administrator/i);
@@ -87,22 +87,23 @@ describe('KPI authorization in shared mode', { skip: !ADMIN_URL && 'set TEST_DAT
 
   test('shared admin can view /team report and individual /users/:id report', async () => {
     const resTeam = await request(app)
-      .get('/api/kpis/team?year=2026')
+      .get('/api/kpis/team?period=calendar-year&on=2026-06-01')
       .set('Cookie', sharedCookie);
     assert.equal(resTeam.status, 200);
-    assert.equal(resTeam.body.data.reporting_period.year, 2026);
-    assert.ok(Array.isArray(resTeam.body.data.salespeople));
+    assert.equal(resTeam.body.data.period.from, '2026-01-01');
+    assert.equal(resTeam.body.data.period.to, '2027-01-01');
+    assert.ok(Array.isArray(resTeam.body.data.people));
 
     const resUser = await request(app)
-      .get(`/api/kpis/users/${salesUser.id}?year=2026`)
+      .get(`/api/kpis/users/${salesUser.id}?period=calendar-year&on=2026-06-01`)
       .set('Cookie', sharedCookie);
     assert.equal(resUser.status, 200);
-    assert.equal(resUser.body.data.salesperson.id, salesUser.id);
+    assert.equal(resUser.body.data.user.id, salesUser.id);
   });
 
   test('shared admin can view and update targets with audit trail', async () => {
     const resTargets = await request(app)
-      .get('/api/kpis/targets?year=2026')
+      .get('/api/kpis/targets?period=calendar-year&on=2026-06-01')
       .set('Cookie', sharedCookie);
     assert.equal(resTargets.status, 200);
 
@@ -110,7 +111,7 @@ describe('KPI authorization in shared mode', { skip: !ADMIN_URL && 'set TEST_DAT
       .put(`/api/kpis/users/${salesUser.id}/targets/won_quotations_count`)
       .set('Cookie', sharedCookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 25,
         unit: 'count',
       });

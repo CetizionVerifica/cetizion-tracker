@@ -449,6 +449,16 @@ CREATE TABLE quotations (
   lost_notes             text,
   competitor             text,
   closed_at              timestamptz,
+  -- When it was decided, and whether we actually know (#18 §3, 065).
+  -- closed_at above is one column for both outcomes and is driven by the
+  -- pipeline stage; these are driven by `status`, which is the field #18 §5
+  -- defines the KPIs on, and they say which outcome the date belongs to.
+  -- The estimated flags carry the acceptance criterion that a won date
+  -- inferred from quotation_date is labelled rather than reported as fact.
+  won_at                 timestamptz,
+  won_at_estimated       boolean NOT NULL DEFAULT false,
+  lost_at                timestamptz,
+  lost_at_estimated      boolean NOT NULL DEFAULT false,
   -- Approvals (#46)
   discount_percent       numeric(5,2),
   approval_status        text NOT NULL DEFAULT 'not_needed'
@@ -470,6 +480,11 @@ CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
+-- Owner first: the KPI queries filter a half-open period and group by
+-- person, so a bare date index would be read for "won in Q2" and the rows
+-- then filtered by owner one at a time (065).
+CREATE INDEX quotations_won_at_idx  ON quotations (owner_user_id, won_at)  WHERE won_at IS NOT NULL;
+CREATE INDEX quotations_lost_at_idx ON quotations (owner_user_id, lost_at) WHERE lost_at IS NOT NULL;
 CREATE INDEX quotations_originating_user_id_idx ON quotations (originating_user_id);
 CREATE INDEX ON quotations (status);
 
@@ -571,8 +586,8 @@ CREATE TABLE enquiries (
   --
   -- Last in this table, and deliberately so. v_enquiries is `SELECT e.*`,
   -- which records in the view's own definition the order the columns are in.
-  -- ALTER TABLE can only append, so every database upgraded through 059 and
-  -- 062 has these four here, at the end — and scripts/ci/check-migrations.sh
+  -- ALTER TABLE can only append, so every database upgraded through 059,
+  -- 062 and 065 has these six here, at the end — and scripts/ci/check-migrations.sh
   -- compares the view a fresh schema.sql builds against the view an upgraded
   -- database has. Declaring them up beside sales_person, where they read
   -- best, builds a v_enquiries that no real database matches.
@@ -582,7 +597,16 @@ CREATE TABLE enquiries (
   owner_user_id      int,
   originating_user_id          int,
   originating_user_snapshot_id int,
-  originating_user_name        text
+  originating_user_name        text,
+  -- When the lead stopped being one, either way (#18 §3, 065). An enquiry
+  -- has no closed_at to fall back on, so every backfilled date here is an
+  -- estimate from enquiry_date.
+  --
+  -- After the four above, and for the same reason: 065 is an ALTER TABLE
+  -- too, so this is the order an upgraded database has, and so the order
+  -- v_enquiries must expand `e.*` into on both sides of the check.
+  decided_at           timestamptz,
+  decided_at_estimated boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX enquiries_company_id_idx ON enquiries (company_id);
@@ -590,6 +614,7 @@ CREATE INDEX enquiries_follow_up_idx ON enquiries (next_follow_up_at);
 -- Phase 2C filters these lists by owner, and the foreign key needs it
 -- now: without it, deleting a user sequentially scans this table.
 CREATE INDEX enquiries_owner_user_id_idx ON enquiries (owner_user_id);
+CREATE INDEX enquiries_decided_at_idx ON enquiries (owner_user_id, decided_at) WHERE decided_at IS NOT NULL;
 CREATE INDEX enquiries_originating_user_id_idx ON enquiries (originating_user_id);
 CREATE INDEX ON enquiries (status);
 -- A quotation belongs to at most one enquiry.
@@ -754,8 +779,27 @@ CREATE TABLE payments (
   reference    text,
   notes        text,
   recorded_by  text,
+  -- What kind of row this is (#18 §5, 068), so a collections figure can say
+  -- how much of itself it actually knows:
+  --
+  --   receipt          money arriving, on the date it arrived.
+  --   opening_balance  a cumulative total carried in from before #27, dated
+  --                    with the last receipt's date — so it lands in one
+  --                    period when it may have arrived across several. Any
+  --                    period figure containing one is an estimate.
+  --   adjustment       a negative row correcting a total typed too high.
+  --
+  -- A column rather than a match on `notes`: a KPI that decides whether a
+  -- figure is an estimate by comparing prose silently starts reporting
+  -- estimates as facts the day somebody edits that sentence.
+  origin       text NOT NULL DEFAULT 'receipt'
+                 CONSTRAINT payments_origin_check
+                 CHECK (origin IN ('receipt', 'opening_balance', 'adjustment')),
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS payments_received_on_idx
+  ON payments (received_on) WHERE received_on IS NOT NULL;
 
 CREATE INDEX payments_stage_idx ON payments (stage_id, received_on);
 
@@ -781,12 +825,13 @@ CREATE TRIGGER payments_changed AFTER INSERT OR UPDATE OR DELETE ON payments
 CREATE OR REPLACE FUNCTION payments_opening() RETURNS trigger AS $$
 DECLARE cur record;
 BEGIN
-  IF NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
+  IF NEW.origin = 'opening_balance' OR NEW.notes = 'Opening balance from the stage' THEN RETURN NEW; END IF;
   IF NOT EXISTS (SELECT 1 FROM payments WHERE stage_id = NEW.stage_id) THEN
     SELECT amount_received, payment_received_date INTO cur FROM payment_stages WHERE id = NEW.stage_id;
     IF cur.amount_received > 0 THEN
-      INSERT INTO payments (stage_id, amount, received_on, mode, notes)
-      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other', 'Opening balance from the stage');
+      INSERT INTO payments (stage_id, amount, received_on, mode, notes, origin)
+      VALUES (NEW.stage_id, cur.amount_received, cur.payment_received_date, 'other',
+              'Opening balance from the stage', 'opening_balance');
     END IF;
   END IF;
   RETURN NEW;
@@ -1116,8 +1161,83 @@ END $$ LANGUAGE plpgsql;
 CREATE TRIGGER c_stage_sync BEFORE INSERT OR UPDATE ON quotations
   FOR EACH ROW EXECUTE FUNCTION quotation_stage_sync();
 
+CREATE OR REPLACE FUNCTION quotation_decision_dates() RETURNS trigger AS $$
+BEGIN
+  -- Only on a real transition. An UPDATE that touches the value but not the
+  -- status — a price correction on a won deal — must not restamp the date
+  -- it was won, or every edit would drag the win into the current month.
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'Won - PO Received' THEN
+    -- COALESCE, so an explicit date survives. That is what lets an admin
+    -- correct a backfilled guess, and what lets the backfill below write a
+    -- date through this trigger without it being overwritten by now().
+    NEW.won_at := COALESCE(NEW.won_at, now());
+    NEW.lost_at := NULL;
+    NEW.lost_at_estimated := false;
+
+  ELSIF NEW.status = 'Lost' THEN
+    NEW.lost_at := COALESCE(NEW.lost_at, now());
+    NEW.won_at := NULL;
+    NEW.won_at_estimated := false;
+
+  ELSE
+    -- Reopened. A quotation back in negotiation has not been won and has
+    -- not been lost, and leaving a stale date behind would put it in a
+    -- period's order intake for ever. The stage history keeps what happened;
+    -- these two columns say only what is true now.
+    --
+    -- This is the same reasoning quotation_stage_sync applies to closed_at
+    -- and to lost_reason_id, deliberately: two columns describing one deal
+    -- that disagree about whether it is open is worse than either answer.
+    NEW.won_at := NULL;
+    NEW.lost_at := NULL;
+    NEW.won_at_estimated := false;
+    NEW.lost_at_estimated := false;
+  END IF;
+
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+-- BEFORE, so it writes to NEW rather than issuing a second UPDATE, and
+-- named to sort after quotation_stage_sync: that one can rewrite NEW.status
+-- from the pipeline stage, and this must read the status that actually
+-- lands. Postgres fires same-event triggers in name order.
+DROP TRIGGER IF EXISTS z_quotation_decision_dates ON quotations;
+CREATE TRIGGER z_quotation_decision_dates BEFORE INSERT OR UPDATE ON quotations
+  FOR EACH ROW EXECUTE FUNCTION quotation_decision_dates();
+
+CREATE OR REPLACE FUNCTION enquiry_decision_date() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    RETURN NEW;
+  END IF;
+
+  -- Decided means it stopped being a lead, either way: quoted (Converted)
+  -- or turned down (Unqualified). The four open statuses since #24 — New,
+  -- Contacted, Qualified, Nurture — are all still in progress.
+  IF NEW.status IN ('Converted', 'Unqualified') THEN
+    NEW.decided_at := COALESCE(NEW.decided_at, now());
+  ELSE
+    NEW.decided_at := NULL;
+    NEW.decided_at_estimated := false;
+  END IF;
+
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS z_enquiry_decision_date ON enquiries;
+CREATE TRIGGER z_enquiry_decision_date BEFORE INSERT OR UPDATE ON enquiries
+  FOR EACH ROW EXECUTE FUNCTION enquiry_decision_date();
+
+
 INSERT INTO settings (key, value, notes) VALUES
-  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
+  ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.'),
+  -- #18 §5 leaves the number open and suggests 14. A settings row rather
+  -- than a constant, so it changes without a deploy.
+  ('stale_quotation_days', '14', 'Days without pipeline movement before an open quotation is reported as stale.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------- enquiry stamps
@@ -2439,13 +2559,31 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   -- change any of them. Off unless asked for: a token requested without
   -- saying otherwise is a reading token (#50).
   can_write     boolean NOT NULL DEFAULT false,
+  -- Whose records a sales token sees (064). CASCADE, unlike owner_user_id's
+  -- SET NULL on the record tables: a quotation is the company's history and
+  -- outlives whoever sold it, but a token is a credential belonging to one
+  -- person, and a credential whose owner is gone must stop working rather
+  -- than become an unowned key that still opens the door.
+  user_id       integer REFERENCES users(id) ON DELETE CASCADE,
+  -- The name the token was issued against. Kept beside user_id, not
+  -- replaced by it: it is what the tokens page has always shown and how an
+  -- admin recognises which token is whose. It is no longer an authorization
+  -- identity — see lib/scope.js.
   person        text,
   created_by    text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   last_used_at  timestamptz,
   revoked_at    timestamptz,
-  CHECK (role = 'admin' OR person IS NOT NULL)
+  CHECK (role = 'admin' OR person IS NOT NULL),
+  -- A live sales token has an account behind it. Revoked rows are exempt:
+  -- they are history, including tokens 064 revoked because no account could
+  -- be matched to their name.
+  CONSTRAINT api_tokens_sales_needs_user CHECK (
+    role = 'admin' OR user_id IS NOT NULL OR revoked_at IS NOT NULL
+  )
 );
+
+CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens (user_id);
 
 CREATE TABLE IF NOT EXISTS api_token_log (
   id          bigserial PRIMARY KEY,
@@ -2470,11 +2608,19 @@ ON CONFLICT (key) DO NOTHING;
 CREATE TABLE IF NOT EXISTS auth_events (
   id          bigserial PRIMARY KEY,
   username    text,
+  -- Which account, once one was resolved (066). Null on a failure, because
+  -- nobody knows who a wrong password belongs to, and null on rows written
+  -- before 066. SET NULL rather than CASCADE for activity_log's reason:
+  -- deleting an account must not erase every sign-in it ever made.
+  user_id     integer REFERENCES users(id) ON DELETE SET NULL,
   ip          text,
   ok          boolean NOT NULL,
   reason      text,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS auth_events_user_idx
+  ON auth_events (user_id, created_at DESC) WHERE user_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS auth_events_ip_idx ON auth_events (ip, created_at DESC);
 
@@ -2588,7 +2734,18 @@ CREATE INDEX IF NOT EXISTS ownership_history_prev_owner_idx
 CREATE TABLE IF NOT EXISTS sales_targets (
   id                          serial PRIMARY KEY,
   salesperson_user_id         integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  calendar_year               integer NOT NULL CHECK (calendar_year BETWEEN 2000 AND 2100),
+  -- The period a target covers, half-open [start, end), the same convention
+  -- every report uses (#18 §4, 067). A date range rather than a year number
+  -- because the business runs on the Indian financial year — the invoice
+  -- series is already numbered by it — and because §6 wants monthly intake
+  -- against target, which an annual figure cannot be decomposed into.
+  period_start                date NOT NULL,
+  period_end                  date NOT NULL,
+  period_type                 text NOT NULL,
+  -- Derived from period_start and kept for anything still reading it. 067
+  -- made it nullable: an April-to-March target has no single calendar year
+  -- to name, and forcing one would make the column lie about half its rows.
+  calendar_year               integer CHECK (calendar_year BETWEEN 2000 AND 2100),
   metric                      text NOT NULL CHECK (btrim(metric) <> ''),
   target_value                numeric(16,2) NOT NULL CHECK (target_value >= 0),
   unit                        text NOT NULL CHECK (unit IN ('count', 'currency', 'percentage')),
@@ -2613,17 +2770,36 @@ CREATE TABLE IF NOT EXISTS sales_targets (
   ),
   CONSTRAINT sales_targets_actor_needs_user CHECK (
     created_by_user_id IS NULL OR actor_type = 'user'
+  ),
+  CONSTRAINT sales_targets_period_ordered CHECK (period_end > period_start),
+  CONSTRAINT sales_targets_period_type_check CHECK (period_type IN ('month', 'quarter', 'year')),
+  -- Constrained rather than free text: a target on a metric nothing
+  -- computes is a progress bar that never moves and no error anybody sees.
+  CONSTRAINT sales_targets_metric_known CHECK (
+    metric IN (
+      'order_intake_value',
+      'won_quotations_count',
+      'quotations_sent_count',
+      'collections_value',
+      'enquiries_created_count',
+      'follow_up_completion_rate'
+    )
   )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS sales_targets_unique_idx
-  ON sales_targets (salesperson_user_id, calendar_year, metric, COALESCE(currency, ''));
+-- One target per person, per period, per metric. Keyed on the period, not
+-- the year: the old index would have forbidden twelve monthly intake
+-- targets in one year, which is the thing 067 exists to allow.
+--
+-- COALESCE on currency because a plain UNIQUE treats two NULLs as distinct,
+-- so it would let the same count target be created twice.
+CREATE UNIQUE INDEX IF NOT EXISTS sales_targets_period_unique_idx
+  ON sales_targets (salesperson_user_id, period_start, period_end, metric, COALESCE(currency, ''));
 
-CREATE INDEX IF NOT EXISTS sales_targets_lookup_idx
-  ON sales_targets (salesperson_user_id, calendar_year);
+-- The lookup every report makes: this person's targets inside a range.
+CREATE INDEX IF NOT EXISTS sales_targets_period_idx
+  ON sales_targets (salesperson_user_id, period_start, period_end);
 
-CREATE INDEX IF NOT EXISTS sales_targets_year_idx
-  ON sales_targets (calendar_year);
 
 CREATE TRIGGER sales_targets_set_updated_at BEFORE UPDATE ON sales_targets
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

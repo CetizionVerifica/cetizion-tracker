@@ -9,6 +9,8 @@ import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.ts';
 import { reportPeriod } from './salesReport.js';
+import { actorFrom } from './activity.js';
+import { isAudited, logRecordSaved } from './salesActivity.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
 
 const MAX_LIMIT = 1000;
@@ -362,7 +364,7 @@ async function claimDocument(client, def, values, id, scope) {
  * Takes a client rather than opening its own transaction, so a caller
  * writing many rows can put them all in one.
  */
-export async function insertRecord(client, def, { values, input, scope }) {
+export async function insertRecord(client, def, { values, input, scope, actor = null }) {
   if (def.hasDocument) await claimDocument(client, def, values);
 
   if (def.autoId) {
@@ -394,14 +396,21 @@ export async function insertRecord(client, def, { values, input, scope }) {
   // staff route passes it; MCP's bulk import does not, which leaves that
   // hook exactly as unrestricted as it is on main.
   const extra = await def.onSave?.(client, { before: null, after: rows[0], input, scope });
+  // After the hook, so a record the hook rewrote is logged as it was
+  // actually stored. Inside the same transaction, so a failed audit row
+  // rolls the save back rather than letting it happen unrecorded.
+  await logRecordSaved(client, { table: def.table, before: null, after: rows[0], actor });
   return { row: rows[0], extra };
 }
 
 /** The same for an existing row, by id or natural key. Returns null if gone. */
-export async function updateRecordRow(client, def, id, { values, input }) {
+export async function updateRecordRow(client, def, id, { values, input, actor = null }) {
   const cols = Object.keys(values);
   let before = null;
-  if (def.onSave) {
+  // `before` is read for an audited table even with no onSave hook: an
+  // audit row saying a field changed but not what it changed from is the
+  // gap #83's review called out on user emails, and it is no better here.
+  if (def.onSave || (actor && isAudited(def.table))) {
     const keyParams = [];
     const keyPred = idPredicate(def, String(id), keyParams);
     ({ rows: [before] } = await client.query(
@@ -419,6 +428,7 @@ export async function updateRecordRow(client, def, id, { values, input }) {
   }
   if (!rows.length) return null;
   const extra = await def.onSave?.(client, { before, after: rows[0], input });
+  await logRecordSaved(client, { table: def.table, before, after: rows[0], actor });
   return { row: rows[0], extra };
 }
 
@@ -459,7 +469,12 @@ export function crudRouter(name, def) {
   // onSave(client, { before, after, input }) hook writes, a document attached under
   // lock, and a reference number taken from its series commit together with
   // the record or not at all.
-  const write = (fn) => (def.onSave || def.hasDocument || def.autoId ? transaction(fn) : fn({ query }));
+  // An audited table joins the list that always gets a transaction: the
+  // audit row and the change it describes have to land together, or the
+  // trail records saves that did not happen and misses ones that did.
+  const write = (fn) => (
+    def.onSave || def.hasDocument || def.autoId || isAudited(def.table) ? transaction(fn) : fn({ query })
+  );
 
   router.get('/', async (req, res) => {
     const params = [];
@@ -534,7 +549,7 @@ export function crudRouter(name, def) {
       // writer, rather than inside it: the check is about who is asking,
       // and insertRecord is also called by MCP, which has no such caller.
       await assertParentReachable(client, def, values, scopeOf(req), input);
-      const written = await insertRecord(client, def, { values, input, scope: scopeOf(req) });
+      const written = await insertRecord(client, def, { values, input, scope: scopeOf(req), actor: actorFrom(req.user) });
       return { id: written.row.id, extra: written.extra };
     });
 
@@ -601,7 +616,10 @@ export function crudRouter(name, def) {
       if (!cols.length && !linksOnly) throw new ApiError(422, 'Nothing to update');
 
       let before = null;
-      if (def.onSave) {
+      // Also for an audited table with no onSave hook: a trail that says a
+      // field changed but not what it changed from is the gap #83's review
+      // called out on user emails, and it is no better on a quotation.
+      if (def.onSave || isAudited(def.table)) {
         const keyParams = [];
         const keyPred = scopedIdPredicate(def, req.params.id, keyParams, scopeOf(req), def.table);
         ({ rows: [before] } = await client.query(
@@ -627,6 +645,9 @@ export function crudRouter(name, def) {
       }
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0], input, scope: scopeOf(req) });
+      await logRecordSaved(client, {
+        table: def.table, before, after: rows[0], actor: actorFrom(req.user),
+      });
       return { id: rows[0].id, extra, replacedDocument };
     });
 

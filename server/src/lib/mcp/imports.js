@@ -22,6 +22,7 @@ import { ApiError } from '../../middleware/error.js';
 import { loadBatch, planBatch, recallFile, rememberFile, fileCache } from '../../import/batches.js';
 import { commitBatch } from '../../import/commit.js';
 import { DEFAULT_RULES, rulesSchema } from '../../import/rules.js';
+import { actorFromToken } from '../activity.js';
 
 /**
  * How many rows one conversation may send.
@@ -292,7 +293,13 @@ export async function commitSheetImport(scope, token, { batch_id: batchId, confi
   if (blocking.length) {
     throw new ApiError(422, `${blocking.length} row(s) still have errors, so nothing was written. Fix them or untick them with update_import_plan, then commit again. Rows: ${blocking.slice(0, 10).map((b) => b.seq).join(', ')}${blocking.length > 10 ? '…' : ''}`);
   }
-  const result = await commitBatch(batch, items, { user: `${token.person || token.name} (via MCP)` });
+  // `user` is the label stamped on the records themselves; `actor` is who
+  // the audit trail says acted. They are deliberately separate — the first
+  // is data a sheet can carry, the second comes only from the credential.
+  const result = await commitBatch(batch, items, {
+    user: `${token.person || token.name} (via MCP)`,
+    actor: actorFromToken(token),
+  });
   fileCache.delete(batchId);
   // commitBatch reports every record it touched, one line each — the full
   // list of a 500-row sheet is tens of thousands of characters and would

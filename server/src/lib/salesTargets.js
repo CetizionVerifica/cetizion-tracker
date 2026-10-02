@@ -1,20 +1,45 @@
 import { pool } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, logActivity } from './activity.js';
+import { resolvePeriod } from './reportingPeriod.js';
 
 export const SUPPORTED_TARGET_UNITS = Object.freeze(['count', 'currency', 'percentage']);
+
+/**
+ * A target covers a whole month, quarter or year — never an arbitrary range.
+ *
+ * #18 §4 asks for monthly targets, and monthly is what rolls up: an annual
+ * figure is the sum of its months, while the reverse is an invention. A
+ * target over "12 March to 4 May" could not be summed with anything or
+ * compared with any report period, so it is refused rather than stored.
+ */
+export const TARGET_PERIOD_TYPES = Object.freeze(['month', 'quarter', 'fy', 'calendar-year']);
+
+/**
+ * 066 stores three period types; resolvePeriod names two kinds of year
+ * because a report needs to tell an April-to-March year from a January one.
+ * A stored target does not: its dates already say which, and a fourth value
+ * in the CHECK would have to be added to every database to record something
+ * the row can be read off directly.
+ */
+const storedPeriodType = (type) => (type === 'fy' || type === 'calendar-year' ? 'year' : type);
 
 /**
  * Validate and upsert an annual sales target atomically with an audit log.
  */
 export async function upsertSalesTarget(
   client,
-  { salespersonUserId, calendarYear, metric, targetValue, unit, currency = null, actor }
+  { salespersonUserId, period, metric, targetValue, unit, currency = null, actor }
 ) {
-  const year = Number(calendarYear);
-  if (!Number.isSafeInteger(year) || year < 2000 || year > 2100) {
-    throw new ApiError(422, 'calendar_year must be an integer between 2000 and 2100');
+  // A target belongs to a period, not to a calendar year (#18 §4, 066).
+  // The caller passes the same shape every report uses, so "the target for
+  // March" and "March's figures" cannot describe different months.
+  const { from, to, type } = resolvePeriod(period);
+  if (!TARGET_PERIOD_TYPES.includes(type)) {
+    throw new ApiError(422, `A target covers a whole ${TARGET_PERIOD_TYPES.join(', a ')} — not a custom range`);
   }
+  // Kept in step for anything still reading it; 066 made it derived.
+  const year = Number(from.slice(0, 4));
 
   const metricKey = String(metric ?? '').trim();
   if (!metricKey) {
@@ -72,11 +97,11 @@ export async function upsertSalesTarget(
   const { rows: existingRows } = await client.query(
     `SELECT * FROM sales_targets
       WHERE salesperson_user_id = $1
-        AND calendar_year = $2
-        AND metric = $3
-        AND COALESCE(currency, '') = $4
+        AND period_start = $2::date AND period_end = $3::date
+        AND metric = $4
+        AND COALESCE(currency, '') = $5
       FOR UPDATE`,
-    [targetUser.id, year, metricKey, currParam]
+    [targetUser.id, from, to, metricKey, currParam]
   );
 
   let target;
@@ -104,11 +129,13 @@ export async function upsertSalesTarget(
     isCreated = true;
     const { rows: inserted } = await client.query(
       `INSERT INTO sales_targets (
-         salesperson_user_id, calendar_year, metric, target_value, unit, currency,
+         salesperson_user_id, period_start, period_end, period_type, calendar_year,
+         metric, target_value, unit, currency,
          created_by_user_id, updated_by_user_id, actor_type
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)
+       ) VALUES ($1, $2::date, $3::date, $4, $5, $6, $7, $8, $9, $10, $10, $11)
        RETURNING *`,
-      [targetUser.id, year, metricKey, numVal, unit, cleanCurrency, actorUserId, actor.type]
+      [targetUser.id, from, to, storedPeriodType(type), year,
+        metricKey, numVal, unit, cleanCurrency, actorUserId, actor.type]
     );
     target = inserted[0];
   }
@@ -122,7 +149,9 @@ export async function upsertSalesTarget(
     metadata: {
       salesperson_user_id: targetUser.id,
       salesperson_name: targetUser.name,
-      calendar_year: year,
+      period_start: from,
+      period_end: to,
+      period_type: type,
       metric: metricKey,
       previous_target_value: previousValue !== null ? Number(previousValue) : null,
       new_target_value: numVal,
@@ -143,9 +172,20 @@ export async function upsertSalesTarget(
 /**
  * List annual sales targets filtered by year and/or salesperson.
  */
+/**
+ * Targets for a set of people, optionally narrowed to a date range.
+ *
+ * `salespersonUserIds` rather than one id: the team report asks once for
+ * everybody, so the page does not issue one query per person (#18's
+ * performance note).
+ *
+ * The range filter selects targets lying wholly inside it, which is what
+ * makes an annual attainment the sum of its months rather than the months
+ * plus a year counted twice.
+ */
 export async function listSalesTargets(
   db = pool,
-  { salespersonUserId = null, calendarYear = null } = {}
+  { salespersonUserId = null, salespersonUserIds = null, from = null, to = null } = {}
 ) {
   const clauses = [];
   const params = [];
@@ -155,9 +195,14 @@ export async function listSalesTargets(
     clauses.push(`t.salesperson_user_id = $${params.length}`);
   }
 
-  if (calendarYear !== null) {
-    params.push(Number(calendarYear));
-    clauses.push(`t.calendar_year = $${params.length}`);
+  if (salespersonUserIds !== null) {
+    params.push(salespersonUserIds.map(Number));
+    clauses.push(`t.salesperson_user_id = ANY($${params.length}::int[])`);
+  }
+
+  if (from !== null && to !== null) {
+    params.push(from, to);
+    clauses.push(`t.period_start >= $${params.length - 1}::date AND t.period_end <= $${params.length}::date`);
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -168,6 +213,15 @@ export async function listSalesTargets(
             u.name                 AS salesperson_name,
             u.email                AS salesperson_email,
             u.active               AS salesperson_active,
+            -- As text, not as a date. node-postgres turns a date column into a
+            -- JS Date at local midnight, and every caller then has to
+            -- convert it back without tripping over the timezone —
+            -- String(d).slice(0, 10) yields "Wed Apr 01", which compares
+            -- against an ISO string in the wrong order and silently. The
+            -- database already holds the exact characters wanted.
+            t.period_start::text AS period_start,
+            t.period_end::text   AS period_end,
+            t.period_type,
             t.calendar_year,
             t.metric,
             t.target_value::numeric AS target_value,
@@ -178,7 +232,7 @@ export async function listSalesTargets(
        FROM sales_targets t
        JOIN users u ON u.id = t.salesperson_user_id
        ${where}
-      ORDER BY t.calendar_year DESC, t.salesperson_user_id, t.metric, t.currency NULLS LAST`,
+      ORDER BY t.period_start DESC, t.salesperson_user_id, t.metric, t.currency NULLS LAST`,
     params
   );
 

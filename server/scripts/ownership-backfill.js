@@ -2,8 +2,10 @@
 /**
  * Assign historical ownership that the data names beyond doubt.
  *
- *   npm run ownership:backfill -- --dry-run   what it would do; changes nothing
- *   npm run ownership:backfill               do it
+ *   npm run ownership:backfill -- --dry-run                  what it would do; changes nothing
+ *   npm run ownership:backfill -- --create-users --dry-run   including the accounts it would create
+ *   npm run ownership:backfill -- --create-users             create the missing people, then assign
+ *   npm run ownership:backfill                               assign only
  *
  * Why this exists alongside migration 019: a migration runs once. On a
  * database where the historical salespeople are not yet in the users table,
@@ -23,10 +25,47 @@ import { pool } from '../src/db.js';
 import {
   BACKFILL_MIGRATION, backfillOwnership, formatOwnershipReport, ownershipReport,
 } from '../src/lib/ownership.js';
+import { DISPOSITIONS, createHistoricalUsers } from '../src/lib/historicalUsers.js';
 
-const dryRun = process.argv.slice(2).includes('--dry-run');
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry-run');
+const createUsers = args.includes('--create-users');
+
+/**
+ * `--create-users` first, then the assignment.
+ *
+ * The two are separate commands on purpose (see lib/historicalUsers.js):
+ * creating a person invents an identity and wants an operator looking at
+ * the list, whereas assigning owners is arithmetic on identities that
+ * already exist. Running them in one invocation is a convenience for a
+ * rehearsal, not an instruction to stop reading the output.
+ */
+async function createMissingPeople() {
+  const { created, skipped } = await createHistoricalUsers(pool, { dryRun });
+
+  console.log(dryRun
+    ? 'Historical salespeople — dry run. Nothing is written.\n'
+    : 'Creating historical salespeople as inactive sales accounts.\n');
+
+  if (!created.length) console.log('  No new people to create.');
+  for (const p of created) {
+    const where = `${p.records.total} record${p.records.total === 1 ? '' : 's'}`;
+    const mail = p.email ? ' · ' + p.email : p.emailWithheldReason ? ` · no address (${p.emailWithheldReason})` : ' · no address';
+    console.log(`  ${dryRun ? 'would create' : 'created'}  ${p.displayName}  (${where}${mail})`);
+  }
+
+  const ambiguous = skipped.filter((s) => s.disposition === DISPOSITIONS.AMBIGUOUS);
+  const exists = skipped.filter((s) => s.disposition === DISPOSITIONS.EXISTS);
+  if (exists.length) console.log(`\n  ${exists.length} name${exists.length === 1 ? '' : 's'} already had an account.`);
+  for (const p of ambiguous) {
+    console.log(`  AMBIGUOUS  ${p.displayName} — ${p.existingUserCount} accounts carry this name; assign these ${p.records.total} records by hand.`);
+  }
+  console.log('');
+}
 
 try {
+  if (createUsers) await createMissingPeople();
+
   if (dryRun) {
     console.log('Ownership backfill — dry run. Nothing is written.\n');
     console.log(formatOwnershipReport(await ownershipReport()));

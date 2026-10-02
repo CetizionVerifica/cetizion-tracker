@@ -21,6 +21,7 @@ import { transaction } from '../../db.js';
 import { ApiError } from '../../middleware/error.js';
 import { resources } from '../resources.js';
 import { insertRecord, updateRecordRow, validateRecord } from '../crud.js';
+import { actorFromToken } from '../activity.js';
 
 /**
  * As many rows as one call may carry.
@@ -183,6 +184,8 @@ export async function importRecords(scope, token, { entity, rows, dry_run: dryRu
     return found?.id ?? null;
   };
 
+  const actor = actorFromToken(token);
+
   return transaction(async (client) => {
     const results = [];
     for (const r of checked) {
@@ -193,9 +196,14 @@ export async function importRecords(scope, token, { entity, rows, dry_run: dryRu
       if (dryRun) { results.push({ at: r.at, action, key: r.key, id: existing }); continue; }
 
       if (def.stampActor && !r.values[def.stampActor]) r.values[def.stampActor] = `${token.person || token.name} (via MCP)`;
+      // The audit actor comes from the token, never from the row. A sheet
+      // may carry its own `created_by` — that is what stampActor above is
+      // for — and it must not be able to sign somebody else's name to the
+      // activity trail. Records written here were invisible to the log
+      // until now, which is the half of #18 §3 that MCP was missing.
       const written = existing
-        ? await updateRecordRow(client, def, existing, { values: r.values, input: r.input })
-        : await insertRecord(client, def, { values: r.values, input: r.input });
+        ? await updateRecordRow(client, def, existing, { values: r.values, input: r.input, actor })
+        : await insertRecord(client, def, { values: r.values, input: r.input, actor });
       results.push({ at: r.at, action, key: r.key, id: written?.row?.id ?? existing });
     }
     const out = report(results);

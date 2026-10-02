@@ -485,6 +485,25 @@ export const routes = [
     method: 'PATCH', path: '/api/:resource/:id/owner', access: mustBeAdmin,
     why: 'Assigning, reassigning or unassigning a record moves somebody else\'s pipeline. Sales users already see only their own rows, so letting one of them set owner_user_id would let them take a record off a colleague, or hand their own away to hide it (#18 Phase 3).',
   },
+  // The queue of records nobody owns, and the people the backfill could not
+  // match to an account. Both name other salespeople's work, and both exist
+  // to be acted on by whoever assigns ownership — which is the administrator.
+  {
+    method: 'GET', path: '/api/ownership/unassigned', access: mustBeAdmin,
+    why: 'Everything ownership could not settle, across every owned table. It is the whole of what the team has not claimed, which is the administrator\'s list to work through rather than any one salesperson\'s (#18 Phase 3).',
+  },
+  {
+    method: 'GET', path: '/api/ownership/unassigned/:resource/suggestions', access: mustBeAdmin,
+    why: 'Who each unassigned record probably belongs to, matched from the name and email it carries. It reads other people\'s records and names accounts to attach them to, and a suggestion is the step before an assignment, which only an administrator may make (#18 Phase 3).',
+  },
+  {
+    method: 'GET', path: '/api/ownership/historical-salespeople', access: mustBeAdmin,
+    why: 'The salespeople named in old records who have no account. It is a list of people, not of records, and it exists so an administrator can decide which of them to create (#18 Phase 3).',
+  },
+  {
+    method: 'POST', path: '/api/ownership/historical-salespeople', access: mustBeAdmin,
+    why: 'Creating accounts for the people old records name. Making a user is an administrator\'s act wherever it happens, and these are inactive accounts that exist to own history rather than to sign in (#18 Phase 3).',
+  },
   {
     method: 'GET', path: '/api/:resource/:id/ownership-history', access: mustBeAdmin,
     why: 'The handover trail for one record: who owned it, who changed that, and when. It names accounts other than the caller\'s, which is the administrator\'s view of the team rather than a salesperson\'s view of their own work (#18 Phase 3).',

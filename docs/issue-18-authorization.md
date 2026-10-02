@@ -287,6 +287,11 @@ session is **401**, before any of these is considered.
 | `POST /api/notifications/read-all` | any | Scoped: record-owner. |
 | `GET /api/notifications/summary` | any | Scoped: record-owner. |
 | `POST /api/notifications/sweep` | **admin** | The same work as the notifications.daily job. Running a job by hand is operational. |
+| **/api/ownership** | | |
+| `GET /api/ownership/historical-salespeople` | **admin** | The salespeople named in old records who have no account. It is a list of people, not of records, and it exists so an administrator can decide which of them to create (#18 Phase 3). |
+| `POST /api/ownership/historical-salespeople` | **admin** | Creating accounts for the people old records name. Making a user is an administrator's act wherever it happens, and these are inactive accounts that exist to own history rather than to sign in (#18 Phase 3). |
+| `GET /api/ownership/unassigned` | **admin** | Everything ownership could not settle, across every owned table. It is the whole of what the team has not claimed, which is the administrator's list to work through rather than any one salesperson's (#18 Phase 3). |
+| `GET /api/ownership/unassigned/:resource/suggestions` | **admin** | Who each unassigned record probably belongs to, matched from the name and email it carries. It reads other people's records and names accounts to attach them to, and a suggestion is the step before an assignment, which only an administrator may make (#18 Phase 3). |
 | **/api/payment-stages** | | |
 | `POST /api/payment-stages/:id/invoice` | any |  |
 | `POST /api/payment-stages/:id/payment` | any |  |

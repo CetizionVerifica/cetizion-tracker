@@ -38,6 +38,24 @@ export const ACTIONS = {
   OWNERSHIP_UNASSIGNED: 'ownership.unassigned',
   TARGET_CREATED: 'target.created',
   TARGET_UPDATED: 'target.updated',
+
+  // The sales workflow (#18 §3). A status change is its own action rather
+  // than a field inside `*.updated`: "moved to Won" is what a timeline, a
+  // KPI and a handover argument all look for, and burying it in a generic
+  // edit means every reader has to parse metadata to find it.
+  ENQUIRY_CREATED: 'enquiry.created',
+  ENQUIRY_UPDATED: 'enquiry.updated',
+  ENQUIRY_STATUS_CHANGED: 'enquiry.status_changed',
+  QUOTATION_CREATED: 'quotation.created',
+  QUOTATION_UPDATED: 'quotation.updated',
+  QUOTATION_STATUS_CHANGED: 'quotation.status_changed',
+  QUOTATION_CONVERTED: 'quotation.converted',
+  PROJECT_CREATED: 'project.created',
+  PROJECT_UPDATED: 'project.updated',
+  PROJECT_STATUS_CHANGED: 'project.status_changed',
+  STAGE_INVOICED: 'stage.invoiced',
+  PAYMENT_RECORDED: 'payment.recorded',
+
   // Money (#85). An expense claim's approval and its reimbursement are the
   // two acts that turn a submitted claim into a payment, and a vendor
   // invoice's payment is the same act on the other side of a trip. Each is
@@ -48,6 +66,22 @@ export const ACTIONS = {
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
 };
+
+/**
+ * Sign-in is deliberately NOT here.
+ *
+ * @Hayyan612's #83 review called missing sign-in events "the biggest gap"
+ * in this table, and on the face of it that is right. But `auth_events`
+ * (040) already records every success and failure with the address and the
+ * reason, and it is not a log the rate limiter happens to write — it is the
+ * limiter's own store, read by recentFailures() to decide a lockout.
+ * Copying those rows here would give one event two homes that can disagree,
+ * which is the shape of problem this codebase keeps refusing elsewhere.
+ *
+ * What 040 was genuinely missing is fixed in 065 instead: it keyed a
+ * sign-in to a typed username rather than to an account, and it recorded no
+ * sign-out at all.
+ */
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */
 export const SYSTEM_ACTOR = Object.freeze({ type: 'system', userId: null, name: null });
@@ -81,6 +115,35 @@ export function actorFrom(user) {
     return { type: 'shared_admin', userId: null, name: user.username ?? null };
   }
   throw new Error('Cannot record activity: the request has no recognised signed-in user.');
+}
+
+/**
+ * The actor behind an MCP call.
+ *
+ * A bearer token rather than a session cookie, but the same two shapes and
+ * the same rule: the identity comes from the credential, never from the
+ * payload. An import can carry its own `created_by` — that is what the
+ * column is for — and it does not touch who the audit trail says acted.
+ *
+ *   sales token   `users.id`, since 063 bound every live one to an account.
+ *   admin token   no account exists behind it, so `shared_admin` — the same
+ *                 classification the legacy shared login gets, and for the
+ *                 same reason: an administrator with no users row. The
+ *                 token's own name is carried as the label, which is what
+ *                 makes "Reporting" distinguishable from "Claude desktop"
+ *                 in the log.
+ *
+ * Returns null rather than throwing when there is no token at all. Unlike a
+ * request, an MCP writer can legitimately be called without one — the sheet
+ * importer's own tests drive it directly — and the writers treat a missing
+ * actor as "do not record" rather than as a failure.
+ */
+export function actorFromToken(token) {
+  if (!token) return null;
+  if (Number.isSafeInteger(token.user_id) && token.user_id > 0) {
+    return { type: 'user', userId: token.user_id, name: token.person ?? null };
+  }
+  return { type: 'shared_admin', userId: null, name: token.name ?? token.person ?? null };
 }
 
 // Anything whose name suggests it would let somebody act as the person

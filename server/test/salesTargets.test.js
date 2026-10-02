@@ -10,7 +10,7 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const PASSWORD = 'a-good-long-test-password';
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 
-describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
+describe('sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   let dbUrl;
   let db;
   let app;
@@ -85,7 +85,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/order_intake_value`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 5000000,
         unit: 'currency',
         currency: 'INR',
@@ -93,7 +93,8 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
 
     assert.equal(resCreate.status, 201, JSON.stringify(resCreate.body));
     assert.equal(resCreate.body.data.salesperson_user_id, salesA.user.id);
-    assert.equal(resCreate.body.data.calendar_year, 2026);
+    assert.equal(resCreate.body.data.period_start.toISOString?.().slice(0, 10) ?? String(resCreate.body.data.period_start).slice(0, 10), '2026-01-01');
+    assert.equal(resCreate.body.data.period_type, 'year');
     assert.equal(resCreate.body.data.metric, 'order_intake_value');
     assert.equal(resCreate.body.data.target_value, 5000000);
     assert.equal(resCreate.body.data.currency, 'INR');
@@ -111,7 +112,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/order_intake_value`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 6500000,
         unit: 'currency',
         currency: 'INR',
@@ -138,7 +139,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 12.5,
         unit: 'count',
       });
@@ -149,7 +150,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 12,
         unit: 'count',
         currency: 'INR',
@@ -161,7 +162,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 20,
         unit: 'count',
       });
@@ -178,14 +179,14 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 15,
         unit: 'count',
       });
 
     // Check directly in database that only 1 row exists
     const { rows: targets } = await db.query(
-      'SELECT id, target_value FROM sales_targets WHERE salesperson_user_id = $1 AND calendar_year = 2026 AND metric = $2',
+      "SELECT id, target_value FROM sales_targets WHERE salesperson_user_id = $1 AND period_start = '2026-01-01' AND metric = $2",
       [salesA.user.id, 'won_quotations_count']
     );
     assert.equal(targets.length, 1);
@@ -194,11 +195,11 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     // Attempting a second raw insert with currency NULL violates unique index
     await assert.rejects(async () => {
       await db.query(
-        `INSERT INTO sales_targets (salesperson_user_id, calendar_year, metric, target_value, unit, currency)
-         VALUES ($1, 2026, 'won_quotations_count', 25, 'count', NULL)`,
+        `INSERT INTO sales_targets (salesperson_user_id, period_start, period_end, period_type, calendar_year, metric, target_value, unit, currency)
+         VALUES ($1, '2026-01-01', '2027-01-01', 'year', 2026, 'won_quotations_count', 25, 'count', NULL)`,
         [salesA.user.id]
       );
-    }, /sales_targets_unique_idx/);
+    }, /sales_targets_period_unique_idx/);
   });
 
   test('monetary targets require explicit currency and reject negative amounts', async () => {
@@ -209,7 +210,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/order_intake_value`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 100000,
         unit: 'currency',
       });
@@ -220,7 +221,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/order_intake_value`)
       .set('Cookie', admin.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: -5000,
         unit: 'currency',
         currency: 'INR',
@@ -235,7 +236,7 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', salesA.cookie)
       .send({
-        calendar_year: 2026,
+        period: { preset: 'calendar-year', anchor: '2026-06-01' },
         target_value: 50,
         unit: 'count',
       });
@@ -249,16 +250,16 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     await request(app)
       .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
-      .send({ calendar_year: 2026, target_value: 10, unit: 'count' });
+      .send({ period: { preset: 'calendar-year', anchor: '2026-06-01' }, target_value: 10, unit: 'count' });
 
     await request(app)
       .put(`/api/kpis/users/${salesB.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
-      .send({ calendar_year: 2026, target_value: 20, unit: 'count' });
+      .send({ period: { preset: 'calendar-year', anchor: '2026-06-01' }, target_value: 20, unit: 'count' });
 
     // Sales A requests targets without param -> gets Sales A's target only
     const resA = await request(app)
-      .get('/api/kpis/targets?year=2026')
+      .get('/api/kpis/targets?from=2026-01-01&to=2027-01-01')
       .set('Cookie', salesA.cookie);
     assert.equal(resA.status, 200);
     assert.equal(resA.body.data.length, 1);
@@ -266,13 +267,13 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
 
     // Sales A attempts to request Sales B's targets -> 403 Forbidden
     const resForbidden = await request(app)
-      .get(`/api/kpis/targets?year=2026&salesperson_user_id=${salesB.user.id}`)
+      .get(`/api/kpis/targets?from=2026-01-01&to=2027-01-01&salesperson_user_id=${salesB.user.id}`)
       .set('Cookie', salesA.cookie);
     assert.equal(resForbidden.status, 403);
 
     // Admin requests targets -> sees both
     const resAdmin = await request(app)
-      .get('/api/kpis/targets?year=2026')
+      .get('/api/kpis/targets?from=2026-01-01&to=2027-01-01')
       .set('Cookie', admin.cookie);
     assert.equal(resAdmin.status, 200);
     assert.equal(resAdmin.body.data.length, 2);
@@ -285,14 +286,14 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     await request(app)
       .put(`/api/kpis/users/${salesB.user.id}/targets/won_quotations_count`)
       .set('Cookie', admin.cookie)
-      .send({ calendar_year: 2026, target_value: 30, unit: 'count' });
+      .send({ period: { preset: 'calendar-year', anchor: '2026-06-01' }, target_value: 30, unit: 'count' });
 
     // Deactivate Sales B
     await db.query('UPDATE users SET active = false WHERE id = $1', [salesB.user.id]);
 
     // Admin can still list targets and sees Sales B's target
     const resDeact = await request(app)
-      .get(`/api/kpis/targets?year=2026&salesperson_user_id=${salesB.user.id}`)
+      .get(`/api/kpis/targets?from=2026-01-01&to=2027-01-01&salesperson_user_id=${salesB.user.id}`)
       .set('Cookie', admin.cookie);
     assert.equal(resDeact.status, 200);
     assert.equal(resDeact.body.data.length, 1);
@@ -303,4 +304,144 @@ describe('annual sales targets', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
       await db.query('DELETE FROM users WHERE id = $1', [salesB.user.id]);
     }, /sales_targets_salesperson_user_id_fkey/);
   });
+
+  // ------------------------------------------------- monthly, and the sum
+
+  test('a target can be set per month, twelve times in one year', async () => {
+    await setUp();
+    for (const month of ['2026-04', '2026-05', '2026-06']) {
+      const res = await request(app)
+        .put(`/api/kpis/users/${salesA.user.id}/targets/order_intake_value`)
+        .set('Cookie', admin.cookie)
+        .send({
+          period: { preset: 'month', anchor: `${month}-15` },
+          target_value: 100000, unit: 'currency', currency: 'INR',
+        });
+      assert.equal(res.status, 201, `${month}: ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.data.period_type, 'month');
+    }
+
+    const { rows } = await db.query(
+      'SELECT COUNT(*)::int AS n FROM sales_targets WHERE salesperson_user_id = $1 AND metric = $2',
+      [salesA.user.id, 'order_intake_value']
+    );
+    assert.equal(rows[0].n, 3,
+      'the old index keyed on the year and would have refused the second one');
+  });
+
+  test('an annual figure is the sum of the months inside it', async () => {
+    await setUp();
+    for (const month of ['2026-04', '2026-05', '2026-06']) {
+      await request(app)
+        .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+        .set('Cookie', admin.cookie)
+        .send({ period: { preset: 'month', anchor: `${month}-15` }, target_value: 5, unit: 'count' })
+        .expect(201);
+    }
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2026-07-01' },
+      compare: false,
+    });
+    const target = report.targets.find((t) => t.metric === 'won_quotations_count');
+    assert.equal(target.target_value, 15, 'three months of five');
+    assert.equal(target.periods, 3, 'and it says how many periods it added up');
+  });
+
+  test('a target outside the range asked about is not counted in it', async () => {
+    await setUp();
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'month', anchor: '2026-04-15' }, target_value: 5, unit: 'count' })
+      .expect(201);
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'month', anchor: '2026-09-15' }, target_value: 99, unit: 'count' })
+      .expect(201);
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2026-05-01' },
+      compare: false,
+    });
+    assert.equal(report.targets.find((t) => t.metric === 'won_quotations_count').target_value, 5,
+      'September\'s target has nothing to do with April');
+  });
+
+  test('a target must cover a whole period, not an arbitrary range', async () => {
+    await setUp();
+    const res = await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { from: '2026-04-12', to: '2026-05-04' }, target_value: 5, unit: 'count' });
+    assert.equal(res.status, 422,
+      'a target over twenty-two days could not be summed with anything or compared with any report');
+  });
+
+  test('a metric nothing computes is refused, not stored as a bar that never moves', async () => {
+    await setUp();
+    const res = await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/handshakes_per_week`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'month', anchor: '2026-04-15' }, target_value: 5, unit: 'count' });
+    assert.ok(res.status >= 400, `expected a refusal, got ${res.status}`);
+  });
+
+
+  test('a month and a year target for one metric are not counted twice', async () => {
+    await setUp();
+    // Nothing in the schema stops an admin setting both: a month and a year
+    // are different periods, so the unique index allows each.
+    for (const month of ['2026-04', '2026-05', '2026-06']) {
+      await request(app)
+        .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+        .set('Cookie', admin.cookie)
+        .send({ period: { preset: 'month', anchor: `${month}-15` }, target_value: 5, unit: 'count' })
+        .expect(201);
+    }
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'fy', anchor: '2026-06-01' }, target_value: 60, unit: 'count' })
+      .expect(201);
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2027-04-01' },
+      compare: false,
+    });
+    const target = report.targets.find((t) => t.metric === 'won_quotations_count');
+
+    assert.equal(target.target_value, 15,
+      'the three months, not the three months plus the year on top of them');
+    assert.equal(target.period_type, 'month', 'the finest granularity somebody stated wins');
+    assert.ok(target.ignored_coarser_targets?.some((i) => i.period_type === 'year'),
+      'and the annual figure is reported as ignored rather than dropped in silence');
+  });
+
+  test('an annual target alone is still used when no monthly ones exist', async () => {
+    await setUp();
+    await request(app)
+      .put(`/api/kpis/users/${salesA.user.id}/targets/won_quotations_count`)
+      .set('Cookie', admin.cookie)
+      .send({ period: { preset: 'fy', anchor: '2026-06-01' }, target_value: 60, unit: 'count' })
+      .expect(201);
+
+    const { getSalespersonKpis } = await import('../src/lib/salesKpis.js');
+    const report = await getSalespersonKpis({
+      userId: salesA.user.id,
+      period: { from: '2026-04-01', to: '2027-04-01' },
+      compare: false,
+    });
+    const target = report.targets.find((t) => t.metric === 'won_quotations_count');
+    assert.equal(target.target_value, 60);
+    assert.equal(target.period_type, 'year');
+  });
+
 });

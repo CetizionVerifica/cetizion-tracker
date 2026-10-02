@@ -58,6 +58,15 @@ describe('MCP cannot write the workflow-owned columns', { skip: !ADMIN_URL && 's
         VALUES ('VI-P1', 'TRV-P1', 'YT/2026/9', 12000);
     `);
 
+    // The account the sales token below acts as. Since 063 a sales token is
+    // bound to a users.id rather than to a spelling of somebody's name, and
+    // a name that matches no account is refused — so the person has to exist
+    // before a token can be issued for them (#18, migrations/063).
+    await db.query(
+      `INSERT INTO users (name, email, password_hash, role, active)
+       VALUES ('Sam Sales', 'sam.sales@example.com', 'x', 'sales', true)`
+    );
+
     Object.assign(process.env, {
       SKIP_DOTENV: '1', NODE_ENV: 'test', DATABASE_URL: url.toString(),
       AUTH_USERNAME: 'tester', AUTH_PASSWORD: 'a-good-long-test-password',
