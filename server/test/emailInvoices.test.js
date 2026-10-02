@@ -463,4 +463,37 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.deepEqual(settled, { outcome: 'recorded_by_hand', po_number: '4500043043', stage_id: s2.id });
     void client;
   });
+
+  // ---------------------------------------------------------- wrong PO
+
+  test('an invoice citing a PO not in the tracker waits for it, rather than landing on another PO with a stage of that amount', async () => {
+    const box = await mailbox();
+    const { email } = await poFor('Recurring Audit Ltd', 'RA-1001');
+    const msg = invoiceEmail(box, email, { no: 'CVPL/WAIT/0001', buyer: 'Recurring Audit Ltd', po: 'RA-2002' });
+    ai(reading({ invoice_no: 'CVPL/WAIT/0001', buyer: { company_name: 'Recurring Audit Ltd' }, po_reference: 'RA-2002' }));
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.equal(d.outcome, 'waiting', JSON.stringify(d));
+    assert.deepEqual((await stagesOf('RA-1001')).map((st) => st.invoice_no), [null, null], 'the other PO is left alone');
+  });
+
+  test('an invoice to a client we cannot identify, naming a PO number another client has, goes to review', async () => {
+    const box = await mailbox();
+    await poFor('Short Numbers Ltd', '1001');
+    const msg = invoiceEmail(box, 'accounts@never-seen-before.example', { no: 'CVPL/WHO/0001', buyer: 'Never Seen Before Pvt Ltd', po: '1001' });
+    ai(reading({ invoice_no: 'CVPL/WHO/0001', buyer: { company_name: 'Never Seen Before Pvt Ltd' }, po_reference: '1001' }));
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'client_unknown'], JSON.stringify(d));
+    assert.deepEqual((await stagesOf('1001')).map((st) => st.invoice_no), [null, null]);
+  });
+
+  test('an invoice citing nothing still finds its client\'s PO by the stage amount', async () => {
+    const box = await mailbox();
+    const { email } = await poFor('Cites Nothing Ltd', 'CN-1001');
+    const msg = invoiceEmail(box, email, { no: 'CVPL/AMT/0001', buyer: 'Cites Nothing Ltd' });
+    ai(reading({ invoice_no: 'CVPL/AMT/0001', buyer: { company_name: 'Cites Nothing Ltd' } }));
+    await deliver(box, [msg]);
+    assert.equal((await stagesOf('CN-1001'))[0].invoice_no, 'CVPL/AMT/0001');
+  });
 });

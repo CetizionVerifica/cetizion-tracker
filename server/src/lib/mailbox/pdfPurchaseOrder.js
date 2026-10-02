@@ -105,8 +105,11 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
     flags.push('po_date_from_email');
   }
 
-  const currency = v.currency || 'INR';
-  if (!STATUS.currency.includes(currency)) return fail('bad_currency');
+  // Unknown stays unknown: the quotation it matches says what it is
+  // (matchQuotation). Read as INR, a USD order printed without a symbol
+  // was registered at an eighty-fifth of its value.
+  const currency = v.currency || null;
+  if (currency && !STATUS.currency.includes(currency)) return fail('bad_currency');
   po.currency = currency;
 
   // Values. The total includes tax; with "GST extra" only the basic value

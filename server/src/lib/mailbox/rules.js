@@ -9,8 +9,20 @@ import { QUOTE_CLASSES, splitQuoted } from './quotes.js';
 export const addr = (s) => String(s || '').trim().toLowerCase();
 export const domainOf = (email) => addr(email).split('@')[1] || '';
 
-/** Free-mail domains never identify a company. */
-export const PUBLIC_DOMAINS = new Set(['gmail.com', 'yahoo.com', 'yahoo.co.in', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'rediffmail.com', 'proton.me', 'protonmail.com', 'aol.com', 'zoho.com']);
+/**
+ * Free-mail domains never identify a company. Two people writing from one
+ * of these are not colleagues: matching on the domain merged unrelated
+ * senders into whichever client had a contact there first.
+ */
+export const PUBLIC_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com',
+  'yahoo.com', 'yahoo.co.in', 'yahoo.in', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com',
+  'outlook.com', 'outlook.in', 'hotmail.com', 'hotmail.co.uk', 'hotmail.co.in', 'live.com', 'live.in', 'msn.com',
+  'icloud.com', 'me.com', 'mac.com',
+  'rediffmail.com', 'rediff.com', 'sify.com', 'indiatimes.com',
+  'proton.me', 'protonmail.com', 'pm.me', 'aol.com', 'zoho.com', 'zohomail.in', 'zohomail.com',
+  'gmx.com', 'gmx.net', 'mail.com', 'yandex.com', 'tutanota.com',
+]);
 
 export function isBlocked(email, blocklist = []) {
   const e = addr(email); const d = domainOf(e);

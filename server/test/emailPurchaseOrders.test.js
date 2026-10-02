@@ -692,4 +692,85 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     await agent.post(`/api/purchase-orders/review/${d.id}/register`).expect(200);
     assert.equal(await autoEnquiry.aiCallsToday(), before + 1);
   });
+
+  // ---------------------------------------------------------- wrong client, wrong PO
+
+  test('a PO number another client already has, from a buyer we cannot identify, goes to review and touches nothing', async () => {
+    const box = await mailbox();
+    await client('Known Client Ltd', 'buyer@known-client.co.in');
+    const q = await quotation('Known Client Ltd');
+    await agent.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`).send({ po_number: '4500088888', po_date: day(10), payment_terms_days: 30 }).expect(201);
+    const msg = poEmail({ from: { email: 'someone.new@gmail.com', name: 'Someone' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500088888', buyer: 'Brand New Buyer Pvt Ltd' }) }] });
+    ai(reading({ po_number: '4500088888', buyer: { company_name: 'Brand New Buyer Pvt Ltd' } }));
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'company_mismatch']);
+    assert.equal((await poRow('4500088888')).document_id, null, 'the other client\'s PO gets no PDF');
+  });
+
+  test('a PO printing no currency takes its quotation\'s: a USD quotation registers a USD PO', async () => {
+    const box = await mailbox();
+    await client('Dollar Buyer Inc', 'ap@dollar-buyer.com');
+    const q = await quotation('Dollar Buyer Inc');
+    await db.query(`UPDATE quotations SET currency = 'USD' WHERE id = $1`, [q.id]);
+    const msg = poEmail({ from: { email: 'ap@dollar-buyer.com' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077001', buyer: 'Dollar Buyer Inc' }) }] });
+    ai(reading({ po_number: '4500077001', buyer: { company_name: 'Dollar Buyer Inc' }, currency: null }));
+    await deliver(box, [msg]);
+    const po = await poRow('4500077001');
+    assert.ok(po, JSON.stringify(await decision(box.id, msg.provider_id)));
+    assert.equal(po.currency, 'USD');
+  });
+
+  test('a PO in another currency than its quotation goes to review instead of matching on the number alone', async () => {
+    const box = await mailbox();
+    await client('Rupee Buyer Ltd', 'ap@rupee-buyer.co.in');
+    const q = await quotation('Rupee Buyer Ltd');
+    await db.query(`UPDATE quotations SET currency = 'USD' WHERE id = $1`, [q.id]);
+    const msg = poEmail({ from: { email: 'ap@rupee-buyer.co.in' }, subject: `PO against ${q.quotation_no}`, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077002', buyer: 'Rupee Buyer Ltd', ref: q.quotation_no }) }] });
+    ai(reading({ po_number: '4500077002', buyer: { company_name: 'Rupee Buyer Ltd' }, our_quotation_ref: q.quotation_no, currency: 'INR' }));
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'currency_mismatch']);
+    assert.equal(await poRow('4500077002'), undefined);
+  });
+
+  test('with no quotation to take it from, a PO printing no currency is INR only for a GST-registered buyer', async () => {
+    const box = await mailbox();
+    await client('Abroad Buyer GmbH', 'einkauf@abroad-buyer.de');
+    const unknown = poEmail({ from: { email: 'einkauf@abroad-buyer.de' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077003', buyer: 'Abroad Buyer GmbH' }) }] });
+    ai(reading({ po_number: '4500077003', buyer: { company_name: 'Abroad Buyer GmbH' }, currency: null }));
+    await deliver(box, [unknown]);
+    const d = await decision(box.id, unknown.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'no_currency']);
+
+    await client('Gst Buyer Ltd', 'ap@gst-buyer.co.in');
+    const indian = poEmail({ from: { email: 'ap@gst-buyer.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077004', buyer: 'Gst Buyer Ltd' }) }] });
+    ai(reading({ po_number: '4500077004', buyer: { company_name: 'Gst Buyer Ltd', gstin: '27AAACG1234A1Z5' }, currency: null }));
+    await deliver(box, [indian]);
+    assert.equal((await poRow('4500077004'))?.currency, 'INR');
+  });
+
+  test('a quotation made from a PO is filed under the client already found, however the PO spells its name', async () => {
+    const box = await mailbox();
+    const companyId = await client('Spelling Steel Ltd', 'ap@spelling-steel.co.in');
+    const msg = poEmail({ from: { email: 'ap@spelling-steel.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077005', buyer: 'SPELLING STEEL LIMITED' }) }] });
+    ai(reading({ po_number: '4500077005', buyer: { company_name: 'SPELLING STEEL LIMITED' } }));
+    await deliver(box, [msg]);
+    const po = await poRow('4500077005');
+    assert.ok(po, JSON.stringify(await decision(box.id, msg.provider_id)));
+    const { rows: [q] } = await db.query('SELECT company_id, client_name FROM quotations WHERE quotation_no = $1', [po.quotation_no]);
+    assert.deepEqual([q.company_id, q.client_name], [companyId, 'Spelling Steel Ltd']);
+    const { rows: [{ n: companies }] } = await db.query(`SELECT count(*)::int AS n FROM companies WHERE lower(name) LIKE 'spelling steel%'`);
+    assert.equal(companies, 1, 'no second company');
+  });
+
+  test('a sender is matched to a company by its website\'s host, not by any website containing the domain', async () => {
+    const { rows: [{ id }] } = await db.query('SELECT company_for($1) AS id', ['Sun Pharmatech Industries']);
+    await db.query(`UPDATE companies SET website = 'https://www.sunpharmatech.com/about' WHERE id = $1`, [id]);
+    const match = (email) => sync.matchParticipants(db, [{ email, name: 'X' }], { autoCreate: false });
+    assert.equal((await match('x@pharmatech.com')).company_id, null, 'pharmatech.com is not sunpharmatech.com');
+    assert.equal((await match('x@sunpharmatech.com')).company_id, id);
+    assert.equal((await match('x@mail.sunpharmatech.com')).company_id, id, 'a subdomain is still theirs');
+    assert.equal((await match('x@sunpharmatech.com.evil.example')).company_id, null);
+  });
 });
