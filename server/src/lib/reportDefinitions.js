@@ -22,6 +22,7 @@ import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
  *   2. What happened to them: converted, pipeline, lost, quoted–not–won? §4.2
  *   3. Which sectors gave us POs?                                   §4.3
  *   4. Which services sell best?                                    §4.4
+ *   5. New customers, and repeat orders from existing ones?         §4.5
  *   6. What is the revenue each month, and which sales make it up?  §4.6
  *
  * The pure functions at the top take rows and return figures, so the rules
@@ -538,6 +539,103 @@ export function serviceSection(pos, categories, linesOf) {
 }
 
 // ---------------------------------------------------------------------
+// 5. New and existing customers (§4.5)
+// ---------------------------------------------------------------------
+
+/**
+ * Every counting PO a customer has ever placed, oldest first, from
+ * orderIndexRows: Map(customer_key → [{ po_number, date }]). A customer's
+ * first order is the first in its list; nothing is stored.
+ */
+export function orderIndex(rows) {
+  const index = new Map();
+  for (const row of rows) index.set(row.customer_key, [...(index.get(row.customer_key) ?? []), row]);
+  for (const list of index.values()) list.sort((a, b) => a.date.localeCompare(b.date) || a.po_number.localeCompare(b.po_number));
+  return index;
+}
+
+/**
+ * New customers, repeat orders, and enquiries from customers who had never
+ * ordered — for a period.
+ *
+ *   new customer   their first-ever PO falls in the period
+ *   existing       their first PO was before the period started
+ *   repeat order   a PO in the period that is not the customer's first
+ *                  (so a new customer's second PO this period is a repeat)
+ *   new-customer   an enquiry from a customer with no PO before the
+ *   enquiry        enquiry's own date, including one who has none at all
+ *
+ * Every PO in the period is exactly one of "first order" or "repeat", so
+ * the two values add up to the revenue total.
+ *
+ * `pos`: the period's PO rows (po_number, date, client, customer_key,
+ *        customer, keyed_by_name, po_value_inr, service)
+ * `index`: orderIndex over every counting PO, whoever owns it
+ * `enquiries`: the period's enquiry rows with customer_key and outcome
+ */
+export function customerSection(pos, index, enquiries, { from } = {}) {
+  const firstDate = (key) => index.get(key)?.[0]?.date ?? null;
+  const previous = (po) => (index.get(po.customer_key) ?? []).findIndex((o) => o.po_number === po.po_number);
+
+  const orders = pos.filter((po) => po.date).map((po) => {
+    const prior = previous(po);
+    return { ...po, previous_orders: Math.max(prior, 0), repeat: prior > 0 };
+  });
+  const customers = new Map();
+  for (const po of orders) {
+    const c = customers.get(po.customer_key) ?? {
+      customer: po.customer, first_po_date: firstDate(po.customer_key), pos: 0, value_inr: 0,
+    };
+    c.pos += 1;
+    c.value_inr += po.po_value_inr ?? 0;
+    customers.set(po.customer_key, c);
+  }
+  const isNew = (c) => !from || (c.first_po_date && c.first_po_date >= from);
+  const newCustomers = [...customers.values()].filter(isNew);
+  const repeats = orders.filter((po) => po.repeat);
+  const valueOf = (list) => r2(list.reduce((n, po) => n + (po.po_value_inr ?? 0), 0));
+  const repeatValue = valueOf(repeats);
+  const firstValue = valueOf(orders.filter((po) => !po.repeat));
+  const [, repeatPct] = percentages([firstValue, repeatValue]);
+
+  const enquiryRows = enquiries.map((e) => {
+    const first = firstDate(e.customer_key);
+    return { ...e, new_customer: !first || !e.date || first >= e.date };
+  });
+  const fromNew = enquiryRows.filter((e) => e.new_customer);
+
+  return {
+    tiles: {
+      customers: customers.size,
+      new_customers: newCustomers.length,
+      existing_customers: customers.size - newCustomers.length,
+      first_orders: orders.length - repeats.length,
+      repeat_orders: repeats.length,
+      first_order_value_inr: firstValue,
+      repeat_value_inr: repeatValue,
+      repeat_share_pct: repeatPct,
+      enquiries_from_new: fromNew.length,
+      enquiries_from_existing: enquiryRows.length - fromNew.length,
+    },
+    new_customers: newCustomers
+      .map((c) => ({ ...c, value_inr: r2(c.value_inr) }))
+      .sort((a, b) => b.value_inr - a.value_inr || a.customer.localeCompare(b.customer)),
+    new_customer_enquiries: fromNew.map((e) => ({
+      enquiry_no: e.enquiry_no, client: e.client, date: e.date, outcome: enquiryOutcome(e).outcome,
+    })),
+    repeat_orders: repeats.map((po) => ({
+      po_number: po.po_number,
+      po_date: po.date,
+      customer: po.customer,
+      po_value_inr: po.po_value_inr,
+      service: po.service,
+      previous_orders: po.previous_orders,
+    })),
+    keyed_by_name: orders.filter((po) => po.keyed_by_name).length,
+  };
+}
+
+// ---------------------------------------------------------------------
 // 6. Monthly revenue (§4.6)
 // ---------------------------------------------------------------------
 
@@ -647,10 +745,47 @@ export function reportScope(scope, reqQuery = {}) {
 }
 
 /**
+ * Who a record's customer is, as SQL: its company, else the company whose
+ * name matches the client name (ignoring case and spacing), else the client
+ * name itself. `customer_key` is "c:<id>" or "n:<name key>"; keyed_by_name
+ * says it came to the last, so the report can say how many did.
+ */
+const customerKeySql = (companyIds, clientName) => {
+  const company = `COALESCE(${companyIds}, (SELECT ck.id FROM companies ck WHERE ck.name_key = name_key(${clientName})))`;
+  return {
+    key: `COALESCE('c:' || ${company}, 'n:' || name_key(${clientName}))`,
+    name: `COALESCE((SELECT cn.name FROM companies cn WHERE cn.id = ${company}), btrim(${clientName}))`,
+    byName: `(${company} IS NULL)`,
+  };
+};
+
+/**
+ * Every counting PO with a date, whoever owns it, keyed by customer: the
+ * order history "new" and "repeat" are judged against.
+ *
+ * Deliberately not scoped, like contractDateOf in salesReviewData.js:
+ * whether a client had ordered before is a fact about the client, not about
+ * who is reading. Scoped, a sales user taking over an account would see a
+ * ten-year client as new. Only dates and PO numbers come back, and the
+ * report shows a reader nothing but a count of previous orders.
+ */
+function orderIndexRows() {
+  const customer = customerKeySql('pr.company_id, q.company_id', 'pr.client_name');
+  return query(
+    `SELECT po.po_number, to_char(po.po_date, 'YYYY-MM-DD') AS date, ${customer.key} AS customer_key
+       FROM purchase_orders po
+       JOIN projects pr ON pr.project_id = po.project_id
+       LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
+      WHERE po.po_date IS NOT NULL AND ${poCountsAsSale('po')}`
+  );
+}
+
+/**
  * The day an enquiry counts on: its enquiry date, or the day the record was
  * created where the business is, when that was left blank. $3 is the time zone.
  */
 const ENQUIRY_DAY = `COALESCE(e.enquiry_date, (e.created_at AT TIME ZONE $3)::date)`;
+const ENQUIRY_CUSTOMER = customerKeySql('e.company_id', 'e.client_name');
 
 /**
  * Enquiries received in the period, each with what had become of it by the
@@ -687,7 +822,8 @@ function outcomeRows({ from, to }, scope = UNRESTRICTED, today = businessToday()
                            q.quotation_date, '-infinity'::date) <= ${asOf} AS quotation_lost,
             COALESCE(q.status IN ('${QUOTATION_STATUS.submitted}', '${QUOTATION_STATUS.negotiating}')
                      AND q.valid_until < ${asOf}, false) AS quotation_expired,
-            lr.name                                      AS lost_reason
+            lr.name                                      AS lost_reason,
+            ${ENQUIRY_CUSTOMER.key}                      AS customer_key
        FROM ${src.enquiries} e
        LEFT JOIN lead_sources ls ON ls.id = e.source_id
        LEFT JOIN quotations q ON q.quotation_no = e.quotation_no
@@ -708,6 +844,8 @@ function outcomeRows({ from, to }, scope = UNRESTRICTED, today = businessToday()
  * project. The sector and service sections split these same rows, so their
  * totals are the revenue total.
  */
+const PO_CUSTOMER = customerKeySql('pr.company_id, q.company_id', 'pr.client_name');
+
 function revenueRows({ from, to }, scope = UNRESTRICTED) {
   const params = [from, to];
   const src = scopedSources(scope, params);
@@ -717,6 +855,9 @@ function revenueRows({ from, to }, scope = UNRESTRICTED) {
             to_char(po.po_date, 'YYYY-MM-DD')        AS date,
             btrim(pr.client_name)                    AS client,
             q.id                                     AS quotation_id,
+            ${PO_CUSTOMER.key}                       AS customer_key,
+            ${PO_CUSTOMER.name}                      AS customer,
+            ${PO_CUSTOMER.byName}                    AS keyed_by_name,
             -- The quotation's sector, else the company's (§4.3).
             COALESCE(NULLIF(btrim(q.sector), ''), NULLIF(btrim(c.sector), '')) AS sector,
             NULLIF(btrim(q.service_quoted), '')      AS service,
@@ -873,7 +1014,7 @@ async function undatedPos({ from, to }, scope) {
 const fmtInr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 
 /** One plain sentence per section, from the figures alone. */
-export function narrate({ enquiries, outcomes, sectors, services, revenue }) {
+export function narrate({ enquiries, outcomes, sectors, services, customers, revenue }) {
   const out = {};
   if (!enquiries.total) out.enquiries = 'No enquiries in this period.';
   else {
@@ -904,6 +1045,14 @@ export function narrate({ enquiries, outcomes, sectors, services, revenue }) {
       ? `${best.line} sold the most: ${fmtInr(best.value_inr)} (${best.pct}% of PO value) across ${best.pos} PO${best.pos === 1 ? '' : 's'}.`
       : 'No PO value fell in a listed service line.';
   }
+  if (!customers.tiles.customers && !enquiries.total) out.customers = 'No POs or enquiries in this period.';
+  else {
+    const t = customers.tiles;
+    out.customers = `${t.new_customers} new customer${t.new_customers === 1 ? '' : 's'} placed a first order`
+      + `; ${t.repeat_orders} repeat order${t.repeat_orders === 1 ? '' : 's'}`
+      + (t.repeat_share_pct != null ? ` made up ${t.repeat_share_pct}% of PO value` : '')
+      + `. ${t.enquiries_from_new} of ${enquiries.total} enquiries came from customers who had never ordered.`;
+  }
   if (!revenue.total.pos) out.revenue = 'No POs in this period.';
   else {
     const best = revenue.months.filter((m) => m.key).reduce((a, m) => (m.po_value_inr > (a?.po_value_inr ?? 0) ? m : a), null);
@@ -918,9 +1067,9 @@ export function narrate({ enquiries, outcomes, sectors, services, revenue }) {
  * screen, the CSV export and the PDF all read this.
  */
 export async function salesReport(period, { grain, scope = UNRESTRICTED, today = businessToday() } = {}) {
-  const [enquiryRows, poRows, billing, undated, categories] = await Promise.all([
+  const [enquiryRows, poRows, billing, undated, categories, allOrders] = await Promise.all([
     outcomeRows(period, scope, today), revenueRows(period, scope), billingRows(period, scope), undatedPos(period, scope),
-    reportCategories(),
+    reportCategories(), orderIndexRows(),
   ]);
   const pieces = await servicePieces(poRows.rows);
   const mapSector = sectorMapper(categories.sectors, categories.aliases);
@@ -938,12 +1087,15 @@ export async function salesReport(period, { grain, scope = UNRESTRICTED, today =
   const outcomes = outcomeSummary(enquiryRows.rows, period);
   const sectors = sectorSection(pos, categories.sectors, mapSector);
   const services = serviceSection(pos, categories.service_lines, linesOf);
-  // The PO list behind each month says which category each PO counted in.
-  const revenue = monthlyRevenue(pos.map((row) => ({
+  // The PO lists behind each month and each repeat order say which
+  // categories each PO counted in.
+  const labelled = pos.map((row) => ({
     ...row,
     sector: mapSector(row.sector),
     service: serviceSplit(row, linesOf).shares.map((share) => share.line).join(', '),
-  })), billing.rows, period);
+  }));
+  const revenue = monthlyRevenue(labelled, billing.rows, period);
+  const customers = customerSection(labelled, orderIndex(allOrders.rows), enquiryRows.rows, period);
 
   const notes = [];
   if (used !== wanted) notes.push({ key: 'grain', text: `Too many ${wanted}s to chart; shown by ${used}.` });
@@ -972,12 +1124,16 @@ export async function salesReport(period, { grain, scope = UNRESTRICTED, today =
     const n = services.sources.keywords;
     notes.push({ key: 'services_by_keywords', count: n, text: `${n} PO${n === 1 ? ' has' : 's have'} no service lines recorded; ${n === 1 ? 'its' : 'their'} service was read from the quotation's service text${services.bundled ? ', and a PO naming several services is split equally between them' : ''}.` });
   }
+  if (customers.keyed_by_name) {
+    const n = customers.keyed_by_name;
+    notes.push({ key: 'po_without_company', count: n, href: '/projects?company_id=__none__', text: `${n} PO${n === 1 ? ' is' : 's are'} on a project with no company, so ${n === 1 ? 'its' : 'their'} customer is matched by client name.` });
+  }
   if (undated.length) {
     notes.push({ key: 'undated_pos', count: undated.length, href: '/purchase-orders', text: `${undated.length} PO${undated.length === 1 ? ' has' : 's have'} no PO date and ${undated.length === 1 ? 'is' : 'are'} in no month: ${undated.join(', ')}.` });
   }
   const currencies = poRows.rows.map((row) => ({ currency: row.currency }));
   const stale = await staleAmong(currencies, { period, today });
 
-  const sections = { enquiries, outcomes, sectors, services, revenue };
+  const sections = { enquiries, outcomes, sectors, services, customers, revenue };
   return { period, grain: used, ...sections, notes, stale_rates: stale, narrative: narrate(sections) };
 }

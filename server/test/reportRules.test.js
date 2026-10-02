@@ -328,3 +328,33 @@ test('the service section counts a bundle in each line but splits its value, so 
   assert.deepEqual(section.sources, { po_services: 0, quotation_lines: 0, keywords: 3 });
   assert.equal(section.bundled, 1);
 });
+
+test('customers: new by first-ever PO, repeat by any later one, enquiries judged on their own date', () => {
+  const index = defs.orderIndex([
+    { po_number: 'B2', date: '2026-09-20', customer_key: 'c:2' },
+    { po_number: 'B0', date: '2025-01-01', customer_key: 'c:2' },
+    { po_number: 'A1', date: '2026-09-05', customer_key: 'c:1' },
+    { po_number: 'A2', date: '2026-09-25', customer_key: 'c:1' },
+  ]);
+  const pos = [
+    { po_number: 'A1', date: '2026-09-05', customer_key: 'c:1', customer: 'Acme', po_value_inr: 100 },
+    { po_number: 'A2', date: '2026-09-25', customer_key: 'c:1', customer: 'Acme', po_value_inr: 50 },
+    { po_number: 'B2', date: '2026-09-20', customer_key: 'c:2', customer: 'Beta', po_value_inr: 50, keyed_by_name: true },
+  ];
+  const enquiries = [
+    { enquiry_no: 'E1', date: '2026-09-01', customer_key: 'c:1', status: 'New' }, // before Acme's first PO: new
+    { enquiry_no: 'E2', date: '2026-09-10', customer_key: 'c:1', status: 'New' }, // after it: existing
+    { enquiry_no: 'E3', date: '2026-09-02', customer_key: 'c:2', status: 'New' }, // Beta ordered in 2025
+    { enquiry_no: 'E4', date: '2026-09-03', customer_key: 'n:zeta', status: 'Unqualified' }, // never ordered
+  ];
+  const section = defs.customerSection(pos, index, enquiries, { from: '2026-09-01', to: '2026-09-30' });
+  assert.deepEqual(section.tiles, {
+    customers: 2, new_customers: 1, existing_customers: 1, first_orders: 1, repeat_orders: 2,
+    first_order_value_inr: 100, repeat_value_inr: 100, repeat_share_pct: 50,
+    enquiries_from_new: 2, enquiries_from_existing: 2,
+  });
+  assert.deepEqual(section.new_customers.map((c) => [c.customer, c.first_po_date, c.pos, c.value_inr]), [['Acme', '2026-09-05', 2, 150]]);
+  assert.deepEqual(section.repeat_orders.map((r) => [r.po_number, r.previous_orders]), [['A2', 1], ['B2', 1]]);
+  assert.deepEqual(section.new_customer_enquiries.map((e) => [e.enquiry_no, e.outcome]), [['E1', 'pipeline'], ['E4', 'lost']]);
+  assert.equal(section.keyed_by_name, 1);
+});

@@ -70,7 +70,9 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
         ('PO-2R',  'P-1', 'Q-1', '2026-09-12', 1500,   'INR'),
         ('PO-USD', 'P-2', NULL,  '2026-09-15', 100,    'USD'),
         ('PO-EUR', 'P-2', NULL,  '2026-09-16', 50,     'EUR'),
-        ('PO-OCT', 'P-2', NULL,  '2026-10-01', 700,    'INR');
+        ('PO-OCT', 'P-2', NULL,  '2026-10-01', 700,    'INR'),
+        -- Beta ordered before: an existing customer in September.
+        ('PO-OLD', 'P-2', NULL,  '2026-03-01', 100,    'INR');
       UPDATE purchase_orders SET cancelled = true WHERE po_number = 'PO-1C';
       UPDATE purchase_orders SET replaces_po_number = 'PO-2' WHERE po_number = 'PO-2R';
 
@@ -219,6 +221,30 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
       await db.query(`DELETE FROM services WHERE name IN ('Board briefing', 'HAZOP study')`);
       await db.query(`DELETE FROM sector_aliases WHERE alias = 'Widgets'`);
     }
+  });
+
+  test('new and existing customers: by company, against every order ever placed', async () => {
+    const { customers } = await defs.salesReport(SEPT, { today: TODAY });
+    // Acme first ordered on 10 September; Beta in March. PO-2R is Acme's
+    // second order; both Beta POs this month follow its March one.
+    assert.deepEqual(customers.new_customers.map((c) => [c.customer, c.first_po_date, c.pos, c.value_inr]),
+      [['Acme', '2026-09-10', 2, 119500]]);
+    assert.deepEqual(customers.repeat_orders.map((r) => [r.po_number, r.customer, r.previous_orders]),
+      [['PO-2R', 'Acme', 1], ['PO-USD', 'Beta', 1], ['PO-EUR', 'Beta', 2]]);
+    assert.deepEqual(
+      [customers.tiles.new_customers, customers.tiles.existing_customers, customers.tiles.repeat_value_inr, customers.tiles.repeat_share_pct],
+      [1, 1, 10500, 8]);
+    // Beta's enquiries come after its March order; everyone else had never ordered by then.
+    assert.deepEqual(customers.new_customer_enquiries.map((e) => e.enquiry_no), ['E-1', 'E-4', 'E-5', 'E-6', 'E-7']);
+    assert.match((await defs.salesReport(SEPT, { today: TODAY })).narrative.customers, /^1 new customer placed a first order; 3 repeat orders/);
+  });
+
+  test('order history is not narrowed by who is reading', async () => {
+    // Bilal sees Beta's POs only. Beta is still an existing customer, and
+    // PO-EUR still has two orders before it, whoever's they were.
+    const { customers } = await defs.salesReport(SEPT, { today: TODAY, scope: { unrestricted: false, ownerId: 102 } });
+    assert.deepEqual(customers.repeat_orders.map((r) => [r.po_number, r.previous_orders]), [['PO-USD', 1], ['PO-EUR', 2]]);
+    assert.equal(customers.tiles.new_customers, 0);
   });
 
   test('a sales user sees only their own records', async () => {
