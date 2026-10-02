@@ -324,4 +324,84 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.equal(d.method, 'rules');
     assert.equal(d.outcome, 'created');
   });
+
+  describe('reading past mail', () => {
+  const past = (over) => ({ ...rfq(over), history: true });
+
+  test('5. the backfill reads history oldest first, dates enquiries by the email, resumes, and never repeats', async () => {
+    const box = await mailbox({ shared: true });
+    sync.testPaging.size = 2;
+    const old = at(200);
+    sync.pushTestMessages(box.id, [
+      past({ from: { email: 'a@hist-one.com', name: 'A' }, sent_at: old }),
+      past({ from: { email: 'b@hist-two.com', name: 'B' }, sent_at: at(150) }),
+      past({ from: { email: 'c@hist-three.com', name: 'C' }, sent_at: at(100) }),
+      past({ from: { email: 'news@hist-news.com' }, subject: 'Weekly', body_html: '<p>Unsubscribe</p>', sent_at: at(90) }),
+      past({ from: { email: 'd@too-old.com', name: 'D' }, sent_at: at(400) }),
+    ]);
+    const ctx = await auto.runContext({ backfill: true });
+    // A budget of zero still reads one page: the first run stops part-way.
+    let r = await auto.backfillAccount(box, ctx, { budgetMs: 0 });
+    assert.equal(r.pages, 1);
+    assert.equal(r.created, 2);
+    let { rows: [row] } = await db.query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
+    assert.equal(row.next_link, '2', 'it stopped with a cursor to resume from');
+    assert.equal(row.finished_at, null);
+
+    r = await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+    ({ rows: [row] } = await db.query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]));
+    assert.ok(row.finished_at, 'both folders read');
+    assert.equal(row.created, 3);
+    assert.equal(row.scanned, 4);
+
+    const made = await enquiriesFrom(box.id);
+    assert.deepEqual(made.map((e) => e.client_name), ['Hist One', 'Hist Two', 'Hist Three']);
+    const { rows: [first] } = await db.query(`SELECT enquiry_date::text AS d, enquiry_no FROM enquiries WHERE client_name = 'Hist One'`);
+    assert.equal(first.d, old.slice(0, 10), 'dated by the email, not by today');
+    assert.match(first.enquiry_no, new RegExp(`/${old.slice(0, 4)}/`), 'numbered in the email\'s year');
+
+    // A second run, and a run over the same ground, make nothing.
+    await db.query('UPDATE mailbox_enquiry_backfills SET finished_at = NULL, folder = \'inbox\', next_link = NULL WHERE account_id = $1', [box.id]);
+    r = await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+    assert.equal(r.created, 0);
+    assert.equal((await enquiriesFrom(box.id)).length, 3);
+    sync.testPaging.size = 50;
+
+    const { rows: notes } = await db.query(`SELECT title FROM notifications WHERE dedupe_key LIKE $1`, [`auto-enquiry-backfill:${box.id}:%`]);
+    assert.ok(notes.length >= 1);
+    assert.match(notes[0].title, /3 enquiries created/);
+  });
+
+  test('14. with both folders in history, the Inbox enquiry is made first and the later quotation links to it', async () => {
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, quotation_date, status) VALUES ('CTZ/QT/2025/950', 'Order Matters Ltd', CURRENT_DATE - 40, 'Submitted')`);
+    const box = await mailbox({ shared: true });
+    sync.pushTestMessages(box.id, [
+      // Sent Items holds the quotation; Inbox the request that came first.
+      past({ folder: 'sentitems', from: { email: box.email }, to: [{ email: 'buyer@order-matters.com' }], subject: 'Quotation CTZ/QT/2025/950', body_html: '<p>Attached.</p>', has_attachments: true, sent_at: at(40) }),
+      past({ from: { email: 'buyer@order-matters.com', name: 'Buyer' }, sent_at: at(45) }),
+    ]);
+    await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+    const made = await enquiriesFrom(box.id);
+    assert.equal(made.length, 1);
+    const { rows: [e] } = await db.query('SELECT status, quotation_no FROM enquiries WHERE enquiry_no = $1', [made[0].enquiry_no]);
+    assert.equal(e.quotation_no, 'CTZ/QT/2025/950');
+    assert.equal(e.status, 'New', 'its status is left for a person to move on');
+  });
+
+  test('the day\'s AI ceiling stops the backfill, and it carries on from the same page', async () => {
+    const box = await mailbox({ shared: true });
+    await db.query(`UPDATE settings SET value = '0' WHERE key = 'auto_enquiry_daily_ai_limit'`);
+    auto.deps.chat = async () => ({ kind: 'new_enquiry', confidence: 0.9 });
+    sync.pushTestMessages(box.id, [past({ from: { email: 'x@ceiling-co.com', name: 'X' }, sent_at: at(20) })]);
+    const r = await auto.runBackfills();
+    assert.equal(r.stopped, 'ai_limit');
+    const { rows: [row] } = await db.query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
+    assert.equal(row.finished_at, null);
+    assert.equal((await enquiriesFrom(box.id)).length, 0);
+
+    await db.query(`UPDATE settings SET value = '1500' WHERE key = 'auto_enquiry_daily_ai_limit'`);
+    await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+    assert.equal((await enquiriesFrom(box.id)).length, 1);
+  });
+});
 });

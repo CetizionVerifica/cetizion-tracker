@@ -2896,6 +2896,8 @@ CREATE TABLE IF NOT EXISTS mailbox_enquiry_backfills (
   -- Inbox first, then Sent Items; null once both are read.
   folder      text CHECK (folder IN ('inbox','sentitems')),
   next_link   text,
+  -- The date of the last message read, so progress can be shown in days.
+  reached     timestamptz,
   scanned     int NOT NULL DEFAULT 0,
   created     int NOT NULL DEFAULT 0,
   linked      int NOT NULL DEFAULT 0,

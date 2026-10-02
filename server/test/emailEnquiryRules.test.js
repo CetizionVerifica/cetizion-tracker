@@ -103,7 +103,8 @@ test('companyNameFromEmail', () => {
   assert.equal(companyNameFromEmail('ravi@acme-steel.co.in'), 'Acme Steel');
   assert.equal(companyNameFromEmail('a@mail.hindalco.com'), 'Hindalco');
   assert.equal(companyNameFromEmail('a@tata_chemicals.in'), 'Tata Chemicals');
-  assert.equal(companyNameFromEmail('a@abc-industries.com'), 'ABC Industries');
+  assert.equal(companyNameFromEmail('a@jsw-steel.in'), 'JSW Steel');
+  assert.equal(companyNameFromEmail('a@hpcl.co.in'), 'HPCL');
   assert.equal(companyNameFromEmail('someone@gmail.com'), null);
   assert.equal(companyNameFromEmail('not an address'), null);
 });

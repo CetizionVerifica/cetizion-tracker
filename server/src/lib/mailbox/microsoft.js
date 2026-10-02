@@ -115,6 +115,16 @@ export function microsoftProvider(account, tokens) {
       }
       return { messages, deltaLink: next || deltaLink };
     },
+    /**
+     * One page of a folder, oldest first, from a date — for reading back
+     * through past mail. A plain list rather than delta, so the live sync's
+     * cursor is never touched. `cursor` is the nextLink of the page before.
+     */
+    async page(folder, { sinceIso, cursor = null, top = 50 } = {}) {
+      const url = cursor || `${who}/mailFolders/${folder}/messages?$select=${SELECT}&$filter=receivedDateTime+ge+${sinceIso}&$orderby=receivedDateTime+asc&$top=${top}`;
+      const j = await graph(url, { headers: { Prefer: 'outlook.body-content-type="html"' } });
+      return { messages: (j.value || []).filter((m) => !m.isDraft).map(toMessage), next: j['@odata.nextLink'] || null };
+    },
     /** Reply in the same conversation; Outlook keeps it in Sent Items. */
     async reply(providerId, html, { replyAll = true } = {}) {
       await graph(`${who}/messages/${providerId}/${replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: { comment: html } });

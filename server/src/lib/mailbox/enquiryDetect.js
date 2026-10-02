@@ -129,7 +129,8 @@ export function companyNameFromEmail(email) {
   if (!core || TLDS.has(core)) return null;
   const words = core.split(/[-_]+/).filter(Boolean);
   if (!words.length) return null;
-  return words.map((w) => (w.length <= 3 && words.length > 1 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+  // A short word with no vowels is an acronym: jsw → JSW, hpcl → HPCL.
+  return words.map((w) => (w.length <= 5 && !/[aeiouy]/.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
 }
 
 /** The service line an email asks about, or null. */

@@ -329,7 +329,8 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | Job | When | What it does |
 | --- | --- | --- |
 | `webhooks.deliver` | every minute | Sends webhook events to their endpoints and retries failed ones |
-| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes |
+| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes, and creates enquiries from new client requests (docs/email-enquiries.md) |
+| `enquiries.backfill` | every 10 minutes | Reads each mailbox's past year of mail once, in runs of about four minutes, and creates the enquiries it finds |
 | `notifications.email` | every 10 minutes | Emails the notifications people asked to get by email |
 | `ops.watch` | every 15 minutes | Checks the certificate, disk, backups and stuck jobs; alerts when something is wrong |
 | `documents.purge` | 03:00 daily | Finishes interrupted document removals |

@@ -23,7 +23,7 @@ import { query, transaction } from '../../db.js';
 import { aiConfig, chatJSON } from '../ai.js';
 import { notify } from '../notify.js';
 import { addWorkingDays, businessToday } from '../businessDate.ts';
-import { ingestOne } from './sync.js';
+import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
 import { domainOf } from './rules.js';
@@ -504,4 +504,105 @@ async function prepareQuotation(account, cand, verdict, ctx) {
     console.warn('[auto-enquiry] quotation PDF not read:', err.message);
     return { ok: false, reason: 'unreadable' };
   }
+}
+
+// ------------------------------------------------------------ past mail
+
+/** How long one backfill run may read before it hands over to the next. */
+export const BACKFILL_BUDGET_MS = 4 * 60_000;
+
+/**
+ * The candidates on one page of past mail. A message we already store uses
+ * its stored thread; one we never stored (older than the mailbox's import
+ * window, or dropped as not a client) is judged from the raw message.
+ */
+async function pastCandidates(account, judge, messages) {
+  const out = [];
+  for (const m of messages) {
+    if (!m.provider_id || !m.conversation_id || m.draft) continue;
+    const c = judge(m);
+    if (c.skip) continue;
+    const { rows: [stored] } = await query(
+      `SELECT t.id AS thread_id,
+              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3) AS first
+         FROM email_threads t WHERE t.account_id = $1 AND t.conversation_id = $2`, [account.id, m.conversation_id, m.sent_at]);
+    out.push(stored
+      ? { m, c, threadId: stored.thread_id, newThread: stored.first, dropped: false }
+      : { m, c, threadId: null, newThread: false, dropped: true });
+  }
+  return out;
+}
+
+/**
+ * Read one mailbox's past mail, oldest first, Inbox before Sent Items, for
+ * up to `budgetMs`. Resumable: progress is stored after every page, so a
+ * restart or a stop at the day's AI ceiling loses nothing.
+ */
+export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET_MS } = {}) {
+  const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
+  await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, 'inbox') ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
+  let { rows: [row] } = await query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
+  if (row.finished_at) return { id: account.id, finished: true, created: 0, linked: 0 };
+  const started = Date.now();
+  const tally = { id: account.id, email: account.email, pages: 0, created: 0, linked: 0 };
+  let provider;
+  try {
+    provider = providerFor(account);
+    if (!provider.page) throw new Error(`Reading past mail is not supported for ${account.provider} mailboxes`);
+    const judge = await ingestRules(account);
+    // At least one page per run, however little time is left.
+    for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
+      const page = await provider.page(row.folder, { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      const before = { created: ctx.created.length, linked: ctx.linked };
+      await processCandidates(account, await pastCandidates(account, judge, page.messages), { ctx, notifyEach: false, provider });
+      const created = ctx.created.length - before.created; const linked = ctx.linked - before.linked;
+      tally.pages += 1; tally.created += created; tally.linked += linked;
+      // Stopped part-way through this page (the day's AI ceiling): read it
+      // again next time. What was already decided is not judged twice.
+      const last = page.messages.length ? page.messages[page.messages.length - 1].sent_at : row.reached;
+      let next = { next_link: page.next, folder: row.folder, scanned: page.messages.length, reached: last, finished_at: null };
+      if (ctx.stopped) next = { next_link: row.next_link, folder: row.folder, scanned: 0, reached: row.reached, finished_at: null };
+      else if (!page.next && row.folder === 'inbox') next = { next_link: null, folder: 'sentitems', scanned: page.messages.length, reached: null, finished_at: null };
+      else if (!page.next) next = { next_link: null, folder: null, scanned: page.messages.length, reached: last, finished_at: new Date().toISOString() };
+      ({ rows: [row] } = await query(
+        `UPDATE mailbox_enquiry_backfills
+            SET next_link = $2, folder = $3, scanned = scanned + $4, created = created + $5, linked = linked + $6,
+                reached = $7, finished_at = $8, last_error = NULL, updated_at = now()
+          WHERE account_id = $1 RETURNING *`,
+        [account.id, next.next_link, next.folder, next.scanned, created, linked, next.reached, next.finished_at]));
+      if (row.finished_at) break;
+    }
+    await saveTokens(account, provider);
+  } catch (err) {
+    await query('UPDATE mailbox_enquiry_backfills SET last_error = $2, updated_at = now() WHERE account_id = $1', [account.id, String(err.message).slice(0, 500)]);
+    tally.error = err.message;
+  }
+  if (row.finished_at) {
+    tally.finished = true;
+    await notify({
+      kind: 'enquiry', title: `Read ${ctx.settings.backfillDays} days of ${account.email}: ${row.created} ${row.created === 1 ? 'enquiry' : 'enquiries'} created, ${row.linked} linked to existing ones`,
+      link: '/enquiries?from_email=1', dedupeKey: `auto-enquiry-backfill:${account.id}:${new Date(row.started_at).toISOString()}`,
+    }).catch(() => {});
+  }
+  return tally;
+}
+
+/** The scheduled sweep: every active mailbox whose past mail is not read yet. */
+export async function runBackfills({ budgetMs = BACKFILL_BUDGET_MS } = {}) {
+  const ctx = await runContext({ backfill: true });
+  if (!ctx.settings.enabled) return { skipped: 'switched off', created: 0, errors: 0 };
+  const { rows } = await query(
+    `SELECT a.* FROM connected_accounts a LEFT JOIN mailbox_enquiry_backfills b ON b.account_id = a.id
+      WHERE a.status = 'active' AND b.finished_at IS NULL ORDER BY a.id`);
+  const started = Date.now();
+  const results = [];
+  for (const account of rows) {
+    const left = budgetMs - (Date.now() - started);
+    if (left <= 0 || ctx.stopped) break;
+    results.push(await backfillAccount(account, ctx, { budgetMs: left }));
+  }
+  return {
+    mailboxes: results.length, created: results.reduce((t, r) => t + r.created, 0), linked: results.reduce((t, r) => t + r.linked, 0),
+    errors: results.filter((r) => r.error).length + ctx.errors, stopped: ctx.stopped, results,
+  };
 }

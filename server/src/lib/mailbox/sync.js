@@ -22,6 +22,8 @@ const key = () => config.microsoft.tokenKey;
 // A mailbox that lives in memory, for local runs and tests (provider 'test',
 // never in production). Sent mail comes back on the next sync, like Outlook.
 const testBoxes = new Map();
+/** How many messages the test provider's page() returns at once; tests lower it to exercise resuming. */
+export const testPaging = { size: 50 };
 export function pushTestMessages(accountId, messages) {
   const box = testBoxes.get(accountId) || [];
   box.push(...messages);
@@ -29,16 +31,26 @@ export function pushTestMessages(accountId, messages) {
   return box.length;
 }
 function testProvider(account) {
+  // Messages pushed with `history: true` are the mailbox's past: delta
+  // never hands them over, page() does, and they stay in the mailbox.
   const take = (folder) => {
     const box = testBoxes.get(account.id) || [];
-    const mine = box.filter((m) => (m.folder || 'inbox') === folder);
-    testBoxes.set(account.id, box.filter((m) => (m.folder || 'inbox') !== folder));
+    const mine = box.filter((m) => !m.history && (m.folder || 'inbox') === folder);
+    testBoxes.set(account.id, box.filter((m) => m.history || (m.folder || 'inbox') !== folder));
     return mine;
   };
   const sent = (m) => pushTestMessages(account.id, [{ folder: 'sentitems', provider_id: `sent-${crypto.randomUUID()}`, from: { email: account.email, name: account.display_name }, sent_at: new Date().toISOString(), ...m }]);
   return {
     tokens: () => null,
     async delta(folder, deltaLink) { return { messages: take(folder), deltaLink: deltaLink || `test:${folder}` }; },
+    async page(folder, { sinceIso, cursor = null } = {}) {
+      const past = (testBoxes.get(account.id) || [])
+        .filter((m) => m.history && (m.folder || 'inbox') === folder && new Date(m.sent_at) >= new Date(sinceIso))
+        .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
+      const from = Number(cursor || 0);
+      const to = from + testPaging.size;
+      return { messages: past.slice(from, to), next: to < past.length ? String(to) : null };
+    },
     async reply(providerId, html) {
       const { rows: [m] } = await query('SELECT m.*, t.conversation_id FROM email_messages m JOIN email_threads t ON t.id = m.thread_id WHERE m.account_id = $1 AND m.provider_id = $2', [account.id, providerId]);
       sent({ conversation_id: m.conversation_id, subject: `RE: ${m.subject || ''}`, body_html: html, to: [{ email: m.direction === 'inbound' ? m.from_email : m.to_emails[0] }], cc: [] });
@@ -63,7 +75,7 @@ export function providerFor(account) {
   throw new Error(`Provider ${account.provider} is not supported yet`);
 }
 
-async function saveTokens(account, provider) {
+export async function saveTokens(account, provider) {
   const t = provider.tokens();
   if (!t) return;
   await query('UPDATE connected_accounts SET tokens_encrypted = $2, token_expires_at = $3 WHERE id = $1', [account.id, sealTokens(t, key()), t.expires_at || null]);
@@ -431,6 +443,8 @@ export async function disconnect(id, { removeBodies = true } = {}) {
   }
   await query(`UPDATE connected_accounts SET status = 'disconnected', tokens_encrypted = NULL, token_expires_at = NULL, last_error = $2 WHERE id = $1`, [id, upstream]);
   await query('DELETE FROM mail_folders WHERE account_id = $1', [id]);
+  // Its sweep of past mail stops with it; the decisions stay, for the record.
+  await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
   return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };
 }
