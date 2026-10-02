@@ -32,19 +32,20 @@ test('the lookup takes the newest rate on or before the record own date', () => 
 });
 
 test('each report joins on the date that belongs to its own record', async () => {
-  const [sales, revenue, review] = await Promise.all([
+  const [sales, revenue, sections] = await Promise.all([
     import('node:fs').then(({ readFileSync }) => readFileSync('src/lib/salesReport.js', 'utf8')),
     import('node:fs').then(({ readFileSync }) => readFileSync('src/lib/revenueReport.js', 'utf8')),
-    import('node:fs').then(({ readFileSync }) => readFileSync('src/lib/salesReviewData.js', 'utf8')),
+    import('node:fs').then(({ readFileSync }) => readFileSync('src/lib/reportDefinitions.js', 'utf8')),
   ]);
-  const all = sales + revenue + review;
+  const all = sales + revenue + sections;
 
   // Nothing may still join a rate without a date.
   assert.ok(!/JOIN rates \w+ ON/.test(all), 'every rates join must go through rateOn()');
 
-  // A PO converts at its PO date, a quotation at its quotation date.
+  // A PO converts at its PO date — order intake and billing alike.
   assert.ok(revenue.includes("rateOn('r', 'p.currency', 'p.po_date')"));
-  assert.ok(revenue.includes("rateOn('qr', 'q.currency', 'q.quotation_date')"));
+  assert.ok(revenue.includes("rateOn('r', 'po.currency', 'po.po_date')"));
+  assert.ok(sections.includes("rateOn('r', 'po.currency', 'po.po_date')"));
   // A stage's invoice and payment each convert on their own date, so summing
   // the stages first and converting once at the PO's rate is not enough.
   assert.ok(revenue.includes("rateOn('ir', 's.currency', 'COALESCE(s.invoice_date, p.po_date)')"));

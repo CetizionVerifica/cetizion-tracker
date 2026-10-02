@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, fileSize, today } from '../lib/format.js';
 import { EmailThreadDialog } from './EmailThread.jsx';
+import { FollowUpBanner, FOLLOW_UP_KINDS, useLogParam } from './FollowUpBanner.jsx';
 
 /**
  * Tasks, notes, files and the timeline of one record (#22). Drop it on any
@@ -23,8 +24,13 @@ export function Timeline({ entity, id, title = 'Activity' }) {
   const [touch, setTouch] = useState(null);     // { channel, contact_id } for the log dialog
   const [removing, setRemoving] = useState(null);
   const [busy, setBusy] = useState(false);
-  const { data, loading, refetch } = useFetch(() => api.raw(`/timeline?entity=${entity}&id=${encodeURIComponent(id)}${kind ? `&kind=${kind}` : ''}`), [entity, id, kind]);
+  // Anything logged here may answer an open follow-up; the banner re-asks.
+  const [logged, setLogged] = useState(0);
+  // Reached from a follow-up email: open "Log a touch" straight away.
+  useLogParam(() => setTouch({ channel: 'call', contact_id: null }), FOLLOW_UP_KINDS.includes(entity));
+  const { data, loading, refetch: refetchItems } = useFetch(() => api.raw(`/timeline?entity=${entity}&id=${encodeURIComponent(id)}${kind ? `&kind=${kind}` : ''}`), [entity, id, kind]);
   const items = data?.data ?? [];
+  const refetch = () => { refetchItems(); setLogged((n) => n + 1); };
 
   async function toggleTask(t) {
     try { await api.update('tasks', t.id, { status: t.status === 'done' ? 'todo' : 'done' }); refetch(); }
@@ -51,6 +57,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
         </div>
       }
     >
+      <FollowUpBanner className="px-4 pt-3" entity={entity} id={id} version={logged} onLog={() => setTouch({ channel: 'call', contact_id: null })} />
       <ContactBar entity={entity} id={id} onLog={setTouch} />
       {loading && !data ? <div className="skeleton" style={{ height: 80, margin: 18 }} /> : items.length === 0 ? (
         <Empty title="Nothing here yet" text="Add a note, a task or a file. Emails sent about this record and its milestones appear here on their own." />
@@ -284,7 +291,7 @@ export function ContactBar({ entity, id, onLog }) {
   );
 }
 
-function TouchDialog({ entity, id, start, onClose, onSaved }) {
+export function TouchDialog({ entity, id, start, onClose, onSaved }) {
   const toast = useToast();
   const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   const [v, setV] = useState({ channel: start.channel, direction: 'outbound', outcome: OUTCOMES[start.channel][0], started_at: now, duration_minutes: '', summary: '', attendees: '', next_title: '', next_due: '' });
@@ -313,7 +320,7 @@ function TouchDialog({ entity, id, start, onClose, onSaved }) {
         {v.channel === 'meeting' && <Field label="Attendees"><Input value={v.attendees} onChange={(e) => set('attendees', e.target.value)} /></Field>}
         <div className="span-all"><Field label="Notes"><Textarea rows={3} value={v.summary} onChange={(e) => set('summary', e.target.value)} placeholder="What was agreed" autoFocus /></Field></div>
         <Field label="Next step"><Input value={v.next_title} onChange={(e) => set('next_title', e.target.value)} placeholder="Send revised quote" /></Field>
-        <Field label="By"><Input type="date" value={v.next_due} onChange={(e) => set('next_due', e.target.value)} /></Field>
+        <Field label="By" hint="Sets the next follow-up date: the owner is reminded on it if nothing is logged"><Input type="date" value={v.next_due} onChange={(e) => set('next_due', e.target.value)} /></Field>
       </form>
     </Modal>
   );

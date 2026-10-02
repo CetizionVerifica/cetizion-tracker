@@ -19,10 +19,10 @@ import { test, expect } from '@playwright/test';
  */
 
 const ROUTES = [
-  '/', '/worklist', '/data-quality', '/tasks', '/companies', '/deliverables',
+  '/', '/worklist', '/data-quality', '/tasks', '/follow-ups', '/companies', '/deliverables',
   '/schedule', '/enquiries', '/quotations', '/pipeline', '/renewals',
-  '/sales-report', '/projects', '/purchase-orders', '/payment-stages',
-  '/collections', '/cashflow', '/reports', '/profitability', '/accounting',
+  '/projects', '/purchase-orders', '/payment-stages',
+  '/collections', '/cashflow', '/reports', '/insights', '/profitability', '/accounting',
   '/notifications', '/inbox', '/money/invoice-run', '/travel',
   '/vendor-invoices', '/payables', '/expense-claims', '/travel-dashboard',
   '/settings/company', '/settings/holidays', '/settings/rates', '/settings/assumptions',

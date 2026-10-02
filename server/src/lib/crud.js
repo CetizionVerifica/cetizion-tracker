@@ -82,6 +82,21 @@ export function buildWhere(def, reqQuery, params, extra = []) {
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+/**
+ * The whole WHERE for a list read: the ownership predicate, the filters a
+ * resource works out itself (`listClauses`: the quotations "follow-up
+ * overdue" filter, which runs the follow-up rules, or the records behind a
+ * Reports chart, which runs the report's), then the column filters.
+ *
+ * The list, its CSV/Excel export and a saved view's count all come through
+ * here, so the rows downloaded or counted are the rows the page shows.
+ */
+export async function listWhere(def, reqQuery, params, scope, alias) {
+  const scoped = resourceClause(def, scope, params, { alias });
+  const computed = def.listClauses ? await def.listClauses(reqQuery, { scope, params }) : [];
+  return buildWhere(def, reqQuery, params, [...(scoped ? [scoped] : []), ...computed]);
+}
+
 function buildOrder(def, sortParam) {
   if (!sortParam) return `ORDER BY ${def.defaultSort}`;
   const [rawCol, rawDir] = String(sortParam).split(':');
@@ -471,8 +486,7 @@ export function crudRouter(name, def) {
     // keyed on the free-text sales_person; ownership is owner_user_id and
     // only owner_user_id, so the predicate comes from the resource's
     // declared ownership instead. One engine, one truth.
-    const scoped = resourceClause(def, scopeOf(req), params, { alias: readFrom });
-    const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
+    const where = await listWhere(def, req.query, params, scopeOf(req), readFrom);
     const order = buildOrder(def, req.query.sort);
     const limit = Math.min(Number(req.query.limit) || 500, MAX_LIMIT);
     const offset = Math.max(Number(req.query.offset) || 0, 0);

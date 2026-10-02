@@ -14,16 +14,23 @@
  * Out: vendor invoices unpaid, by their pay-by date; approved expense
  *      claims not yet reimbursed, now.
  * INR only; other currencies are listed separately, unconverted.
+ *
+ * Insights asks the same question with two options the endpoint does not
+ * use: `scope`, to narrow the money to one owner's records (outflows are
+ * the company's, so a narrowed forecast leaves them out), and `convert`, to
+ * count other currencies in INR at the rate on each record's own date. A
+ * record with no rate for its date stays in `foreign`, never guessed.
  */
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
+import { RATES, rateOn } from './salesReport.js';
 
 const ym = (d) => String(d).slice(0, 7);
 const addMonths = (yyyymm, n) => { const [y, m] = yyyymm.split('-').map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; };
 
-export async function cashflow({ months: wanted } = {}) {
+export async function cashflow({ months: wanted, scope = UNRESTRICTED, convert = false, db = { query }, today = businessToday() } = {}) {
   const months = Math.min(Math.max(Number(wanted) || 6, 1), 24);
-  const today = businessToday();
   const first = ym(today);
   const keys = Array.from({ length: months }, (_, i) => addMonths(first, i));
   const blank = (month) => ({ month, received: 0, invoiced: 0, scheduled: 0, pipeline: 0, vendors: 0, claims: 0, items: [] });
@@ -37,30 +44,53 @@ export async function cashflow({ months: wanted } = {}) {
     bucket[field] += Number(amount);
     if (item) bucket.items.push({ ...item, field, amount: Number(amount), when: when || null });
   };
+  // The rate column, or INR-only when not converting: then every other
+  // currency has no rate and lands in `foreign`, as it always has.
+  const rate = (alias, currency, date) => (convert
+    ? { col: `${alias}.rate AS fx_rate`, join: rateOn(alias, currency, date), with: `WITH ${RATES}` }
+    : { col: `CASE WHEN ${currency} = 'INR' THEN 1 END AS fx_rate`, join: '', with: '' });
+  const outflows = scope.unrestricted;
 
+  const sParams = []; const sSrc = scopedSources(scope, sParams);
+  const qParams = []; const qSrc = scopedSources(scope, qParams);
+  const rParams = []; const rSrc = scopedSources(scope, rParams);
+  const sRate = rate('sr', 'ps.currency', 'COALESCE(ps.invoice_date, po.po_date)');
+  const qRate = rate('qr', 'v.currency', 'v.quotation_date');
+  const rRate = rate('rr', 'ps.currency', 'p.received_on');
+  rParams.push(today);
+  const none = Promise.resolve({ rows: [] });
   const [{ rows: stages }, { rows: quotes }, { rows: vendors }, { rows: claims }, { rows: receipts }] = await Promise.all([
-    query(`SELECT ps.*, po.po_date, po.actual_delivery_date, po.payment_terms_days, pr.planned_delivery_date, pr.client_name AS project_client
-             FROM v_payment_stages ps JOIN purchase_orders po ON po.po_number = ps.po_number JOIN projects pr ON pr.project_id = po.project_id
-            WHERE ps.stage_status <> 'Paid'`),
-    query(`SELECT quotation_no, client_name, quotation_value, currency, probability, weighted_value, expected_close_date, stage
-             FROM v_quotations WHERE stage_type = 'open' AND quotation_value IS NOT NULL`),
-    query(`SELECT vendor_invoice_id, travel_vendor, invoice_amount, amount_paid, pay_by, payment_status FROM v_travel_vendor_invoices
-            WHERE finance_to_pay`),
-    query(`SELECT claim_id, employee_name, amount_claimed, amount_reimbursed, status FROM v_employee_expense_claims
-            WHERE status IN ('Approved - to reimburse', 'Partly reimbursed')`),
+    db.query(`${sRate.with}
+           SELECT ps.*, po.po_date, po.actual_delivery_date, po.payment_terms_days, pr.planned_delivery_date, pr.client_name AS project_client, ${sRate.col}
+             FROM ${sSrc.vPaymentStages} ps JOIN purchase_orders po ON po.po_number = ps.po_number JOIN projects pr ON pr.project_id = po.project_id
+             ${sRate.join}
+            WHERE ps.stage_status <> 'Paid'`, sParams),
+    db.query(`${qRate.with}
+           SELECT v.quotation_no, v.client_name, v.quotation_value, v.currency, v.probability, v.weighted_value, v.expected_close_date, v.stage, ${qRate.col}
+             FROM ${qSrc.vQuotations} v ${qRate.join}
+            WHERE v.stage_type = 'open' AND v.quotation_value IS NOT NULL`, qParams),
+    outflows ? db.query(`SELECT vendor_invoice_id, travel_vendor, invoice_amount, amount_paid, pay_by, payment_status FROM v_travel_vendor_invoices
+            WHERE finance_to_pay`) : none,
+    outflows ? db.query(`SELECT claim_id, employee_name, amount_claimed, amount_reimbursed, status FROM v_employee_expense_claims
+            WHERE status IN ('Approved - to reimburse', 'Partly reimbursed')`) : none,
     // Money already in the bank this month. A forecast that starts at the
     // first of the month and shows only what is still owed reads as though
     // the month has collected nothing, which is wrong by the third of it.
-    query(`SELECT to_char(p.received_on, 'YYYY-MM') AS month, SUM(p.amount) AS amount
-             FROM payments p JOIN v_payment_stages ps ON ps.id = p.stage_id
-            WHERE p.received_on >= date_trunc('month', $1::date) AND ps.currency = 'INR'
-            GROUP BY 1`, [today]),
+    db.query(`${rRate.with}
+           SELECT to_char(x.received_on, 'YYYY-MM') AS month, SUM(x.amount * x.fx_rate) AS amount
+             FROM (SELECT p.amount, p.received_on, ${rRate.col}
+                     FROM payments p JOIN ${rSrc.vPaymentStages} ps ON ps.id = p.stage_id ${rRate.join}
+                    WHERE p.received_on >= date_trunc('month', $${rParams.length}::date)) x
+            WHERE x.fx_rate IS NOT NULL
+            GROUP BY 1`, rParams),
   ]);
+  const fx = (row) => (row.fx_rate == null ? null : Number(row.fx_rate));
 
   for (const s of stages) {
-    const outstanding = Number(s.stage_amount) - Number(s.amount_received || 0);
-    if (outstanding <= 0) continue;
-    if (s.currency !== 'INR') { foreign.push({ kind: 'stage', ref: `${s.po_number} · ${s.stage_name}`, client: s.client_name, currency: s.currency, amount: outstanding }); continue; }
+    const owed = Number(s.stage_amount) - Number(s.amount_received || 0);
+    if (owed <= 0) continue;
+    if (fx(s) === null) { foreign.push({ kind: 'stage', ref: `${s.po_number} · ${s.stage_name}`, client: s.client_name, currency: s.currency, amount: owed }); continue; }
+    const outstanding = owed * fx(s);
     const item = { ref: `${s.po_number} · ${s.stage_name}`, client: s.client_name };
     if (s.invoice_no) {
       put(s.invoice_due_date || today, 'invoiced', outstanding, { ...item, note: s.invoice_no });
@@ -74,9 +104,9 @@ export async function cashflow({ months: wanted } = {}) {
     }
   }
   for (const q of quotes) {
-    if (q.currency !== 'INR') { foreign.push({ kind: 'quotation', ref: q.quotation_no, client: q.client_name, currency: q.currency, amount: Number(q.weighted_value) }); continue; }
+    if (fx(q) === null) { foreign.push({ kind: 'quotation', ref: q.quotation_no, client: q.client_name, currency: q.currency, amount: Number(q.weighted_value) }); continue; }
     // The advance (half, by the usual split) arrives with the PO; the rest later. Kept simple: the weighted value at the close date.
-    put(q.expected_close_date, 'pipeline', Number(q.weighted_value || 0), { ref: q.quotation_no, client: q.client_name, note: `${q.stage} · ${q.probability}%` });
+    put(q.expected_close_date, 'pipeline', Number(q.weighted_value || 0) * fx(q), { ref: q.quotation_no, client: q.client_name, note: `${q.stage} · ${q.probability}%` });
   }
   for (const v of vendors) put(v.pay_by || today, 'vendors', Number(v.invoice_amount || 0) - Number(v.amount_paid || 0), { ref: v.vendor_invoice_id, client: v.travel_vendor, note: v.payment_status });
   for (const c of claims) put(today, 'claims', Number(c.amount_claimed || 0) - Number(c.amount_reimbursed || 0), { ref: c.claim_id, client: c.employee_name, note: c.status });

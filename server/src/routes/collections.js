@@ -20,21 +20,13 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { parentClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
+import { AGEING_BUCKETS, ageingBucketOf } from '../lib/ageing.js';
 import { ApiError } from '../middleware/error.js';
 
 export const collectionsRouter = Router();
 
-// Money that is not late yet used to land in the same bucket as money a
-// month late, because days_overdue is negative before the due date and the
-// lookup floored it. It is a different conversation, so it gets its own band.
-const BUCKETS = [
-  { key: 'not-due', label: 'Not yet due', lo: -1e6, hi: 0 },
-  { key: '1-30', label: '1–30 days', lo: 1, hi: 30 },
-  { key: '31-60', label: '31–60 days', lo: 31, hi: 60 },
-  { key: '61-90', label: '61–90 days', lo: 61, hi: 90 },
-  { key: '90+', label: 'Over 90 days', lo: 91, hi: 1e6 },
-];
-const bucketOf = (days) => (BUCKETS.find((b) => days >= b.lo && days <= b.hi) || BUCKETS[0]).key;
+const BUCKETS = AGEING_BUCKETS;
+const bucketOf = ageingBucketOf;
 const emptyBuckets = () => Object.fromEntries(BUCKETS.map((b) => [b.key, 0]));
 
 collectionsRouter.get('/', async (req, res) => {

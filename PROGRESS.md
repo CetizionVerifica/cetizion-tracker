@@ -2,7 +2,7 @@
 
 A plain-language account of what has been built, what is being built, and what
 is waiting on a decision. Updated with every pull request. Last update:
-17 September 2026.
+2 October 2026.
 
 ## Where things stand
 
@@ -241,6 +241,69 @@ is replaced by a fake one. It cannot send email or reach any outside system,
 is password-protected, and says STAGING on every page. The lead creates it in
 Dokploy with the written steps.
 
+### Follow-up reminders and escalation (in review)
+
+**What it does.** Every working morning, the owner of an open enquiry, a sent
+quotation or an overdue invoice gets one email listing what needs a follow-up
+from them. They have two working days to log something on the record: a call,
+an email, a meeting, a note or a chase. If nothing is logged, the management
+team gets one email naming the record, the owner and how long it has gone
+untouched, and it is repeated weekly while nothing happens. Records with no
+owner go straight to management so someone assigns them.
+
+**Where to see it.** A Follow-ups screen lists what is waiting, what was
+escalated and what was resolved, with a count per salesperson for admins.
+Each record shows a banner while a follow-up is open, and the link in the
+email opens the record with the logging form ready.
+
+**Before it goes live.** It is switched off. The lead chooses the management
+addresses in Settings, tries it in test mode, then switches it on.
+
+### Reports: six questions for any period (in review)
+
+**What it does.** The Reports page now answers the six questions the sales lead
+asked, for any period: how many enquiries came in (per day, week or month), what
+happened to them (converted to a PO, still in the pipeline, quoted but not won,
+or lost), which sectors gave us POs, which services sell best, which customers
+are new and which orders are repeats, and the PO value each month with the sales
+behind it. Every bar opens the exact records it counted.
+
+**Same numbers everywhere.** The screen, the downloads and the PDF are built from
+one set of rules, so they always agree. Revenue is PO value including GST, by
+PO date. "Lost" means an enquiry closed without ever being quoted; a quotation
+that did not win is shown separately.
+
+**Sectors and services.** An admin chooses the headline sectors and service lines
+under Settings, and which spellings count as which ("Steel" as Metal Industry).
+Nothing already typed on a record is changed.
+
+**Also fixed.** The light/dark theme now loads before the page appears, and a
+Windows-saved CSV keeps its dashes on import.
+
+### Enquiries from email, automatically (in review)
+
+**What it does.** Every connected mailbox is read. A client email asking for
+new work becomes an enquiry by itself, with nobody pressing a button. Each
+mailbox's past year of mail is read once, so last year's enquiries are counted
+in the right month. Free rules discard replies, newsletters, invoices and CVs
+first. The AI judges the rest, or stricter rules do when there is no AI key.
+
+**When our quotation comes first.** Some requests come by phone or WhatsApp,
+so the first email is our quotation. That still makes an enquiry. If the
+quotation was made outside the tracker, its PDF is read and the quotation is
+created too: its lines are checked to add up, and otherwise the printed totals
+are kept and never blanked. A PDF that cannot be trusted leaves the owner a
+task to add the quotation.
+
+**No duplicates.** The same email in two mailboxes, a re-run, or the same
+client writing again within 30 days gives one enquiry.
+
+**Before it goes live.** It is on by default. An admin can switch it off
+under Settings → Mailboxes, which also shows each mailbox's progress. To
+review what was made, use Enquiries → Created from email and
+Quotations → Read from email. Without an AI key the rules decide and no PDF
+is read.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -279,10 +342,28 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 - **Server access for the platform items (#33, #34, #35).** The lead's own
   notes rank backups and closing the database port as the most urgent items in
   the whole list. They need access we do not have.
+- **Sales targets after the Reports change.** A salesperson's order intake now
+  counts the POs received, by PO date, so it matches the Reports page. It used
+  to count quotations marked won. Targets already set for 2026 will read
+  differently; the lead should confirm this is the measure targets are set on.
 - **Accounts:** an SMTP mailbox for reminders, a Microsoft 365 app registration
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-02: Enquiries from email (PR #161's plan, all six steps) built on
+  `feat/email-enquiries`: live detection, the backfill of past mail,
+  quotations read from PDFs, and the admin and review screens. On by
+  default; waiting for review.
+
+- 2026-10-02: Reports rework (six questions, one PDF, admin-chosen sectors and
+  services) built on `feat/sales-report-rework` and opened for review as one
+  pull request. Salesperson order intake moves to POs received; needs the
+  lead's confirmation for targets.
+
+- 2026-10-01: Follow-up reminders to owners and escalation to management
+  built on `feat/follow-up-escalation`, switched off until the lead turns
+  it on. Waiting for review.
 
 - 2026-09-17: Bulk import merged with the team's latest code (invoice
   documents, migrations on start-up, CI/CD). All checks green. Plan and

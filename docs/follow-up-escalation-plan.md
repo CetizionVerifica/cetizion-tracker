@@ -109,6 +109,39 @@ Notes:
   chased is a decision for the lead (§11, D3). The plan assumes **no**: raising
   an invoice is finance's job, and My Today already lists them.
 
+#### As built: quotations not sent from the tracker
+
+`sent_at` is only set by **Send to the client** (or an acceptance link), so
+imported and hand-typed quotations never have it. Requiring it would leave
+almost every open quotation unchased. A quotation is open on its status alone
+(Submitted or Under Negotiation, not accepted, not closed), and the quiet
+period counts from `sent_at`, else `quotation_date`, else the day it was
+entered. The email says "sent", "dated" or "entered" accordingly. Drafts are
+never chased.
+
+#### As built: tasks are the follow-up date
+
+Quotations and invoices have no follow-up date of their own, and adding one
+would be a second place to type the same intention. The date is the **earliest
+open task with a due date** on the record (on the task's own record or any
+record in `task_targets`). "Log a touch" → *Next step … by* creates exactly
+that task. For an enquiry, its own `next_follow_up_at` is a second such date.
+
+For every kind, before the rules in the table above:
+
+1. **A date has come and nothing was logged on or after it** → due on that
+   date (the earliest such date). An invoice must still be overdue by
+   `followup_invoice_overdue_days`.
+2. **Every date is still ahead** → not due: the owner has planned the
+   follow-up, so the quiet-period rule does not nag before it.
+3. **No date, or every date was met by activity** → the quiet-period rule in
+   the table applies.
+
+With an open cycle, moving the date that made it due to a later day with no
+contact logged resolves it as `rescheduled` (D2), for a task as for an
+enquiry's own date. Completing the task counts as activity. The record banner
+shows the next planned task when no follow-up is open.
+
 ### 4.2 What counts as activity
 
 Activity on a record is any of these, made by a **person** (not a job), on
@@ -253,7 +286,7 @@ CREATE TABLE IF NOT EXISTS follow_up_cycles (
   entity               text NOT NULL CHECK (entity IN ('enquiry','quotation','payment_stage')),
   entity_id            text NOT NULL,
   due_on               date NOT NULL,
-  owner_user_id        int REFERENCES users(id) ON DELETE SET NULL,
+  reminded_user_id     int REFERENCES users(id) ON DELETE SET NULL,  -- see the note below
   owner_name           text,              -- snapshot, survives the user's deletion
   reminded_at          timestamptz,
   reminder_email_id    int REFERENCES email_log(id) ON DELETE SET NULL,
@@ -271,8 +304,8 @@ CREATE TABLE IF NOT EXISTS follow_up_cycles (
 -- One open cycle per record.
 CREATE UNIQUE INDEX IF NOT EXISTS follow_up_cycles_open_key
   ON follow_up_cycles (entity, entity_id) WHERE resolved_at IS NULL;
-CREATE INDEX IF NOT EXISTS follow_up_cycles_owner_idx
-  ON follow_up_cycles (owner_user_id, resolved_at);
+CREATE INDEX IF NOT EXISTS follow_up_cycles_reminded_user_idx
+  ON follow_up_cycles (reminded_user_id, resolved_at);
 
 -- Chasing rows written by the payment-reminder job are not a person
 -- following up. Existing ones are recognised by the summary that job writes.
@@ -292,6 +325,11 @@ INSERT INTO settings (key, value, notes) VALUES
   ('followup_cc_owner_on_escalation', 'true', 'Tell the owner when one of their follow-ups is escalated.')
 ON CONFLICT (key) DO NOTHING;
 ```
+
+**As built:** the ledger's user column is `reminded_user_id`, not
+`owner_user_id`. That name marks the three ownership-scoped tables
+(`server/test/ownership.test.js` asserts exactly those three carry it), and
+the person reminded stops being the record's owner once it is reassigned.
 
 Then:
 

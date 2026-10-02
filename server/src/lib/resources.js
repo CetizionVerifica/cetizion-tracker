@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
+import { REPORT_LIST_KEYS, reportListClauses, saveSectorAlias, saveServiceReportLine } from './reportDefinitions.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
@@ -181,6 +182,10 @@ export const resources = {
     filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
+    // Insights' filters (?risk=, ?owner=) and the records behind a Reports
+    // chart (?report_from=&report_outcome=…), each worked out by its own rules.
+    listClauses: async (q, ctx) => [...await enquiryListClauses(q, ctx), ...fromEmailClause('enquiries', q), ...await reportListClauses('enquiries', q, ctx)],
+    computedFilters: ['risk', 'owner', 'from_email', ...REPORT_LIST_KEYS],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -239,6 +244,9 @@ export const resources = {
     filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value', 'contact_email', 'contact_person', 'stage_type'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
+    // Insights opens this list on what it counted (docs/insights-dashboard-plan.md §5.3).
+    listClauses: async (q, ctx) => [...await quotationListClauses(q, ctx), ...fromEmailClause('quotations', q)],
+    computedFilters: ['follow_up', 'overdue_days', 'close_month', 'month', 'owner', 'from_email'],
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
@@ -380,6 +388,15 @@ export const resources = {
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
     filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
+    // ?live=1: not cancelled and not replaced by a revision, the POs the
+    // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
+    // And the records behind a Reports chart (?report_from=&report_sector=…),
+    // picked by the report's own rules, so the list holds what the bar counted.
+    listClauses: async (q, ctx) => [
+      ...(String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+      ...await reportListClauses('pos', q, ctx),
+    ],
+    computedFilters: ['live', ...REPORT_LIST_KEYS],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
@@ -895,6 +912,23 @@ export const resources = {
     schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
+  'sector-aliases': {
+    // A Settings list (065): a spelling of a sector that the Reports section
+    // counts under one of its headline sectors ("Steel" -> Metal Industry).
+    // Nothing on a quotation or enquiry changes. Admins curate it.
+    adminOnlyWrites: true,
+    table: 'sector_aliases',
+    view: null,
+    label: 'Sector alias',
+    defaultSort: 'sector, alias',
+    search: ['alias', 'sector'],
+    filters: ['sector'],
+    columns: ['alias', 'sector'],
+    schema: z.object({ alias: requiredStr(120), sector: requiredStr(120) }),
+    // The sector must be a headline sector (Settings → Report categories).
+    onSave: saveSectorAlias,
+  },
+
   'lost-reasons': {
     // A Settings list. Deleting one blanks it on every lost quotation and
     // unqualified enquiry, through ON DELETE SET NULL.
@@ -919,7 +953,7 @@ export const resources = {
     defaultSort: 'sort_order, name',
     search: ['name'],
     filters: ['active'],
-    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id', 'report_line'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
@@ -935,7 +969,11 @@ export const resources = {
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
       onboarding_template_id: int({ min: 1 }),
       payment_terms_template_id: int({ min: 1 }),
+      // The Reports section's service line (065); blank = matched by name.
+      report_line: str(120),
     }),
+    // A report line, when set, must be one of the listed service lines.
+    onSave: saveServiceReportLine,
   },
 
   'quotation-lines': {
@@ -1067,3 +1105,91 @@ export const ONBOARDING_TEMPLATE = [
   ['Delivery', 'Finance raises the on-delivery stage invoice(s)'],
   ['Closure', 'All stage invoices paid on time as per agreed terms - project closed'],
 ];
+
+/* ------------------------------------------------- computed list filters */
+
+const MONTH = /^\d{4}-\d{2}$/;
+
+/**
+ * The scope the Insights rules run with: the reader's own, or, for an admin
+ * following a bar for one owner, that owner's (`owner=none` is the records
+ * nobody owns). Not a column filter: owner_user_id stays out of the generic
+ * filters until ownership is a list filter everywhere.
+ */
+function ruleScope(scope, owner) {
+  if (!scope.unrestricted || !owner) return { scope, unowned: false };
+  if (owner === 'none') return { scope, unowned: true };
+  const id = Number(owner);
+  return Number.isInteger(id) && id > 0 ? { scope: { unrestricted: false, ownerId: id }, unowned: false } : { scope, unowned: false };
+}
+
+/**
+ * The record numbers the Insights rules pick out, as a clause. Loaded on
+ * demand: insights.js reaches the follow-up and mail modules, which reach
+ * back here, and a static import would make that a cycle.
+ */
+async function numbersClause(column, params, pick) {
+  const { insightsContext } = await import('./insights.js');
+  const { businessToday } = await import('./businessDate.ts');
+  const { query } = await import('../db.js');
+  const db = { query };
+  const numbers = await pick(db, await insightsContext(db, businessToday()));
+  params.push(numbers);
+  return `${column} = ANY($${params.length}::text[])`;
+}
+
+/**
+ *   ?follow_up=overdue        open quotations past their follow-up date
+ *   &overdue_days=8-14 | 15+  …and overdue by that many days
+ *   &owner=<user id> | none   …and, for an admin, one owner's
+ *   ?close_month=YYYY-MM      expected to close that month
+ *   ?month=YYYY-MM            quoted that month (Reports' quoted-vs-won bars)
+ */
+async function quotationListClauses(q, { scope, params }) {
+  const out = [];
+  if (MONTH.test(String(q.close_month ?? ''))) {
+    params.push(q.close_month);
+    out.push(`to_char(expected_close_date, 'YYYY-MM') = $${params.length}`);
+  } else if (q.close_month === 'undated') out.push('expected_close_date IS NULL');
+  if (MONTH.test(String(q.month ?? ''))) {
+    params.push(q.month);
+    out.push(`to_char(quotation_date, 'YYYY-MM') = $${params.length}`);
+  }
+  if (q.follow_up === 'overdue') {
+    const { parseDayRange } = await import('./ageing.js');
+    const range = parseDayRange(q.overdue_days);
+    out.push(await numbersClause('quotation_no', params, async (db, ctx) => {
+      const { overdueFollowUps } = await import('./insights.js');
+      const who = ruleScope(scope, q.owner);
+      const items = (await overdueFollowUps(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
+      return items.filter((i) => !range || (i.days_overdue >= range.lo && i.days_overdue <= range.hi)).map((i) => i.number);
+    }));
+  }
+  return out;
+}
+
+/**
+ * ?from_email=1   enquiries created automatically from an email, or
+ *                 quotations read from a PDF we emailed — derived from the
+ *                 decision log (docs/email-enquiries-plan.md), not stored on
+ *                 the record.
+ */
+function fromEmailClause(resource, q) {
+  if (!['1', 'true', 'yes'].includes(String(q.from_email ?? '').toLowerCase())) return [];
+  return resource === 'enquiries'
+    ? [`enquiry_no IN (SELECT enquiry_no FROM email_enquiry_decisions WHERE outcome = 'created' AND enquiry_no IS NOT NULL)`]
+    : [`quotation_no IN (SELECT quotation_no FROM email_enquiry_decisions WHERE quotation_extraction IN ('created','revised') AND quotation_no IS NOT NULL)`];
+}
+
+/** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */
+async function enquiryListClauses(q, { scope, params }) {
+  if (!q.risk) return [];
+  const { RISK_REASONS } = await import('./enquiryRisk.js');
+  const reason = RISK_REASONS.includes(q.risk) ? q.risk : null;
+  return [await numbersClause('enquiry_no', params, async (db, ctx) => {
+    const { enquiriesAtRisk } = await import('./insights.js');
+    const who = ruleScope(scope, q.owner);
+    const items = (await enquiriesAtRisk(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
+    return items.filter((i) => !reason || i.reasons.some((r) => r.reason === reason)).map((i) => i.number);
+  })];
+}

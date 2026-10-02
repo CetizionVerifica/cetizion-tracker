@@ -1,7 +1,7 @@
-import { useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { PageHeader } from '../App.jsx';
-import { Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
+import { Alert, Card, DataTable, Empty, ErrorState, ConfirmDialog, useToast } from './ui.jsx';
 import { RecordForm } from './RecordForm.jsx';
 import { SavedViews } from './SavedViews.jsx';
 import { api } from '../lib/api.js';
@@ -56,7 +56,15 @@ export function ListPage({
     const value = urlParams.get(name);
     if (value) fromUrl[name] = value;
   }
+  // The records behind a Reports chart (?report_from=&report_outcome=…).
+  // Not a dropdown on any list: the server runs the report's own rules on
+  // them, so they ride along with the filters to the list, its exports and
+  // a saved view, and the banner below says why the list is short.
+  const fromReport = {};
+  for (const [name, value] of urlParams) if (name.startsWith('report_') && value) fromReport[name] = value;
+  Object.assign(fromUrl, fromReport);
   const urlSearch = urlParams.get('q') || '';
+  const { pathname } = useLocation();
 
   // Companies, contacts, purchase orders, their service lines and their
   // payment stages are an admin's to delete (#85) — shared master data and
@@ -180,6 +188,14 @@ export function ListPage({
       />
 
       <div className="page stack">
+        {fromReport.report_from && (
+          <Alert tone="info">
+            <span>
+              {reportBannerText(fromReport, total)}{' '}
+              <Link to={pathname}>Show all {title.toLowerCase()}</Link>
+            </span>
+          </Alert>
+        )}
         {typeof banner === 'function' ? banner(rows) : banner}
 
         <Card flush>
@@ -317,4 +333,27 @@ export function ListPage({
       )}
     </>
   );
+}
+
+const SLICE_LABEL = {
+  outcome: {
+    converted: 'converted to a PO', pipeline: 'still in the pipeline', quoted_not_won: 'quoted, not won', lost: 'lost before a quotation',
+    not_quoted: 'in the pipeline, not yet quoted', quoted: 'in the pipeline, quoted',
+  },
+  customer: {
+    new: 'from new customers', existing: 'from existing customers', first: 'first orders', repeat: 'repeat orders',
+  },
+};
+
+/** "The 4 records behind the Reports chart: 1 Sep 2026 – 30 Sep 2026, lost before a quotation." */
+function reportBannerText(q, total) {
+  const parts = [`${date(q.report_from)} – ${date(q.report_to)}`];
+  if (q.report_outcome) parts.push(SLICE_LABEL.outcome[q.report_outcome] ?? q.report_outcome);
+  if (q.report_customer) parts.push(SLICE_LABEL.customer[q.report_customer] ?? q.report_customer);
+  if (q.report_sector) parts.push(`sector ${q.report_sector}`);
+  if (q.report_service) parts.push(`service ${q.report_service}`);
+  if (q.report_month) parts.push(`month ${q.report_month}`);
+  if (q.report_owner) parts.push('one owner');
+  const count = total == null ? 'The records' : `The ${total} record${total === 1 ? '' : 's'}`;
+  return `${count} behind the Reports chart: ${parts.join(', ')}.`;
 }

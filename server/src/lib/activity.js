@@ -47,6 +47,9 @@ export const ACTIONS = {
   CLAIM_REIMBURSED: 'claim.reimbursed',
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
+  // A quotation read from the PDF we emailed, checked against it by a person
+  // (docs/email-enquiries-plan.md §3.9.6).
+  QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */

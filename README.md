@@ -52,10 +52,13 @@ on its own trigger — registration, delivery, a project milestone — and nobod
 hand. Invoice runs, receipts, collections ageing, cash-flow forecasting, payables to
 travel vendors, and profitability per project.
 
-<img src="docs/images/reports.png" alt="Reports: pipeline by stage, collections ageing, cash expected over six months, and win rate by quarter" width="900">
+<img src="docs/images/reports.png" alt="Reports for a month: enquiries, conversion to PO, POs and new clients in a summary strip, then enquiries per day and what happened to them" width="900">
 
-*Every bar links into the list behind it, and each chart opens as a table — a figure you
-cannot interrogate is a figure you have to trust.*
+*Reports answers six questions for any period — enquiries received, what became of them,
+sector-wise POs, service-wise sales, new and repeat customers, monthly revenue — on screen,
+as CSVs and as one PDF, all from the same definitions. Every bar opens the records it
+counted, and each chart opens as a table: a figure you cannot interrogate is a figure you
+have to trust.*
 
 **Delivery and travel.** Projects with onboarding checklists and milestones, site visit
 scheduling, trips with vendor invoices and employee expense claims, and certificates with
@@ -326,7 +329,8 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | Job | When | What it does |
 | --- | --- | --- |
 | `webhooks.deliver` | every minute | Sends webhook events to their endpoints and retries failed ones |
-| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes |
+| `mail.sync` | every 5 minutes | Pulls new client email from connected mailboxes, and creates enquiries from new client requests (docs/email-enquiries.md) |
+| `enquiries.backfill` | every 10 minutes | Reads each mailbox's past year of mail once, in runs of about four minutes, and creates the enquiries it finds |
 | `notifications.email` | every 10 minutes | Emails the notifications people asked to get by email |
 | `ops.watch` | every 15 minutes | Checks the certificate, disk, backups and stuck jobs; alerts when something is wrong |
 | `documents.purge` | 03:00 daily | Finishes interrupted document removals |
@@ -337,12 +341,13 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | `notifications.digest` | 08:30 weekdays | Each person's digest of what is waiting for them |
 | `renewals.daily` | 08:45 daily | Opens renewal quotations inside the lead time |
 | `reminders.payment` | 09:00 weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |
+| `followups.daily` | 09:15 weekdays | Emails each owner the enquiries, quotations and overdue invoices due a follow-up (on the date of their next open task, an enquiry's follow-up date, or after a quiet period); tells management about the ones with nothing logged by the respond-by date. Off until `followup_enabled` is `true`; skips holidays |
 | `notifications.weekly` | 09:00 Mondays | The admins' week in notifications |
 | `finance.digest` | 09:30 weekdays | Summary to `finance_email`: stages to invoice, overdue invoices, reminders sent today |
 | `visits.reminders` | 17:00 daily | Reminds the team, and the client where chosen, before a visit |
 | `exchange.rates` | 21:00 weekdays | Fetches the ECB reference rates; hand-entered rates are left alone |
 
-The finance digest runs after the payment reminders, so its count covers the same morning.
+The finance digest runs after the payment reminders, so its count covers the same morning. The follow-up run comes after the payment reminders too, so the client reminders sent that morning are already marked as automated and do not count as someone following up (docs/follow-up-escalation-plan.md).
 
 ---
 

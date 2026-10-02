@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { ownerClause, scopeOf, scopedSources } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
+import { pipelineCards, summarisePipeline } from '../lib/pipeline.js';
 import { RATES, rateOn } from '../lib/salesReport.js';
 
 export const pipelineRouter = Router();
@@ -25,62 +26,25 @@ pipelineRouter.get('/', async (req, res) => {
   // The pipeline_stages list is configuration and stays whole: an empty
   // column is information, and hiding the column would not be.
   const scope = scopeOf(req);
-  const cardParams = []; const cardSrc = scopedSources(scope, cardParams);
   const closedParams = []; const closedSrc = scopedSources(scope, closedParams);
-  const filters = (params) => {
-    const where = [];
-    if (req.query.sales_person) { params.push(String(req.query.sales_person)); where.push(`v.sales_person = $${params.length}`); }
-    if (req.query.sector) { params.push(String(req.query.sector)); where.push(`v.sector = $${params.length}`); }
-    return where.length ? `AND ${where.join(' AND ')}` : '';
-  };
-  const cardWhere = filters(cardParams);
-  const closedWhere = filters(closedParams);
+  const closedWhere = [];
+  if (req.query.sales_person) { closedParams.push(String(req.query.sales_person)); closedWhere.push(`v.sales_person = $${closedParams.length}`); }
+  if (req.query.sector) { closedParams.push(String(req.query.sector)); closedWhere.push(`v.sector = $${closedParams.length}`); }
   const [stages, cards, closed] = await Promise.all([
     query('SELECT * FROM pipeline_stages WHERE active ORDER BY sort_order'),
-    // Every currency counts, converted to INR at the rate on the quotation's
-    // own date (#25), the way the sales reports convert. A currency with no
-    // rate for that date is left out of the totals and counted as such.
-    //
-    // The relation is substituted, not the arithmetic: main's conversion is
-    // untouched, it simply runs over the cards this reader may see.
-    query(`WITH ${RATES}
-           SELECT v.id, v.quotation_no, v.client_name, v.company_id, v.service_quoted, v.sales_person, v.sector, v.quotation_value, v.currency, v.status,
-                  v.stage_id, v.probability, v.weighted_value, v.expected_close_date, v.next_step, v.days_in_stage, v.stale, v.valid_until, v.expired,
-                  v.sent_at, v.accepted_at, v.quotation_date,
-                  round(v.quotation_value * r.rate, 2) AS value_inr, round(v.weighted_value * r.rate, 2) AS weighted_inr
-             FROM ${cardSrc.vQuotations} v ${rateOn('r', 'v.currency', 'v.quotation_date')}
-            WHERE v.stage_type IN ('open', 'paused') ${cardWhere}
-            ORDER BY v.stage_order, v.expected_close_date NULLS LAST, v.quotation_value DESC NULLS LAST`, cardParams),
+    pipelineCards({ query }, scope, { sales_person: req.query.sales_person, sector: req.query.sector }),
     query(`WITH ${RATES}
            SELECT v.stage, COUNT(*)::int AS n, COALESCE(round(SUM(v.quotation_value * r.rate), 2), 0) AS value_inr,
                   COUNT(*) FILTER (WHERE v.quotation_value IS NOT NULL AND r.rate IS NULL)::int AS without_rate, v.lost_reason
              FROM ${closedSrc.vQuotations} v ${rateOn('r', 'v.currency', 'v.quotation_date')}
-            WHERE v.stage_type IN ('won', 'lost') AND v.closed_at >= now() - interval '90 days' ${closedWhere}
+            WHERE v.stage_type IN ('won', 'lost') AND v.closed_at >= now() - interval '90 days' ${closedWhere.length ? `AND ${closedWhere.join(' AND ')}` : ''}
             GROUP BY v.stage, v.lost_reason ORDER BY v.stage, n DESC`, closedParams),
   ]);
-  // Forecast: weighted INR value of open quotations by expected close month; undated ones in their own bucket.
-  const converted = (c) => c.quotation_value != null && c.value_inr != null;
-  const forecast = {};
-  for (const c of cards.rows) {
-    // A draft has not gone to the client: it is not forecast (#24).
-    if (c.status === 'Draft' || !converted(c) || !Number(c.quotation_value)) continue;
-    const key = c.expected_close_date ? String(c.expected_close_date).slice(0, 7) : 'undated';
-    forecast[key] ??= { month: key, count: 0, value: 0, weighted: 0 };
-    forecast[key].count += 1; forecast[key].value += Number(c.value_inr); forecast[key].weighted += Number(c.weighted_inr || 0);
-  }
-  const perStage = Object.fromEntries(stages.rows.map((s) => [s.id, { count: 0, value: 0, weighted: 0, stale: 0, without_rate: 0 }]));
-  for (const c of cards.rows) {
-    const t = perStage[c.stage_id]; if (!t) continue;
-    t.count += 1;
-    if (converted(c)) { t.value += Number(c.value_inr); if (c.status !== 'Draft') t.weighted += Number(c.weighted_inr || 0); }
-    else if (c.quotation_value != null) t.without_rate += 1;
-    if (c.stale) t.stale += 1;
-  }
-  const withoutRate = cards.rows.filter((c) => c.quotation_value != null && c.value_inr == null).length;
+  const summary = summarisePipeline(stages.rows, cards);
   res.json({ data: {
-    stages: stages.rows.map((s) => ({ ...s, ...perStage[s.id] })), cards: cards.rows,
-    forecast: Object.values(forecast).sort((a, b) => a.month.localeCompare(b.month)), closed_90_days: closed.rows,
-    without_rate: withoutRate,
+    stages: summary.stages, cards,
+    forecast: summary.forecast, closed_90_days: closed.rows,
+    without_rate: summary.without_rate,
   } });
 });
 

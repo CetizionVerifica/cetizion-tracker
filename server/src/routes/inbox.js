@@ -18,8 +18,8 @@ import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { sentFields } from '../lib/sentFields.js';
-import { claimNextId } from '../lib/sequences.js';
 import { replyToThread } from '../lib/mailbox/sync.js';
+import { createEnquiryFromEmail } from '../lib/mailbox/enquiryFromEmail.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate, wake } from '../lib/inbox.js';
 
@@ -382,45 +382,15 @@ inboxRouter.post('/:id/convert', async (req, res) => {
   const enquiry = await transaction(async (db) => {
     const { rows: [src] } = v.source_id ? { rows: [{ id: v.source_id }] } : await db.query(`SELECT id FROM lead_sources WHERE name = 'Inbound email or call'`);
     const { rows: [{ first }] } = await db.query('SELECT MIN(sent_at) AS first FROM email_messages WHERE thread_id = $1', [c.thread_id]);
-    const no = await claimNextId('enquiry', db);
-    const { rows: [e] } = await db.query(
-      `INSERT INTO enquiries (enquiry_no, enquiry_date, client_name, contact_person, sales_person, service, status, source_id, notes, first_responded_at)
-       VALUES ($1, ($2::timestamptz AT TIME ZONE 'Asia/Kolkata')::date, $3, $4, $5, $6, 'New', $7, $8, $9) RETURNING *`,
-      [no, first || new Date().toISOString(), client, v.contact_person || c.contact_name || c.from_name || null, v.sales_person || c.assignee || null,
-        v.service || c.subject || null, src?.id ?? null, v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, c.first_response_at]);
-    await db.query('UPDATE inbox_conversations SET enquiry_no = $2, company_id = COALESCE(company_id, $3) WHERE id = $1', [c.id, e.enquiry_no, e.company_id]);
-    await db.query(`UPDATE email_threads SET entity = 'enquiry', entity_id = $2, company_id = COALESCE(company_id, $3) WHERE id = $1`, [c.thread_id, e.enquiry_no, e.company_id]);
-    // The sender's address, onto the contact this enquiry is actually
-    // linked to.
-    //
-    // This used to insert a contact under the sender's *display* name. The
-    // enquiry above had already made one under whatever name was typed, and
-    // whoever converts the thread often corrects it — "Ravi K" in the From
-    // line becomes "Ravi Kumar". Contacts are unique by name within a
-    // company, so those are two rows: one with the email and one the
-    // enquiry and every quotation made from it point at, without it. The
-    // address was recorded and then not used, which is worse than not
-    // recording it (client-data-gaps.md, gap 2).
-    //
-    // So: fill the linked contact's blank, and only create one when the
-    // enquiry linked to nobody.
-    let contactId = e.contact_id || null;
-    if (e.company_id && c.from_email) {
-      if (contactId) {
-        await db.query(
-          `UPDATE contacts SET email = COALESCE(NULLIF(btrim(email), ''), $2) WHERE id = $1`,
-          [contactId, c.from_email]);
-      } else {
-        const { rows: [ct] } = await db.query(
-          `INSERT INTO contacts (company_id, name, email, notes) VALUES ($1,$2,$3,'Added from the inbox')
-           ON CONFLICT (company_id, lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))) DO UPDATE SET email = COALESCE(contacts.email, EXCLUDED.email) RETURNING id`,
-          [e.company_id, (c.from_name || c.from_email.split('@')[0]).slice(0, 160), c.from_email]);
-        contactId = ct.id;
-      }
-      await db.query('UPDATE inbox_conversations SET contact_id = $2 WHERE id = $1', [c.id, contactId]);
-      await db.query('UPDATE email_threads SET contact_id = $2 WHERE id = $1', [c.thread_id, contactId]);
-    }
-    return e;
+    return createEnquiryFromEmail(db, {
+      threadId: c.thread_id, fromEmail: c.from_email, fromName: c.from_name,
+      enquiry: {
+        dated_at: first || new Date().toISOString(), client_name: client, status: 'New',
+        contact_person: v.contact_person || c.contact_name || c.from_name || null, sales_person: v.sales_person || c.assignee || null,
+        service: v.service || c.subject || null, source_id: src?.id ?? null,
+        notes: v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, first_responded_at: c.first_response_at,
+      },
+    });
   });
   res.status(201).json({ data: enquiry });
 });

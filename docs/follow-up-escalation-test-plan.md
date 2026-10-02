@@ -140,7 +140,7 @@ File: `server/test/followUps.test.js`. Pure functions, no database.
 | U-Q01 | Quotation `Submitted`, sent `2026-09-28`, no activity, today `2026-10-05` | Due (5 working days) |
 | U-Q02 | Same, with the holiday on 2 October | Due on `2026-10-06`, not on 5 October |
 | U-Q03 | `Under Negotiation`, last touch `2026-10-01` | Not due until `2026-10-08` (`2026-10-09` with the holiday) |
-| U-Q04 | `sent_at` is null (typed in or imported, never sent) | Never due |
+| U-Q04 | `sent_at` is null (typed in or imported, never sent) | Counted from `quotation_date` (else the day it was entered): due on 5 Oct for a quotation dated 28 Sep. The email says "dated". A Draft is never due. (As built; the plan first said never due.) |
 | U-Q05 | `accepted_at` set, `closed_at` set, or status `Won - PO Received`, `Lost`, `On Hold` or `Draft` | Never due |
 | U-I01 | Invoice `Overdue`, 15 days overdue, no chase ever | Due |
 | U-I02 | `Overdue`, last human chase 2 working days ago | Not due |
@@ -152,6 +152,19 @@ File: `server/test/followUps.test.js`. Pure functions, no database.
 | U-I08 | Stage `Paid` | Never due |
 | U-S01 | A setting that is blank, `'abc'` or negative | The default is used, and the test documents which one |
 | U-S02 | Today is Saturday `2026-10-03`, or the holiday `2026-10-02` | `planFollowUps` returns nothing to do and gives the reason `not a working day` |
+
+### Tasks as follow-up dates (as built, plan §4.1)
+
+| ID | Case | Expected |
+| --- | --- | --- |
+| T-01 | Quotation sent 1 Oct (inside the quiet period), open task due 5 Oct, today 5 Oct | Due on 5 Oct, reason `task`, the task's title in the email |
+| T-02 | Quotation or invoice quiet for weeks, open task due 12 Oct, today 5 Oct | Not due: the follow-up is planned |
+| T-03 | Task due 1 Oct, a touch on 2 Oct | Not due on 5 Oct; due on the quiet rule from 2 Oct (9 Oct) |
+| T-04 | Enquiry date 12 Oct and a task due 1 Oct; and the reverse | Due on the earliest missed date, with its reason |
+| T-05 | Invoice 0 days overdue with a task due 1 Oct | Not due until it is overdue enough |
+| T-06 | Open cycle, task moved to a later date with no contact | Resolved as `rescheduled`; a task still overdue escalates as usual |
+| T-07 | Two open tasks, one done task, one task attached through `task_targets` | The earliest open dated task counts, on every record it stands on; a done task does not |
+| T-08 | `GET /api/follow-ups/record` on a record with a planned task | `next_task` gives its date and title, with or without an open cycle |
 
 ## 5. Unit tests: the cycle (§4.3)
 
@@ -270,7 +283,7 @@ that records each call and returns a configurable status.
 | M-02 | Apply 063 to a database holding `collection_log` rows written by the old reminder job | Those rows get `automated = true`. Rows typed by a person stay `false`. |
 | M-03 | Apply 063 twice (`IF NOT EXISTS`) and to an empty database | No error |
 | M-04 | Insert two open cycles for the same record | Rejected by `follow_up_cycles_open_key`. A second cycle after the first is resolved is allowed. |
-| M-05 | Delete a user who owns cycles | Cycles stay, `owner_user_id` becomes null and `owner_name` is kept |
+| M-05 | Delete a user who owns cycles | Cycles stay, `reminded_user_id` becomes null and `owner_name` is kept |
 | M-06 | `v_enquiries` and every other view | Unchanged (no column added to `enquiries`) |
 
 ### Authorization and API

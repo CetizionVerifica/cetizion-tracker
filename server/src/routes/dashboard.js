@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { scopedSources, scopeOf } from '../auth/ownership.js';
-import { customerReport, fxReport, reportPeriod, sectorReport } from '../lib/salesReport.js';
-import { revenueReport } from '../lib/revenueReport.js';
 import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 import { payables } from '../lib/payables.js';
@@ -189,29 +187,6 @@ dashboardRouter.get('/worklist', async (req, res) => {
       won_without_project: gaps.rows,
     },
   });
-});
-
-/**
- * Sector-wise funnel, FX deals and new vs repeat customers, for an
- * optional ?from=&to= range.
- */
-dashboardRouter.get('/sales-report', async (req, res) => {
-  const period = reportPeriod(req.query);
-  const scope = scopeOf(req);
-  const [sectors, customers, fx] = await Promise.all([
-    sectorReport(period, scope), customerReport(period, scope), fxReport(period, scope),
-  ]);
-  res.json({ data: { period, sectors, customers, fx } });
-});
-
-/**
- * Order intake (won quotations), invoicing & collections and payment status
- * (purchase orders) per month, for an optional ?from=&to= range — the page
- * sends a calendar year, or one month of it.
- */
-dashboardRouter.get('/revenue-report', async (req, res) => {
-  const period = reportPeriod(req.query);
-  res.json({ data: { period, ...(await revenueReport(period, { scope: scopeOf(req) })) } });
 });
 
 /**

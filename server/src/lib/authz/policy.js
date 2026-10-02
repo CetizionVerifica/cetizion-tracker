@@ -193,8 +193,6 @@ export const routes = [
   // ------------------------------------------------------------ dashboard
   { method: 'GET', path: '/api/dashboard/overview', access: signedIn },
   { method: 'GET', path: '/api/dashboard/worklist', access: signedIn },
-  { method: 'GET', path: '/api/dashboard/sales-report', access: signedIn },
-  { method: 'GET', path: '/api/dashboard/revenue-report', access: signedIn },
   { method: 'GET', path: '/api/dashboard/travel', access: signedIn },
   { method: 'GET', path: '/api/dashboard/data-quality', access: signedIn },
   { method: 'GET', path: '/api/dashboard/payables', access: signedIn, note: 'What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill.' },
@@ -214,6 +212,8 @@ export const routes = [
   { method: 'GET', path: '/api/reports/conversion', access: signedIn, restrictions: ['record-owner'], note: 'Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string.' },
   { method: 'GET', path: '/api/reports/quoted-won', access: signedIn, restrictions: ['record-owner'], note: 'Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today\'s rate into a month that has passed.' },
   { method: 'GET', path: '/api/reports/by-status', access: signedIn, restrictions: ['record-owner'], note: 'Open deals by the status on the record, which is not always where its pipeline stage puts it.' },
+  { method: 'GET', path: '/api/reports/sales', access: signedIn, restrictions: ['record-owner'], note: 'The Reports section\'s questions for a period: enquiries received and their outcome, sector-wise POs, service-wise sales, new and existing customers, and monthly revenue. Every record listed comes from the scoped sources; ?owner= narrows an admin\'s view to one salesperson and is ignored for a sales user. One deliberate exception: whether a customer had ordered before is judged against every counting PO, so a sales user sees a long-standing client as existing, and a repeat order\'s count of previous orders — never those orders themselves.' },
+  { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 
   // --------------------------------------------------------- saved views
   //
@@ -305,6 +305,14 @@ export const routes = [
   { method: 'POST', path: '/api/notifications/:id/read', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/notifications/sweep', access: mustBeAdmin, why: 'The same work as the notifications.daily job. Running a job by hand is operational.' },
 
+  // ----------------------------------------------------------- follow-ups
+  { method: 'GET', path: '/api/follow-ups', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/record', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'GET', path: '/api/follow-ups/summary', access: mustBeAdmin, why: 'How each salesperson answers their reminders is a management view of the whole team.' },
+
+  // ------------------------------------------------------------- insights
+  { method: 'GET', path: '/api/insights', access: signedIn, restrictions: ['record-owner'], note: 'Five questions on one screen (docs/insights-dashboard-plan.md). Every section is narrowed to the reader\'s records; ?owner= is honoured for an admin only.' },
+
   // ------------------------------------------------------- communications
   { method: 'GET', path: '/api/communications', access: signedIn },
   { method: 'POST', path: '/api/communications', access: signedIn },
@@ -330,11 +338,14 @@ export const routes = [
   { method: 'POST', path: '/api/mailboxes/:id/sync', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
+  { method: 'GET', path: '/api/mailboxes/auto-enquiries', access: mustBeAdmin, why: 'Counts what every mailbox\'s mail was judged to be, the whole team\'s included.' },
+  { method: 'POST', path: '/api/mailboxes/:id/auto-enquiries/rerun', access: mustBeAdmin, why: 'Has a mailbox\'s mail judged again for enquiries, which spends the AI budget everybody shares.' },
   { method: 'GET', path: '/api/mailboxes/blocklist', access: signedIn },
   { method: 'POST', path: '/api/mailboxes/blocklist', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody.' },
   { method: 'DELETE', path: '/api/mailboxes/blocklist/:id', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again.' },
 
   // ---------------------------------------------------------- mail threads
+  { method: 'GET', path: '/api/mail/origin', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'GET', path: '/api/mail/threads', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'GET', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'PATCH', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
@@ -443,6 +454,7 @@ export const routes = [
   { method: 'GET', path: '/api/quotations/:key/full', access: signedIn },
   { method: 'GET', path: '/api/quotations/:key/pdf', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/revise', access: signedIn },
+  { method: 'POST', path: '/api/quotations/:key/email-read-checked', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/send', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/accept', access: signedIn },
   { method: 'POST', path: '/api/quotations/:id/convert', access: signedIn },
@@ -594,6 +606,7 @@ export const resourceAccess = {
   // --- the Settings lists: one edit re-labels every record that used it --
   'pipeline-stages': { read: 'any', write: 'admin', delete: 'admin', why: 'A stage\'s status mapping and probability rewrite quotation statuses and the whole forecast.' },
   services: { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
+  'sector-aliases': { read: 'any', write: 'admin', delete: 'admin', why: 'Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report.' },
   'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'expense-categories': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'exchange-rates': { read: 'any', write: 'admin', delete: 'admin', why: 'One rate re-values every historical deal in every report.' },

@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -232,7 +232,10 @@ CREATE TABLE services (
   renewal_interval_months int,
   renewal_lead_days       int NOT NULL DEFAULT 60,
   onboarding_template_id    int REFERENCES onboarding_templates(id) ON DELETE SET NULL,
-  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL
+  payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL,
+  -- The Reports section's service line for this entry (065). Blank: the
+  -- name is matched against the keyword rules in lib/serviceLines.js.
+  report_line               text
 );
 
 CREATE TABLE travel_vendors (
@@ -805,7 +808,9 @@ CREATE TABLE collection_log (
   summary              text NOT NULL,
   promise_to_pay_date  date,
   next_action_on       date,
-  created_at           timestamptz NOT NULL DEFAULT now()
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  -- Written by the payment-reminder job, not a person: not a follow-up.
+  automated            boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX collection_log_stage_idx ON collection_log (stage_id, happened_at DESC);
@@ -937,13 +942,28 @@ END $$;
 
 -- ---------------------------------------------------------------- quotation totals
 -- Totals follow the lines. With lines, quotation_value is the total; without
--- any, the typed quotation_value stands and the totals are blank.
+-- any, the typed quotation_value stands and the totals are blank — unless the
+-- totals were read from a PDF (066), in which case those printed figures stand.
 CREATE OR REPLACE FUNCTION quotation_totals(p_quotation int) RETURNS void AS $$
 DECLARE s numeric; t numeric; n int; gross numeric; disc numeric; threshold numeric; st text; approved_at numeric;
+        p_sub numeric; p_tax numeric; p_total numeric;
 BEGIN
   SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(round(amount * gst_rate / 100, 2)), 0), COALESCE(SUM(round(qty * rate, 2)), 0)
     INTO n, s, t, gross FROM quotation_lines WHERE quotation_id = p_quotation;
   IF n = 0 THEN
+    -- Read from the PDF we sent (docs/email-enquiries-plan.md §3.9.7): the
+    -- printed totals stand until real lines replace them, and come back if
+    -- those lines are all removed. Never blanked, never zero.
+    SELECT d.printed_subtotal, d.printed_tax_total, d.printed_total INTO p_sub, p_tax, p_total
+      FROM email_enquiry_decisions d JOIN quotations q ON q.quotation_no = d.quotation_no
+     WHERE q.id = p_quotation AND d.quotation_extraction IN ('created','revised') AND d.printed_total IS NOT NULL
+     ORDER BY d.decided_at DESC, d.id DESC LIMIT 1;
+    IF FOUND THEN
+      UPDATE quotations SET subtotal = p_sub, tax_total = p_tax, total = p_total, quotation_value = p_total, discount_percent = NULL,
+             approval_status = CASE WHEN approval_status = 'pending' AND approval_reason IS NULL THEN 'not_needed' ELSE approval_status END
+       WHERE id = p_quotation;
+      RETURN;
+    END IF;
     UPDATE quotations SET subtotal = NULL, tax_total = NULL, total = NULL, discount_percent = NULL,
            approval_status = CASE WHEN approval_status = 'pending' AND approval_reason IS NULL THEN 'not_needed' ELSE approval_status END
      WHERE id = p_quotation;
@@ -2626,6 +2646,59 @@ CREATE INDEX IF NOT EXISTS sales_targets_year_idx
 CREATE TRIGGER sales_targets_set_updated_at BEFORE UPDATE ON sales_targets
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ------------------------------------------------------- follow_up_cycles
+-- Follow-up reminders to owners and escalation to management
+-- (docs/follow-up-escalation-plan.md).
+-- A follow-up cycle: one record, one reminder, at most one open at a time.
+-- These are events that happened (an email went, a deadline passed), not
+-- values derived from other columns, so they are stored, the same way
+-- payment_stages.reminder_sent_on is.
+CREATE TABLE IF NOT EXISTS follow_up_cycles (
+  id                   serial PRIMARY KEY,
+  entity               text NOT NULL CHECK (entity IN ('enquiry','quotation','payment_stage')),
+  entity_id            text NOT NULL,
+  due_on               date NOT NULL,
+  -- The person the reminder went to, as things stood then. Not the record's
+  -- owner (that is owner_user_id on the record): a reassignment ends the cycle.
+  reminded_user_id     int REFERENCES users(id) ON DELETE SET NULL,
+  owner_name           text,
+  reminded_at          timestamptz,
+  reminder_email_id    int REFERENCES email_log(id) ON DELETE SET NULL,
+  respond_by           date,
+  escalated_at         timestamptz,
+  last_escalated_on    date,
+  escalation_count     int NOT NULL DEFAULT 0,
+  escalation_email_id  int REFERENCES email_log(id) ON DELETE SET NULL,
+  resolved_at          timestamptz,
+  resolved_reason      text CHECK (resolved_reason IN
+                         ('activity','closed','paid','on_hold','promised','rescheduled','reassigned','disabled')),
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+-- One open cycle per record.
+CREATE UNIQUE INDEX IF NOT EXISTS follow_up_cycles_open_key
+  ON follow_up_cycles (entity, entity_id) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS follow_up_cycles_reminded_user_idx
+  ON follow_up_cycles (reminded_user_id, resolved_at);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('followup_enabled', 'false', 'Email owners about due follow-ups and escalate to management when nothing is logged.'),
+  ('followup_enquiry_idle_days', '3', 'Working days an enquiry with no follow-up date may go untouched.'),
+  ('followup_quotation_idle_days', '5', 'Working days a sent quotation may go untouched.'),
+  ('followup_invoice_overdue_days', '1', 'Days overdue before the owner is asked to follow up an invoice.'),
+  ('followup_invoice_idle_days', '5', 'Working days an overdue invoice may go unchased.'),
+  ('followup_grace_days', '2', 'Working days after a reminder before management is told.'),
+  ('followup_reescalate_days', '5', 'Working days before an escalated item is listed again.'),
+  ('followup_escalation_emails', '', 'Management addresses for escalations, besides admin accounts. Comma-separated.'),
+  ('followup_cc_owner_on_escalation', 'true', 'Tell the owner when one of their follow-ups is escalated.')
+ON CONFLICT (key) DO NOTHING;
+
+-- When an open enquiry counts as at risk on Insights (064).
+INSERT INTO settings (key, value, notes) VALUES
+  ('enquiry_reply_days', '1', 'Working days a new enquiry may wait for a first reply before it is at risk.'),
+  ('enquiry_decision_warn_days', '5', 'Working days before the client''s decision date that an enquiry with no quotation is at risk.')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------------
 -- Saved views: the pinned list in the sidebar, and every report.
 --
@@ -2749,3 +2822,105 @@ CREATE TRIGGER zz_resolve_notifications AFTER UPDATE OF amount_received ON payme
   FOR EACH ROW EXECUTE FUNCTION payment_stage_resolves_notifications();
 CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON inbox_conversations
   FOR EACH ROW EXECUTE FUNCTION conversation_resolves_notifications();
+
+-- ------------------------------------------------------ report categories
+-- The categories the Reports section groups free-text sectors and services
+-- into (065, docs/sales-report-rework-plan.md §4.3, §4.4). services.report_line
+-- is declared with the services table above.
+CREATE TABLE IF NOT EXISTS sector_aliases (
+  id     serial PRIMARY KEY,
+  alias  text NOT NULL CHECK (name_key(alias) IS NOT NULL),
+  sector text NOT NULL CHECK (name_key(sector) IS NOT NULL)
+);
+
+-- One alias per spelling, ignoring case and spacing the way every report does.
+CREATE UNIQUE INDEX IF NOT EXISTS sector_aliases_alias_key ON sector_aliases (name_key(alias));
+
+INSERT INTO sector_aliases (alias, sector) VALUES
+  ('Metal', 'Metal Industry'), ('Metals', 'Metal Industry'), ('Steel', 'Metal Industry'),
+  ('Aluminium', 'Metal Industry'), ('Aluminum', 'Metal Industry'), ('Copper', 'Metal Industry'),
+  ('Mining & Metals', 'Metal Industry'),
+  ('Agri', 'Agriculture'), ('Agro', 'Agriculture'), ('Agrochemicals', 'Agriculture'),
+  ('Pharma', 'Pharmaceutical'), ('Pharmaceuticals', 'Pharmaceutical')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('report_sectors', '["Metal Industry","Agriculture","Pharmaceutical"]',
+   'Headline sectors on the Reports page, in order. Everything else is Other. Edit under Settings -> Reports.'),
+  ('report_service_lines', '["EcoVadis","ESIA","Climate Change","ESG","HSE","Sustainability","ISO certification","ASI / Copper Mark / LME","Social & supply-chain audits"]',
+   'Service lines on the Reports page, in order. Everything else is Other. Edit under Settings -> Reports.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ------------------------------------------------------ enquiries from email
+-- What was decided about each email the enquiry reader judged, and how far
+-- its sweep of past mail has got (066, docs/email-enquiries-plan.md §4.1).
+-- quotation_totals() above reads the printed totals here; it is plpgsql, so
+-- the table being created later in this file is resolved when it runs.
+CREATE TABLE IF NOT EXISTS email_enquiry_decisions (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  conversation_id      text,
+  thread_id            int REFERENCES email_threads(id) ON DELETE SET NULL,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  from_email           text,
+  received_at          timestamptz,
+  outcome              text NOT NULL CHECK (outcome IN ('created','linked','not_enquiry')),
+  kind                 text NOT NULL,
+  confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
+  method               text NOT NULL CHECK (method IN ('ai','rules')),
+  -- How many model calls this decision cost, against the daily ceiling.
+  ai_calls             smallint NOT NULL DEFAULT 0 CHECK (ai_calls >= 0),
+  enquiry_no           text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  -- The quotation read from the PDF we sent (plan §3.9), and how that went.
+  quotation_no         text REFERENCES quotations(quotation_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_extraction text CHECK (quotation_extraction IN ('created','revised','failed')),
+  extraction_reason    text,
+  printed_subtotal     numeric(16,2),
+  printed_tax_total    numeric(16,2),
+  printed_total        numeric(16,2),
+  decided_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_enquiry_decisions_message_idx ON email_enquiry_decisions (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_enquiry_decisions_conversation_idx ON email_enquiry_decisions (conversation_id) WHERE conversation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_enquiry_decisions_enquiry_idx ON email_enquiry_decisions (enquiry_no) WHERE enquiry_no IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_enquiry_decisions_quotation_idx ON email_enquiry_decisions (quotation_no) WHERE quotation_no IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_enquiry_decisions_decided_idx ON email_enquiry_decisions (decided_at);
+
+CREATE TABLE IF NOT EXISTS mailbox_enquiry_backfills (
+  account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  since       timestamptz NOT NULL,
+  -- Inbox first, then Sent Items; null once both are read.
+  folder      text CHECK (folder IN ('inbox','sentitems')),
+  next_link   text,
+  -- The date of the last message read, so progress can be shown in days.
+  reached     timestamptz,
+  scanned     int NOT NULL DEFAULT 0,
+  created     int NOT NULL DEFAULT 0,
+  linked      int NOT NULL DEFAULT 0,
+  started_at  timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  last_error  text,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('auto_enquiries_enabled', 'true', 'Create enquiries automatically from new client email in connected mailboxes, and read back past mail once per mailbox. Off stops both at the next run; nothing already created is removed.'),
+  ('auto_enquiry_min_confidence', '0.7', 'How sure the AI must be (0 to 1) that an email is a new enquiry before one is created. Rules alone always need 0.85.'),
+  ('auto_enquiry_backfill_days', '365', 'How far back each mailbox is read once for past enquiries, in days.'),
+  ('auto_enquiry_same_sender_days', '30', 'A new email from a client who already has an open enquiry this recent is linked to it instead of making another.'),
+  ('auto_enquiry_daily_ai_limit', '1500', 'The most AI calls the email reader may make in one day. Reading past mail stops for the day when it is reached.'),
+  ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('auto_enquiries_enabled', 'true', 'Create enquiries automatically from new client email in connected mailboxes, and read back past mail once per mailbox. Off stops both at the next run; nothing already created is removed.'),
+  ('auto_enquiry_min_confidence', '0.7', 'How sure the AI must be (0 to 1) that an email is a new enquiry before one is created. Rules alone always need 0.85.'),
+  ('auto_enquiry_backfill_days', '365', 'How far back each mailbox is read once for past enquiries, in days.'),
+  ('auto_enquiry_same_sender_days', '30', 'A new email from a client who already has an open enquiry this recent is linked to it instead of making another.'),
+  ('auto_enquiry_daily_ai_limit', '1500', 'The most AI calls the email reader may make in one day. Reading past mail stops for the day when it is reached.'),
+  ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.')
+ON CONFLICT (key) DO NOTHING;

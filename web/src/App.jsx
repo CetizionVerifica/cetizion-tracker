@@ -5,6 +5,7 @@ import Today from './pages/Today.jsx';
 import Worklist from './pages/Worklist.jsx';
 import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
+import FollowUps from './pages/FollowUps.jsx';
 import Enquiries from './pages/Enquiries.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
@@ -14,7 +15,6 @@ import Quotations from './pages/Quotations.jsx';
 import QuotationDetail from './pages/QuotationDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
 import Renewals from './pages/Renewals.jsx';
-import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
@@ -27,6 +27,8 @@ import Account from './pages/account/index.jsx';
 // the bundle. Loaded when someone asks for it, so every other page is not
 // paying for it on first visit.
 const Reports = lazy(() => import('./pages/Reports.jsx'));
+// Insights draws charts too, so it is loaded the same way.
+const Insights = lazy(() => import('./pages/Insights.jsx'));
 import Profitability from './pages/Profitability.jsx';
 import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
@@ -92,6 +94,7 @@ import {
 import { CommandPalette, useCommandPalette } from './components/CommandPalette.jsx';
 import {
   BarChart3,
+  Lightbulb,
   Building2,
   ClipboardList,
   FileText,
@@ -129,6 +132,8 @@ function ImportReviewPage() {
 const NAV_TOP = [
   { to: '/', icon: Home, label: 'Today', end: true },
   { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
+  // A landing screen, like Reports: the five questions to start a day on.
+  { to: '/insights', icon: Lightbulb, label: 'Insights' },
   { to: '/reports', icon: BarChart3, label: 'Reports' },
 ];
 
@@ -537,6 +542,7 @@ export default function App() {
           <Route path="/worklist" element={<Worklist />} />
           <Route path="/data-quality" element={<DataQuality />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/follow-ups" element={<FollowUps />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/companies/:id" element={<CompanyDetail />} />
           <Route path="/deliverables" element={<Deliverables />} />
@@ -546,7 +552,8 @@ export default function App() {
           <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/renewals" element={<Renewals />} />
-          <Route path="/sales-report" element={<SalesReport />} />
+          {/* The two report pages became one (docs/sales-report-rework-plan.md §3.3). */}
+          <Route path="/sales-report" element={<LegacyRedirect to="/reports" />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/purchase-orders" element={<PurchaseOrders />} />
@@ -556,6 +563,7 @@ export default function App() {
           <Route path="/cashflow" element={<Cashflow />} />
           <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
+          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Insights /></Suspense>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />

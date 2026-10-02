@@ -184,8 +184,6 @@ session is **401**, before any of these is considered.
 | `GET /api/dashboard/data-quality` | any |  |
 | `GET /api/dashboard/overview` | any |  |
 | `GET /api/dashboard/payables` | any | What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill. |
-| `GET /api/dashboard/revenue-report` | any |  |
-| `GET /api/dashboard/sales-report` | any |  |
 | `GET /api/dashboard/travel` | any |  |
 | `GET /api/dashboard/worklist` | any |  |
 | **/api/deliverables** | | |
@@ -213,6 +211,10 @@ session is **401**, before any of these is considered.
 | `GET /api/export/payables.csv` | any | The same rows as GET /api/dashboard/payables, so it carries the same answer. |
 | `GET /api/export/sales-report.pdf` | any |  |
 | `GET /api/export/sales-report/:report.csv` | any |  |
+| **/api/follow-ups** | | |
+| `GET /api/follow-ups` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/record` | any | Scoped: record-owner. |
+| `GET /api/follow-ups/summary` | **admin** | How each salesperson answers their reminders is a management view of the whole team. |
 | **/api/health** | | |
 | `GET /api/health` | public | none — The platform needs somewhere to point a health check. It answers only that the database replied, when the process started, the environment name and the auth mode — the last of which /api/auth/config already tells any caller. ?deep=1 is checked inside the handler and needs an administrator. |
 | **/api/hooks** | | |
@@ -242,6 +244,8 @@ session is **401**, before any of these is considered.
 | `DELETE /api/inbox/inboxes/:id` | **admin** | Removing a shared inbox decides where a client's mail stops landing, for everybody. |
 | `PATCH /api/inbox/inboxes/:id` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
 | `GET /api/inbox/summary` | any | Scoped: mailbox-delegate. |
+| **/api/insights** | | |
+| `GET /api/insights` | any | Five questions on one screen (docs/insights-dashboard-plan.md). Every section is narrowed to the reader's records; ?owner= is honoured for an admin only. |
 | **/api/jobs** | | |
 | `GET /api/jobs` | any |  |
 | `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |
@@ -256,6 +260,7 @@ session is **401**, before any of these is considered.
 | `GET /api/lookups/next-id/:kind` | any |  |
 | **/api/mail** | | |
 | `POST /api/mail/notifications` | public | graph-client-state — Microsoft Graph posts here and has no session. A notification whose clientState does not match the stored subscription secret is ignored. |
+| `GET /api/mail/origin` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/threads` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `PATCH /api/mail/threads/:id` | any | Scoped: mailbox-owner, mailbox-delegate. |
@@ -263,10 +268,12 @@ session is **401**, before any of these is considered.
 | **/api/mailboxes** | | |
 | `GET /api/mailboxes` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `PATCH /api/mailboxes/:id` | any | Scoped: mailbox-owner. |
+| `POST /api/mailboxes/:id/auto-enquiries/rerun` | **admin** | Has a mailbox's mail judged again for enquiries, which spends the AI budget everybody shares. |
 | `POST /api/mailboxes/:id/disconnect` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/refresh-bodies` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
+| `GET /api/mailboxes/auto-enquiries` | **admin** | Counts what every mailbox's mail was judged to be, the whole team's included. |
 | `GET /api/mailboxes/blocklist` | any |  |
 | `POST /api/mailboxes/blocklist` | **admin** | The blocklist decides whose mail the application will never sync, for everybody. |
 | `DELETE /api/mailboxes/blocklist/:id` | **admin** | The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again. |
@@ -330,6 +337,7 @@ session is **401**, before any of these is considered.
 | `POST /api/quotations/:key/acceptances/:id/revoke` | any |  |
 | `POST /api/quotations/:key/approval/decide` | **admin** | An approval you can grant yourself is not an approval. A discount past the threshold is decided by somebody else. |
 | `POST /api/quotations/:key/approval/request` | any |  |
+| `POST /api/quotations/:key/email-read-checked` | any |  |
 | `GET /api/quotations/:key/full` | any |  |
 | `GET /api/quotations/:key/pdf` | any |  |
 | `POST /api/quotations/:key/register` | any |  |
@@ -343,8 +351,10 @@ session is **401**, before any of these is considered.
 | `POST /api/renewals/manual` | any |  |
 | **/api/reports** | | |
 | `GET /api/reports/by-status` | any | Open deals by the status on the record, which is not always where its pipeline stage puts it. |
+| `GET /api/reports/categories` | **admin** | Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller's own records. |
 | `GET /api/reports/conversion` | any | Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string. |
 | `GET /api/reports/quoted-won` | any | Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today's rate into a month that has passed. |
+| `GET /api/reports/sales` | any | The Reports section's questions for a period: enquiries received and their outcome, sector-wise POs, service-wise sales, new and existing customers, and monthly revenue. Every record listed comes from the scoped sources; ?owner= narrows an admin's view to one salesperson and is ignored for a sales user. One deliberate exception: whether a customer had ordered before is judged against every counting PO, so a sales user sees a long-standing client as existing, and a repeat order's count of previous orders — never those orders themselves. |
 | `GET /api/reports/win-rate` | any | Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped. |
 | **/api/search** | | |
 | `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
@@ -464,6 +474,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `purchase-orders` | any | any | **admin** | The PO value is what Due now, To bill and profitability are computed against, and deleting one takes its lines and stages with it. |
 | `quotation-lines` | any | any | any | The lines of a quotation, edited with it. |
 | `quotations` | any | any | any | A salesperson's own working record. A quotation is the offer made on one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
+| `sector-aliases` | any | **admin** | **admin** | Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |

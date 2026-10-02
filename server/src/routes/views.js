@@ -14,8 +14,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { resourceClause, scopeOf } from '../auth/ownership.js';
-import { buildWhere } from '../lib/crud.js';
+import { scopeOf } from '../auth/ownership.js';
+import { listWhere } from '../lib/crud.js';
 import { ApiError } from '../middleware/error.js';
 import { resources } from '../lib/resources.js';
 
@@ -75,7 +75,9 @@ function mayWrite(req, row) {
  * than a page that will not load.
  */
 function usable(def, filters) {
-  const allowed = new Set([...(def.filters || []), 'q']);
+  // Filters the resource works out itself (Insights' follow-up and risk
+  // filters) are kept too, or a view saved from one would count everything.
+  const allowed = new Set([...(def.filters || []), ...(def.computedFilters || []), 'q']);
   // A list with a date column takes `from` and `to` as well, and they are
   // not in `filters`. Without them a view like "invoiced this quarter"
   // would be counted across all time, and the number in the sidebar would
@@ -107,9 +109,8 @@ async function countOf(view, scope) {
   // showing none, and the number itself was the leak — how many records
   // exist that this reader may not open.
   const relation = def.view || def.table;
-  const scoped = resourceClause(def, scope, params, { alias: relation });
-  // buildWhere returns the whole clause, `WHERE …` or the empty string.
-  const where = buildWhere(def, usable(def, view.filters), params, scoped ? [scoped] : []);
+  // listWhere returns the whole clause, `WHERE …` or the empty string.
+  const where = await listWhere(def, usable(def, view.filters), params, scope, relation);
   const { rows } = await query(`SELECT count(*)::int AS n FROM "${relation}" ${where}`, params);
   return rows[0].n;
 }

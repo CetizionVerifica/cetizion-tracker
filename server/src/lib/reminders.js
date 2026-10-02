@@ -107,8 +107,10 @@ export async function runPaymentReminders({ db = { query }, today = businessToda
         await db.query('UPDATE payment_stages SET reminder_sent_on = $1, reminder_level = $3 WHERE id = $2', [today, s.id, s.next_level]);
       }
       await db.query(
-        `INSERT INTO collection_log (stage_id, company_id, channel, by_whom, summary)
-         SELECT id, $2, 'email', $3, $4 FROM payment_stages WHERE id = ANY($1::int[])`,
+        // automated: the job chased, not a person, so it is not a follow-up
+        // by the owner (lib/followUps.js).
+        `INSERT INTO collection_log (stage_id, company_id, channel, by_whom, summary, automated)
+         SELECT id, $2, 'email', $3, $4, true FROM payment_stages WHERE id = ANY($1::int[])`,
         [r.stages.map((s) => s.id), r.companyId, startedBy, `Reminder level ${r.level} emailed to ${r.to}`]
       );
     }

@@ -90,7 +90,9 @@ export default function Quotations() {
         // (e.g. ?status=Won - PO Received&sector=__none__&from=&to=), so the
         // list shows exactly the quotations that figure counts.
         initialFilters={Object.fromEntries(
-          ['status', 'sector', 'sales_person', 'from', 'to'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
+          // Insights adds the month a deal is expected to close, the month it
+          // was quoted (Reports' quoted-vs-won bars) and one owner's records.
+          ['status', 'sector', 'sales_person', 'from', 'to', 'close_month', 'month', 'owner', 'from_email'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
         )}
         dateFilterLabel="Quotation date"
         // A saved quotation can change the lists other forms offer (won
@@ -106,6 +108,12 @@ export default function Quotations() {
           { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
           { name: 'sales_person', label: 'Owner', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sales_people] },
           { name: 'quotation_value', label: 'Value', options: [{ value: '__none__', label: 'Not set' }, { value: '__any__', label: 'Set' }] },
+          // Insights links its overdue-follow-up bars here; worked out by the
+          // follow-up rules on the server, not a column.
+          { name: 'follow_up', label: 'Follow-up', options: [{ value: 'overdue', label: 'Overdue' }] },
+          // Quotations read from the PDF we emailed (docs/email-enquiries.md).
+          { name: 'from_email', label: 'Read from email', options: [{ value: '1', label: 'Read from email' }] },
+          { name: 'overdue_days', label: 'Overdue by', options: [{ value: '0-3', label: 'Up to 3 days' }, { value: '4-7', label: '4–7 days' }, { value: '8-14', label: '8–14 days' }, { value: '15+', label: '15 days or more' }] },
         ]}
       />
 

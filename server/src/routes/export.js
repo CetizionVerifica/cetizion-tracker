@@ -1,17 +1,23 @@
 import { Router } from 'express';
 import XLSX from 'xlsx';
+import { config } from '../config.js';
 import { query } from '../db.js';
-import { buildWhere } from '../lib/crud.js';
+import { listWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
-import { resourceClause, scopeOf } from '../auth/ownership.js';
+import { scopeOf } from '../auth/ownership.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
 import {
   invoicingCsvRows, ordersCsvRows, overdueCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
-import { reportTimeZone, salesReportPdf } from '../lib/salesReportPdf.js';
-import { dataGaps, exchangeRates, salesReviewSections } from '../lib/salesReviewData.js';
+import { reportTimeZone } from '../lib/pdfBlocks.js';
+import { reportPdf } from '../lib/reportPdf.js';
+import { reportGrain, reportScope, salesReport } from '../lib/reportDefinitions.js';
+import {
+  enquiriesCsvRows, newCustomersCsvRows, outcomesCsvRows, repeatOrdersCsvRows, revenueCsvRows, revenuePosCsvRows,
+  sectorCsvRows as sectorPosCsvRows, servicesCsvRows,
+} from '../lib/reportCsv.js';
 import { payablesRows } from '../lib/payables.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -41,7 +47,25 @@ function sendCsv(res, filename, rows) {
 // way. revenueReport takes its scope in an options object, so it is adapted.
 const buildRevenue = (period, scope) => revenueReport(period, { scope });
 
+/**
+ * The Reports section's report for a request: its period and its grain, in
+ * the scope the CSV route has already narrowed to the owner an admin chose
+ * (a sales user's own records, whatever they asked).
+ */
+const buildSections = (period, scope, reqQuery = {}) =>
+  salesReport(period, { grain: reportGrain(reqQuery, period), scope });
+
 const SALES_REPORTS = {
+  // The Reports section, one CSV per question (docs/sales-report-rework-plan.md §5.1).
+  enquiries: { build: buildSections, toRows: enquiriesCsvRows },
+  outcomes: { build: buildSections, toRows: outcomesCsvRows },
+  'sector-pos': { build: buildSections, toRows: sectorPosCsvRows },
+  services: { build: buildSections, toRows: servicesCsvRows },
+  'new-customers': { build: buildSections, toRows: newCustomersCsvRows },
+  'repeat-orders': { build: buildSections, toRows: repeatOrdersCsvRows },
+  revenue: { build: buildSections, toRows: revenueCsvRows },
+  'revenue-pos': { build: buildSections, toRows: revenuePosCsvRows },
+  // Detailed tables the old Sales reports page showed, linked under More analysis.
   sectors: { build: sectorReport, toRows: sectorCsvRows },
   customers: { build: customerReport, toRows: customerCsvRows },
   fx: { build: fxReport, toRows: fxCsvRows },
@@ -51,59 +75,29 @@ const SALES_REPORTS = {
   overdue: { build: buildRevenue, toRows: overdueCsvRows },
 };
 
-// Report builders started at once for the PDF. The two that fan out the
-// most are revenueReport (4 queries) and salesReviewSections (3), so at
-// most 7 of the pool's 10 connections are in use at a time.
-const REPORT_CONCURRENCY = 2;
-
 /**
- * Run tasks a few at a time, results in the order they were given. Several
- * report builders fan out into queries of their own, so the limit is well
- * under the database pool size and the rest of the app keeps its connections.
+ * The Reports section as one PDF, for ?from=&to=&grain=&owner= exactly as on
+ * screen: the same salesReport() the page reads, so the two always agree. A
+ * report of whatever the reader may see (#18 Phase 2C).
  */
-async function runWithLimit(tasks, limit) {
-  const results = new Array(tasks.length);
-  let next = 0;
-  let failure = null;
-  const worker = async () => {
-    while (next < tasks.length && !failure) {
-      const index = next;
-      next += 1;
-      try {
-        results[index] = await tasks[index]();
-      } catch (err) {
-        failure ??= err;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
-  if (failure) throw failure;
-  return results;
-}
-
-/** The whole sales report as one PDF: ?from=&to=, exactly as on screen — every section, revenue included, covers the same period. */
 exportRouter.get('/sales-report.pdf', async (req, res) => {
   const period = reportPeriod(req.query);
-
-  // The PDF is a report of whatever the reader may see (#18 Phase 2C): a
-  // sales user's covers their own pipeline, an admin's covers everything.
-  const scope = scopeOf(req);
-  const [sectors, customers, fx, revenue, review, gaps, rates] = await runWithLimit([
-    () => sectorReport(period, scope),
-    () => customerReport(period, scope),
-    () => fxReport(period, scope),
-    // The PDF has no year picker, so the query behind it is skipped.
-    () => revenueReport(period, { includeYears: false, scope }),
-    () => salesReviewSections(period, scope),
-    () => dataGaps(period, scope),
-    () => exchangeRates(),
-  ], REPORT_CONCURRENCY);
-  const pdf = await salesReportPdf({
-    period,
-    sectors, customers, fx, revenue, gaps, rates,
-    enquiries: review.enquiries, quotationStatus: review.quotationStatus, services: review.services, contracts: review.contracts,
+  const scope = reportScope(scopeOf(req), req.query);
+  const [report, names] = await Promise.all([
+    salesReport(period, { grain: reportGrain(req.query, period), scope }),
+    query(
+      `SELECT (SELECT value FROM settings WHERE key = 'company_name') AS company,
+              (SELECT name FROM users WHERE id = $1) AS owner`,
+      [scope.unrestricted ? null : scope.ownerId]
+    ),
+  ]);
+  const { company, owner } = names.rows[0];
+  const pdf = await reportPdf(report, {
+    company: company?.trim() || 'Cetizion Verifica',
+    // A sales user's PDF is their own; only an admin's narrowed one names the owner.
+    owner: scopeOf(req).unrestricted ? owner : null,
     generatedAt: new Date(),
-    timeZone: reportTimeZone(req.query.tz),
+    timeZone: reportTimeZone(req.query.tz || config.businessTimeZone),
   });
 
   const span = period.from || period.to ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}` : '';
@@ -119,7 +113,9 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
 
   const period = reportPeriod(req.query);
   const report = SALES_REPORTS[name];
-  const rows = report.toRows(await report.build(period, scopeOf(req)));
+  // Every CSV — section or detailed table — follows the owner an admin
+  // narrowed the page to, as the screen and the PDF do.
+  const rows = report.toRows(await report.build(period, reportScope(scopeOf(req), req.query), req.query));
 
   const span = period.from || period.to
     ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}`
@@ -142,8 +138,7 @@ async function listRows(req) {
   // attachments, POs, stages, lines, payments, costs) walked straight out.
   // resourceClause answers for every ownership shape, so both doors close.
   const relation = def.view || def.table;
-  const scoped = resourceClause(def, scopeOf(req), params, { alias: relation });
-  const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
+  const where = await listWhere(def, req.query, params, scopeOf(req), relation);
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
     params

@@ -17,80 +17,17 @@
  * the heuristics below and the batch is marked as built without AI.
  */
 
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+import { aiConfig, chatJSON as chat } from '../lib/ai.js';
 
-export const aiConfig = {
-  apiKey: process.env.OPENROUTER_API_KEY || '',
-  model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4.1-flash',
-  enabled: Boolean(process.env.OPENROUTER_API_KEY),
-};
+export { aiConfig };
 
 /** Running totals for the current batch; the route resets and reads them. */
 export const usage = { calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0, provider: null };
 export function resetUsage() { usage.calls = 0; usage.prompt_tokens = 0; usage.completion_tokens = 0; usage.cost_usd = 0; usage.provider = null; }
 
-async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
-  try {
-    res = await fetch(ENDPOINT, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://tracker.cetizionverifica.com',
-        'X-Title': 'Cetizion Tracker bulk import',
-      },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        temperature: 0,
-        max_tokens: maxTokens,
-        response_format: { type: 'json_object' },
-        // The review is extraction, not reasoning: with thinking on, a
-        // flash-class model spends its output budget deliberating and
-        // truncates. Fable models cannot switch thinking off; keep it low.
-        reasoning: /fable/i.test(aiConfig.model) ? { effort: 'low' } : { enabled: false },
-        // What goes out is a client's commercial detail — names, deal
-        // values, invoice numbers, and whatever somebody typed in a
-        // remarks column. Which provider serves the model decides whether
-        // that is kept, and the default is to let OpenRouter choose freely.
-        //
-        // data_collection: 'deny' routes only to providers that do not
-        // store or train on prompts; zdr narrows that to zero-retention
-        // endpoints. Both can make a request fail to route rather than
-        // fall back to a provider that keeps it, which is the right way
-        // round: not answering is recoverable, and the importer falls back
-        // to rules. A copy of a client's pipeline on somebody's training
-        // set is not recoverable.
-        provider: { data_collection: 'deny', zdr: true },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      }),
-    });
-  } catch (err) {
-    throw new Error(err.name === 'AbortError' ? `OpenRouter timed out after ${timeoutMs / 1000}s` : err.message);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
-  const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  const u = data.usage || {};
-  usage.calls += 1;
-  usage.prompt_tokens += u.prompt_tokens || 0;
-  usage.completion_tokens += u.completion_tokens || 0;
-  usage.cost_usd += Number(u.cost || 0);
-  usage.provider = data.provider || usage.provider;
-  return JSON.parse(cleaned);
-}
+// The call itself lives in lib/ai.js, shared with the email enquiry reader;
+// the importer's calls count against the batch.
+const chatJSON = (system, user, opts = {}) => chat(system, user, { title: 'Cetizion Tracker bulk import', usage, ...opts });
 
 /* ------------------------------------------------------------------ */
 /* 1. Column mapping                                                    */
