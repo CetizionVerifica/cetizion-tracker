@@ -4,8 +4,11 @@ Every **active connected mailbox** is read. An email from a client asking for
 new work becomes an **enquiry** in the tracker with no one pressing a button.
 This includes the **past year of mail**, not only what arrives from now on.
 
-Phase 1 is **new enquiries only**. It does not cover quotations, POs,
-invoices or replies on deals that already exist.
+Phase 1 is **new enquiries**, plus one exception. When the first email is
+a quotation we sent, and that quotation was made outside the tracker, the
+attached PDF is read and the quotation is created as well (§3.8, §3.9).
+Phase 1 does not read POs or invoices, and does not handle replies on
+deals that already exist.
 
 This file is written for the person (or Claude Code session) who builds it.
 Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) first. It follows the two
