@@ -376,5 +376,26 @@ test('a Reports slice opens exactly the records it counted, and the PDF download
   expect(download.suggestedFilename()).toBe(`cetizion-sales-report-${from}-to-${to}.pdf`);
   const pdf = readFileSync(await download.path());
   expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
-  expect(pdf.length).toBeGreaterThan(5000);
+
+  // Read it back: the six questions, in the order the screen asks them.
+  const text = await pdfText(pdf);
+  const headings = [
+    '1. How many enquiries did we receive?', '2. What happened to them?', '3. Which sectors gave us POs?',
+    '4. Which services sell best?', '5. New and existing customers', '6. Monthly revenue', 'Notes and what to fix',
+  ];
+  const at = headings.map((h) => text.lastIndexOf(h));
+  expect(at.every((i) => i >= 0), `every heading is in the PDF: ${JSON.stringify(at)}`).toBeTruthy();
+  expect([...at].sort((a, b) => a - b)).toEqual(at);
 });
+
+/** A PDF's text, page after page, with its whitespace collapsed. pdf.js reads it in Node, no browser. */
+async function pdfText(buffer) {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await getDocument({ data: new Uint8Array(buffer), useSystemFonts: true }).promise;
+  const pages = [];
+  for (let n = 1; n <= doc.numPages; n += 1) {
+    const content = await (await doc.getPage(n)).getTextContent();
+    pages.push(content.items.map((item) => item.str).join(' '));
+  }
+  return pages.join(' ').replace(/\s+/g, ' ').replace(/(\d)\. +/g, '$1. ');
+}
