@@ -629,7 +629,4 @@ Derived, not stored:
 3. **PO value different from the quotation:** a difference over 2% goes
    to **review**; it is never registered automatically (§3.3).
 4. **Amended POs:** always review, never applied automatically (§3.6).
-
-### Still open (default given)
-
-5. **Confidence bar.** Default **0.85**.
+5. **Confidence bar:** **0.85** (`auto_po_min_confidence`).
