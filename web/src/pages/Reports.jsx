@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
 import { PageHeader } from '../App.jsx';
-import { AXIS, BAR, BAR_LABEL, ChartCard, ChartTip, GRID, HOVER } from '../components/charts.jsx';
+import { AGE_COLOUR, AXIS, BAR, BAR_LABEL, CASH_BANDS, ChartCard, ChartTip, GRID, HOVER, ROW_CHART, ZERO_BAR } from '../components/charts.jsx';
 import { ChartContainer, ChartTooltip } from '../components/ui/chart.tsx';
 import { Alert, Select } from '../components/ui.jsx';
 import { Skeleton } from '../components/ui/skeleton.tsx';
@@ -25,26 +25,6 @@ import { money, number, percent } from '../lib/format.js';
  * mostly does nothing. The horizon that genuinely changes a chart is the
  * one offered.
  */
-const ROW_HEIGHT = 34;
-const CHART_MIN_HEIGHT = 180;
-
-const ROW_CHART = (rows) => Math.max(CHART_MIN_HEIGHT, rows * ROW_HEIGHT + 24);
-
-// A stage or a band with nothing in it is an answer — "no money is over
-// ninety days late" is the best line on the page. Recharts draws a zero bar
-// as nothing at all and puts its label nowhere, so every bar keeps two
-// pixels and its ₹0 stays where the reader expects it.
-const ZERO_BAR = 2;
-
-/** Ageing escalates: not late, late, properly late. Red is only for the last. */
-const AGE_COLOUR = { 'not-due': 'var(--forecast)', '1-30': 'var(--waiting)', '31-60': 'var(--waiting)', '61-90': 'var(--late)', '90+': 'var(--late)' };
-
-const CASH_BANDS = [
-  { key: 'received', label: 'Received', colour: 'var(--settled)' },
-  { key: 'invoiced', label: 'Invoiced, due', colour: 'var(--waiting)' },
-  { key: 'scheduled', label: 'Not yet invoiced', colour: 'var(--forecast)' },
-];
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(2, 4)}`;
 const inr = (value) => money(value, 'INR', { compact: true });

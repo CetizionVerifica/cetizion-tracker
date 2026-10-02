@@ -19,6 +19,7 @@ import { sendMail } from './mail.js';
 import { notify } from './notify.js';
 import { emit } from './webhooks.js';
 import { raiseAlert } from './ops/alerts.js';
+import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
 
 export const OPEN_ENQUIRY_STATUSES = ['New', 'Contacted', 'Qualified', 'Nurture'];
 export const OPEN_QUOTATION_STATUSES = ['Submitted', 'Under Negotiation'];
@@ -420,37 +421,50 @@ export async function nextTask(db, entity, id) {
  * Every open record of the three kinds, plus the records named in `keys`
  * (those with an open cycle) whatever their state, so the plan can tell why
  * a cycle should close.
+ *
+ * `scope` narrows the rows to one owner's, the way every list is narrowed
+ * (auth/ownership.js). The daily run passes nothing and sees everything;
+ * Insights passes the reader's scope. `kinds` limits the read to the record
+ * types asked for, so a caller wanting only quotations does not read every
+ * open enquiry and invoice too.
  */
-export async function loadRecords(db, keys = []) {
+export async function loadRecords(db, keys = [], { scope = UNRESTRICTED, kinds = ['enquiry', 'quotation', 'payment_stage'] } = {}) {
+  const none = Promise.resolve({ rows: [] });
+  const wants = (kind) => kinds.includes(kind);
   const ids = (entity) => keys.filter((k) => k.startsWith(`${entity}:`)).map((k) => k.slice(entity.length + 1));
+  const eParams = []; const eSrc = scopedSources(scope, eParams);
+  const qParams = []; const qSrc = scopedSources(scope, qParams);
+  const sParams = []; const sSrc = scopedSources(scope, sParams);
+  const p = (params, v) => { params.push(v); return `$${params.length}`; };
   const [enquiries, quotations, stages] = await Promise.all([
-    db.query(
+    !wants('enquiry') ? none : db.query(
       `SELECT 'enquiry' AS entity, e.enquiry_no AS entity_id, e.enquiry_no AS number, e.status, e.next_follow_up_at,
               e.enquiry_date, e.created_at, e.client_name AS client, e.service AS detail,
-              e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id, ${OWNER}, nt.*
-         FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id ${NEXT_TASK('enquiry', 'e.enquiry_no')}
-        WHERE e.status = ANY($1::text[]) OR e.enquiry_no = ANY($2::text[])`,
-      [OPEN_ENQUIRY_STATUSES, ids('enquiry')]
+              e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id,
+              e.first_responded_at, e.expected_decision_date, e.quotation_no, ${OWNER}, nt.*
+         FROM ${eSrc.enquiries} e LEFT JOIN users u ON u.id = e.owner_user_id ${NEXT_TASK('enquiry', 'e.enquiry_no')}
+        WHERE e.status = ANY(${p(eParams, OPEN_ENQUIRY_STATUSES)}::text[]) OR e.enquiry_no = ANY(${p(eParams, ids('enquiry'))}::text[])`,
+      eParams
     ),
-    db.query(
+    !wants('quotation') ? none : db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
               q.sent_at, q.quotation_date, q.created_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
               COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}, nt.*
-         FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id ${NEXT_TASK('quotation', 'q.quotation_no')}
-        WHERE (q.status = ANY($1::text[]) AND q.accepted_at IS NULL AND q.closed_at IS NULL)
-           OR q.quotation_no = ANY($2::text[])`,
-      [OPEN_QUOTATION_STATUSES, ids('quotation')]
+         FROM ${qSrc.quotations} q LEFT JOIN users u ON u.id = q.owner_user_id ${NEXT_TASK('quotation', 'q.quotation_no')}
+        WHERE (q.status = ANY(${p(qParams, OPEN_QUOTATION_STATUSES)}::text[]) AND q.accepted_at IS NULL AND q.closed_at IS NULL)
+           OR q.quotation_no = ANY(${p(qParams, ids('quotation'))}::text[])`,
+      qParams
     ),
-    db.query(
+    !wants('payment_stage') ? none : db.query(
       `SELECT 'payment_stage' AS entity, ps.id::text AS entity_id, ps.invoice_no AS number, ps.stage_status,
               ps.invoice_no, ps.invoice_due_date, ps.days_overdue, ps.on_hold, ps.promise_to_pay_date,
               ps.client_name AS client, ps.po_number || ' · ' || ps.stage_name AS detail,
               ps.due_now_amount AS amount, ps.currency, pr.company_id, pr.owner_user_id, ${OWNER}, nt.*
-         FROM v_payment_stages ps
+         FROM ${sSrc.vPaymentStages} ps
          JOIN projects pr ON pr.project_id = ps.project_id
          LEFT JOIN users u ON u.id = pr.owner_user_id ${NEXT_TASK('payment_stage', 'ps.id::text')}
-        WHERE ps.stage_status IN ('Overdue', 'Partially Paid') OR ps.id::text = ANY($1::text[])`,
-      [ids('payment_stage')]
+        WHERE ps.stage_status IN ('Overdue', 'Partially Paid') OR ps.id::text = ANY(${p(sParams, ids('payment_stage'))}::text[])`,
+      sParams
     ),
   ]);
   return [...enquiries.rows, ...quotations.rows, ...stages.rows].map((r) => ({ ...r, link: recordLink(r.entity, r.entity_id) }));

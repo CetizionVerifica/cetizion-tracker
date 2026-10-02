@@ -351,6 +351,9 @@ export default function Today() {
           )}
 
           <Diary visits={diary.data?.data || []} />
+
+          {/* One line, not the charts: Insights is where they live. */}
+          <Link to="/insights" className="self-start text-[13px] font-medium text-primary hover:underline">See all insights →</Link>
         </div>
 
         {d && <Rail finance={d.finance} sales={d.sales} travel={d.travel} />}

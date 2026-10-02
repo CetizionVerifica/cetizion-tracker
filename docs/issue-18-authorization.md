@@ -246,6 +246,8 @@ session is **401**, before any of these is considered.
 | `DELETE /api/inbox/inboxes/:id` | **admin** | Removing a shared inbox decides where a client's mail stops landing, for everybody. |
 | `PATCH /api/inbox/inboxes/:id` | **admin** | An inbox and its membership decide whose queue a client's mail lands in. |
 | `GET /api/inbox/summary` | any | Scoped: mailbox-delegate. |
+| **/api/insights** | | |
+| `GET /api/insights` | any | Five questions on one screen (docs/insights-dashboard-plan.md). Every section is narrowed to the reader's records; ?owner= is honoured for an admin only. |
 | **/api/jobs** | | |
 | `GET /api/jobs` | any |  |
 | `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |

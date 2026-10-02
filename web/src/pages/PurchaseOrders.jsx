@@ -93,13 +93,15 @@ export default function PurchaseOrders() {
       // The sales report's payment status table links here with the status
       // and period behind a row, so the list shows exactly those POs.
       initialFilters={Object.fromEntries(
-        ['payment_status', 'from', 'to'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
+        ['payment_status', 'from', 'to', 'live'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
       )}
       dateFilterLabel="PO date"
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
         { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },
         { name: 'quotation_no', label: 'Quotation', options: [{ value: '__none__', label: 'Not linked' }, { value: '__any__', label: 'Linked' }] },
+        // Insights links its PO bars with ?live=1: cancelled and revised POs left out.
+        { name: 'live', label: 'Cancelled, revised', options: [{ value: '1', label: 'Left out' }] },
       ]}
       banner={
         lookups.projects.length === 0 ? (

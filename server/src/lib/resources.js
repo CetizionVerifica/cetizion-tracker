@@ -181,6 +181,8 @@ export const resources = {
     filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
+    listClauses: enquiryListClauses,
+    computedFilters: ['risk', 'owner'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -239,6 +241,9 @@ export const resources = {
     filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value', 'contact_email', 'contact_person', 'stage_type'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
+    // Insights opens this list on what it counted (docs/insights-dashboard-plan.md §5.3).
+    listClauses: quotationListClauses,
+    computedFilters: ['follow_up', 'overdue_days', 'close_month', 'month', 'owner'],
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
@@ -380,6 +385,10 @@ export const resources = {
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
     filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
+    // ?live=1: not cancelled and not replaced by a revision, the POs the
+    // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
+    listClauses: async (q) => (String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+    computedFilters: ['live'],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
@@ -1067,3 +1076,78 @@ export const ONBOARDING_TEMPLATE = [
   ['Delivery', 'Finance raises the on-delivery stage invoice(s)'],
   ['Closure', 'All stage invoices paid on time as per agreed terms - project closed'],
 ];
+
+/* ------------------------------------------------- computed list filters */
+
+const MONTH = /^\d{4}-\d{2}$/;
+
+/**
+ * The scope the Insights rules run with: the reader's own, or, for an admin
+ * following a bar for one owner, that owner's (`owner=none` is the records
+ * nobody owns). Not a column filter: owner_user_id stays out of the generic
+ * filters until ownership is a list filter everywhere.
+ */
+function ruleScope(scope, owner) {
+  if (!scope.unrestricted || !owner) return { scope, unowned: false };
+  if (owner === 'none') return { scope, unowned: true };
+  const id = Number(owner);
+  return Number.isInteger(id) && id > 0 ? { scope: { unrestricted: false, ownerId: id }, unowned: false } : { scope, unowned: false };
+}
+
+/**
+ * The record numbers the Insights rules pick out, as a clause. Loaded on
+ * demand: insights.js reaches the follow-up and mail modules, which reach
+ * back here, and a static import would make that a cycle.
+ */
+async function numbersClause(column, params, pick) {
+  const { insightsContext } = await import('./insights.js');
+  const { businessToday } = await import('./businessDate.ts');
+  const { query } = await import('../db.js');
+  const db = { query };
+  const numbers = await pick(db, await insightsContext(db, businessToday()));
+  params.push(numbers);
+  return `${column} = ANY($${params.length}::text[])`;
+}
+
+/**
+ *   ?follow_up=overdue        open quotations past their follow-up date
+ *   &overdue_days=8-14 | 15+  …and overdue by that many days
+ *   &owner=<user id> | none   …and, for an admin, one owner's
+ *   ?close_month=YYYY-MM      expected to close that month
+ *   ?month=YYYY-MM            quoted that month (Reports' quoted-vs-won bars)
+ */
+async function quotationListClauses(q, { scope, params }) {
+  const out = [];
+  if (MONTH.test(String(q.close_month ?? ''))) {
+    params.push(q.close_month);
+    out.push(`to_char(expected_close_date, 'YYYY-MM') = $${params.length}`);
+  } else if (q.close_month === 'undated') out.push('expected_close_date IS NULL');
+  if (MONTH.test(String(q.month ?? ''))) {
+    params.push(q.month);
+    out.push(`to_char(quotation_date, 'YYYY-MM') = $${params.length}`);
+  }
+  if (q.follow_up === 'overdue') {
+    const { parseDayRange } = await import('./ageing.js');
+    const range = parseDayRange(q.overdue_days);
+    out.push(await numbersClause('quotation_no', params, async (db, ctx) => {
+      const { overdueFollowUps } = await import('./insights.js');
+      const who = ruleScope(scope, q.owner);
+      const items = (await overdueFollowUps(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
+      return items.filter((i) => !range || (i.days_overdue >= range.lo && i.days_overdue <= range.hi)).map((i) => i.number);
+    }));
+  }
+  return out;
+}
+
+/** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */
+async function enquiryListClauses(q, { scope, params }) {
+  if (!q.risk) return [];
+  const { RISK_REASONS } = await import('./enquiryRisk.js');
+  const reason = RISK_REASONS.includes(q.risk) ? q.risk : null;
+  return [await numbersClause('enquiry_no', params, async (db, ctx) => {
+    const { enquiriesAtRisk } = await import('./insights.js');
+    const who = ruleScope(scope, q.owner);
+    const items = (await enquiriesAtRisk(db, who.scope, ctx)).filter((i) => !who.unowned || i.owner_user_id == null);
+    return items.filter((i) => !reason || i.reasons.some((r) => r.reason === reason)).map((i) => i.number);
+  })];
+}

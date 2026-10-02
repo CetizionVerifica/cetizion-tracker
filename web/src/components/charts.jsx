@@ -1,5 +1,7 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
+import { ChartContainer, ChartTooltip } from './ui/chart.tsx';
 import { Table as TableIcon, BarChart3 } from 'lucide-react';
 import { Button } from './ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card.tsx';
@@ -194,5 +196,54 @@ export function ChartTip({ active, payload, label, format = (value) => value, na
         );
       })}
     </div>
+  );
+}
+
+/* --------------------------------------------------------- shared shapes */
+
+const ROW_HEIGHT = 34;
+const CHART_MIN_HEIGHT = 180;
+
+/** The height a row chart needs for `rows` bars, so none is squeezed. */
+export const ROW_CHART = (rows) => Math.max(CHART_MIN_HEIGHT, rows * ROW_HEIGHT + 24);
+
+// A stage or a band with nothing in it is an answer — "no money is over
+// ninety days late" is the best line on the page. Recharts draws a zero bar
+// as nothing at all and puts its label nowhere, so every bar keeps two
+// pixels and its ₹0 stays where the reader expects it.
+export const ZERO_BAR = 2;
+
+/** Ageing escalates: not late, late, properly late. Red is only for the last. */
+export const AGE_COLOUR = { 'not-due': 'var(--forecast)', '1-30': 'var(--waiting)', '31-60': 'var(--waiting)', '61-90': 'var(--late)', '90+': 'var(--late)' };
+
+/** Money expected in, firmest first. The weighted pipeline is its own, lighter band. */
+export const CASH_BANDS = [
+  { key: 'received', label: 'Received', colour: 'var(--settled)' },
+  { key: 'invoiced', label: 'Invoiced, due', colour: 'var(--waiting)' },
+  { key: 'scheduled', label: 'Not yet invoiced', colour: 'var(--forecast)' },
+];
+
+/**
+ * Stages read top to bottom as a funnel: one row each, the bar as long as
+ * its value, the count beside the name. Recharts' own FunnelChart centres
+ * its trapezoids and loses the labels, which is the part that matters.
+ *
+ * Rows are `{ key, label, value, count, colour? }`.
+ */
+export function FunnelBars({ rows, format, onOpen, valueName = 'value' }) {
+  const data = rows.map((r) => ({ ...r, name: `${r.label} (${r.count})` }));
+  return (
+    <ChartContainer config={{ value: { label: valueName } }} className="h-full w-full aspect-auto">
+      <BarChart data={data} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
+        <CartesianGrid {...GRID} horizontal={false} />
+        <XAxis type="number" dataKey="value" {...AXIS} tickFormatter={format} />
+        <YAxis type="category" dataKey="name" width={170} {...AXIS} />
+        <ChartTooltip cursor={HOVER} content={<ChartTip format={format} names={{ value: valueName }} />} />
+        <Bar dataKey="value" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} cursor={onOpen ? 'pointer' : undefined} onClick={(bar) => bar?.payload && onOpen?.(bar.payload)}>
+          {data.map((r) => <Cell key={r.key} fill={r.colour || 'var(--primary)'} />)}
+          <LabelList dataKey="value" position="right" formatter={format} {...BAR_LABEL} />
+        </Bar>
+      </BarChart>
+    </ChartContainer>
   );
 }
