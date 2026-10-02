@@ -1828,6 +1828,10 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   auto_create_contacts boolean NOT NULL DEFAULT true,
   last_synced_at     timestamptz,
   last_error         text,
+  -- When its past mail was last read through for enquiries, and for POs.
+  -- Kept across a re-run, so the next reader is not held back (069).
+  past_enquiries_read_at timestamptz,
+  past_pos_read_at   timestamptz,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );

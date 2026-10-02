@@ -448,6 +448,46 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.ok(!swept.results.some((x) => x.id === box.id), 'the sweep skips it too');
   });
 
+  test('12b. a re-run of enquiries does not hold the PO backfill back: the past mail was read through once', async () => {
+    const box = await mailbox();
+    await autoEnquiry.backfillAccount(box, await autoEnquiry.runContext({ backfill: true }));
+    await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).expect(200);
+    const { rows: e } = await db.query('SELECT 1 FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
+    assert.equal(e.length, 0, 'the enquiry read starts again');
+    const r = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+    assert.deepEqual([r.waiting, r.finished], [undefined, true]);
+    const { rows: [a] } = await db.query('SELECT past_enquiries_read_at, past_pos_read_at FROM connected_accounts WHERE id = $1', [box.id]);
+    assert.ok(a.past_enquiries_read_at && a.past_pos_read_at);
+  });
+
+  test('12c. the PO backfill reads as far as the enquiry reader has got in Sent Items, and waits there', async () => {
+    const box = await mailbox();
+    const plain = (daysAgo) => ({
+      folder: 'inbox', history: true, provider_id: uid('p'), conversation_id: uid('conv'), internet_message_id: `<${uid('mid')}@client>`,
+      from: { email: 'someone@plain-co.in' }, to: [{ email: box.email }], subject: 'Lunch?', body_html: '<p>Lunch on Friday?</p>', sent_at: at(daysAgo),
+    });
+    sync.pushTestMessages(box.id, [plain(200), plain(100)]);
+    sync.testPaging.size = 1;
+    try {
+      // The whole Inbox read for enquiries, and Sent Items up to 150 days ago.
+      await db.query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder, reached) VALUES ($1, $2, 'sentitems', $3)`, [box.id, at(365), at(150)]);
+      let r = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+      assert.deepEqual([r.pages, r.waiting], [1, 'enquiry backfill']);
+      const reached = async () => (await db.query('SELECT reached, finished_at FROM mailbox_po_backfills WHERE account_id = $1', [box.id])).rows[0];
+      let row = await reached();
+      assert.ok(Math.abs(new Date(row.reached) - new Date(at(200))) < 60_000, 'read the 200-day-old page');
+      r = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+      assert.deepEqual([r.pages, r.waiting], [0, 'enquiry backfill'], 'the 100-day-old page waits');
+      await db.query('UPDATE mailbox_enquiry_backfills SET finished_at = now(), folder = NULL WHERE account_id = $1', [box.id]);
+      r = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+      assert.equal(r.finished, true);
+      row = await reached();
+      assert.ok(new Date(row.reached) > new Date(at(150)));
+    } finally {
+      sync.testPaging.size = 50;
+    }
+  });
+
   test('11. an eight-month-old PO from past mail: history mode, its stages listed to settle, nobody told but one summary', async () => {
     const box = await mailbox();
     await client('Acme Past Ltd', 'anil@acme-past.co.in');

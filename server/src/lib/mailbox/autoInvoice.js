@@ -464,18 +464,31 @@ async function pastInvoiceCandidates(account, judge, messages) {
 }
 
 /**
- * May this mailbox's Sent Items be read for invoices yet? After its own PO
- * backfill, and after every mailbox's — a PO may arrive in sales@ and its
- * invoice go out from accounts@ — or 24 hours after its own, whichever
- * comes first. Undecided invoices wait for their PO anyway.
+ * How far into this mailbox's past the invoice reader may go: the POs its
+ * invoices are for should be registered first (§3.10.6). A PO may arrive in
+ * sales@ and its invoice go out from accounts@, so every active mailbox's
+ * PO reader counts, until 24 hours after this one's own has read through.
+ *
+ * Each PO reader has got either all the way (`past_pos_read_at`, which a
+ * re-run does not clear, or a finished row) or to the date it has reached.
+ * `true` means no limit, a date means up to then, and null means wait.
+ * Undecided invoices wait for their PO anyway.
  */
-async function readyForInvoices(accountId) {
-  const { rows: [r] } = await query(
-    `SELECT b.finished_at, b.finished_at < now() - interval '24 hours' AS long_ago,
-            NOT EXISTS (SELECT 1 FROM connected_accounts a LEFT JOIN mailbox_po_backfills o ON o.account_id = a.id
-                         WHERE a.status = 'active' AND o.finished_at IS NULL) AS all_done
-       FROM mailbox_po_backfills b WHERE b.account_id = $1`, [accountId]);
-  return Boolean(r?.finished_at && (r.all_done || r.long_ago));
+export async function posReadUpTo(accountId) {
+  const { rows } = await query(
+    `SELECT a.id, COALESCE(b.finished_at, a.past_pos_read_at) AS read_at, b.reached
+       FROM connected_accounts a LEFT JOIN mailbox_po_backfills b ON b.account_id = a.id
+      WHERE a.status = 'active' OR a.id = $1`, [accountId]);
+  const own = rows.find((r) => r.id === accountId);
+  if (!own || (!own.read_at && !own.reached)) return null;
+  if (own.read_at && new Date(own.read_at) < new Date(Date.now() - 864e5)) return true;
+  let upTo = true;
+  for (const r of rows) {
+    if (r.read_at) continue;
+    if (!r.reached) return null;
+    if (upTo === true || new Date(r.reached) < upTo) upTo = new Date(r.reached);
+  }
+  return upTo;
 }
 
 /**
@@ -483,11 +496,15 @@ async function readyForInvoices(accountId) {
  * `budgetMs`. Resumable, as the other backfills are.
  */
 export async function backfillInvoiceAccount(account, ctx, { budgetMs = 4 * 60_000 } = {}) {
-  if (!(await readyForInvoices(account.id))) return { id: account.id, waiting: 'PO backfill', recorded: 0, review: 0 };
+  const upTo = await posReadUpTo(account.id);
+  if (!upTo) return { id: account.id, waiting: 'PO backfill', recorded: 0, review: 0 };
   const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
   await query(`INSERT INTO mailbox_invoice_backfills (account_id, since) VALUES ($1, $2) ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
   let { rows: [row] } = await query('SELECT * FROM mailbox_invoice_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, recorded: 0, review: 0 };
+  const beyondUpTo = (date) => upTo !== true && date && new Date(date) > upTo;
+  // Caught up with the PO readers: nothing to fetch until they move on.
+  if (upTo !== true && row.reached && new Date(row.reached) >= upTo) return { id: account.id, waiting: 'PO backfill', recorded: 0, review: 0 };
   const started = Date.now();
   const tally = { id: account.id, email: account.email, pages: 0, recorded: 0, review: 0 };
   let provider;
@@ -497,6 +514,12 @@ export async function backfillInvoiceAccount(account, ctx, { budgetMs = 4 * 60_0
     const judge = await ingestRules(account);
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       const page = await provider.page('sentitems', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      // A page that runs past where the PO readers have got is left for a
+      // later run: the cursor stays, so it is fetched again then.
+      if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {
+        tally.waiting = 'PO backfill';
+        break;
+      }
       const before = { recorded: ctx.recorded.length, review: ctx.review.length };
       await processInvoiceCandidates(account, await pastInvoiceCandidates(account, judge, page.messages), { ctx, provider });
       const recorded = ctx.recorded.length - before.recorded; const review = ctx.review.length - before.review;
@@ -538,9 +561,11 @@ export async function runInvoiceBackfills({ budgetMs = 4 * 60_000 } = {}) {
   if (!ctx.settings.enabled) return { skipped: 'switched off', recorded: 0, errors: 0 };
   const retried = await retryWaiting(ctx);
   const { rows } = await query(
-    `SELECT a.* FROM connected_accounts a JOIN mailbox_po_backfills p ON p.account_id = a.id AND p.finished_at IS NOT NULL
+    `SELECT a.* FROM connected_accounts a LEFT JOIN mailbox_po_backfills p ON p.account_id = a.id
        LEFT JOIN mailbox_invoice_backfills b ON b.account_id = a.id
-      WHERE a.status = 'active' AND b.finished_at IS NULL ORDER BY a.id`);
+      WHERE a.status = 'active' AND b.finished_at IS NULL
+        AND (a.past_pos_read_at IS NOT NULL OR p.finished_at IS NOT NULL OR p.reached IS NOT NULL)
+      ORDER BY a.id`);
   const started = Date.now();
   const results = [];
   for (const account of rows) {

@@ -669,7 +669,12 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
       // Re-run or a disconnect removed the row while this ran: stop here;
       // the next run starts afresh.
       if (!row) { tally.restarted = true; break; }
-      if (row.finished_at) break;
+      if (row.finished_at) {
+        // Kept on the mailbox, where a re-run does not clear it: the PO
+        // reader goes by it (autoPurchaseOrder.js enquiriesReadUpTo).
+        await query('UPDATE connected_accounts SET past_enquiries_read_at = $2 WHERE id = $1', [account.id, row.finished_at]);
+        break;
+      }
     }
     await saveTokens(account, provider);
   } catch (err) {

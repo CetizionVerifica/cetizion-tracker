@@ -722,20 +722,39 @@ async function enquiriesFromNotPo(account, cands, enquiryCtx, provider) {
 }
 
 /**
+ * How far into this mailbox's past the PO reader may go: the enquiries and
+ * quotations a PO looks for must be there first (§3.9). `true` once its
+ * past mail has been read through for enquiries — a re-run reading it
+ * again does not undo that, since what it made stays. Otherwise the date
+ * the enquiry reader has reached in Sent Items, where the quotations we
+ * sent are read, after the whole Inbox. Null while it is still on the
+ * Inbox: a PO read then could find no quotation and make one.
+ */
+export async function enquiriesReadUpTo(accountId) {
+  const { rows: [r] } = await query(
+    `SELECT a.past_enquiries_read_at, e.finished_at, e.folder, e.reached
+       FROM connected_accounts a LEFT JOIN mailbox_enquiry_backfills e ON e.account_id = a.id WHERE a.id = $1`, [accountId]);
+  if (r?.past_enquiries_read_at || r?.finished_at) return true;
+  return r?.folder === 'sentitems' && r.reached ? new Date(r.reached) : null;
+}
+
+/**
  * Read one mailbox's past Inbox for POs, oldest first, for up to
  * `budgetMs`. Resumable: progress is stored after every page, so a restart
- * or a stop at the day's AI ceiling loses nothing. Starts only once the
- * mailbox's enquiry backfill has finished, so the enquiries and quotations
- * a PO looks for are already there.
+ * or a stop at the day's AI ceiling loses nothing. It reads only as far as
+ * the enquiry reader has got (enquiriesReadUpTo), and waits there for it.
  */
 export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_BUDGET_MS, enquiryCtx = null } = {}) {
-  const { rows: [phase1] } = await query('SELECT finished_at FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
-  if (!phase1?.finished_at) return { id: account.id, waiting: 'enquiry backfill', registered: 0, review: 0 };
+  const upTo = await enquiriesReadUpTo(account.id);
+  if (!upTo) return { id: account.id, waiting: 'enquiry backfill', registered: 0, review: 0 };
   const days = (await enquirySettings()).backfillDays;
   const since = new Date(Date.now() - days * 864e5).toISOString();
   await query(`INSERT INTO mailbox_po_backfills (account_id, since) VALUES ($1, $2) ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
   let { rows: [row] } = await query('SELECT * FROM mailbox_po_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, registered: 0, review: 0 };
+  const beyondUpTo = (date) => upTo !== true && date && new Date(date) > upTo;
+  // Caught up with the enquiry reader: nothing to fetch until it moves on.
+  if (upTo !== true && row.reached && new Date(row.reached) >= upTo) return { id: account.id, waiting: 'enquiry backfill', registered: 0, review: 0 };
   const started = Date.now();
   const tally = { id: account.id, email: account.email, pages: 0, registered: 0, review: 0 };
   let provider;
@@ -746,6 +765,12 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
     const eCtx = enquiryCtx || await runContext({ backfill: true });
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       const page = await provider.page('inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      // A page that runs past where the enquiry reader has got is left for
+      // a later run: the cursor stays, so it is fetched again then.
+      if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {
+        tally.waiting = 'enquiry backfill';
+        break;
+      }
       const cands = await pastPoCandidates(account, judge, page.messages, ctx.settings.portalSenders);
       const before = { registered: ctx.registered.length, review: ctx.review.length };
       await processPoCandidates(account, cands, { ctx, provider });
@@ -769,7 +794,12 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
         [account.id, next.next_link, next.scanned, registered, review, next.reached, next.finished_at]));
       // Re-run or a disconnect removed the row while this ran: stop here.
       if (!row) { tally.restarted = true; break; }
-      if (row.finished_at) break;
+      if (row.finished_at) {
+        // Kept on the mailbox, where a re-run does not clear it: the invoice
+        // reader goes by it (autoInvoice.js posReadUpTo).
+        await query('UPDATE connected_accounts SET past_pos_read_at = $2 WHERE id = $1', [account.id, row.finished_at]);
+        break;
+      }
     }
     await saveTokens(account, provider);
   } catch (err) {
@@ -799,9 +829,11 @@ export async function runPoBackfills({ budgetMs = PO_BACKFILL_BUDGET_MS } = {}) 
   await notifyReview({ backfill: false, review: ctx.review.splice(0) });
   const { rows } = await query(
     `SELECT a.* FROM connected_accounts a
-       JOIN mailbox_enquiry_backfills e ON e.account_id = a.id AND e.finished_at IS NOT NULL
+       LEFT JOIN mailbox_enquiry_backfills e ON e.account_id = a.id
        LEFT JOIN mailbox_po_backfills b ON b.account_id = a.id
-      WHERE a.status = 'active' AND b.finished_at IS NULL ORDER BY a.id`);
+      WHERE a.status = 'active' AND b.finished_at IS NULL
+        AND (a.past_enquiries_read_at IS NOT NULL OR e.finished_at IS NOT NULL OR (e.folder = 'sentitems' AND e.reached IS NOT NULL))
+      ORDER BY a.id`);
   const started = Date.now();
   const results = [];
   const enquiryCtx = await runContext({ backfill: true });

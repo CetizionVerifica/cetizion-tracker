@@ -291,6 +291,33 @@ The owner and `sales_person` stay the quotation's. The registration is
 attributed to "Automatic (email)" in the activity log, which is how phase
 1's automatic records are attributed.
 
+#### 3.5.1 The order inside the transaction
+
+The project is created automatically, as part of registration; nobody sets
+it up by hand first. Payment stages hang off the PO, and the PO hangs off a
+project, so the project has to exist before the stages. Registration
+writes, in one transaction:
+
+1. **The project.** The quotation's project if it has one, else a new one
+   numbered by the PO date's year. The client, primary service and
+   salesperson come from the quotation; the project manager and planned
+   delivery date come from the PO.
+2. **The quotation, won**, and linked to that project, with `closed_at` =
+   PO date.
+3. **The enquiry, converted**, with `converted_at` = PO date.
+4. **The PO**, on the project, with its PDF.
+5. **The service lines** (`po_services`).
+6. **The payment stages**, from the PO's own payment terms (§3.4), else the
+   template. A stage triggered `On Milestone` creates that milestone on the
+   project if it is missing.
+
+If any step fails, the whole registration rolls back: there is never a
+project without its PO, or a PO without its stages.
+
+A PO sent to review (§3.7) creates nothing yet. When a person clicks
+**Register against…**, the same function runs, so the project and stages
+are still created automatically then.
+
 ### 3.6 Duplicates, re-sends, amendments, cancellations
 
 | Case | Rule |
@@ -400,9 +427,20 @@ right months automatically.
     phase 1 backfill has finished;
   - because phase 1 already judged these emails for enquiries, the PO pass
     is separate and does not re-judge them.
-- **Order across phases:** the PO pass for a mailbox starts only after that
-  mailbox's phase 1 backfill has finished. Enquiries and quotations then
-  exist before POs look for them.
+- **Order across phases:** the PO pass for a mailbox reads only as far as
+  that mailbox's phase 1 backfill has got, so enquiries and quotations
+  exist before POs look for them (`enquiriesReadUpTo`):
+  - **Phase 1 still on the Inbox:** the PO pass waits. The quotations we
+    sent are read from Sent Items, after the whole Inbox. A PO read before
+    then could find no quotation and make one (§3.3).
+  - **Phase 1 in Sent Items:** the PO pass reads up to the date phase 1 has
+    reached there. A page that runs past it is fetched again on a later
+    run.
+  - **Phase 1 read through once:** no limit.
+    `connected_accounts.past_enquiries_read_at` records this (migration
+    069). **Re-run** clears only the progress row, not this, so a re-read
+    of enquiries never holds POs back: what the first read made is still
+    there.
 
 ### 3.10 Invoices we email to clients
 
@@ -596,12 +634,18 @@ stage. **Not an invoice** dismisses it.
   - a new job, `invoices.backfill`, every 10 minutes;
   - **Sent Items only**, oldest first, 365 days, with its own cursor table;
   - the same 4-minute budget and the same shared daily AI ceiling;
-  - for a mailbox, it starts only when **that mailbox's PO backfill has
-    finished**. Ideally every mailbox's PO backfill has finished, because
-    a PO may arrive in `sales@` and its invoice go out from `accounts@`.
-    The rule: wait until all PO backfills finish, or 24 hours, whichever
-    comes first. Undecided invoices are retried until
-    `auto_invoice_wait_days`.
+  - for a mailbox, it reads only as far as the **PO backfills** have got
+    (`posReadUpTo`). Every active mailbox's PO pass counts, because a PO
+    may arrive in `sales@` and its invoice go out from `accounts@`:
+    - each PO pass has got either all the way, or to the date it has
+      reached;
+    - the invoice pass reads up to the earliest of those dates;
+    - while any mailbox's PO pass has not started, the invoice pass waits;
+    - 24 hours after this mailbox's own PO pass has read through, the other
+      mailboxes no longer hold it back.
+  - "Read through" includes `connected_accounts.past_pos_read_at`, which a
+    **Re-run** of POs does not clear (migration 069).
+  - Undecided invoices are retried until `auto_invoice_wait_days`.
 
 ---
 
