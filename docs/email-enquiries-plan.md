@@ -422,7 +422,7 @@ The quotation, in the same transaction as the enquiry:
 | `service_quoted` | The line services joined, or the extracted service. |
 | `owner_user_id`, `sales_person` | The sender (§3.8), with the same rule as the enquiry. |
 | **Lines** | If the lines **add up**, insert `quotation_lines`. The `quotation_totals()` trigger then sets `subtotal`, `tax_total`, `total` and `quotation_value` from the lines, exactly as for a quotation built in the tracker. |
-| **No lines** | If they **do not add up**, insert no lines. Set `subtotal`, `tax_total`, `total` and `quotation_value` from the printed totals. Before relying on this, confirm that the `quotation_totals()` trigger does not overwrite totals on a quotation that has no lines. The quotation page then says "Lines could not be read; totals are from the PDF". |
+| **No lines** | If they **do not add up**, insert no lines. Set `subtotal`, `tax_total`, `total` and `quotation_value` from the printed totals. **These totals must never be overwritten with zero or blank** while the quotation has no lines (confirmed by the product owner; see §3.9.7). The quotation page then says "Lines could not be read; totals are from the PDF". |
 | `document_id` | The PDF, stored through `lib/documents.js` under owner `quotations`, so it opens from the quotation page like any uploaded document. If document storage (Cloudinary) is not configured, the quotation is still created, without a document. |
 | `remarks` | "Read from the PDF emailed to *client* on *date* by *mailbox*." Plus the printed number, if it was replaced. |
 
@@ -473,6 +473,78 @@ In that case:
   the email. **Mark checked** writes an activity log entry and hides the
   banner. That is an event, so it is stored, the same way the activity log
   already is.
+
+#### 3.9.7 Keeping the PDF's totals when there are no lines (requirement)
+
+**Confirmed requirement:** a quotation created from a PDF with **no lines**
+keeps the subtotal, tax and total read from the PDF. Nothing may overwrite
+them with zero or blank while it has no lines.
+
+**Why this needs a change.** `quotation_totals()` (`server/db/schema.sql`,
+"quotation totals") handles a quotation with no lines like this:
+
+```sql
+IF n = 0 THEN
+  UPDATE quotations SET subtotal = NULL, tax_total = NULL, total = NULL, discount_percent = NULL, …
+```
+
+It keeps `quotation_value` but **blanks the other three totals**. It runs:
+
+- from the `quotation_lines_changed` trigger, when any line is inserted,
+  updated or deleted. For example, someone adds a line on the quotation
+  page and then removes it.
+- directly from `POST /api/quotations/:key/revise`
+  (`server/src/routes/quotations.js`), on **every** revision, including a
+  revision of a PDF quotation that still has no lines.
+
+A plain insert with no lines never fires it, so the totals survive
+creation. They would be lost on the first revision, or the first time a
+line is added and removed.
+
+**The change.** In the `n = 0` branch, leave `subtotal`, `tax_total`,
+`total` and `quotation_value` **untouched** when the quotation's totals
+came from a document. Every other quotation behaves exactly as today.
+
+**"Came from a document" is derived, not stored.** It is true when the
+decision log has a row for that quotation with
+`quotation_extraction IN ('created','revised')`. No new column goes on
+`quotations`:
+
+```sql
+IF n = 0 THEN
+  IF EXISTS (SELECT 1 FROM email_enquiry_decisions d
+              JOIN quotations q ON q.quotation_no = d.quotation_no
+             WHERE q.id = p_quotation AND d.quotation_extraction IN ('created','revised')) THEN
+    -- totals were read from the PDF: they stand until real lines replace them
+    UPDATE quotations SET discount_percent = NULL, approval_status = … WHERE id = p_quotation;
+    RETURN;
+  END IF;
+  … existing behaviour …
+```
+
+The function is redefined in migration 065 and in `schema.sql`. It is
+plpgsql, so referring to `email_enquiry_decisions` (which is created later
+in the file) resolves when it runs.
+
+**When lines are added later** (someone types them in from the PDF), the
+lines take over, as for any quotation: totals and `quotation_value` follow
+the lines. If all of those lines are then deleted, the quotation goes back
+to **the PDF's totals**, not to blank. To make that possible:
+
+- keep the PDF's figures in the quotation's first revision snapshot. The
+  revision path already stores `subtotal`, `tax_total`, `total` and
+  `quotation_value` in `quotation_revisions.snapshot`.
+- have `createQuotationFromEmail` write that snapshot (revision 0, note
+  "Read from PDF") at creation.
+- in the `n = 0` branch, restore the four values from the latest snapshot
+  noted "Read from PDF".
+
+**Revising a PDF quotation with no lines** keeps the totals: the new
+version starts with the same figures until a new PDF or real lines change
+them.
+
+**A newer PDF revision** (§3.9.4, "Revisions") replaces the totals with the
+new PDF's figures, and writes a new "Read from PDF" snapshot.
 
 ---
 
@@ -532,6 +604,8 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 ```
 
+- **`quotation_totals()` is redefined** in this migration, as in §3.9.7.
+  A quotation with no lines whose totals came from a PDF keeps them.
 - **"Created automatically" is derived, not stored:** an enquiry has a
   decision row with outcome `created`. No new column goes on `enquiries`,
   which matters because `v_enquiries` is `SELECT e.*`; see the column-order
@@ -566,7 +640,8 @@ that mailbox's backfill row. Decision rows stay, for the audit trail.
 | Enquiry page | One line under the title: "Created automatically from an email on 12 Mar 2026 · open thread". It links to the stored thread when the mailbox shares it. |
 | `server/package.json` | Add `unpdf` (§3.9.2). |
 | `server/src/lib/mailbox/quotationPdf.js` | **New.** Pick the PDF, extract its text, call the AI, and run the pure checks in §3.9.3 (`checkExtraction()`, `parseAmount()`, `linesAddUp()`). |
-| `server/src/lib/mailbox/autoQuotation.js` | **New.** `createQuotationFromEmail(db, …)`: the number rule, insert, lines or printed totals, document, the revision path, and the fallback task. |
+| `server/src/lib/mailbox/autoQuotation.js` | **New.** `createQuotationFromEmail(db, …)`: the number rule, insert, lines or printed totals plus the "Read from PDF" snapshot (§3.9.7), document, the revision path, and the fallback task. |
+| `server/db/schema.sql` + migration 065 | Redefine `quotation_totals()` so that a PDF quotation with no lines keeps its totals (§3.9.7). |
 | `server/src/lib/mailbox/microsoft.js` | `attachments(providerId)`, as well as `page()`. |
 | `web/src/pages/Quotations.jsx`, `QuotationDetail.jsx` | The "Read from email" filter, and the review banner with **Mark checked**. |
 | `docs/email-enquiries.md` | **New.** What it does, what is read, what is kept, the settings, and how to switch it off. Add a row to `docs/security.md` for the new data flow to the AI provider. |
@@ -699,6 +774,15 @@ daily AI ceiling.
       `Converted` enquiry points at it.
   17. **Lines do not add up:** no lines are inserted, the totals are the
       printed ones, and the banner says so.
+  17a. **The PDF's totals survive** (§3.9.7). On a PDF quotation with no
+      lines:
+      - `POST /api/quotations/:key/revise` leaves `subtotal`, `tax_total`,
+        `total` and `quotation_value` exactly as printed, never 0 or NULL;
+      - adding a line makes the totals follow that line;
+      - deleting it brings back the PDF's figures.
+  17b. **Nothing else changes.** A tracker-built quotation with no lines
+      still gets blank totals from `quotation_totals()`, as today. The
+      existing quotation and revision tests pass unchanged.
   18. **Clashing printed number:** a new tracker number is used, the
       printed one goes in `remarks`, and a printed number in the CTZ
       pattern moves the counter past it.
