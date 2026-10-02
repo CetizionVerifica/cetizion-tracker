@@ -7,6 +7,7 @@
  *       project_manager?, project_manager_email?, planned_start_date?, planned_delivery_date?
  *       po_number, po_date?, po_value?, currency?, payment_terms_days?, document_id?
  *       payment_terms_template_id?   the schedule; blank = the default template, 0 = no stages
+ *       review_id?                   the PO email in the review queue this settles (poReview.js)
  *       stages?                      the schedule itself, instead of a template:
  *                                    [{ stage_name, trigger_event, percent, credit_days?, milestone_name? }]
  *       onboarding_template_id?      the checklist; blank = the service's, else the default; 0 = none
@@ -29,6 +30,7 @@ import { transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { registerPurchaseOrder } from '../lib/purchaseOrders.js';
 import { STATUS } from '../lib/statuses.js';
+import { settleReview } from './poReview.js';
 
 export const registerRouter = Router();
 
@@ -58,6 +60,8 @@ const schema = z.object({
     credit_days: z.preprocess(blank, z.coerce.number().int().min(0).max(365).optional()),
     milestone_name: optStr(120),
   })).max(12).optional(),
+  // A PO email from the review queue (poReview.js), settled by this registration.
+  review_id: optInt,
 });
 
 registerRouter.post('/:key/register', async (req, res) => {
@@ -66,7 +70,11 @@ registerRouter.post('/:key/register', async (req, res) => {
     throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.') || '_', i.message])) });
   }
   const scope = scopeOf(req);
-  const data = await transaction((client) =>
-    registerPurchaseOrder(client, { ...parsed.data, quotation: decodeURIComponent(req.params.key) }, { scope }));
+  const { review_id: reviewId, ...input } = parsed.data;
+  const data = await transaction(async (client) => {
+    const registered = await registerPurchaseOrder(client, { ...input, quotation: decodeURIComponent(req.params.key) }, { scope });
+    if (reviewId) await settleReview(client, req, reviewId, { poNumber: registered.po_number, quotationNo: registered.quotation_no });
+    return registered;
+  });
   res.status(201).json({ data });
 });

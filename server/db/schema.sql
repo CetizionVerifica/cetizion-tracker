@@ -2963,8 +2963,11 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   -- No quotation was on file, so one was made from the PO (§3.3).
   created_quotation    boolean NOT NULL DEFAULT false,
   stages_source        text CHECK (stages_source IN ('po_terms','template','none')),
-  -- Set when a person registers or dismisses it from the review queue.
+  -- Who settled it from the review queue, and when: registered by hand or
+  -- dismissed. decided_at stays the moment it was read, which the daily AI
+  -- ceiling counts by.
   decided_by           text,
+  settled_at           timestamptz,
   decided_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
@@ -3015,6 +3018,7 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   -- The stage already had a document, so the emailed PDF was not attached.
   document_kept_existing boolean NOT NULL DEFAULT false,
   decided_by             text,
+  settled_at             timestamptz,
   decided_at             timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );

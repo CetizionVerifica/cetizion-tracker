@@ -439,6 +439,10 @@ export const routes = [
   { method: 'GET', path: '/api/projects/:projectId/full', access: signedIn },
   { method: 'POST', path: '/api/projects/:projectId/onboarding/apply-template', access: signedIn },
   { method: 'GET', path: '/api/purchase-orders/:poNumber/full', access: signedIn },
+  // POs read from email that need a person (docs/email-po-plan.md §3.7).
+  { method: 'GET', path: '/api/purchase-orders/review', access: signedIn, restrictions: ['record-owner'], note: 'A salesperson sees the items whose suggested quotation is theirs; an admin sees all.' },
+  { method: 'POST', path: '/api/purchase-orders/review/:id/register', access: signedIn, restrictions: ['record-owner'], note: 'Reads the PO again for the Register PO dialog; saves nothing but an unattached upload.' },
+  { method: 'POST', path: '/api/purchase-orders/review/:id/dismiss', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
   { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },

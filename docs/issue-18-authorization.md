@@ -329,6 +329,9 @@ session is **401**, before any of these is considered.
 | **/api/purchase-orders** | | |
 | `GET /api/purchase-orders/:poNumber/full` | any |  |
 | `POST /api/purchase-orders/:poNumber/stages` | any |  |
+| `GET /api/purchase-orders/review` | any | A salesperson sees the items whose suggested quotation is theirs; an admin sees all. |
+| `POST /api/purchase-orders/review/:id/dismiss` | any | Scoped: record-owner. |
+| `POST /api/purchase-orders/review/:id/register` | any | Reads the PO again for the Register PO dialog; saves nothing but an unattached upload. |
 | **/api/quotations** | | |
 | `POST /api/quotations/:id/convert` | any |  |
 | `POST /api/quotations/:key/accept` | any |  |

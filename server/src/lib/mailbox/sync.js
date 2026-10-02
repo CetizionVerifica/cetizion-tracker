@@ -12,6 +12,7 @@ import { query, transaction } from '../../db.js';
 import { config } from '../../config.js';
 import { applyVisibility, classify, cleanHtml, domainOf, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
 import { microsoftConfigured, microsoftProvider } from './microsoft.js';
+import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
 
@@ -97,7 +98,7 @@ async function settingsFor(db) {
 }
 
 /** The contact and company behind a set of external participants. */
-async function matchParticipants(db, external, { autoCreate }) {
+export async function matchParticipants(db, external, { autoCreate }) {
   const emails = external.map((p) => p.email.toLowerCase());
   const { rows: contacts } = await db.query('SELECT id, company_id, lower(email) AS email FROM contacts WHERE lower(email) = ANY($1)', [emails]);
   if (contacts.length) {
@@ -217,23 +218,48 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
  */
 export async function ingest(account, messages, { sentBy = null } = {}) {
   const judge = await ingestRules(account);
-  const result = { stored: 0, skipped: {}, threads: new Set(), candidates: [] };
+  const portals = await portalSenders();
+  const result = { stored: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [] };
   const skip = (why) => { result.skipped[why] = (result.skipped[why] || 0) + 1; };
+  // The PO reader (autoPurchaseOrder.js) looks at every inbound message
+  // that might hold an order, later ones in a thread included: that is
+  // where most POs arrive. A cheap test; its prefilter does the rest.
+  const mayBePo = (m, c) => c.direction === 'inbound' && (m.has_attachments || MAY_BE_PO.test(`${m.subject || ''} ${m.preview || ''}`));
   for (const m of messages.sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))) {
     if (!m.provider_id || !m.conversation_id || m.draft) { skip('incomplete'); continue; }
     const c = judge(m);
-    if (c.skip) { skip(c.skip); continue; }
+    if (c.skip) {
+      skip(c.skip);
+      // A procurement portal's notification reads as a robot; for POs it is not one.
+      if (c.skip === 'blocked sender' && isPortalSender(m.from?.email, portals)) {
+        result.poCandidates.push({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId: null, newThread: false, dropped: true });
+      }
+      continue;
+    }
     const r = await transaction((db) => ingestOne(db, account, m, c, { sentBy }));
     if (r.skipped) {
       skip(r.skipped);
-      if (r.skipped === 'no matching client') result.candidates.push({ m, c, threadId: null, newThread: false, dropped: true });
+      if (r.skipped === 'no matching client') {
+        const cand = { m, c, threadId: null, newThread: false, dropped: true };
+        result.candidates.push(cand);
+        if (mayBePo(m, c)) result.poCandidates.push(cand);
+      }
       continue;
     }
     result.stored += 1;
     result.threads.add(r.thread.id);
-    if (c.direction === 'outbound' || r.newThread) result.candidates.push({ m, c, threadId: r.thread.id, newThread: r.newThread, dropped: false });
+    const cand = { m, c, threadId: r.thread.id, newThread: r.newThread, dropped: false };
+    if (c.direction === 'outbound' || r.newThread) result.candidates.push(cand);
+    if (mayBePo(m, c)) result.poCandidates.push(cand);
   }
   return { ...result, threads: result.threads.size };
+}
+
+const MAY_BE_PO = /order|\bP\.?O\b|\bW\.?O\b|\bLOI\b|contract|letter of (intent|award)/i;
+
+async function portalSenders() {
+  const { rows: [r] } = await query(`SELECT value FROM settings WHERE key = 'po_portal_senders'`);
+  return r?.value || '';
 }
 
 export async function syncAccount(id) {
@@ -242,6 +268,7 @@ export async function syncAccount(id) {
   const provider = providerFor(account);
   const out = { id, email: account.email, stored: 0, skipped: {} };
   const candidates = [];
+  const poCandidates = [];
   try {
     for (const folder of FOLDERS) {
       const { rows: [f] } = await query(
@@ -250,6 +277,7 @@ export async function syncAccount(id) {
       const { messages, deltaLink } = await provider.delta(folder, f.delta_link, since);
       const r = await ingest(account, messages);
       candidates.push(...r.candidates);
+      poCandidates.push(...r.poCandidates);
       out.stored += r.stored;
       for (const [k, v] of Object.entries(r.skipped)) out.skipped[k] = (out.skipped[k] || 0) + v;
       await query('UPDATE mail_folders SET delta_link = $2 WHERE id = $1', [f.id, deltaLink]);
@@ -259,6 +287,13 @@ export async function syncAccount(id) {
     // After the mail is stored, never inside its transactions: judging an
     // email may call the AI. Inbox first, then Sent Items — FOLDERS' order —
     // so a quotation answering an emailed enquiry finds it already made.
+    // POs before enquiries, for the same batch: a PO email can never also
+    // start an enquiry (docs/email-po-plan.md §3.9).
+    if (poCandidates.length) {
+      const { processPoCandidates } = await import('./autoPurchaseOrder.js');
+      const p = await processPoCandidates(account, poCandidates, { provider });
+      if (p) out.purchase_orders = p;
+    }
     if (candidates.length) {
       const { processCandidates } = await import('./autoEnquiry.js');
       const e = await processCandidates(account, candidates, { provider });

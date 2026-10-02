@@ -37,7 +37,7 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains'];
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
 
@@ -53,14 +53,19 @@ export async function enquirySettings(db = { query }) {
     quotationMinConfidence: num(s.auto_quotation_min_confidence, 0.8),
     ourNames: [s.company_name].filter(Boolean),
     internalDomains: String(s.internal_email_domains || '').split(',').map((d) => d.trim()).filter(Boolean),
+    // The PO reader (autoPurchaseOrder.js) takes PO emails while it is on.
+    poReader: String(s.auto_po_enabled ?? 'true').trim().toLowerCase() !== 'false',
+    portalSenders: String(s.po_portal_senders || ''),
   };
 }
 
 /** Model calls made today (business day), against the daily ceiling. */
 export async function aiCallsToday(db = { query }) {
+  // One ceiling for every email reader: enquiries, quotations and POs (docs/email-po-plan.md §3.9).
   const { rows: [r] } = await db.query(
-    `SELECT COALESCE(sum(ai_calls), 0)::int AS n FROM email_enquiry_decisions
-      WHERE decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')`);
+    `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' AS start)
+     SELECT (SELECT COALESCE(sum(ai_calls), 0) FROM email_enquiry_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_po_decisions, day WHERE decided_at >= day.start)::int AS n`);
   return r.n;
 }
 
@@ -122,7 +127,7 @@ async function logDecision(db, account, cand, d) {
 // ------------------------------------------------------------ facts
 
 /** The facts prefilter() needs that only the database knows. */
-async function factsFor(account, cand) {
+async function factsFor(account, cand, settings = {}) {
   const { m, c } = cand;
   const { rows: [conv] } = await query(
     `SELECT EXISTS (SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1 AND conversation_id = $2 AND outcome IN ('created','linked')) AS decided,
@@ -134,6 +139,12 @@ async function factsFor(account, cand) {
   // enquiry (plan §3.8), which quotationEnquiry() works out.
   const onRecord = c.direction === 'inbound' && await linkedByNumber(cand);
   const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped };
+  if (c.direction === 'inbound' && settings.poReader) {
+    // A PO email is the PO reader's, until it has decided otherwise.
+    const { rows: [po] } = await query(
+      `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND outcome IN ('not_po','dismissed')`, [account.id, m.provider_id]);
+    Object.assign(facts, { poReader: true, notPo: Boolean(po), portalSenders: settings.portalSenders });
+  }
   if (c.direction === 'outbound') {
     // A domain we have only ever had bills or sales pitches from is a vendor,
     // and what we send them is not a quotation to a client.
@@ -218,7 +229,7 @@ async function salesUser(db, ref) {
  * assignee, if that is a salesperson. Otherwise nobody — visibly unassigned
  * rather than wrongly given to someone (the rule ownerForNewRecord follows).
  */
-async function ownerFor(db, account, threadId, fallbackUserId = null) {
+export async function ownerFor(db, account, threadId, fallbackUserId = null) {
   if (!account.is_shared) return (await salesUser(db, account.username)) || (await salesUser(db, account.email));
   if (threadId) {
     const { rows: [conv] } = await db.query('SELECT assignee FROM inbox_conversations WHERE thread_id = $1', [threadId]);
@@ -290,7 +301,7 @@ async function threadCompany(db, threadId) {
  * The thread a dropped email gets once it is an enquiry: stored now, under
  * the new company, with the mailbox's visibility applied as for any mail.
  */
-async function keepDropped(db, account, cand, companyId) {
+export async function keepDropped(db, account, cand, companyId) {
   if (cand.threadId) return cand.threadId;
   const r = await ingestOne(db, account, cand.m, cand.c, { forceCompanyId: companyId });
   if (r.thread) return r.thread.id;
@@ -316,8 +327,8 @@ export async function decide(account, cand, ctx) {
   if (elsewhere) return transaction((db) => joinElsewhere(db, account, cand, elsewhere, ctx));
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
-  const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments };
-  const pf = prefilter(input, await factsFor(account, cand));
+  const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments, attachments: m.attachments };
+  const pf = prefilter(input, await factsFor(account, cand, ctx.settings));
   if (!pf.candidate) { ctx.skipped += 1; return 'skipped'; }
 
   const verdict = await classifyEmail(account, cand, input, ctx);
