@@ -2949,7 +2949,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   document_type        text,
   review_reason        text CHECK (review_reason IN
                          ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
-                          'value_mismatch','company_mismatch','amendment','cancellation','multiple_pos','unreadable')),
+                          'value_mismatch','company_mismatch','amendment','cancellation','multiple_pos','unreadable',
+                          -- the PO's own figures failed a check (pdfPurchaseOrder.js checkPo)
+                          'no_value','amounts_not_in_pdf','totals_do_not_add_up','bad_currency')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
