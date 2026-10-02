@@ -103,17 +103,31 @@ export function microsoftProvider(account, tokens) {
   return {
     tokens: () => current,
     async me() { return graph(`${who}?$select=displayName,mail,userPrincipalName`); },
-    /** New and changed messages in a folder since the last delta link. */
-    async delta(folder, deltaLink, sinceIso) {
+    /**
+     * New and changed messages in a folder since the last delta link, at
+     * most `maxPages` pages of 50 at a time.
+     *
+     * The link returned is where the next call starts. Graph gives a delta
+     * link only on the last page of a round; a round cut off at `maxPages`
+     * returns the next page's link instead, which resumes the same round.
+     * Returning the old link there (or none, on a first sync) started the
+     * round over every time, so a mailbox with more than 2,500 changes
+     * re-read the same messages for ever and never reached new mail.
+     */
+    async delta(folder, deltaLink, sinceIso, { maxPages = 50 } = {}) {
       let url = deltaLink || `${who}/mailFolders/${folder}/messages/delta?$select=${SELECT}${sinceIso ? `&$filter=receivedDateTime+ge+${sinceIso}` : ''}`;
       const messages = []; let next = null;
-      for (let page = 0; page < 50 && url; page += 1) {
+      for (let page = 0; page < maxPages && url; page += 1) {
         const j = await graph(url, { headers: { Prefer: 'odata.maxpagesize=50, outlook.body-content-type="html"' } });
         for (const m of j.value || []) if (!m['@removed'] && !m.isDraft) messages.push(toMessage(m));
         url = j['@odata.nextLink'] || null;
         next = j['@odata.deltaLink'] || next;
       }
-      return { messages, deltaLink: next || deltaLink };
+      return { messages, deltaLink: url || next || deltaLink, more: Boolean(url) };
+    },
+    /** One message by its id; a 404 when the mailbox no longer has it under that id. */
+    async message(providerId) {
+      return toMessage(await graph(`${who}/messages/${providerId}?$select=${SELECT}`, { headers: { Prefer: 'outlook.body-content-type="html"' } }));
     },
     /**
      * One page of a folder, oldest first, from a date — for reading back

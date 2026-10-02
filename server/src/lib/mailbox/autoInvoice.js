@@ -37,6 +37,7 @@ import { aiCallsToday, enquirySettings } from './autoEnquiry.js';
 import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
 import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs } from './invoiceDetect.js';
 import { readWithAi } from './readAttachment.js';
+import { queueFailures } from './readerQueue.js';
 import { ingestRules, providerFor, saveTokens } from './sync.js';
 import { isPdf } from './pdfQuotation.js';
 
@@ -71,19 +72,25 @@ export async function invoiceRunContext({ backfill = false } = {}) {
  * tally, or null when the feature is switched off. One email failing never
  * stops the rest, and never fails the sync that found it.
  */
-export async function processInvoiceCandidates(account, candidates, { ctx: given = null, provider = null } = {}) {
+export async function processInvoiceCandidates(account, candidates, { ctx: given = null, provider = null, onSettled = null } = {}) {
   const ctx = given || await invoiceRunContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
   for (const cand of candidates) {
     if (ctx.stopped) break;
-    if (cand.c?.direction !== 'outbound') continue;
-    try {
-      await decideInvoice(account, cand, ctx);
-    } catch (err) {
-      ctx.errors += 1;
-      console.error('[auto-invoice]', account.email, cand.m?.provider_id, err.message);
+    // Told for every email reached, so the reader queue (readerQueue.js)
+    // can keep the ones that failed. One left unreached stays queued.
+    let failure = null;
+    if (cand.c?.direction === 'outbound') {
+      try {
+        await decideInvoice(account, cand, ctx);
+      } catch (err) {
+        failure = err;
+        ctx.errors += 1;
+        console.error('[auto-invoice]', account.email, cand.m?.provider_id, err.message);
+      }
     }
+    if (onSettled) await onSettled(cand, failure);
   }
   if (!given) await notifyOutcomes(ctx);
   return given ? ctx : { recorded: ctx.recorded.length, review: ctx.review.length, linked: ctx.linked, waiting: ctx.waiting, not_invoice: ctx.notInvoice, errors: ctx.errors };
@@ -521,7 +528,7 @@ export async function backfillInvoiceAccount(account, ctx, { budgetMs = 4 * 60_0
         break;
       }
       const before = { recorded: ctx.recorded.length, review: ctx.review.length };
-      await processInvoiceCandidates(account, await pastInvoiceCandidates(account, judge, page.messages), { ctx, provider });
+      await processInvoiceCandidates(account, await pastInvoiceCandidates(account, judge, page.messages), { ctx, provider, onSettled: queueFailures(account, 'invoice') });
       const recorded = ctx.recorded.length - before.recorded; const review = ctx.review.length - before.review;
       tally.pages += 1; tally.recorded += recorded; tally.review += review;
       const last = page.messages.length ? page.messages[page.messages.length - 1].sent_at : row.reached;

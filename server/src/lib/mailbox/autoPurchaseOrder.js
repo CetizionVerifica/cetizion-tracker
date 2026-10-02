@@ -36,6 +36,7 @@ import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates
 import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
 import { readWithAi } from './readAttachment.js';
+import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
 import { referencesIn } from './rules.js';
 
@@ -81,19 +82,25 @@ export async function poRunContext({ backfill = false } = {}) {
  * null when the feature is switched off. One email failing never stops the
  * rest, and never fails the sync that found it.
  */
-export async function processPoCandidates(account, candidates, { ctx: given = null, provider = null } = {}) {
+export async function processPoCandidates(account, candidates, { ctx: given = null, provider = null, onSettled = null } = {}) {
   const ctx = given || await poRunContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
   for (const cand of candidates) {
     if (ctx.stopped) break;
-    if (cand.c?.direction !== 'inbound') continue;
-    try {
-      await decidePo(account, cand, ctx);
-    } catch (err) {
-      ctx.errors += 1;
-      console.error('[auto-po]', account.email, cand.m?.provider_id, err.message);
+    // Told for every email reached, so the reader queue (readerQueue.js)
+    // can keep the ones that failed. One left unreached stays queued.
+    let failure = null;
+    if (cand.c?.direction === 'inbound') {
+      try {
+        await decidePo(account, cand, ctx);
+      } catch (err) {
+        failure = err;
+        ctx.errors += 1;
+        console.error('[auto-po]', account.email, cand.m?.provider_id, err.message);
+      }
     }
+    if (onSettled) await onSettled(cand, failure);
   }
   await notifyReview(ctx);
   return given ? ctx : { registered: ctx.registered.length, review: ctx.review.length, linked: ctx.linked, not_po: ctx.notPo, errors: ctx.errors };
@@ -773,7 +780,7 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
       }
       const cands = await pastPoCandidates(account, judge, page.messages, ctx.settings.portalSenders);
       const before = { registered: ctx.registered.length, review: ctx.review.length };
-      await processPoCandidates(account, cands, { ctx, provider });
+      await processPoCandidates(account, cands, { ctx, provider, onSettled: queueFailures(account, 'po') });
       // The enquiry reader shares the day's AI ceiling: what this pass used counts.
       eCtx.aiUsed = Math.max(eCtx.aiUsed, ctx.aiUsed);
       await enquiriesFromNotPo(account, cands, eCtx, provider);

@@ -274,8 +274,14 @@ not one per enquiry.
   - were dropped as `no matching client`. A personal mailbox drops sent
     mail to an unknown client as well as received mail.
   Each item carries the raw message **in memory** (subject and text) plus
-  the stored thread and message ids if they were stored. Nothing extra is
-  written by `ingest`.
+  the stored thread and message ids if they were stored. `ingest` also
+  queues each one for its readers in `email_reader_queue` (migration 070,
+  `readerQueue.js`): ids and classification only, never the subject or
+  body, written in the transaction that stores the message. A row leaves
+  the queue once its reader is done with the email; one whose reading
+  threw, or never started, is read again on a later sync (re-fetched from
+  the mailbox), with backoff, up to 8 attempts, after which admins are
+  told.
 - `syncAccount()` hands the candidates from both folders to
   `processCandidates(account, candidates)` **after** the ingest transaction.
   Inbox is processed before Sent Items, which is the order `FOLDERS`
