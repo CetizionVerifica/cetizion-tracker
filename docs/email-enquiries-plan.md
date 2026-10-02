@@ -22,6 +22,7 @@ place. It was written against commit `24af059`.
 | How is an email judged to be a new enquiry? | **AI, after rules.** Cheap rules discard obvious non-enquiries first. The rest go to the AI the bulk importer already uses (OpenRouter, routed only to providers that keep no data), which also extracts the company, contact and service. With no AI key configured, rules alone decide, with a stricter bar. |
 | How far back? | **365 days** for every mailbox. |
 | Manual or automatic? | **Fully automatic.** It is on by default, and admins have one switch to turn it off. |
+| The enquiry never reached us by email: the first email is **our quotation** to the client (the request came by phone, a meeting, WhatsApp or a colleague) | **An enquiry is still created**, from the quotation email we sent. See §3.8. |
 
 ---
 
@@ -52,6 +53,8 @@ thread into an enquiry. Three things are missing:
 
 1. A **detector** that judges each inbound email as either a new enquiry or
    not. It has rules first and AI second, and it returns structured fields.
+   It also judges each **outbound** email that sends a quotation to a client
+   in a conversation that has no enquiry yet (§3.8).
 2. **Automatic enquiry creation**, inside the 5-minute sync, for every active
    mailbox, shared or personal.
 3. **Backfill**: a resumable sweep of the last 365 days for every active
@@ -112,7 +115,7 @@ An email goes on to be classified only if **all** of these hold:
 | Rule | Why |
 | --- | --- |
 | Inbound, from an external address, not blocked (`classify()` already does this) | Our own mail, colleague mail and robots are never enquiries. |
-| It is the **first message we know of in its conversation**, and the conversation was started by the client | Phase 1 is *new* enquiries. A reply in a thread that already exists is not one. |
+| It is the **first message we know of in its conversation**, and the conversation was started by the client | Phase 1 is *new* enquiries. A reply in a thread that already exists is not one. Outbound quotations follow their own rules in §3.8. |
 | The subject carries **no record number** (`referencesIn()`: QT/ENQ/PO) | It is about a record we already have. |
 | The thread is not linked to a record by a number, and is not already converted (`inbox_conversations.enquiry_no`) | Already handled. A *weak* company-fallback link does **not** exclude it (see §1). |
 | It does not look like bulk or automated mail: `unsubscribe`, `view in browser`, `this is an automated message`, or a sender like `newsletter@`/`marketing@` | Newsletters and notifications. |
@@ -128,7 +131,7 @@ every email would make the log mostly noise.
 
 ```jsonc
 {
-  "kind": "new_enquiry | reply_or_followup | billing | vendor_or_sales_pitch | marketing | job_application | spam | other",
+  "kind": "new_enquiry | quotation_sent | reply_or_followup | billing | vendor_or_sales_pitch | marketing | job_application | spam | other",
   "confidence": 0.0-1.0,
   "company_name": "…", "contact_name": "…", "contact_phone": "…",
   "service": "one of the service lines, or the client's words",
@@ -239,9 +242,13 @@ not one per enquiry.
 - **Same pipeline:** each page goes through §3.1 exactly as live mail does.
   Messages already stored use their stored thread; messages that were
   dropped are judged from the raw message.
-- **Order:** oldest first, so "first message in the conversation" is
-  decided correctly and the same-sender rule links later emails to the
-  earlier enquiry.
+- **Folders:** Inbox first, then Sent Items. Reading all of the Inbox
+  before any sent mail means every client-started enquiry already exists
+  when the outbound quotations are judged (§3.8), so a quotation that
+  answers an emailed enquiry links to it instead of making a second one.
+- **Order:** oldest first within each folder, so "first message in the
+  conversation" is decided correctly and the same-sender rule links later
+  emails to the earlier enquiry.
 - **AI pacing:** at most 2 AI calls in flight per run, and a daily ceiling
   on AI calls (setting, default 1,500) so a large backfill cannot run up an
   unbounded bill. When the ceiling is reached, the run stops and resumes
@@ -251,19 +258,84 @@ not one per enquiry.
 
 ### 3.7 Live sync changes (`sync.js`)
 
-- `ingest()` gains a return value, `candidates`. It lists inbound messages
-  that passed `classify()` and either:
-  - started a new thread in this call, or
-  - were dropped as `no matching client`.
+- `ingest()` gains a return value, `candidates`. It lists messages that
+  passed `classify()` and either:
+  - are inbound and started a new thread in this call,
+  - are outbound and look like a quotation (§3.8), or
+  - were dropped as `no matching client`. A personal mailbox drops sent
+    mail to an unknown client as well as received mail.
   Each item carries the raw message **in memory** (subject and text) plus
   the stored thread and message ids if they were stored. Nothing extra is
   written by `ingest`.
-- `syncAccount()` hands the Inbox folder's candidates to
+- `syncAccount()` hands the candidates from both folders to
   `processCandidates(account, candidates)` **after** the ingest transaction.
+  Inbox is processed before Sent Items, which is the order `FOLDERS`
+  already has.
   AI calls are never made inside a database transaction or while holding a
   thread lock.
 - When `auto_enquiries_enabled` is `false`, `processCandidates` returns
   immediately, and sync behaves exactly as it does today.
+
+### 3.8 Edge case: the conversation starts with our quotation
+
+Not every enquiry arrives by email. A client may ask by phone, at a meeting,
+on WhatsApp or through a colleague, and the first email anyone sends is the
+salesperson's **quotation**. These enquiries must still be in the tracker,
+or the reports will undercount enquiries and conversion.
+
+**Which outbound emails are candidates** (pure rules, in `prefilter()`):
+
+| Rule | Why |
+| --- | --- |
+| Outbound, sent from the mailbox (Sent Items), to at least one external, non-blocked address | Our quotation to a client. |
+| **Looks like a quotation:** the subject or body carries one of our quotation numbers (`referencesIn().quotations`), **or** it has an attachment **and** quotation words in the subject or new body text: quotation, quote, proposal, offer, techno-commercial, fee proposal, commercial offer, price | A quotation goes out as a PDF with a covering note. Words alone, with no attachment and no number, are not enough. |
+| The conversation has **no enquiry yet**: no `created`/`linked` decision for it, the thread is not linked to an enquiry, and the quotation it names is not already on an enquiry (`enquiries.quotation_no`) | If the client emailed the enquiry first, §3.1 already made it. |
+| No more than 5 external recipients | A mail-merge or campaign is not a quotation to one client. |
+| Not a forward or reply carrying someone else's quotation to us, and not sent to a vendor (a `travel_vendors` address or a domain that only ever sends us invoices) | A quotation we *received* or forwarded is not one we sent. |
+
+Unlike inbound mail, this does **not** have to be the first message in the
+conversation. If our outreach started the thread, the client answered "yes,
+please quote", and the quotation went in the same thread, the first
+*quotation* in a conversation with no enquiry is the candidate.
+
+**Classification:** the same AI call with `kind = quotation_sent`. It also
+extracts the client company (from the recipient and the letter, not from
+our signature), the contact (the addressee), the service and, if stated,
+the quoted amount and currency. Without AI, the rules above decide on their
+own: a quotation number in the subject, or an attachment plus quotation
+words, is enough.
+
+**What is created:**
+
+| Case | Enquiry created |
+| --- | --- |
+| The quotation **is in the tracker** (its number is in the email and matches `quotations.quotation_no`) and no enquiry points at it | An enquiry with `status = 'Converted'`, `quotation_no` set to that quotation and `converted_at` the email date. Client, contact, sector, service and value come from the quotation. Inserting with `quotation_no` already set means `quoteWonEnquiry` creates no second quotation. `enquiry_date` is the quotation's `quotation_date`, or the email date if earlier. |
+| The quotation **is not in the tracker** (made in Word or Excel and emailed) | An enquiry with `status = 'Contacted'` (it has a company and a source, so `enquiryRuleErrors` allows it). Service, estimated value and currency come from the email when the AI found them. `enquiry_date` is the email date. The note reads "Quotation sent by email on *date* by *mailbox*; the enquiry itself did not come by email." Phase 1 does **not** create the quotation itself; that is a later phase. |
+
+In both cases:
+
+- `source_id` is **Other**, not "Inbound email or call". The request
+  reached us some other way, and the source says so; the salesperson can
+  correct it.
+- `first_responded_at` is the email date: the quotation is our response.
+- The owner is the person who sent it: the mailbox's user if a salesperson.
+  For a shared mailbox, it is the tracker quotation's owner when there is
+  one.
+- Any client reply later in the thread is linked to the enquiry as normal.
+
+**No duplicates** (in addition to §3.5):
+
+- If the company has an enquiry in `New`/`Contacted`/`Qualified`/`Nurture`
+  with **no quotation**, created within `auto_enquiry_same_sender_days`, the
+  quotation email is linked to it instead.
+  - If the quotation is a tracker quotation, that enquiry's `quotation_no`
+    is filled.
+  - Its status is not changed automatically; a person moves it on.
+- The same quotation sent again, or revised (`…/R1`), gives no second
+  enquiry. The conversation, or the quotation number, already has one.
+
+**Decision log:** these rows have `kind = 'quotation_sent'`, so admins can
+see how many enquiries came this way.
 
 ---
 
@@ -448,6 +520,21 @@ daily AI ceiling.
   9. A personal mailbox of a sales user makes them the owner; a shared
      mailbox leaves it unowned.
   10. The manual convert route still produces the same enquiry as before.
+  11. **Quotation first, tracker quotation:** an outbound email naming an
+      existing QT number, with no enquiry, creates a `Converted` enquiry
+      linked to that quotation. No second quotation is made, and the client's
+      reply joins it.
+  12. **Quotation first, outside the tracker:** an outbound email with a PDF
+      and "please find our quotation" creates a `Contacted` enquiry with
+      source Other. A plain outbound email with no attachment and no number
+      creates nothing.
+  13. **Inbound enquiry, then quotation in a new thread:** this gives one
+      enquiry. The quotation email links to the open enquiry, and its
+      `quotation_no` is filled.
+  14. **Backfill order:** with both folders in history, the Inbox enquiry is
+      created first and the later quotation links to it.
+  15. A campaign to 20 recipients with "offer" in the subject creates
+      nothing.
 - **AI path:** inject a fake `chat` function into `decide()` and assert the
   threshold and kind handling. No network calls in CI.
 - **Authz:** the new admin routes are refused for sales users.
@@ -456,11 +543,9 @@ daily AI ceiling.
 
 ## 9. Still open (defaults given; the build can start with them)
 
-1. **Conversations we started.** Default: phase 1 creates enquiries only
-   from conversations the **client** started. A client answering our
-   outreach with "yes, please quote" is left to a person. The alternative is
-   to let the AI judge replies in threads that we started and that are
-   linked to nothing.
+1. **Quotation sent outside the tracker.** Default: the enquiry is created
+   (§3.8), but the quotation itself is not. The alternative, in a later
+   phase, is to read the attached PDF and create the quotation too.
 2. **Existing clients with an open deal.** Default: a new request from them
    still becomes a new enquiry, unless the subject names a record. This
    keeps repeat business visible in the reports. The alternative is to
