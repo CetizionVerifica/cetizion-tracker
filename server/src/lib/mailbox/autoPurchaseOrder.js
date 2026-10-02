@@ -32,11 +32,11 @@ import { registerPurchaseOrder } from '../purchaseOrders.js';
 import { ApiError } from '../../middleware/error.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { companyNameFromEmail, mainText } from './enquiryDetect.js';
-import { aiCallsToday, enquirySettings, keepDropped, ownerFor } from './autoEnquiry.js';
-import { buildPoPrompt, parsePoVerdict, poPrefilter } from './poDetect.js';
+import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates, runContext } from './autoEnquiry.js';
+import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
 import { MAX_PDF_BYTES, SCANNED_BELOW, isPdf, pdfText } from './pdfQuotation.js';
-import { matchParticipants, providerFor } from './sync.js';
+import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
 import { referencesIn } from './rules.js';
 
 /**
@@ -603,6 +603,21 @@ async function notifyReview(ctx) {
   }
 }
 
+/**
+ * A PO registered automatically from email: when, from whom, in which mode,
+ * and whether a person has checked it since (an event in the activity
+ * log). Null for a PO typed in by hand. The PO page's banner reads it.
+ */
+export async function poFromEmail(poNumber, db = { query }) {
+  const { rows: [d] } = await db.query(
+    `SELECT d.received_at, d.from_email, d.thread_id, d.mode, d.stages_source, d.created_quotation, a.email AS mailbox,
+            EXISTS (SELECT 1 FROM activity_log l WHERE l.action = 'purchase_order.email_read_checked' AND l.entity_type = 'purchase_order'
+                     AND l.entity_id = d.po_number AND l.created_at >= d.decided_at) AS checked
+       FROM email_po_decisions d JOIN connected_accounts a ON a.id = d.account_id
+      WHERE d.po_number = $1 AND d.outcome = 'registered' ORDER BY d.decided_at, d.id LIMIT 1`, [poNumber]);
+  return d || null;
+}
+
 /** Did the PO reader decide this email is not a PO? The enquiry reader then judges it as any other. */
 export async function decidedNotPo(db, accountId, providerId) {
   const { rows: [d] } = await db.query(
@@ -610,3 +625,139 @@ export async function decidedNotPo(db, accountId, providerId) {
   return Boolean(d);
 }
 
+
+// ------------------------------------------------------------ past mail (§3.9)
+
+/** How long one backfill run may read before it hands over to the next: the same as phase 1's. */
+export const PO_BACKFILL_BUDGET_MS = 4 * 60_000;
+
+/**
+ * The PO candidates on one page of past Inbox mail: every inbound message,
+ * replies included. A message we already store uses its stored thread; one
+ * we never stored is read from the raw message. A procurement portal's
+ * notification counts even when the blocklist drops it.
+ */
+async function pastPoCandidates(account, judge, messages, portals) {
+  const out = [];
+  for (const m of messages) {
+    if (!m.provider_id || !m.conversation_id || m.draft) continue;
+    let c = judge(m);
+    if (c.skip === 'blocked sender' && isPortalSender(m.from?.email, portals)) c = { ...c, skip: null, direction: 'inbound', external: [m.from] };
+    if (c.skip || c.direction !== 'inbound') continue;
+    const { rows: [stored] } = await query(
+      `SELECT t.id AS thread_id,
+              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3) AS first
+         FROM email_threads t WHERE t.account_id = $1 AND t.conversation_id = $2`, [account.id, m.conversation_id, m.sent_at]);
+    out.push(stored
+      ? { m, c, threadId: stored.thread_id, newThread: stored.first, dropped: false }
+      : { m, c, threadId: null, newThread: false, dropped: true });
+  }
+  return out;
+}
+
+/**
+ * Hand the emails this pass decided are not POs to the enquiry reader. Its
+ * backfill ran first and left them alone while the PO reader was on
+ * (enquiryDetect.prefilter); now they are judged like any other email.
+ */
+async function enquiriesFromNotPo(account, cands, enquiryCtx, provider) {
+  if (!cands.length) return;
+  const { rows } = await query(
+    `SELECT provider_id FROM email_po_decisions WHERE account_id = $1 AND provider_id = ANY($2) AND outcome = 'not_po'`,
+    [account.id, cands.map((c) => c.m.provider_id)]);
+  const notPo = new Set(rows.map((r) => r.provider_id));
+  const handBack = cands.filter((c) => notPo.has(c.m.provider_id) && (c.newThread || c.dropped));
+  if (handBack.length) await processCandidates(account, handBack, { ctx: enquiryCtx, notifyEach: false, provider });
+}
+
+/**
+ * Read one mailbox's past Inbox for POs, oldest first, for up to
+ * `budgetMs`. Resumable: progress is stored after every page, so a restart
+ * or a stop at the day's AI ceiling loses nothing. Starts only once the
+ * mailbox's enquiry backfill has finished, so the enquiries and quotations
+ * a PO looks for are already there.
+ */
+export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_BUDGET_MS, enquiryCtx = null } = {}) {
+  const { rows: [phase1] } = await query('SELECT finished_at FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
+  if (!phase1?.finished_at) return { id: account.id, waiting: 'enquiry backfill', registered: 0, review: 0 };
+  const days = (await enquirySettings()).backfillDays;
+  const since = new Date(Date.now() - days * 864e5).toISOString();
+  await query(`INSERT INTO mailbox_po_backfills (account_id, since) VALUES ($1, $2) ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
+  let { rows: [row] } = await query('SELECT * FROM mailbox_po_backfills WHERE account_id = $1', [account.id]);
+  if (row.finished_at) return { id: account.id, finished: true, registered: 0, review: 0 };
+  const started = Date.now();
+  const tally = { id: account.id, email: account.email, pages: 0, registered: 0, review: 0 };
+  let provider;
+  try {
+    provider = providerFor(account);
+    if (!provider.page) throw new Error(`Reading past mail is not supported for ${account.provider} mailboxes`);
+    const judge = await ingestRules(account);
+    const eCtx = enquiryCtx || await runContext({ backfill: true });
+    for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
+      const page = await provider.page('inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      const cands = await pastPoCandidates(account, judge, page.messages, ctx.settings.portalSenders);
+      const before = { registered: ctx.registered.length, review: ctx.review.length };
+      await processPoCandidates(account, cands, { ctx, provider });
+      // The enquiry reader shares the day's AI ceiling: what this pass used counts.
+      eCtx.aiUsed = Math.max(eCtx.aiUsed, ctx.aiUsed);
+      await enquiriesFromNotPo(account, cands, eCtx, provider);
+      ctx.aiUsed = Math.max(ctx.aiUsed, eCtx.aiUsed);
+      const registered = ctx.registered.length - before.registered; const review = ctx.review.length - before.review;
+      tally.pages += 1; tally.registered += registered; tally.review += review;
+      // Stopped part-way through this page (the day's AI ceiling): read it
+      // again next time. What was already decided is not read twice.
+      const last = page.messages.length ? page.messages[page.messages.length - 1].sent_at : row.reached;
+      const next = ctx.stopped
+        ? { next_link: row.next_link, scanned: 0, reached: row.reached, finished_at: null }
+        : { next_link: page.next, scanned: page.messages.length, reached: last, finished_at: page.next ? null : new Date().toISOString() };
+      ({ rows: [row] } = await query(
+        `UPDATE mailbox_po_backfills
+            SET next_link = $2, scanned = scanned + $3, registered = registered + $4, review = review + $5,
+                reached = $6, finished_at = $7, last_error = NULL, updated_at = now()
+          WHERE account_id = $1 RETURNING *`,
+        [account.id, next.next_link, next.scanned, registered, review, next.reached, next.finished_at]));
+      // Re-run or a disconnect removed the row while this ran: stop here.
+      if (!row) { tally.restarted = true; break; }
+      if (row.finished_at) break;
+    }
+    await saveTokens(account, provider);
+  } catch (err) {
+    await query('UPDATE mailbox_po_backfills SET last_error = $2, updated_at = now() WHERE account_id = $1', [account.id, String(err.message).slice(0, 500)]);
+    tally.error = err.message;
+  }
+  if (row?.finished_at) {
+    tally.finished = true;
+    // One summary per mailbox instead of a notification per PO (§3.7, §3.8).
+    await notify({
+      kind: 'po_review',
+      title: `Read ${days} days of ${account.email} for purchase orders: ${row.registered} registered, ${row.review} to review`,
+      body: row.registered ? 'POs from past mail have their payment stages; record the invoices and payments that already happened from "Stages from past POs".' : null,
+      link: row.registered ? '/payment-stages?from_past_po=1' : '/purchase-orders?tab=review',
+      dedupeKey: `auto-po-backfill:${account.id}:${new Date(row.started_at).toISOString()}`,
+    }).catch(() => {});
+  }
+  return tally;
+}
+
+/** The scheduled sweep: every active mailbox whose past mail is not read for POs yet. */
+export async function runPoBackfills({ budgetMs = PO_BACKFILL_BUDGET_MS } = {}) {
+  const ctx = await poRunContext({ backfill: true });
+  if (!ctx.settings.enabled) return { skipped: 'switched off', registered: 0, errors: 0 };
+  const { rows } = await query(
+    `SELECT a.* FROM connected_accounts a
+       JOIN mailbox_enquiry_backfills e ON e.account_id = a.id AND e.finished_at IS NOT NULL
+       LEFT JOIN mailbox_po_backfills b ON b.account_id = a.id
+      WHERE a.status = 'active' AND b.finished_at IS NULL ORDER BY a.id`);
+  const started = Date.now();
+  const results = [];
+  const enquiryCtx = await runContext({ backfill: true });
+  for (const account of rows) {
+    const left = budgetMs - (Date.now() - started);
+    if (left <= 0 || ctx.stopped) break;
+    results.push(await backfillPoAccount(account, ctx, { budgetMs: left, enquiryCtx }));
+  }
+  return {
+    mailboxes: results.length, registered: results.reduce((t, r) => t + r.registered, 0), review: results.reduce((t, r) => t + r.review, 0),
+    errors: results.filter((r) => r.error).length + ctx.errors, stopped: ctx.stopped, results,
+  };
+}

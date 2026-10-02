@@ -380,6 +380,8 @@ export const resources = {
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
+    computedFilters: ['from_email'],
+    listClauses: async (q) => fromEmailClause('purchase-orders', q),
     hasDocument: true,
     // Deleting a PO deletes its payment stages, and with them their invoice documents.
     cascadeDocuments: { sql: 'SELECT document_id FROM payment_stages WHERE po_number = $1 FOR UPDATE', key: 'po_number' },
@@ -464,6 +466,8 @@ export const resources = {
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
+    computedFilters: ['from_past_po'],
+    listClauses: async (q) => fromPastPoClause(q),
     // The invoice document: replaced on edit, deleted from Cloudinary with the stage.
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
@@ -1176,9 +1180,23 @@ async function quotationListClauses(q, { scope, params }) {
  */
 function fromEmailClause(resource, q) {
   if (!['1', 'true', 'yes'].includes(String(q.from_email ?? '').toLowerCase())) return [];
+  // POs registered automatically from a client's email (docs/email-po-plan.md).
+  if (resource === 'purchase-orders') return [`po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND po_number IS NOT NULL)`];
   return resource === 'enquiries'
     ? [`enquiry_no IN (SELECT enquiry_no FROM email_enquiry_decisions WHERE outcome = 'created' AND enquiry_no IS NOT NULL)`]
     : [`quotation_no IN (SELECT quotation_no FROM email_enquiry_decisions WHERE quotation_extraction IN ('created','revised') AND quotation_no IS NOT NULL)`];
+}
+
+/**
+ * ?from_past_po=1   "Stages from past POs" (docs/email-po-plan.md §3.8): the
+ *                   stages of POs registered from past mail in history mode
+ *                   that have no invoice yet. Their invoices and payments
+ *                   very likely happened outside the tracker; finance
+ *                   records them from this list.
+ */
+function fromPastPoClause(q) {
+  if (!['1', 'true', 'yes'].includes(String(q.from_past_po ?? '').toLowerCase())) return [];
+  return [`invoice_no IS NULL AND po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND mode = 'history' AND po_number IS NOT NULL)`];
 }
 
 /** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */

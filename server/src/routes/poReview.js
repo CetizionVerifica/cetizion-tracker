@@ -8,6 +8,7 @@
  *        posts to /api/quotations/:key/register with review_id, which marks
  *        the item registered_by_hand
  *   POST /api/purchase-orders/review/:id/dismiss     "Not a PO"
+ *   POST /api/purchase-orders/:poNumber/email-read-checked   the PO banner's "Mark checked"
  *
  * Admins see every item; a salesperson sees the items whose suggested
  * quotation is theirs. No PDF text is stored: the register action reads the
@@ -15,7 +16,8 @@
  */
 import { Router } from 'express';
 import { query } from '../db.js';
-import { scopeOf } from '../auth/ownership.js';
+import { purchaseOrderClause, scopeOf } from '../auth/ownership.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { ApiError } from '../middleware/error.js';
 import * as autoPo from '../lib/mailbox/autoPurchaseOrder.js';
 import { grossUp, stagesFromTerms } from '../lib/mailbox/pdfPurchaseOrder.js';
@@ -121,6 +123,22 @@ poReviewRouter.post('/review/:id/dismiss', async (req, res) => {
     `UPDATE email_po_decisions SET outcome = 'dismissed', decided_by = $2, settled_at = now() WHERE id = $1 AND outcome = 'review'`,
     [d.id, req.user?.name || req.user?.username || null]);
   res.json({ data: { id: d.id, outcome: 'dismissed' } });
+});
+
+/**
+ * A PO registered from email has been checked against the client's PO by a
+ * person: an event, in the activity log. From then on its stages are
+ * chased like any other's (§3.8).
+ */
+poReviewRouter.post('/:poNumber/email-read-checked', async (req, res) => {
+  const poNumber = decodeURIComponent(req.params.poNumber);
+  const params = [poNumber];
+  const mine = purchaseOrderClause(scopeOf(req), params, { alias: 'po' });
+  const { rows: [po] } = await query(`SELECT po.po_number FROM purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`, params);
+  if (!po) throw new ApiError(404, 'Purchase order not found');
+  if (!(await autoPo.poFromEmail(po.po_number))) throw new ApiError(422, 'This purchase order was not registered from an email');
+  await logActivity(undefined, { actor: actorFrom(req.user), action: ACTIONS.PURCHASE_ORDER_EMAIL_READ_CHECKED, entityType: 'purchase_order', entityId: po.po_number });
+  res.json({ data: await autoPo.poFromEmail(po.po_number) });
 });
 
 /**

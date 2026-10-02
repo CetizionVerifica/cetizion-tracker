@@ -22,7 +22,7 @@ const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const NAME = `email_pos_${process.pid}`;
 
-let app; let agent; let db; let sync; let autoPo; let pdfmake;
+let app; let agent; let db; let sync; let autoPo; let autoEnquiry; let pdfmake;
 let n = 0;
 const uid = (p) => `${p}-${process.pid}-${(n += 1)}`;
 const at = (daysAgo) => new Date(Date.now() - daysAgo * 864e5).toISOString();
@@ -124,6 +124,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     ({ default: app } = await import('../src/app.js'));
     sync = await import('../src/lib/mailbox/sync.js');
     autoPo = await import('../src/lib/mailbox/autoPurchaseOrder.js');
+    autoEnquiry = await import('../src/lib/mailbox/autoEnquiry.js');
     ({ default: pdfmake } = await import('../src/lib/pdf.js'));
     (await import('../src/lib/ai.js')).aiConfig.enabled = false;
     autoPo.deps.upload = async ({ buffer, fileName, contentType }) => (await db.query(
@@ -425,5 +426,124 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal(await decision(box.id, msg.provider_id), undefined);
     const { rows } = await db.query('SELECT outcome FROM email_enquiry_decisions WHERE provider_id = $1', [msg.provider_id]);
     assert.equal(rows.length, 1, 'phase 1 judged it, as it did before phase 2');
+  });
+  // ------------------------------------------------------------ step 4: past mail
+
+  /** A message in the mailbox's past: page() hands it over, delta does not. */
+  const past = (over) => ({ ...poEmail(over), history: true, folder: 'inbox' });
+  const readPast = async (box) => {
+    const enquiries = await autoEnquiry.backfillAccount(box, await autoEnquiry.runContext({ backfill: true }));
+    const pos = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+    return { enquiries, pos };
+  };
+
+  test('12. the PO backfill waits for the mailbox\'s enquiry backfill', async () => {
+    const box = await mailbox();
+    const r = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+    assert.equal(r.waiting, 'enquiry backfill');
+    const { rows } = await db.query('SELECT 1 FROM mailbox_po_backfills WHERE account_id = $1', [box.id]);
+    assert.equal(rows.length, 0, 'not even started');
+    const swept = await autoPo.runPoBackfills();
+    assert.ok(!swept.results.some((x) => x.id === box.id), 'the sweep skips it too');
+  });
+
+  test('11. an eight-month-old PO from past mail: history mode, its stages listed to settle, nobody told but one summary', async () => {
+    const box = await mailbox();
+    await client('Acme Past Ltd', 'anil@acme-past.co.in');
+    const q = await quotation('Acme Past Ltd');
+    await db.query(`UPDATE quotations SET sales_person = 'Seller Sam', sales_person_email = 'sam@example.test' WHERE id = $1`, [q.id]);
+    await db.query(`INSERT INTO webhook_endpoints (name, url, events, secret) VALUES ('n8n-past', 'https://example.test/hook', ARRAY['po.received','quotation.won'], 's')`);
+    try {
+      const msg = past({ from: { email: 'anil@acme-past.co.in' }, sent_at: at(240), subject: `RE: ${q.quotation_no}`,
+        attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500240240', buyer: 'Acme Past Ltd', ref: q.quotation_no }) }] });
+      sync.pushTestMessages(box.id, [msg]);
+      ai(reading({ po_number: '4500240240', buyer: { company_name: 'Acme Past Ltd' }, our_quotation_ref: q.quotation_no, po_date: day(241) }));
+      const { pos } = await readPast(box);
+      assert.deepEqual([pos.registered, pos.finished], [1, true]);
+
+      const d = await decision(box.id, msg.provider_id);
+      assert.deepEqual([d.outcome, d.mode], ['registered', 'history']);
+      const po = await poRow('4500240240');
+      const { rows: notes } = await db.query(`SELECT 1 FROM notifications WHERE kind = 'po_registered' AND entity_id = $1`, [po.project_id]);
+      assert.equal(notes.length, 0);
+      const { rows: steps } = await db.query('SELECT 1 FROM onboarding_tasks WHERE project_id = $1', [po.project_id]);
+      assert.equal(steps.length, 0);
+      const { rows: hooks } = await db.query('SELECT 1 FROM webhook_events WHERE entity_id IN ($1, $2)', [po.po_number, q.quotation_no]);
+      assert.equal(hooks.length, 0, 'no po.received, no quotation.won');
+
+      const { body: settle } = await agent.get('/api/payment-stages?from_past_po=1').expect(200);
+      const mine = settle.data.filter((s) => s.po_number === po.po_number);
+      assert.equal(mine.length, 2, 'both stages, waiting for the invoices that already happened');
+      // An invoice recorded takes its stage off the list.
+      await agent.post(`/api/payment-stages/${mine[0].id}/invoice`).send({ invoice_no: `INV-PAST-${n}`, invoice_date: day(200) }).expect(200);
+      const { body: after } = await agent.get('/api/payment-stages?from_past_po=1').expect(200);
+      assert.equal(after.data.filter((s) => s.po_number === po.po_number).length, 1);
+      const { body: fromEmail } = await agent.get('/api/purchase-orders?from_email=1').expect(200);
+      assert.ok(fromEmail.data.some((p) => p.po_number === po.po_number));
+
+      const { rows: summary } = await db.query(`SELECT title, link FROM notifications WHERE dedupe_key LIKE $1`, [`auto-po-backfill:${box.id}:%`]);
+      assert.equal(summary.length, 1);
+      assert.match(summary[0].title, /for purchase orders: 1 registered, 0 to review/);
+      assert.equal(summary[0].link, '/payment-stages?from_past_po=1');
+
+      // Read again: nothing twice.
+      const again = await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+      assert.equal(again.finished, true);
+      assert.equal(again.registered, 0);
+    } finally {
+      await db.query(`DELETE FROM webhook_endpoints WHERE name = 'n8n-past'`);
+    }
+  });
+
+  test('an old RFQ that only looked like a PO is handed back to the enquiry reader', async () => {
+    const box = await mailbox();
+    const msg = past({
+      from: { email: 'ravi@contract-rfq.co.in', name: 'Ravi' }, sent_at: at(100),
+      subject: 'Request for quotation: EcoVadis assessment under our annual contract',
+      body_html: '<p>Dear team, we are interested in EcoVadis certification for our plant. Please share your proposal and fee. Scope attached.</p>',
+      attachments: [{ name: 'Scope.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'NA', buyer: 'Contract Rfq' }) }],
+    });
+    sync.pushTestMessages(box.id, [msg]);
+    ai({ is_purchase_order: false, document_type: 'other', confidence: 0.9 });
+    const { enquiries } = await readPast(box);
+    assert.equal(enquiries.created, 0, 'the enquiry pass left it for the PO reader');
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'not_po');
+    const { rows } = await db.query('SELECT outcome FROM email_enquiry_decisions WHERE account_id = $1 AND provider_id = $2', [box.id, msg.provider_id]);
+    assert.deepEqual(rows.map((r) => r.outcome), ['created'], 'then judged as an enquiry after all');
+  });
+
+  test('the PO banner: where it came from, and Mark checked', async () => {
+    const box = await mailbox();
+    await client('Acme Banner Ltd', 'anil@acme-banner.co.in');
+    await quotation('Acme Banner Ltd');
+    const msg = poEmail({ from: { email: 'anil@acme-banner.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'AB/PO/77', buyer: 'Acme Banner Ltd' }) }] });
+    ai(reading({ po_number: 'AB/PO/77', buyer: { company_name: 'Acme Banner Ltd' } }));
+    await deliver(box, [msg]);
+    const key = encodeURIComponent('AB/PO/77');
+    const { body: full } = await agent.get(`/api/purchase-orders/${key}/full`).expect(200);
+    assert.deepEqual([full.data.from_email.from_email, full.data.from_email.mode, full.data.from_email.checked], ['anil@acme-banner.co.in', 'live', false]);
+    const { body: checked } = await agent.post(`/api/purchase-orders/${key}/email-read-checked`).expect(200);
+    assert.equal(checked.data.checked, true);
+    // A PO typed in by hand has no banner to check.
+    const q = await quotation('Acme Banner Ltd');
+    await agent.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`).send({ po_number: 'AB/PO/78' }).expect(201);
+    await agent.post(`/api/purchase-orders/${encodeURIComponent('AB/PO/78')}/email-read-checked`).expect(422);
+    assert.equal((await agent.get(`/api/purchase-orders/${encodeURIComponent('AB/PO/78')}/full`).expect(200)).body.data.from_email, null);
+  });
+
+  test('the mailbox status counts POs, and re-run reads not-POs again', async () => {
+    const box = await mailbox();
+    await client('Acme Status Ltd', 'anil@acme-status.co.in');
+    const msg = poEmail({ from: { email: 'anil@acme-status.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ buyer: 'Acme Status Ltd' }) }] });
+    ai({ is_purchase_order: false, document_type: 'other', confidence: 0.9 });
+    await deliver(box, [msg]);
+    const { body } = await agent.get('/api/mailboxes/auto-enquiries').expect(200);
+    assert.equal(body.data.purchase_orders_enabled, true);
+    const row = body.data.mailboxes.find((m) => m.id === box.id);
+    assert.deepEqual([row.pos_registered, row.pos_to_review, row.not_po], [0, 0, 1]);
+    // Today's AI-read decision stays (the ceiling counts it); an older one is cleared.
+    await db.query(`UPDATE email_po_decisions SET decided_at = now() - interval '2 days' WHERE account_id = $1`, [box.id]);
+    const { body: rerun } = await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).send({ kind: 'pos' }).expect(200);
+    assert.deepEqual([rerun.data.kind, rerun.data.decisions_cleared], ['pos', 1]);
   });
 });

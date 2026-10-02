@@ -348,9 +348,12 @@ poRouter.get('/:poNumber/full', async (req, res) => {
     query('SELECT * FROM v_travel_logs WHERE po_number = $1 ORDER BY travel_start_date NULLS LAST', [po]),
   ]);
 
+  const { poFromEmail } = await import('../lib/mailbox/autoPurchaseOrder.js');
   res.json({
     data: {
       purchase_order: header.rows[0],
+      // Registered automatically from the client's email: the banner (docs/email-po-plan.md).
+      from_email: await poFromEmail(po),
       services: services.rows,
       payment_stages: stages.rows,
       travel: travel.rows,

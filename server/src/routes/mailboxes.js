@@ -265,17 +265,31 @@ mailboxRouter.post('/:id/disconnect', async (req, res) => {
 /** Per mailbox: how far the read of past mail has got, and what was decided. */
 mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   const { enquirySettings, aiCallsToday } = await import('../lib/mailbox/autoEnquiry.js');
+  const { poSettings } = await import('../lib/mailbox/autoPurchaseOrder.js');
   const { aiConfig } = await import('../lib/ai.js');
   const settings = await enquirySettings();
+  const po = await poSettings();
   const { rows } = await query(
     `SELECT a.id, a.email, a.is_shared, a.status, a.visibility,
             b.since, b.folder, b.reached, b.scanned, b.created AS backfill_created, b.linked AS backfill_linked,
             b.started_at, b.finished_at, b.last_error, b.updated_at,
             COALESCE(d.created, 0)::int AS created, COALESCE(d.linked, 0)::int AS linked, COALESCE(d.not_enquiry, 0)::int AS not_enquiry,
             COALESCE(d.from_quotations, 0)::int AS from_quotations, COALESCE(d.quotations_read, 0)::int AS quotations_read,
-            COALESCE(d.quotations_failed, 0)::int AS quotations_failed
+            COALESCE(d.quotations_failed, 0)::int AS quotations_failed,
+            -- Purchase orders (docs/email-po-plan.md): what was decided, and the read of past mail.
+            COALESCE(p.registered, 0)::int AS pos_registered, COALESCE(p.linked, 0)::int AS pos_linked,
+            COALESCE(p.review, 0)::int AS pos_to_review, COALESCE(p.not_po, 0)::int AS not_po,
+            pb.reached AS po_reached, pb.scanned AS po_scanned, pb.started_at AS po_started_at, pb.finished_at AS po_finished_at,
+            pb.last_error AS po_last_error
        FROM connected_accounts a
        LEFT JOIN mailbox_enquiry_backfills b ON b.account_id = a.id
+       LEFT JOIN mailbox_po_backfills pb ON pb.account_id = a.id
+       LEFT JOIN (SELECT account_id,
+                         count(*) FILTER (WHERE outcome IN ('registered','registered_by_hand')) AS registered,
+                         count(*) FILTER (WHERE outcome = 'linked') AS linked,
+                         count(*) FILTER (WHERE outcome = 'review') AS review,
+                         count(*) FILTER (WHERE outcome IN ('not_po','dismissed')) AS not_po
+                    FROM email_po_decisions GROUP BY account_id) p ON p.account_id = a.id
        LEFT JOIN (SELECT account_id,
                          count(*) FILTER (WHERE outcome = 'created') AS created,
                          count(*) FILTER (WHERE outcome = 'linked') AS linked,
@@ -288,6 +302,7 @@ mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   res.json({
     data: {
       enabled: settings.enabled,
+      purchase_orders_enabled: po.enabled,
       ai: { configured: aiConfig.enabled, used_today: await aiCallsToday(), daily_limit: settings.dailyAiLimit },
       backfill_days: settings.backfillDays,
       mailboxes: rows,
@@ -305,6 +320,16 @@ mailboxRouter.post('/:id/auto-enquiries/rerun', requireAdmin, async (req, res) =
   const id = Number(req.params.id);
   const { rows: [a] } = await query('SELECT id FROM connected_accounts WHERE id = $1', [id]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
+  if (req.body?.kind === 'pos') {
+    // POs only: the emails decided not to be POs are read again, and the
+    // read of past mail restarts. Registered, linked, review and dismissed
+    // decisions stay, so nothing is registered twice and no item reappears.
+    const { rowCount: cleared } = await query(
+      `DELETE FROM email_po_decisions WHERE account_id = $1 AND outcome = 'not_po'
+          AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
+    await query('DELETE FROM mailbox_po_backfills WHERE account_id = $1', [id]);
+    return res.json({ data: { id, kind: 'pos', decisions_cleared: cleared, backfill: 'restarts on the next run' } });
+  }
   // Today's AI-judged rows stay: they are what the day's AI ceiling is
   // counted from, and judging them again today would change nothing.
   const { rowCount: cleared } = await query(
