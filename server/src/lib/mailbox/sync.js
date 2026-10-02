@@ -8,7 +8,8 @@
  *   disconnect(id)       drop tokens, subscriptions and (by policy) bodies
  */
 import crypto from 'node:crypto';
-import { pool, query, transaction } from '../../db.js';
+import pg from 'pg';
+import { query, transaction } from '../../db.js';
 import { config } from '../../config.js';
 import { applyVisibility, classify, cleanHtml, domainOf, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
 import { microsoftConfigured, microsoftProvider } from './microsoft.js';
@@ -174,9 +175,11 @@ export async function feedsInbox(account, db = { query }) {
  * as `filtered`, so ingest can still keep that mail away from the
  * enquiry and PO readers — the filters exist for those, not for reading.
  */
-export async function ingestRules(account, db = { query }) {
+export async function ingestRules(account, db = { query }, { forInbox = false } = {}) {
   const rules = await settingsFor(db);
-  const keepAll = await feedsInbox(account, db);
+  // Only live ingest asks for this. The enquiry, PO and invoice backfills
+  // call ingestRules too and must keep seeing the filters' verdict.
+  const keepAll = forInbox && await feedsInbox(account, db);
   return (m) => {
     const c = classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
     if (!keepAll || !c.skip) return c;
@@ -193,6 +196,9 @@ export async function ingestRules(account, db = { query }) {
  * company it has just created, once the email has turned out to be one.
  */
 export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null } = {}) {
+  // Kept only because the mailbox feeds an Inbox (ingestRules): the hooks
+  // are told which filter would have dropped it.
+  const filtered = c.filtered || null;
   const { rows: [dupe] } = await db.query('SELECT id FROM email_messages WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
   if (dupe) return { skipped: 'already synced' };
   let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
@@ -203,7 +209,11 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
     if (named.entity) Object.assign(who, { company_id: (await resolveParties(named.entity, named.entity_id, db)).company_id || null });
   }
   if (!who.company_id && forceCompanyId) who.company_id = forceCompanyId;
-  const newThread = !thread;
+  // "New" for the readers means the first real message: a thread opened
+  // by a robot or a colleague (kept only for the Inbox) is still new
+  // business when the client's first message lands in it.
+  const newThread = !thread || (!filtered && !(await db.query(
+    'SELECT 1 FROM email_messages WHERE thread_id = $1 AND filtered_as IS NULL LIMIT 1', [thread.id])).rows.length);
   if (!thread) {
     // A personal mailbox keeps only client mail; a shared one keeps everything external (new leads).
     if (!who.company_id && !account.is_shared) return { skipped: 'no matching client' };
@@ -220,12 +230,12 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
   const row = applyVisibility({ subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html }, account.visibility);
   const { rows: [saved] } = await db.query(
     `INSERT INTO email_messages (account_id, thread_id, provider_id, internet_message_id, direction, from_email, from_name, to_emails, cc_emails,
-                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by, filtered_as)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
     [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
       (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
-      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy]);
-  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null });
+      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy, filtered]);
+  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null, filtered });
   return { thread, message: saved, newThread };
 }
 
@@ -238,7 +248,7 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
  * for not matching a client. Nothing extra is written for them here.
  */
 export async function ingest(account, messages, { sentBy = null } = {}) {
-  const judge = await ingestRules(account);
+  const judge = await ingestRules(account, undefined, { forInbox: true });
   const portals = await portalSenders();
   const result = { stored: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [] };
   const skip = (why) => { result.skipped[why] = (result.skipped[why] || 0) + 1; };
@@ -305,28 +315,43 @@ const SYNC_LOCK = 2900;
  * second one's insert fails on the unique key and fails its whole sync.
  * A session-level advisory lock, held on its own connection for the
  * length of the sync, makes the second caller step aside instead.
+ *
+ * That connection comes from a pool of its own. Taken from the main pool,
+ * ten mailboxes syncing at once (a burst of webhooks) would hold all ten
+ * connections as locks and then wait for ever on the main pool for the
+ * queries the syncs themselves need — and with them every API request.
  */
+const lockPool = new pg.Pool({ connectionString: config.databaseUrl, max: 10, idleTimeoutMillis: 30_000, allowExitOnIdle: true });
+lockPool.on('error', (err) => console.error('[mail.sync] lock connection', err.message));
+
 export async function syncAccount(id) {
-  const lock = await pool.connect();
+  const lock = await lockPool.connect();
   let held = false;
   try {
     ({ rows: [{ held }] } = await lock.query('SELECT pg_try_advisory_lock($1, $2) AS held', [SYNC_LOCK, Number(id)]));
     if (!held) return { id, skipped: 'already syncing' };
     return await syncAccountUnlocked(id);
   } finally {
-    if (held) await lock.query('SELECT pg_advisory_unlock($1, $2)', [SYNC_LOCK, Number(id)]).catch(() => {});
-    lock.release();
+    // A connection whose unlock failed may still hold the lock, and back in
+    // the pool it would keep this mailbox from ever syncing again. It is
+    // destroyed instead; closing the session is what releases the lock.
+    let broken = false;
+    if (held) await lock.query('SELECT pg_advisory_unlock($1, $2)', [SYNC_LOCK, Number(id)]).catch(() => { broken = true; });
+    lock.release(broken);
   }
 }
 
 async function syncAccountUnlocked(id) {
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [id]);
   if (!account || account.status !== 'active') return { id, skipped: 'not active' };
-  const provider = providerFor(account);
   const out = { id, email: account.email, stored: 0, skipped: {} };
   const candidates = [];
   const poCandidates = [];
   try {
+    // Inside the try: a mailbox whose provider cannot even be built (bad
+    // tokens, Microsoft not configured) records its own error rather than
+    // throwing out of syncAll and stopping every mailbox after it.
+    const provider = providerFor(account);
     for (const folder of FOLDERS) {
       const { rows: [f] } = await query(
         `INSERT INTO mail_folders (account_id, folder) VALUES ($1,$2) ON CONFLICT (account_id, folder) DO UPDATE SET folder = EXCLUDED.folder RETURNING *`, [account.id, folder]);
@@ -465,7 +490,7 @@ export async function syncAll() {
   const { rows } = await query(`SELECT id FROM connected_accounts WHERE status = 'active'`);
   const results = [];
   for (const { id } of rows) {
-    const r = await syncAccount(id);
+    const r = await syncAccount(id).catch((err) => ({ id, error: err.message }));
     // A mailbox another process is syncing has its subscriptions seen to
     // there; renewing them here too could create a second one.
     if (!r.error && !r.skipped) {

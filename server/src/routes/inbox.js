@@ -166,7 +166,9 @@ const LIST = `
          --
          -- looks_new: nobody has turned it into an enquiry and it is not
          -- attached to any record, so it is either new business or noise.
-         (c.enquiry_no IS NULL AND t.entity IS NULL AND c.status = 'open') AS looks_new,
+         -- Mail kept only because the Inbox shows everything (filtered_as)
+         -- is a colleague or a robot, never new business.
+         (c.enquiry_no IS NULL AND t.entity IS NULL AND c.status = 'open' AND c.filtered_as IS NULL) AS looks_new,
          -- for_finance: it is about money that has already been invoiced,
          -- so it is finance's to answer even though it arrived in sales.
          -- COALESCE, because a thread attached to nothing gives NULL here
@@ -229,7 +231,7 @@ inboxRouter.get('/summary', async (req, res) => {
  * sweep stored. Asking again within 15 seconds starts nothing new.
  */
 inboxRouter.post('/sync', async (req, res) => {
-  const started = Boolean(kickSync());
+  const { started } = kickSync();
   const { rows: [r] } = await query(
     `SELECT MAX(a.last_synced_at) AS last_synced_at
        FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id
@@ -313,6 +315,7 @@ async function suggestionFor(conversation) {
   if (conversation.enquiry_no) return null;        // already converted
   if (conversation.entity) return null;            // already attached to a record
   if (conversation.status !== 'open') return null;
+  if (conversation.filtered_as) return null;     // a colleague or a robot, not a lead
 
   if (!conversation.company_id) {
     return {

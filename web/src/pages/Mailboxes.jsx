@@ -124,6 +124,10 @@ export default function Mailboxes() {
    * never left the building.
    */
   function syncResult(x) {
+    // The API syncs every mailbox each minute by itself now, so a press
+    // often lands while that sweep holds this one. Its mail is on the way.
+    if (x.data.skipped === 'already syncing') return 'Already syncing — new mail appears in a moment.';
+    if (typeof x.data.skipped === 'string') return `Not synced: ${x.data.skipped}`;
     const stored = Number(x.data.stored || 0);
     const skipped = Object.entries(x.data.skipped || {}).filter(([, n]) => n > 0);
     const head = `${number(stored)} new email${stored === 1 ? '' : 's'}`;

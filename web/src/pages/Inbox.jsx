@@ -107,6 +107,10 @@ function Tag({ tone = 'plain', mono = false, children }) {
  * reference number.
  */
 function stateTag(row) {
+  // Kept because the Inbox shows everything, though the filters would have
+  // dropped it. Said first, so a robot never reads as a lead.
+  if (row.filtered_as === 'internal only') return <Tag>Internal</Tag>;
+  if (row.filtered_as) return <Tag>Automated</Tag>;
   if (row.looks_new) return <Tag tone="waiting">New enquiry</Tag>;
   if (row.for_finance) return <Tag tone="settled">Payment · for finance</Tag>;
   if (!row.company_name) return <Tag>no company match</Tag>;
@@ -407,13 +411,18 @@ export default function Inbox() {
    * nobody, and coming back to it catches up at once.
    */
   const [tick, setTick] = useState(0);
+  // Past page 1 the rows stay put: re-reading page 2 at the same offset
+  // after new mail arrives slides rows between pages, so paging on would
+  // repeat some and skip others. Page 1 is where new mail lands anyway.
+  const onFirstPage = useRef(page === 1);
+  onFirstPage.current = page === 1;
   const { refetch: refetchList } = list;
   const { refetch: refetchSummary } = summary;
   useEffect(() => {
     if (view === 'setup') return undefined;
     const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
     const pull = () => { if (visible()) api.action('/inbox/sync', {}).catch(() => {}); };
-    const refresh = () => { if (!visible()) return; refetchList(); refetchSummary(); setTick((n) => n + 1); };
+    const refresh = () => { if (!visible()) return; if (onFirstPage.current) refetchList(); refetchSummary(); setTick((n) => n + 1); };
     const onVisible = () => { if (visible()) { pull(); refresh(); } };
     pull();
     const pulling = setInterval(pull, SYNC_EVERY_MS);

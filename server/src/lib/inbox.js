@@ -57,14 +57,16 @@ async function companyOwner(db, companyId) {
 const receivedHere = (account, message, folder) => folder === 'inbox'
   && String(message.from_email || '').toLowerCase() !== String(account.email || '').toLowerCase();
 
-async function routeToInbox({ db, account, thread, message, folder = null }) {
+async function routeToInbox({ db, account, thread, message, folder = null, filtered = null }) {
   if (!account.is_shared) return;
   const { rows: [inbox] } = await db.query('SELECT * FROM inboxes WHERE account_id = $1 AND active FOR UPDATE', [account.id]);
   if (!inbox) return;
   const { rows: [conv] } = await db.query('SELECT * FROM inbox_conversations WHERE thread_id = $1 FOR UPDATE', [thread.id]);
 
   if (message.direction === 'outbound' && !(!conv && receivedHere(account, message, folder))) {
-    if (conv) {
+    // Only colleagues on it ("who is picking this up?", an internal
+    // forward): the client has not been answered, so the clock runs on.
+    if (conv && filtered !== 'internal only') {
       await db.query(
         `UPDATE inbox_conversations SET first_response_at = COALESCE(first_response_at, $2), response_due_at = NULL,
                 status = CASE WHEN status = 'closed' THEN status ELSE 'pending_client' END WHERE id = $1`, [conv.id, message.sent_at]);
@@ -77,18 +79,31 @@ async function routeToInbox({ db, account, thread, message, folder = null }) {
   if (!conv) {
     const pick = pickAssignee({ rule: inbox.default_assignment, companyOwner: await companyOwner(db, thread.company_id), members: inbox.members, last: inbox.round_robin_last });
     if (pick.last !== inbox.round_robin_last) await db.query('UPDATE inboxes SET round_robin_last = $2 WHERE id = $1', [inbox.id, pick.last]);
+    // Mail the filters would have dropped — a colleague, a no-reply robot,
+    // a sender on the "Never sync" list — is shown, but nobody owes it an
+    // answer and nobody needs telling it came.
     const { rows: [created] } = await db.query(
-      `INSERT INTO inbox_conversations (inbox_id, thread_id, company_id, contact_id, from_email, from_name, assignee, last_inbound_at, response_due_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [inbox.id, thread.id, thread.company_id, thread.contact_id, message.from_email, message.from_name, pick.assignee, message.sent_at, dueAfter(message.sent_at, hours)]);
-    await notify({ kind: 'inbox', username: 'admin', title: `New email in ${inbox.name}: ${message.subject || '(no subject)'}`, body: `${message.from_name || message.from_email}${pick.assignee ? ` · assigned to ${pick.assignee}` : ' · unassigned'}`, link: `/inbox?c=${created.id}`, dedupeKey: `inbox:${created.id}` }, db);
+      `INSERT INTO inbox_conversations (inbox_id, thread_id, company_id, contact_id, from_email, from_name, assignee, last_inbound_at, response_due_at, filtered_as)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [inbox.id, thread.id, thread.company_id, thread.contact_id, message.from_email, message.from_name, pick.assignee, message.sent_at,
+        filtered ? null : dueAfter(message.sent_at, hours), filtered]);
+    if (!filtered) {
+      await notify({ kind: 'inbox', username: 'admin', title: `New email in ${inbox.name}: ${message.subject || '(no subject)'}`, body: `${message.from_name || message.from_email}${pick.assignee ? ` · assigned to ${pick.assignee}` : ' · unassigned'}`, link: `/inbox?c=${created.id}`, dedupeKey: `inbox:${created.id}` }, db);
+    }
+    return;
+  }
+  if (filtered) {
+    // More of the same robot or internal mail: noted, but it neither
+    // reopens a closed thread nor starts a clock.
+    await db.query('UPDATE inbox_conversations SET last_inbound_at = $2 WHERE id = $1', [conv.id, message.sent_at]);
     return;
   }
   // The client wrote again: reopen, and a new reply is due if we had answered.
+  // A real client message also ends a thread's standing as filtered mail.
   await db.query(
     `UPDATE inbox_conversations SET last_inbound_at = $2, status = 'open', closed_at = NULL, snoozed_until = NULL,
             response_due_at = CASE WHEN response_due_at IS NULL THEN $3::timestamptz ELSE response_due_at END,
-            company_id = COALESCE(company_id, $4), contact_id = COALESCE(contact_id, $5)
+            company_id = COALESCE(company_id, $4), contact_id = COALESCE(contact_id, $5), filtered_as = NULL
       WHERE id = $1`, [conv.id, message.sent_at, dueAfter(message.sent_at, hours), thread.company_id, thread.contact_id]);
 }
 

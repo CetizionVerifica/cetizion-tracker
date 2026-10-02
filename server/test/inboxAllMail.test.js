@@ -107,10 +107,44 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
       [colleague, robot, blocked, client].map((m) => m.conversation_id).sort(),
       'every message the address received is in the Inbox');
 
-    // The filters still decide what the enquiry reader sees.
-    const { rows: decided } = await db.query('SELECT provider_id FROM email_enquiry_decisions WHERE account_id = $1', [box.id]);
-    const judged = decided.map((d) => d.provider_id);
-    for (const m of [colleague, robot, blocked]) assert.ok(!judged.includes(m.provider_id), `${m.subject} never reaches the enquiry reader`);
+    // Shown, but no clock, no notification, never offered as an enquiry.
+    const by = Object.fromEntries(convs.map((c) => [c.conversation_id, c]));
+    assert.equal(by[colleague.conversation_id].filtered_as, 'internal only');
+    assert.equal(by[robot.conversation_id].filtered_as, 'blocked sender');
+    assert.equal(by[blocked.conversation_id].filtered_as, 'blocked sender');
+    assert.equal(by[client.conversation_id].filtered_as, null);
+    for (const m of [colleague, robot, blocked]) assert.equal(by[m.conversation_id].response_due_at, null, `${m.subject} starts no reply clock`);
+    assert.ok(by[client.conversation_id].response_due_at, 'client mail still does');
+    const { rows: told } = await db.query(`SELECT link FROM notifications WHERE kind = 'inbox'`);
+    const toldAbout = told.map((x) => x.link);
+    assert.ok(toldAbout.includes(`/inbox?c=${by[client.conversation_id].id}`));
+    for (const m of [colleague, robot, blocked]) assert.ok(!toldAbout.includes(`/inbox?c=${by[m.conversation_id].id}`), `nobody is told about ${m.subject}`);
+    const { rows: [inbox] } = await db.query('SELECT id FROM inboxes WHERE account_id = $1', [box.id]);
+    const list = await agent.get(`/api/inbox?inbox_id=${inbox.id}`);
+    const shown = Object.fromEntries(list.body.data.map((c) => [c.subject, c]));
+    assert.equal(shown['Your password was changed'].looks_new, false);
+    assert.equal(shown['Quotation please'].looks_new, true);
+    const banner = await agent.get(`/api/inbox/${by[robot.conversation_id].id}`);
+    assert.equal(banner.body.data.suggestion, null, 'no "create the enquiry" banner on a robot');
+
+    // A real client message in a filtered thread makes it client mail.
+    sync.pushTestMessages(box.id, [mail(box, {
+      conversation_id: colleague.conversation_id, subject: 'RE: Internal: site visit plan',
+      sent_at: new Date(Date.now() + 60_000).toISOString(),
+    })]);
+    await sync.syncAccount(box.id);
+    const { rows: [now] } = await db.query('SELECT filtered_as, response_due_at FROM inbox_conversations WHERE id = $1', [by[colleague.conversation_id].id]);
+    assert.equal(now.filtered_as, null);
+    assert.ok(now.response_due_at);
+
+    // The filters still decide what the readers are handed: ingest() is
+    // what syncAccount passes to the enquiry and PO readers.
+    const fresh = await mailbox();
+    const again = [colleague, robot, blocked, client].map((m) => ({ ...m, provider_id: uid('m'), conversation_id: uid('conv'), folder: 'inbox' }));
+    const r2 = await sync.ingest(fresh, again);
+    assert.equal(r2.stored, 4);
+    assert.deepEqual(r2.candidates.map((x) => x.m.subject), ['Quotation please'], 'only the client mail goes to the enquiry reader');
+    assert.deepEqual(r2.poCandidates, []);
   });
 
   test('a colleague replying on an open conversation still counts as our reply', async () => {
@@ -130,6 +164,38 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
     assert.equal(c.status, 'pending_client');
     assert.ok(c.first_response_at, 'the reply clock stopped');
     assert.equal(c.response_due_at, null);
+  });
+
+  test('a message with only colleagues on it does not stop a client conversation\'s clock', async () => {
+    const box = await mailbox();
+    const first = mail(box, { subject: 'Price for audit' });
+    sync.pushTestMessages(box.id, [first]);
+    await sync.syncAccount(box.id);
+    sync.pushTestMessages(box.id, [mail(box, {
+      conversation_id: first.conversation_id, from: { email: 'priya@cetizionverifica.com', name: 'Priya' },
+      to: [{ email: box.email }], subject: 'FW: Price for audit — who is picking this up?',
+      sent_at: new Date(Date.now() + 60_000).toISOString(),
+    })]);
+    await sync.syncAccount(box.id);
+    const [c] = await conversations(box.id);
+    assert.equal(c.status, 'open');
+    assert.equal(c.first_response_at, null, 'the client has not been answered');
+    assert.ok(c.response_due_at);
+  });
+
+  test('the backfills still see the filters, and a client message in a thread a robot opened is new', async () => {
+    const box = await mailbox();
+    const robot = mail(box, { from: { email: 'no-reply@forms.example', name: 'Web form' }, subject: 'New form submission' });
+    const judge = await sync.ingestRules(box);
+    assert.equal(judge(robot).skip, 'blocked sender', 'readers get the filtering verdict');
+    assert.equal((await sync.ingestRules(box, undefined, { forInbox: true }))(robot).skip, null);
+
+    sync.pushTestMessages(box.id, [robot]);
+    await sync.syncAccount(box.id);
+    const client = mail(box, { conversation_id: robot.conversation_id, subject: 'RE: New form submission', sent_at: new Date(Date.now() + 60_000).toISOString(), folder: 'inbox' });
+    const r = await sync.ingest(box, [client]);
+    assert.equal(r.candidates.length, 1, 'the client message goes to the enquiry reader');
+    assert.equal(r.candidates[0].newThread, true, 'as the first real message in the thread');
   });
 
   test('a mailbox without an Inbox still filters as before', async () => {
@@ -170,7 +236,7 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
     const res = await agent.post('/api/inbox/sync').send({});
     assert.equal(res.status, 202, JSON.stringify(res.body));
     assert.equal(res.body.data.started, true);
-    await autoSync.kickSync(); // the sweep already running
+    await autoSync.kickSync().done; // the sweep already running
 
     const convs = await conversations(box.id);
     assert.deepEqual(convs.map((c) => c.conversation_id), [msg.conversation_id]);

@@ -23,10 +23,21 @@ let lastStartedAt = 0;
 
 /**
  * Start a sweep of every active mailbox unless one is running or one
- * started under `minGapMs` ago. Returns the sweep's promise, or null when
- * it was not started. Never rejects.
+ * started under `minGapMs` ago. Returns { started, done }: `done` is the
+ * sweep's promise (the one already running, if any; null when there is
+ * none), and `started` says whether this call began it. Never rejects.
+ *
+ * Nothing on staging, where mailbox sync is switched off: every sweep
+ * would only log the same refusal, once a minute per open Inbox tab.
  */
-export function kickSync({ minGapMs = 15_000, log = console } = {}) {
+export function kickSync(options = {}) {
+  if (isStaging()) return { started: false, done: null };
+  const before = running;
+  const done = sweep(options);
+  return { started: Boolean(done) && done !== before, done };
+}
+
+function sweep({ minGapMs = 15_000, log = console } = {}) {
   if (running) return running;
   if (Date.now() - lastStartedAt < minGapMs) return null;
   lastStartedAt = Date.now();
@@ -52,7 +63,7 @@ export const isSyncing = () => Boolean(running);
  */
 export function startAutoSync({ seconds = config.microsoft.autoSyncSeconds, log = console } = {}) {
   if (!seconds || config.nodeEnv === 'test' || isStaging()) return () => {};
-  const tick = () => { kickSync({ minGapMs: 0, log }); };
+  const tick = () => { sweep({ minGapMs: 0, log }); };
   const first = setTimeout(tick, 5_000);
   const timer = setInterval(tick, seconds * 1000);
   first.unref();
