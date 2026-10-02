@@ -61,11 +61,12 @@ export async function enquirySettings(db = { query }) {
 
 /** Model calls made today (business day), against the daily ceiling. */
 export async function aiCallsToday(db = { query }) {
-  // One ceiling for every email reader: enquiries, quotations and POs (docs/email-po-plan.md §3.9).
+  // One ceiling for every email reader: enquiries, quotations, POs and invoices (docs/email-po-plan.md §3.9).
   const { rows: [r] } = await db.query(
     `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' AS start)
      SELECT (SELECT COALESCE(sum(ai_calls), 0) FROM email_enquiry_decisions, day WHERE decided_at >= day.start)::int
-          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_po_decisions, day WHERE decided_at >= day.start)::int AS n`);
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_po_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_invoice_decisions, day WHERE decided_at >= day.start)::int AS n`);
   return r.n;
 }
 

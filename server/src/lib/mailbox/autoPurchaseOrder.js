@@ -35,7 +35,7 @@ import { companyNameFromEmail, mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates, runContext } from './autoEnquiry.js';
 import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
-import { MAX_PDF_BYTES, SCANNED_BELOW, isPdf, pdfText } from './pdfQuotation.js';
+import { readWithAi } from './readAttachment.js';
 import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
 import { referencesIn } from './rules.js';
 
@@ -230,51 +230,10 @@ async function storePdf(pdf) {
  */
 export async function readPo(account, cand, ctx, chat, emailText) {
   const { m } = cand;
-  let chosen = null; let text = null;
-  if (m.has_attachments) {
-    let files;
-    try {
-      const provider = ctx.provider || providerFor(account);
-      files = (await provider.attachments(m.provider_id)).filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
-    } catch (err) {
-      return { error: err.message };
-    }
-    const read = [];
-    for (const f of files) {
-      try {
-        read.push({ ...f, pages: await pdfText(f.content) });
-      } catch (err) {
-        read.push({ ...f, pages: null, error: err.code || 'unreadable' });
-      }
-    }
-    chosen = rankPoPdfs(read.map((f) => ({ ...f, firstPage: f.pages?.[0] || '' })))[0] || null;
-    if (chosen && !chosen.pages) return { unreadable: true, ai_calls: 0 };
-    if (chosen) text = chosen.pages.join('\n\n');
-  }
-  const scanned = chosen && (text || '').replace(/\s+/g, '').length < SCANNED_BELOW;
-  const bodyText = mainText(m.body_html || '', 30_000);
-  const { system, user } = buildPoPrompt({
-    pdfText: chosen ? (scanned ? null : text) : '', emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from,
+  return readWithAi(account, cand, ctx, chat, {
+    rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf',
+    prompt: ({ pdfText }) => buildPoPrompt({ pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from }),
   });
-  ctx.aiUsed += 1;
-  let raw;
-  try {
-    raw = scanned
-      // A scan: the file itself goes, for OCR, with the same zero-retention routing.
-      ? await chat(system, [
-        { type: 'text', text: user },
-        { type: 'file', file: { filename: chosen.name || 'purchase-order.pdf', file_data: `data:application/pdf;base64,${chosen.content.toString('base64')}` } },
-      ], { maxTokens: 3000, timeoutMs: 90_000, plugins: [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }] })
-      : await chat(system, user, { maxTokens: 3000, timeoutMs: 60_000 });
-  } catch (err) {
-    // Counted against the ceiling, but nothing is logged: the next run tries again.
-    return { error: err.message };
-  }
-  const sourceText = chosen ? (scanned ? null : text) : `${m.subject || ''}\n${bodyText}`;
-  return {
-    verdict: parsePoVerdict(raw), sourceText, allText: `${m.subject || ''}\n${bodyText}\n${text || ''}`,
-    pdf: chosen ? { content: chosen.content, name: chosen.name } : null, ai_calls: 1,
-  };
 }
 
 // ------------------------------------------------------------ matching
@@ -499,7 +458,7 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
  * subject names that record: the automatic path never takes a thread off a
  * record it was put on by number.
  */
-async function linkThread(db, threadId, poNumber, quotationNo) {
+export async function linkThread(db, threadId, poNumber, quotationNo) {
   if (!threadId || !poNumber) return;
   const { rows: [t] } = await db.query('SELECT entity, entity_id, subject FROM email_threads WHERE id = $1', [threadId]);
   if (!t) return;

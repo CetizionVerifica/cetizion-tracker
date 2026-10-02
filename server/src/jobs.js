@@ -14,6 +14,7 @@ import { runDeliverableReminders } from './lib/deliverables.js';
 import { syncAll } from './lib/mailbox/sync.js';
 import { runBackfills } from './lib/mailbox/autoEnquiry.js';
 import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
+import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
 import { runVisitReminders } from './lib/visits.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
@@ -101,6 +102,12 @@ export const JOBS = {
     cron: '*/10 * * * *',
     quiet: (r) => r.registered > 0 || r.review > 0 || r.errors > 0,
     run: () => runPoBackfills(),
+  },
+  'invoices.backfill': {
+    description: 'Record the invoices we emailed whose PO has since arrived; read each mailbox\'s past year of sent mail, once, after its POs, for the invoices in it',
+    cron: '*/10 * * * *',
+    quiet: (r) => r.recorded > 0 || r.review > 0 || r.errors > 0,
+    run: () => runInvoiceBackfills(),
   },
   'deliverables.daily': {
     description: 'Mark expired certificates and deliverables; remind owners before expiry with a task',

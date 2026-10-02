@@ -1188,15 +1188,18 @@ function fromEmailClause(resource, q) {
 }
 
 /**
- * ?from_past_po=1   "Stages from past POs" (docs/email-po-plan.md §3.8): the
- *                   stages of POs registered from past mail in history mode
- *                   that have no invoice yet. Their invoices and payments
- *                   very likely happened outside the tracker; finance
- *                   records them from this list.
+ * ?from_past_po=1   "Past POs and invoices to settle" (docs/email-po-plan.md
+ *                   §3.8, §3.10.4): the stages of POs registered from past
+ *                   mail, and the stages whose invoice was recorded from
+ *                   past mail, that have no payment recorded yet. Their
+ *                   invoices and payments very likely happened outside the
+ *                   tracker; finance records them from this list.
  */
 function fromPastPoClause(q) {
   if (!['1', 'true', 'yes'].includes(String(q.from_past_po ?? '').toLowerCase())) return [];
-  return [`invoice_no IS NULL AND po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND mode = 'history' AND po_number IS NOT NULL)`];
+  return [`(po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND mode = 'history' AND po_number IS NOT NULL)
+            OR id IN (SELECT stage_id FROM email_invoice_decisions WHERE outcome = 'recorded' AND mode = 'history' AND stage_id IS NOT NULL))
+           AND COALESCE(amount_received, 0) = 0`];
 }
 
 /** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */

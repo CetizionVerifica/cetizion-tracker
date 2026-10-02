@@ -294,6 +294,13 @@ export async function syncAccount(id) {
       const p = await processPoCandidates(account, poCandidates, { provider });
       if (p) out.purchase_orders = p;
     }
+    // Invoices we sent (docs/email-po-plan.md §3.10), after the POs they bill.
+    const sent = candidates.filter((cand) => cand.c.direction === 'outbound');
+    if (sent.length) {
+      const { processInvoiceCandidates } = await import('./autoInvoice.js');
+      const i = await processInvoiceCandidates(account, sent, { provider });
+      if (i) out.invoices = i;
+    }
     if (candidates.length) {
       const { processCandidates } = await import('./autoEnquiry.js');
       const e = await processCandidates(account, candidates, { provider });

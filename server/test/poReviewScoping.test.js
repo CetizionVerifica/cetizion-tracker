@@ -22,6 +22,7 @@ describe('the PO review queue is scoped', { skip: !ADMIN_URL && 'set TEST_DATABA
   let dbUrl; let db; let app; let pool;
   const cookie = {};
   const item = {};
+  const invoice = {};
 
   before(async () => {
     const root = new pg.Client({ connectionString: ADMIN_URL });
@@ -62,6 +63,13 @@ describe('the PO review queue is scoped', { skip: !ADMIN_URL && 'set TEST_DATABA
         `INSERT INTO email_po_decisions (account_id, provider_id, outcome, review_reason, method, suggested_quotations)
          VALUES ($1, $2, 'review', 'several_matches', 'ai', $3) RETURNING id`, [box.id, `m-${key}`, [q.quotation_no]]);
       item[key] = d.id;
+      // And an invoice we emailed on that client's PO, in the invoice queue.
+      await db.query(`INSERT INTO projects (project_id, client_name, owner_user_id) VALUES ($1, $2, $3)`, [`PRJ-SC-${key}`, `Client of ${key}`, owner]);
+      await db.query(`INSERT INTO purchase_orders (po_number, project_id, quotation_no, po_value) VALUES ($1, $2, $3, 1000)`, [`PO-SC-${key}`, `PRJ-SC-${key}`, q.quotation_no]);
+      const { rows: [inv] } = await db.query(
+        `INSERT INTO email_invoice_decisions (account_id, provider_id, outcome, review_reason, method, po_number)
+         VALUES ($1, $2, 'review', 'amount_not_a_stage', 'ai', $3) RETURNING id`, [box.id, `inv-${key}`, `PO-SC-${key}`]);
+      invoice[key] = inv.id;
     }
   });
 
@@ -88,5 +96,14 @@ describe('the PO review queue is scoped', { skip: !ADMIN_URL && 'set TEST_DATABA
     await request(app).post(`/api/purchase-orders/review/${item.nobody}/dismiss`).set('Cookie', cookie.sam).expect(404);
     await request(app).post(`/api/purchase-orders/review/${item.sam}/dismiss`).set('Cookie', cookie.sam).expect(200);
     assert.deepEqual(await list('sam'), []);
+  });
+  const invoices = async (who) => (await request(app).get('/api/payment-stages/invoice-review').set('Cookie', cookie[who]).expect(200)).body.data.map((r) => r.id).sort();
+
+  test('the invoice queue is scoped the same way, through the PO', async () => {
+    assert.deepEqual(await invoices('alice'), [invoice.sam, invoice.bea, invoice.nobody].sort());
+    assert.deepEqual(await invoices('sam'), [invoice.sam]);
+    await request(app).post(`/api/payment-stages/invoice-review/${invoice.bea}/dismiss`).set('Cookie', cookie.sam).expect(404);
+    await request(app).post(`/api/payment-stages/invoice-review/${invoice.bea}/record`).set('Cookie', cookie.sam).expect(404);
+    await request(app).post(`/api/payment-stages/invoice-review/${invoice.sam}/dismiss`).set('Cookie', cookie.sam).expect(200);
   });
 });

@@ -474,8 +474,12 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
       const { body: settle } = await agent.get('/api/payment-stages?from_past_po=1').expect(200);
       const mine = settle.data.filter((s) => s.po_number === po.po_number);
       assert.equal(mine.length, 2, 'both stages, waiting for the invoices that already happened');
-      // An invoice recorded takes its stage off the list.
+      // An invoice recorded keeps it on the list ("Past POs and invoices to
+      // settle", §3.10.4); the payment that already happened takes it off.
       await agent.post(`/api/payment-stages/${mine[0].id}/invoice`).send({ invoice_no: `INV-PAST-${n}`, invoice_date: day(200) }).expect(200);
+      const { body: invoiced } = await agent.get('/api/payment-stages?from_past_po=1').expect(200);
+      assert.equal(invoiced.data.filter((s) => s.po_number === po.po_number).length, 2);
+      await agent.post(`/api/payment-stages/${mine[0].id}/payment`).send({ amount_received: Number(mine[0].stage_amount), payment_received_date: day(150) }).expect(200);
       const { body: after } = await agent.get('/api/payment-stages?from_past_po=1').expect(200);
       assert.equal(after.data.filter((s) => s.po_number === po.po_number).length, 1);
       const { body: fromEmail } = await agent.get('/api/purchase-orders?from_email=1').expect(200);

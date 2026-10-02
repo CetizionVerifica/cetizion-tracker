@@ -3002,11 +3002,15 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   to_emails              text[],
   sent_at                timestamptz,
   outcome                text NOT NULL CHECK (outcome IN
-                           ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed')),
+                           ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed',
+                            -- its PO is not in the tracker yet: tried again until auto_invoice_wait_days
+                            'waiting')),
   document_type          text,
   review_reason          text CHECK (review_reason IN
                            ('po_not_found','several_pos','amount_not_a_stage','po_without_stages','invoice_no_in_use',
-                            'not_from_us','low_confidence','credit_note','revised','unreadable')),
+                            'not_from_us','low_confidence','credit_note','revised','unreadable',
+                            -- the invoice's own figures failed a check (invoiceDetect.js checkInvoice)
+                            'no_invoice_no','amounts_not_in_pdf','totals_do_not_add_up','bad_currency','bad_date')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3017,6 +3021,10 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   invoice_no             text,
   -- The stage already had a document, so the emailed PDF was not attached.
   document_kept_existing boolean NOT NULL DEFAULT false,
+  -- While waiting only: the facts read from the invoice (number, date,
+  -- amounts, references; never its text), so a retry needs no second AI
+  -- call. Cleared once it is decided.
+  reading                jsonb,
   decided_by             text,
   settled_at             timestamptz,
   decided_at             timestamptz NOT NULL DEFAULT now(),
@@ -3026,6 +3034,7 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_message_idx ON email_invoice_decisions (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_stage_idx ON email_invoice_decisions (stage_id) WHERE stage_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS email_invoice_decisions_review_idx ON email_invoice_decisions (decided_at) WHERE outcome = 'review';
+CREATE INDEX IF NOT EXISTS email_invoice_decisions_waiting_idx ON email_invoice_decisions (decided_at) WHERE outcome = 'waiting';
 
 CREATE TABLE IF NOT EXISTS mailbox_invoice_backfills (
   account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,

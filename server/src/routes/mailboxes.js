@@ -266,6 +266,7 @@ mailboxRouter.post('/:id/disconnect', async (req, res) => {
 mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   const { enquirySettings, aiCallsToday } = await import('../lib/mailbox/autoEnquiry.js');
   const { poSettings } = await import('../lib/mailbox/autoPurchaseOrder.js');
+  const { invoiceSettings } = await import('../lib/mailbox/autoInvoice.js');
   const { aiConfig } = await import('../lib/ai.js');
   const settings = await enquirySettings();
   const po = await poSettings();
@@ -280,8 +281,18 @@ mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
             COALESCE(p.registered, 0)::int AS pos_registered, COALESCE(p.linked, 0)::int AS pos_linked,
             COALESCE(p.review, 0)::int AS pos_to_review, COALESCE(p.not_po, 0)::int AS not_po,
             pb.reached AS po_reached, pb.scanned AS po_scanned, pb.started_at AS po_started_at, pb.finished_at AS po_finished_at,
-            pb.last_error AS po_last_error
+            pb.last_error AS po_last_error,
+            -- Invoices we emailed (§3.10).
+            COALESCE(i.recorded, 0)::int AS invoices_recorded, COALESCE(i.review, 0)::int AS invoices_to_review,
+            COALESCE(i.waiting, 0)::int AS invoices_waiting,
+            ib.reached AS invoice_reached, ib.scanned AS invoice_scanned, ib.finished_at AS invoice_finished_at, ib.last_error AS invoice_last_error
        FROM connected_accounts a
+       LEFT JOIN mailbox_invoice_backfills ib ON ib.account_id = a.id
+       LEFT JOIN (SELECT account_id,
+                         count(*) FILTER (WHERE outcome IN ('recorded','recorded_by_hand')) AS recorded,
+                         count(*) FILTER (WHERE outcome = 'review') AS review,
+                         count(*) FILTER (WHERE outcome = 'waiting') AS waiting
+                    FROM email_invoice_decisions GROUP BY account_id) i ON i.account_id = a.id
        LEFT JOIN mailbox_enquiry_backfills b ON b.account_id = a.id
        LEFT JOIN mailbox_po_backfills pb ON pb.account_id = a.id
        LEFT JOIN (SELECT account_id,
@@ -303,6 +314,7 @@ mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
     data: {
       enabled: settings.enabled,
       purchase_orders_enabled: po.enabled,
+      invoices_enabled: (await invoiceSettings()).enabled,
       ai: { configured: aiConfig.enabled, used_today: await aiCallsToday(), daily_limit: settings.dailyAiLimit },
       backfill_days: settings.backfillDays,
       mailboxes: rows,
@@ -329,6 +341,14 @@ mailboxRouter.post('/:id/auto-enquiries/rerun', requireAdmin, async (req, res) =
           AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
     await query('DELETE FROM mailbox_po_backfills WHERE account_id = $1', [id]);
     return res.json({ data: { id, kind: 'pos', decisions_cleared: cleared, backfill: 'restarts on the next run' } });
+  }
+  if (req.body?.kind === 'invoices') {
+    // Invoices only, the same way: not_invoice decisions read again, the read of Sent Items restarted.
+    const { rowCount: cleared } = await query(
+      `DELETE FROM email_invoice_decisions WHERE account_id = $1 AND outcome = 'not_invoice'
+          AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
+    await query('DELETE FROM mailbox_invoice_backfills WHERE account_id = $1', [id]);
+    return res.json({ data: { id, kind: 'invoices', decisions_cleared: cleared, backfill: 'restarts on the next run' } });
   }
   // Today's AI-judged rows stay: they are what the day's AI ceiling is
   // counted from, and judging them again today would change nothing.
