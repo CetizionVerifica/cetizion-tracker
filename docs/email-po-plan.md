@@ -1,4 +1,4 @@
-# Purchase orders from email, automatically: implementation plan (phase 2)
+# Purchase orders and invoices from email, automatically: implementation plan (phase 2)
 
 Phase 1 ([email-enquiries-plan.md](email-enquiries-plan.md), built in #163)
 turns client email into **enquiries**, and turns the quotation PDFs we send
@@ -12,6 +12,10 @@ in the body. Registering it means:
 - the project;
 - the original PDF, attached;
 - the quotation marked won.
+
+When **we** send a client an **invoice** by email for a PO or a project, it
+is **recorded against the right payment stage** (invoice number and date),
+and the invoice PDF is **uploaded** to that stage (§3.10).
 
 This covers past mail too: the last 365 days of every connected mailbox.
 
@@ -79,15 +83,21 @@ Phase 2 needs four things:
    flooding Collections, notifications, onboarding or webhooks (§3.8).
 8. **A review queue** for PO emails that could not be registered safely,
    with one-click registration against a suggested quotation.
-9. Admin switch, status, filters, banners, tests and docs.
+9. **Invoices we email to clients** (§3.10). Read the invoice PDF in our
+   sent mail, match it to the PO and payment stage, record the invoice
+   number and date, and upload the PDF to the stage. This includes past
+   invoices from the 365-day backfill.
+10. Admin switch, status, filters, banners, tests and docs.
 
 ### Out of scope (say so in the PR)
 
 - POs **we** issue to vendors. Outbound mail is not read for POs.
 - Cancelling a PO from a cancellation email. A review item is raised
   instead (§3.6).
-- Invoices, payments and remittance advice from email. That is a later
-  phase.
+- **Payments** and remittance advice from email. That is a later phase.
+  Invoices **are** in scope (§3.10).
+- Proforma invoices, credit notes and cancelled or revised invoices are
+  never recorded automatically (§3.10.5).
 - Procurement portals that need a login (Ariba, Coupa, Jaggaer). Only the
   email notification they send is read (§3.1).
 - Reading Excel or Word PO attachments. PDFs and the email body only.
@@ -394,6 +404,205 @@ right months automatically.
   mailbox's phase 1 backfill has finished. Enquiries and quotations then
   exist before POs look for them.
 
+### 3.10 Invoices we email to clients
+
+In the tracker, an invoice is **a payment stage with an invoice number, an
+invoice date and a document** (`payment_stages.invoice_no`,
+`invoice_date`, `document_id`), recorded through
+`POST /api/payment-stages/:id/invoice` (`server/src/routes/workflow.js`).
+The stage's amount is not stored; it is `stage_percent × po_value`. That
+route already accepts an invoice number raised outside the tracker. It
+claims a `CVPL/{fy}/{n}` number only when none is given.
+
+Many invoices are raised in Tally or Zoho, or as a Word document, and
+emailed to the client from Outlook. The tracker never hears of them, so
+the stage stays **To Invoice**. Phase 2 reads those emails.
+
+#### 3.10.1 Which emails are invoice candidates (pure rules)
+
+A new `invoicePrefilter(message, facts)` in a new module
+`server/src/lib/mailbox/invoiceDetect.js`:
+
+| Rule | Why |
+| --- | --- |
+| **Outbound** (Sent Items), to at least one external, non-blocked address | We send invoices. An invoice we **receive** is a vendor bill, which belongs to payables and is out of scope. |
+| A **PDF attachment**, **and** invoice words in the subject, body or file name: invoice, tax invoice, bill, "please find attached our invoice", GST invoice | The usual covering email. |
+| **Not** proforma (`proforma`, `PI No`), credit note, debit note or quotation words only | A proforma invoice is not a tax invoice. It is a request for an advance and must not use up the GST series. |
+| No more than 5 external recipients | Not a mass mailing. |
+| Not already decided for invoices (`email_invoice_decisions`, §4) | Idempotent. |
+
+An invoice emailed from the tracker itself goes out through `sendMail`,
+not a connected mailbox, and already has its `invoice_no`. If an Outlook
+copy turns up, it matches by number and is logged `linked` (§3.10.4).
+
+**Which mailboxes:** every connected mailbox, as before. Invoices often go
+out from a finance mailbox (for example `accounts@`). The admin docs must
+say that **that mailbox needs to be connected** for its invoices to be
+read.
+
+#### 3.10.2 Reading the invoice
+
+The same pipeline as the PO (§3.2):
+
+- rank the attachments ("invoice" or "tax invoice" in the file name or on
+  the first page comes first);
+- extract the text with `unpdf`, using OCR if the PDF is scanned;
+- make one AI call returning:
+
+```jsonc
+{
+  "document_type": "tax_invoice | proforma | credit_note | debit_note | other",
+  "confidence": 0.0-1.0,
+  "invoice_no": "CVPL/26-27/0042", "invoice_date": "2026-09-30",
+  "seller": { "company_name": "…", "gstin": "…" },        // must be us
+  "buyer":  { "company_name": "…", "gstin": "…" },
+  "po_reference": "4500012345",                          // "PO No.", "Your order ref"
+  "project_reference": "PRJ-2026-014",                   // if printed
+  "quotation_reference": "CTZ/QT/2026/045",
+  "currency": "INR",
+  "taxable_value": 125000, "tax_value": 22500, "total_value": 147500,
+  "stage_hint": "50% advance",                           // "Advance", "Final", "Milestone 2"
+  "due_date": "2026-10-30"
+}
+```
+
+**Checks in code.** Failing any of these sends the invoice to review
+(§3.10.5):
+
+- `document_type = tax_invoice`;
+- **the seller is us**, by `company_gstin` or `company_name`, and the
+  buyer is not us;
+- an invoice number is present;
+- the invoice date is on or before the email date;
+- every amount appears in the PDF text (`amountInText`);
+- taxable value plus tax equals the total, within ₹1 or 0.5%;
+- the currency is valid;
+- confidence is at least **0.85** (`auto_invoice_min_confidence`, the same
+  bar as POs).
+
+#### 3.10.3 Matching the invoice to a PO, a project and a stage
+
+**Which PO.** These run in order, and the first that gives exactly one PO
+wins:
+
+1. The invoice's `po_reference`, compared **normalised** with
+   `purchase_orders.po_number` for the buyer's company.
+2. `project_reference` names a project. If the project has one live PO
+   (not cancelled, not replaced), that is the PO. If it has several, rule
+   4 picks among them.
+3. The **thread** is linked to a PO or project (`email_threads.entity`), or
+   the conversation holds the PO email (`email_po_decisions.po_number`).
+4. **Company and amount:** the buyer resolves to a company (GSTIN, then
+   contact or domain, then name). Its live POs are the candidates, and the
+   one with an **open stage** whose amount matches (rule below) wins.
+
+**Which stage on that PO:**
+
+- **Open stages only:** no `invoice_no` yet, and not on hold.
+- **Amount match:** the stage amount (`stage_percent × po_value`, incl.
+  GST) must equal the invoice **total**, within ₹1 or 0.5%. This allows
+  for rounding only. An invoice for a different amount is a different
+  split, and is never forced onto a stage.
+- **Several stages match** (for example 50/50): prefer the stage whose
+  name or trigger fits `stage_hint` ("advance" → `On PO Registration`,
+  "final" or "balance" → `On Delivery`, a milestone name → that
+  milestone). Otherwise take the **lowest stage number** still open,
+  because invoices go out in order.
+- **No stage matches:** send it to **review** with
+  `amount_not_a_stage`, showing the stages and their amounts. Examples are
+  an invoice for 40% on a 50/50 PO, or a combined invoice for two stages.
+  The reviewer can re-split the stages with the existing
+  `POST /api/purchase-orders/:poNumber/stages`, then record the invoice.
+- **The PO has no stages:** review (`po_without_stages`).
+- **The PO is not in the tracker yet:** for example, the invoice is read
+  before its PO email in the same batch. Leave the email undecided. It is
+  tried again on the next run and after the PO backfill finishes. After
+  `auto_invoice_wait_days` (default 7) it goes to review
+  (`po_not_found`).
+
+#### 3.10.4 Recording the invoice and uploading the PDF
+
+Extract the body of `POST /api/payment-stages/:id/invoice` into
+`server/src/lib/invoices.js` `recordInvoice(db, { stageId, invoiceNo,
+invoiceDate, documentId, actor, mode })`. The route and automation both
+call it, and the route's behaviour is unchanged.
+
+| Field | Value |
+| --- | --- |
+| `invoice_no` | **As printed.** It is a fact, and the GST series is kept in the books. It is checked against the unique index `payment_stages_invoice_no_key`, comparing normalised (case, spaces and dashes ignored). If the number is already on **this** stage, log `linked`. If it is on **another** stage, send it to review (`invoice_no_in_use`). |
+| Series counter | If the printed number is in the tracker's own `CVPL/{fy}/{n}` pattern, **move that financial year's counter past it** in the same transaction. Phase 1 did the same for quotation numbers (`moveCounterPast`), so the tracker never issues that number again. |
+| `invoice_date` | From the invoice. |
+| `document_id` | The invoice PDF. It is uploaded with `uploadDocument({ owner: 'payment-stages' })` **before** the transaction, then claimed with `claimAttachment`. If the stage **already has a document** (an invoice PDF generated or uploaded in the tracker), it is **kept**. The email's PDF is not attached and the decision notes it: an existing document is never replaced automatically. |
+| Thread | Linked to the PO, unless it is already linked to a record by number. |
+
+Because `invoice_date` is set, the stage moves from To Invoice to
+**Due**, or to **Overdue** once its credit days pass, by the existing view
+logic. Nothing derived is stored.
+
+**Live mode** (invoice dated within `auto_po_history_after_days`, 30):
+
+- the `invoice.issued` webhook fires as usual;
+- the stage enters the normal collections cycle, including the client
+  payment reminders (`reminders.payment`);
+- the PO's owner gets one notification: "Invoice *no* recorded from email
+  on PO *x*".
+
+**History mode** (older invoices, from the backfill):
+
+- no notification;
+- no `invoice.issued` webhook (`app.suppress_webhooks`, §3.8);
+- **no client payment reminders.** `runPaymentReminders`
+  (`server/src/lib/reminders.js`) emails the **client** when a stage is
+  overdue. An invoice from eight months ago has very likely been paid
+  already, outside the tracker, and asking the client again would be
+  wrong. Such stages are skipped until a person has touched them: a
+  payment is recorded, or the PO banner is marked checked. The same rule
+  applies to `followups.daily`. "From history" is derived from
+  `email_invoice_decisions.mode`; nothing is stored on the stage.
+- The "Stages from past POs" view (§3.8) becomes **"Past POs and invoices
+  to settle"**:
+  - stages from history POs or history invoices with no payment recorded;
+  - finance records the payments that already happened;
+  - if Zoho or Tally is connected, the existing books reconciliation
+    (`lib/accounting/books.js`, `applyBookPayments`) can fill them in.
+
+This also fixes the side effect of decision 2 (stages for historical POs).
+Their invoices are now read from the same year of sent mail, so most
+history stages get their invoice number, date and PDF automatically, and
+only the payment is left for finance.
+
+#### 3.10.5 What is never recorded automatically
+
+| Case | What happens |
+| --- | --- |
+| Proforma invoice | Logged `not_invoice` (`proforma`). Nothing is recorded. |
+| Credit note, debit note | Review (`credit_note`). |
+| Revised or cancelled invoice ("Revised", "Cancelled", same number re-sent with different amounts) | Review (`revised`). An invoice already recorded is never changed automatically. |
+| One invoice covering several stages or POs | Review (`amount_not_a_stage`). |
+| Seller is not us (a forwarded vendor bill) | Review (`not_from_us`). |
+| Number already on another stage | Review (`invoice_no_in_use`). |
+
+These go to the same review screen as POs (§3.7), on an **"Invoices to
+review"** tab, from the Payment stages page. **Record against…** opens the
+existing invoice dialog pre-filled (number, date, PDF) with the suggested
+stage. **Not an invoice** dismisses it.
+
+#### 3.10.6 Wiring
+
+- **Live:** add `processInvoiceCandidates(account, candidates)` in
+  `syncAccount`. Sent Items candidates already include every outbound
+  message (phase 1). It runs after the PO consumer.
+- **Backfill:**
+  - a new job, `invoices.backfill`, every 10 minutes;
+  - **Sent Items only**, oldest first, 365 days, with its own cursor table;
+  - the same 4-minute budget and the same shared daily AI ceiling;
+  - for a mailbox, it starts only when **that mailbox's PO backfill has
+    finished**. Ideally every mailbox's PO backfill has finished, because
+    a PO may arrive in `sales@` and its invoice go out from `accounts@`.
+    The rule: wait until all PO backfills finish, or 24 hours, whichever
+    comes first. Undecided invoices are retried until
+    `auto_invoice_wait_days`.
+
 ---
 
 ## 4. Data
@@ -442,7 +651,48 @@ CREATE TABLE IF NOT EXISTS mailbox_po_backfills (   -- same shape as mailbox_enq
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- What was decided about one outbound email that might have been our invoice.
+CREATE TABLE IF NOT EXISTS email_invoice_decisions (
+  id                  serial PRIMARY KEY,
+  account_id          int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id         text NOT NULL,
+  internet_message_id text,
+  conversation_id     text,
+  thread_id           int REFERENCES email_threads(id) ON DELETE SET NULL,
+  to_emails           text[],
+  sent_at             timestamptz,
+  outcome             text NOT NULL CHECK (outcome IN
+                        ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed')),
+  document_type       text,
+  review_reason       text CHECK (review_reason IN
+                        ('po_not_found','several_pos','amount_not_a_stage','po_without_stages','invoice_no_in_use',
+                         'not_from_us','low_confidence','credit_note','revised','unreadable')),
+  mode                text CHECK (mode IN ('live','history')),
+  confidence          numeric(4,3),
+  method              text NOT NULL CHECK (method IN ('ai','rules')),
+  ai_calls            smallint NOT NULL DEFAULT 0,
+  stage_id            int REFERENCES payment_stages(id) ON DELETE SET NULL,
+  po_number           text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  invoice_no          text,              -- as printed; the stage holds the recorded one
+  document_kept_existing boolean NOT NULL DEFAULT false,
+  decided_by          text,
+  decided_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+-- + indexes on lower(internet_message_id), stage_id, (outcome) WHERE outcome = 'review'
+
+CREATE TABLE IF NOT EXISTS mailbox_invoice_backfills (   -- same shape, Sent Items only
+  account_id int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  since timestamptz NOT NULL, next_link text, reached timestamptz,
+  scanned int NOT NULL DEFAULT 0, recorded int NOT NULL DEFAULT 0, review int NOT NULL DEFAULT 0,
+  started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz, last_error text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 INSERT INTO settings (key, value, notes) VALUES
+  ('auto_invoice_enabled', 'true', '…'),
+  ('auto_invoice_min_confidence', '0.85', '…'),
+  ('auto_invoice_wait_days', '7', '…'),
   ('auto_po_enabled', 'true', '…'),
   ('auto_po_min_confidence', '0.85', '…'),
   ('auto_po_value_tolerance_percent', '2', '…'),
@@ -485,7 +735,12 @@ Derived, not stored:
 | `server/src/lib/mailbox/enquiryDetect.js` | `purchase_order` kind; the prefilter defers PO emails to phase 2. |
 | `server/src/lib/mailbox/sync.js` | `ingest()` also returns later inbound messages with attachments or PO words. `syncAccount` calls `processPoCandidates` before `processCandidates`. |
 | `server/src/import/parse.js`, `import/ai.js`, `import/rules.js` | Export `splitReference`, `parseMoney`, `advanceShare`, the split rule and `norm` for reuse. No behaviour change. |
-| `server/src/jobs.js` | `pos.backfill` (`*/10 * * * *`). |
+| `server/src/jobs.js` | `pos.backfill` and `invoices.backfill` (`*/10 * * * *`). |
+| `server/src/lib/mailbox/invoiceDetect.js` | **New, pure.** `invoicePrefilter`, `buildInvoicePrompt`, `parseInvoiceVerdict`, `checkInvoice`, `pickStage` (amount match, stage hint, lowest open stage), `normaliseInvoiceNo`. |
+| `server/src/lib/mailbox/autoInvoice.js` | **New.** `processInvoiceCandidates`, `decideInvoice`, `matchPo`, `backfillInvoiceAccount`, `runInvoiceBackfills`. Same `deps.chat` test seam. |
+| `server/src/lib/invoices.js` | **New.** `recordInvoice(db, …, { mode })`, extracted from `POST /api/payment-stages/:id/invoice`, plus the CVPL counter move-past and the keep-existing-document rule. The route calls it, with unchanged behaviour. |
+| `server/src/lib/reminders.js` | `runPaymentReminders` skips stages whose invoice was recorded in history mode, until a payment is recorded or the PO is marked checked (§3.10.4). |
+| `web/src/pages/PaymentStages.jsx` | An "Invoices to review" tab; a "Recorded from email" filter; the "Past POs and invoices to settle" view. The invoice dialog accepts a prefill. |
 | `server/src/lib/followUps.js` | Invoice follow-ups skip the stages of history-mode POs until a person has touched them: an invoice number or payment is recorded, or the PO is marked checked. Derived from `email_po_decisions.mode`, not stored on the stage (§3.8). |
 | `server/src/lib/resources.js`, `web/src/pages/PaymentStages.jsx` | A `from_past_po=1` filter: the "Stages from past POs" view (§3.8). |
 | `server/src/routes/purchaseOrders*.js` / `workflow.js` | `GET /api/purchase-orders/review` (scoped: admins see all, sales see their quotations' items), `POST /api/purchase-orders/review/:id/register` (re-reads the PDF and returns the dialog's prefill), `POST /api/purchase-orders/review/:id/dismiss`. |
@@ -502,7 +757,11 @@ Derived, not stored:
 ## 6. Operations and safety
 
 - **Switch:** `auto_po_enabled = false` stops PO detection and the PO
-  backfill. Phase 1 is unaffected.
+  backfill. `auto_invoice_enabled = false` stops invoice recording. Phase
+  1 is unaffected by either.
+- **Invoices and clients:** recording an invoice never emails the client.
+  Client payment reminders only apply to invoices recorded live; past
+  invoices are not chased until a person has touched them.
 - **What leaves the server:** for PO candidates only, the email's new text
   and the PO PDF's text (at most 10 pages), or the file itself for OCR. A
   client's PO is **their** document, so record this in `security.md`.
@@ -537,8 +796,14 @@ Derived, not stored:
    duplicates, the review queue API, notifications.
 4. **Backfill:** the `pos.backfill` job, history mode, summary
    notifications.
-5. **Screens:**
-   - the review tab and prefilled `RegisterPoDialog`;
+5. **Invoices:**
+   - `recordInvoice()` extracted from the invoice route;
+   - `invoiceDetect.js` (pure) and `autoInvoice.js`;
+   - the `invoices.backfill` job, and history mode, including the
+     client-reminder exclusion;
+   - the invoice review API.
+6. **Screens:**
+   - the review tabs, the prefilled `RegisterPoDialog` and invoice dialog;
    - the PO banner and filter;
    - the Mailboxes card;
    - docs.
@@ -608,6 +873,39 @@ Derived, not stored:
       currency gets 422.
   15. `auto_po_enabled = false`: nothing is registered, and phase 1 runs
       as before.
+  16. **Invoice, PO number printed:** an outbound email with a tax-invoice
+      PDF citing PO `4500012345` for 50% of the PO value:
+      - is recorded on stage 1 (`On PO Registration`), with the printed
+        `invoice_no` and the invoice date;
+      - has its PDF uploaded to the stage;
+      - moves the stage to Due;
+      - fires `invoice.issued` (live);
+      - is logged `recorded`.
+  17. **Second invoice on a 50/50 PO** with "balance" in it goes to stage 2.
+  18. **Invoice amount not a stage** (40% on a 50/50 PO) goes to review
+      (`amount_not_a_stage`), and nothing is recorded.
+  19. **Proforma invoice:** logged `not_invoice`, nothing recorded, and no
+      invoice number used.
+  20. **Printed `CVPL/26-27/0042`:** recorded, and the 26-27 counter moves
+      past 42, so the next tracker invoice is 0043 or higher.
+  21. **Stage already has a document:** the invoice number and date are
+      recorded, the existing document is kept, and
+      `document_kept_existing` is set.
+  22. **Invoice number already on another stage:** review
+      (`invoice_no_in_use`).
+  23. **Invoice before its PO:** left undecided, recorded once the PO is
+      registered, and sent to review (`po_not_found`) after 7 days.
+  24. **History invoice (eight months old):** recorded, with no
+      notification and no webhook. `runPaymentReminders` does **not**
+      email the client about it, and it appears in "Past POs and invoices
+      to settle". After a payment is recorded, it leaves that list.
+  25. **Vendor bill forwarded by us:** review (`not_from_us`).
+  26. **Invoice backfill order:** it waits for the PO backfill, and the
+      history PO from scenario 11 gets its invoice recorded on its stage.
+  27. `auto_invoice_enabled = false`: no invoices are recorded, and POs
+      run as before.
+  28. **The invoice route** still claims a CVPL number when none is given,
+      and behaves as before.
 - **Authz:** the review routes are scoped. A sales user sees only items
   for their own quotations.
 - **E2E:** open "To review", use **Register against**, and land on the
@@ -630,3 +928,20 @@ Derived, not stored:
    to **review**; it is never registered automatically (§3.3).
 4. **Amended POs:** always review, never applied automatically (§3.6).
 5. **Confidence bar:** **0.85** (`auto_po_min_confidence`).
+6. **Invoices we email to clients** are recorded on the right payment
+   stage, and their PDF is uploaded to it, for a PO or a project (§3.10).
+
+### Still open for invoices (defaults given; the build can start with them)
+
+7. **Proforma invoices.** Default: never recorded, since they are not tax
+   invoices. The alternative is to log them as a note on the PO.
+8. **Invoice amount that is not a stage.** Default: **review**, and the
+   reviewer re-splits the stages. The alternative is to re-split the PO's
+   remaining stages automatically to fit the invoice.
+9. **Client payment reminders for past invoices.** Default: **off** until
+   a person has touched the stage, so clients are never asked to pay an
+   invoice they may already have paid. The alternative is to chase them
+   like any overdue invoice.
+10. **An existing invoice document on the stage.** Default: **keep it**.
+    The alternative is to replace it with the emailed PDF.
+
