@@ -1,0 +1,584 @@
+# Purchase orders from email, automatically: implementation plan (phase 2)
+
+Phase 1 ([email-enquiries-plan.md](email-enquiries-plan.md), built in #163)
+turns client email into **enquiries**, and turns the quotation PDFs we send
+into **quotations**. Phase 2 closes the loop.
+
+When a client sends a **purchase order**, it is registered in the tracker.
+The client may send a PO, work order, LOI or signed contract, as a PDF or
+in the body. Registering it means:
+
+- the PO itself, with its services and payment stages;
+- the project;
+- the original PDF, attached;
+- the quotation marked won.
+
+This covers past mail too: the last 365 days of every connected mailbox.
+
+This file is written for the person (or Claude Code session) who builds it.
+Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) and
+[email-enquiries.md](email-enquiries.md) first. The plan follows the two
+design rules: nothing derived is stored, and each fact is typed in one
+place. It was written against commit `fd93cc1`.
+
+---
+
+## 0. Carried over from phase 1, and assumed unchanged
+
+These phase 1 decisions also hold here:
+
+- Every active connected mailbox is read.
+- Emails are judged by rules first, then AI (OpenRouter, zero-retention
+  routing).
+- Past mail goes back 365 days.
+- It is fully automatic, on by default, with one admin switch to turn it
+  off.
+- A metadata-only mailbox still stores no email text.
+
+The new decisions are in §9; each has a default the build can start from.
+
+---
+
+## 1. What already exists, and why it is not this
+
+| Existing piece | File | What it does | Why it is not this feature |
+| --- | --- | --- | --- |
+| PO registration | `server/src/routes/register.js` `POST /api/quotations/:key/register` | In one transaction: project (new or joined), quotation → `Won - PO Received`, PO, `po_services` split from the quotation lines with GST gross-up, payment stages from a terms template, `po_registered` notification, onboarding checklist. | A person must open the quotation and fill the dialog. Nothing reads the client's PO. It does not refuse a quotation that already has a PO; only the UI hides the button. It compares PO numbers as exact text, so "PO-123" and "po 123" both get in. |
+| Phase 1 detector | `server/src/lib/mailbox/enquiryDetect.js`, `autoEnquiry.js` | Judges inbound mail as a new enquiry, and outbound mail as a quotation we sent. | It has **no purchase-order kind**. A "PO attached" email is judged `reply_or_followup` or `other`, logged `not_enquiry`, and never looked at again (`UNIQUE(account_id, provider_id)`). It skips replies and later messages in a thread, which is exactly where most POs arrive. **Inbound attachments are never opened.** |
+| PDF reading | `server/src/lib/mailbox/pdfQuotation.js`, `autoQuotation.js` | `unpdf` text extraction, OCR fallback (`mistral-ocr` plugin), checks in code (`parseAmount`, `amountInText`, `near`), document upload before the transaction. | Built for **our** quotation layout. A client's PO is a different document, with buyer and vendor reversed. |
+| PO number in mail | `rules.js` `referencesIn().pos` | Matches only `PO-123`-style numbers in a subject. | Real PO numbers are `4500012345`, `PO/2026/12`, `WO-HR-0091`. These are missed. |
+| Import rules | `server/src/import/parse.js`, `import/ai.js`, `import/rules.js` | `splitReference` (PO number + "dtd" date), `parseMoney`/`readCurrency` (lakh/crore), `advanceShare` (advance %, ignoring GST and TDS), the advance/delivery split, PO-number normalisation (`norm`). | Written for the bulk importer. They are the right rules, but not wired to email. |
+| Payment terms | `payment_terms_templates`, `services.payment_terms_template_id` | 50/50 (default), 100% on delivery, 30/70, 20/80. | The PO's own terms text is never read. |
+
+**Summary:** registration, PDF reading and the email pipeline all exist.
+Phase 2 needs four things:
+
+- **(a)** recognise a PO email, wherever it sits in a thread;
+- **(b)** read the client's PO document;
+- **(c)** match it to the right quotation, or to nothing;
+- **(d)** call registration safely, including for POs that are months old.
+
+---
+
+## 2. Scope
+
+### In scope
+
+1. **PO detection** on inbound mail, including replies in existing
+   threads.
+2. **Reading the PO:** open the inbound PDF attachment (only for PO
+   candidates), extract the PO fields, and check them in code.
+3. **Matching** the PO to a quotation, using the quotation number, the
+   thread, the company and the value.
+4. **Registering** through one shared `registerPurchaseOrder()` function,
+   extracted from `register.js` and used by the route and by automation.
+5. **Payment stages from the PO's own terms**, when they can be read.
+6. **Duplicates and revisions:** the same PO in two mailboxes, a re-send, a
+   PO already registered by hand, or an amended PO.
+7. **Historical POs** from the 365-day backfill, registered without
+   flooding Collections, notifications, onboarding or webhooks (§3.8).
+8. **A review queue** for PO emails that could not be registered safely,
+   with one-click registration against a suggested quotation.
+9. Admin switch, status, filters, banners, tests and docs.
+
+### Out of scope (say so in the PR)
+
+- POs **we** issue to vendors. Outbound mail is not read for POs.
+- Cancelling a PO from a cancellation email. A review item is raised
+  instead (§3.6).
+- Invoices, payments and remittance advice from email. That is a later
+  phase.
+- Procurement portals that need a login (Ariba, Coupa, Jaggaer). Only the
+  email notification they send is read (§3.1).
+- Reading Excel or Word PO attachments. PDFs and the email body only.
+
+---
+
+## 3. How it works
+
+### 3.1 Which emails are PO candidates (pure rules)
+
+This is a new function, `poPrefilter(message, facts)`, in a new pure module
+`server/src/lib/mailbox/poDetect.js`. It runs on **every inbound
+message**, not just the first one in a conversation. A message is a
+candidate when:
+
+| Rule | Why |
+| --- | --- |
+| Inbound, from an external address | POs come from clients. |
+| **PO words** in the subject, the new body text or an attachment name: purchase order, PO, P.O., work order, WO, service order, LOI, letter of intent, letter of award, contract, order confirmation, "we are pleased to place", "please find attached our order" | How clients say it. |
+| **and** at least one of: a PDF attachment; a PO-number-like token near the words; or a known procurement-portal sender (below) | Words alone ("we will send the PO next week") are not a PO. |
+| Not bulk mail, and not a payment or remittance advice (`remittance`, `payment advice`, `UTR`, `credited`) | Those mention PO numbers too. |
+| Not already decided for PO (`email_po_decisions`, §4) | Idempotent. |
+
+- **Procurement portals:** PO notifications from senders such as
+  `*@ansmtp.ariba.com`, `*@coupahost.com` and `*@jaggaer.com` are
+  automated, and `isBlocked()` would drop some of them. Add a
+  `po_portal_senders` setting (comma-separated patterns, seeded with
+  these). The PO pipeline treats these senders as candidates even when
+  the general sync would skip them as robots.
+- **Wider PO-number matching:** add a `poNumbersIn(text)` function, used
+  for matching and duplicates only, not for the phase 1 "names a record"
+  rule. It recognises tokens after "PO No", "Order No", "WO No", "P.O.
+  Number", "Contract No" and similar labels, using the same idea as
+  `splitReference`.
+
+The phase 1 detector is changed in one place:
+
+- add `purchase_order` to `KINDS`;
+- in `prefilter`, when `poPrefilter` says candidate, return `{candidate:
+  null, reason: 'purchase order'}`.
+
+That way a PO email is never logged as a `not_enquiry`, and no enquiry is
+made from it.
+
+### 3.2 Reading the PO
+
+Use the same steps as `autoQuotation.prepare`, but with a PO prompt and PO
+checks:
+
+1. **Attachment:** `provider.attachments(providerId)` (phase 1). Keep PDFs
+   of at most 15 MB. Rank them: a file name with PO, order, WO, LOI or
+   contract first; then first-page text with "Purchase Order"; then the
+   largest. Terms-and-conditions annexures come last.
+2. **Text:** `pdfText` (unpdf), at most 10 pages. With fewer than 50
+   characters, use OCR, as in phase 1. If there is no PDF, use the email
+   body (portal notifications and "please treat this mail as our PO").
+3. **One AI call** (`chatJSON`) that returns:
+
+```jsonc
+{
+  "is_purchase_order": true, "document_type": "purchase_order | work_order | loi | contract | amendment | cancellation | other",
+  "confidence": 0.0-1.0,
+  "po_number": "4500012345", "po_date": "2026-09-22",
+  "amendment_no": 0,                       // "Amendment 1", "Rev 2"
+  "buyer":  { "company_name": "…", "gstin": "…", "state": "…", "contact_name": "…", "contact_email": "…" },
+  "vendor": { "company_name": "…", "gstin": "…" },   // must be us
+  "our_quotation_ref": "CTZ/QT/2026/045",  // "Ref: your offer no. …", or null
+  "currency": "INR",
+  "lines": [ { "description": "…", "qty": 1, "rate": 250000, "amount": 250000, "service": "EcoVadis" } ],
+  "basic_value": 250000, "tax_value": 45000, "total_value": 295000,
+  "gst_extra": false,                      // "GST extra as applicable"
+  "payment_terms_text": "50% advance against PI, balance on submission of report",
+  "credit_days": 30,
+  "delivery_date": "2026-11-30",
+  "project_manager": { "name": "…", "email": "…" }
+}
+```
+
+4. **Checks in code** (pure, in `poDetect.js` / `pdfPurchaseOrder.js`). The
+   model proposes and code decides:
+
+| Check | Rule (failure → review queue, §3.7) |
+| --- | --- |
+| **It is addressed to us** | `vendor.company_name` matches our company (`company_name` setting) or our GSTIN (`company_gstin`), or the PDF text contains either. A PO to someone else, or a PO we issued, is rejected. |
+| **The buyer is not us** | `isUs(buyer)` is false. |
+| **There is a PO number** | It is present, at least 3 characters, and not "Awaited", "Verbal" or "TBD" (reuse `splitReference`'s refusal list). Store it as printed. Compare it **normalised**: lowercase, alphanumerics only, as `import/rules.js` `norm` does. |
+| **Dates** | `po_date` is on or before the email date and no more than 365 days earlier; otherwise the email date is used and flagged. |
+| **Amounts are real** | Every amount used must appear in the PDF text (`amountInText`). Indian grouping is parsed by `parseAmount`/`parseMoney`. |
+| **Lines add up** | `sum(lines) ≈ basic_value`, and `basic + tax ≈ total`, each within ₹1 or 0.5% (`near`). |
+| **Currency** | One of the tracker's currency codes. `register.js` does not check this today; the shared function will (§3.5). |
+| **Confidence** | At least `auto_po_min_confidence` (default **0.85**, higher than for enquiries: a wrong PO moves money). |
+
+### 3.3 Matching the PO to a quotation
+
+These run in order, and the first that gives **exactly one** quotation
+wins:
+
+| # | Signal | Rule |
+| --- | --- | --- |
+| 1 | **Quotation number on the PO** | `our_quotation_ref`, or any `referencesIn().quotations` hit in the PDF text or email, exists in `quotations`. This includes printed numbers kept by phase 1 for PDF quotations. |
+| 2 | **The thread** | The email's thread is linked to a quotation (`email_threads.entity = 'quotation'`), or the conversation holds our outbound quotation email (phase 1 decision with `quotation_no`). |
+| 3 | **Company, then value** | The buyer resolves to a company: by GSTIN (`companies.gstin`), else the sender's contact or domain (`matchParticipants`), else `name_key`. That company's quotations that are **not** won or lost and have no PO are the candidates. One candidate whose value matches the PO (either total incl. GST, or subtotal against basic value) within `auto_po_value_tolerance_percent` (default 2%) wins. If there is exactly one candidate in total, it wins **only** when its value also matches. |
+
+The PO must also be **consistent** with the quotation it matched:
+
+- The quotation's company must be the buyer's company. A GSTIN mismatch,
+  where both are known, means review.
+- A quotation already `Won - PO Received` **with a PO** is not matched
+  again; see duplicates in §3.6.
+- **No match.** The buyer is a known company with open quotations, but
+  none fits: send it to **review**, with those quotations suggested.
+- **No quotation at all.** Nothing on file fits. The default is to
+  **create** the quotation and an enquiry from the PO, then register (§9,
+  question 1). This keeps reports complete for work quoted outside the
+  tracker or before it existed.
+  - The quotation is `Won - PO Received`, with lines from the PO (or
+    totals only, as phase 1 does).
+  - Its `quotation_date` is the PO date.
+  - The enquiry is `Converted`, with source **Existing client** if the
+    company has an earlier PO, else **Other**.
+  - Both are marked as read from email.
+
+### 3.4 Payment stages from the PO's terms
+
+1. Run `payment_terms_text` through the importer's `advanceShare()`, which
+   already ignores GST and TDS percentages and returns "unclear" when
+   there are several.
+2. Map the result with the importer's split rule:
+   - **x% advance** gives two stages: x% `On PO Registration` and
+     (100−x)% `On Delivery`;
+   - **"100% after completion"**, **"on submission of report"** or **"on
+     delivery"** give one stage: 100% `On Delivery`;
+   - **two or three explicit milestones** that sum to 100% give one stage
+     each: `On PO Registration`, `On Milestone` (named after the
+     milestone) and `On Delivery`.
+3. `credit_days` from the PO ("within 30 days of invoice") becomes
+   `payment_terms_days`, defaulting to 30.
+4. If the terms are unclear, use the template that registration would pick
+   today: the service's template, else the default. Flag the PO: "Payment
+   stages are the default; the PO says: *terms*". The PO's terms text
+   itself is kept in the PO's `remarks`, since it is a fact the client
+   typed.
+
+Stages must total exactly 100%. This is checked in code before insert, as
+`register.js:192` does.
+
+### 3.5 Registering
+
+**Extract** the body of `POST /api/quotations/:key/register` into
+`server/src/lib/purchaseOrders.js` `registerPurchaseOrder(db, input, {
+actor, mode })`. This mirrors what phase 1 did with
+`createEnquiryFromEmail`. The route keeps its behaviour and response, and
+gains three guards that automation needs and the UI only implied:
+
+- **Refuse a quotation that already has a PO.** Raising another PO on the
+  same won work goes through the existing CRUD route on the project.
+- **Normalised duplicate check on the PO number.** "PO-123" and "po 123"
+  are the same.
+- **Validate the currency** against the enum.
+
+What automation passes in:
+
+| Input | Value |
+| --- | --- |
+| `po_number`, `po_date`, `currency` | From the PO, after the checks. |
+| `po_value` | **Total including GST**. This is the tracker's convention: revenue = PO value incl. GST (reports plan). If the PO states only a basic value and "GST extra", gross it up with the quotation lines' GST rates (default 18%). The PO's remarks say "Value grossed up for GST; the PO states basic *x*". |
+| `payment_terms_days`, stages | From §3.4. Pass explicit stages, a new input alongside `payment_terms_template_id`. |
+| `document_id` | The PO PDF, uploaded with `uploadDocument({ owner: 'purchase-orders' })` before the transaction, then locked and claimed inside it. Unattached uploads are purged after a day, so an aborted registration leaves no orphan. |
+| Project | The quotation's project if it has one (from `/convert`), else a new project numbered by the **PO date's year**. Today's route uses the current year, which is wrong for a backfilled PO; fix it in the shared function for both callers. `project_manager`/`_email` come from the PO if it names one. `planned_delivery_date` comes from the PO's delivery date. |
+| Quotation | Set `Won - PO Received` with `closed_at` = **PO date**. The stage-sync trigger only fills `closed_at` when it is null, so set it explicitly, or a 2025 PO is won "today". |
+| Enquiry | An enquiry linked to the quotation that is not yet `Converted` is moved to `Converted`, with `converted_at` = PO date. Registration does not do this today, and the reports' "converted to PO" count depends on it. |
+| `po_services` | As today: split from the quotation lines, scaled to the PO value. If the PO has its own lines that add up, use those instead, mapped to `services` by name. |
+| Thread | The email thread is linked to the PO (`entity = 'purchase_order'`), unless it is linked by number to another record (phase 1's `keepRecordLink` rule). |
+
+The owner and `sales_person` stay the quotation's. The registration is
+attributed to "Automatic (email)" in the activity log, which is how phase
+1's automatic records are attributed.
+
+### 3.6 Duplicates, re-sends, amendments, cancellations
+
+| Case | Rule |
+| --- | --- |
+| Same email in two mailboxes | `lower(internet_message_id)` across `email_po_decisions`, as in phase 1. The second copy is logged `linked`, with no AI call. |
+| PO number already registered (by hand, by import, or earlier by email) | Matched by **normalised** number for the same company. Log `linked`. If that PO has no document, attach this PDF. Nothing else changes. |
+| Same PO re-sent with no amendment | As above. |
+| **Amendment** (`document_type = amendment`, or the same number with a higher `amendment_no`) | Do **not** change the PO automatically: an amended value or terms affect invoicing that may already have happened. Raise a **review item**: "PO *x* amended: value *a* → *b*". The reviewer uses the existing revision path, a new PO with `replaces_po_number`. |
+| **Cancellation** | Review item only. Never cancel automatically. |
+| Two POs in one email, or one PO covering two quotations | Review item. |
+| Advisory lock | `pg_advisory_xact_lock(hashtext('auto-po:' || normalised po_number || company_id))`, plus phase 1's message lock, then re-check under the lock. |
+
+### 3.7 The review queue
+
+Anything the rules will not register goes to **one queue**, not silence.
+Reasons for review:
+
+- no match;
+- several matches;
+- a check failed;
+- an amendment or cancellation;
+- confidence below the bar;
+- the vendor is not us.
+
+The queue:
+
+- **Data:** `email_po_decisions` rows with `outcome = 'review'` and a
+  `review_reason` code. No PDF text is stored. The PDF is uploaded **only
+  if** a person registers it.
+- **Screen:** a "POs to review" tab on the **Purchase orders** page, for
+  admins and the quotation owner. Each row shows:
+  - client, PO number and value as read (shown, not stored);
+  - the reason;
+  - the suggested quotation(s);
+  - **Open email**;
+  - **Register against…**, which opens the existing `RegisterPoDialog`
+    pre-filled from a fresh read of the PDF;
+  - **Not a PO**.
+- **What the actions record:** the decision becomes `registered_by_hand`
+  or `dismissed`, with who and when.
+- **Notifications:** one per review item to the quotation owner (or
+  admins). During backfill, one summary instead.
+
+### 3.8 Historical POs (backfill) without flooding the system
+
+A PO from eight months ago is very likely **delivered and invoiced
+already**, outside the tracker. Registering it like a new PO would cause
+three kinds of noise:
+
+- its `On PO Registration` stage becomes **To Invoice**, then Overdue,
+  across Collections, Insights and the finance digest;
+- the PM and salesperson get `po_registered` notifications, and an
+  onboarding checklist is created;
+- the `po.received` webhook fires to n8n.
+
+So `registerPurchaseOrder` takes `mode: 'live' | 'history'`. A PO counts as
+**history** when its PO date is more than `auto_po_history_after_days`
+(default **30**) before the day it is read.
+
+| Effect | `live` | `history` |
+| --- | --- | --- |
+| Project, PO, document, services, quotation won, enquiry converted | yes | yes |
+| Payment stages | from the PO's terms | **none** (default, §9 question 2). The PO shows payment status "No stages", and the review list offers "Add stages" to finance. |
+| `po_registered` notification, onboarding checklist | yes | no |
+| `po.received` / `quotation.won` webhooks | yes | **no**: the webhook trigger skips rows when `current_setting('app.suppress_webhooks', true) = 'on'`, which the history path sets with `SET LOCAL` |
+| Backfill summary | — | one per mailbox: "Read 365 days of sales@…: 37 POs registered, 6 to review" |
+
+The reports and KPIs count POs by `po_date`, so history POs land in the
+right months automatically.
+
+### 3.9 Live sync and backfill wiring
+
+- **Live:** `syncAccount` already hands candidates over. Add a second
+  consumer, `processPoCandidates(account, candidates)`, next to phase 1's.
+  Phase 1's candidates exclude later messages in a thread, so `ingest()`
+  also returns **every stored or dropped inbound message with an
+  attachment or PO words** (a cheap string test). The PO prefilter does the
+  rest. Run PO before enquiry for the same batch, so a PO email can never
+  also start an enquiry.
+- **Backfill:**
+  - a new job, `pos.backfill`, every 10 minutes;
+  - its own cursor table (§4), **Inbox only**, oldest first, 365 days;
+  - the same 4-minute budget and the same **shared** daily AI ceiling
+    (`auto_enquiry_daily_ai_limit`);
+  - it starts by itself for every active mailbox, including those whose
+    phase 1 backfill has finished;
+  - because phase 1 already judged these emails for enquiries, the PO pass
+    is separate and does not re-judge them.
+- **Order across phases:** the PO pass for a mailbox starts only after that
+  mailbox's phase 1 backfill has finished. Enquiries and quotations then
+  exist before POs look for them.
+
+---
+
+## 4. Data
+
+Migration `067_email_purchase_orders.sql`, mirrored in `schema.sql`:
+
+```sql
+-- What was decided about one inbound email that might have been a PO.
+-- Separate from email_enquiry_decisions: a PO email may already have an
+-- enquiry decision, and the outcomes differ. No PDF text is stored.
+CREATE TABLE IF NOT EXISTS email_po_decisions (
+  id                  serial PRIMARY KEY,
+  account_id          int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id         text NOT NULL,
+  internet_message_id text,
+  conversation_id     text,
+  thread_id           int REFERENCES email_threads(id) ON DELETE SET NULL,
+  from_email          text,
+  received_at         timestamptz,
+  outcome             text NOT NULL CHECK (outcome IN
+                        ('registered','linked','review','not_po','registered_by_hand','dismissed')),
+  document_type       text,
+  review_reason       text CHECK (review_reason IN
+                        ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
+                         'value_mismatch','company_mismatch','amendment','cancellation','multiple_pos','unreadable')),
+  mode                text CHECK (mode IN ('live','history')),
+  confidence          numeric(4,3),
+  method              text NOT NULL CHECK (method IN ('ai','rules')),
+  ai_calls            smallint NOT NULL DEFAULT 0,
+  po_number           text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_no        text REFERENCES quotations(quotation_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  suggested_quotations text[],           -- for the review screen
+  created_quotation   boolean NOT NULL DEFAULT false,   -- §3.3 "no quotation at all"
+  stages_source       text CHECK (stages_source IN ('po_terms','template','none')),
+  decided_by          text,              -- set when a person registers or dismisses
+  decided_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+-- + indexes on lower(internet_message_id), po_number, quotation_no, (outcome) WHERE outcome = 'review'
+
+CREATE TABLE IF NOT EXISTS mailbox_po_backfills (   -- same shape as mailbox_enquiry_backfills, inbox only
+  account_id int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  since timestamptz NOT NULL, next_link text, reached timestamptz,
+  scanned int NOT NULL DEFAULT 0, registered int NOT NULL DEFAULT 0, review int NOT NULL DEFAULT 0,
+  started_at timestamptz NOT NULL DEFAULT now(), finished_at timestamptz, last_error text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('auto_po_enabled', 'true', '…'),
+  ('auto_po_min_confidence', '0.85', '…'),
+  ('auto_po_value_tolerance_percent', '2', '…'),
+  ('auto_po_history_after_days', '30', '…'),
+  ('auto_po_create_quotation_when_missing', 'true', '…'),
+  ('po_portal_senders', '*@ansmtp.ariba.com,*@coupahost.com,*@jaggaer.com', '…')
+ON CONFLICT (key) DO NOTHING;
+```
+
+Also in 067:
+
+- `webhook_record_events()` returns early when
+  `current_setting('app.suppress_webhooks', true) = 'on'` (§3.8).
+- A unique index on the normalised PO number. It can only be added once
+  existing duplicates are checked, so first run
+  `SELECT lower(regexp_replace(po_number,'[^a-z0-9]','','gi')), count(*) … HAVING count(*) > 1`
+  on production data. If any are found, use the app-level check only and
+  list them for clean-up.
+
+Derived, not stored:
+
+- "Registered from email" is an EXISTS on `email_po_decisions` with
+  outcome `registered`.
+- "Read from email" on a quotation created from a PO reuses phase 1's flag
+  path.
+
+`scrub.sql` nulls `from_email` in the new table for staging copies.
+
+---
+
+## 5. Files
+
+| File | Change |
+| --- | --- |
+| `server/src/lib/mailbox/poDetect.js` | **New, pure.** `poPrefilter`, `poNumbersIn`, `isPortalSender`, `buildPoPrompt`, `parsePoVerdict`. |
+| `server/src/lib/mailbox/pdfPurchaseOrder.js` | **New, pure** where possible. `rankPoPdfs`, `checkPo` (the §3.2 checks), `stagesFromTerms` (wrapping `advanceShare` and the split rule), `grossUp`. |
+| `server/src/lib/mailbox/autoPurchaseOrder.js` | **New.** `processPoCandidates`, `decidePo`, `matchQuotation`, `backfillPoAccount`, `runPoBackfills`, review-item notifications. Same `deps.chat` test seam as phase 1. |
+| `server/src/lib/purchaseOrders.js` | `registerPurchaseOrder(db, input, { actor, mode })`, extracted from `register.js` with the three guards, explicit stages, PO-date year, `closed_at`, enquiry conversion. |
+| `server/src/routes/register.js` | Calls the shared function. The response is unchanged. |
+| `server/src/lib/mailbox/enquiryDetect.js` | `purchase_order` kind; the prefilter defers PO emails to phase 2. |
+| `server/src/lib/mailbox/sync.js` | `ingest()` also returns later inbound messages with attachments or PO words. `syncAccount` calls `processPoCandidates` before `processCandidates`. |
+| `server/src/import/parse.js`, `import/ai.js`, `import/rules.js` | Export `splitReference`, `parseMoney`, `advanceShare`, the split rule and `norm` for reuse. No behaviour change. |
+| `server/src/jobs.js` | `pos.backfill` (`*/10 * * * *`). |
+| `server/src/routes/purchaseOrders*.js` / `workflow.js` | `GET /api/purchase-orders/review` (scoped: admins see all, sales see their quotations' items), `POST /api/purchase-orders/review/:id/register` (re-reads the PDF and returns the dialog's prefill), `POST /api/purchase-orders/review/:id/dismiss`. |
+| `server/src/routes/mailboxes.js` | The auto-enquiries status gains PO counts and PO backfill progress. Re-run gets a "POs" option. |
+| `server/src/lib/authz/policy.js` | Every new route. |
+| `web/src/pages/PurchaseOrders.jsx` | A "To review" tab, and a "Registered from email" filter. |
+| `web/src/components/RegisterPoDialog.jsx` | Accepts a prefill: number, date, value, currency, terms, stages, document. |
+| `web/src/pages/PurchaseOrderDetail.jsx` | Banner: "Registered automatically from the client's PO emailed on *date*. Check value, terms and stages." **Mark checked** writes an activity entry, as on quotations. `EmailOrigin` line. |
+| `web/src/pages/Mailboxes.jsx` | The Automatic enquiries card becomes "Automatic enquiries and POs", with a second switch and counts. |
+| `docs/email-enquiries.md` | A "Purchase orders" section. Add a `docs/security.md` row: **inbound** PO PDFs' text now goes to the AI provider. |
+
+---
+
+## 6. Operations and safety
+
+- **Switch:** `auto_po_enabled = false` stops PO detection and the PO
+  backfill. Phase 1 is unaffected.
+- **What leaves the server:** for PO candidates only, the email's new text
+  and the PO PDF's text (at most 10 pages), or the file itself for OCR. A
+  client's PO is **their** document, so record this in `security.md`.
+  Nothing is sent for non-candidates.
+- **Money safety:**
+  - nothing is registered below 0.85 confidence;
+  - nothing is registered unless the PO is addressed to us and every amount
+    appears in the PDF;
+  - amendments and cancellations are never applied automatically;
+  - history POs get no stages.
+- **AI cost:** about one call per PO candidate, plus OCR for scanned POs.
+  It shares the phase 1 daily ceiling.
+- **Failure:** an AI or Graph error leaves the email undecided, so the next
+  run retries it. A failed check sends it to review, never to silence.
+
+---
+
+## 7. Build order (one PR each, each shippable)
+
+1. **Groundwork:**
+   - extract `registerPurchaseOrder()` with its guards, explicit stages,
+     PO-date year, `closed_at` and enquiry conversion;
+   - export the importer's parsing rules;
+   - migration 067, including webhook suppression.
+   The register route behaves as before, except for the three guards,
+   which get their own tests.
+2. **Detector and reader (pure):** `poDetect.js`, `pdfPurchaseOrder.js`,
+   and the phase 1 prefilter change. Tests need no network.
+3. **Live automation:** candidates from sync, matching, registration,
+   duplicates, the review queue API, notifications.
+4. **Backfill:** the `pos.backfill` job, history mode, summary
+   notifications.
+5. **Screens:**
+   - the review tab and prefilled `RegisterPoDialog`;
+   - the PO banner and filter;
+   - the Mailboxes card;
+   - docs.
+
+---
+
+## 8. Tests
+
+- **Pure** (`server/test/poDetectRules.test.js`, `pdfPurchaseOrder.test.js`):
+  - **PO words with a PDF** make a candidate; words alone, a remittance
+    advice and a newsletter do not; a portal sender with no PDF does.
+  - **`poNumbersIn`** handles "PO No: 4500012345", "P.O. Number –
+    PO/2026/12" and "WO No. HR-0091", and refuses "Awaited".
+  - **`checkPo`** rejects:
+    - a vendor that is not us;
+    - a buyer that is us;
+    - amounts not found in the text;
+    - lines that do not add up;
+    - a future PO date.
+  - **`stagesFromTerms`** for:
+    - "50% advance, balance on report" → 50/50;
+    - "100% after completion" → 100 On Delivery;
+    - "30% advance, 40% on draft, 30% on final" → three stages;
+    - "advance 18% GST extra" → unclear, so the template is used.
+  - **`grossUp`** with "GST extra".
+- **Database-backed** (`server/test/emailPurchaseOrders.test.js`, test
+  provider, fake `deps.chat`, PDFs built with pdfmake):
+  1. A client reply in the quotation thread, with a PO PDF naming our QT
+     number, registers a PO. It creates the project (PO-date year) and the
+     stages from the PO's terms, attaches the document, marks the
+     quotation won with `closed_at` = PO date, converts the enquiry and
+     logs `registered`.
+  2. A new thread with no QT reference, from a known company with one open
+     quotation of matching value, registers against it.
+  3. The same company with two open quotations of similar value goes to
+     **review** (`several_matches`), with both suggested.
+  4. No quotation on file creates the quotation (won) and enquiry
+     (converted) from the PO, then registers.
+  5. A PO number already registered by hand in another format ("PO-123"
+     vs "po 123") is logged `linked`. The PDF is attached if missing, and
+     nothing new is created.
+  6. The same email in two mailboxes gives one registration.
+  7. An amendment gives a review item, and the PO is unchanged.
+  8. A cancellation gives a review item.
+  9. A PO addressed to another vendor goes to review (`not_to_us`).
+  10. A PO email is never logged as a phase 1 `not_enquiry`, and never
+      makes an enquiry.
+  11. **Backfill:** an eight-month-old PO is registered in history mode,
+      with no stages, no `po_registered` notification, no onboarding tasks
+      and no webhook rows. One summary is sent per mailbox.
+  12. The PO backfill waits for that mailbox's phase 1 backfill to finish.
+  13. **Review actions:** "Register against" returns a prefill, and a
+      manual registration marks the decision `registered_by_hand`.
+      "Dismiss" marks it `dismissed`.
+  14. **Register-route guards:** a quotation that already has a PO is
+      refused (409); a duplicate normalised PO number is refused; a bad
+      currency gets 422.
+  15. `auto_po_enabled = false`: nothing is registered, and phase 1 runs
+      as before.
+- **Authz:** the review routes are scoped. A sales user sees only items
+  for their own quotations.
+- **E2E:** open "To review", use **Register against**, and land on the
+  new PO with its banner.
+
+---
+
+## 9. Decisions for the product owner (defaults given; the build can start with them)
+
+1. **A PO with no quotation in the tracker.** Default: **create** the
+   quotation (won) and the enquiry (converted) from the PO, then register,
+   so reports count it. The alternative is to send it to review and let a
+   person decide.
+2. **Payment stages for historical POs** (older than 30 days when read).
+   Default: **no stages**. They appear in a finance list to add stages and
+   invoices, so Collections is not flooded with false "To Invoice" and
+   "Overdue" stages. The alternative is to create stages anyway.
+3. **PO value different from the quotation.** Default: register at the
+   **PO's value**, since the client's PO is the fact, and flag it on the
+   banner. The value check only helps choose **which** quotation (§3.3);
+   it is not a reason to refuse. The alternative is to send any difference
+   over 2% to review.
+4. **Amended POs.** Default: always review, never applied automatically.
+5. **Confidence bar.** Default **0.85**.
