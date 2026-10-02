@@ -14,19 +14,10 @@
          next-themes probes `dark`, so on such a browser, with "Match the
          system" chosen, this painted dark and next-themes then resolved
          light — a black flash on every load. -->
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem('cetizion.theme');
-          var system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          var mode = stored === 'light' || stored === 'dark' ? stored : stored === 'system' ? system : 'dark';
-          document.documentElement.classList.toggle('dark', mode === 'dark');
-          document.documentElement.style.colorScheme = mode;
-        } catch (e) {
-          document.documentElement.classList.add('dark');
-        }
-      })();
-    </script>
+    <!-- Its own file: the CSP the server sends (script-src 'self') refuses
+         inline scripts. Classic and blocking on purpose, so it runs before
+         anything is painted. -->
+    <script src="/theme-init.js"></script>
     <title>Cetizion — Sales, Projects & Expenses</title>
       <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
