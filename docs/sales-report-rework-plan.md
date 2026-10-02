@@ -445,3 +445,37 @@ N more, see CSV".
 7. **Calendar or financial year** for the presets. Default: both are
    offered; This FY is listed first, since Reports already uses Indian FY
    quarters.
+
+---
+
+## 9. As built
+
+Built on `feat/sales-report-rework`, one commit per step in §6. What is in use now is
+described in [SALES-REPORTS.md](SALES-REPORTS.md). Where the build differs from this plan,
+and why:
+
+- **No multi-colour charts.**
+  - The tracker has no categorical palette, and the outcome colours that were tried
+    failed a colour-blindness check: Lost and Quoted-not-won were too close.
+  - Every chart on screen is one series in the primary colour, with Other and Not set
+    muted, and labelled with n and %. Enquiries by source is a ranked line under the
+    chart, not a stacked bar.
+  - The month-by-month outcome split is text on screen and a table in the PDF. The PDF
+    keeps a donut, whose legend carries n and %.
+- **Revenue is PO value only on its chart.** Invoiced and received are in the month
+  table, so one chart does not mix three measures. `lineOverColumns` was not added.
+- **Invoiced and received are dated by the invoice and the payment**, not grouped under
+  the PO's month as the old revenue report did.
+- **Drill-down uses `report_*` keys.** They are the report's own rules applied to the
+  list (`listClauses`), not a re-implementation of the outcome in list filters, so a
+  list always holds what its bar counted.
+- **The sales review PDF is gone.** It is replaced by the six-section PDF. The detailed
+  tables of the old page stay as CSVs under More analysis: sector funnel, repeat/single
+  clients, FX deals, order intake, invoicing, payment status and overdue.
+- **There is no logo in the PDF header.** No logo setting exists; the company name from
+  Settings is used.
+- **The e2e checks the PDF download, not its text.** `pdf-parse` was not added as a
+  dependency. The six headings and their order are checked on the document definition in
+  `reportPdf.test.js`.
+- **Order intake in `revenueReport` is on the PO basis** (§6 step 6), so it matches
+  section 6.

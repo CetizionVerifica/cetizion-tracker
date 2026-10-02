@@ -33,7 +33,7 @@ const CHART_NEEDS = '(min-width: 640px)';
  * Rows are `{ key, cells: [...strings], href? }`, so the twin is built from
  * the same array the chart is and cannot drift away from it.
  */
-export function ChartCard({ title, meta, columns, rows, footnote, children, height = 260 }) {
+export function ChartCard({ title, meta, columns, rows, footnote, children, height = 260, actions }) {
   const roomForAChart = useMediaQuery(CHART_NEEDS);
   const [chosen, setChosen] = useState(null);
   const asTable = chosen ?? !roomForAChart;
@@ -50,6 +50,7 @@ export function ChartCard({ title, meta, columns, rows, footnote, children, heig
             <CardTitle className="text-[15px]">{title}</CardTitle>
             {meta && <CardDescription className="mt-0.5">{meta}</CardDescription>}
           </div>
+          {actions}
           <Button
             type="button"
             variant="outline"

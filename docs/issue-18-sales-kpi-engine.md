@@ -13,7 +13,7 @@ Phase 4 delivers the backend foundation for individual sales KPI reporting, admi
 A critical principle of Phase 4 is the architectural separation between:
 1. **Current Workload & Active Pipeline**: Who is currently responsible for progressing or delivering an active deal (`owner_user_id`).
 2. **Historical Creation & Cohort Performance**: Which salesperson originally originated the business opportunity (`originating_user_id`, `originating_user_snapshot_id`, `originating_user_name`).
-3. **Financial Attribution & Honest Boundaries**: Strict distinction between authoritative financial metrics (such as order intake derived from won deals) and structurally unavailable metrics (such as annual cash collections).
+3. **Financial Attribution & Honest Boundaries**: Strict distinction between authoritative financial metrics (such as order intake derived from the purchase orders received) and structurally unavailable metrics (such as annual cash collections).
 
 Backend only. React dashboards, visual charts, and target management forms are deferred to future frontend phases.
 
@@ -79,7 +79,7 @@ Operates on `COALESCE(originating_user_id, originating_user_snapshot_id) = $user
 * `cohort_win_rate_percentage`: $\frac{\text{quotations\_cohort\_won}}{\text{quotations\_cohort\_won} + \text{quotations\_cohort\_lost}} \times 100$. Returns `null` if closed count is 0.
 
 ### Category C: Financial Performance
-* `order_intake_inr`: Total value of won quotations dated in the calendar year originated by the salesperson, converted to INR via dated FX rates. Deals in foreign currencies without a matching rate are flagged in `order_intake_unconverted_deals`.
+* `order_intake_inr`: Total value, including GST, of the purchase orders that count as a sale (not cancelled, not replaced by a revision) dated in the calendar year by PO date, credited to the salesperson who originated the deal, converted to INR at the rate on the PO date. A PO is credited to its quotation's originator, or its project's when it has no quotation; when both are known and differ it is credited to nobody (see `origin_conflict_deals`). `order_intake_orders` counts those POs, and POs in a currency with no matching rate are flagged in `order_intake_unconverted_deals`. This is the same basis as the Reports section's monthly revenue ([SALES-REPORTS.md](SALES-REPORTS.md)); until October 2026 it was won quotations by quotation date, so targets set against the old figure read differently.
 * `collections`: **Explicitly Unavailable**. The application returns:
   ```json
   {
@@ -95,8 +95,8 @@ Operates on `COALESCE(originating_user_id, originating_user_snapshot_id) = $user
 ### Category E: Admin Team-Wide Reporting
 Aggregates performance across all salespeople and maintains strict separation between attributed and unattributed business:
 * `team_pipeline_summary`: Separates `assigned` vs `unassigned` open quotations and pipeline value.
-* `team_order_intake_summary`: Separates `attributed` vs `unattributed` won quotation counts and intake value. Unattributed intake is never artificially credited to any sales rep.
-* `origin_conflict_deals`: Flags purchase orders linked to both a project and a quotation where the project origin differs from the quotation origin. Attribution is left unresolved (`unresolved_conflict`) rather than guessing.
+* `team_order_intake_summary`: Separates `attributed` vs `unattributed` order intake (`*_orders` counts and `*_intake_value_inr`), on the basis above. Unattributed intake — no known originator, or conflicting ones — is never artificially credited to any sales rep.
+* `origin_conflict_deals`: Flags purchase orders that count as a sale whose quotation (by the same PO-to-quotation rule the reports use) and project have different originators. Attribution is left unresolved (`unresolved_conflict`) rather than guessing, and the PO's value counts as unattributed intake.
 * `salespeople`: Array of individual salesperson KPI reports.
 
 ---

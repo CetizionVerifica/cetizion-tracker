@@ -72,6 +72,21 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
     return res.headers['set-cookie'];
   };
 
+  /**
+   * The PO that makes a won quotation order intake (salesKpis.js
+   * creditedOrders): on a project of its own with no originator, so the
+   * credit follows the quotation's.
+   */
+  async function orderFor(quotationNo, poDate, value, { cancelled = false } = {}) {
+    const project = `P-${quotationNo}`;
+    await db.query('INSERT INTO projects (project_id, client_name) VALUES ($1, $2)', [project, 'Order Corp']);
+    await db.query(
+      `INSERT INTO purchase_orders (po_number, project_id, quotation_no, po_date, po_value, currency, cancelled)
+       VALUES ($1, $2, $3, $4, $5, 'INR', $6)`,
+      [`PO-${quotationNo}`, project, quotationNo, poDate, value, cancelled]
+    );
+  }
+
   async function setUp() {
     await db.query('DELETE FROM sales_targets');
     await db.query('DELETE FROM activity_log');
@@ -218,7 +233,12 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
       .set('Cookie', salesA.cookie);
     assert.equal(resKpiA.status, 200);
     assert.equal(resKpiA.body.data.historical_cohort_performance.quotations_cohort_won, 1);
-    assert.equal(resKpiA.body.data.financial_performance.order_intake_inr, 300000);
+    // Won, but no PO yet: no order intake. The PO arrives, and it is A's.
+    assert.equal(resKpiA.body.data.financial_performance.order_intake_inr, 0);
+    await orderFor('CTZ/QT/2026/020', '2026-02-10', 300000);
+    const withPo = await request(app).get('/api/kpis/me?year=2026').set('Cookie', salesA.cookie);
+    assert.equal(withPo.body.data.financial_performance.order_intake_inr, 300000);
+    assert.equal(withPo.body.data.financial_performance.order_intake_orders, 1);
 
     // Check Sales B's KPIs:
     // Sales B has 0 cohort won deals
@@ -242,6 +262,10 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
         ('QT-2026-DEC', 'Dec Corp',   '2026-12-31', 100000, 'INR', 'Won - PO Received', $1, $1, $1, 'Sam Sales'),
         ('QT-2027-JAN', 'Next Corp',  '2027-01-01', 100000, 'INR', 'Won - PO Received', $1, $1, $1, 'Sam Sales')
     `, [salesA.user.id]);
+    // Intake follows the PO date: each order dated like its quotation.
+    for (const [no, day] of [['QT-2025-DEC', '2025-12-31'], ['QT-2026-JAN', '2026-01-01'], ['QT-2026-DEC', '2026-12-31'], ['QT-2027-JAN', '2027-01-01']]) {
+      await orderFor(no, day, 100000);
+    }
 
     const res2026 = await request(app)
       .get('/api/kpis/me?year=2026')
@@ -279,6 +303,14 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
       VALUES ('QT-DELETE', 'Snap Corp', '2026-05-01', 400000, 'INR', 'Won - PO Received', $1, $1, $1, 'Sam Sales')
     `, [salesA.user.id]);
 
+    await orderFor('QT-DELETE', '2026-05-10', 400000);
+    // A cancelled order is no order intake for anyone.
+    await db.query(`
+      INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, currency, status, owner_user_id, originating_user_id, originating_user_snapshot_id, originating_user_name)
+      VALUES ('QT-CANCELLED', 'Snap Corp', '2026-05-01', 900000, 'INR', 'Won - PO Received', $1, $1, $1, 'Sam Sales')
+    `, [salesA.user.id]);
+    await orderFor('QT-CANCELLED', '2026-05-11', 900000, { cancelled: true });
+
     // Hard delete Sales A (without targets so delete passes)
     await db.query('DELETE FROM users WHERE id = $1', [salesA.user.id]);
 
@@ -303,8 +335,9 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
       .get('/api/kpis/team?year=2026')
       .set('Cookie', admin.cookie);
     assert.equal(resTeam.status, 200);
-    assert.equal(resTeam.body.data.team_order_intake_summary.attributed_won_quotations, 1);
+    assert.equal(resTeam.body.data.team_order_intake_summary.attributed_orders, 1);
     assert.equal(resTeam.body.data.team_order_intake_summary.attributed_intake_value_inr, 400000);
+    assert.equal(resTeam.body.data.team_order_intake_summary.total_orders, 1);
   });
 
   test('conflicting PO origins are flagged and left unresolved to prevent arbitrary attribution', async () => {
@@ -339,6 +372,13 @@ describe('sales KPI engine and financial attribution', { skip: !ADMIN_URL && 'se
     assert.equal(conflict.quotation_origin_user_id, salesA.user.id);
     assert.equal(conflict.project_origin_user_id, salesB.user.id);
     assert.equal(conflict.resolution_status, 'unresolved_conflict');
+
+    // And its value is credited to nobody: unattributed for the team, in neither rep's intake.
+    assert.equal(resTeam.body.data.team_order_intake_summary.unattributed_orders, 1);
+    assert.equal(resTeam.body.data.team_order_intake_summary.unattributed_intake_value_inr, 500000);
+    const intakeOf = (user) => resTeam.body.data.salespeople
+      .find((p) => p.salesperson.id === user.user.id).financial_performance.order_intake_inr;
+    assert.deepEqual([intakeOf(salesA), intakeOf(salesB)], [0, 0]);
   });
 
   /**

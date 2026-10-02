@@ -179,6 +179,8 @@ test('every report chart has a table twin, and its rows link into the list', asy
   await signIn(page);
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
+  // These charts sit under More analysis, below the six questions, folded until opened.
+  await page.getByText('More analysis: pipeline, ageing, cash, win rate').click();
 
   // Before the toggle is touched: the chart is hidden from the tree and the
   // twin is there in text. A band with nothing in it still has a row.
@@ -353,3 +355,73 @@ test('choosing light mode takes the dark class off the document', async ({ page 
   await page.reload();
   await expect(page.locator('html')).not.toHaveClass(/dark/);
 });
+
+/**
+ * Reports (docs/sales-report-rework-plan.md §7): pick "Last month", follow
+ * the Lost slice into the enquiries it counted — the same number, by the
+ * same rules — and download the period as a PDF. An enquiry lost last month
+ * is made first, so the slice is never empty whatever the database holds.
+ */
+test('a Reports slice opens exactly the records it counted, and the PDF downloads', async ({ page }) => {
+  await signIn(page);
+
+  const now = new Date();
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+  const day = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}-15`;
+  // An enquiry leaves New only with a source, and is Unqualified only with a reason.
+  const [source] = (await (await page.request.get('/api/lead-sources')).json()).data;
+  const made = await page.request.post('/api/enquiries', {
+    data: { client_name: `E2E Lost ${stamp}`, enquiry_date: day, status: 'Unqualified', source_id: source.id, unqualified_notes: 'End-to-end test' },
+  });
+  expect(made.ok(), await made.text()).toBeTruthy();
+
+  await page.goto('/reports');
+  await page.getByLabel('Period').selectOption('last-month');
+  await expect(page.getByRole('heading', { name: '2. What happened to them?' })).toBeVisible();
+
+  const from = new URL(page.url()).searchParams.get('from');
+  const to = new URL(page.url()).searchParams.get('to');
+  const report = (await (await page.request.get(`/api/reports/sales?from=${from}&to=${to}`)).json()).data;
+  const lost = report.outcomes.slices.find((s) => s.key === 'lost').count;
+  expect(lost).toBeGreaterThan(0);
+
+  // The table twin's link is the keyboard path to where the bar goes.
+  const outcome = page.locator('section', { has: page.getByRole('heading', { name: '2. What happened to them?' }) });
+  await outcome.getByRole('button', { name: /Open as table/ }).click();
+  await outcome.getByRole('link', { name: 'Lost', exact: true }).click();
+
+  await expect(page).toHaveURL(/\/enquiries\?.*report_outcome=lost/);
+  await expect(page.getByText(`The ${lost} record${lost === 1 ? '' : 's'} behind the Reports chart`)).toBeVisible();
+  await expect(page.getByText(`E2E Lost ${stamp}`)).toBeVisible();
+
+  await page.goto(`/reports?from=${from}&to=${to}`);
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('link', { name: 'Download PDF' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe(`cetizion-sales-report-${from}-to-${to}.pdf`);
+  const pdf = readFileSync(await download.path());
+  expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+
+  // Read it back: the six questions, in the order the screen asks them.
+  const text = await pdfText(pdf);
+  const headings = [
+    '1. How many enquiries did we receive?', '2. What happened to them?', '3. Which sectors gave us POs?',
+    '4. Which services sell best?', '5. New and existing customers', '6. Monthly revenue', 'Notes and what to fix',
+  ];
+  const at = headings.map((h) => text.lastIndexOf(h));
+  expect(at.every((i) => i >= 0), `every heading is in the PDF: ${JSON.stringify(at)}`).toBeTruthy();
+  expect([...at].sort((a, b) => a - b)).toEqual(at);
+});
+
+/** A PDF's text, page after page, with its whitespace collapsed. pdf.js reads it in Node, no browser. */
+async function pdfText(buffer) {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await getDocument({ data: new Uint8Array(buffer), useSystemFonts: true }).promise;
+  const pages = [];
+  for (let n = 1; n <= doc.numPages; n += 1) {
+    const content = await (await doc.getPage(n)).getTextContent();
+    pages.push(content.items.map((item) => item.str).join(' '));
+  }
+  return pages.join(' ').replace(/\s+/g, ' ').replace(/(\d)\. +/g, '$1. ');
+}

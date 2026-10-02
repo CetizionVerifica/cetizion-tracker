@@ -2,7 +2,7 @@
 
 A plain-language account of what has been built, what is being built, and what
 is waiting on a decision. Updated with every pull request. Last update:
-17 September 2026.
+2 October 2026.
 
 ## Where things stand
 
@@ -259,6 +259,27 @@ email opens the record with the logging form ready.
 **Before it goes live.** It is switched off. The lead chooses the management
 addresses in Settings, tries it in test mode, then switches it on.
 
+### Reports: six questions for any period (in review)
+
+**What it does.** The Reports page now answers the six questions the sales lead
+asked, for any period: how many enquiries came in (per day, week or month), what
+happened to them (converted to a PO, still in the pipeline, quoted but not won,
+or lost), which sectors gave us POs, which services sell best, which customers
+are new and which orders are repeats, and the PO value each month with the sales
+behind it. Every bar opens the exact records it counted.
+
+**Same numbers everywhere.** The screen, the downloads and the PDF are built from
+one set of rules, so they always agree. Revenue is PO value including GST, by
+PO date. "Lost" means an enquiry closed without ever being quoted; a quotation
+that did not win is shown separately.
+
+**Sectors and services.** An admin chooses the headline sectors and service lines
+under Settings, and which spellings count as which ("Steel" as Metal Industry).
+Nothing already typed on a record is changed.
+
+**Also fixed.** The light/dark theme now loads before the page appears, and a
+Windows-saved CSV keeps its dashes on import.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -297,10 +318,19 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 - **Server access for the platform items (#33, #34, #35).** The lead's own
   notes rank backups and closing the database port as the most urgent items in
   the whole list. They need access we do not have.
+- **Sales targets after the Reports change.** A salesperson's order intake now
+  counts the POs received, by PO date, so it matches the Reports page. It used
+  to count quotations marked won. Targets already set for 2026 will read
+  differently; the lead should confirm this is the measure targets are set on.
 - **Accounts:** an SMTP mailbox for reminders, a Microsoft 365 app registration
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-02: Reports rework (six questions, one PDF, admin-chosen sectors and
+  services) built on `feat/sales-report-rework` and opened for review as one
+  pull request. Salesperson order intake moves to POs received; needs the
+  lead's confirmation for targets.
 
 - 2026-10-01: Follow-up reminders to owners and escalation to management
   built on `feat/follow-up-escalation`, switched off until the lead turns

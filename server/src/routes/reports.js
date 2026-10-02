@@ -6,6 +6,11 @@
  *   GET /api/reports/conversion?by=sector    won / lost / rate by sector, owner or service
  *   GET /api/reports/quoted-won?months=6     what was quoted against what was won, by month
  *   GET /api/reports/by-status               open deals by the status they are sitting in
+ *   GET /api/reports/sales?from=&to=&grain=&owner=
+ *                                            the Reports section's questions for a period
+ *                                            (lib/reportDefinitions.js)
+ *   GET /api/reports/categories              admin: the sector and service categories, and
+ *                                            what every spelling in use counts under
  *
  * Pipeline by stage comes from /api/pipeline, ageing from /api/collections
  * and the cash bands from /api/cashflow. Only win rate had nowhere to come
@@ -27,6 +32,9 @@ import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { financialQuarter, recentQuarters } from '../lib/quarters.js';
+import { categoryUsage, reportGrain, reportScope, salesReport } from '../lib/reportDefinitions.js';
+import { requireAdmin } from '../auth/middleware.js';
+import { reportPeriod } from '../lib/salesReport.js';
 import { ownerClause, scopeOf } from '../auth/ownership.js';
 
 export const reportsRouter = Router();
@@ -203,4 +211,25 @@ reportsRouter.get('/by-status', async (req, res) => {
     params
   );
   res.json({ data: { statuses: rows, foreign: rows.reduce((n, r) => n + r.foreign_deals, 0) } });
+});
+
+/**
+ * The Reports section for a period, every question in one round trip. An
+ * admin may narrow it to one salesperson with ?owner=<user id>; a sales
+ * user always sees their own records, whatever ?owner= says.
+ */
+reportsRouter.get('/sales', async (req, res) => {
+  const period = reportPeriod(req.query);
+  const grain = reportGrain(req.query, period);
+  res.json({ data: await salesReport(period, { grain, scope: reportScope(scopeOf(req), req.query) }) });
+});
+
+/**
+ * Settings → Reports: the category lists, the aliases, and where every sector
+ * spelling and catalogue service lands today. Admin-only: it names sectors
+ * from every record, not just the caller's. The lists themselves are saved
+ * through /api/settings, /api/sector-aliases and /api/services.
+ */
+reportsRouter.get('/categories', requireAdmin, async (req, res) => {
+  res.json({ data: await categoryUsage() });
 });

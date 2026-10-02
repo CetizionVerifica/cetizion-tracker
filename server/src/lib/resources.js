@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
+import { REPORT_LIST_KEYS, reportListClauses, saveSectorAlias, saveServiceReportLine } from './reportDefinitions.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
@@ -181,8 +182,10 @@ export const resources = {
     filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
-    listClauses: enquiryListClauses,
-    computedFilters: ['risk', 'owner'],
+    // Insights' filters (?risk=, ?owner=) and the records behind a Reports
+    // chart (?report_from=&report_outcome=…), each worked out by its own rules.
+    listClauses: async (q, ctx) => [...await enquiryListClauses(q, ctx), ...await reportListClauses('enquiries', q, ctx)],
+    computedFilters: ['risk', 'owner', ...REPORT_LIST_KEYS],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -387,8 +390,13 @@ export const resources = {
     dateFilter: 'po_date',
     // ?live=1: not cancelled and not replaced by a revision, the POs the
     // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
-    listClauses: async (q) => (String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
-    computedFilters: ['live'],
+    // And the records behind a Reports chart (?report_from=&report_sector=…),
+    // picked by the report's own rules, so the list holds what the bar counted.
+    listClauses: async (q, ctx) => [
+      ...(String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+      ...await reportListClauses('pos', q, ctx),
+    ],
+    computedFilters: ['live', ...REPORT_LIST_KEYS],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
@@ -904,6 +912,23 @@ export const resources = {
     schema: z.object({ name: requiredStr(120), active: bool(), sort_order: int().default(0) }),
   },
 
+  'sector-aliases': {
+    // A Settings list (065): a spelling of a sector that the Reports section
+    // counts under one of its headline sectors ("Steel" -> Metal Industry).
+    // Nothing on a quotation or enquiry changes. Admins curate it.
+    adminOnlyWrites: true,
+    table: 'sector_aliases',
+    view: null,
+    label: 'Sector alias',
+    defaultSort: 'sector, alias',
+    search: ['alias', 'sector'],
+    filters: ['sector'],
+    columns: ['alias', 'sector'],
+    schema: z.object({ alias: requiredStr(120), sector: requiredStr(120) }),
+    // The sector must be a headline sector (Settings → Report categories).
+    onSave: saveSectorAlias,
+  },
+
   'lost-reasons': {
     // A Settings list. Deleting one blanks it on every lost quotation and
     // unqualified enquiry, through ON DELETE SET NULL.
@@ -928,7 +953,7 @@ export const resources = {
     defaultSort: 'sort_order, name',
     search: ['name'],
     filters: ['active'],
-    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id'],
+    columns: ['name', 'active', 'sort_order', 'code', 'sac_code', 'default_rate', 'currency', 'gst_rate', 'unit', 'description', 'renewal_interval_months', 'renewal_lead_days', 'onboarding_template_id', 'payment_terms_template_id', 'report_line'],
     schema: z.object({
       name: requiredStr(200),
       active: bool(),
@@ -944,7 +969,11 @@ export const resources = {
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
       onboarding_template_id: int({ min: 1 }),
       payment_terms_template_id: int({ min: 1 }),
+      // The Reports section's service line (065); blank = matched by name.
+      report_line: str(120),
     }),
+    // A report line, when set, must be one of the listed service lines.
+    onSave: saveServiceReportLine,
   },
 
   'quotation-lines': {

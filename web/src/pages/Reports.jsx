@@ -1,35 +1,184 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
 import { PageHeader } from '../App.jsx';
 import { AGE_COLOUR, AXIS, BAR, BAR_LABEL, CASH_BANDS, ChartCard, ChartTip, GRID, HOVER, ROW_CHART, ZERO_BAR } from '../components/charts.jsx';
 import { ChartContainer, ChartTooltip } from '../components/ui/chart.tsx';
-import { Alert, Select } from '../components/ui.jsx';
+import { Alert, Input, Select } from '../components/ui.jsx';
+import {
+  CustomersSection, DataNotes, EnquiriesSection, OutcomesSection, RevenueSection, SectorsSection, ServicesSection, SummaryStrip,
+} from '../components/SalesReportSections.jsx';
+import { useAuth } from '../lib/auth.jsx';
+import { PRESETS, defaultGrain, localToday, presetPeriod, readReportQuery } from '../lib/reportPeriods.js';
 import { Skeleton } from '../components/ui/skeleton.tsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, number, percent } from '../lib/format.js';
+import { date, money, number, percent } from '../lib/format.js';
 
 /**
- * Reports (#22): seven charts, each with a table twin, each bar a link into
- * the list it counts.
+ * Reports: six questions about a period on top (docs/sales-report-rework-
+ * plan.md, components/SalesReportSections.jsx), and below them the seven
+ * charts of #22 under More analysis — each with a table twin, each bar a
+ * link into the list it counts.
  *
  * Every figure here is INR. A deal or an invoice in another currency is not
  * converted at a made-up rate and not silently dropped either — it is
  * counted where the number is a count, left out where the number is money,
  * and said so under the chart that leaves it out.
  *
- * There is no "This FY / Quarter / Custom" switch. Three of the four
- * questions here are about now — what is open, what is owed, what is coming
- * — and a control that reframed only the fourth would be a control that
- * mostly does nothing. The horizon that genuinely changes a chart is the
- * one offered.
+ * The period control drives the six questions only. The charts under More
+ * analysis are about now — what is open, what is owed, what is coming — and
+ * keep the one horizon that genuinely changes them.
  */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(2, 4)}`;
 const inr = (value) => money(value, 'INR', { compact: true });
 
 export default function Reports() {
+  const { isAdmin } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const today = localToday();
+  const { from, to, grain, owner, preset } = readReportQuery(searchParams, today);
+  const [custom, setCustom] = useState(preset === 'custom');
+  const scope = { from, to, owner, grain };
+
+  const query = new URLSearchParams({ from, to, ...(grain && { grain }), ...(owner && { owner }) });
+  const report = useFetch(() => api.raw(`/reports/sales?${query}`), [query.toString()]);
+  const users = useFetch(() => (isAdmin ? api.users.list() : Promise.resolve({ data: [] })), [isAdmin]);
+  const d = report.data?.data;
+
+  /** Every control writes the address bar; the page reads it back. */
+  const update = (next) => {
+    const merged = { from, to, grain, owner, ...next };
+    setSearchParams(Object.fromEntries(Object.entries(merged).filter(([, v]) => v)), { replace: true });
+  };
+  const choosePreset = (key) => {
+    if (key === 'custom') { setCustom(true); return; }
+    setCustom(false);
+    // A new period starts at its own default grain, not the last one picked.
+    update({ ...presetPeriod(key, today), grain: '' });
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Reports"
+        subtitle={`${date(from)} – ${date(to)} · All figures in ₹ at the rate on each record's own date. Every bar opens the records behind it.`}
+        actions={(
+          <>
+            <Select
+              value={custom ? 'custom' : preset}
+              placeholder={null}
+              aria-label="Period"
+              options={PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+              onChange={(e) => choosePreset(e.target.value)}
+            />
+            {(custom || preset === 'custom') && (
+              <>
+                <Input type="date" aria-label="From" value={from} max={to} onChange={(e) => e.target.value && update({ from: e.target.value, grain: '' })} />
+                <Input type="date" aria-label="To" value={to} min={from} onChange={(e) => e.target.value && update({ to: e.target.value, grain: '' })} />
+              </>
+            )}
+            <Select
+              value={grain || d?.grain || defaultGrain(from, to)}
+              placeholder={null}
+              aria-label="Group enquiries by"
+              options={[{ value: 'day', label: 'Group by: day' }, { value: 'week', label: 'Group by: week' }, { value: 'month', label: 'Group by: month' }]}
+              onChange={(e) => update({ grain: e.target.value === defaultGrain(from, to) ? '' : e.target.value })}
+            />
+            {isAdmin && (
+              <Select
+                value={owner}
+                placeholder="Owner: everyone"
+                aria-label="Owner"
+                options={(users.data?.data || []).map((u) => ({ value: String(u.id), label: `Owner: ${u.name}` }))}
+                onChange={(e) => update({ owner: e.target.value })}
+              />
+            )}
+            <a
+              className="btn"
+              href={api.reportPdfUrl({ from, to, ...(grain && { grain }), ...(owner && { owner }) })}
+              download
+              title="These six questions for this period, as a PDF"
+            >
+              Download PDF
+            </a>
+          </>
+        )}
+      />
+      <div className="page stack">
+        {report.error && <Alert tone="danger"><span>{report.error}</span></Alert>}
+        {report.loading && !d && <Loading height={480} />}
+        {d && (
+          <>
+            <SummaryStrip report={d} scope={scope} />
+            <DataNotes notes={d.notes} staleRates={d.stale_rates} />
+            <div className="@container">
+              <div className="grid gap-6 @3xl:grid-cols-2">
+                <EnquiriesSection report={d} scope={scope} />
+                <OutcomesSection report={d} scope={scope} />
+                <SectorsSection report={d} scope={scope} />
+                <ServicesSection report={d} scope={scope} />
+                <CustomersSection report={d} scope={scope} />
+                <RevenueSection report={d} scope={scope} />
+              </div>
+            </div>
+          </>
+        )}
+        <MoreAnalysis from={from} to={to} owner={owner} />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The charts Reports had before the six questions (#22): pipeline, ageing,
+ * cash, win rate and conversion. They answer "where do things stand now",
+ * not "what happened in the period", so they keep their own two controls
+ * and sit below, folded until opened.
+ */
+function MoreAnalysis({ from, to, owner }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="cursor-pointer py-2 text-[15px] font-semibold text-foreground">
+        More analysis: pipeline, ageing, cash, win rate
+      </summary>
+      {open && <AnalysisCharts />}
+      {open && <DetailedDownloads from={from} to={to} owner={owner} />}
+    </details>
+  );
+}
+
+/**
+ * The detailed tables the old Sales reports page offered, as CSVs for the
+ * period and owner above. The six questions replaced that page; these
+ * answer the questions it asked that they do not.
+ */
+const DETAILED_CSVS = [
+  ['sectors', 'Sector funnel: enquiries, quoted, lost and win rate'],
+  ['customers', 'Clients: repeat or single, deals to date'],
+  ['fx', 'Deals in another currency, and the rates used'],
+  ['orders', 'Order intake per month'],
+  ['invoicing', 'Invoicing and collections per month'],
+  ['payment-status', 'POs by payment status'],
+  ['overdue', 'Overdue invoices by client'],
+];
+
+function DetailedDownloads({ from, to, owner }) {
+  return (
+    <div className="mt-4 rounded-[10px] border border-border px-4 py-3 text-[13px]">
+      <div className="font-medium text-foreground">Detailed tables for {date(from)} – {date(to)}</div>
+      <ul className="mt-1.5 grid gap-1 @3xl:grid-cols-2">
+        {DETAILED_CSVS.map(([name, label]) => (
+          <li key={name}><a href={api.reportCsvUrl(name, { from, to, ...(owner && { owner }) })} download>{label} (CSV)</a></li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AnalysisCharts() {
   const navigate = useNavigate();
   const [horizon, setHorizon] = useState('6');
   const [dimension, setDimension] = useState('owner');
@@ -42,65 +191,49 @@ export default function Reports() {
   const quotedWon = useFetch(() => api.raw(`/reports/quoted-won?months=${horizon}`), [horizon]);
   const byStatus = useFetch(() => api.raw('/reports/by-status'), []);
 
-  const financialYear = useMemo(() => {
-    const today = winRate.data?.data?.today || cashflow.data?.data?.today;
-    if (!today) return null;
-    const [year, month] = today.split('-').map(Number);
-    const start = month >= 4 ? year : year - 1;
-    return `${start}–${String((start + 1) % 100).padStart(2, '0')}`;
-  }, [winRate.data, cashflow.data]);
-
   const errors = [pipeline.error, collections.error, cashflow.error, winRate.error, conversion.error, quotedWon.error, byStatus.error].filter(Boolean);
 
   return (
-    <>
-      <PageHeader
-        title="Reports"
-        subtitle={`${financialYear ? `Financial year ${financialYear} · ` : ''}All figures in ₹, at the rate on each record's own date. Every bar links into the list behind it.`}
-        actions={(
-          <>
-            {/* Two controls, and each one genuinely reframes a chart: the
-                horizon moves the cash bands and the months on quoted-vs-won,
-                the dimension regroups the win-rate bars. */}
-            <Select
-              value={horizon}
-              placeholder={null}
-              aria-label="Months shown"
-              options={[{ value: '3', label: 'Months: 3' }, { value: '6', label: 'Months: 6' }, { value: '12', label: 'Months: 12' }]}
-              onChange={(e) => setHorizon(e.target.value)}
-            />
-            <Select
-              value={dimension}
-              placeholder={null}
-              aria-label="Win rate grouped by"
-              options={[{ value: 'owner', label: 'Win rate by: owner' }, { value: 'sector', label: 'Win rate by: sector' }, { value: 'service', label: 'Win rate by: service' }]}
-              onChange={(e) => setDimension(e.target.value)}
-            />
-          </>
-        )}
-      />
-      <div className="page stack">
-        {errors.map((message, i) => <Alert key={i} tone="danger"><span>{message}</span></Alert>)}
+    <div className="stack mt-3">
+      {/* Two controls, and each one genuinely reframes a chart: the
+          horizon moves the cash bands and the months on quoted-vs-won,
+          the dimension regroups the win-rate bars. */}
+      <div className="flex flex-wrap gap-2">
+        <Select
+          className="w-auto"
+          value={horizon}
+          placeholder={null}
+          aria-label="Months shown"
+          options={[{ value: '3', label: 'Months: 3' }, { value: '6', label: 'Months: 6' }, { value: '12', label: 'Months: 12' }]}
+          onChange={(e) => setHorizon(e.target.value)}
+        />
+        <Select
+          className="w-auto"
+          value={dimension}
+          placeholder={null}
+          aria-label="Win rate grouped by"
+          options={[{ value: 'owner', label: 'Win rate by: owner' }, { value: 'sector', label: 'Win rate by: sector' }, { value: 'service', label: 'Win rate by: service' }]}
+          onChange={(e) => setDimension(e.target.value)}
+        />
+      </div>
+      {errors.map((message, i) => <Alert key={i} tone="danger"><span>{message}</span></Alert>)}
 
-        {/* Two columns when the page itself is wide enough for them, not when
-            the window is — the sidebar takes 15rem of that window, and a
-            container query measures the content box, so the breakpoint is a
-            step below the one the window would want. The container has to be
-            an ancestor of the thing that queries it: both classes on one
-            element is a query against nothing. */}
-        <div className="@container">
-          <div className="grid gap-4 @3xl:grid-cols-2">
-            <PipelineChart state={pipeline} onOpen={(stageId) => navigate(`/quotations?stage_id=${stageId}`)} />
-            <AgeingChart state={collections} onOpen={(bucket) => navigate(`/collections?bucket=${encodeURIComponent(bucket)}`)} />
-            <CashChart state={cashflow} horizon={horizon} onOpen={(month) => navigate(`/cashflow?month=${month}`)} />
-            <WinRateChart state={winRate} />
-            <QuotedWonChart state={quotedWon} horizon={horizon} onOpen={(month) => navigate(`/quotations?month=${month}`)} />
-            <ConversionChart state={conversion} />
-            <StatusChart state={byStatus} onOpen={(status) => navigate(`/quotations?status=${encodeURIComponent(status)}`)} />
-          </div>
+      {/* Two columns when the page itself is wide enough for them, not when
+          the window is. The container has to be an ancestor of the thing
+          that queries it: both classes on one element is a query against
+          nothing. */}
+      <div className="@container">
+        <div className="grid gap-4 @3xl:grid-cols-2">
+          <PipelineChart state={pipeline} onOpen={(stageId) => navigate(`/quotations?stage_id=${stageId}`)} />
+          <AgeingChart state={collections} onOpen={(bucket) => navigate(`/collections?bucket=${encodeURIComponent(bucket)}`)} />
+          <CashChart state={cashflow} horizon={horizon} onOpen={(month) => navigate(`/cashflow?month=${month}`)} />
+          <WinRateChart state={winRate} />
+          <QuotedWonChart state={quotedWon} horizon={horizon} onOpen={(month) => navigate(`/quotations?month=${month}`)} />
+          <ConversionChart state={conversion} />
+          <StatusChart state={byStatus} onOpen={(status) => navigate(`/quotations?status=${encodeURIComponent(status)}`)} />
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

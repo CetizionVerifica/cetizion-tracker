@@ -683,7 +683,9 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       const { rows: [a] } = await db.query(
         `INSERT INTO connected_accounts (username, provider, email, status, visibility)
          VALUES ('other@example.test', 'microsoft', 'other@example.test', 'active', 'share_everything') RETURNING id`);
-      const no = `CTZ/QT/2026/8${Math.floor(Math.random() * 90) + 10}`;
+      // Unique by the account just made. A random 8NN here met the fixed
+      // CTZ/QT/2026/881 and /882 of the currency test about one run in 45.
+      const no = `CTZ/QT/2026/MAIL-${a.id}`;
       await db.query(
         `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
          VALUES ($1, 'Not Their Client', '2026-09-01', 50000, 'Submitted', 'Somebody Else')`, [no]);
