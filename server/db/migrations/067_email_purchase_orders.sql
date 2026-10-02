@@ -152,6 +152,9 @@ ON CONFLICT (key) DO NOTHING;
 CREATE OR REPLACE FUNCTION webhook_emit(p_event text, p_entity text, p_entity_id text, p_value numeric, p_company int, p_data jsonb)
 RETURNS void AS $$
 BEGIN
+  -- A PO or invoice registered from past mail is not news (067,
+  -- docs/email-po-plan.md §3.8): the history path turns this on for its
+  -- own transaction.
   IF current_setting('app.suppress_webhooks', true) = 'on' THEN
     RETURN;
   END IF;

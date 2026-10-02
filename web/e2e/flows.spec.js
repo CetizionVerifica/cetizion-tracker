@@ -434,7 +434,7 @@ async function pdfText(buffer) {
 async function withDatabase(fn) {
   const { createRequire } = await import('node:module');
   const pg = createRequire(join(here, '..', '..', 'server', 'package.json'))('pg');
-  const client = new pg.Client({ connectionString: process.env.E2E_DATABASE_URL || env.DATABASE_URL });
+  const client = new pg.Client({ connectionString: process.env.E2E_DATABASE_URL || process.env.DATABASE_URL || env.DATABASE_URL });
   await client.connect();
   try { return await fn(client); } finally { await client.end(); }
 }
