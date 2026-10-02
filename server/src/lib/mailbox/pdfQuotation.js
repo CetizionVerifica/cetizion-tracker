@@ -144,7 +144,9 @@ export function checkExtraction(raw, { emailDate, sourceText = null, minConfiden
   // A total the document does not print is a total the model made up.
   if (sourceText !== null && !amountInText(total, sourceText)) return { ok: false, reason: 'total_not_in_pdf' };
 
-  const emailDay = String(emailDate).slice(0, 10);
+  // The email's date where the business is: a quotation dated 2 October and
+  // emailed at 01:00 IST was sent on 1 October in UTC.
+  const emailDay = new Date(new Date(emailDate).getTime() + 330 * 60_000).toISOString().slice(0, 10);
   let quotationDate = isoDate(v.quotation_date); let validUntil = isoDate(v.valid_until);
   if (!quotationDate || days(emailDay, quotationDate) < 0 || days(emailDay, quotationDate) > 60) { quotationDate = emailDay; validUntil = null; }
   if (validUntil && days(validUntil, quotationDate) <= 0) validUntil = null;

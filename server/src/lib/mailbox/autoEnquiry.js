@@ -129,7 +129,11 @@ async function factsFor(account, cand) {
             EXISTS (SELECT 1 FROM email_threads t JOIN inbox_conversations ic ON ic.thread_id = t.id
                      WHERE t.account_id = $1 AND t.conversation_id = $2 AND ic.enquiry_no IS NOT NULL) AS converted`,
     [account.id, m.conversation_id]);
-  const facts = { handled: conv.decided || conv.converted, firstInConversation: cand.newThread || cand.dropped };
+  // For our own quotation the thread being on that quotation is the point,
+  // not a reason to skip it: what matters there is whether it has an
+  // enquiry (plan §3.8), which quotationEnquiry() works out.
+  const onRecord = c.direction === 'inbound' && await linkedByNumber(cand);
+  const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped };
   if (c.direction === 'outbound') {
     // A domain we have only ever had bills or sales pitches from is a vendor,
     // and what we send them is not a quotation to a client.
@@ -142,6 +146,29 @@ async function factsFor(account, cand) {
     }
   }
   return facts;
+}
+
+/**
+ * Is the stored thread on a quotation, PO or project because the
+ * conversation names it? Then it is about a record we already have, even
+ * when its first message does not say so: the backfill reaches the first
+ * message of a thread whose later replies carried the number.
+ *
+ * A link the sync made only because the company has an open deal (the weak
+ * fallback in linkRecord) does not count: a repeat client's new request
+ * must not hide under their old deal (plan §1). Where the mailbox stores no
+ * subjects there is no telling the two apart, and the link is trusted —
+ * missing an enquiry is the safer mistake than duplicating one.
+ */
+async function linkedByNumber(cand) {
+  if (!cand.threadId) return false;
+  const { rows: [t] } = await query('SELECT entity, entity_id, subject FROM email_threads WHERE id = $1', [cand.threadId]);
+  if (!t?.entity || t.entity === 'enquiry') return false;
+  const { rows: subjects } = await query('SELECT subject FROM email_messages WHERE thread_id = $1', [cand.threadId]);
+  const all = [t.subject, ...subjects.map((r) => r.subject)].filter(Boolean);
+  if (!all.length) return true;
+  const id = String(t.entity_id).toUpperCase();
+  return all.some((sub) => { const r = numbersIn(sub); return [...r.quotations, ...r.enquiries, ...r.pos].some((n) => n.toUpperCase() === id); });
 }
 
 // ------------------------------------------------------------ classification
@@ -219,18 +246,31 @@ async function linkThread(db, threadId, enquiryNo) {
   await db.query('UPDATE inbox_conversations SET enquiry_no = $2 WHERE thread_id = $1 AND enquiry_no IS NULL', [threadId, enquiryNo]);
 }
 
-/** An open enquiry this email belongs to, from the same sender or company, recently enough. */
-async function openEnquiryFor(db, { email, companyId, sentAt, days, withoutQuotation = false }) {
+/**
+ * The enquiry this email belongs to, from the same sender or company:
+ *
+ *   an open one dated up to `days` before the email — the client writing
+ *   again about the same request; or
+ *   one in any status dated within a week either side of it — an enquiry
+ *   somebody typed in by hand for this very email. Reading back a year of
+ *   mail meets mostly these, long since Converted or Unqualified, and
+ *   without this each would be made a second time.
+ *
+ * `clientName` finds the company by name when no thread or contact does.
+ */
+async function openEnquiryFor(db, { email, companyId, clientName = null, sentAt, days, withoutQuotation = false }) {
   const { rows: [e] } = await db.query(
-    `SELECT e.enquiry_no, e.quotation_no, e.company_id FROM enquiries e LEFT JOIN contacts ct ON ct.id = e.contact_id
-      WHERE e.status = ANY($1)
-        AND e.enquiry_date BETWEEN (($4::timestamptz AT TIME ZONE 'Asia/Kolkata')::date - $5::int) AND ($4::timestamptz AT TIME ZONE 'Asia/Kolkata')::date
+    `WITH day AS (SELECT ($4::timestamptz AT TIME ZONE 'Asia/Kolkata')::date AS d),
+          co AS (SELECT COALESCE($3::int, (SELECT id FROM companies WHERE name_key = name_key($7))) AS id)
+     SELECT e.enquiry_no, e.quotation_no, e.company_id FROM enquiries e LEFT JOIN contacts ct ON ct.id = e.contact_id, day, co
+      WHERE ((e.status = ANY($1) AND e.enquiry_date BETWEEN day.d - $5::int AND day.d)
+             OR e.enquiry_date BETWEEN day.d - 7 AND day.d + 7)
         AND ($6::boolean IS FALSE OR e.quotation_no IS NULL)
         AND ((ct.email IS NOT NULL AND lower(ct.email) = lower($2))
-             OR ($3::int IS NOT NULL AND e.company_id = $3)
+             OR (co.id IS NOT NULL AND e.company_id = co.id)
              OR EXISTS (SELECT 1 FROM email_enquiry_decisions d WHERE d.enquiry_no = e.enquiry_no AND d.outcome = 'created' AND lower(d.from_email) = lower($2)))
-      ORDER BY e.enquiry_date DESC, e.id DESC LIMIT 1`,
-    [OPEN_ENQUIRY, email || '', companyId ?? null, sentAt, days, withoutQuotation]);
+      ORDER BY (e.status = ANY($1)) DESC, abs(e.enquiry_date - day.d), e.id DESC LIMIT 1`,
+    [OPEN_ENQUIRY, email || '', companyId ?? null, sentAt, days, withoutQuotation, clientName]);
   return e || null;
 }
 
@@ -272,16 +312,8 @@ export async function decide(account, cand, ctx) {
 
   // The same email, read in another mailbox, already made or joined an
   // enquiry: join this mailbox's copy to it, with no second AI call.
-  const elsewhere = await sameEmailElsewhere(m);
-  if (elsewhere) {
-    await transaction(async (db) => {
-      const threadId = elsewhere.enquiry_no ? await keepDropped(db, account, cand, elsewhere.company_id) : cand.threadId;
-      await linkThread(db, threadId, elsewhere.enquiry_no);
-      await logDecision(db, account, cand, { outcome: 'linked', kind: elsewhere.kind, confidence: elsewhere.confidence, method: elsewhere.method, enquiry_no: elsewhere.enquiry_no, quotation_no: elsewhere.quotation_no, thread_id: threadId });
-    });
-    ctx.linked += 1;
-    return 'linked';
-  }
+  const elsewhere = await sameEmailElsewhere({ query }, m);
+  if (elsewhere) return transaction((db) => joinElsewhere(db, account, cand, elsewhere, ctx));
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
   const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments };
@@ -301,6 +333,9 @@ export async function decide(account, cand, ctx) {
   // The quotation PDF is read before the transaction too: it may call the AI.
   const prepared = wanted === 'quotation_sent' ? await prepareQuotation(account, cand, verdict, ctx) : null;
   if (prepared?.stop) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+  // Whatever happens next, the PDF's AI call is this decision's too, and
+  // counts against the day's ceiling.
+  if (prepared?.ai_calls) verdict.ai_calls = (verdict.ai_calls || 0) + prepared.ai_calls;
 
   const result = await transaction(async (db) => {
     // Live sync and the backfill can meet on one email, and two emails from
@@ -310,6 +345,10 @@ export async function decide(account, cand, ctx) {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`auto-enquiry-party:${domainOf(party) || party}`]);
     const { rows: [again] } = await db.query('SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
     if (again) return 'seen';
+    // Another mailbox's copy of this email may have been decided while this
+    // one was being judged: join it rather than make a second record.
+    const meanwhile = await sameEmailElsewhere(db, m);
+    if (meanwhile) return joinElsewhere(db, account, cand, meanwhile, ctx, verdict.ai_calls);
     return wanted === 'new_enquiry'
       ? inboundEnquiry(db, account, cand, verdict, ctx)
       : quotationEnquiry(db, account, cand, verdict, prepared, ctx);
@@ -317,14 +356,26 @@ export async function decide(account, cand, ctx) {
   return result;
 }
 
-async function sameEmailElsewhere(m) {
+async function sameEmailElsewhere(db, m) {
   if (!m.internet_message_id) return null;
-  const { rows: [d] } = await query(
+  const { rows: [d] } = await db.query(
     `SELECT d.enquiry_no, d.quotation_no, d.kind, d.confidence, d.method, e.company_id FROM email_enquiry_decisions d
        LEFT JOIN enquiries e ON e.enquiry_no = d.enquiry_no
       WHERE lower(d.internet_message_id) = lower($1) AND d.outcome IN ('created','linked') AND d.enquiry_no IS NOT NULL
       ORDER BY d.id LIMIT 1`, [m.internet_message_id]);
   return d || null;
+}
+
+/** This mailbox's copy of an email another mailbox already turned into (or onto) an enquiry. */
+async function joinElsewhere(db, account, cand, elsewhere, ctx, aiCalls = 0) {
+  const threadId = await keepDropped(db, account, cand, elsewhere.company_id);
+  await linkThread(db, threadId, elsewhere.enquiry_no);
+  await logDecision(db, account, cand, {
+    outcome: 'linked', kind: elsewhere.kind, confidence: elsewhere.confidence, method: elsewhere.method, ai_calls: aiCalls,
+    enquiry_no: elsewhere.enquiry_no, quotation_no: elsewhere.quotation_no, thread_id: threadId,
+  });
+  ctx.linked += 1;
+  return 'linked';
 }
 
 const decisionOf = (verdict) => ({ kind: verdict.kind, confidence: verdict.confidence, method: verdict.method, ai_calls: verdict.ai_calls });
@@ -335,7 +386,10 @@ async function inboundEnquiry(db, account, cand, verdict, ctx) {
   const thread = await threadCompany(db, cand.threadId);
   const companyId = thread?.company_id || null;
 
-  const open = await openEnquiryFor(db, { email: m.from?.email, companyId, sentAt: m.sent_at, days: ctx.settings.sameSenderDays });
+  const fromName = m.from?.name && !m.from.name.includes('@') ? m.from.name.trim() : null;
+  const client = (await companyName(db, companyId)) || verdict.company_name || companyNameFromEmail(m.from?.email) || fromName || m.from?.email;
+
+  const open = await openEnquiryFor(db, { email: m.from?.email, companyId, clientName: client, sentAt: m.sent_at, days: ctx.settings.sameSenderDays });
   if (open) {
     const threadId = await keepDropped(db, account, cand, open.company_id);
     await linkThread(db, threadId, open.enquiry_no);
@@ -344,8 +398,6 @@ async function inboundEnquiry(db, account, cand, verdict, ctx) {
     return 'linked';
   }
 
-  const fromName = m.from?.name && !m.from.name.includes('@') ? m.from.name.trim() : null;
-  const client = (await companyName(db, companyId)) || verdict.company_name || companyNameFromEmail(m.from?.email) || fromName || m.from?.email;
   const { rows: [{ id: newCompanyId }] } = await db.query('SELECT company_for($1) AS id', [client]);
   const threadId = await keepDropped(db, account, cand, newCompanyId);
   const owner = await ownerFor(db, account, threadId);
@@ -353,6 +405,7 @@ async function inboundEnquiry(db, account, cand, verdict, ctx) {
     `SELECT MIN(sent_at) AS first_reply FROM email_messages WHERE thread_id = $1 AND direction = 'outbound' AND sent_at >= $2`, [threadId, m.sent_at]);
   const summary = verdict.method === 'ai' ? verdict.summary : (account.visibility === 'metadata' ? null : verdict.summary);
   const e = await createEnquiryFromEmail(db, {
+    keepRecordLink: true,
     threadId, fromEmail: m.from?.email, fromName,
     enquiry: {
       dated_at: m.sent_at, year: istYear(m.sent_at), client_name: client, status: 'New',
@@ -399,18 +452,37 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
   // one with no quotation: this quotation answers it.
   const onThread = thread?.entity === 'enquiry' ? { enquiry_no: thread.entity_id, company_id: thread.company_id } : null;
   const open = onThread || await openEnquiryFor(db, { email: recipient.email, companyId, sentAt: m.sent_at, days: ctx.settings.sameSenderDays, withoutQuotation: true });
+  const sentOn = istDate(m.sent_at);
   if (open) {
-    if (q) await db.query('UPDATE enquiries SET quotation_no = $2 WHERE enquiry_no = $1 AND quotation_no IS NULL', [open.enquiry_no, q.quotation_no]);
-    return linked(open.enquiry_no, await keepDropped(db, account, cand, companyId || open.company_id));
+    const threadId = await keepDropped(db, account, cand, companyId || open.company_id);
+    if (q) {
+      await db.query('UPDATE enquiries SET quotation_no = $2 WHERE enquiry_no = $1 AND quotation_no IS NULL', [open.enquiry_no, q.quotation_no]);
+      return linked(open.enquiry_no, threadId);
+    }
+    // Made outside the tracker, answering an enquiry we already have: the
+    // PDF that was read becomes that enquiry's quotation, or, when it could
+    // not be read, its owner is asked to add it.
+    const { rows: [e] } = await db.query('SELECT enquiry_no, client_name, quotation_no, owner_user_id, sales_person FROM enquiries WHERE enquiry_no = $1', [open.enquiry_no]);
+    if (e?.quotation_no) return linked(e.enquiry_no, threadId);
+    if (prepared?.ok && deps.readQuotation?.create) {
+      const owner = e?.owner_user_id ? { id: e.owner_user_id, name: e.sales_person } : await ownerFor(db, account, threadId);
+      const made = await deps.readQuotation.create(db, { account, cand, prepared, client: e.client_name, owner, threadId });
+      if (!made.revised && !made.repeated) {
+        await db.query('UPDATE enquiries SET quotation_no = $2 WHERE enquiry_no = $1 AND quotation_no IS NULL', [e.enquiry_no, made.quotation_no]);
+      }
+      return linked(e.enquiry_no, threadId, { quotation_no: made.quotation_no, quotation_extraction: made.repeated ? null : (made.revised ? 'revised' : 'created'), ...made.printed });
+    }
+    if (prepared) await addQuotationTask(db, { enquiryNo: e.enquiry_no, client: e.client_name, sentOn, account, threadId, assignee: e.sales_person });
+    return linked(e.enquiry_no, threadId, prepared ? { quotation_extraction: 'failed', extraction_reason: prepared.reason || 'no_pdf' } : {});
   }
 
   const otherSource = await sourceId(db, 'Other');
-  const sentOn = istDate(m.sent_at);
   if (q) {
     const threadId = await keepDropped(db, account, cand, q.company_id);
     const owner = await ownerFor(db, account, threadId, q.owner_user_id);
     const dated = q.quotation_date && String(q.quotation_date).slice(0, 10) < sentOn ? `${String(q.quotation_date).slice(0, 10)}T12:00:00+05:30` : m.sent_at;
     const e = await createEnquiryFromEmail(db, {
+    keepRecordLink: true,
       threadId, fromEmail: recipient.email, fromName: recipient.name,
       enquiry: {
         dated_at: dated, year: istYear(dated), client_name: q.client_name, contact_person: q.contact_person, sector: q.sector, country: q.country,
@@ -448,6 +520,7 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
       });
     }
     const e = await createEnquiryFromEmail(db, {
+    keepRecordLink: true,
       threadId, fromEmail: recipient.email, fromName: recipient.name,
       enquiry: {
         ...base, status: 'Converted', quotation_no: made.quotation_no, converted_at: m.sent_at,
@@ -456,7 +529,7 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
       },
     });
     await logDecision(db, account, cand, {
-      outcome: 'created', ...decisionOf(verdict), ai_calls: (verdict.ai_calls || 0) + (prepared.ai_calls || 0),
+      outcome: 'created', ...decisionOf(verdict),
       enquiry_no: e.enquiry_no, quotation_no: made.quotation_no, quotation_extraction: 'created', thread_id: threadId, ...made.printed,
     });
     ctx.created.push({ ...e, owner_email: owner?.email || null, kind: 'quotation_sent' });
@@ -466,25 +539,31 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
   // The PDF could not be trusted, or was not read: the enquiry still goes
   // in, and a person adds the quotation.
   const e = await createEnquiryFromEmail(db, {
+    keepRecordLink: true,
     threadId, fromEmail: recipient.email, fromName: recipient.name,
     enquiry: {
       ...base, status: 'Contacted', estimated_value: verdict.quoted_amount ?? null, currency: verdict.currency || 'INR',
       notes: `Quotation sent by email on ${sentOn} by ${account.email}; the enquiry itself did not come by email. The quotation is not in the tracker yet.`,
     },
   });
-  const { rows: hol } = await db.query('SELECT holiday_on FROM holidays');
-  await db.query(
-    `INSERT INTO tasks (entity, entity_id, title, description, due_at, type, priority, assignee, created_by)
-     VALUES ('enquiry', $1, $2, $3, $4, 'document', 'normal', $5, 'system')`,
-    [e.enquiry_no, `Add the quotation sent to ${client} on ${sentOn}: the PDF could not be read`,
-      `The quotation went by email from ${account.email}${threadId ? ` (email thread ${threadId})` : ''}. Enter it in the tracker and link it to this enquiry.`,
-      addWorkingDays(businessToday(), 1, hol.map((h) => String(h.holiday_on).slice(0, 10))), owner?.name ?? null]);
+  await addQuotationTask(db, { enquiryNo: e.enquiry_no, client, sentOn, account, threadId, assignee: owner?.name ?? null });
   await logDecision(db, account, cand, {
-    outcome: 'created', ...decisionOf(verdict), ai_calls: (verdict.ai_calls || 0) + (prepared?.ai_calls || 0),
+    outcome: 'created', ...decisionOf(verdict),
     enquiry_no: e.enquiry_no, quotation_extraction: 'failed', extraction_reason: prepared?.reason || 'no_pdf', thread_id: threadId,
   });
   ctx.created.push({ ...e, owner_email: owner?.email || null, kind: 'quotation_sent' });
   return 'created';
+}
+
+/** The owner adds by hand the quotation whose PDF could not be read. */
+async function addQuotationTask(db, { enquiryNo, client, sentOn, account, threadId, assignee }) {
+  const { rows: hol } = await db.query('SELECT holiday_on FROM holidays');
+  await db.query(
+    `INSERT INTO tasks (entity, entity_id, title, description, due_at, type, priority, assignee, created_by)
+     VALUES ('enquiry', $1, $2, $3, $4, 'document', 'normal', $5, 'system')`,
+    [enquiryNo, `Add the quotation sent to ${client} on ${sentOn}: the PDF could not be read`,
+      `The quotation went by email from ${account.email}${threadId ? ` (email thread ${threadId})` : ''}. Enter it in the tracker and link it to this enquiry.`,
+      addWorkingDays(businessToday(), 1, hol.map((h) => String(h.holiday_on).slice(0, 10))), assignee ?? null]);
 }
 
 /**
@@ -572,6 +651,9 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
                 reached = $7, finished_at = $8, last_error = NULL, updated_at = now()
           WHERE account_id = $1 RETURNING *`,
         [account.id, next.next_link, next.folder, next.scanned, created, linked, next.reached, next.finished_at]));
+      // Re-run or a disconnect removed the row while this ran: stop here;
+      // the next run starts afresh.
+      if (!row) { tally.restarted = true; break; }
       if (row.finished_at) break;
     }
     await saveTokens(account, provider);
@@ -579,7 +661,7 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
     await query('UPDATE mailbox_enquiry_backfills SET last_error = $2, updated_at = now() WHERE account_id = $1', [account.id, String(err.message).slice(0, 500)]);
     tally.error = err.message;
   }
-  if (row.finished_at) {
+  if (row?.finished_at) {
     tally.finished = true;
     await notify({
       kind: 'enquiry', title: `Read ${ctx.settings.backfillDays} days of ${account.email}: ${row.created} ${row.created === 1 ? 'enquiry' : 'enquiries'} created, ${row.linked} linked to existing ones`,

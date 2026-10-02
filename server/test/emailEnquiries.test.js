@@ -606,4 +606,98 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
       await agent.post(`/api/quotations/${plain.id}/email-read-checked`).expect(422);
     });
   });
+
+  describe('fixes from the review of #163', () => {
+    const past = (over) => ({ ...rfq(over), history: true });
+
+    test('the backfill leaves alone a thread a later reply put on a quotation, and never takes it off it', async () => {
+      await db.query(`INSERT INTO quotations (quotation_no, client_name, status) VALUES ('CTZ/QT/2026/903', 'Linked Later Ltd', 'Submitted')`);
+      const box = await mailbox({ shared: true });
+      const conversation = uid('later');
+      await deliver(box, [rfq({ conversation_id: conversation, from: { email: 'b@linked-later.com' }, subject: 'RE: CTZ/QT/2026/903 revised scope', sent_at: at(5) })]);
+      const { rows: [before1] } = await db.query('SELECT entity, entity_id FROM email_threads WHERE account_id = $1', [box.id]);
+      assert.deepEqual(before1, { entity: 'quotation', entity_id: 'CTZ/QT/2026/903' });
+      sync.pushTestMessages(box.id, [past({ conversation_id: conversation, from: { email: 'b@linked-later.com', name: 'B' }, sent_at: at(9) })]);
+      await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+      assert.equal((await enquiriesFrom(box.id)).length, 0);
+      const { rows: [after1] } = await db.query('SELECT entity, entity_id FROM email_threads WHERE account_id = $1', [box.id]);
+      assert.deepEqual(after1, before1);
+    });
+
+    test('the backfill joins an enquiry somebody typed in for that email, even one since converted', async () => {
+      const day = at(100);
+      await db.query(`INSERT INTO enquiries (enquiry_no, enquiry_date, client_name, status) VALUES ('CTZ/ENQ/2025/950', ($1::timestamptz AT TIME ZONE 'Asia/Kolkata')::date + 1, 'Handmade Pumps', 'Converted')`, [day]);
+      const box = await mailbox({ shared: true });
+      sync.pushTestMessages(box.id, [past({ from: { email: 'buyer@handmade-pumps.com', name: 'Buyer' }, sent_at: day })]);
+      await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+      assert.equal((await enquiriesFrom(box.id)).length, 0);
+      const [d] = await decisions(box.id);
+      assert.equal(d.outcome, 'linked');
+      assert.equal(d.enquiry_no, 'CTZ/ENQ/2025/950');
+    });
+
+    test('our PDF quotation answering an enquiry we already have becomes its quotation', async () => {
+      const { default: pdfmake } = await import('../src/lib/pdf.js');
+      const box = await mailbox({ shared: true });
+      await deliver(box, [rfq({ from: { email: 'buyer@answered-co.com', name: 'Buyer' }, sent_at: at(2) })]);
+      const [e] = await enquiriesFrom(box.id);
+      auto.deps.chat = async (system) => (/You read a quotation/.test(system)
+        ? { quotation_no_printed: 'CV/Q/2025/960', revision: 0, quotation_date: at(1).slice(0, 10), client: { company_name: 'Answered Co' }, currency: 'INR', lines: [], subtotal: '1,00,000', tax_total: '18,000', total: '1,18,000', confidence: 0.9 }
+        : { kind: 'quotation_sent', confidence: 0.95, company_name: 'Answered Co' });
+      const content = await pdfmake.createPdf({ content: ['QUOTATION CV/Q/2025/960', 'To: Answered Co', 'Total 1,18,000'] }).getBuffer();
+      await deliver(box, [rfq({
+        folder: 'sentitems', from: { email: box.email }, to: [{ email: 'buyer@answered-co.com' }], subject: 'Our quotation', body_html: '<p>Attached.</p>',
+        has_attachments: true, sent_at: at(1), attachments: [{ name: 'Quotation.pdf', contentType: 'application/pdf', content }],
+      })]);
+      assert.equal((await enquiriesFrom(box.id)).length, 1);
+      const { rows: [after1] } = await db.query('SELECT quotation_no FROM enquiries WHERE enquiry_no = $1', [e.enquiry_no]);
+      assert.equal(after1.quotation_no, 'CV/Q/2025/960');
+      const ds = await decisions(box.id);
+      assert.deepEqual(ds.map((d) => [d.outcome, d.quotation_extraction, d.ai_calls]), [['created', null, 0], ['linked', 'created', 2]]);
+    });
+
+    test('the same email decided in another mailbox while this one was being judged is joined, not made twice', async () => {
+      const first = await mailbox({ shared: true });
+      const second = await mailbox({ shared: true });
+      const msg = rfq({ from: { email: 'race@race-co.com', name: 'Race' } });
+      auto.deps.chat = async () => {
+        // While this mailbox waits on the AI, the other one finishes.
+        auto.deps.chat = null;
+        await deliver(first, [msg]);
+        return { kind: 'new_enquiry', confidence: 0.95, company_name: 'Race Co' };
+      };
+      await deliver(second, [{ ...msg, provider_id: uid('race-copy') }]);
+      const made = await enquiriesFrom(first.id);
+      assert.equal(made.length, 1);
+      assert.equal((await enquiriesFrom(second.id)).length, 0);
+      const [d] = await decisions(second.id);
+      assert.deepEqual([d.outcome, d.enquiry_no, d.ai_calls], ['linked', made[0].enquiry_no, 1]);
+    });
+
+    test('a backfill whose progress is removed mid-run (Re-run, disconnect) stops cleanly', async () => {
+      const box = await mailbox({ shared: true });
+      sync.testPaging.size = 1;
+      sync.pushTestMessages(box.id, [past({ from: { email: 'a@mid-run.com', name: 'A' }, sent_at: at(30) }), past({ from: { email: 'b@mid-run-two.com', name: 'B' }, sent_at: at(20) })]);
+      auto.deps.chat = async () => {
+        await db.query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
+        return { kind: 'other', confidence: 0.9 };
+      };
+      const r = await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+      sync.testPaging.size = 50;
+      assert.equal(r.restarted, true);
+      assert.equal(r.error, undefined);
+    });
+
+    test('re-run keeps the AI-judged decisions of today, which the day\'s ceiling is counted from', async () => {
+      const box = await mailbox({ shared: true });
+      auto.deps.chat = async () => ({ kind: 'other', confidence: 0.9 });
+      await deliver(box, [rfq({ from: { email: 'x@kept-today.com' } })]);
+      auto.deps.chat = null;
+      await deliver(box, [rfq({ from: { email: 'y@cleared-co.com' }, subject: 'Hello', body_html: '<p>Lunch?</p>' })]);
+      const before1 = await auto.aiCallsToday();
+      const { body } = await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).expect(200);
+      assert.equal(body.data.decisions_cleared, 1, 'only the rules-judged one');
+      assert.equal(await auto.aiCallsToday(), before1);
+    });
+  });
 });

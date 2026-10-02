@@ -305,7 +305,11 @@ mailboxRouter.post('/:id/auto-enquiries/rerun', requireAdmin, async (req, res) =
   const id = Number(req.params.id);
   const { rows: [a] } = await query('SELECT id FROM connected_accounts WHERE id = $1', [id]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
-  const { rowCount: cleared } = await query(`DELETE FROM email_enquiry_decisions WHERE account_id = $1 AND outcome = 'not_enquiry'`, [id]);
+  // Today's AI-judged rows stay: they are what the day's AI ceiling is
+  // counted from, and judging them again today would change nothing.
+  const { rowCount: cleared } = await query(
+    `DELETE FROM email_enquiry_decisions WHERE account_id = $1 AND outcome = 'not_enquiry'
+        AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
   await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
   res.json({ data: { id, decisions_cleared: cleared, backfill: 'restarts on the next run' } });
 });

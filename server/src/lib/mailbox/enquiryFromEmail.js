@@ -16,8 +16,9 @@ const COLUMNS = ['client_name', 'contact_person', 'sales_person', 'service', 'se
  *   year      the numbering year; omitted, the current business year
  * The thread, and its inbox conversation if it has one, are linked to it,
  * and the sender's address goes onto the contact the enquiry linked to.
+ * keepRecordLink: leave a thread on the quotation, PO or project it is on.
  */
-export async function createEnquiryFromEmail(db, { threadId, fromEmail = null, fromName = null, enquiry }) {
+export async function createEnquiryFromEmail(db, { threadId, fromEmail = null, fromName = null, enquiry, keepRecordLink = false }) {
   const no = await claimNextId('enquiry', db, enquiry.year);
   const cols = COLUMNS.filter((c) => enquiry[c] !== undefined);
   const values = cols.map((c) => enquiry[c]);
@@ -26,7 +27,14 @@ export async function createEnquiryFromEmail(db, { threadId, fromEmail = null, f
      VALUES ($1, ($2::timestamptz AT TIME ZONE 'Asia/Kolkata')::date, ${cols.map((_, i) => `$${i + 3}`).join(', ')}) RETURNING *`,
     [no, enquiry.dated_at || new Date().toISOString(), ...values]);
   await db.query('UPDATE inbox_conversations SET enquiry_no = $2, company_id = COALESCE(company_id, $3) WHERE thread_id = $1', [threadId, e.enquiry_no, e.company_id]);
-  await db.query(`UPDATE email_threads SET entity = 'enquiry', entity_id = $2, company_id = COALESCE(company_id, $3) WHERE id = $1`, [threadId, e.enquiry_no, e.company_id]);
+  // A person converting a thread decides what it is about, so the convert
+  // route moves it onto the enquiry. The automatic path never takes a
+  // thread off a quotation, PO or project it is already on.
+  await db.query(
+    `UPDATE email_threads SET entity = CASE WHEN $4 AND entity IS NOT NULL AND entity <> 'enquiry' THEN entity ELSE 'enquiry' END,
+            entity_id = CASE WHEN $4 AND entity IS NOT NULL AND entity <> 'enquiry' THEN entity_id ELSE $2 END,
+            company_id = COALESCE(company_id, $3) WHERE id = $1`,
+    [threadId, e.enquiry_no, e.company_id, keepRecordLink]);
   // The sender's address, onto the contact this enquiry is actually
   // linked to.
   //

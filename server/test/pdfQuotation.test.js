@@ -102,3 +102,9 @@ test('the quotation PDF ranks above a brochure, by name, then first page, then s
   ];
   assert.deepEqual(rankPdfs(files).map((f) => f.name), ['Cetizion_Quotation_Acme.pdf', 'Document.pdf', 'Company profile.pdf']);
 });
+
+test('the email date is taken in IST: a quotation dated 2 October and emailed at 01:30 IST keeps its date', () => {
+  const r = checkExtraction(good({ quotation_date: '2026-10-02', valid_until: '2026-11-01' }), { ...opts, emailDate: '2026-10-01T20:00:00Z' });
+  assert.equal(r.extraction.quotation_date, '2026-10-02');
+  assert.equal(r.extraction.valid_until, '2026-11-01');
+});
