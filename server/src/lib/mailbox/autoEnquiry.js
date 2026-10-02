@@ -28,7 +28,7 @@ import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
 import { domainOf } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
-import { queueFailures } from './readerQueue.js';
+import { lastTry, queueFailures, transientError } from './readerQueue.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, so no test reaches the
@@ -208,12 +208,14 @@ async function classifyEmail(account, cand, input, ctx) {
     }
     const { system, user } = buildPrompt(input, { companyKnown, openDeals });
     try {
-      const v = parseVerdict(await chat(system, user, { maxTokens: 600, timeoutMs: 30_000 }), ctx.settings);
-      return { ...v, ai_calls: 1 };
+      const raw = await chat(system, user, { maxTokens: 600, timeoutMs: 30_000 });
+      if (!answered(raw)) throw new Error('the AI gave no verdict');
+      return { ...parseVerdict(raw, ctx.settings), ai_calls: 1 };
     } catch (err) {
-      // Not answered (no route, a timeout): the rules decide this one.
-      console.warn('[auto-enquiry] AI unavailable, rules decide:', err.message);
-      return { ...rulesVerdict(input), ai_calls: 1 };
+      // Not answered (no route, a timeout, an empty reply): the rules
+      // decide only if they can say yes (decide); a no waits for the AI.
+      console.warn('[auto-enquiry] AI unavailable:', err.message);
+      return { ...rulesVerdict(input), ai_calls: 1, aiFailed: err.message };
     }
   }
   // The day's ceiling is reached: the live path carries on with rules; the
@@ -221,6 +223,13 @@ async function classifyEmail(account, cand, input, ctx) {
   // same way throughout.
   if (chat && ctx.backfill) return null;
   return { ...rulesVerdict(input), ai_calls: 0 };
+}
+
+/** Did the model answer at all? An empty object or unparseable text read as "other, 0%", a final no. */
+function answered(raw) {
+  let v = raw;
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return false; } }
+  return Boolean(v && typeof v === 'object' && !Array.isArray(v) && typeof v.kind === 'string' && v.kind);
 }
 
 // ------------------------------------------------------------ owners
@@ -346,6 +355,10 @@ export async function decide(account, cand, ctx) {
   const wanted = pf.candidate === 'quotation' ? 'quotation_sent' : 'new_enquiry';
   const bar = verdict.method === 'ai' ? ctx.settings.minConfidence : RULES_BAR;
   if (verdict.kind !== wanted || verdict.confidence < bar) {
+    // The AI did not answer and the rules alone cannot say yes: a timeout
+    // is not a verdict. The email is read again (readerQueue.js); on its
+    // last try the rules' no stands.
+    if (verdict.aiFailed && !lastTry(cand)) throw transientError(`AI unavailable (${verdict.aiFailed}); read again later`);
     await logDecision({ query }, account, cand, { outcome: 'not_enquiry', kind: verdict.kind, confidence: verdict.confidence, method: verdict.method, ai_calls: verdict.ai_calls });
     ctx.notEnquiry += 1;
     return 'not_enquiry';
@@ -603,6 +616,10 @@ async function prepareQuotation(account, cand, verdict, ctx) {
   try {
     return await deps.readQuotation.prepare(account, cand, verdict, ctx, chatFn());
   } catch (err) {
+    // A download or an AI call that failed passes: the email is read again
+    // rather than made into an enquiry with a "type it in" task. On its
+    // last try, or for a PDF that is truly broken, the task it is.
+    if (err.transient && !lastTry(cand)) throw err;
     console.warn('[auto-enquiry] quotation PDF not read:', err.message);
     return { ok: false, reason: 'unreadable' };
   }

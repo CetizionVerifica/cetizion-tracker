@@ -692,4 +692,32 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     await agent.post(`/api/purchase-orders/review/${d.id}/register`).expect(200);
     assert.equal(await autoEnquiry.aiCallsToday(), before + 1);
   });
+
+  test('retrying a PO email the tracker never stored reads it from the mailbox, body and all', async () => {
+    const box = await mailbox();
+    const msg = poEmail({ from: { email: 'notify@ansmtp.ariba.com', name: 'Ariba' }, has_attachments: false, history: true,
+      body_html: '<p>Purchase order 4500066001 from Portal Buyer Ltd: EcoVadis assessment, total INR 2,95,000.</p>' });
+    sync.pushTestMessages(box.id, [msg]);
+    await db.query(
+      `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, conversation_id, from_email, received_at, outcome, method, retry_since)
+       VALUES ($1, $2, $3, $4, $5, $6, 'retry', 'ai', now())`,
+      [box.id, msg.provider_id, msg.internet_message_id, msg.conversation_id, msg.from.email, msg.sent_at]);
+    const calls = ai({ is_purchase_order: false, document_type: 'other', confidence: 0.9 });
+    await autoPo.retryPoReads(await autoPo.poRunContext({ backfill: true }));
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].user, /4500066001 from Portal Buyer Ltd/, 'the AI was given the email, not an empty message');
+  });
+
+  test('a PO email still unreadable after a week goes to review, and someone is told', async () => {
+    const box = await mailbox();
+    const providerId = uid('m');
+    await db.query(
+      `INSERT INTO email_po_decisions (account_id, provider_id, from_email, received_at, outcome, method, retry_since)
+       VALUES ($1, $2, 'buyer@week-old.co.in', now(), 'retry', 'ai', now() - interval '8 days')`, [box.id, providerId]);
+    await autoPo.retryPoReads(await autoPo.poRunContext({ backfill: true }));
+    const d = await decision(box.id, providerId);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'unreadable']);
+    const { rows: [note] } = await db.query(`SELECT title FROM notifications WHERE dedupe_key = $1`, [`po-review:${box.id}:${providerId}`]);
+    assert.match(note.title, /buyer@week-old\.co\.in could not be read for a week/);
+  });
 });
