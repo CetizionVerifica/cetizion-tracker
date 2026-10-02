@@ -353,6 +353,17 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.match(summary.title, /for invoices: 1 recorded, 0 to review/);
   });
 
+  test('26b. a re-run of POs does not hold the invoice backfill back: the past mail was read through once', async () => {
+    const box = await mailbox();
+    await autoEnquiry.backfillAccount(box, await autoEnquiry.runContext({ backfill: true }));
+    await autoPo.backfillPoAccount(box, await autoPo.poRunContext({ backfill: true }));
+    await db.query(`UPDATE connected_accounts SET past_pos_read_at = now() - interval '25 hours' WHERE id = $1`, [box.id]);
+    await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).send({ kind: 'pos' }).expect(200);
+    assert.equal(await autoInvoice.posReadUpTo(box.id), true);
+    const r = await autoInvoice.backfillInvoiceAccount(box, await autoInvoice.invoiceRunContext({ backfill: true }));
+    assert.deepEqual([r.waiting, r.finished], [undefined, true]);
+  });
+
   test('27. auto_invoice_enabled off: no invoices are read', async () => {
     await db.query(`UPDATE settings SET value = 'false' WHERE key = 'auto_invoice_enabled'`);
     const box = await mailbox();
