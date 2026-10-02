@@ -215,4 +215,102 @@ describe('registering a purchase order from a quotation', { skip: !ADMIN_URL && 
         WHERE m.project_id = $1 GROUP BY m.id`, [reg.body.data.project_id]);
     assert.deepEqual(rows, [{ name: 'Final report', reached: '2026-10-01', stages: 1 }]);
   });
+  // ------------------------------------------------- docs/email-po-plan.md §3.5
+
+  const register = (q, body) => agent.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`)
+    .send({ po_date: '2026-09-21', ...body });
+
+  test('a quotation that already has a PO is refused, not given a second one', async () => {
+    const q = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    await register(q, { po_number: `REG-ONE-${Date.now()}` }).expect(201);
+    const again = await register(q, { po_number: `REG-TWO-${Date.now()}` }).expect(409);
+    assert.match(again.body.error.message, /already has PO REG-ONE-/);
+  });
+
+  test('a PO number already registered in another spelling is refused', async () => {
+    const stamp = Date.now();
+    const first = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    await register(first, { po_number: `PO-${stamp}` }).expect(201);
+    const second = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    const res = await register(second, { po_number: `po ${stamp}` }).expect(422);
+    assert.equal(res.body.error.fields.po_number, `PO po ${stamp} is already registered as PO-${stamp}`);
+    const { rows } = await db.query('SELECT status FROM quotations WHERE id = $1', [second.id]);
+    assert.notEqual(rows[0].status, 'Won - PO Received', 'and nothing of it is kept');
+  });
+
+  test('a currency the tracker does not know is refused', async () => {
+    const q = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    const res = await register(q, { po_number: `REG-CUR-${Date.now()}`, currency: 'XYZ' }).expect(422);
+    assert.match(res.body.error.fields.currency, /^Use one of INR/);
+  });
+
+  test('stages given explicitly are used instead of the template, and must add up to 100%', async () => {
+    const q = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    const poNumber = `REG-STG-${Date.now()}`;
+    const stages = [
+      { stage_name: 'Advance (30%)', trigger_event: 'On PO Registration', percent: 30 },
+      { stage_name: 'Draft report', trigger_event: 'On Milestone', percent: 40, milestone_name: 'Draft report' },
+      { stage_name: 'Final report', trigger_event: 'On Delivery', percent: 30, credit_days: 45 },
+    ];
+    await register(q, { po_number: `${poNumber}-X`, stages: stages.slice(0, 2) }).expect(422);
+    const { body } = await register(q, { po_number: poNumber, stages }).expect(201);
+    assert.equal(body.data.template, null);
+    const { rows } = await db.query(
+      `SELECT stage_no, stage_name, trigger_event, stage_percent::float AS p, credit_days, milestone_id IS NOT NULL AS has_milestone
+         FROM payment_stages WHERE po_number = $1 ORDER BY stage_no`, [poNumber]);
+    assert.deepEqual(rows.map((r) => [r.stage_no, r.stage_name, r.p, r.credit_days, r.has_milestone]), [
+      [1, 'Advance (30%)', 0.3, null, false],
+      [2, 'Draft report', 0.4, null, true],
+      [3, 'Final report', 0.3, 45, false],
+    ]);
+  });
+
+  test('a past PO makes a project of its own year, is won on its own date, and converts its enquiry', async () => {
+    const q = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+    // Lost first: the day it was lost must not stand as the day it was won.
+    await db.query(`UPDATE quotations SET status = 'Lost' WHERE id = $1`, [q.id]);
+    const { rows: [e] } = await db.query(
+      `INSERT INTO enquiries (enquiry_no, enquiry_date, client_name, status, quotation_no)
+       VALUES ($1, '2025-11-01', $2, 'Qualified', $3) RETURNING enquiry_no`, [`ENQ-REG-${Date.now()}`, q.client_name, q.quotation_no]);
+    const poNumber = `REG-PAST-${Date.now()}`;
+    const { body } = await register(q, { po_number: poNumber, po_date: '2025-12-15' }).expect(201);
+    assert.match(body.data.project_id, /^PRJ-2025-/, 'numbered by the PO date, not today');
+
+    const { rows: [won] } = await db.query(
+      `SELECT status, (closed_at AT TIME ZONE 'Asia/Kolkata')::date::text AS closed FROM quotations WHERE id = $1`, [q.id]);
+    assert.deepEqual(won, { status: 'Won - PO Received', closed: '2025-12-15' });
+    const { rows: [conv] } = await db.query(
+      `SELECT status, (converted_at AT TIME ZONE 'Asia/Kolkata')::date::text AS converted FROM enquiries WHERE enquiry_no = $1`, [e.enquiry_no]);
+    assert.deepEqual(conv, { status: 'Converted', converted: '2025-12-15' });
+  });
+
+  test('history mode registers everything but tells nobody: no notification, no checklist, no webhook', async () => {
+    const { registerPurchaseOrder } = await import('../src/lib/purchaseOrders.js');
+    const { transaction } = await import('../src/db.js');
+    await db.query(`INSERT INTO webhook_endpoints (name, url, events, secret) VALUES ('n8n', 'https://example.test/hook', ARRAY['po.received','quotation.won','quotation.stage_changed'], 's')`);
+    try {
+      const q = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+      await db.query(`UPDATE quotations SET sales_person = 'Seller Sam', sales_person_email = 'sam@example.test' WHERE id = $1`, [q.id]);
+      const poNumber = `REG-HIST-${Date.now()}`;
+      const data = await transaction((client) => registerPurchaseOrder(client,
+        { quotation: q.quotation_no, po_number: poNumber, po_date: '2026-01-20', project_manager: 'Priya PM' }, { mode: 'history' }));
+      assert.ok(data.stages.length > 0, 'the payment stages are still made');
+      assert.equal(data.checklist_steps, 0);
+      const count = async (sql, params) => Number((await db.query(sql, params)).rows[0].n);
+      assert.equal(await count(`SELECT count(*) AS n FROM notifications WHERE kind = 'po_registered' AND entity_id = $1`, [data.project_id]), 0);
+      assert.equal(await count('SELECT count(*) AS n FROM onboarding_tasks WHERE project_id = $1', [data.project_id]), 0);
+      assert.equal(await count(`SELECT count(*) AS n FROM webhook_events WHERE entity_id IN ($1, $2)`, [poNumber, q.quotation_no]), 0);
+
+      // The same registration live does all three, so the test above means something.
+      const live = await quotationWith([{ description: 'Audit', rate: 100000, gst_rate: 18 }]);
+      const liveData = await transaction((client) => registerPurchaseOrder(client,
+        { quotation: live.quotation_no, po_number: `${poNumber}-L`, po_date: '2026-09-20', project_manager: 'Priya PM' }));
+      assert.ok(await count(`SELECT count(*) AS n FROM webhook_events WHERE entity_id = $1`, [`${poNumber}-L`]) > 0);
+      assert.ok(await count(`SELECT count(*) AS n FROM notifications WHERE kind = 'po_registered' AND entity_id = $1`, [liveData.project_id]) > 0);
+      // And the suppression ended with its transaction.
+      assert.equal((await db.query(`SELECT current_setting('app.suppress_webhooks', true) AS v`)).rows[0].v || '', '');
+    } finally {
+      await db.query(`DELETE FROM webhook_endpoints WHERE name = 'n8n'`);
+    }
+  });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { AlertTriangle, Check, Loader2, MoreHorizontal, X } from 'lucide-react';
 import { cn } from 'cn';
 import { Alert, ConfirmDialog, Field, Modal, useToast } from '../components/ui.jsx';
@@ -575,6 +575,23 @@ function AutoEnquiries() {
   }
   const toggle = () => act('switch', () => api.update('settings', 'auto_enquiries_enabled', { value: s.enabled ? 'false' : 'true' }),
     s.enabled ? 'Automatic enquiries are off' : 'Automatic enquiries are on');
+  // POs and invoices (docs/email-po-plan.md): a switch each, independent of enquiries.
+  const togglePos = () => act('switch-pos', () => api.update('settings', 'auto_po_enabled', { value: s.purchase_orders_enabled ? 'false' : 'true' }),
+    s.purchase_orders_enabled ? 'Automatic POs are off' : 'Automatic POs are on');
+  const toggleInvoices = () => act('switch-invoices', () => api.update('settings', 'auto_invoice_enabled', { value: s.invoices_enabled ? 'false' : 'true' }),
+    s.invoices_enabled ? 'Automatic invoices are off' : 'Automatic invoices are on');
+
+  /** The PO and invoice reads of past mail, after the enquiry one. */
+  function laterProgress(m) {
+    const step = (label, finished, reached, started) => {
+      if (finished) return `${label} read`;
+      if (!started && !reached) return `${label} waiting`;
+      const span = s.backfill_days;
+      const done = reached ? Math.max(0, Math.min(span, span - (Date.now() - new Date(reached).getTime()) / 864e5)) : 0;
+      return `${label}: ${Math.round(done)} of ${span} days`;
+    };
+    return `${step('POs', m.po_finished_at, m.po_reached, m.po_started_at)} · ${step('Invoices', m.invoice_finished_at, m.invoice_reached, m.invoice_scanned != null)}`;
+  }
 
   /** "212 of 365 days read", from the date the sweep has reached. */
   function progress(m) {
@@ -589,18 +606,29 @@ function AutoEnquiries() {
     <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-[14px] font-semibold text-foreground">Automatic enquiries</div>
+          <div className="text-[14px] font-semibold text-foreground">Automatic enquiries, POs and invoices</div>
           <p className="text-[12.5px]/[1.6] text-secondary-text">
             A client email asking for new work becomes an enquiry by itself, and so does a quotation we email in a conversation with no enquiry.
-            Each mailbox's past {s.backfill_days} days are read once. Only the enquiry's own fields are kept, never the email's text.
+            A purchase order a client emails is registered against its quotation, and an invoice we email is recorded on its payment stage;
+            anything the reader is unsure of goes to review instead.
+            Each mailbox's past {s.backfill_days} days are read once. Only the records' own fields are kept, never the email's text.
           </p>
         </div>
-        <Button size="sm" variant={s.enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
-          {s.enabled ? 'Switch off' : 'Switch on'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant={s.enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
+            {s.enabled ? 'Enquiries: switch off' : 'Enquiries: switch on'}
+          </Button>
+          <Button size="sm" variant={s.purchase_orders_enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch-pos'} onClick={togglePos}>
+            {s.purchase_orders_enabled ? 'POs: switch off' : 'POs: switch on'}
+          </Button>
+          <Button size="sm" variant={s.invoices_enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch-invoices'} onClick={toggleInvoices}>
+            {s.invoices_enabled ? 'Invoices: switch off' : 'Invoices: switch on'}
+          </Button>
+        </div>
       </div>
       <p className="text-[12px] text-muted-foreground">
-        {s.enabled ? 'On.' : 'Off: nothing new is read; what was created stays.'}{' '}
+        Enquiries {s.enabled ? 'on' : 'off'}, POs {s.purchase_orders_enabled ? 'on' : 'off'}, invoices {s.invoices_enabled ? 'on' : 'off'}; switching one off stops it reading, and what it made stays.{' '}
+        {s.ai.configured ? '' : 'POs and invoices need the AI key: without it they are left unread. '}
         {s.ai.configured
           ? `AI reads the emails that pass the rules: ${number(s.ai.used_today)} of ${number(s.ai.daily_limit)} calls used today.`
           : 'No AI key is set, so rules alone decide, with a stricter bar.'}
@@ -618,26 +646,45 @@ function AutoEnquiries() {
                   {m.quotations_read > 0 && <> · {number(m.quotations_read)} quotation{m.quotations_read === 1 ? '' : 's'} read from PDFs</>}
                   {m.quotations_failed > 0 && <> · {number(m.quotations_failed)} PDF{m.quotations_failed === 1 ? '' : 's'} not read</>}
                 </div>
+                <div className="text-[12px] text-secondary-text">
+                  {laterProgress(m)} · {number(m.pos_registered)} PO{m.pos_registered === 1 ? '' : 's'} registered
+                  {m.pos_to_review > 0 && <> · <Link className="underline" to="/purchase-orders?tab=review">{number(m.pos_to_review)} to review</Link></>}
+                  {' · '}{number(m.invoices_recorded)} invoice{m.invoices_recorded === 1 ? '' : 's'} recorded
+                  {m.invoices_to_review > 0 && <> · <Link className="underline" to="/payment-stages?tab=invoice-review">{number(m.invoices_to_review)} to review</Link></>}
+                  {m.invoices_waiting > 0 && <> · {number(m.invoices_waiting)} waiting for their PO</>}
+                </div>
+                {(m.po_last_error || m.invoice_last_error) && <div className="text-[12px] text-waiting">Last error: {m.po_last_error || m.invoice_last_error}</div>}
                 {m.last_error && <div className="text-[12px] text-waiting">Last error {m.updated_at ? ago(m.updated_at) : ''}: {m.last_error}</div>}
               </div>
-              <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === m.id} onClick={() => setRerunning(m)}>Re-run</Button>
+              <div className="flex gap-1.5">
+                <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === m.id} onClick={() => setRerunning({ ...m, kind: 'enquiries' })}>Re-run enquiries</Button>
+                <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === m.id} onClick={() => setRerunning({ ...m, kind: 'pos' })}>POs</Button>
+                <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === m.id} onClick={() => setRerunning({ ...m, kind: 'invoices' })}>Invoices</Button>
+              </div>
             </div>
           ))}
         </div>
       )}
       {rerunning && (
         <ConfirmDialog
-          title={`Read ${rerunning.email} again?`}
-          message={`Emails judged not to be enquiries are judged again, and the past ${s.backfill_days} days are read again from the start. Enquiries already created or linked are kept, so nothing is made twice. With an AI key, this uses the shared daily AI budget.`}
+          title={`Read ${rerunning.email} again for ${rerunning.kind === 'pos' ? 'POs' : rerunning.kind}?`}
+          message={rerunning.kind === 'pos'
+            ? `Emails judged not to be POs are read again, and the past ${s.backfill_days} days of inbox mail are read again for POs. POs registered, linked, in review or dismissed are kept, so nothing is registered twice. This uses the shared daily AI budget.`
+            : rerunning.kind === 'invoices'
+              ? `Emails judged not to be invoices are read again, and the past ${s.backfill_days} days of sent mail are read again for invoices. Invoices recorded, linked, in review or dismissed are kept, so nothing is recorded twice. This uses the shared daily AI budget.`
+              : `Emails judged not to be enquiries are judged again, and the past ${s.backfill_days} days are read again from the start. Enquiries already created or linked are kept, so nothing is made twice. With an AI key, this uses the shared daily AI budget.`}
           confirmLabel="Re-run"
           tone="default"
           onClose={() => setRerunning(null)}
-          onConfirm={() => { const m = rerunning; setRerunning(null); act(m.id, () => api.action(`/mailboxes/${m.id}/auto-enquiries/rerun`), `${m.email} will be read again on the next run`); }}
+          onConfirm={() => {
+            const m = rerunning; setRerunning(null);
+            act(m.id, () => api.action(`/mailboxes/${m.id}/auto-enquiries/rerun`, m.kind === 'enquiries' ? {} : { kind: m.kind }), `${m.email} will be read again on the next run`);
+          }}
         />
       )}
       <p className="text-[11.5px] text-muted-foreground">
         Started {s.mailboxes.some((m) => m.started_at) ? date(s.mailboxes.filter((m) => m.started_at).map((m) => m.started_at).sort()[0]) : 'on the next run'}.
-        {' '}Review what was made under Enquiries → Created from email.
+        {' '}Review what was made under Enquiries → Created from email, Purchase orders → To review and Payment schedule → Invoices to review.
       </p>
     </div>
   );

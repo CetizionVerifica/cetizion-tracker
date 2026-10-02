@@ -20,6 +20,8 @@ import { notify } from './notify.js';
 import { emit } from './webhooks.js';
 import { raiseAlert } from './ops/alerts.js';
 import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
+// Invoices read from past mail are not chased until a person has touched them (docs/email-po-plan.md §3.8).
+import { UNTOUCHED_HISTORY_INVOICE } from './invoices.js';
 
 export const OPEN_ENQUIRY_STATUSES = ['New', 'Contacted', 'Qualified', 'Nurture'];
 export const OPEN_QUOTATION_STATUSES = ['Submitted', 'Under Negotiation'];
@@ -463,7 +465,8 @@ export async function loadRecords(db, keys = [], { scope = UNRESTRICTED, kinds =
          FROM ${sSrc.vPaymentStages} ps
          JOIN projects pr ON pr.project_id = ps.project_id
          LEFT JOIN users u ON u.id = pr.owner_user_id ${NEXT_TASK('payment_stage', 'ps.id::text')}
-        WHERE ps.stage_status IN ('Overdue', 'Partially Paid') OR ps.id::text = ANY(${p(sParams, ids('payment_stage'))}::text[])`,
+        WHERE (ps.stage_status IN ('Overdue', 'Partially Paid') AND NOT ${UNTOUCHED_HISTORY_INVOICE('ps')})
+           OR ps.id::text = ANY(${p(sParams, ids('payment_stage'))}::text[])`,
       sParams
     ),
   ]);

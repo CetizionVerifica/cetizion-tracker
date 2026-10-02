@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
+import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
@@ -228,9 +229,16 @@ export default function PurchaseOrderDetail() {
     );
   }
 
-  const { purchase_order: po, services, payment_stages: stages, travel } = data.data;
+  const { purchase_order: po, services, payment_stages: stages, travel, from_email: fromEmail } = data.data;
   const close = () => setDialog(null);
   const done = () => { close(); refetch(); };
+  const markChecked = async () => {
+    try {
+      await api.action(`/purchase-orders/${encodeURIComponent(po.po_number)}/email-read-checked`);
+      toast('Marked checked', 'success');
+      refetch();
+    } catch (err) { toast(err.message, 'danger'); }
+  };
 
   const stagesOff = po.stage_count > 0 && Math.abs(Number(po.stages_percent_total) - 1) > 0.0001;
   const serviceTotal = services.reduce((sum, s) => sum + Number(s.service_value || 0), 0);
@@ -398,6 +406,23 @@ export default function PurchaseOrderDetail() {
           </>
         }
       >
+        {/* Registered automatically from the client's email (docs/email-po-plan.md):
+            a person checks it against the PO once, and says so. */}
+        {fromEmail && !fromEmail.checked && (
+          <Alert tone="warning">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span>
+                <strong>Registered automatically from the client's PO emailed on {date(fromEmail.received_at)}.</strong>{' '}
+                Check the value, the terms and the payment stages against it{po.document_id ? '' : ' (the PDF itself could not be stored)'}.
+                {fromEmail.stages_source === 'template' && ' Its terms could not be read, so the stages are the default.'}
+                {fromEmail.mode === 'history' && ' It came from past mail: record the invoices and payments that already happened.'}
+                {fromEmail.created_quotation && ' No quotation was on file, so one was made from the PO.'}
+              </span>
+              <Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={markChecked}>Mark checked</Button>
+            </span>
+          </Alert>
+        )}
+        <EmailOrigin entity="purchase_order" id={po.po_number} />
         {/* Out of the sales figures, but still billed: say so where the PO is read. */}
         {(po.cancelled || po.replaced_by_po_number) && (
           <Alert tone="warning">

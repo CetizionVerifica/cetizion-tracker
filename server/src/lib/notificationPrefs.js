@@ -23,6 +23,8 @@ export const GROUPS = {
   inbox: { label: 'Mail waiting for a reply', kinds: ['inbox'] },
   visits: { label: 'Audit and site visits', kinds: ['visit'] },
   follow_up_escalations: { label: 'Follow-ups escalated to management', kinds: ['follow_up_escalated'] },
+  // docs/email-po-plan.md: what the email readers could not settle alone, and the invoices they recorded.
+  from_email: { label: 'POs and invoices read from email', kinds: ['po_review', 'invoice_recorded', 'invoice_review'] },
 };
 export const CHANNELS = ['in_app', 'email', 'both', 'off'];
 

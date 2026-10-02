@@ -172,6 +172,10 @@ export function cleanHtml(html) {
   return sanitizeHtml(String(html), SANITIZE);
 }
 
+/** Newsletters and automated mail, by their text and by their sender. */
+export const BULK = /\bunsubscribe\b|view (it |this (email|message) )?in (your |a )?browser|this is an automated (message|email)|do not reply to this (email|message)/i;
+export const BULK_SENDER = /^(newsletters?|marketing|news|mailer|bounces?|campaigns?|updates|digest)[@.+-]/i;
+
 /** Record numbers mentioned in a subject, most specific first. */
 export function referencesIn(subject) {
   const s = String(subject || '');

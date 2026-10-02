@@ -1,6 +1,8 @@
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { PageHeader } from '../App.jsx';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Alert, DocumentLink } from '../components/ui.jsx';
+import { Badge, Alert, DocumentLink, Tabs } from '../components/ui.jsx';
+import { PoReviewList, useReviewCount } from '../components/EmailReview.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, number, percent } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
@@ -9,7 +11,28 @@ import { poRevisionFields } from '../lib/poRevision.js';
 export default function PurchaseOrders() {
   const navigate = useNavigate();
   const lookups = useLookups();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  // POs read from client email that need a person (docs/email-po-plan.md §3.7).
+  const tab = params.get('tab') === 'review' ? 'review' : 'all';
+  const toReview = useReviewCount('/purchase-orders/review');
+  const tabs = (
+    <Tabs
+      active={tab}
+      onChange={(key) => setParams(key === 'review' ? { tab: 'review' } : {})}
+      tabs={[{ key: 'all', label: 'All POs' }, { key: 'review', label: 'To review', count: toReview || undefined }]}
+    />
+  );
+  if (tab === 'review') {
+    return (
+      <>
+        <PageHeader title="Purchase orders" subtitle="POs read from client email that were not registered automatically" />
+        <div className="page stack">
+          {tabs}
+          <PoReviewList />
+        </div>
+      </>
+    );
+  }
 
   const columns = [
     {
@@ -102,11 +125,15 @@ export default function PurchaseOrders() {
         { name: 'quotation_no', label: 'Quotation', options: [{ value: '__none__', label: 'Not linked' }, { value: '__any__', label: 'Linked' }] },
         // Insights links its PO bars with ?live=1: cancelled and revised POs left out.
         { name: 'live', label: 'Cancelled, revised', options: [{ value: '1', label: 'Left out' }] },
+        { name: 'from_email', label: 'Source', options: [{ value: '1', label: 'Registered from email' }] },
       ]}
       banner={
-        lookups.projects.length === 0 ? (
-          <Alert tone="warning">Register a project before adding purchase orders — every PO belongs to one.</Alert>
-        ) : null
+        <>
+          {tabs}
+          {lookups.projects.length === 0 && (
+            <Alert tone="warning">Register a project before adding purchase orders — every PO belongs to one.</Alert>
+          )}
+        </>
       }
     />
   );

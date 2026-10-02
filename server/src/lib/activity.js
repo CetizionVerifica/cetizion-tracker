@@ -50,6 +50,9 @@ export const ACTIONS = {
   // A quotation read from the PDF we emailed, checked against it by a person
   // (docs/email-enquiries-plan.md §3.9.6).
   QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',
+  // A PO registered from a client's email, checked by a person against the
+  // PO (docs/email-po-plan.md §3.8): its stages may be chased from then on.
+  PURCHASE_ORDER_EMAIL_READ_CHECKED: 'purchase_order.email_read_checked',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */

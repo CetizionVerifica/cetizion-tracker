@@ -265,17 +265,42 @@ mailboxRouter.post('/:id/disconnect', async (req, res) => {
 /** Per mailbox: how far the read of past mail has got, and what was decided. */
 mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   const { enquirySettings, aiCallsToday } = await import('../lib/mailbox/autoEnquiry.js');
+  const { poSettings } = await import('../lib/mailbox/autoPurchaseOrder.js');
+  const { invoiceSettings } = await import('../lib/mailbox/autoInvoice.js');
   const { aiConfig } = await import('../lib/ai.js');
   const settings = await enquirySettings();
+  const po = await poSettings();
   const { rows } = await query(
     `SELECT a.id, a.email, a.is_shared, a.status, a.visibility,
             b.since, b.folder, b.reached, b.scanned, b.created AS backfill_created, b.linked AS backfill_linked,
             b.started_at, b.finished_at, b.last_error, b.updated_at,
             COALESCE(d.created, 0)::int AS created, COALESCE(d.linked, 0)::int AS linked, COALESCE(d.not_enquiry, 0)::int AS not_enquiry,
             COALESCE(d.from_quotations, 0)::int AS from_quotations, COALESCE(d.quotations_read, 0)::int AS quotations_read,
-            COALESCE(d.quotations_failed, 0)::int AS quotations_failed
+            COALESCE(d.quotations_failed, 0)::int AS quotations_failed,
+            -- Purchase orders (docs/email-po-plan.md): what was decided, and the read of past mail.
+            COALESCE(p.registered, 0)::int AS pos_registered, COALESCE(p.linked, 0)::int AS pos_linked,
+            COALESCE(p.review, 0)::int AS pos_to_review, COALESCE(p.not_po, 0)::int AS not_po,
+            pb.reached AS po_reached, pb.scanned AS po_scanned, pb.started_at AS po_started_at, pb.finished_at AS po_finished_at,
+            pb.last_error AS po_last_error,
+            -- Invoices we emailed (§3.10).
+            COALESCE(i.recorded, 0)::int AS invoices_recorded, COALESCE(i.review, 0)::int AS invoices_to_review,
+            COALESCE(i.waiting, 0)::int AS invoices_waiting,
+            ib.reached AS invoice_reached, ib.scanned AS invoice_scanned, ib.finished_at AS invoice_finished_at, ib.last_error AS invoice_last_error
        FROM connected_accounts a
+       LEFT JOIN mailbox_invoice_backfills ib ON ib.account_id = a.id
+       LEFT JOIN (SELECT account_id,
+                         count(*) FILTER (WHERE outcome IN ('recorded','recorded_by_hand')) AS recorded,
+                         count(*) FILTER (WHERE outcome = 'review') AS review,
+                         count(*) FILTER (WHERE outcome = 'waiting') AS waiting
+                    FROM email_invoice_decisions GROUP BY account_id) i ON i.account_id = a.id
        LEFT JOIN mailbox_enquiry_backfills b ON b.account_id = a.id
+       LEFT JOIN mailbox_po_backfills pb ON pb.account_id = a.id
+       LEFT JOIN (SELECT account_id,
+                         count(*) FILTER (WHERE outcome IN ('registered','registered_by_hand')) AS registered,
+                         count(*) FILTER (WHERE outcome = 'linked') AS linked,
+                         count(*) FILTER (WHERE outcome = 'review') AS review,
+                         count(*) FILTER (WHERE outcome IN ('not_po','dismissed')) AS not_po
+                    FROM email_po_decisions GROUP BY account_id) p ON p.account_id = a.id
        LEFT JOIN (SELECT account_id,
                          count(*) FILTER (WHERE outcome = 'created') AS created,
                          count(*) FILTER (WHERE outcome = 'linked') AS linked,
@@ -288,6 +313,8 @@ mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   res.json({
     data: {
       enabled: settings.enabled,
+      purchase_orders_enabled: po.enabled,
+      invoices_enabled: (await invoiceSettings()).enabled,
       ai: { configured: aiConfig.enabled, used_today: await aiCallsToday(), daily_limit: settings.dailyAiLimit },
       backfill_days: settings.backfillDays,
       mailboxes: rows,
@@ -305,6 +332,24 @@ mailboxRouter.post('/:id/auto-enquiries/rerun', requireAdmin, async (req, res) =
   const id = Number(req.params.id);
   const { rows: [a] } = await query('SELECT id FROM connected_accounts WHERE id = $1', [id]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
+  if (req.body?.kind === 'pos') {
+    // POs only: the emails decided not to be POs are read again, and the
+    // read of past mail restarts. Registered, linked, review and dismissed
+    // decisions stay, so nothing is registered twice and no item reappears.
+    const { rowCount: cleared } = await query(
+      `DELETE FROM email_po_decisions WHERE account_id = $1 AND outcome = 'not_po'
+          AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
+    await query('DELETE FROM mailbox_po_backfills WHERE account_id = $1', [id]);
+    return res.json({ data: { id, kind: 'pos', decisions_cleared: cleared, backfill: 'restarts on the next run' } });
+  }
+  if (req.body?.kind === 'invoices') {
+    // Invoices only, the same way: not_invoice decisions read again, the read of Sent Items restarted.
+    const { rowCount: cleared } = await query(
+      `DELETE FROM email_invoice_decisions WHERE account_id = $1 AND outcome = 'not_invoice'
+          AND NOT (ai_calls > 0 AND decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'))`, [id]);
+    await query('DELETE FROM mailbox_invoice_backfills WHERE account_id = $1', [id]);
+    return res.json({ data: { id, kind: 'invoices', decisions_cleared: cleared, backfill: 'restarts on the next run' } });
+  }
   // Today's AI-judged rows stay: they are what the day's AI ceiling is
   // counted from, and judging them again today would change nothing.
   const { rowCount: cleared } = await query(
@@ -333,14 +378,42 @@ mailboxRouter.delete('/blocklist/:id', requireAdmin, async (req, res) => {
 
 /**
  * Where a record came from, when it was made from an email: the date, the
- * mailbox, and the thread when the caller may read it. ?entity=enquiry&id=
- * or ?entity=quotation&id=. Nothing when it did not come from email, or
+ * mailbox, and the thread when the caller may read it. ?entity=enquiry&id=,
+ * ?entity=quotation&id=, ?entity=purchase_order&id= or ?entity=payment_stage&id=. Nothing when it did not come from email, or
  * when the record is not the caller's to see.
  */
 mailThreadRouter.get('/origin', async (req, res) => {
   const { entity, id } = req.query;
-  if (!['enquiry', 'quotation'].includes(entity) || !id) throw new ApiError(422, 'entity (enquiry or quotation) and id are required');
-  const { scopeOf, ownerClause } = await import('../auth/ownership.js');
+  if (!['enquiry', 'quotation', 'purchase_order', 'payment_stage'].includes(entity) || !id) {
+    throw new ApiError(422, 'entity (enquiry, quotation, purchase_order or payment_stage) and id are required');
+  }
+  const { scopeOf, ownerClause, purchaseOrderClause, parentClause } = await import('../auth/ownership.js');
+  if (entity === 'purchase_order' || entity === 'payment_stage') {
+    // A PO registered from the client's email, or an invoice recorded from
+    // ours (docs/email-po-plan.md): reachable through the PO, as the PO is.
+    const params = [String(id)];
+    const mine = entity === 'purchase_order'
+      ? purchaseOrderClause(scopeOf(req), params, { alias: 'po' })
+      : parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+    const { rows: [record] } = await query(entity === 'purchase_order'
+      ? `SELECT 1 FROM purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`
+      : `SELECT 1 FROM payment_stages ps WHERE ps.id::text = $1 ${mine ? `AND ${mine}` : ''}`, params);
+    if (!record) return res.json({ data: null });
+    const { rows: [d] } = await query(entity === 'purchase_order'
+      ? `SELECT d.received_at, d.mode, d.thread_id, d.outcome, a.email AS mailbox FROM email_po_decisions d JOIN connected_accounts a ON a.id = d.account_id
+          WHERE d.po_number = $1 AND d.outcome IN ('registered','registered_by_hand') ORDER BY d.decided_at LIMIT 1`
+      : `SELECT d.sent_at AS received_at, d.mode, d.thread_id, d.outcome, a.email AS mailbox FROM email_invoice_decisions d JOIN connected_accounts a ON a.id = d.account_id
+          WHERE d.stage_id::text = $1 AND d.outcome IN ('recorded','recorded_by_hand') ORDER BY d.decided_at LIMIT 1`, [String(id)]);
+    if (!d) return res.json({ data: null });
+    let threadId = null;
+    if (d.thread_id) {
+      const scope = readableThread(req, 'a', 't', 2);
+      const { rows: [t] } = await query(
+        `SELECT t.id FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id WHERE t.id = $1 AND ${scope.clause}`, [d.thread_id, ...scope.params]);
+      threadId = t?.id ?? null;
+    }
+    return res.json({ data: { received_at: d.received_at, mode: d.mode, mailbox: d.mailbox, thread_id: threadId, by_hand: d.outcome.endsWith('_by_hand') } });
+  }
   const params = [String(id)];
   const mine = ownerClause(scopeOf(req), params);
   const table = entity === 'enquiry' ? 'enquiries' : 'quotations';

@@ -202,7 +202,22 @@ function sheetChanges(existing, payload, was) {
 const WON_STATUS = 'Won - PO Received';
 // "ISO 14001" and "ISO9001" alike: a digit may follow straight on (#23).
 const ISO = /\bISO(?![a-z])/i;
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// How two references are compared: "PO-123" and "po 123" are the same.
+export const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * The payment stages for an advance of `first` percent: that much On PO
+ * Registration and the rest On Delivery. No advance (null, 0 or 100 on
+ * completion) is one stage, all On Delivery. Shared with the email reader,
+ * which builds a PO's stages from its printed terms (lib/mailbox/pdfPurchaseOrder.js).
+ */
+export function paymentSplit(first) {
+  if (!first) return [{ stage_name: 'On delivery (100%)', trigger_event: 'On Delivery', stage_percent: 1 }];
+  return [
+    { stage_name: `Advance (${first}%)`, trigger_event: 'On PO Registration', stage_percent: first / 100 },
+    { stage_name: `On delivery (${100 - first}%)`, trigger_event: 'On Delivery', stage_percent: (100 - first) / 100 },
+  ];
+}
 
 /** The quotation status a sheet's deal stage reads as, or null. See stages.js. */
 export function mapStage(raw) {
@@ -638,7 +653,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
     // ---- payment split ---------------------------------------------
     let split;
     if (fullOnCompletion) {
-      split = [{ stage_name: 'On delivery (100%)', trigger_event: 'On Delivery', stage_percent: 1 }];
+      split = paymentSplit(null);
     } else {
       let first = hint.advance_percent;
       let splitNote = null;
@@ -656,10 +671,7 @@ export function buildPlan({ rows, mapping, live, hints = {}, rules: overrides = 
       }
       if (!first) first = rules.default_split[0];
       else if (!splitNote) splitNote = 'advance percentage read from remarks';
-      split = [
-        { stage_name: `Advance (${first}%)`, trigger_event: 'On PO Registration', stage_percent: first / 100 },
-        { stage_name: `On delivery (${100 - first}%)`, trigger_event: 'On Delivery', stage_percent: (100 - first) / 100 },
-      ];
+      split = paymentSplit(first);
       if (splitNote) poItem.assumptions.push(`${first}/${100 - first} split: ${splitNote}`);
       else poItem.assumptions.push(`${first}/${100 - first} split: default, nothing in the sheet says otherwise`);
     }

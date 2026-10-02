@@ -13,10 +13,11 @@
  * The model proposes and code decides: nothing the AI returns is used
  * without passing through parseVerdict.
  */
-import { domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
+import { BULK, BULK_SENDER, domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
+import { poPrefilter } from './poDetect.js';
 import { SERVICE_LINES, serviceLinesFor, OTHER_SERVICE, NO_SERVICE } from '../serviceLines.js';
 
-export const KINDS = ['new_enquiry', 'quotation_sent', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
+export const KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
 
 /** The bar rules alone must clear: they err towards missing an enquiry, not inventing one. */
 export const RULES_BAR = 0.85;
@@ -32,8 +33,6 @@ const ENQUIRY_TERMS = [
 ];
 // A few phrasings that say "quote us" outright weigh more than a word in passing.
 const STRONG_TERMS = /\brfq\b|request for (a )?(quot|proposal)|please (send|share) (us )?(a |your )?(quot|proposal|offer)|need a quot|looking for a quot/i;
-const BULK = /\bunsubscribe\b|view (it |this (email|message) )?in (your |a )?browser|this is an automated (message|email)|do not reply to this (email|message)/i;
-const BULK_SENDER = /^(newsletters?|marketing|news|mailer|bounces?|campaigns?|updates|digest)[@.+-]/i;
 const BILLING_HR = /\binvoice\b|\bremittance\b|payment advice|statement of account|\bresume\b|\bcv\b|curriculum vitae|job application|applying for|\binternship\b/i;
 const JOB = /\bresume\b|\bcv\b|curriculum vitae|job application|applying for (the )?(post|position|role)|\binternship\b/i;
 const QUOTATION_WORDS = /\bquotation\b|\bquote\b|\bproposal\b|\boffer\b|techno[\s-]*commercial|fee proposal|commercial offer|\bprice\b/i;
@@ -59,12 +58,15 @@ const anyNumber = (refs) => refs.quotations.length + refs.enquiries.length + ref
  * Should this email be judged? Pure: the caller works out the facts that
  * need the database.
  *
- * message: { direction, subject, text, from: {email}, external: [...], has_attachments }
+ * message: { direction, subject, text, from: {email}, external: [...], has_attachments, attachments? }
  * facts:
  *   firstInConversation  inbound: nothing earlier is known in this conversation
  *   handled              the conversation is already linked to a record by
  *                        number, converted, or has an enquiry decision
  *   toVendor             outbound: a recipient is one of our vendors
+ *   poReader             inbound: the PO reader is on (auto_po_enabled)
+ *   notPo                inbound: the PO reader has decided it is not a PO
+ *   portalSenders        the po_portal_senders setting
  *
  * Returns { candidate: 'inbound' | 'quotation' | null, reason }.
  */
@@ -83,6 +85,11 @@ export function prefilter(message, facts = {}) {
     return { candidate: null, reason: 'not a quotation' };
   }
 
+  // A client's PO is phase 2's (docs/email-po-plan.md §3.1): never an
+  // enquiry, and not judged here, so it is never logged not_enquiry. Only
+  // while the PO reader is on: off, nothing would ever read it. Once the
+  // PO reader has decided it is not a PO, it is judged as any email.
+  if (facts.poReader && !facts.notPo && poPrefilter(message, { portalSenders: facts.portalSenders }).candidate) return { candidate: null, reason: 'purchase order' };
   if (!facts.firstInConversation) return { candidate: null, reason: 'not the first message' };
   if (REPLY.test(subject)) return { candidate: null, reason: 'reply' };
   if (anyNumber(referencesIn(subject))) return { candidate: null, reason: 'names a record' };
@@ -203,6 +210,7 @@ export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {})
     '{"kind": one of ' + KINDS.map((k) => `"${k}"`).join(' | ') + ', "confidence": 0 to 1, "company_name": string|null, "contact_name": string|null, "contact_phone": string|null, "service": string|null, "sector": string|null, "country": string|null, "summary": string|null, "quoted_amount": number|null, "currency": string|null}',
     'new_enquiry: a client or prospect asking us for new work: a quote, a proposal, pricing, an audit, a certification, an assessment, a consultation.',
     'quotation_sent: an email WE send to a client carrying our quotation or proposal.',
+    'purchase_order: a client placing an order with us: a purchase order, work order, letter of intent or signed contract.',
     'reply_or_followup: about work already under discussion. vendor_or_sales_pitch: someone selling to us. billing: invoices, payments, statements.',
     'For inbound mail the company and contact are the sender\'s. For quotation_sent they are the RECIPIENT\'s, from the addressee and the letter, never from our own signature or letterhead.',
     `service: one of these service lines when it fits, otherwise the client's own words: ${lines}.`,

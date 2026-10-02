@@ -8,6 +8,7 @@ import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
 import { financeDigest, paymentReminder } from './emailTemplates.js';
 import { sendMail } from './mail.js';
+import { UNTOUCHED_HISTORY_INVOICE } from './invoices.js';
 
 const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86_400_000);
 
@@ -92,7 +93,10 @@ async function setting(db, key, fallback) {
 export async function runPaymentReminders({ db = { query }, today = businessToday(), startedBy = 'schedule', send = sendMail } = {}) {
   const intervalDays = Number(await setting(db, 'reminder_interval_days', '7')) || 7;
   const levelDays = String(await setting(db, 'reminder_levels_days', '3,14,30')).split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b);
-  const { rows } = await db.query(`${STAGE_ROWS} WHERE ps.stage_status = 'Overdue'`);
+  // An invoice read from past mail is very likely paid already: the client
+  // is not asked again until a person has looked (docs/email-po-plan.md
+  // §3.10.4, decision 9).
+  const { rows } = await db.query(`${STAGE_ROWS} WHERE ps.stage_status = 'Overdue' AND NOT ${UNTOUCHED_HISTORY_INVOICE('ps')}`);
   const financeEmail = (await setting(db, 'finance_email', '')) || null;
   const plan = planReminders(rows, { today, intervalDays, levelDays: levelDays.length ? levelDays : [3, 14, 30] });
   const sent = [];
