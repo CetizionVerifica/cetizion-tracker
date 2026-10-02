@@ -4,8 +4,10 @@
  *   GET    /api/inbox/inboxes                       inboxes and their shared mailboxes
  *   POST   /api/inbox/inboxes                       { name, account_id, default_assignment, members, first_response_hours, signature }
  *   PATCH  /api/inbox/inboxes/:id
- *   GET    /api/inbox?view=mine|unassigned|all|overdue&status=&inbox_id=&q=
+ *   GET    /api/inbox?view=mine|unassigned|all|overdue&status=&inbox_id=&q=&page=&page_size=
+ *                                                   { data, meta: { page, page_size, total, pages } }
  *   GET    /api/inbox/summary                       counts for the sidebar
+ *   POST   /api/inbox/sync                          pull new mail now (the API also does every minute)
  *   GET    /api/inbox/:id                           the conversation with its thread
  *   PATCH  /api/inbox/:id                           { assignee, status, priority, labels, snoozed_until }
  *   POST   /api/inbox/:id/reply                     { html | body, canned_id }  from the shared address
@@ -22,6 +24,7 @@ import { replyToThread } from '../lib/mailbox/sync.js';
 import { createEnquiryFromEmail } from '../lib/mailbox/enquiryFromEmail.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate, wake } from '../lib/inbox.js';
+import { isSyncing, kickSync } from '../lib/mailbox/autoSync.js';
 
 export const inboxRouter = Router();
 
@@ -217,8 +220,31 @@ inboxRouter.get('/summary', async (req, res) => {
   res.json({ data: r });
 });
 
+/**
+ * Pull new mail now, without waiting for the API's minute timer.
+ *
+ * The Inbox page calls this when it opens and while it stays open; there
+ * is no button. It answers at once — a sweep can take minutes when the
+ * enquiry reader calls the AI — and the page's own polling shows what the
+ * sweep stored. Asking again within 15 seconds starts nothing new.
+ */
+inboxRouter.post('/sync', async (req, res) => {
+  const started = Boolean(kickSync());
+  const { rows: [r] } = await query(
+    `SELECT MAX(a.last_synced_at) AS last_synced_at
+       FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id
+      WHERE i.active AND a.status = 'active'`);
+  res.status(202).json({ data: { started, syncing: isSyncing(), last_synced_at: r?.last_synced_at || null } });
+});
+
+/** Conversations per page of the list, by default and at most. */
+export const PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
 inboxRouter.get('/', async (req, res) => {
   await wake();
+  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number.parseInt(req.query.page_size, 10) || PAGE_SIZE));
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
   const params = []; const where = [];
   const add = (sql, v) => { params.push(v); where.push(sql.replaceAll('?', `$${params.length}`)); };
   const view = String(req.query.view || 'all');
@@ -239,13 +265,27 @@ inboxRouter.get('/', async (req, res) => {
   const order = view === 'overdue'
     ? 'c.response_due_at, t.last_message_at DESC NULLS LAST, c.id DESC'
     : 't.last_message_at DESC NULLS LAST, c.id DESC';
-  const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY ${order} LIMIT 500`, params);
+  const filter = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  // A page at a time: with every message in the shared mailbox kept, the
+  // list is the whole mailbox, and the old flat LIMIT 500 simply hid
+  // everything after the 500th thread. The count uses the same joins and
+  // the same filter, so `total` is the number the pages add up to.
+  const [{ rows }, { rows: [{ total }] }] = await Promise.all([
+    query(`${LIST} ${filter} ORDER BY ${order} LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`, params),
+    query(`SELECT COUNT(*)::int AS total FROM inbox_conversations c
+              JOIN inboxes i ON i.id = c.inbox_id
+              JOIN email_threads t ON t.id = c.thread_id
+              LEFT JOIN companies co ON co.id = c.company_id
+            ${filter}`, params),
+  ]);
   // The preview is a column written at ingest, so mail synced before the
   // quoted history was split out still carries it — which is every thread
   // in the inbox today. Cutting it here fixes the backlog without dropping
   // a sync cursor and re-reading a year of mail to rewrite one text field.
-  res.json({ data: rows.map((r) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })) });
+  res.json({
+    data: rows.map((r) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })),
+    meta: { page, page_size: pageSize, total, pages: Math.max(1, Math.ceil(total / pageSize)) },
+  });
 });
 
 async function loadConversation(id, req) {

@@ -43,13 +43,27 @@ async function companyOwner(db, companyId) {
   return r?.sales_person || null;
 }
 
-async function routeToInbox({ db, account, thread, message }) {
+/**
+ * Mail that arrived in the shared mailbox's Inbox folder from somebody
+ * other than the mailbox itself.
+ *
+ * classify() calls a message outbound when its sender is one of us, which
+ * is right for answering a client and wrong for a colleague writing to
+ * sales@: that is mail the shared address received, and the Inbox shows
+ * everything the address receives. It only decides whether a thread gets
+ * a conversation — once it has one, a colleague's message still counts as
+ * our reply, as it always has.
+ */
+const receivedHere = (account, message, folder) => folder === 'inbox'
+  && String(message.from_email || '').toLowerCase() !== String(account.email || '').toLowerCase();
+
+async function routeToInbox({ db, account, thread, message, folder = null }) {
   if (!account.is_shared) return;
   const { rows: [inbox] } = await db.query('SELECT * FROM inboxes WHERE account_id = $1 AND active FOR UPDATE', [account.id]);
   if (!inbox) return;
   const { rows: [conv] } = await db.query('SELECT * FROM inbox_conversations WHERE thread_id = $1 FOR UPDATE', [thread.id]);
 
-  if (message.direction === 'outbound') {
+  if (message.direction === 'outbound' && !(!conv && receivedHere(account, message, folder))) {
     if (conv) {
       await db.query(
         `UPDATE inbox_conversations SET first_response_at = COALESCE(first_response_at, $2), response_due_at = NULL,

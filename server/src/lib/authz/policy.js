@@ -354,6 +354,7 @@ export const routes = [
   // ---------------------------------------------------------------- inbox
   { method: 'GET', path: '/api/inbox', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'GET', path: '/api/inbox/summary', access: signedIn, restrictions: ['mailbox-delegate'] },
+  { method: 'POST', path: '/api/inbox/sync', access: signedIn, note: 'Starts the same sweep the API runs every minute, at most once every 15 seconds; returns nothing from any mailbox.' },
   { method: 'GET', path: '/api/inbox/:id', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'PATCH', path: '/api/inbox/:id', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'POST', path: '/api/inbox/:id/reply', access: signedIn, restrictions: ['mailbox-delegate'] },

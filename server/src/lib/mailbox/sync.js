@@ -8,7 +8,7 @@
  *   disconnect(id)       drop tokens, subscriptions and (by policy) bodies
  */
 import crypto from 'node:crypto';
-import { query, transaction } from '../../db.js';
+import { pool, query, transaction } from '../../db.js';
 import { config } from '../../config.js';
 import { applyVisibility, classify, cleanHtml, domainOf, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
 import { microsoftConfigured, microsoftProvider } from './microsoft.js';
@@ -157,10 +157,31 @@ async function linkRecord(db, subject, companyId) {
 /** Hooks run for each stored message (the shared inbox, #30, registers one). */
 export const messageHooks = [];
 
-/** The rules every message is classified under, for one account. */
+/** Whether this mailbox's mail is routed into an active Inbox (lib/inbox.js). */
+export async function feedsInbox(account, db = { query }) {
+  if (!account.is_shared) return false;
+  const { rows: [r] } = await db.query('SELECT EXISTS (SELECT 1 FROM inboxes WHERE account_id = $1 AND active) AS yes', [account.id]);
+  return Boolean(r?.yes);
+}
+
+/**
+ * The rules every message is classified under, for one account.
+ *
+ * A mailbox that feeds an Inbox keeps every message: the Inbox is a mail
+ * client for the shared address, and one that silently drops colleagues'
+ * mail, no-reply senders and anything on the "Never sync" list is not
+ * showing the mailbox. The verdict the filters would have given is kept
+ * as `filtered`, so ingest can still keep that mail away from the
+ * enquiry and PO readers — the filters exist for those, not for reading.
+ */
 export async function ingestRules(account, db = { query }) {
   const rules = await settingsFor(db);
-  return (m) => classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
+  const keepAll = await feedsInbox(account, db);
+  return (m) => {
+    const c = classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
+    if (!keepAll || !c.skip) return c;
+    return { ...c, skip: null, filtered: c.skip };
+  };
 }
 
 /**
@@ -204,7 +225,7 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
     [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
       (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
       m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy]);
-  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external });
+  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null });
   return { thread, message: saved, newThread };
 }
 
@@ -248,6 +269,15 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
     }
     result.stored += 1;
     result.threads.add(r.thread.id);
+    if (c.filtered) {
+      // Stored for the Inbox only (ingestRules). The readers see it exactly
+      // as they did when the filters dropped it: a portal's notification
+      // still goes to the PO reader, nothing else goes anywhere.
+      if (c.filtered === 'blocked sender' && isPortalSender(m.from?.email, portals)) {
+        result.poCandidates.push({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId: r.thread.id, newThread: r.newThread, dropped: false });
+      }
+      continue;
+    }
     const cand = { m, c, threadId: r.thread.id, newThread: r.newThread, dropped: false };
     if (c.direction === 'outbound' || r.newThread) result.candidates.push(cand);
     if (mayBePo(m, c)) result.poCandidates.push(cand);
@@ -262,7 +292,34 @@ async function portalSenders() {
   return r?.value || '';
 }
 
+/** The first half of the advisory lock key a mailbox's sync holds; the second is its id. */
+const SYNC_LOCK = 2900;
+
+/**
+ * Sync one mailbox, unless a sync of it is already running somewhere.
+ *
+ * Mail is pulled from several places now — the API's own timer
+ * (autoSync.js), the worker's mail.sync job, Graph's webhook and the Sync
+ * now button — in more than one process. Two of them reading the same
+ * delta at once would both try to store the same messages, and the
+ * second one's insert fails on the unique key and fails its whole sync.
+ * A session-level advisory lock, held on its own connection for the
+ * length of the sync, makes the second caller step aside instead.
+ */
 export async function syncAccount(id) {
+  const lock = await pool.connect();
+  let held = false;
+  try {
+    ({ rows: [{ held }] } = await lock.query('SELECT pg_try_advisory_lock($1, $2) AS held', [SYNC_LOCK, Number(id)]));
+    if (!held) return { id, skipped: 'already syncing' };
+    return await syncAccountUnlocked(id);
+  } finally {
+    if (held) await lock.query('SELECT pg_advisory_unlock($1, $2)', [SYNC_LOCK, Number(id)]).catch(() => {});
+    lock.release();
+  }
+}
+
+async function syncAccountUnlocked(id) {
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [id]);
   if (!account || account.status !== 'active') return { id, skipped: 'not active' };
   const provider = providerFor(account);
@@ -275,7 +332,8 @@ export async function syncAccount(id) {
         `INSERT INTO mail_folders (account_id, folder) VALUES ($1,$2) ON CONFLICT (account_id, folder) DO UPDATE SET folder = EXCLUDED.folder RETURNING *`, [account.id, folder]);
       const since = f.delta_link ? null : new Date(Date.now() - account.import_days * 864e5).toISOString();
       const { messages, deltaLink } = await provider.delta(folder, f.delta_link, since);
-      const r = await ingest(account, messages);
+      // Which folder each message came from, for the Inbox's routing.
+      const r = await ingest(account, messages.map((m) => ({ ...m, folder: m.folder || folder })));
       candidates.push(...r.candidates);
       poCandidates.push(...r.poCandidates);
       out.stored += r.stored;
@@ -408,7 +466,9 @@ export async function syncAll() {
   const results = [];
   for (const { id } of rows) {
     const r = await syncAccount(id);
-    if (!r.error) {
+    // A mailbox another process is syncing has its subscriptions seen to
+    // there; renewing them here too could create a second one.
+    if (!r.error && !r.skipped) {
       const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [id]);
       r.subscriptions = await ensureSubscriptions(a).catch((e) => `failed: ${e.message}`);
     }
@@ -435,7 +495,7 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
   await saveTokens(account, provider);
   // Pull it straight back so it shows on the timeline now, marked as sent from here.
   const { messages } = await provider.delta('sentitems', (await query(`SELECT delta_link FROM mail_folders WHERE account_id = $1 AND folder = 'sentitems'`, [account.id])).rows[0]?.delta_link || null, new Date(Date.now() - 3600e3).toISOString());
-  const r = await ingest(account, messages, { sentBy: by });
+  const r = await ingest(account, messages.map((m) => ({ ...m, folder: 'sentitems' })), { sentBy: by });
   return { sent: true, synced: r.stored };
 }
 
