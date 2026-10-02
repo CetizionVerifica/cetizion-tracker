@@ -380,8 +380,6 @@ export const resources = {
     table: 'purchase_orders',
     view: 'v_purchase_orders',
     label: 'Purchase order',
-    computedFilters: ['from_email'],
-    listClauses: async (q) => fromEmailClause('purchase-orders', q),
     hasDocument: true,
     // Deleting a PO deletes its payment stages, and with them their invoice documents.
     cascadeDocuments: { sql: 'SELECT document_id FROM payment_stages WHERE po_number = $1 FOR UPDATE', key: 'po_number' },
@@ -394,11 +392,13 @@ export const resources = {
     // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
     // And the records behind a Reports chart (?report_from=&report_sector=…),
     // picked by the report's own rules, so the list holds what the bar counted.
+    // ?from_email=1: POs registered automatically from a client's email.
     listClauses: async (q, ctx) => [
       ...(String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+      ...fromEmailClause('purchase-orders', q),
       ...await reportListClauses('pos', q, ctx),
     ],
-    computedFilters: ['live', ...REPORT_LIST_KEYS],
+    computedFilters: ['live', 'from_email', ...REPORT_LIST_KEYS],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
