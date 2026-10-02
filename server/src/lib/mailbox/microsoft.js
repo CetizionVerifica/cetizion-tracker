@@ -143,6 +143,11 @@ export function microsoftProvider(account, tokens) {
      * A message's file attachments, as buffers. Graph returns small files
      * inline as base64; one larger than about 3 MB comes without its bytes
      * and is fetched from its $value. Mail.ReadWrite already covers this.
+     *
+     * A file over `maxBytes` comes back with `content: null`, on purpose. A
+     * download that fails throws instead: returning it without its bytes
+     * made the readers decide "no PDF attached" — for an invoice, a final
+     * "not an invoice" — on what was a throttled or timed-out request.
      */
     async attachments(providerId, { maxBytes = 15 * 1024 * 1024 } = {}) {
       const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size`);
@@ -156,7 +161,8 @@ export function microsoftProvider(account, tokens) {
         else {
           current = await freshTokens(current);
           const r = await fetch(`${GRAPH}${who}/messages/${providerId}/attachments/${a.id}/$value`, { headers: { Authorization: `Bearer ${current.access_token}` }, signal: AbortSignal.timeout(60_000) });
-          if (r.ok) content = Buffer.from(await r.arrayBuffer());
+          if (!r.ok) throw Object.assign(new Error(`Attachment ${a.name || a.id} could not be downloaded (Graph ${r.status})`), { status: r.status, transient: true });
+          content = Buffer.from(await r.arrayBuffer());
         }
         out.push({ name: a.name, contentType: a.contentType, size: a.size, content });
       }

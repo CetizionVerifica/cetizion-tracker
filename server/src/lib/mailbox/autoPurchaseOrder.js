@@ -37,7 +37,7 @@ import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './po
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
-import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
+import { fetchMessage, ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
 import { referencesIn } from './rules.js';
 
 /**
@@ -648,15 +648,25 @@ async function keepForRetry(account, cand, aiCalls) {
 
 /**
  * Read the kept emails again; after a week, a person decides (review,
- * 'unreadable'). The message is rebuilt from what the tracker stores; the
- * PDF comes from the mailbox.
+ * 'unreadable') and is told. The message is the tracker's stored copy, or
+ * — for one it never stored (a portal's notification, past mail outside
+ * the import window) — fetched from the mailbox again: rebuilt from ids
+ * alone, it went to the AI with no subject and no body, and a PO written
+ * in the email itself came back "not a PO".
  */
 export async function retryPoReads(ctx, { limit = 100 } = {}) {
-  await query(
+  const { rows: expired } = await query(
     `UPDATE email_po_decisions SET outcome = 'review', review_reason = 'unreadable'
-      WHERE outcome = 'retry' AND retry_since < now() - interval '7 days'`);
+      WHERE outcome = 'retry' AND retry_since < now() - interval '7 days' RETURNING id, account_id, provider_id, from_email`);
+  for (const d of expired) {
+    await notify({
+      kind: 'po_review', title: `A purchase order from ${d.from_email || 'a client'} could not be read for a week`,
+      body: 'Not registered automatically: its PDF could not be read. Check it in the review queue.',
+      link: '/purchase-orders?tab=review', dedupeKey: `po-review:${d.account_id}:${d.provider_id}`,
+    }).catch(() => {});
+  }
   const { rows } = await query(
-    `SELECT d.*, m.subject, m.body_html, m.has_attachments, m.from_name FROM email_po_decisions d
+    `SELECT d.*, m.id AS stored_id, m.subject, m.body_html, m.has_attachments, m.from_name FROM email_po_decisions d
        JOIN connected_accounts a ON a.id = d.account_id AND a.status = 'active'
        LEFT JOIN email_messages m ON m.account_id = d.account_id AND m.provider_id = d.provider_id
       WHERE d.outcome = 'retry' ORDER BY d.retry_since LIMIT $1`, [limit]);
@@ -664,9 +674,11 @@ export async function retryPoReads(ctx, { limit = 100 } = {}) {
   for (const d of rows) {
     if (ctx.aiUsed >= ctx.settings.dailyAiLimit) break;
     const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [d.account_id]);
+    const fetched = d.stored_id ? null : await fetchMessage(account, d.provider_id);
     const cand = {
       m: { provider_id: d.provider_id, internet_message_id: d.internet_message_id, conversation_id: d.conversation_id, sent_at: d.received_at,
-        subject: d.subject, body_html: d.body_html, has_attachments: d.has_attachments ?? true, from: { email: d.from_email, name: d.from_name } },
+        subject: fetched?.subject ?? d.subject, body_html: fetched?.body_html ?? d.body_html, preview: fetched?.preview,
+        has_attachments: fetched?.has_attachments ?? d.has_attachments ?? true, from: { email: d.from_email, name: fetched?.from?.name ?? d.from_name } },
       c: { direction: 'inbound', external: d.from_email ? [{ email: d.from_email, name: d.from_name }] : [] },
       threadId: d.thread_id, retrySince: d.retry_since,
     };
@@ -725,7 +737,7 @@ async function enquiriesFromNotPo(account, cands, enquiryCtx, provider) {
     [account.id, cands.map((c) => c.m.provider_id)]);
   const notPo = new Set(rows.map((r) => r.provider_id));
   const handBack = cands.filter((c) => notPo.has(c.m.provider_id) && (c.newThread || c.dropped));
-  if (handBack.length) await processCandidates(account, handBack, { ctx: enquiryCtx, notifyEach: false, provider });
+  if (handBack.length) await processCandidates(account, handBack, { ctx: enquiryCtx, notifyEach: false, provider, onSettled: queueFailures(account, 'enquiry') });
 }
 
 /**

@@ -38,7 +38,7 @@ import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
 import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs } from './invoiceDetect.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
-import { ingestRules, providerFor, saveTokens } from './sync.js';
+import { fetchMessage, ingestRules, providerFor, saveTokens } from './sync.js';
 import { isPdf } from './pdfQuotation.js';
 
 /** Replaceable in tests: the AI and document storage. */
@@ -163,8 +163,16 @@ export async function decideInvoice(account, cand, ctx) {
   }
 
   const chat = chatFn();
-  // No AI, or the day's ceiling reached: left undecided, so the backfill reads it once it can.
-  if (!chat) { ctx.skipped += 1; return 'no_ai'; }
+  // No AI, or the day's ceiling reached: it waits, unread, for
+  // invoices.backfill to read it (retryWaiting), or for a person after
+  // auto_invoice_wait_days. With no AI it used to be left with no decision
+  // at all, and live mail is handed over once: it was never read.
+  if (!chat) {
+    if (ctx.backfill && !cand.retry) { ctx.stopped = 'no_ai'; return 'no_ai'; }
+    if (!cand.retry) await saveDecision({ query }, account, cand, { outcome: 'waiting', reading: null, ai_calls: 0 });
+    ctx.waiting += 1;
+    return 'waiting';
+  }
   if (ctx.aiUsed >= ctx.settings.dailyAiLimit) {
     // The backfill reads the page again tomorrow; live mail is handed over
     // once, so it waits, unread, for invoices.backfill to read it.
@@ -440,10 +448,12 @@ export async function retryWaiting(ctx, { limit = 200 } = {}) {
       } else if (daysBetween(istDay(d.decided_at), businessToday()) >= ctx.settings.waitDays) {
         // Never read in a week: a person looks.
         await toReview({ query }, account, cand, ctx, { method: 'ai', review_reason: 'unreadable' });
-      } else if (ctx.aiUsed < ctx.settings.dailyAiLimit) {
-        // Never read (an AI error, or the day's ceiling): read it now.
+      } else if (chatFn() && ctx.aiUsed < ctx.settings.dailyAiLimit) {
+        // Never read (an AI error, no AI, or the day's ceiling): read it now,
+        // from the stored copy or, for one never stored, the mailbox.
         const { rows: [msg] } = await query('SELECT subject, body_html FROM email_messages WHERE account_id = $1 AND provider_id = $2', [d.account_id, d.provider_id]);
-        await decideInvoice(account, { ...cand, retry: true, m: { ...cand.m, subject: msg?.subject ?? null, body_html: msg?.body_html ?? null } }, ctx);
+        const m = msg || await fetchMessage(account, d.provider_id);
+        await decideInvoice(account, { ...cand, retry: true, m: { ...cand.m, subject: m?.subject ?? null, body_html: m?.body_html ?? null } }, ctx);
       }
     } catch (err) {
       ctx.errors += 1;
@@ -567,6 +577,10 @@ export async function runInvoiceBackfills({ budgetMs = 4 * 60_000 } = {}) {
   const ctx = await invoiceRunContext({ backfill: true });
   if (!ctx.settings.enabled) return { skipped: 'switched off', recorded: 0, errors: 0 };
   const retried = await retryWaiting(ctx);
+  // Without an AI nothing in the past can be read: the backfill waits for
+  // one rather than reading a year of mail, deciding nothing, and calling
+  // itself finished.
+  if (!chatFn()) return { skipped: 'no AI', retried, recorded: 0, errors: 0 };
   const { rows } = await query(
     `SELECT a.* FROM connected_accounts a LEFT JOIN mailbox_po_backfills p ON p.account_id = a.id
        LEFT JOIN mailbox_invoice_backfills b ON b.account_id = a.id

@@ -315,6 +315,45 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.deepEqual(ds.map((d) => [d.outcome, d.method, d.ai_calls]), [['created', 'ai', 1], ['not_enquiry', 'ai', 1], ['not_enquiry', 'ai', 1]]);
   });
 
+  // A vague request: a candidate, but the rules alone cannot call it an enquiry.
+  const vague = (over = {}) => rfq({
+    from: { email: `p@${uid('vague')}.com`, name: 'P' }, subject: 'BRSR',
+    body_html: '<p>Hi, we need support with our BRSR report, can we discuss?</p>', ...over,
+  });
+  const queuedFor = async (accountId) => (await db.query(`SELECT attempts, last_error FROM email_reader_queue WHERE account_id = $1 AND reader = 'enquiry'`, [accountId])).rows;
+  const dueNow = (accountId) => db.query(`UPDATE email_reader_queue SET next_attempt_at = now() - interval '1 second' WHERE account_id = $1`, [accountId]);
+
+  test('the AI failing on an email the rules cannot call an enquiry leaves it to be read again, not "not an enquiry"', async () => {
+    const box = await mailbox({ shared: true });
+    auto.deps.chat = async () => { throw new Error('timeout'); };
+    await deliver(box, [vague()]);
+    assert.deepEqual(await decisions(box.id), [], 'no final verdict on a timeout');
+    const [row] = await queuedFor(box.id);
+    assert.equal(row?.attempts, 1, 'queued to be read again');
+    assert.match(row.last_error, /AI unavailable/);
+
+    auto.deps.chat = async () => ({ kind: 'new_enquiry', confidence: 0.9, company_name: 'Vague Reporting Ltd', service: 'BRSR' });
+    await dueNow(box.id);
+    await sync.syncAccount(box.id);
+    const [d] = await decisions(box.id);
+    assert.deepEqual([d.outcome, d.method], ['created', 'ai']);
+    assert.deepEqual(await queuedFor(box.id), []);
+  });
+
+  test('an empty AI reply is no answer either; on the last try the rules\' no stands', async () => {
+    const box = await mailbox({ shared: true });
+    auto.deps.chat = async () => ({});
+    await deliver(box, [vague()]);
+    assert.deepEqual(await decisions(box.id), []);
+    const { MAX_ATTEMPTS } = await import('../src/lib/mailbox/readerQueue.js');
+    await db.query(`UPDATE email_reader_queue SET attempts = $2 - 1 WHERE account_id = $1`, [box.id, MAX_ATTEMPTS]);
+    await dueNow(box.id);
+    await sync.syncAccount(box.id);
+    const [d] = await decisions(box.id);
+    assert.deepEqual([d.outcome, d.method], ['not_enquiry', 'rules']);
+    assert.deepEqual(await queuedFor(box.id), []);
+  });
+
   test('the AI failing falls back to rules, and never stops the sync', async () => {
     const box = await mailbox({ shared: true });
     auto.deps.chat = async () => { throw new Error('no route'); };

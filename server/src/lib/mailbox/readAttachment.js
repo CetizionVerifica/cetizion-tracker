@@ -30,7 +30,12 @@ export async function readWithAi(account, cand, ctx, chat, { rank, prompt, parse
     let files;
     try {
       const provider = ctx.provider || providerFor(account);
-      files = (await provider.attachments(m.provider_id)).filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
+      const pdfs = (await provider.attachments(m.provider_id)).filter((a) => isPdf(a));
+      files = pdfs.filter((a) => a.content && a.content.length <= MAX_PDF_BYTES);
+      // A PDF is attached but too large to read: the document is there, and
+      // a person reads it. Not "no PDF", which the invoice reader takes as
+      // "not an invoice" for good.
+      if (pdfs.length && !files.length) return { unreadable: true, ai_calls: 0 };
     } catch (err) {
       return { error: err.message };
     }

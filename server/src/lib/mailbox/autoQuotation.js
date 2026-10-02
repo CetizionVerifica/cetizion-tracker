@@ -31,7 +31,13 @@ export async function prepare(account, cand, verdict, ctx, chat) {
   let chosen = null; let text = null; let reason = null;
   if (m.has_attachments) {
     const provider = ctx.provider || providerFor(account);
-    const files = (await provider.attachments(m.provider_id)).filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
+    let all;
+    try {
+      all = await provider.attachments(m.provider_id);
+    } catch (err) {
+      throw Object.assign(err, { transient: true });
+    }
+    const files = all.filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
     const read = [];
     for (const f of files) {
       try {
@@ -62,7 +68,8 @@ export async function prepare(account, cand, verdict, ctx, chat) {
       ], { maxTokens: 3000, timeoutMs: 90_000, plugins: [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }] })
       : await chat(system, user, { maxTokens: 3000, timeoutMs: 60_000 });
   } catch (err) {
-    return fail('unreadable', { ai_calls: 1, detail: err.message });
+    // The AI did not answer: the PDF may be fine. Read again later (autoEnquiry.js prepareQuotation).
+    throw Object.assign(new Error(`the quotation PDF was not read: ${err.message}`), { transient: true });
   }
   const checked = checkExtraction(raw, {
     emailDate: m.sent_at, sourceText: scanned ? null : text, minConfidence: ctx.settings.quotationMinConfidence,

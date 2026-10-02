@@ -30,6 +30,11 @@ export const testPaging = { size: 50 };
 const testAttachments = new Map();
 /** Every message pushed, by id, for message(): the mailbox keeps mail after delta has handed it over. */
 const testMessages = new Map();
+/** Attachments that fail to download the next `times` they are asked for, as Graph does when throttled. */
+const testAttachmentFailures = new Map();
+export function failTestAttachments(accountId, providerId, times = 1) {
+  testAttachmentFailures.set(`${accountId}:${providerId}`, times);
+}
 export function pushTestMessages(accountId, messages) {
   for (const m of messages) {
     if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
@@ -59,6 +64,11 @@ function testProvider(account) {
       return m;
     },
     async attachments(providerId) {
+      const left = testAttachmentFailures.get(`${account.id}:${providerId}`) || 0;
+      if (left > 0) {
+        testAttachmentFailures.set(`${account.id}:${providerId}`, left - 1);
+        throw Object.assign(new Error('Attachment could not be downloaded (Graph 429)'), { status: 429, transient: true });
+      }
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
     },
     async page(folder, { sinceIso, cursor = null } = {}) {
@@ -91,6 +101,23 @@ export function providerFor(account) {
     return microsoftProvider(account, openTokens(account.tokens_encrypted, key()));
   }
   throw new Error(`Provider ${account.provider} is not supported yet`);
+}
+
+/**
+ * One message from the mailbox again, for a reader retrying an email the
+ * tracker never stored. Null when the mailbox cannot give it (moved,
+ * deleted, offline): the caller reads on with what it has.
+ */
+export async function fetchMessage(account, providerId) {
+  try {
+    const provider = providerFor(account);
+    if (!provider.message) return null;
+    const m = await provider.message(providerId);
+    await saveTokens(account, provider);
+    return m;
+  } catch {
+    return null;
+  }
 }
 
 export async function saveTokens(account, provider) {

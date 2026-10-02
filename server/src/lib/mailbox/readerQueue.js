@@ -69,6 +69,16 @@ async function giveUp(account, row) {
   }).catch(() => {});
 }
 
+/**
+ * A reading that failed for a reason that passes (the AI timed out or gave
+ * no answer, an attachment did not download). Thrown by a reader to have
+ * the email read again later instead of deciding it on half the facts.
+ */
+export const transientError = (message) => Object.assign(new Error(message), { transient: true });
+
+/** Is this the email's last try in the queue? Then a reader decides with what it has. */
+export const lastTry = (cand) => (cand.attempts ?? 0) >= MAX_ATTEMPTS - 1;
+
 /** `onSettled` for a reader: what every caller of a reader passes it. */
 export const settler = (account, reader) => (cand, err) => settle(account, reader, cand, err);
 
@@ -147,7 +157,9 @@ export async function retryQueued(account, provider, { limit = RETRY_BATCH } = {
       await giveUp(account, gone);
       continue;
     }
-    (routed[row.reader] ||= []).push({ ...row.cand, m });
+    // `attempts`: the readers settle a doubtful email on its last try
+    // rather than leave it undecided (lastTry).
+    (routed[row.reader] ||= []).push({ ...row.cand, m, attempts: row.attempts });
   }
   return { retried: rows.length, ...(await runReaders(account, routed, { provider })) };
 }

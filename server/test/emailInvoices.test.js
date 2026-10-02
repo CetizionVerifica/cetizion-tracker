@@ -463,4 +463,46 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.deepEqual(settled, { outcome: 'recorded_by_hand', po_number: '4500043043', stage_id: s2.id });
     void client;
   });
+
+  // ---------------------------------------------------------- failures that pass
+
+  test('an invoice whose PDF did not download waits to be read again, instead of "not an invoice" for good', async () => {
+    const box = await mailbox();
+    const { email } = await poFor('Throttled Ltd', 'TH-1001');
+    const msg = invoiceEmail(box, email, { no: 'CVPL/TH/0001', buyer: 'Throttled Ltd', po: 'TH-1001' });
+    ai(reading({ invoice_no: 'CVPL/TH/0001', buyer: { company_name: 'Throttled Ltd' }, po_reference: 'TH-1001' }));
+    sync.failTestAttachments(box.id, msg.provider_id, 1);
+    await deliver(box, [msg]);
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'waiting');
+
+    // The job reads it again once the mailbox answers.
+    await autoInvoice.retryWaiting(await autoInvoice.invoiceRunContext());
+    const d = await decision(box.id, msg.provider_id);
+    assert.equal(d.outcome, 'recorded', JSON.stringify(d));
+    assert.equal((await stagesOf('TH-1001'))[0].invoice_no, 'CVPL/TH/0001');
+  });
+
+  test('a PDF too large to read goes to a person, not "not an invoice"', async () => {
+    const box = await mailbox();
+    const { email } = await poFor('Big File Ltd', 'BF-1001');
+    const msg = invoiceEmail(box, email, { no: 'CVPL/BF/0001', buyer: 'Big File Ltd', po: 'BF-1001' });
+    msg.attachments = [{ name: 'CVPL-BF-0001.pdf', contentType: 'application/pdf', content: null, size: 40 * 1024 * 1024 }];
+    ai(reading({ invoice_no: 'CVPL/BF/0001' }));
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'unreadable']);
+  });
+
+  test('with no AI, an invoice email waits for one rather than being dropped, and the backfill does not pretend to finish', async () => {
+    const box = await mailbox();
+    const { email } = await poFor('No Ai Ltd', 'NA-1001');
+    const msg = invoiceEmail(box, email, { no: 'CVPL/NA/0001', buyer: 'No Ai Ltd', po: 'NA-1001' });
+    await deliver(box, [msg]);
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'waiting');
+
+    const r = await autoInvoice.runInvoiceBackfills({ budgetMs: 1000 });
+    assert.equal(r.skipped, 'no AI');
+    const { rows } = await db.query('SELECT 1 FROM mailbox_invoice_backfills WHERE account_id = $1 AND finished_at IS NOT NULL', [box.id]);
+    assert.equal(rows.length, 0);
+  });
 });
