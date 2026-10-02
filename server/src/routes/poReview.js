@@ -24,6 +24,7 @@ import { grossUp, stagesFromTerms } from '../lib/mailbox/pdfPurchaseOrder.js';
 import { aiConfig, chatJSON } from '../lib/ai.js';
 import { aiCallsToday } from '../lib/mailbox/autoEnquiry.js';
 import { mainText } from '../lib/mailbox/enquiryDetect.js';
+import { MAX_EMAIL_TEXT } from '../lib/mailbox/readLimits.js';
 
 export const poReviewRouter = Router();
 
@@ -96,7 +97,7 @@ poReviewRouter.post('/review/:id/register', async (req, res) => {
     has_attachments: msg ? msg.has_attachments : true,
   };
   const before = ctx.aiUsed;
-  const read = await autoPo.readPo(account, { m, c: { direction: 'inbound', external: [] } }, ctx, chat, mainText(m.body_html || '', 3000));
+  const read = await autoPo.readPo(account, { m, c: { direction: 'inbound', external: [] } }, ctx, chat, mainText(m.body_html || '', MAX_EMAIL_TEXT));
   await countAiCalls(ctx.aiUsed - before, 'po_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, note: 'The PO could not be read again: enter it from the email.' } });
   const v = read.verdict;

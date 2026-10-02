@@ -119,3 +119,12 @@ test('the prompt sends the PDF text when there is some, and says when the email 
   assert.match(buildPoPrompt({ ...base, pdfText: '' }).user, /email itself is the order/);
   assert.match(buildPoPrompt(base).system, /BUYER is the client/);
 });
+
+test('a long PO is read whole: up to 300 lines kept, and over 100,000 characters of its text sent', () => {
+  const lines = Array.from({ length: 320 }, (_, i) => ({ description: `Site ${i + 1} audit`, qty: 1, rate: '10,000.00', amount: '10,000.00' }));
+  assert.equal(parsePoVerdict({ is_purchase_order: true, confidence: 0.9, lines }).lines.length, 300);
+  const text = `PURCHASE ORDER ${'x'.repeat(100_000)} SCHEDULE END`;
+  const { user } = buildPoPrompt({ pdfText: text, emailSubject: 'PO', emailText: 'e'.repeat(9000), receivedAt: '2026-10-01', from: { email: 'a@b.com' } });
+  assert.match(user, /SCHEDULE END/);
+  assert.ok(user.includes('e'.repeat(9000)), 'the email\'s text is not cut at 3,000');
+});

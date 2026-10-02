@@ -2928,7 +2928,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiry_min_confidence', '0.7', 'How sure the AI must be (0 to 1) that an email is a new enquiry before one is created. Rules alone always need 0.85.'),
   ('auto_enquiry_backfill_days', '365', 'How far back each mailbox is read once for past enquiries, in days.'),
   ('auto_enquiry_same_sender_days', '30', 'A new email from a client who already has an open enquiry this recent is linked to it instead of making another.'),
-  ('auto_enquiry_daily_ai_limit', '1500', 'The most AI calls the email reader may make in one day. Reading past mail stops for the day when it is reached.'),
+  ('auto_enquiry_daily_ai_limit', '5000', 'The most AI calls the email readers (enquiries, quotations, POs, invoices) may make in one day, together. Reading past mail stops for the day when it is reached.'),
+  ('email_reader_concurrency', '4', 'How many emails each email reader reads at once, 1 to 8. Emails from one client or one conversation are still read one after another, oldest first.'),
   ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.')
 ON CONFLICT (key) DO NOTHING;
 
@@ -2937,7 +2938,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiry_min_confidence', '0.7', 'How sure the AI must be (0 to 1) that an email is a new enquiry before one is created. Rules alone always need 0.85.'),
   ('auto_enquiry_backfill_days', '365', 'How far back each mailbox is read once for past enquiries, in days.'),
   ('auto_enquiry_same_sender_days', '30', 'A new email from a client who already has an open enquiry this recent is linked to it instead of making another.'),
-  ('auto_enquiry_daily_ai_limit', '1500', 'The most AI calls the email reader may make in one day. Reading past mail stops for the day when it is reached.'),
+  ('auto_enquiry_daily_ai_limit', '5000', 'The most AI calls the email readers (enquiries, quotations, POs, invoices) may make in one day, together. Reading past mail stops for the day when it is reached.'),
+  ('email_reader_concurrency', '4', 'How many emails each email reader reads at once, 1 to 8. Emails from one client or one conversation are still read one after another, oldest first.'),
   ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.')
 ON CONFLICT (key) DO NOTHING;
 

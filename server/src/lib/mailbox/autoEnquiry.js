@@ -29,6 +29,9 @@ import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, pars
 import { domainOf, PUBLIC_DOMAINS } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
 import { queueFailures } from './readerQueue.js';
+import { inLanes } from './inLanes.js';
+import { MAX_PDF_BYTES, SCANNED_BELOW, isPdf, pdfText } from './pdfQuotation.js';
+import { MAX_ENQUIRY_ATTACHMENT_TEXT } from './readLimits.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, so no test reaches the
@@ -38,7 +41,7 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders'];
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
 
@@ -49,7 +52,9 @@ export async function enquirySettings(db = { query }) {
     enabled: String(s.auto_enquiries_enabled ?? 'true').trim().toLowerCase() !== 'false',
     minConfidence: num(s.auto_enquiry_min_confidence, 0.7),
     sameSenderDays: num(s.auto_enquiry_same_sender_days, 30),
-    dailyAiLimit: num(s.auto_enquiry_daily_ai_limit, 1500),
+    dailyAiLimit: num(s.auto_enquiry_daily_ai_limit, 5000),
+    // How many emails each reader reads at once (inLanes.js); 1 is one after another.
+    concurrency: Math.min(8, Math.max(1, Math.trunc(num(s.email_reader_concurrency, 4)))),
     backfillDays: num(s.auto_enquiry_backfill_days, 365),
     quotationMinConfidence: num(s.auto_quotation_min_confidence, 0.8),
     ourNames: [s.company_name].filter(Boolean),
@@ -89,20 +94,23 @@ export async function processCandidates(account, candidates, { ctx: given = null
   const ctx = given || await runContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
-  for (const cand of candidates) {
-    if (ctx.stopped) break;
-    // Told for every email reached, so the reader queue (readerQueue.js)
-    // can keep the ones that failed. One left unreached stays queued.
-    let failure = null;
-    try {
-      await decide(account, cand, ctx);
-    } catch (err) {
-      failure = err;
-      ctx.errors += 1;
-      console.error('[auto-enquiry]', account.email, cand.m?.provider_id, err.message);
-    }
-    if (onSettled) await onSettled(cand, failure);
-  }
+  await inLanes(candidates, {
+    concurrency: ctx.settings.concurrency,
+    stopped: () => Boolean(ctx.stopped),
+    each: async (cand) => {
+      // Told for every email reached, so the reader queue (readerQueue.js)
+      // can keep the ones that failed. One left unreached stays queued.
+      let failure = null;
+      try {
+        await decide(account, cand, ctx);
+      } catch (err) {
+        failure = err;
+        ctx.errors += 1;
+        console.error('[auto-enquiry]', account.email, cand.m?.provider_id, err.message);
+      }
+      if (onSettled) await onSettled(cand, failure);
+    },
+  });
   if (notifyEach) {
     for (const e of ctx.created) {
       await notify({
@@ -208,9 +216,10 @@ async function classifyEmail(account, cand, input, ctx) {
            FROM email_threads t WHERE t.id = $1`, [cand.threadId]);
       companyKnown = Boolean(t?.company_id); openDeals = t?.open || 0;
     }
-    const { system, user } = buildPrompt(input, { companyKnown, openDeals });
+    const attachmentText = await attachedText(account, cand, ctx);
+    const { system, user } = buildPrompt({ ...input, attachmentText }, { companyKnown, openDeals });
     try {
-      const v = parseVerdict(await chat(system, user, { maxTokens: 600, timeoutMs: 30_000 }), ctx.settings);
+      const v = parseVerdict(await chat(system, user, { maxTokens: 1000, timeoutMs: 60_000 }), ctx.settings);
       return { ...v, ai_calls: 1 };
     } catch (err) {
       // Not answered (no route, a timeout): the rules decide this one.
@@ -223,6 +232,33 @@ async function classifyEmail(account, cand, input, ctx) {
   // same way throughout.
   if (chat && ctx.backfill) return null;
   return { ...rulesVerdict(input), ai_calls: 0 };
+}
+
+/**
+ * The text of the PDFs a client attached: a request for quotation or a scope
+ * of work often says in its PDF what the email only points to. Text PDFs
+ * only, no OCR, at most MAX_ENQUIRY_ATTACHMENT_TEXT; anything that fails
+ * leaves the email judged on its own, as before.
+ */
+async function attachedText(account, cand, ctx) {
+  const { m, c } = cand;
+  if (c.direction !== 'inbound' || !m.has_attachments) return '';
+  let files;
+  try {
+    files = (await (ctx.provider || providerFor(account)).attachments(m.provider_id))
+      .filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
+  } catch (err) {
+    console.warn('[auto-enquiry] attachments not read:', err.message);
+    return '';
+  }
+  let out = '';
+  for (const f of files) {
+    if (out.length >= MAX_ENQUIRY_ATTACHMENT_TEXT) break;
+    const text = (await pdfText(f.content).catch(() => [])).join('\n\n');
+    if (text.replace(/\s+/g, '').length < SCANNED_BELOW) continue;
+    out += `\n--- ${f.name || 'attachment.pdf'} ---\n${text}`;
+  }
+  return out.slice(0, MAX_ENQUIRY_ATTACHMENT_TEXT);
 }
 
 // ------------------------------------------------------------ owners

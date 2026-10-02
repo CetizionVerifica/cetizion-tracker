@@ -15,13 +15,12 @@
 import { parseAmount } from './pdfQuotation.js';
 import { BULK, BULK_SENDER, addr, domainOf } from './rules.js';
 import { splitReference } from '../../import/parse.js';
+import { MAX_DOCUMENT_TEXT as MAX_PDF_TEXT, MAX_EMAIL_TEXT, MAX_LINES } from './readLimits.js';
 
 export const DOCUMENT_TYPES = ['purchase_order', 'work_order', 'loi', 'contract', 'amendment', 'cancellation', 'other'];
 
-/** How much of the email's own text goes to the AI. */
-export const MAX_EMAIL_TEXT = 3000;
-/** How much of the PO's text: ten pages of a PO is rarely more. */
-export const MAX_PDF_TEXT = 30_000;
+/** How much of the email's own text, and of the PO and its annexures, goes to the AI (readLimits.js). */
+export { MAX_EMAIL_TEXT, MAX_DOCUMENT_TEXT as MAX_PDF_TEXT } from './readLimits.js';
 
 // How clients say it. The short forms are matched in capitals only: "po"
 // and "wo" in lower case are as often parts of other words or typos.
@@ -163,7 +162,7 @@ export function parsePoVerdict(raw) {
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = null; } }
   if (!v || typeof v !== 'object' || Array.isArray(v)) return { ...NOT_A_PO };
   const c = Number(v.confidence);
-  const lines = (Array.isArray(v.lines) ? v.lines : []).slice(0, 50).map((l) => ({
+  const lines = (Array.isArray(v.lines) ? v.lines : []).slice(0, MAX_LINES).map((l) => ({
     description: clean(l?.description, 500),
     qty: l?.qty === undefined || l?.qty === null ? 1 : parseAmount(l.qty),
     rate: parseAmount(l?.rate),

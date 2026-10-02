@@ -40,6 +40,8 @@ import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, providerFor, saveTokens } from './sync.js';
 import { isPdf } from './pdfQuotation.js';
+import { MAX_EMAIL_TEXT } from './readLimits.js';
+import { inLanes } from './inLanes.js';
 
 /** Replaceable in tests: the AI and document storage. */
 export const deps = { chat: null, upload: documentStorageReady ? uploadDocument : null };
@@ -58,6 +60,7 @@ export async function invoiceSettings(db = { query }) {
     historyAfterDays: num(s.auto_po_history_after_days, 30),
     ourGstin: String(s.company_gstin || '').trim() || null,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit, backfillDays: shared.backfillDays,
+    concurrency: shared.concurrency,
   };
 }
 
@@ -76,22 +79,25 @@ export async function processInvoiceCandidates(account, candidates, { ctx: given
   const ctx = given || await invoiceRunContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
-  for (const cand of candidates) {
-    if (ctx.stopped) break;
-    // Told for every email reached, so the reader queue (readerQueue.js)
-    // can keep the ones that failed. One left unreached stays queued.
-    let failure = null;
-    if (cand.c?.direction === 'outbound') {
-      try {
-        await decideInvoice(account, cand, ctx);
-      } catch (err) {
-        failure = err;
-        ctx.errors += 1;
-        console.error('[auto-invoice]', account.email, cand.m?.provider_id, err.message);
+  await inLanes(candidates, {
+    concurrency: ctx.settings.concurrency,
+    stopped: () => Boolean(ctx.stopped),
+    each: async (cand) => {
+      // Told for every email reached, so the reader queue (readerQueue.js)
+      // can keep the ones that failed. One left unreached stays queued.
+      let failure = null;
+      if (cand.c?.direction === 'outbound') {
+        try {
+          await decideInvoice(account, cand, ctx);
+        } catch (err) {
+          failure = err;
+          ctx.errors += 1;
+          console.error('[auto-invoice]', account.email, cand.m?.provider_id, err.message);
+        }
       }
-    }
-    if (onSettled) await onSettled(cand, failure);
-  }
+      if (onSettled) await onSettled(cand, failure);
+    },
+  });
   if (!given) await notifyOutcomes(ctx);
   return given ? ctx : { recorded: ctx.recorded.length, review: ctx.review.length, linked: ctx.linked, waiting: ctx.waiting, not_invoice: ctx.notInvoice, errors: ctx.errors };
 }
@@ -134,7 +140,7 @@ export async function decideInvoice(account, cand, ctx) {
     `SELECT 1 FROM email_invoice_decisions WHERE account_id = $1 AND provider_id = $2 AND NOT (outcome = 'waiting' AND $3)`, [account.id, m.provider_id, Boolean(cand.retry)]);
   if (seen) return 'seen';
 
-  const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''), 2000);
+  const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''), MAX_EMAIL_TEXT);
   // A retry was a candidate when it was sent; its stored copy may hold no text.
   const pf = cand.retry ? { candidate: true } : invoicePrefilter({ direction: 'outbound', subject: m.subject, text, external: c.external, attachments: m.attachments, has_attachments: m.has_attachments });
   if (!pf.candidate) {
