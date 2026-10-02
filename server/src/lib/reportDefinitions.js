@@ -6,7 +6,7 @@ import { ApiError } from '../middleware/error.js';
 import { nameKey, normalizeName } from './names.ts';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2 } from './reportMath.ts';
-import { RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn, staleAmong } from './salesReport.js';
+import { RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn, reportPeriod, staleAmong } from './salesReport.js';
 import { monthLabel } from './revenueReport.js';
 import { SERVICE_LINES, serviceLinesFor } from './serviceLines.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
@@ -261,7 +261,10 @@ export function enquiryOutcome(row) {
   }
   if (row.quotation_lost || row.quotation_expired) return { outcome: 'quoted_not_won', stage: null, notes };
   if (row.quotation_status === QUOTATION_STATUS.won) notes.push('won_without_po');
-  else if (row.quotation_status && !OPEN_QUOTATION.includes(row.quotation_status)) notes.push('unknown_quotation_status');
+  // Lost now, but only after the period ended (quotation_lost said no): it
+  // was open at the time, which is what this report asks.
+  else if (row.quotation_status && !OPEN_QUOTATION.includes(row.quotation_status)
+           && row.quotation_status !== QUOTATION_STATUS.lost) notes.push('unknown_quotation_status');
   return { outcome: 'pipeline', stage: 'quoted', notes };
 }
 
@@ -584,7 +587,7 @@ export function customerSection(pos, index, enquiries, { from } = {}) {
   const customers = new Map();
   for (const po of orders) {
     const c = customers.get(po.customer_key) ?? {
-      customer: po.customer, first_po_date: firstDate(po.customer_key), pos: 0, value_inr: 0,
+      customer_key: po.customer_key, customer: po.customer, first_po_date: firstDate(po.customer_key), pos: 0, value_inr: 0,
     };
     c.pos += 1;
     c.value_inr += po.po_value_inr ?? 0;
@@ -1062,23 +1065,123 @@ export function narrate({ enquiries, outcomes, sectors, services, customers, rev
   return out;
 }
 
+// ---------------------------------------------------------------------
+// Drill-down: the records behind a bar
+// ---------------------------------------------------------------------
+
 /**
- * Every section built so far, for one period and scope, in one call: the
- * screen, the CSV export and the PDF all read this.
+ * The query keys a list accepts to show the records behind a Reports chart:
+ * the report's period and owner, and the slice that was clicked. The list
+ * runs the same rules the chart did and narrows to those enquiry or PO
+ * numbers, so a list opened from a bar always holds what the bar counted.
  */
-export async function salesReport(period, { grain, scope = UNRESTRICTED, today = businessToday() } = {}) {
-  const [enquiryRows, poRows, billing, undated, categories, allOrders] = await Promise.all([
-    outcomeRows(period, scope, today), revenueRows(period, scope), billingRows(period, scope), undatedPos(period, scope),
-    reportCategories(), orderIndexRows(),
+export const REPORT_LIST_KEYS = [
+  'report_from', 'report_to', 'report_owner',
+  'report_outcome', 'report_customer', 'report_sector', 'report_service', 'report_month',
+];
+
+const ENQUIRY_SLICES = ['converted', 'pipeline', 'quoted_not_won', 'lost', 'not_quoted', 'quoted'];
+const CUSTOMER_SLICES = { enquiries: ['new', 'existing'], pos: ['first', 'repeat', 'new', 'existing'] };
+
+const asked = (reqQuery) => REPORT_LIST_KEYS.some((key) => String(reqQuery[key] ?? '').trim() !== '');
+const value = (reqQuery, key) => String(reqQuery[key] ?? '').trim();
+
+function oneOf(reqQuery, key, allowed) {
+  const v = value(reqQuery, key);
+  if (v && !allowed.includes(v)) throw new ApiError(422, `"${v}" is not a ${key.replace('report_', '')} the report knows`);
+  return v;
+}
+
+/** The enquiry numbers behind a slice of the enquiry charts. */
+export async function reportEnquiryNumbers(reqQuery, scope, today = businessToday()) {
+  const period = reportPeriod({ from: reqQuery.report_from, to: reqQuery.report_to });
+  const outcome = oneOf(reqQuery, 'report_outcome', ENQUIRY_SLICES);
+  const customer = oneOf(reqQuery, 'report_customer', CUSTOMER_SLICES.enquiries);
+  const reportScoped = reportScope(scope, { owner: reqQuery.report_owner });
+  const [{ rows }, allOrders] = await Promise.all([
+    outcomeRows(period, reportScoped, today),
+    customer ? orderIndexRows() : { rows: [] },
   ]);
+  let list = rows;
+  if (outcome) list = list.filter((row) => { const o = enquiryOutcome(row); return o.outcome === outcome || o.stage === outcome; });
+  if (customer) {
+    const fromNew = new Set(customerSection([], orderIndex(allOrders.rows), list, period).new_customer_enquiries.map((e) => e.enquiry_no));
+    list = list.filter((row) => fromNew.has(row.enquiry_no) === (customer === 'new'));
+  }
+  return list.map((row) => row.enquiry_no);
+}
+
+/** The PO numbers behind a slice of the sector, service, customer or revenue charts. */
+export async function reportPoNumbers(reqQuery, scope) {
+  const period = reportPeriod({ from: reqQuery.report_from, to: reqQuery.report_to });
+  const customer = oneOf(reqQuery, 'report_customer', CUSTOMER_SLICES.pos);
+  const sector = value(reqQuery, 'report_sector');
+  const service = value(reqQuery, 'report_service');
+  const month = value(reqQuery, 'report_month');
+  const [{ pos }, allOrders] = await Promise.all([
+    periodPos(period, reportScope(scope, { owner: reqQuery.report_owner })),
+    customer ? orderIndexRows() : { rows: [] },
+  ]);
+  let list = pos;
+  if (sector) list = list.filter((po) => po.category === sector);
+  if (service) list = list.filter((po) => po.service_lines.includes(service));
+  if (month) list = list.filter((po) => po.date?.slice(0, 7) === month);
+  if (customer) {
+    const section = customerSection(list, orderIndex(allOrders.rows), [], period);
+    const repeat = new Set(section.repeat_orders.map((r) => r.po_number));
+    const newKeys = new Set(section.new_customers.map((c) => c.customer_key));
+    const keep = {
+      first: (po) => !repeat.has(po.po_number),
+      repeat: (po) => repeat.has(po.po_number),
+      new: (po) => newKeys.has(po.customer_key),
+      existing: (po) => !newKeys.has(po.customer_key),
+    }[customer];
+    list = list.filter(keep);
+  }
+  return list.map((po) => po.po_number);
+}
+
+/**
+ * The list filter: for /enquiries and /purchase-orders, when any report key
+ * is present, one clause narrowing the list to the numbers above. Pushes its
+ * parameter onto `params`, like every other clause in buildWhere.
+ */
+export async function reportListClauses(kind, reqQuery, { scope, params }) {
+  if (!asked(reqQuery)) return [];
+  const numbers = kind === 'enquiries' ? await reportEnquiryNumbers(reqQuery, scope) : await reportPoNumbers(reqQuery, scope);
+  params.push(numbers);
+  return [`${kind === 'enquiries' ? 'enquiry_no' : 'po_number'} = ANY($${params.length}::text[])`];
+}
+
+/**
+ * The period's counting POs with everything the sector, service and
+ * customer sections read: their service pieces, the mappers built from the
+ * admin's categories, and each PO labelled with the sector and service lines
+ * it counts under. The report and its drill-down lists both start here, so a
+ * list opened from a bar holds exactly the POs the bar counted.
+ */
+async function periodPos(period, scope) {
+  const [poRows, categories] = await Promise.all([revenueRows(period, scope), reportCategories()]);
   const pieces = await servicePieces(poRows.rows);
   const mapSector = sectorMapper(categories.sectors, categories.aliases);
   const linesOf = serviceMapper(categories.service_lines, categories.services);
-  const pos = poRows.rows.map((row) => ({
-    ...row,
-    services: pieces.services.get(row.po_number) ?? [],
-    lines: pieces.lines.get(row.quotation_id) ?? [],
-  }));
+  const pos = poRows.rows.map((row) => {
+    const po = { ...row, services: pieces.services.get(row.po_number) ?? [], lines: pieces.lines.get(row.quotation_id) ?? [] };
+    const split = serviceSplit(po, linesOf);
+    return { ...po, sector_raw: row.sector, category: mapSector(row.sector), service_lines: split.shares.map((share) => share.line) };
+  });
+  return { pos, categories, mapSector, linesOf };
+}
+
+/**
+ * Every section, for one period and scope, in one call: the screen, the CSV
+ * export and the PDF all read this.
+ */
+export async function salesReport(period, { grain, scope = UNRESTRICTED, today = businessToday() } = {}) {
+  const [enquiryRows, { pos, categories, mapSector, linesOf }, billing, undated, allOrders] = await Promise.all([
+    outcomeRows(period, scope, today), periodPos(period, scope), billingRows(period, scope), undatedPos(period, scope),
+    orderIndexRows(),
+  ]);
   const dates = enquiryRows.rows.map((row) => row.date).filter(Boolean);
   const wanted = grain || defaultGrain(period);
   const used = fitGrain(period.from || dates[0], period.to || dates.at(-1), wanted);
@@ -1089,11 +1192,7 @@ export async function salesReport(period, { grain, scope = UNRESTRICTED, today =
   const services = serviceSection(pos, categories.service_lines, linesOf);
   // The PO lists behind each month and each repeat order say which
   // categories each PO counted in.
-  const labelled = pos.map((row) => ({
-    ...row,
-    sector: mapSector(row.sector),
-    service: serviceSplit(row, linesOf).shares.map((share) => share.line).join(', '),
-  }));
+  const labelled = pos.map((row) => ({ ...row, sector: row.category, service: row.service_lines.join(', ') }));
   const revenue = monthlyRevenue(labelled, billing.rows, period);
   const customers = customerSection(labelled, orderIndex(allOrders.rows), enquiryRows.rows, period);
 
@@ -1131,7 +1230,7 @@ export async function salesReport(period, { grain, scope = UNRESTRICTED, today =
   if (undated.length) {
     notes.push({ key: 'undated_pos', count: undated.length, href: '/purchase-orders', text: `${undated.length} PO${undated.length === 1 ? ' has' : 's have'} no PO date and ${undated.length === 1 ? 'is' : 'are'} in no month: ${undated.join(', ')}.` });
   }
-  const currencies = poRows.rows.map((row) => ({ currency: row.currency }));
+  const currencies = pos.map((row) => ({ currency: row.currency }));
   const stale = await staleAmong(currencies, { period, today });
 
   const sections = { enquiries, outcomes, sectors, services, customers, revenue };

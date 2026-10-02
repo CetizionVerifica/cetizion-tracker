@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
+import { REPORT_LIST_KEYS, reportListClauses } from './reportDefinitions.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
@@ -181,6 +182,10 @@ export const resources = {
     filters: ['status', 'sales_person', 'client_name', 'sector', 'country', 'source', 'company_id', 'source_id'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
+    // The records behind a Reports chart (?report_from=&report_outcome=…):
+    // the report's own rules pick the rows, so the list holds what the bar counted.
+    listKeys: REPORT_LIST_KEYS,
+    listClauses: (reqQuery, ctx) => reportListClauses('enquiries', reqQuery, ctx),
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -380,6 +385,10 @@ export const resources = {
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
     filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
+    // The records behind a Reports chart (?report_from=&report_outcome=…):
+    // the report's own rules pick the rows, so the list holds what the bar counted.
+    listKeys: REPORT_LIST_KEYS,
+    listClauses: (reqQuery, ctx) => reportListClauses('pos', reqQuery, ctx),
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',

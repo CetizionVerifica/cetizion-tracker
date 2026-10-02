@@ -147,6 +147,8 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
     // E-3 (lost only in October), E-6 (open quotation), E-7 (not quoted).
     assert.equal(slice(report, 'pipeline'), 3);
     assert.deepEqual(report.outcomes.pipeline, { not_quoted: 1, quoted: 2 });
+    // Q-3 is Lost today but was open on 30 September: no "unknown status" note.
+    assert.ok(!report.notes.some((n) => n.key === 'unknown_quotation_status'));
     assert.deepEqual(report.outcomes.quoted_not_won_reasons,
       [{ reason: 'Expired without a decision', count: 1 }, { reason: 'Price', count: 1 }]);
     assert.equal(report.outcomes.slices.reduce((n, s) => n + s.pct, 0), 100);
@@ -245,6 +247,36 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
     const { customers } = await defs.salesReport(SEPT, { today: TODAY, scope: { unrestricted: false, ownerId: 102 } });
     assert.deepEqual(customers.repeat_orders.map((r) => [r.po_number, r.previous_orders]), [['PO-USD', 1], ['PO-EUR', 2]]);
     assert.equal(customers.tiles.new_customers, 0);
+  });
+
+  test('drill-down: a list opened from a slice holds exactly what the slice counted', async () => {
+    const q = (extra) => ({ report_from: SEPT.from, report_to: SEPT.to, ...extra });
+    const admin = { unrestricted: true, ownerId: null };
+    const report = await defs.salesReport(SEPT);
+
+    for (const slice of report.outcomes.slices) {
+      const numbers = await defs.reportEnquiryNumbers(q({ report_outcome: slice.key }), admin);
+      assert.equal(numbers.length, slice.count, slice.key);
+    }
+    assert.deepEqual(await defs.reportEnquiryNumbers(q({ report_outcome: 'lost' }), admin), ['E-5']);
+    assert.deepEqual(await defs.reportEnquiryNumbers(q({ report_outcome: 'not_quoted' }), admin), ['E-7']);
+    assert.deepEqual(await defs.reportEnquiryNumbers(q({ report_customer: 'new' }), admin),
+      report.customers.new_customer_enquiries.map((e) => e.enquiry_no));
+
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_sector: 'Metal Industry' }), admin), ['PO-1', 'PO-2R']);
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_service: 'HSE' }), admin), ['PO-1']);
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_customer: 'repeat' }), admin), ['PO-2R', 'PO-USD', 'PO-EUR']);
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_customer: 'new' }), admin), ['PO-1', 'PO-2R']);
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_month: '2026-09' }), admin), ['PO-1', 'PO-2R', 'PO-USD', 'PO-EUR']);
+    // An admin's owner filter carries through; a sales user's cannot widen their own.
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_owner: '101' }), admin), ['PO-1', 'PO-2R']);
+    assert.deepEqual(await defs.reportPoNumbers(q({ report_owner: '101' }), { unrestricted: false, ownerId: 102 }), ['PO-USD', 'PO-EUR']);
+
+    await assert.rejects(defs.reportEnquiryNumbers(q({ report_outcome: 'maybe' }), admin), (err) => err.status === 422);
+    const params = [];
+    assert.deepEqual(await defs.reportListClauses('enquiries', {}, { scope: admin, params }), []);
+    assert.deepEqual(await defs.reportListClauses('pos', q({ report_sector: 'Agriculture' }), { scope: admin, params }), ['po_number = ANY($1::text[])']);
+    assert.deepEqual(params, [[]]);
   });
 
   test('a sales user sees only their own records', async () => {

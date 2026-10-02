@@ -14,8 +14,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { resourceClause, scopeOf } from '../auth/ownership.js';
-import { buildWhere } from '../lib/crud.js';
+import { scopeOf } from '../auth/ownership.js';
+import { listWhere } from '../lib/crud.js';
 import { ApiError } from '../middleware/error.js';
 import { resources } from '../lib/resources.js';
 
@@ -81,6 +81,9 @@ function usable(def, filters) {
   // would be counted across all time, and the number in the sidebar would
   // not be the number of rows you get when you click it.
   if (def.dateFilter) { allowed.add('from'); allowed.add('to'); }
+  // A list a Reports chart opened ("Lost enquiries, last month") saves the
+  // report's keys, and counts by the same rules.
+  for (const key of def.listKeys || []) allowed.add(key);
   return Object.fromEntries(Object.entries(filters || {}).filter(([key]) => allowed.has(key)));
 }
 
@@ -107,9 +110,8 @@ async function countOf(view, scope) {
   // showing none, and the number itself was the leak — how many records
   // exist that this reader may not open.
   const relation = def.view || def.table;
-  const scoped = resourceClause(def, scope, params, { alias: relation });
-  // buildWhere returns the whole clause, `WHERE …` or the empty string.
-  const where = buildWhere(def, usable(def, view.filters), params, scoped ? [scoped] : []);
+  // listWhere returns the whole clause, `WHERE …` or the empty string.
+  const where = await listWhere(def, usable(def, view.filters), params, scope, relation);
   const { rows } = await query(`SELECT count(*)::int AS n FROM "${relation}" ${where}`, params);
   return rows[0].n;
 }

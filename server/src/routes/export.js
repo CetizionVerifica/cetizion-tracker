@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import XLSX from 'xlsx';
 import { query } from '../db.js';
-import { buildWhere } from '../lib/crud.js';
+import { listWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
-import { resourceClause, scopeOf } from '../auth/ownership.js';
+import { scopeOf } from '../auth/ownership.js';
 import {
   customerCsvRows, customerReport, fxCsvRows, fxReport, reportPeriod, sectorCsvRows, sectorReport,
 } from '../lib/salesReport.js';
@@ -142,8 +142,7 @@ async function listRows(req) {
   // attachments, POs, stages, lines, payments, costs) walked straight out.
   // resourceClause answers for every ownership shape, so both doors close.
   const relation = def.view || def.table;
-  const scoped = resourceClause(def, scopeOf(req), params, { alias: relation });
-  const where = buildWhere(def, req.query, params, scoped ? [scoped] : []);
+  const where = await listWhere(def, req.query, params, scopeOf(req), relation);
   const { rows } = await query(
     `SELECT * FROM "${def.view || def.table}" ${where} ORDER BY ${def.defaultSort}`,
     params

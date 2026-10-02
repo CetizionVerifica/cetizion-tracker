@@ -15,7 +15,6 @@ import Quotations from './pages/Quotations.jsx';
 import QuotationDetail from './pages/QuotationDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
 import Renewals from './pages/Renewals.jsx';
-import SalesReport from './pages/SalesReport.jsx';
 import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
@@ -548,7 +547,8 @@ export default function App() {
           <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/renewals" element={<Renewals />} />
-          <Route path="/sales-report" element={<SalesReport />} />
+          {/* The two report pages became one (docs/sales-report-rework-plan.md §3.3). */}
+          <Route path="/sales-report" element={<LegacyRedirect to="/reports" />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/purchase-orders" element={<PurchaseOrders />} />

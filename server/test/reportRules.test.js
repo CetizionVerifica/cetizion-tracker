@@ -177,6 +177,9 @@ test('enquiry outcome: first match wins, and only an unquoted enquiry is ever lo
     { outcome: 'pipeline', stage: 'quoted', notes: [] });
   // Marked won with no PO yet: still pipeline, and flagged.
   assert.deepEqual(outcome({ status: 'Converted', quotation_no: 'Q-1', quotation_status: 'Won - PO Received' }).notes, ['won_without_po']);
+  // Lost only after the period ended: open at the time, and nothing to flag.
+  assert.deepEqual(outcome({ status: 'Converted', quotation_no: 'Q-1', quotation_status: 'Lost', quotation_lost: false }),
+    { outcome: 'pipeline', stage: 'quoted', notes: [] });
   // Converted with nothing linked: not quoted, flagged.
   assert.deepEqual(outcome({ status: 'Converted' }).notes, ['converted_without_quotation']);
 });
