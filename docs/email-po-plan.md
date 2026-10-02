@@ -197,11 +197,26 @@ The PO must also be **consistent** with the quotation it matched:
   where both are known, means review.
 - A quotation already `Won - PO Received` **with a PO** is not matched
   again; see duplicates in §3.6.
+- **Value must agree (decided).** The PO's value must be within
+  `auto_po_value_tolerance_percent` (**2%**) of the quotation it matched.
+  This applies however the match was made, including by quotation number
+  or thread. Compare like with like:
+  - the PO total incl. GST against the quotation `total`;
+  - the PO basic value against the quotation `subtotal`;
+  - if the PO says "GST extra", its basic value against the quotation
+    `subtotal`.
+
+  A larger difference **never registers automatically**. It goes to
+  review with `value_mismatch`, showing both values and the difference.
+  Partial POs, scope changes and negotiated discounts arrive this way, and
+  a person decides. The reviewer can still register at the PO's value
+  with **Register against…**.
 - **No match.** The buyer is a known company with open quotations, but
   none fits: send it to **review**, with those quotations suggested.
-- **No quotation at all.** Nothing on file fits. The default is to
-  **create** the quotation and an enquiry from the PO, then register (§9,
-  question 1). This keeps reports complete for work quoted outside the
+- **No quotation at all.** Nothing on file fits. **Decided:** create the
+  quotation and an enquiry from the PO, then register (§9, decision 1).
+  There is no quotation to compare against, so the 2% value rule does not
+  apply here. This keeps reports complete for work quoted outside the
   tracker or before it existed.
   - The quotation is `Won - PO Received`, with lines from the PO (or
     totals only, as phase 1 does).
@@ -312,14 +327,35 @@ The queue:
 ### 3.8 Historical POs (backfill) without flooding the system
 
 A PO from eight months ago is very likely **delivered and invoiced
-already**, outside the tracker. Registering it like a new PO would cause
-three kinds of noise:
+already**, outside the tracker. Registering it like a new PO would set off
+notifications, onboarding and webhooks that only make sense for a new
+order:
 
-- its `On PO Registration` stage becomes **To Invoice**, then Overdue,
-  across Collections, Insights and the finance digest;
 - the PM and salesperson get `po_registered` notifications, and an
   onboarding checklist is created;
 - the `po.received` webhook fires to n8n.
+
+**Payment stages are still created for history POs (decided, §9 decision
+2)**, exactly as for live ones: from the PO's terms, else the template.
+The consequence, which finance should expect:
+
+- an old PO's `On PO Registration` stage shows as **To Invoice**, and then
+  **Overdue** once its credit days pass, in Collections, Insights and the
+  finance digest;
+- that lasts until finance records the invoice and payment that already
+  happened.
+
+To make that clean-up quick:
+
+- the backfill summary links to a **"Stages from past POs"** view: payment
+  stages of POs registered in history mode that have no invoice yet;
+- finance can work through that list with the existing invoice and
+  payment actions;
+- the payment follow-up and escalation job (`followups.daily`) does
+  **not** chase these stages until a person has touched them, so owners
+  and management are not emailed about months-old invoices. A stage
+  counts as touched when an invoice number or payment has been recorded,
+  or when it has been marked "checked" from the PO banner.
 
 So `registerPurchaseOrder` takes `mode: 'live' | 'history'`. A PO counts as
 **history** when its PO date is more than `auto_po_history_after_days`
@@ -328,7 +364,7 @@ So `registerPurchaseOrder` takes `mode: 'live' | 'history'`. A PO counts as
 | Effect | `live` | `history` |
 | --- | --- | --- |
 | Project, PO, document, services, quotation won, enquiry converted | yes | yes |
-| Payment stages | from the PO's terms | **none** (default, §9 question 2). The PO shows payment status "No stages", and the review list offers "Add stages" to finance. |
+| Payment stages | from the PO's terms (else template) | **the same**: from the PO's terms (else template). They appear in the "Stages from past POs" view, and follow-up emails skip them until a person touches them. |
 | `po_registered` notification, onboarding checklist | yes | no |
 | `po.received` / `quotation.won` webhooks | yes | **no**: the webhook trigger skips rows when `current_setting('app.suppress_webhooks', true) = 'on'`, which the history path sets with `SET LOCAL` |
 | Backfill summary | — | one per mailbox: "Read 365 days of sales@…: 37 POs registered, 6 to review" |
@@ -474,7 +510,9 @@ Derived, not stored:
   - nothing is registered unless the PO is addressed to us and every amount
     appears in the PDF;
   - amendments and cancellations are never applied automatically;
-  - history POs get no stages.
+  - history POs' stages are not chased by follow-up emails until a person
+    has checked them;
+  - a PO value more than 2% off its quotation always goes to review.
 - **AI cost:** about one call per PO candidate, plus OCR for scanned POs.
   It shares the phase 1 daily ceiling.
 - **Failure:** an AI or Graph error leaves the email undecided, so the next
@@ -546,9 +584,19 @@ Derived, not stored:
   9. A PO addressed to another vendor goes to review (`not_to_us`).
   10. A PO email is never logged as a phase 1 `not_enquiry`, and never
       makes an enquiry.
-  11. **Backfill:** an eight-month-old PO is registered in history mode,
-      with no stages, no `po_registered` notification, no onboarding tasks
-      and no webhook rows. One summary is sent per mailbox.
+  11. **Backfill:** an eight-month-old PO is registered in history mode.
+      - It gets its **payment stages** (from its terms), and they appear in
+        the "Stages from past POs" view.
+      - `followups.daily` does not chase them.
+      - There is no `po_registered` notification, no onboarding tasks and
+        no webhook rows.
+      - One summary is sent per mailbox.
+  11a. **Value mismatch:** a PO naming our QT number, but 5% below the
+      quotation total, goes to review (`value_mismatch`) with both values,
+      and nothing is registered. At 1.5% off, it registers.
+  11b. **No quotation at all:** registers with no value check (scenario
+      4). A known company with an open quotation 10% off goes to review,
+      not to "create a quotation".
   12. The PO backfill waits for that mailbox's phase 1 backfill to finish.
   13. **Review actions:** "Register against" returns a prefill, and a
       manual registration marks the decision `registered_by_hand`.
@@ -565,20 +613,21 @@ Derived, not stored:
 
 ---
 
-## 9. Decisions for the product owner (defaults given; the build can start with them)
+## 9. Decisions
 
-1. **A PO with no quotation in the tracker.** Default: **create** the
-   quotation (won) and the enquiry (converted) from the PO, then register,
-   so reports count it. The alternative is to send it to review and let a
-   person decide.
-2. **Payment stages for historical POs** (older than 30 days when read).
-   Default: **no stages**. They appear in a finance list to add stages and
-   invoices, so Collections is not flooded with false "To Invoice" and
-   "Overdue" stages. The alternative is to create stages anyway.
-3. **PO value different from the quotation.** Default: register at the
-   **PO's value**, since the client's PO is the fact, and flag it on the
-   banner. The value check only helps choose **which** quotation (§3.3);
-   it is not a reason to refuse. The alternative is to send any difference
-   over 2% to review.
-4. **Amended POs.** Default: always review, never applied automatically.
+### Decided by the product owner
+
+1. **A PO with no quotation in the tracker:** create the quotation (won)
+   and the enquiry (converted) from the PO, then register, so reports
+   count it (§3.3).
+2. **Payment stages for historical POs:** create them anyway, from the
+   PO's terms or the template. Follow-up emails do not chase them until a
+   person has touched them, and finance gets a "Stages from past POs" view
+   to record the invoices and payments that already happened (§3.8).
+3. **PO value different from the quotation:** a difference over 2% goes
+   to **review**; it is never registered automatically (§3.3).
+4. **Amended POs:** always review, never applied automatically (§3.6).
+
+### Still open (default given)
+
 5. **Confidence bar.** Default **0.85**.
