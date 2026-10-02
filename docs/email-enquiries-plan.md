@@ -23,6 +23,7 @@ place. It was written against commit `24af059`.
 | How far back? | **365 days** for every mailbox. |
 | Manual or automatic? | **Fully automatic.** It is on by default, and admins have one switch to turn it off. |
 | The enquiry never reached us by email: the first email is **our quotation** to the client (the request came by phone, a meeting, WhatsApp or a colleague) | **An enquiry is still created**, from the quotation email we sent. See §3.8. |
+| That quotation was made outside the tracker (Word or Excel, sent as a PDF) | **In this phase**, the attached PDF is read and **the quotation is created in the tracker too**, with its lines, totals and the PDF itself. See §3.9. |
 
 ---
 
@@ -65,13 +66,18 @@ thread into an enquiry. Three things are missing:
 5. A **decision log**, so admins can see what was created, what was skipped
    and why, without the email's text.
 6. Admin **switch and status** in Settings → Mailboxes.
-7. Tests and documentation.
+7. **Reading the quotation PDF** we sent, when the quotation is not in the
+   tracker, and creating that quotation with its lines, totals and document
+   (§3.9).
+8. Tests and documentation.
 
 ### Out of scope (say so in the PR)
 
 - Quotations, POs, invoices or payments read from email. Those are later
   phases.
-- Attachments. Only the subject and body are read; RFQ PDFs are not opened.
+- Attachments on **inbound** mail. A client's RFQ PDF is not opened; only
+  the subject and body are read. The one attachment that is read is the
+  quotation PDF **we** sent (§3.9).
 - Auto-replying to the client.
 - IMAP or Gmail. Microsoft 365 only, as today.
 - Re-judging old decisions when the rules change. Decisions are final. An
@@ -310,7 +316,7 @@ words, is enough.
 | Case | Enquiry created |
 | --- | --- |
 | The quotation **is in the tracker** (its number is in the email and matches `quotations.quotation_no`) and no enquiry points at it | An enquiry with `status = 'Converted'`, `quotation_no` set to that quotation and `converted_at` the email date. Client, contact, sector, service and value come from the quotation. Inserting with `quotation_no` already set means `quoteWonEnquiry` creates no second quotation. `enquiry_date` is the quotation's `quotation_date`, or the email date if earlier. |
-| The quotation **is not in the tracker** (made in Word or Excel and emailed) | An enquiry with `status = 'Contacted'` (it has a company and a source, so `enquiryRuleErrors` allows it). Service, estimated value and currency come from the email when the AI found them. `enquiry_date` is the email date. The note reads "Quotation sent by email on *date* by *mailbox*; the enquiry itself did not come by email." Phase 1 does **not** create the quotation itself; that is a later phase. |
+| The quotation **is not in the tracker** (made in Word or Excel and emailed) | The attached PDF is read and **the quotation is created** (§3.9). The enquiry is then created exactly as in the row above: `Converted`, linked to the new quotation. `enquiry_date` is the email date. The note reads "Quotation sent by email on *date* by *mailbox*; the enquiry itself did not come by email." If the PDF cannot be read well enough (§3.9.5), the enquiry is created as `Contacted` with no quotation, and the owner gets a task to add the quotation. |
 
 In both cases:
 
@@ -337,6 +343,134 @@ In both cases:
 **Decision log:** these rows have `kind = 'quotation_sent'`, so admins can
 see how many enquiries came this way.
 
+### 3.9 Reading the quotation PDF and creating the quotation
+
+This applies to the second row of the table in §3.8: we sent a quotation
+by email, and it is **not** in the tracker.
+
+#### 3.9.1 Getting the PDF
+
+- **Fetch:** add `attachments(providerId)` to the provider. It calls
+  `GET /users/{mailbox}/messages/{id}/attachments`. A file larger than
+  about 3 MB is fetched through `/attachments/{id}/$value`. No new Graph
+  permission is needed; `Mail.ReadWrite` already covers it. The test
+  provider returns attachments pushed with the message.
+- **Which file:** only `application/pdf` or `*.pdf`, at most 15 MB. With
+  several PDFs, rank them:
+  1. a file name with quotation, quote, proposal, offer or our QT pattern;
+  2. then the first page's text containing those words;
+  3. then the largest.
+  Brochures and company profiles are passed over this way.
+- **Held in memory only** while being read. The file is stored once, as
+  the quotation's document (§3.9.4), and only if a quotation is created.
+- **No PDF at all:** the quotation is in the email body. The same
+  extraction runs on the body text.
+
+#### 3.9.2 Text out of the PDF
+
+- **Text PDFs** (what Word and Excel export): add `unpdf` (pdf.js, MIT,
+  pure JavaScript, no native build) to `server/package.json`. Extract the
+  text page by page, at most 10 pages, keeping the reading order.
+- **Scanned PDFs** (fewer than about 200 characters of text): send the PDF
+  itself to OpenRouter as a `file` content part with the PDF OCR engine.
+  This uses the same zero-retention routing. It is counted against the
+  daily AI ceiling at the higher per-page cost.
+- **Password-protected or unreadable:** go to the fallback in §3.9.5.
+
+#### 3.9.3 Extracting the quotation (AI, validated in code)
+
+One AI call with the PDF text and the covering email returns:
+
+```jsonc
+{
+  "quotation_no_printed": "CV/Q/2025/045",   // as written on the document, or null
+  "revision": 0,                                // "Rev 1", "R2" → 1, 2
+  "quotation_date": "2025-11-04", "valid_until": "2025-12-04",
+  "client": { "company_name": "…", "gstin": "…", "state": "…", "country": "…", "contact_name": "…" },
+  "currency": "INR",
+  "lines": [ { "description": "…", "qty": 1, "unit": "lot", "rate": 250000, "discount_percent": 0, "gst_rate": 18, "service": "EcoVadis" } ],
+  "subtotal": 250000, "tax_total": 45000, "total": 295000,
+  "terms": "payment and validity terms, as written",
+  "confidence": 0.0-1.0
+}
+```
+
+The model proposes and **code decides**. These checks all live in a pure
+module:
+
+| Check | Rule |
+| --- | --- |
+| **The client is not us** | `company_name` is not Cetizion and not an internal domain. The client is the addressee, never the letterhead. |
+| **Numbers are numbers** | qty is above 0, rate is 0 or more, discount is 0–100, GST is 0–100, and the currency is a known code. Indian-format amounts are parsed by code from the text the model quotes back ("2,50,000"), not trusted as given. |
+| **Lines add up** | The sum of line amounts must equal `subtotal`, and subtotal + tax must equal `total`, each within ₹1 or 0.5%. |
+| **Dates** | `quotation_date` is on or before the email date, and no more than 60 days earlier. `valid_until` is after `quotation_date`. If either fails, the email date is used and validity is left blank. |
+| **Service** | Each line's `service` is mapped to the `services` catalogue by name and code. `service_id` is set only on an exact or alias match, never guessed. |
+
+#### 3.9.4 What is created
+
+The quotation, in the same transaction as the enquiry:
+
+| Quotation column | Value |
+| --- | --- |
+| `quotation_no` | The **printed number**, if there is one and it is not already used in the tracker. The client's later emails quote that number, so keeping it is what lets `referencesIn()` link them. If there is no number, or it clashes, a new one is taken with `claimNextId('quotation', db, year)` and the printed one is kept in `remarks`. A printed number in the tracker's own pattern (`CTZ/QT/{year}/{n}`) must also move that series' counter past it, so the tracker never issues the same number later. Check how `claimNextId` keeps its counter and do this in the same transaction. |
+| `quotation_date`, `valid_until`, `revision`, `currency`, `terms`, `place_of_supply_state` | From the extraction, after the checks. |
+| `client_name`, `contact_person`, `sector`, `country` | Same company and contact as the enquiry, so both link to the same `company_id`/`contact_id` through the triggers. |
+| `status` / stage | `Submitted`, stage **Sent**, `sent_at` the email's sent time. This is the same state a tracker quotation reaches when it is sent. |
+| `service_quoted` | The line services joined, or the extracted service. |
+| `owner_user_id`, `sales_person` | The sender (§3.8), with the same rule as the enquiry. |
+| **Lines** | If the lines **add up**, insert `quotation_lines`. The `quotation_totals()` trigger then sets `subtotal`, `tax_total`, `total` and `quotation_value` from the lines, exactly as for a quotation built in the tracker. |
+| **No lines** | If they **do not add up**, insert no lines. Set `subtotal`, `tax_total`, `total` and `quotation_value` from the printed totals. Before relying on this, confirm that the `quotation_totals()` trigger does not overwrite totals on a quotation that has no lines. The quotation page then says "Lines could not be read; totals are from the PDF". |
+| `document_id` | The PDF, stored through `lib/documents.js` under owner `quotations`, so it opens from the quotation page like any uploaded document. If document storage (Cloudinary) is not configured, the quotation is still created, without a document. |
+| `remarks` | "Read from the PDF emailed to *client* on *date* by *mailbox*." Plus the printed number, if it was replaced. |
+
+**Revisions:** a later email can carry a PDF with the **same printed
+number** and a higher revision, or a "Rev"/"R1" suffix. That is not a new
+quotation:
+
+- the existing quotation goes through the tracker's normal revision path,
+  so the previous version is kept as a revision snapshot;
+- then its lines, totals, date and document are replaced;
+- `revision` is bumped.
+
+Nothing new is created, and the decision is logged as `linked`.
+
+**Repeat sends:** the same PDF sent again, with the same number and
+revision, creates nothing. The message is logged as `linked` to the
+existing quotation.
+
+The decision log gets a `quotation_no` column (§4.1), so every quotation
+read from email can be found and checked.
+
+#### 3.9.5 When the PDF cannot be trusted
+
+The quotation is **not** created when any of these hold:
+
+- the extraction confidence is below `auto_quotation_min_confidence`
+  (default 0.8);
+- there is no client company, or it resolves to us;
+- there is no total, and no lines that add up.
+
+In that case:
+
+- the enquiry is still created, as `Contacted`, with the estimated value
+  from the email if one was found;
+- the owner gets a **task**, due the next working day: "Add the quotation
+  sent to *client* on *date*: the PDF could not be read". It links to the
+  email thread.
+- the decision row records `quotation_extraction = 'failed'` and the
+  reason code (`no_pdf`, `encrypted`, `low_confidence`, `no_client`,
+  `no_total`). No text from the PDF is stored.
+
+#### 3.9.6 Review
+
+- **Quotations list:** a filter "Read from email", derived from the
+  decision log.
+- **Quotation page:** a banner, "Read automatically from the PDF sent on
+  *date*. Check the lines and totals.", with a link to the document and to
+  the email. **Mark checked** writes an activity log entry and hides the
+  banner. That is an event, so it is stored, the same way the activity log
+  already is.
+
 ---
 
 ## 4. Data
@@ -361,6 +495,10 @@ CREATE TABLE IF NOT EXISTS email_enquiry_decisions (
   confidence          numeric(4,3),
   method              text NOT NULL CHECK (method IN ('ai','rules')),
   enquiry_no          text REFERENCES enquiries(enquiry_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  -- §3.9: the quotation read from the PDF we sent, and how that went.
+  quotation_no        text REFERENCES quotations(quotation_no) ON UPDATE CASCADE ON DELETE SET NULL,
+  quotation_extraction text CHECK (quotation_extraction IN ('created','revised','failed')),
+  extraction_reason   text,
   decided_at          timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
@@ -386,7 +524,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiry_min_confidence', '0.7', '…'),
   ('auto_enquiry_backfill_days', '365', '…'),
   ('auto_enquiry_same_sender_days', '30', '…'),
-  ('auto_enquiry_daily_ai_limit', '1500', '…')
+  ('auto_enquiry_daily_ai_limit', '1500', '…'),
+  ('auto_quotation_min_confidence', '0.8', '…')
 ON CONFLICT (key) DO NOTHING;
 ```
 
@@ -422,6 +561,11 @@ that mailbox's backfill row. Decision rows stay, for the audit trail.
 | `web/src/pages/Mailboxes.jsx` | An "Automatic enquiries" card: the on/off switch (writes `auto_enquiries_enabled`), and per mailbox "Past mail: 212 of 365 days read · 42 created · 9 linked", the last error, and **Re-run**. |
 | `web/src/pages/Enquiries.jsx` + `resources.js` | A list filter, `from_email=1` ("Created from email"), derived via `EXISTS` on the decision log, so the team can review them in one view. |
 | Enquiry page | One line under the title: "Created automatically from an email on 12 Mar 2026 · open thread". It links to the stored thread when the mailbox shares it. |
+| `server/package.json` | Add `unpdf` (§3.9.2). |
+| `server/src/lib/mailbox/quotationPdf.js` | **New.** Pick the PDF, extract its text, call the AI, and run the pure checks in §3.9.3 (`checkExtraction()`, `parseAmount()`, `linesAddUp()`). |
+| `server/src/lib/mailbox/autoQuotation.js` | **New.** `createQuotationFromEmail(db, …)`: the number rule, insert, lines or printed totals, document, the revision path, and the fallback task. |
+| `server/src/lib/mailbox/microsoft.js` | `attachments(providerId)`, as well as `page()`. |
+| `web/src/pages/Quotations.jsx`, `QuotationDetail.jsx` | The "Read from email" filter, and the review banner with **Mark checked**. |
 | `docs/email-enquiries.md` | **New.** What it does, what is read, what is kept, the settings, and how to switch it off. Add a row to `docs/security.md` for the new data flow to the AI provider. |
 
 ---
@@ -437,8 +581,14 @@ the next run. Nothing already created is removed.
 
 For a candidate email only: the sender's name, address and domain, the
 subject, and the new part of the body (at most about 4,000 characters). It
-goes to OpenRouter with zero-retention routing. Nothing goes to the AI
-provider for:
+goes to OpenRouter with zero-retention routing.
+
+For a quotation we sent that is not in the tracker, the **quotation PDF's
+text** also goes, at most 10 pages. For a scanned PDF, the file itself
+goes, for OCR. This is our own commercial document, with the client's name
+and the prices.
+
+Nothing goes to the AI provider for:
 
 - prefiltered mail;
 - internal mail;
@@ -485,8 +635,12 @@ daily AI ceiling.
    PR.
 4. **Backfill:** `page()`, `mailbox_enquiry_backfills`, the
    `enquiries.backfill` job, time budget, AI ceiling, summary notification.
-5. **Admin and review screens:** status endpoint, policy, Mailboxes card,
-   enquiries filter, enquiry-page line, docs.
+5. **Quotations from PDFs** (§3.9): `attachments()`, `unpdf`,
+   `quotationPdf.js`, `autoQuotation.js`, revisions, the fallback task. The
+   checks are tested first, with no network.
+6. **Admin and review screens:** status endpoint, policy, Mailboxes card,
+   enquiries and quotations filters, the enquiry-page line, the
+   quotation-page banner, docs.
 
 ---
 
@@ -535,6 +689,26 @@ daily AI ceiling.
       created first and the later quotation links to it.
   15. A campaign to 20 recipients with "offer" in the subject creates
       nothing.
+  16. **PDF read, lines add up:** an outbound email with a text PDF, using
+      a fake AI that returns lines matching the totals, creates a
+      `Submitted` quotation on the Sent stage. It keeps the printed number,
+      the totals come from the lines, the document is attached, and a
+      `Converted` enquiry points at it.
+  17. **Lines do not add up:** no lines are inserted, the totals are the
+      printed ones, and the banner says so.
+  18. **Clashing printed number:** a new tracker number is used, the
+      printed one goes in `remarks`, and a printed number in the CTZ
+      pattern moves the counter past it.
+  19. **Revision:** the same printed number with "Rev 1" revises the
+      existing quotation (a snapshot is kept and `revision` is 1). Nothing
+      new is created.
+  20. **Unreadable:** an encrypted PDF, or low confidence, gives a
+      `Contacted` enquiry, no quotation, a task for the owner, and the
+      decision is logged `failed` with its reason.
+  21. **Two PDFs:** a brochure and a quotation; the quotation is chosen.
+- **Pure** (`server/test/quotationPdf.test.js`): `parseAmount("2,50,000.00")`,
+  `linesAddUp` tolerances, the date checks, the client-is-us check, and PDF
+  ranking by name and first page.
 - **AI path:** inject a fake `chat` function into `decide()` and assert the
   threshold and kind handling. No network calls in CI.
 - **Authz:** the new admin routes are refused for sales users.
@@ -543,9 +717,10 @@ daily AI ceiling.
 
 ## 9. Still open (defaults given; the build can start with them)
 
-1. **Quotation sent outside the tracker.** Default: the enquiry is created
-   (§3.8), but the quotation itself is not. The alternative, in a later
-   phase, is to read the attached PDF and create the quotation too.
+1. **Number for a quotation read from a PDF.** Default: keep the printed
+   number when it is free, so the client's replies link to it, and
+   otherwise take a tracker number. The alternative is to always give it
+   a tracker number and keep the printed one in remarks.
 2. **Existing clients with an open deal.** Default: a new request from them
    still becomes a new enquiry, unless the subject names a record. This
    keeps repeat business visible in the reports. The alternative is to
