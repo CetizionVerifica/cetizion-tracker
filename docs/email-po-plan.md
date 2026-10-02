@@ -486,6 +486,8 @@ Derived, not stored:
 | `server/src/lib/mailbox/sync.js` | `ingest()` also returns later inbound messages with attachments or PO words. `syncAccount` calls `processPoCandidates` before `processCandidates`. |
 | `server/src/import/parse.js`, `import/ai.js`, `import/rules.js` | Export `splitReference`, `parseMoney`, `advanceShare`, the split rule and `norm` for reuse. No behaviour change. |
 | `server/src/jobs.js` | `pos.backfill` (`*/10 * * * *`). |
+| `server/src/lib/followUps.js` | Invoice follow-ups skip the stages of history-mode POs until a person has touched them: an invoice number or payment is recorded, or the PO is marked checked. Derived from `email_po_decisions.mode`, not stored on the stage (§3.8). |
+| `server/src/lib/resources.js`, `web/src/pages/PaymentStages.jsx` | A `from_past_po=1` filter: the "Stages from past POs" view (§3.8). |
 | `server/src/routes/purchaseOrders*.js` / `workflow.js` | `GET /api/purchase-orders/review` (scoped: admins see all, sales see their quotations' items), `POST /api/purchase-orders/review/:id/register` (re-reads the PDF and returns the dialog's prefill), `POST /api/purchase-orders/review/:id/dismiss`. |
 | `server/src/routes/mailboxes.js` | The auto-enquiries status gains PO counts and PO backfill progress. Re-run gets a "POs" option. |
 | `server/src/lib/authz/policy.js` | Every new route. |
