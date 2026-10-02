@@ -10,7 +10,7 @@ import {
 import {
   invoicingCsvRows, ordersCsvRows, overdueCsvRows, paymentStatusCsvRows, revenueReport,
 } from '../lib/revenueReport.js';
-import { reportTimeZone } from '../lib/salesReportPdf.js';
+import { reportTimeZone } from '../lib/pdfBlocks.js';
 import { reportPdf } from '../lib/reportPdf.js';
 import { reportGrain, reportScope, salesReport } from '../lib/reportDefinitions.js';
 import {
@@ -64,7 +64,7 @@ const SALES_REPORTS = {
   'repeat-orders': { build: buildSections, toRows: repeatOrdersCsvRows },
   revenue: { build: buildSections, toRows: revenueCsvRows },
   'revenue-pos': { build: buildSections, toRows: revenuePosCsvRows },
-  // The sales reports page's tables, until step 6 of the plan retires them.
+  // Detailed tables the old Sales reports page showed, linked under More analysis.
   sectors: { build: sectorReport, toRows: sectorCsvRows },
   customers: { build: customerReport, toRows: customerCsvRows },
   fx: { build: fxReport, toRows: fxCsvRows },

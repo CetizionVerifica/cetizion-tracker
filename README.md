@@ -52,10 +52,13 @@ on its own trigger — registration, delivery, a project milestone — and nobod
 hand. Invoice runs, receipts, collections ageing, cash-flow forecasting, payables to
 travel vendors, and profitability per project.
 
-<img src="docs/images/reports.png" alt="Reports: pipeline by stage, collections ageing, cash expected over six months, and win rate by quarter" width="900">
+<img src="docs/images/reports.png" alt="Reports for a month: enquiries, conversion to PO, POs and new clients in a summary strip, then enquiries per day and what happened to them" width="900">
 
-*Every bar links into the list behind it, and each chart opens as a table — a figure you
-cannot interrogate is a figure you have to trust.*
+*Reports answers six questions for any period — enquiries received, what became of them,
+sector-wise POs, service-wise sales, new and repeat customers, monthly revenue — on screen,
+as CSVs and as one PDF, all from the same definitions. Every bar opens the records it
+counted, and each chart opens as a table: a figure you cannot interrogate is a figure you
+have to trust.*
 
 **Delivery and travel.** Projects with onboarding checklists and milestones, site visit
 scheduling, trips with vendor invoices and employee expense claims, and certificates with

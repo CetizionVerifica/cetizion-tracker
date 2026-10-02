@@ -577,21 +577,21 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
   describe('reports and the PDF', () => {
     test('the sales report covers only the caller’s pipeline', async () => {
       await setUp();
-      const mine = await get(salesA.cookie, '/api/dashboard/sales-report');
+      const mine = await get(salesA.cookie, '/api/reports/sales');
       assert.equal(mine.status, 200);
       const body = JSON.stringify(mine.body);
       assert.ok(body.includes('Client A'), 'their own customer is counted');
       assert.ok(!body.includes('Client B'), 'B’s customer is not');
       assert.ok(!body.includes('Client NONE'), 'nor an unassigned one');
 
-      const all = JSON.stringify((await get(admin.cookie, '/api/dashboard/sales-report')).body);
+      const all = JSON.stringify((await get(admin.cookie, '/api/reports/sales')).body);
       assert.ok(all.includes('Client B') && all.includes('Client NONE'), 'an admin sees all of it');
     });
 
-    test('the revenue report is scoped, and still computes the same way', async () => {
+    test('the report is scoped, and still computes the same way', async () => {
       await setUp();
-      const mine = await get(salesA.cookie, '/api/dashboard/revenue-report');
-      const all = await get(admin.cookie, '/api/dashboard/revenue-report');
+      const mine = await get(salesA.cookie, '/api/reports/sales');
+      const all = await get(admin.cookie, '/api/reports/sales');
       assert.equal(mine.status, 200);
       assert.equal(all.status, 200);
       assert.deepEqual(
@@ -610,8 +610,8 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
 
     test('the PDF builds for both, from each one’s own rows', async () => {
       await setUp();
-      const mine = await get(salesA.cookie, '/api/export/sales-report.pdf?year=2026');
-      const all = await get(admin.cookie, '/api/export/sales-report.pdf?year=2026');
+      const mine = await get(salesA.cookie, '/api/export/sales-report.pdf');
+      const all = await get(admin.cookie, '/api/export/sales-report.pdf');
       assert.equal(mine.status, 200);
       assert.equal(all.status, 200);
       assert.equal(mine.headers['content-type'], 'application/pdf');

@@ -1,161 +1,196 @@
-# Sales reports: sector-wise POs and new vs repeat customers
+# Sales reports
 
-Two of the six planned sales reports, built on the existing `quotations` table
-(no customer master yet).
+The **Reports** page (`/reports`) answers six questions about a period, on screen,
+as CSVs and as one PDF. All three read the same definitions
+(`server/src/lib/reportDefinitions.js`), so they never disagree. How it was planned,
+and why each rule is what it is: [sales-report-rework-plan.md](sales-report-rework-plan.md).
 
-| # | Report | Status |
-|---|---|---|
-| 3 | Sector-wise POs | **Done** |
-| 5 | Customer analysis (new vs repeat) | **Done** |
-| 1, 2, 4, 6 | Enquiries, enquiry status, best-selling services, revenue | Later |
+1. **Total enquiries.** How many enquiries came in per day, week or month?
+2. **Enquiry status.** How many converted to a PO, are still in the pipeline, were
+   quoted but not won, or were lost?
+3. **Sector-wise POs.** How many POs, worth how much, came from each sector?
+4. **Service-wise sales.** Which service lines sell best?
+5. **Customer analysis.** Which enquiries came from new customers, and which orders were
+   repeats from existing ones?
+6. **Revenue.** What is the PO value each month, and which sales make it up?
+
+`/sales-report`, the old page, redirects here with its dates.
 
 ## What users see
 
-- **Quotations page:** a new **Sector** field on the form. It suggests sectors already
-  used, and Agriculture / Metal Industry / Pharmaceutical / Other to start with. Any new
-  sector can be typed in. There is also a Sector column and a Sector filter, which
-  includes **Not set** to find quotations still missing one.
-- **Sales reports page** (sidebar → Sales → Sales reports):
-  - Date range, with *All time / This calendar year / This month*. Enquiries follow the
-    enquiry date, everything else the quotation date.
-  - **Sector-wise POs:** a table per sector with Enquiries, POs won, Lost, Pipeline,
-    Win %, Won value and FX deals, plus a Total row, and a chart of POs by sector.
-  - **FX deals:** every client with won POs in a currency other than INR, with its
-    sector, currency, number of POs, won value and the quotation numbers.
-  - **FX deals** also shows the rate and the **Won value (INR)** for each deal.
-  - **Repeat clients**, **Single enquiry clients** and a **Client summary**, each with
-    Client group, Enquiries, POs won, Win %, Won value (INR) and Repeat orders.
-  - **Revenue**, for one calendar year (Jan–Dec) or one month of it, with its own **Year**
-    and **Month** filters. It does not follow the period above.
-    - **Order intake by month:** Orders won, Order intake (INR), Average deal (INR), from
-      won quotations.
-    - **Invoicing & collections by month:** POs, PO value, Invoiced, Received and Due now,
-      from purchase orders. Below its Total row, once for the whole period:
-      **Collection rate** (Received ÷ Invoiced) and **Invoiced % of PO value**.
-    - **Payment status:** the same figures for each PO status (Overdue, To Invoice, Pending,
-      Up to date, Fully Paid). Click a status to open those POs on the Purchase orders page.
-    - Click a month row to show only that month.
-  - A **Download CSV** button on each report, which opens in Excel and follows the chosen
-    dates and filters.
-  - **Download PDF** (top right): the *Sales & Enquiry Performance Review*, an A4 portrait
-    management report with charts and a written analysis. Page 1 has the key figures, the
-    headline and key findings. Then: 1 enquiry volume, 2 quotation status,
-    3 sector-wise performance, 4 service-wise sales, 5 client analysis, 6 revenue and
-    collections, 7 what management needs to fix, and an appendix (FX deals, client lists,
-    notes). It uses the period above and the Revenue section's year and month. The
-    enquiry and quotation status breakdowns, service lines and data-gap checks appear only in
-    the PDF, not on the page.
-    The server builds it with `pdfmake` (charts drawn as SVG); nothing is stored and no
-    outside service or AI is used. The analysis follows fixed rules listed in its notes.
-- **Settings page:** an **FX rate** per currency (INR for 1 EUR, USD, GBP, AED, SGD).
-  Blank until someone enters it. Until then those deals are shown next to the INR values
-  as "rate not set" instead of being guessed.
+- **Period:** This FY (listed first), This quarter (FY), This month, Last month, Last FY,
+  This calendar year, Last calendar year or Custom. The period lives in the address bar,
+  so a link or a bookmark reopens the same report.
+- **Group by:** day for a month or less, week for up to six months, month beyond that.
+  The user can change it.
+- **Owner** (admins only): one salesperson's records. A sales user always sees their own.
+- **Summary strip:** Enquiries · Converted to PO (n and %) · POs and their value ·
+  New clients. Each opens its records.
+- **About these figures:** what limits the numbers, with a link to fix each one.
+  Examples: enquiries with no date, POs with no sector, amounts with no exchange rate,
+  quotations marked won with no PO.
+- **Six sections.** Each is titled with its question and opens with a one-sentence
+  answer written from the figures. That sentence is the same one the PDF prints.
+- **Every bar opens the records it counted.** The same goes for the first cell of every
+  row in "Open as table". The Enquiries or Purchase orders list re-runs the report's own
+  rules (`?report_from=&report_to=&report_outcome=…`), so it holds exactly what the bar
+  counted. A banner says why the list is short, with a link back to all of it. The
+  list's CSV and Excel exports and a saved view carry the same filter.
+- **CSV beside each question**, for the period, grouping and owner on screen:
+  `enquiries`, `outcomes`, `sector-pos`, `services`, `new-customers`, `repeat-orders`,
+  `revenue` and `revenue-pos` (every PO behind the revenue).
+- **Download PDF** (top right): the same six sections. See [The PDF](#the-pdf).
+- **More analysis** (folded until opened): pipeline by stage, collections ageing, cash
+  expected, win rate by quarter and by owner, sector or service, quoted against won, and
+  open deals by status. These are about now, not the period, so they keep their own
+  months control. Under them are the detailed CSVs the old page offered:
+  - sector funnel
+  - clients (repeat or single)
+  - deals in another currency
+  - order intake
+  - invoicing and collections
+  - payment status
+  - overdue invoices by client
+- **Settings → Report categories** (admins): the headline sectors and service lines and
+  their order, sector aliases, and which line each catalogue service counts under.
 
-## The rules the reports follow
+## The rules
 
-- **A PO** is a quotation with status **Won - PO Received**. Many won deals have no PO
-  registered in the PO register yet, so counting that register would miss them.
-- **Enquiries** are the rows on the Enquiries page. **Lost** is a quotation marked Lost.
-  **Pipeline** is every other quotation (Submitted, Under Negotiation, On Hold), so
-  POs won + Lost + Pipeline = all quotations in the period.
-- **Win %** = POs won ÷ (POs won + Lost). Open deals have no outcome yet, so they are
-  left out. It shows — when nothing has been decided.
-- **FX deal** = a won PO in any currency other than INR. The FX deals total matches the
-  FX deals column of the sector table.
-- **Same spelling = same client / same sector.** Capital letters and extra spaces are
-  ignored ("Hetero" = "hetero "). Any other difference is a separate client
-  ("Hindalco" ≠ "Hindalco - Kuppam").
-- **Repeat client:** 2 or more won POs up to the end of the chosen period.
-  **Single enquiry client:** every other client, including one won PO, quoted but not
-  won, or only on the Enquiries page. Each client is in exactly one group.
-- **Clients are counted once.** A client's enquiries and quotations are joined by spelling
-  into one row. An enquiry that became a quotation counts once under Enquiries, and its
-  quotation counts only under POs won / Lost.
-- **Repeat orders** = won POs after the first one (up to the end of the period).
-- **Won value (INR)** = INR deals + FX deals × the Settings rate. It matches the INR won
-  value in the sector table plus the INR total of the FX table.
-- **Order intake** follows the won quotation's date. **Order intake** = won quotation values
-  in INR. **Average deal** = order intake ÷ the orders that have a value.
-- **Invoicing & collections** and **Payment status** list every purchase order by its
-  **PO date**, with PO value, Invoiced, Received, Due now and payment status exactly as on
-  the Purchase orders page, so their totals match that list (FX POs converted to INR).
-  **Due now** = Invoiced − Received, counting only invoices that have actually
-  been raised. Work that is due to be invoiced but has no invoice yet is
-  reported separately as **To bill**, so Due now never overstates what anyone
-  has been asked to pay. **Collection rate** = received against invoices ÷
-  Invoiced, so it cannot exceed 100%.
+**Every query is scoped** to what the reader may see. A sales user gets their own
+records and an admin gets everything, or one owner's with `?owner=`. **Every amount** is
+converted to INR at the rate in force on the record's own date. An amount with no rate is
+left out of the INR figures and named, never guessed. **A PO that counts as a sale** is
+one that is neither cancelled nor replaced by a revision.
 
-  Each amount is converted at the rate in force on its own date — the invoice
-  date for Invoiced and Due now, the payment date for Received — so in INR
-  those figures differ by the currency movement between billing and
-  collection, reported in its own right as **FX gain / loss**.
-  **Invoiced % of PO** = Invoiced ÷ PO value.
-- **PDF enquiry volume:** counts come only from the Enquiries page, by enquiry date: In Progress,
-  Declined, and Won - Quotation Sent ("quotation sent").
-- **PDF quotation status:** quotations by quotation date and their status on the Quotations page:
-  Submitted, Under Negotiation, On Hold, Won - PO Received and Lost, with count, share and
-  quoted value in INR. The counts match POs won / Lost / Pipeline in the sector table.
-- **PDF service lines:** the free-text service is matched by keywords into EcoVadis, ISO,
-  ASI / Copper Mark / LME, Sustainability reporting & assurance, Social & supply-chain audits,
-  Climate & environment, HSE / process safety and ESG strategy & advisory
-  (`server/src/lib/serviceLines.js`). A bundled quotation counts in each line it names;
-  the Total row counts it once. Anything unmatched is "Other services".
-- **Payment status:** Overdue = an invoice is past its due date; To Invoice = a stage is due
-  to be billed; Pending = invoiced, not yet overdue; Up to date = nothing due now; Fully
-  Paid = every stage paid.
-- Every month in the range is listed, so a quiet month shows zeros. Without a date range,
-  undated rows appear in a **No date** row.
-- A **PO without a PO date** cannot be placed in a year or month, so the Revenue section
-  (page and PDF) lists it in a warning, with a link to add the date.
-- **Money stays in its own currency** in the sector and FX tables. The client and revenue
-  tables convert to INR at the Settings rate.
-- A quotation with no date is only counted when no date range is chosen.
+### 1. Enquiries received
 
-## Files changed
+- An enquiry counts on its **enquiry date**. If that is blank, it counts on the day the
+  record was created, in India time, and a note says how many did.
+- Buckets are calendar days, ISO weeks starting Monday (labelled "w/c 6 Oct") or calendar
+  months. Quiet buckets show 0.
+- More than 400 buckets fall back to the next coarser grouping, with a note.
+- Each enquiry is split by **lead source**: the source picked from the list, or the typed
+  one if none was picked.
 
-| File | Change |
-|---|---|
-| `server/db/migrations/001_quotation_sector.sql` | **New.** Adds the `sector` column (safe to re-run) |
-| `server/db/schema.sql`, `server/db/views.sql` | `sector` on `quotations` and `v_quotations` |
-| `server/scripts/db.js`, `server/package.json` | **New command** `npm run db:upgrade`: migrations + views, keeps data |
-| `server/src/lib/salesReport.js` | **New.** The two report queries and their CSV layout |
-| `server/src/routes/dashboard.js` | `GET /api/dashboard/sales-report?from=&to=` |
-| `server/src/routes/export.js` | `GET /api/export/sales-report/sectors.csv` and `customers.csv` |
-| `server/src/lib/resources.js` | `sector` is saved, searchable and filterable on quotations |
-| `server/src/routes/lookups.js` | Sector suggestions for the form |
-| `web/src/pages/SalesReport.jsx` | **New.** The report page |
-| `web/src/pages/Quotations.jsx`, `web/src/App.jsx`, `web/src/lib/*` | Sector field, filter, menu entry, CSV links |
-| `README.md` | Documents `db:upgrade` |
+### 2. Enquiry outcome
 
-## Deploying to production
+Judged **as at the end of the period**. Every enquiry has exactly one outcome; the first
+match wins.
 
-The new code reads the new `sector` column, so the database change and the deploy go
-out together.
+| Outcome | Rule |
+| --- | --- |
+| **Converted to PO** | A PO that counts as a sale, dated by the period's end, on the enquiry's quotation. |
+| **Lost** | Closed as Unqualified **without a quotation**. |
+| **Quoted, not won** | Its quotation was lost by the period's end, or ran past its validity while still Submitted or Under Negotiation. Listed by lost reason. |
+| **In pipeline** | Everything else. Split into *not yet quoted* and *quoted, awaiting a decision*. |
 
-1. **Back up the production database** first.
-2. Deploy the new version on Dokploy as usual.
-3. **Straight away**, open a terminal in the running container and run:
-   ```bash
-   cd server && npm run db:upgrade
-   ```
-   It only **adds** the `sector` column and rebuilds the views. No table is dropped and
-   no data changes. Until it runs, the Quotations and Sales reports pages will show an
-   error.
+- An enquiry that was quoted is **never Lost**, whatever happened to the quotation.
+- A quotation lost only after the period ended was open at the time, so it counts in the
+  pipeline.
+- A quotation marked won with no PO by the period's end stays in the pipeline, with a note.
+- Percentages are of the enquiries received in the period, and always add up to 100.
 
-**Never run `npm run migrate` or `npm run reset` on production.** They drop every table.
+### 3. Sector-wise POs
 
-After deploying, open **Quotations → Sector filter → Not set** and fill in the sector
-for the existing quotations. Until then they appear under **Not set** in the report.
+- A PO's sector is its quotation's sector, or else its company's.
+- That is matched to a **headline sector** (Settings → Report categories) by its name or
+  an alias, ignoring case and spacing.
+- Anything else is **Other**, with the spellings behind it listed. A blank is **Not set**.
+- Nothing on a record is rewritten.
 
-## How it was tested
+### 4. Service-wise sales
 
-On the local database, with a few sectors filled in temporarily and cleared afterwards:
+- A PO's value is split across service lines using, in order of preference:
+  1. its recorded **PO service lines**;
+  2. its quotation's **lines**, weighted by value including GST, each named by its
+     catalogue service where it has one;
+  3. **keywords** in the quotation's service text (`lib/serviceLines.js`).
+- A piece naming several lines is **split equally** between them.
+- The service values therefore add up to the revenue total. A PO counts once in each line
+  it touches, so the PO counts can add up to more.
+- A catalogue service's **report line**, when an admin sets one, overrides the keywords.
+- A line the report does not list, or text matching none, is **Other**.
 
-- Sector totals and customer counts were correct. "pharmaceutical " grouped with
-  "Pharmaceutical".
-- Date ranges: Hetero in May 2026 shows 2 won in the period and 4 to date (Repeat).
-  Up to 30 Apr it has 2 to date (Repeat), and Orion (first quoted in May) is not listed.
-- An invalid date (`2026-02-30`) and a backwards range are both rejected with a clear message.
-- Both CSV downloads have the right file names and columns. The existing Quotations CSV
-  now includes `sector`.
-- The web app builds, and all 18 existing server tests pass.
+### 5. New and existing customers
+
+- A customer is a **company**: the PO's project, then its quotation, then the company of
+  the same name.
+- Only when none matches is the client name the key, and a note counts those POs.
+- **New customer:** their first-ever counting PO falls in the period.
+  **Existing:** their first PO was before the period.
+- **Repeat order:** any PO in the period that is not the customer's first. So a new
+  customer's second PO in the period is a repeat. First orders and repeats add up to the
+  revenue total.
+- **Enquiry from a new customer:** the customer had no PO before the enquiry's own date,
+  or has none at all.
+- Order history is judged against **every** PO, not just the reader's. Otherwise a sales
+  user taking over an account would see a long-standing client as new. A reader sees only
+  a count of earlier POs, never the POs themselves.
+
+### 6. Monthly revenue
+
+- Revenue is the **value of counting POs including GST** (`po_value` as entered), by
+  **PO date**, in INR at the PO-date rate. That is the order basis, so it is the same
+  money sections 3, 4 and 5 split up.
+- **Invoiced** and **received** sit beside it, dated by the invoice and by the payment and
+  converted on those dates. They are the billing and cash view of each month, not a split
+  of its PO value. Every PO counts in them, cancelled or replaced, because that money is
+  real.
+- The **order intake** in the detailed CSV uses the same basis. Until this rework it
+  counted quotations marked won, by quotation date, so figures from older exports will not
+  match.
+
+## The PDF
+
+`GET /api/export/sales-report.pdf?from=&to=&grain=&owner=` takes the same parameters as
+the screen. It is built by `lib/reportPdf.js` with pdfmake and SVG charts, with no browser
+and no outside service.
+
+- **Cover:** company name, period, owner when an admin narrowed it, generated time, the
+  four summary boxes, and the contents.
+- **One section per question:** heading, the server's sentence, chart and table.
+- **Notes and what to fix**, then **How these are counted**.
+- **Footer:** "Page x of y", the period, and "confidential".
+- **Limits:**
+  - A daily chart longer than 31 days is drawn by week, and says so.
+  - The PO list behind the revenue goes on a landscape page and stops at 200 rows; the
+    customer lists stop at 100. Each says which CSV holds the rest.
+  - An empty section reads "Nothing in this period."
+
+## Endpoints
+
+| Endpoint | What |
+| --- | --- |
+| `GET /api/reports/sales?from=&to=&grain=&owner=` | Every section in one response: `{enquiries, outcomes, sectors, services, customers, revenue, notes, stale_rates, narrative}` |
+| `GET /api/reports/categories` | Admin: the category lists, aliases, and where every sector spelling and catalogue service lands today |
+| `GET /api/export/sales-report.pdf` | The PDF |
+| `GET /api/export/sales-report/:report.csv` | A section CSV, or one of the detailed tables |
+| `GET /api/enquiries?report_…`, `/api/purchase-orders?report_…` | The records behind a slice |
+
+The category lists are saved through `/api/settings/report_sectors` and
+`/api/settings/report_service_lines` (JSON lists, validated on save),
+`/api/sector-aliases` and `report_line` on `/api/services`.
+
+## Files
+
+| File | What |
+| --- | --- |
+| `server/src/lib/reportDefinitions.js` | The six definitions, the drill-down filters, and `salesReport()` |
+| `server/src/lib/reportPdf.js`, `pdfBlocks.js`, `pdfCharts.js` | The PDF |
+| `server/src/lib/reportCsv.js` | The section CSVs |
+| `server/src/lib/serviceLines.js` | The service-line keywords |
+| `server/src/lib/salesReport.js`, `revenueReport.js` | Shared SQL (periods, rates, the PO-to-quotation rule) and the detailed tables |
+| `server/db/migrations/064_report_categories.sql` | Sector aliases, `services.report_line`, the two category settings |
+| `web/src/pages/Reports.jsx`, `web/src/components/SalesReportSections.jsx` | The page |
+| `web/src/pages/ReportCategories.jsx` | Settings → Report categories |
+| `web/src/lib/reportPeriods.js` | Period presets and drill-down links |
+
+## Tests
+
+| Test | Covers |
+| --- | --- |
+| `server/test/reportRules.test.js` | Buckets, grain, percentages, outcome precedence, sector and service mapping, the split, customers |
+| `server/test/reportDefinitionsSql.test.js` | Every section against a real database, "as at the period's end", scoping, drill-downs agreeing with charts |
+| `server/test/reportPdf.test.js` | The six headings in order, empty sections, daily-to-weekly, the PO cap and landscape page, CSVs |
+| `web/test/reportPeriods.test.js` | Presets, FY quarters, drill-down links |
+| `web/e2e/flows.spec.js` | Last month → Lost → the same number of enquiries → PDF download |

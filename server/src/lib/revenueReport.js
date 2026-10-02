@@ -1,21 +1,28 @@
 import { query } from '../db.js';
 import { UNRESTRICTED, scopedSources } from '../auth/ownership.js';
-import { IN_PERIOD, RATES, inPeriod, rateOn, staleAmong } from './salesReport.js';
+import { RATES, inPeriod, poCountsAsSale, rateOn, staleAmong } from './salesReport.js';
 import { MONTH_NAMES } from './reportFormat.js';
 import { r2, share as ratio } from './reportMath.ts';
-import { QUOTATION_STATUS, STAGE_STATUS } from './statuses.js';
+import { STAGE_STATUS } from './statuses.js';
 
 /**
  * Revenue for a period, in two halves read from different places:
  *
- * - Order intake: quotations marked "Won - PO Received", by quotation date.
+ * - Order intake: the purchase orders that count as a sale (not cancelled,
+ *   not replaced by a revision), by PO date, at their value as entered —
+ *   including GST — converted at the rate on the PO date. The same basis as
+ *   the Reports section's monthly revenue (reportDefinitions.js §4.6), so
+ *   the two never disagree. Until step 6 of docs/sales-report-rework-plan.md
+ *   this was quotations marked won, by quotation date.
  * - Invoicing & collections, and payment status: every purchase order, by
  *   its PO date, with PO value, invoiced, received, due now and payment
  *   status exactly as the Purchase orders list shows them — so the totals
- *   here are the totals of that list.
+ *   here are the totals of that list. A cancelled or replaced PO is still
+ *   in these: money billed or received against it is real.
  *
- * Amounts are converted to INR at the Settings rate; an amount whose rate is
- * not set is left out of the INR figures and reported, never guessed.
+ * Amounts are converted to INR at the rate in force on each record's own
+ * date; an amount whose rate is not set is left out of the INR figures and
+ * reported, never guessed.
  */
 
 /** "Sep 2026" for "2026-09"; "No date" for a row without one. */
@@ -81,22 +88,22 @@ export function monthRows(rows, { from, to } = {}, summarise) {
   return months;
 }
 
-/** Won quotations: how many, their value in INR, and the average deal. */
+/** Orders (POs that count as a sale): how many, their value in INR, and the average order. */
 export function summariseOrders(orders) {
   const valued = orders.filter((row) => row.order_value_inr !== null);
   const unconverted = new Map();
   for (const row of orders) {
-    if (row.quotation_value !== null && row.rate === null) {
-      unconverted.set(row.currency, r2((unconverted.get(row.currency) || 0) + row.quotation_value));
+    if (row.order_value !== null && row.rate === null) {
+      unconverted.set(row.currency, r2((unconverted.get(row.currency) || 0) + row.order_value));
     }
   }
   const intake = sum(valued, 'order_value_inr');
   return {
-    orders_won: orders.length,
+    orders: orders.length,
     order_intake_inr: intake,
     // Averaged over the orders the intake actually includes.
-    average_deal_inr: valued.length ? r2(intake / valued.length) : null,
-    orders_without_value: orders.filter((row) => row.quotation_value === null).length,
+    average_order_inr: valued.length ? r2(intake / valued.length) : null,
+    orders_without_value: orders.filter((row) => row.order_value === null).length,
     order_unconverted: [...unconverted].map(([currency, amount]) => ({ currency, amount })),
     rate_details: rateDetails(orders),
   };
@@ -199,19 +206,21 @@ export async function revenueReport({ from, to }, { includeYears = true, scope =
   const params = [from, to];
   const src = scopedSources(scope, params);
   const [orders, purchaseOrders, overdueStages, years, undated] = await Promise.all([
+    // Order intake: POs that count as a sale, by PO date. po_value 0 is the
+    // column default — no value entered — never a ₹0 order.
     query(
       `WITH ${RATES}
-       SELECT q.quotation_no,
-              to_char(q.quotation_date, 'YYYY-MM')  AS month,
-              q.currency,
-              q.quotation_value,
-              qr.rate,
-              qr.effective_from AS rate_effective_from,
-              ROUND(q.quotation_value * qr.rate, 2) AS order_value_inr
-         FROM ${src.quotations} q
-         ${rateOn('qr', 'q.currency', 'q.quotation_date')}
-        WHERE q.status = '${QUOTATION_STATUS.won}' AND ${IN_PERIOD}
-        ORDER BY q.quotation_date NULLS LAST, q.quotation_no`,
+       SELECT po.po_number,
+              to_char(po.po_date, 'YYYY-MM')               AS month,
+              po.currency,
+              NULLIF(po.po_value, 0)                       AS order_value,
+              r.rate,
+              r.effective_from AS rate_effective_from,
+              ROUND(NULLIF(po.po_value, 0) * r.rate, 2)    AS order_value_inr
+         FROM ${src.purchaseOrders} po
+         ${rateOn('r', 'po.currency', 'po.po_date')}
+        WHERE ${inPeriod('po.po_date')} AND ${poCountsAsSale('po')}
+        ORDER BY po.po_date NULLS LAST, po.po_number`,
       params
     ),
     query(
@@ -309,7 +318,7 @@ export async function revenueReport({ from, to }, { includeYears = true, scope =
         overdueParams
       );
     })(),
-    // Years with won orders or dated POs, for the year picker.
+    // Years with dated POs, for a year picker.
     includeYears
       // Its own parameter list: this one carries no period, so it cannot
       // reuse the numbering of the two queries above.
@@ -317,13 +326,9 @@ export async function revenueReport({ from, to }, { includeYears = true, scope =
         const yearParams = [];
         const years = scopedSources(scope, yearParams);
         return query(
-          `SELECT year FROM (
-             SELECT EXTRACT(YEAR FROM quotation_date)::int AS year
-               FROM ${years.quotations} yq WHERE status = '${QUOTATION_STATUS.won}' AND quotation_date IS NOT NULL
-             UNION
-             SELECT EXTRACT(YEAR FROM po_date)::int FROM ${years.purchaseOrders} ypo WHERE po_date IS NOT NULL
-           ) y
-           ORDER BY year DESC`,
+          `SELECT DISTINCT EXTRACT(YEAR FROM po_date)::int AS year
+             FROM ${years.purchaseOrders} ypo WHERE po_date IS NOT NULL
+            ORDER BY year DESC`,
           yearParams
         );
       })()
@@ -388,9 +393,9 @@ const moneyColumns = (row) => ({
 export function ordersCsvRows({ orders }) {
   return [...orders.months, { label: 'Total', ...orders.total }].map((row) => ({
     Month: row.label,
-    'Quotations won': row.orders_won,
-    'Order intake (INR)': row.order_intake_inr,
-    'Average deal (INR)': row.average_deal_inr ?? '',
+    'Orders (POs)': row.orders,
+    'Order intake incl. GST (INR)': row.order_intake_inr,
+    'Average order (INR)': row.average_order_inr ?? '',
     'Orders with no value entered': row.orders_without_value,
     'Not in INR (rate not set)': notInInr(row.order_unconverted),
   }));

@@ -17,8 +17,8 @@ const po = (month, extra = {}) => ({
   received_invoiced_inr: 200, to_bill_inr: 0,
   ...extra,
 });
-/** A won quotation row. */
-const order = (month, extra = {}) => ({ month, currency: 'INR', rate: 1, quotation_value: 100, order_value_inr: 100, ...extra });
+/** An order (a PO that counts as a sale) row. */
+const order = (month, extra = {}) => ({ month, currency: 'INR', rate: 1, order_value: 100, order_value_inr: 100, ...extra });
 
 test('a year 0000 date is refused before it can reach Postgres', () => {
   assert.throws(() => reportPeriod({ from: '0000-01-01' }), (err) => err.status === 422);
@@ -83,10 +83,10 @@ test('payment status lists every status and adds up to the total', () => {
 });
 
 test('order intake averages over the orders that have a value', () => {
-  const s = summariseOrders([order('2026-09'), order('2026-09', { quotation_value: 300, order_value_inr: 300 }), order('2026-09', { quotation_value: null, order_value_inr: null })]);
-  assert.equal(s.orders_won, 3);
+  const s = summariseOrders([order('2026-09'), order('2026-09', { order_value: 300, order_value_inr: 300 }), order('2026-09', { order_value: null, order_value_inr: null })]);
+  assert.equal(s.orders, 3);
   assert.equal(s.order_intake_inr, 400);
-  assert.equal(s.average_deal_inr, 200);
+  assert.equal(s.average_order_inr, 200);
   assert.equal(s.orders_without_value, 1);
 });
 

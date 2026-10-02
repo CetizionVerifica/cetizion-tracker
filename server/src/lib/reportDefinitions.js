@@ -766,7 +766,7 @@ const customerKeySql = (companyIds, clientName) => {
  * Every counting PO with a date, whoever owns it, keyed by customer: the
  * order history "new" and "repeat" are judged against.
  *
- * Deliberately not scoped, like contractDateOf in salesReviewData.js:
+ * Deliberately not scoped, like the PO-to-quotation lookups in salesReport.js:
  * whether a client had ordered before is a fact about the client, not about
  * who is reading. Scoped, a sales user taking over an account would see a
  * ten-year client as new. Only dates and PO numbers come back, and the

@@ -193,8 +193,6 @@ export const routes = [
   // ------------------------------------------------------------ dashboard
   { method: 'GET', path: '/api/dashboard/overview', access: signedIn },
   { method: 'GET', path: '/api/dashboard/worklist', access: signedIn },
-  { method: 'GET', path: '/api/dashboard/sales-report', access: signedIn },
-  { method: 'GET', path: '/api/dashboard/revenue-report', access: signedIn },
   { method: 'GET', path: '/api/dashboard/travel', access: signedIn },
   { method: 'GET', path: '/api/dashboard/data-quality', access: signedIn },
   { method: 'GET', path: '/api/dashboard/payables', access: signedIn, note: 'What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill.' },

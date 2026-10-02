@@ -114,7 +114,7 @@ describe('the shared admin and row ownership', { skip: !ADMIN_URL && 'set TEST_D
     assert.equal(csv.status, 200);
     assert.ok(csv.text.includes('Client 1') && csv.text.includes('Client 2'), 'the export holds both');
 
-    const report = await get('/api/dashboard/sales-report');
+    const report = await get('/api/reports/sales');
     assert.equal(report.status, 200);
     assert.ok(JSON.stringify(report.body).includes('Client 2'), 'the report counts the unassigned one');
   });

@@ -4,7 +4,7 @@ import { compactInr, money, number, plural } from './reportFormat.js';
 import { bucketLabel, weekStart } from './reportDefinitions.js';
 import {
   INK, MARGIN_X, PDF_STYLES, dateLabel, figure, generatedStamp, periodLabel, reportTable, section, tile,
-} from './salesReportPdf.js';
+} from './pdfBlocks.js';
 
 /**
  * The Reports section as a PDF (docs/sales-report-rework-plan.md §5.2): the
@@ -14,7 +14,7 @@ import {
  *
  * pdfmake and SVG charts, as for every PDF here: no browser, no outside
  * service. The building blocks and type styles are the sales review's
- * (salesReportPdf.js), so the two documents look like one family.
+ * (pdfBlocks.js), carried over from the review this PDF replaced.
  */
 
 const W = Math.floor(595.28 - MARGIN_X * 2);

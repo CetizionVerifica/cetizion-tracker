@@ -184,8 +184,6 @@ session is **401**, before any of these is considered.
 | `GET /api/dashboard/data-quality` | any |  |
 | `GET /api/dashboard/overview` | any |  |
 | `GET /api/dashboard/payables` | any | What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill. |
-| `GET /api/dashboard/revenue-report` | any |  |
-| `GET /api/dashboard/sales-report` | any |  |
 | `GET /api/dashboard/travel` | any |  |
 | `GET /api/dashboard/worklist` | any |  |
 | **/api/deliverables** | | |

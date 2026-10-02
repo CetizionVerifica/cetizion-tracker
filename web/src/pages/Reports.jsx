@@ -145,7 +145,7 @@ export default function Reports() {
             </div>
           </>
         )}
-        <MoreAnalysis />
+        <MoreAnalysis from={from} to={to} />
       </div>
     </>
   );
@@ -157,7 +157,7 @@ export default function Reports() {
  * not "what happened in the period", so they keep their own two controls
  * and sit below, folded until opened.
  */
-function MoreAnalysis() {
+function MoreAnalysis({ from, to }) {
   const [open, setOpen] = useState(false);
   return (
     <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
@@ -165,7 +165,36 @@ function MoreAnalysis() {
         More analysis: pipeline, ageing, cash, win rate
       </summary>
       {open && <AnalysisCharts />}
+      {open && <DetailedDownloads from={from} to={to} />}
     </details>
+  );
+}
+
+/**
+ * The detailed tables the old Sales reports page offered, as CSVs for the
+ * period above. The six questions replaced that page; these answer the
+ * questions it asked that they do not.
+ */
+const DETAILED_CSVS = [
+  ['sectors', 'Sector funnel: enquiries, quoted, lost and win rate'],
+  ['customers', 'Clients: repeat or single, deals to date'],
+  ['fx', 'Deals in another currency, and the rates used'],
+  ['orders', 'Order intake per month'],
+  ['invoicing', 'Invoicing and collections per month'],
+  ['payment-status', 'POs by payment status'],
+  ['overdue', 'Overdue invoices by client'],
+];
+
+function DetailedDownloads({ from, to }) {
+  return (
+    <div className="mt-4 rounded-[10px] border border-border px-4 py-3 text-[13px]">
+      <div className="font-medium text-foreground">Detailed tables for {date(from)} – {date(to)}</div>
+      <ul className="mt-1.5 grid gap-1 @3xl:grid-cols-2">
+        {DETAILED_CSVS.map(([name, label]) => (
+          <li key={name}><a href={api.reportCsvUrl(name, { from, to })} download>{label} (CSV)</a></li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

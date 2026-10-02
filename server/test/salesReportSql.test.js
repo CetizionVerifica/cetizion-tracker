@@ -22,7 +22,7 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
   let db;
   let dbName;
   let reports;
-  let review;
+  let defs;
 
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -101,7 +101,7 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     process.env.EMAIL_MODE = 'log';
 
     reports = await import('../src/lib/salesReport.js');
-    review = await import('../src/lib/salesReviewData.js');
+    defs = await import('../src/lib/reportDefinitions.js');
   });
 
   after(async () => {
@@ -169,17 +169,6 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     );
   });
 
-  test('"won but no PO" uses the same rule as the won figures', async () => {
-    // Q-D's PO sits on the same project as Q-C, but it is credited to Q-D, so Q-C is still missing.
-    const gaps = await review.dataGaps(Q1);
-    assert.equal(gaps.won_without_po, 1);
-
-    const { quotationStatus } = await review.salesReviewSections(Q1);
-    assert.equal(quotationStatus.pipeline.won_without_po, 1);
-    const qc = quotationStatus.pipeline.detail.find((row) => row.quotation_no === 'Q-C');
-    assert.equal(qc.contract_date, null);
-  });
-
   test('a PO in a different currency from its quotation is listed, and only that', async () => {
     const { summary } = await reports.sectorReport(Q1);
     // PO-A1/PO-A2 are part of Q-A's value in the same currency: not listed.
@@ -215,11 +204,11 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     assert.deepEqual([energy.pos, energy.won_deals, energy.pos_without_value, Number(energy.won_value_inr)], [2, 1, 1, 400]);
   });
 
-  test('a PO saved at 0 is "no value entered" in the PDF sections too', async () => {
-    const { contracts } = await review.salesReviewSections(Q1);
-    const h2 = contracts.detail.find((row) => row.po_number === 'PO-H2');
+  test('a PO saved at 0 is "no value entered" in the Reports section too', async () => {
+    const { revenue } = await defs.salesReport(Q1);
+    const h2 = revenue.months.flatMap((m) => m.detail).find((row) => row.po_number === 'PO-H2');
     assert.equal(h2.po_value, null);
-    assert.equal(contracts.without_value, 1);
+    assert.equal(revenue.total.without_value, 1);
   });
 
   test('a repeat client has two deals, not one deal split into phase POs', async () => {
@@ -241,8 +230,8 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     const omega = rows.find((row) => row.client === 'Omega');
     assert.deepEqual([omega.pos, omega.pos_to_date, omega.deals_to_date, omega.client_type], [1, 1, 1, 'Single enquiry client']);
 
-    const { contracts } = await review.salesReviewSections(Q1);
-    const numbers = contracts.detail.map((row) => row.po_number);
+    const { revenue } = await defs.salesReport(Q1);
+    const numbers = revenue.months.flatMap((m) => m.detail).map((row) => row.po_number);
     assert.ok(numbers.includes('PO-441-R1'));
     assert.ok(!numbers.includes('PO-441') && !numbers.includes('PO-X'));
   });
@@ -278,12 +267,21 @@ describe('sales report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to
     await linkPurchaseOrder(db, { before: r1, after: r1 });
   });
 
-  test('an enquiry is contracted exactly when its quotation is', async () => {
-    const { enquiries } = await review.salesReviewSections(Q1);
-    const detail = (no) => enquiries.pipeline.detail.find((row) => row.enquiry_no === no);
-    // Revised: contracted on the original PO's date, not the revision's.
-    assert.equal(detail('E-R').contract_date, '2026-04-10');
-    // The only PO was cancelled: not contracted, the same as its quotation.
-    assert.equal(detail('E-S').contract_date, null);
+  test('an enquiry is converted exactly when its quotation has a PO that counts', async () => {
+    const { outcomes } = await defs.salesReport(Q1);
+    const outcome = (no) => outcomes.detail.find((row) => row.enquiry_no === no).outcome;
+    // Revised: the revision still counts, so the deal converted.
+    assert.equal(outcome('E-R'), 'converted');
+    // The only PO was cancelled: not converted, the same as its quotation.
+    assert.notEqual(outcome('E-S'), 'converted');
+  });
+
+  test('order intake is the counting POs by PO date, the same total as the Reports section', async () => {
+    const { revenueReport } = await import('../src/lib/revenueReport.js');
+    const [old, { revenue }] = await Promise.all([revenueReport(Q1, { includeYears: false }), defs.salesReport(Q1)]);
+    assert.equal(old.orders.total.orders, revenue.total.pos);
+    assert.equal(old.orders.total.order_intake_inr, revenue.total.po_value_inr);
+    // Not PO-441 (replaced), not PO-X (cancelled), not PO-G (2025).
+    assert.equal(old.orders.total.orders, 8);
   });
 });
