@@ -172,6 +172,37 @@ describe('the shared inbox', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set
     assert.equal(one.body.data.inbox_email, 'sales@cetizionverifica.com', 'the reading pane reads it from the detail route');
   });
 
+  /**
+   * Newest first, as in any mail client. The list used to lead with whatever
+   * was due for a reply soonest, so a thread from last week sat above this
+   * morning's and the order read as shuffled.
+   */
+  test('the list is newest first; only the overdue view leads with the longest overdue', async () => {
+    const { rows: [inbox] } = await pool.query(`SELECT id FROM inboxes WHERE name = 'Sales'`);
+    await pool.query(`
+      INSERT INTO email_threads (id, account_id, conversation_id, subject) VALUES
+        (6101, 5001, 'order-old', 'Old, due soonest'), (6102, 5001, 'order-new', 'Newest, due later'), (6103, 5001, 'order-mid', 'Middle, closed out of the way');
+      INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, sent_at) VALUES
+        (5001, 6101, 'o-1', 'inbound', 'a@order.example', now() - interval '3 days'),
+        (5001, 6102, 'o-2', 'inbound', 'b@order.example', now() - interval '1 hour'),
+        (5001, 6103, 'o-3', 'inbound', 'c@order.example', now() - interval '1 day');`);
+    await pool.query(
+      `INSERT INTO inbox_conversations (inbox_id, thread_id, from_email, status, response_due_at) VALUES
+        ($1, 6101, 'a@order.example', 'open', now() - interval '2 days'),
+        ($1, 6102, 'b@order.example', 'open', now() - interval '1 hour'),
+        ($1, 6103, 'c@order.example', 'pending_client', NULL)`, [inbox.id]);
+
+    const list = await request(app).get('/api/inbox?view=all').set('Cookie', staff);
+    const order = list.body.data.map((c) => c.thread_id).filter((id) => id > 6100);
+    assert.deepEqual(order, [6102, 6103, 6101]);
+
+    const overdue = await request(app).get('/api/inbox?view=overdue').set('Cookie', staff);
+    assert.deepEqual(overdue.body.data.map((c) => c.thread_id).filter((id) => id > 6100), [6101, 6102]);
+
+    // Leave the inbox as the tests after this one expect to find it.
+    await pool.query('DELETE FROM email_threads WHERE id IN (6101, 6102, 6103)');
+  });
+
   test('discard=yes deletes the inbox and its triage, and leaves the mail', async () => {
     const list = await request(app).get('/api/inbox/inboxes').set('Cookie', staff);
     const id = list.body.data.find((i) => i.name === 'Sales').id;

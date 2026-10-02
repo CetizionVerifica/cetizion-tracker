@@ -232,8 +232,15 @@ inboxRouter.get('/', async (req, res) => {
   const scope = inboxScope(req, params.length + 1);
   where.push(scope.clause);
   params.push(...scope.params);
+  // Newest first, the way every mail client lists mail. Ordering by the
+  // reply deadline first read as shuffled: a thread's place depended on a
+  // clock nobody sees in the list. The overdue view is the exception — it
+  // exists to work through the deadlines, so the longest overdue leads.
+  const order = view === 'overdue'
+    ? 'c.response_due_at, t.last_message_at DESC NULLS LAST, c.id DESC'
+    : 't.last_message_at DESC NULLS LAST, c.id DESC';
   const { rows } = await query(`${LIST} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY (c.status = 'open') DESC, c.response_due_at NULLS LAST, t.last_message_at DESC LIMIT 500`, params);
+     ORDER BY ${order} LIMIT 500`, params);
   // The preview is a column written at ingest, so mail synced before the
   // quoted history was split out still carries it — which is every thread
   // in the inbox today. Cutting it here fixes the backlog without dropping
