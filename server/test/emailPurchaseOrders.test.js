@@ -764,6 +764,26 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal(companies, 1, 'no second company');
   });
 
+  test('the PO\'s annexures go to the AI with it, but its amounts are checked against the PO alone', async () => {
+    const box = await mailbox();
+    const annexure = await pdfmake.createPdf({ content: ['ANNEXURE A - SCHEDULE OF RATES', 'Site visit Pune 1,00,000.00', 'Site visit Chennai 2,00,000.00', 'Total 3,54,000.00'] }).getBuffer();
+    const msg = poEmail({
+      from: { email: 'anil@acme-annex.co.in' },
+      attachments: [
+        { name: 'PO_4500313131.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500313131', buyer: 'Acme Annex Ltd' }) },
+        { name: 'Annexure A.pdf', contentType: 'application/pdf', content: annexure },
+      ],
+    });
+    // The model takes the annexure's figures, which the PO itself never prints.
+    const calls = ai(reading({ po_number: '4500313131', buyer: { company_name: 'Acme Annex Ltd' }, basic: 300000, tax: 54000 }));
+    await deliver(box, [msg]);
+    assert.match(calls[0].user, /Order document text:\nPURCHASE ORDER/);
+    assert.match(calls[0].user, /Also attached to the same email, for reference \(Annexure A\.pdf\):\nANNEXURE A - SCHEDULE OF RATES/);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'amounts_not_in_pdf']);
+    assert.equal(await poRow('4500313131'), undefined);
+  });
+
   test('a sender is matched to a company by its website\'s host, not by any website containing the domain', async () => {
     const { rows: [{ id }] } = await db.query('SELECT company_for($1) AS id', ['Sun Pharmatech Industries']);
     await db.query(`UPDATE companies SET website = 'https://www.sunpharmatech.com/about' WHERE id = $1`, [id]);

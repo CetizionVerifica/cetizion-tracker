@@ -15,6 +15,7 @@
  */
 import { BULK, BULK_SENDER, domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
 import { poPrefilter } from './poDetect.js';
+import { MAX_EMAIL_TEXT } from './readLimits.js';
 import { SERVICE_LINES, serviceLinesFor, OTHER_SERVICE, NO_SERVICE } from '../serviceLines.js';
 
 export const KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
@@ -22,8 +23,8 @@ export const KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'reply_
 /** The bar rules alone must clear: they err towards missing an enquiry, not inventing one. */
 export const RULES_BAR = 0.85;
 
-/** How much of a body is read: the new part only, as text. */
-export const MAX_TEXT = 4000;
+/** How much of a body is read: the new part only, as text (readLimits.js). */
+export const MAX_TEXT = MAX_EMAIL_TEXT;
 export const MAX_RECIPIENTS = 5;
 
 const ENQUIRY_TERMS = [
@@ -198,9 +199,9 @@ export function rulesVerdict(input) {
 }
 
 /**
- * What the AI is asked. Only the sender, the subject and the new part of
- * the body go out; whether the company is known and has open deals, never
- * what they are worth.
+ * What the AI is asked. Only the sender, the subject, the new part of the
+ * body and the text of any PDFs the client attached go out; whether the
+ * company is known and has open deals, never what they are worth.
  */
 export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {}) {
   const lines = SERVICE_LINES.map((l) => l.name).join('; ');
@@ -227,6 +228,7 @@ export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {})
     `Subject: ${input.subject || ''}`,
     'Body (new part only):',
     String(input.text || '').slice(0, MAX_TEXT),
+    input.attachmentText ? `\nText of the PDFs attached:${input.attachmentText}` : null,
   ].filter((l) => l !== null).join('\n');
   return { system, user };
 }

@@ -19,6 +19,7 @@ import { documentStorageReady, uploadDocument } from '../documents.js';
 import { mainText } from './enquiryDetect.js';
 import { providerFor } from './sync.js';
 import { MAX_PDF_BYTES, SCANNED_BELOW, checkExtraction, extractionPrompt, isPdf, pdfText, rankPdfs } from './pdfQuotation.js';
+import { DOCUMENT_MAX_TOKENS, DOCUMENT_TIMEOUT_MS, MAX_EMAIL_TEXT, OCR_TIMEOUT_MS } from './readLimits.js';
 
 const fail = (reason, extra = {}) => ({ ok: false, reason, ...extra });
 
@@ -48,7 +49,7 @@ export async function prepare(account, cand, verdict, ctx, chat) {
   if (reason) return fail(reason);
   if (!chosen) text = mainText(m.body_html || '', 30_000);
 
-  const emailText = mainText(m.body_html || '', 2000);
+  const emailText = mainText(m.body_html || '', MAX_EMAIL_TEXT);
   const scanned = chosen && (text || '').replace(/\s+/g, '').length < SCANNED_BELOW;
   const { system, user } = extractionPrompt({ pdfText: scanned ? null : text, emailSubject: m.subject, emailText, sentAt: m.sent_at });
   ctx.aiUsed += 1;
@@ -59,8 +60,8 @@ export async function prepare(account, cand, verdict, ctx, chat) {
       ? await chat(system, [
         { type: 'text', text: user },
         { type: 'file', file: { filename: chosen.name || 'quotation.pdf', file_data: `data:application/pdf;base64,${chosen.content.toString('base64')}` } },
-      ], { maxTokens: 3000, timeoutMs: 90_000, plugins: [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }] })
-      : await chat(system, user, { maxTokens: 3000, timeoutMs: 60_000 });
+      ], { maxTokens: DOCUMENT_MAX_TOKENS, timeoutMs: OCR_TIMEOUT_MS, plugins: [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }] })
+      : await chat(system, user, { maxTokens: DOCUMENT_MAX_TOKENS, timeoutMs: DOCUMENT_TIMEOUT_MS });
   } catch (err) {
     return fail('unreadable', { ai_calls: 1, detail: err.message });
   }

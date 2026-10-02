@@ -150,8 +150,10 @@ checks:
 1. **Attachment:** `provider.attachments(providerId)` (phase 1). Keep PDFs
    of at most 15 MB. Rank them: a file name with PO, order, WO, LOI or
    contract first; then first-page text with "Purchase Order"; then the
-   largest. Terms-and-conditions annexures come last.
-2. **Text:** `pdfText` (unpdf), at most 10 pages. With fewer than 50
+   largest. Terms-and-conditions annexures come last. The other text PDFs
+   go to the AI after the chosen one (a schedule of rates is often its own
+   file); amounts are still checked against the chosen PDF alone.
+2. **Text:** `pdfText` (unpdf), at most 40 pages (`readLimits.js`). With fewer than 50
    characters, use OCR, as in phase 1. If there is no PDF, use the email
    body (portal notifications and "please treat this mail as our PO").
 3. **One AI call** (`chatJSON`) that returns:
@@ -807,7 +809,7 @@ Derived, not stored:
   Client payment reminders only apply to invoices recorded live; past
   invoices are not chased until a person has touched them.
 - **What leaves the server:** for PO candidates only, the email's new text
-  and the PO PDF's text (at most 10 pages), or the file itself for OCR. A
+  and the PO PDF's text (at most 40 pages) with its other text PDFs, or the file itself for OCR. A
   client's PO is **their** document, so record this in `security.md`.
   Nothing is sent for non-candidates.
 - **Money safety:**

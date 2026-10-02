@@ -39,6 +39,7 @@ import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
 import { referencesIn } from './rules.js';
+import { inLanes } from './inLanes.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, `upload` for document
@@ -65,6 +66,7 @@ export async function poSettings(db = { query }) {
     ourGstin: String(s.company_gstin || '').trim() || null,
     // The same "us" and the same daily AI ceiling as phase 1.
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit,
+    concurrency: shared.concurrency,
   };
 }
 
@@ -86,22 +88,25 @@ export async function processPoCandidates(account, candidates, { ctx: given = nu
   const ctx = given || await poRunContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
-  for (const cand of candidates) {
-    if (ctx.stopped) break;
-    // Told for every email reached, so the reader queue (readerQueue.js)
-    // can keep the ones that failed. One left unreached stays queued.
-    let failure = null;
-    if (cand.c?.direction === 'inbound') {
-      try {
-        await decidePo(account, cand, ctx);
-      } catch (err) {
-        failure = err;
-        ctx.errors += 1;
-        console.error('[auto-po]', account.email, cand.m?.provider_id, err.message);
+  await inLanes(candidates, {
+    concurrency: ctx.settings.concurrency,
+    stopped: () => Boolean(ctx.stopped),
+    each: async (cand) => {
+      // Told for every email reached, so the reader queue (readerQueue.js)
+      // can keep the ones that failed. One left unreached stays queued.
+      let failure = null;
+      if (cand.c?.direction === 'inbound') {
+        try {
+          await decidePo(account, cand, ctx);
+        } catch (err) {
+          failure = err;
+          ctx.errors += 1;
+          console.error('[auto-po]', account.email, cand.m?.provider_id, err.message);
+        }
       }
-    }
-    if (onSettled) await onSettled(cand, failure);
-  }
+      if (onSettled) await onSettled(cand, failure);
+    },
+  });
   await notifyReview(ctx);
   return given ? ctx : { registered: ctx.registered.length, review: ctx.review.length, linked: ctx.linked, not_po: ctx.notPo, errors: ctx.errors };
 }
@@ -258,7 +263,8 @@ async function storePdf(pdf) {
 export async function readPo(account, cand, ctx, chat, emailText) {
   const { m } = cand;
   return readWithAi(account, cand, ctx, chat, {
-    rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf',
+    // A PO's schedule of rates is often its own PDF: the annexures go too.
+    rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf', annexures: true,
     prompt: ({ pdfText }) => buildPoPrompt({ pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from }),
   });
 }

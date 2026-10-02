@@ -72,7 +72,8 @@ Emails the free rules discard are not logged.
 | `auto_enquiry_min_confidence` | `0.7` | How sure the AI must be. Rules alone always need 0.85 |
 | `auto_enquiry_backfill_days` | `365` | How far back each mailbox is read, once |
 | `auto_enquiry_same_sender_days` | `30` | Window for linking a new email to an open enquiry from the same sender or company |
-| `auto_enquiry_daily_ai_limit` | `1500` | AI calls per day. The backfill stops for the day when it is reached; live mail carries on with rules |
+| `auto_enquiry_daily_ai_limit` | `5000` | AI calls per day, shared by every email reader. The backfill stops for the day when it is reached; live mail carries on with rules |
+| `email_reader_concurrency` | `4` | How many emails each reader reads at once (1 to 8). One client's or one conversation's mail is still read in order, oldest first |
 | `auto_quotation_min_confidence` | `0.8` | How sure the AI must be of a quotation read from a PDF |
 
 ## Jobs

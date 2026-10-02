@@ -10,7 +10,9 @@ import { extractText, getDocumentProxy } from 'unpdf';
 import { isUs } from './enquiryDetect.js';
 
 export const MAX_PDF_BYTES = 15 * 1024 * 1024;
-export const MAX_PAGES = 10;
+import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT, MAX_PAGES } from './readLimits.js';
+
+export { MAX_PAGES };
 /**
  * Below this many characters of text (spaces aside) a PDF is a scan and
  * needs OCR. A scan yields next to none; even a one-page quotation
@@ -186,8 +188,8 @@ export function extractionPrompt({ pdfText: text, emailSubject, emailText, sentA
   ].join('\n');
   const user = [
     `Covering email, sent ${String(sentAt).slice(0, 10)}. Subject: ${emailSubject || ''}`,
-    String(emailText || '').slice(0, 2000),
-    text ? `\nQuotation document text:\n${String(text).slice(0, 30_000)}` : '\nThe quotation document is attached.',
+    String(emailText || '').slice(0, MAX_EMAIL_TEXT),
+    text ? `\nQuotation document text:\n${String(text).slice(0, MAX_DOCUMENT_TEXT)}` : '\nThe quotation document is attached.',
   ].join('\n');
   return { system, user };
 }

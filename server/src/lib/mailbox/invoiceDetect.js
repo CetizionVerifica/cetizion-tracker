@@ -16,6 +16,7 @@ import { BULK } from './rules.js';
 import { amountInText, near, parseAmount } from './pdfQuotation.js';
 import { isUs } from './enquiryDetect.js';
 import { STATUS } from '../statuses.js';
+import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT } from './readLimits.js';
 
 /** An invoice number as compared: case, spaces and dashes ignored. */
 export const normaliseInvoiceNo = (s) => String(s || '').toLowerCase().replace(/[\s-]/g, '');
@@ -95,8 +96,8 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
   ].join('\n');
   const user = [
     `Email sent ${String(sentAt || '').slice(0, 10)} to ${to.map((p) => `${p.name || ''} <${p.email}>`).join(', ')}. Subject: ${emailSubject || ''}`,
-    String(emailText || '').slice(0, 2000),
-    pdfText === null || pdfText === undefined ? '\nThe document is attached.' : `\nDocument text:\n${String(pdfText).slice(0, 30_000)}`,
+    String(emailText || '').slice(0, MAX_EMAIL_TEXT),
+    pdfText === null || pdfText === undefined ? '\nThe document is attached.' : `\nDocument text:\n${String(pdfText).slice(0, MAX_DOCUMENT_TEXT)}`,
   ].join('\n');
   return { system, user };
 }
