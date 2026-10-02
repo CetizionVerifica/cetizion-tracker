@@ -3086,6 +3086,26 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_invoice_wait_days', '7', 'How long an invoice whose PO is not in the tracker yet is retried before it goes to review.')
 ON CONFLICT (key) DO NOTHING;
 
+-- Every email handed to the PO, invoice or enquiry reader, kept until that
+-- reader has finished with it; a failed one is read again later (070).
+-- `cand` is how ingest classified it, never its subject or body.
+CREATE TABLE IF NOT EXISTS email_reader_queue (
+  id              bigserial PRIMARY KEY,
+  account_id      int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id     text NOT NULL,
+  reader          text NOT NULL CHECK (reader IN ('po','invoice','enquiry')),
+  folder          text,
+  sent_at         timestamptz,
+  cand            jsonb NOT NULL,
+  attempts        int NOT NULL DEFAULT 0,
+  last_error      text,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  failed_at       timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id, reader)
+);
+CREATE INDEX IF NOT EXISTS email_reader_queue_due_idx ON email_reader_queue (account_id, next_attempt_at) WHERE failed_at IS NULL;
+
 -- The PO number as compared: "PO-123" and "po 123" are the same PO.
 CREATE INDEX IF NOT EXISTS purchase_orders_po_number_norm_idx
   ON purchase_orders (lower(regexp_replace(po_number, '[^a-zA-Z0-9]', '', 'g')));

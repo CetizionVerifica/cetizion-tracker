@@ -16,6 +16,7 @@ import { microsoftConfigured, microsoftProvider } from './microsoft.js';
 import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
+import { enqueue, retryQueued, runReaders } from './readerQueue.js';
 
 export const FOLDERS = ['inbox', 'sentitems'];
 const key = () => config.microsoft.tokenKey;
@@ -27,9 +28,12 @@ const testBoxes = new Map();
 /** How many messages the test provider's page() returns at once; tests lower it to exercise resuming. */
 export const testPaging = { size: 50 };
 const testAttachments = new Map();
+/** Every message pushed, by id, for message(): the mailbox keeps mail after delta has handed it over. */
+const testMessages = new Map();
 export function pushTestMessages(accountId, messages) {
   for (const m of messages) {
     if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
+    testMessages.set(`${accountId}:${m.provider_id}`, m);
   }
   const box = testBoxes.get(accountId) || [];
   box.push(...messages);
@@ -49,6 +53,11 @@ function testProvider(account) {
   return {
     tokens: () => null,
     async delta(folder, deltaLink) { return { messages: take(folder), deltaLink: deltaLink || `test:${folder}` }; },
+    async message(providerId) {
+      const m = testMessages.get(`${account.id}:${providerId}`);
+      if (!m) throw Object.assign(new Error('Not found'), { status: 404 });
+      return m;
+    },
     async attachments(providerId) {
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
     },
@@ -242,10 +251,13 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
 /**
  * Store a batch of messages, each in its own transaction.
  *
- * Also returns `candidates`: the messages the enquiry reader should look
- * at (autoEnquiry.js), held in memory only — a new conversation started
- * in this call, anything we sent, and anything a personal mailbox dropped
- * for not matching a client. Nothing extra is written for them here.
+ * Also returns `candidates` (for the enquiry reader, autoEnquiry.js) and
+ * `poCandidates` (for the PO reader): a new conversation started in this
+ * call, anything we sent, and anything a personal mailbox dropped for not
+ * matching a client go to the enquiry reader; outbound mail to the invoice
+ * reader too. Each is also queued for its readers (readerQueue.js) — a
+ * stored message in the same transaction that stores it — so an email
+ * whose reading fails, or never starts, is read again.
  */
 export async function ingest(account, messages, { sentBy = null } = {}) {
   const judge = await ingestRules(account, undefined, { forInbox: true });
@@ -256,41 +268,66 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
   // that might hold an order, later ones in a thread included: that is
   // where most POs arrive. A cheap test; its prefilter does the rest.
   const mayBePo = (m, c) => c.direction === 'inbound' && (m.has_attachments || MAY_BE_PO.test(`${m.subject || ''} ${m.preview || ''}`));
+  const isPortal = (m) => isPortalSender(m.from?.email, portals);
+  const portalCand = (m, c, threadId, newThread) => ({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId, newThread, dropped: !threadId });
+  /** Which readers a candidate goes to: the enquiry reader takes outbound mail and new threads, the invoice reader outbound mail. */
+  const readersOf = (cand, { enquiry }) => [
+    ...(mayBePo(cand.m, cand.c) ? ['po'] : []),
+    ...(enquiry && cand.c.direction === 'outbound' ? ['invoice'] : []),
+    ...(enquiry ? ['enquiry'] : []),
+  ];
+  const route = (cand, readers) => {
+    if (readers.includes('enquiry')) result.candidates.push(cand);
+    if (readers.includes('po')) result.poCandidates.push(cand);
+  };
   for (const m of messages.sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))) {
     if (!m.provider_id || !m.conversation_id || m.draft) { skip('incomplete'); continue; }
     const c = judge(m);
     if (c.skip) {
       skip(c.skip);
       // A procurement portal's notification reads as a robot; for POs it is not one.
-      if (c.skip === 'blocked sender' && isPortalSender(m.from?.email, portals)) {
-        result.poCandidates.push({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId: null, newThread: false, dropped: true });
+      if (c.skip === 'blocked sender' && isPortal(m)) {
+        const cand = portalCand(m, c, null, false);
+        await enqueue({ query }, account, cand, ['po']);
+        route(cand, ['po']);
       }
       continue;
     }
-    const r = await transaction((db) => ingestOne(db, account, m, c, { sentBy }));
+    let r;
+    try {
+      r = await transaction(async (db) => {
+        const stored = await ingestOne(db, account, m, c, { sentBy });
+        if (stored.skipped) return stored;
+        // Stored for the Inbox only (ingestRules). The readers see it exactly
+        // as they did when the filters dropped it: a portal's notification
+        // still goes to the PO reader, nothing else goes anywhere.
+        const cand = c.filtered
+          ? (c.filtered === 'blocked sender' && isPortal(m) ? portalCand(m, c, stored.thread.id, stored.newThread) : null)
+          : { m, c, threadId: stored.thread.id, newThread: stored.newThread, dropped: false };
+        const readers = !cand ? [] : c.filtered ? ['po'] : readersOf(cand, { enquiry: c.direction === 'outbound' || stored.newThread });
+        if (readers.length) await enqueue(db, account, cand, readers);
+        return { ...stored, cand, readers };
+      });
+    } catch (err) {
+      // Another sync, or a reply sent from the tracker, stored it a moment ago.
+      if (err.code === '23505' && err.constraint?.startsWith('email_messages')) { skip('already synced'); continue; }
+      throw err;
+    }
     if (r.skipped) {
       skip(r.skipped);
       if (r.skipped === 'no matching client') {
+        // Not stored, so not queued in a transaction: should this fail, the
+        // delta link has not moved and the next sync hands it over again.
         const cand = { m, c, threadId: null, newThread: false, dropped: true };
-        result.candidates.push(cand);
-        if (mayBePo(m, c)) result.poCandidates.push(cand);
+        const readers = readersOf(cand, { enquiry: true });
+        await enqueue({ query }, account, cand, readers);
+        route(cand, readers);
       }
       continue;
     }
     result.stored += 1;
     result.threads.add(r.thread.id);
-    if (c.filtered) {
-      // Stored for the Inbox only (ingestRules). The readers see it exactly
-      // as they did when the filters dropped it: a portal's notification
-      // still goes to the PO reader, nothing else goes anywhere.
-      if (c.filtered === 'blocked sender' && isPortalSender(m.from?.email, portals)) {
-        result.poCandidates.push({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId: r.thread.id, newThread: r.newThread, dropped: false });
-      }
-      continue;
-    }
-    const cand = { m, c, threadId: r.thread.id, newThread: r.newThread, dropped: false };
-    if (c.direction === 'outbound' || r.newThread) result.candidates.push(cand);
-    if (mayBePo(m, c)) result.poCandidates.push(cand);
+    if (r.cand) route(r.cand, r.readers);
   }
   return { ...result, threads: result.threads.size };
 }
@@ -352,6 +389,9 @@ async function syncAccountUnlocked(id) {
     // tokens, Microsoft not configured) records its own error rather than
     // throwing out of syncAll and stopping every mailbox after it.
     const provider = providerFor(account);
+    // What earlier syncs could not read, before the new mail: oldest first.
+    const retried = await retryQueued(account, provider);
+    if (retried) out.retried = retried;
     for (const folder of FOLDERS) {
       const { rows: [f] } = await query(
         `INSERT INTO mail_folders (account_id, folder) VALUES ($1,$2) ON CONFLICT (account_id, folder) DO UPDATE SET folder = EXCLUDED.folder RETURNING *`, [account.id, folder]);
@@ -371,24 +411,14 @@ async function syncAccountUnlocked(id) {
     // email may call the AI. Inbox first, then Sent Items — FOLDERS' order —
     // so a quotation answering an emailed enquiry finds it already made.
     // POs before enquiries, for the same batch: a PO email can never also
-    // start an enquiry (docs/email-po-plan.md §3.9).
-    if (poCandidates.length) {
-      const { processPoCandidates } = await import('./autoPurchaseOrder.js');
-      const p = await processPoCandidates(account, poCandidates, { provider });
-      if (p) out.purchase_orders = p;
-    }
-    // Invoices we sent (docs/email-po-plan.md §3.10), after the POs they bill.
-    const sent = candidates.filter((cand) => cand.c.direction === 'outbound');
-    if (sent.length) {
-      const { processInvoiceCandidates } = await import('./autoInvoice.js');
-      const i = await processInvoiceCandidates(account, sent, { provider });
-      if (i) out.invoices = i;
-    }
-    if (candidates.length) {
-      const { processCandidates } = await import('./autoEnquiry.js');
-      const e = await processCandidates(account, candidates, { provider });
-      if (e) out.enquiries = e;
-    }
+    // start an enquiry (docs/email-po-plan.md §3.9). Invoices we sent
+    // (§3.10) after the POs they bill. Every one was queued as it was
+    // stored, and leaves the queue only once its reader is done with it.
+    Object.assign(out, await runReaders(account, {
+      po: poCandidates,
+      invoice: candidates.filter((cand) => cand.c.direction === 'outbound'),
+      enquiry: candidates,
+    }, { provider }));
   } catch (err) {
     await query(`UPDATE connected_accounts SET last_error = $2, status = CASE WHEN $3 THEN 'needs_reconnect' ELSE status END WHERE id = $1`, [account.id, String(err.message).slice(0, 500), Boolean(err.reconnect)]);
     out.error = err.message;
@@ -579,6 +609,7 @@ export async function disconnect(id, { removeBodies = true } = {}) {
   await query('DELETE FROM mail_folders WHERE account_id = $1', [id]);
   // Its sweep of past mail stops with it; the decisions stay, for the record.
   await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
+  await query('DELETE FROM email_reader_queue WHERE account_id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
   return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };
 }

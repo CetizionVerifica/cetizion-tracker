@@ -28,6 +28,7 @@ import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
 import { domainOf } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
+import { queueFailures } from './readerQueue.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, so no test reaches the
@@ -84,18 +85,23 @@ export async function runContext({ backfill = false } = {}) {
  * null when the feature is switched off. One email failing never stops the
  * rest, and never fails the sync that found it.
  */
-export async function processCandidates(account, candidates, { ctx: given = null, notifyEach = true, provider = null } = {}) {
+export async function processCandidates(account, candidates, { ctx: given = null, notifyEach = true, provider = null, onSettled = null } = {}) {
   const ctx = given || await runContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
   for (const cand of candidates) {
     if (ctx.stopped) break;
+    // Told for every email reached, so the reader queue (readerQueue.js)
+    // can keep the ones that failed. One left unreached stays queued.
+    let failure = null;
     try {
       await decide(account, cand, ctx);
     } catch (err) {
+      failure = err;
       ctx.errors += 1;
       console.error('[auto-enquiry]', account.email, cand.m?.provider_id, err.message);
     }
+    if (onSettled) await onSettled(cand, failure);
   }
   if (notifyEach) {
     for (const e of ctx.created) {
@@ -650,7 +656,7 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       const page = await provider.page(row.folder, { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       const before = { created: ctx.created.length, linked: ctx.linked };
-      await processCandidates(account, await pastCandidates(account, judge, page.messages), { ctx, notifyEach: false, provider });
+      await processCandidates(account, await pastCandidates(account, judge, page.messages), { ctx, notifyEach: false, provider, onSettled: queueFailures(account, 'enquiry') });
       const created = ctx.created.length - before.created; const linked = ctx.linked - before.linked;
       tally.pages += 1; tally.created += created; tally.linked += linked;
       // Stopped part-way through this page (the day's AI ceiling): read it
