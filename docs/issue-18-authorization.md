@@ -349,6 +349,7 @@ session is **401**, before any of these is considered.
 | `GET /api/reports/by-status` | any | Open deals by the status on the record, which is not always where its pipeline stage puts it. |
 | `GET /api/reports/conversion` | any | Win rate grouped by owner, sector or service. The grouping column is chosen from a fixed map in the route, never taken from the query string. |
 | `GET /api/reports/quoted-won` | any | Quoted against won by month, in INR; quotations in other currencies are counted and reported separately rather than converted at today's rate into a month that has passed. |
+| `GET /api/reports/sales` | any | The Reports section's questions for a period (enquiries received, their outcome, monthly revenue). Every query reads the scoped sources; ?owner= narrows an admin's view to one salesperson and is ignored for a sales user. |
 | `GET /api/reports/win-rate` | any | Win rate by financial quarter. Scoped: before #18 Phase 2C this summed every quotation for anyone signed in, which the note here used to justify by saying both roles see quotations anyway — no longer true once the list itself was scoped. |
 | **/api/search** | | |
 | `GET /api/search` | any | One request across every record type behind Cmd+K (#75). It ranks and returns what the caller may already list; it opens nothing a list page does not. |
