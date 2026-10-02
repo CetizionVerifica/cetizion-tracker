@@ -267,9 +267,8 @@ export default function QuotationDetail() {
           <Alert tone="warning">
             <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <span>
-                <strong>Read automatically from the PDF sent on {date(q.read_from_email.received_at)}.</strong>{' '}
-                {q.read_from_email.no_lines ? 'Lines could not be read; totals are from the PDF. ' : ''}
-                Check the lines and totals against the PDF{q.document_id ? '' : ' (the PDF itself could not be stored)'}.
+                <strong>Check the lines and totals against the PDF</strong>{q.document_id ? '' : ' (the PDF itself could not be stored)'}: they were read automatically.{' '}
+                {q.read_from_email.no_lines ? 'Lines could not be read, so the totals are the ones printed on the PDF.' : ''}
               </span>
               <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy} onClick={() => act('email-read-checked', {}, 'Marked checked')}>Mark checked</Button>
             </span>
