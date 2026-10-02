@@ -280,6 +280,30 @@ Nothing already typed on a record is changed.
 **Also fixed.** The light/dark theme now loads before the page appears, and a
 Windows-saved CSV keeps its dashes on import.
 
+### Enquiries from email, automatically (in review)
+
+**What it does.** Every connected mailbox is read. A client email asking for
+new work becomes an enquiry by itself, with nobody pressing a button. Each
+mailbox's past year of mail is read once, so last year's enquiries are counted
+in the right month. Free rules discard replies, newsletters, invoices and CVs
+first. The AI judges the rest, or stricter rules do when there is no AI key.
+
+**When our quotation comes first.** Some requests come by phone or WhatsApp,
+so the first email is our quotation. That still makes an enquiry. If the
+quotation was made outside the tracker, its PDF is read and the quotation is
+created too: its lines are checked to add up, and otherwise the printed totals
+are kept and never blanked. A PDF that cannot be trusted leaves the owner a
+task to add the quotation.
+
+**No duplicates.** The same email in two mailboxes, a re-run, or the same
+client writing again within 30 days gives one enquiry.
+
+**Before it goes live.** It is on by default. An admin can switch it off
+under Settings → Mailboxes, which also shows each mailbox's progress. To
+review what was made, use Enquiries → Created from email and
+Quotations → Read from email. Without an AI key the rules decide and no PDF
+is read.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -326,6 +350,11 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-02: Enquiries from email (PR #161's plan, all six steps) built on
+  `feat/email-enquiries`: live detection, the backfill of past mail,
+  quotations read from PDFs, and the admin and review screens. On by
+  default; waiting for review.
 
 - 2026-10-02: Reports rework (six questions, one PDF, admin-chosen sectors and
   services) built on `feat/sales-report-rework` and opened for review as one

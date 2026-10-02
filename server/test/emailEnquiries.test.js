@@ -552,4 +552,58 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
       assert.ok(await byNo('CV/Q/2025/900'));
     });
   });
+
+  describe('the admin and review screens', () => {
+    test('the status lists each mailbox with its counts and its progress through past mail', async () => {
+      const { body } = await agent.get('/api/mailboxes/auto-enquiries').expect(200);
+      assert.equal(body.data.enabled, true);
+      assert.equal(body.data.ai.configured, false);
+      assert.ok(body.data.mailboxes.length > 5);
+      const withHistory = body.data.mailboxes.find((m) => m.finished_at && m.backfill_created === 3);
+      assert.ok(withHistory, 'the mailbox read back in test 5');
+      assert.ok(body.data.mailboxes.some((m) => m.quotations_read > 0));
+    });
+
+    test('re-run clears what was judged not an enquiry and the backfill, and keeps what was made', async () => {
+      const box = await mailbox({ shared: true });
+      await deliver(box, [rfq({ from: { email: 'q@rerun-co.com' }, subject: 'Hello', body_html: '<p>Lunch?</p>' }), rfq({ from: { email: 'r@rerun-two.com', name: 'R' } })]);
+      await auto.backfillAccount(box, await auto.runContext({ backfill: true }));
+      const { body } = await agent.post(`/api/mailboxes/${box.id}/auto-enquiries/rerun`).expect(200);
+      assert.equal(body.data.decisions_cleared, 1);
+      assert.deepEqual((await decisions(box.id)).map((d) => d.outcome), ['created']);
+      const { rows } = await db.query('SELECT 1 FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
+      assert.equal(rows.length, 0);
+    });
+
+    test('"Created from email" and "Read from email" filter the lists', async () => {
+      const { body: e } = await agent.get('/api/enquiries?from_email=1&limit=500').expect(200);
+      const { rows: [{ n }] } = await db.query(`SELECT count(DISTINCT enquiry_no)::int AS n FROM email_enquiry_decisions WHERE outcome = 'created'`);
+      assert.equal(e.data.length, n);
+      const { body: q } = await agent.get('/api/quotations?from_email=1&limit=500').expect(200);
+      assert.ok(q.data.length >= 3);
+      assert.ok(q.data.every((x) => /^(CV\/Q|CTZ\/QT)/.test(x.quotation_no)));
+      assert.ok(!q.data.some((x) => x.quotation_no === 'CTZ/QT/2026/901'), 'a tracker quotation named in an email was not read from it');
+    });
+
+    test('an enquiry and a quotation say where they came from', async () => {
+      const { rows: [d] } = await db.query(`SELECT enquiry_no, thread_id FROM email_enquiry_decisions WHERE outcome = 'created' AND thread_id IS NOT NULL ORDER BY id LIMIT 1`);
+      const { body } = await agent.get(`/api/mail/origin?entity=enquiry&id=${encodeURIComponent(d.enquiry_no)}`).expect(200);
+      assert.equal(body.data.thread_id, d.thread_id);
+      assert.ok(body.data.received_at);
+      const { body: none } = await agent.get('/api/mail/origin?entity=enquiry&id=CTZ/ENQ/1999/001').expect(200);
+      assert.equal(none.data, null);
+      const { body: q } = await agent.get(`/api/mail/origin?entity=quotation&id=${encodeURIComponent('CV/Q/2025/046')}`).expect(200);
+      assert.equal(q.data.quotation_extraction, 'created');
+    });
+
+    test('Mark checked records who checked the quotation, and the banner reads it back', async () => {
+      const { rows: [q] } = await db.query(`SELECT id FROM quotations WHERE quotation_no = 'CV/Q/2025/046'`);
+      const { body } = await agent.post(`/api/quotations/${q.id}/email-read-checked`).expect(200);
+      assert.equal(body.data.checked, true);
+      const { rows: [a] } = await db.query(`SELECT * FROM activity_log WHERE action = 'quotation.email_read_checked' AND entity_id = 'CV/Q/2025/046'`);
+      assert.equal(a.actor_type, 'shared_admin');
+      const { rows: [plain] } = await db.query(`SELECT id FROM quotations WHERE quotation_no = 'CTZ/QT/2026/990'`);
+      await agent.post(`/api/quotations/${plain.id}/email-read-checked`).expect(422);
+    });
+  });
 });

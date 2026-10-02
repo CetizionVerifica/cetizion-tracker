@@ -338,11 +338,14 @@ export const routes = [
   { method: 'POST', path: '/api/mailboxes/:id/sync', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
+  { method: 'GET', path: '/api/mailboxes/auto-enquiries', access: mustBeAdmin, why: 'Counts what every mailbox\'s mail was judged to be, the whole team\'s included.' },
+  { method: 'POST', path: '/api/mailboxes/:id/auto-enquiries/rerun', access: mustBeAdmin, why: 'Has a mailbox\'s mail judged again for enquiries, which spends the AI budget everybody shares.' },
   { method: 'GET', path: '/api/mailboxes/blocklist', access: signedIn },
   { method: 'POST', path: '/api/mailboxes/blocklist', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody.' },
   { method: 'DELETE', path: '/api/mailboxes/blocklist/:id', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again.' },
 
   // ---------------------------------------------------------- mail threads
+  { method: 'GET', path: '/api/mail/origin', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'GET', path: '/api/mail/threads', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'GET', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'PATCH', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
@@ -451,6 +454,7 @@ export const routes = [
   { method: 'GET', path: '/api/quotations/:key/full', access: signedIn },
   { method: 'GET', path: '/api/quotations/:key/pdf', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/revise', access: signedIn },
+  { method: 'POST', path: '/api/quotations/:key/email-read-checked', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/send', access: signedIn },
   { method: 'POST', path: '/api/quotations/:key/accept', access: signedIn },
   { method: 'POST', path: '/api/quotations/:id/convert', access: signedIn },

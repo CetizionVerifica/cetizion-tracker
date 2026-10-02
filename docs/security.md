@@ -76,6 +76,15 @@ runs on every push.
   database name.
 - **Tokens** (acceptance links, portal links, API tokens) are stored only as
   hashes; mailbox tokens are encrypted.
+- **What goes to the AI provider** (OpenRouter, only when
+  `OPENROUTER_API_KEY` is set, routed with `data_collection: 'deny'` and
+  zero data retention; a request that cannot be routed that way is not sent
+  elsewhere, and rules decide instead):
+
+  | Feature | What leaves the server |
+  | --- | --- |
+  | Bulk import | Sheet headers, stage wordings, and the remarks columns of the rows being imported |
+  | Enquiries from email ([email-enquiries.md](email-enquiries.md)) | For a client email that passes the free rules: sender name, address and domain, subject, and the new part of the body (at most about 4,000 characters). For a quotation we emailed that is not in the tracker: the text of its PDF (at most 10 pages), or the PDF itself when it is a scan. Nothing for internal mail, blocked senders, replies in known threads, or mail the rules discard. Nothing of the email is stored beyond the enquiry's own fields |
 
 ## 4. Least privilege in the database
 

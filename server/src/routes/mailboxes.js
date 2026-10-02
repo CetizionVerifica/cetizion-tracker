@@ -258,6 +258,58 @@ mailboxRouter.post('/:id/disconnect', async (req, res) => {
   res.json({ data: r });
 });
 
+// ------------------------------------------------------------ automatic enquiries
+// docs/email-enquiries.md. The on/off switch is the auto_enquiries_enabled
+// setting, written through PATCH /api/settings/:key like any other.
+
+/** Per mailbox: how far the read of past mail has got, and what was decided. */
+mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
+  const { enquirySettings, aiCallsToday } = await import('../lib/mailbox/autoEnquiry.js');
+  const { aiConfig } = await import('../lib/ai.js');
+  const settings = await enquirySettings();
+  const { rows } = await query(
+    `SELECT a.id, a.email, a.is_shared, a.status, a.visibility,
+            b.since, b.folder, b.reached, b.scanned, b.created AS backfill_created, b.linked AS backfill_linked,
+            b.started_at, b.finished_at, b.last_error, b.updated_at,
+            COALESCE(d.created, 0)::int AS created, COALESCE(d.linked, 0)::int AS linked, COALESCE(d.not_enquiry, 0)::int AS not_enquiry,
+            COALESCE(d.from_quotations, 0)::int AS from_quotations, COALESCE(d.quotations_read, 0)::int AS quotations_read,
+            COALESCE(d.quotations_failed, 0)::int AS quotations_failed
+       FROM connected_accounts a
+       LEFT JOIN mailbox_enquiry_backfills b ON b.account_id = a.id
+       LEFT JOIN (SELECT account_id,
+                         count(*) FILTER (WHERE outcome = 'created') AS created,
+                         count(*) FILTER (WHERE outcome = 'linked') AS linked,
+                         count(*) FILTER (WHERE outcome = 'not_enquiry') AS not_enquiry,
+                         count(*) FILTER (WHERE outcome = 'created' AND kind = 'quotation_sent') AS from_quotations,
+                         count(*) FILTER (WHERE quotation_extraction IN ('created','revised')) AS quotations_read,
+                         count(*) FILTER (WHERE quotation_extraction = 'failed') AS quotations_failed
+                    FROM email_enquiry_decisions GROUP BY account_id) d ON d.account_id = a.id
+      WHERE a.status <> 'disconnected' ORDER BY a.is_shared DESC, a.email`);
+  res.json({
+    data: {
+      enabled: settings.enabled,
+      ai: { configured: aiConfig.enabled, used_today: await aiCallsToday(), daily_limit: settings.dailyAiLimit },
+      backfill_days: settings.backfillDays,
+      mailboxes: rows,
+    },
+  });
+});
+
+/**
+ * Judge a mailbox's mail again: its not_enquiry decisions and its progress
+ * through past mail are cleared, so the next runs read it afresh — after
+ * the rules improved, or an AI key was added. What was created or linked
+ * stays, so nothing is made twice.
+ */
+mailboxRouter.post('/:id/auto-enquiries/rerun', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows: [a] } = await query('SELECT id FROM connected_accounts WHERE id = $1', [id]);
+  if (!a) throw new ApiError(404, 'Mailbox not found');
+  const { rowCount: cleared } = await query(`DELETE FROM email_enquiry_decisions WHERE account_id = $1 AND outcome = 'not_enquiry'`, [id]);
+  await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
+  res.json({ data: { id, decisions_cleared: cleared, backfill: 'restarts on the next run' } });
+});
+
 mailboxRouter.get('/blocklist', async (req, res) => {
   const { rows } = await query('SELECT * FROM email_blocklist ORDER BY pattern');
   res.json({ data: rows });
@@ -274,6 +326,38 @@ mailboxRouter.delete('/blocklist/:id', requireAdmin, async (req, res) => {
 });
 
 // ------------------------------------------------------------ threads
+
+/**
+ * Where a record came from, when it was made from an email: the date, the
+ * mailbox, and the thread when the caller may read it. ?entity=enquiry&id=
+ * or ?entity=quotation&id=. Nothing when it did not come from email, or
+ * when the record is not the caller's to see.
+ */
+mailThreadRouter.get('/origin', async (req, res) => {
+  const { entity, id } = req.query;
+  if (!['enquiry', 'quotation'].includes(entity) || !id) throw new ApiError(422, 'entity (enquiry or quotation) and id are required');
+  const { scopeOf, ownerClause } = await import('../auth/ownership.js');
+  const params = [String(id)];
+  const mine = ownerClause(scopeOf(req), params);
+  const table = entity === 'enquiry' ? 'enquiries' : 'quotations';
+  const key = entity === 'enquiry' ? 'enquiry_no' : 'quotation_no';
+  const { rows: [record] } = await query(`SELECT 1 FROM ${table} WHERE ${key} = $1 ${mine ? `AND ${mine}` : ''}`, params);
+  if (!record) return res.json({ data: null });
+  const { rows: [d] } = await query(
+    `SELECT d.received_at, d.kind, d.method, d.thread_id, d.quotation_extraction, a.email AS mailbox
+       FROM email_enquiry_decisions d JOIN connected_accounts a ON a.id = d.account_id
+      WHERE ${entity === 'enquiry' ? `d.enquiry_no = $1 AND d.outcome = 'created'` : `d.quotation_no = $1 AND d.quotation_extraction IN ('created','revised')`}
+      ORDER BY d.decided_at ${entity === 'enquiry' ? 'ASC' : 'DESC'} LIMIT 1`, [String(id)]);
+  if (!d) return res.json({ data: null });
+  let threadId = null;
+  if (d.thread_id) {
+    const scope = readableThread(req, 'a', 't', 2);
+    const { rows: [t] } = await query(
+      `SELECT t.id FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id WHERE t.id = $1 AND ${scope.clause}`, [d.thread_id, ...scope.params]);
+    threadId = t?.id ?? null;
+  }
+  res.json({ data: { received_at: d.received_at, kind: d.kind, method: d.method, mailbox: d.mailbox, thread_id: threadId, quotation_extraction: d.quotation_extraction } });
+});
 
 mailThreadRouter.get('/threads', async (req, res) => {
   const params = []; const where = [];
