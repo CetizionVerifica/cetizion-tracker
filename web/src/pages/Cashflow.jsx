@@ -18,7 +18,11 @@ export default function Cashflow() {
   // Insights a quarter or a year as ?from=2026-10-01&to=2026-12-31: the
   // months open on arrival rather than asking for the same clicks again.
   const [open, setOpen] = useState(() => (params.get('month') ? [params.get('month')] : monthsBetween(params.get('from'), params.get('to'))));
-  const [months, setMonths] = useState(() => (monthsAhead(open[open.length - 1]) > 6 ? '12' : '6'));
+  // Long enough to reach the last month asked for: a financial year from
+  // Insights can run 18 months out, and a shorter horizon would fold its
+  // last months into "Later". The API stops at 24.
+  const [months, setMonths] = useState(() => horizonFor(monthsAhead(open[open.length - 1])));
+  const horizons = ['3', '6', '12', ...(['3', '6', '12'].includes(months) ? [] : [months])];
   const { data, loading, error } = useFetch(() => api.raw(`/cashflow?months=${months}`), [months]);
   const d = data?.data;
   const rows = d?.months ?? [];
@@ -30,7 +34,7 @@ export default function Cashflow() {
       <PageHeader
         title="Cash-flow forecast"
         subtitle="Money expected in from invoices, the payment schedule and the weighted pipeline; money out for vendor bills and expense claims. INR only."
-        actions={<Select value={months} placeholder={null} options={[{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }]} onChange={(e) => setMonths(e.target.value)} />}
+        actions={<Select value={months} placeholder={null} options={horizons.map((m) => ({ value: m, label: `${m} months` }))} onChange={(e) => setMonths(e.target.value)} />}
       />
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
@@ -107,6 +111,13 @@ function monthsBetween(from, to) {
     m += 1; if (m > 12) { m = 1; y += 1; }
   }
   return out;
+}
+
+/** The horizon that shows `needed` months: 6, 12, or as many as needed up to 24. */
+function horizonFor(needed) {
+  if (needed <= 6) return '6';
+  if (needed <= 12) return '12';
+  return String(Math.min(needed, 24));
 }
 
 /** How many months after this one a YYYY-MM is, counting this one as 1. */

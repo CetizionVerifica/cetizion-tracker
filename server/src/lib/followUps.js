@@ -424,16 +424,20 @@ export async function nextTask(db, entity, id) {
  *
  * `scope` narrows the rows to one owner's, the way every list is narrowed
  * (auth/ownership.js). The daily run passes nothing and sees everything;
- * Insights passes the reader's scope.
+ * Insights passes the reader's scope. `kinds` limits the read to the record
+ * types asked for, so a caller wanting only quotations does not read every
+ * open enquiry and invoice too.
  */
-export async function loadRecords(db, keys = [], { scope = UNRESTRICTED } = {}) {
+export async function loadRecords(db, keys = [], { scope = UNRESTRICTED, kinds = ['enquiry', 'quotation', 'payment_stage'] } = {}) {
+  const none = Promise.resolve({ rows: [] });
+  const wants = (kind) => kinds.includes(kind);
   const ids = (entity) => keys.filter((k) => k.startsWith(`${entity}:`)).map((k) => k.slice(entity.length + 1));
   const eParams = []; const eSrc = scopedSources(scope, eParams);
   const qParams = []; const qSrc = scopedSources(scope, qParams);
   const sParams = []; const sSrc = scopedSources(scope, sParams);
   const p = (params, v) => { params.push(v); return `$${params.length}`; };
   const [enquiries, quotations, stages] = await Promise.all([
-    db.query(
+    !wants('enquiry') ? none : db.query(
       `SELECT 'enquiry' AS entity, e.enquiry_no AS entity_id, e.enquiry_no AS number, e.status, e.next_follow_up_at,
               e.enquiry_date, e.created_at, e.client_name AS client, e.service AS detail,
               e.estimated_value AS amount, e.currency, e.company_id, e.owner_user_id,
@@ -442,7 +446,7 @@ export async function loadRecords(db, keys = [], { scope = UNRESTRICTED } = {}) 
         WHERE e.status = ANY(${p(eParams, OPEN_ENQUIRY_STATUSES)}::text[]) OR e.enquiry_no = ANY(${p(eParams, ids('enquiry'))}::text[])`,
       eParams
     ),
-    db.query(
+    !wants('quotation') ? none : db.query(
       `SELECT 'quotation' AS entity, q.quotation_no AS entity_id, q.quotation_no AS number, q.status,
               q.sent_at, q.quotation_date, q.created_at, q.accepted_at, q.closed_at, q.client_name AS client, q.service_quoted AS detail,
               COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.company_id, q.owner_user_id, ${OWNER}, nt.*
@@ -451,7 +455,7 @@ export async function loadRecords(db, keys = [], { scope = UNRESTRICTED } = {}) 
            OR q.quotation_no = ANY(${p(qParams, ids('quotation'))}::text[])`,
       qParams
     ),
-    db.query(
+    !wants('payment_stage') ? none : db.query(
       `SELECT 'payment_stage' AS entity, ps.id::text AS entity_id, ps.invoice_no AS number, ps.stage_status,
               ps.invoice_no, ps.invoice_due_date, ps.days_overdue, ps.on_hold, ps.promise_to_pay_date,
               ps.client_name AS client, ps.po_number || ' · ' || ps.stage_name AS detail,

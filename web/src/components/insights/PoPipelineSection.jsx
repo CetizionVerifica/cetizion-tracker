@@ -11,7 +11,7 @@ const STEP_COLOUR = { 'po-to-bill': 'var(--waiting)', 'po-billed': 'var(--settle
 /** 4. Which deals are about to become POs, and which POs are not fully billed? */
 export function PoPipelineSection({ data, loading, onRetry, settings, owner, onNavigate }) {
   const d = data;
-  const stepHref = (s) => (s.stage_id ? hrefs.stage(owner, s.stage_id) : s.key === 'po-to-bill' ? '/purchase-orders' : '/collections');
+  const stepHref = (s) => (s.stage_id ? hrefs.stage(owner, s.stage_id) : s.key === 'po-to-bill' ? '/purchase-orders?live=1' : '/collections');
   const steps = (d?.stages || []).map((s, i, all) => ({
     ...s,
     colour: STEP_COLOUR[s.key] || (s.stage_id === d.awaiting_stage_id ? 'var(--primary)' : i < all.length - 3 ? 'var(--forecast)' : 'var(--info)'),

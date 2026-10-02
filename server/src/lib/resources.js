@@ -182,6 +182,7 @@ export const resources = {
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'enquiry_date',
     listClauses: enquiryListClauses,
+    computedFilters: ['risk', 'owner'],
     // quotation_no links a quotation that already exists; left blank, a won
     // enquiry creates one (quoteWonEnquiry).
     columns: [
@@ -242,6 +243,7 @@ export const resources = {
     dateFilter: 'quotation_date',
     // Insights opens this list on what it counted (docs/insights-dashboard-plan.md §5.3).
     listClauses: quotationListClauses,
+    computedFilters: ['follow_up', 'overdue_days', 'close_month', 'month', 'owner'],
     columns: [
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
@@ -383,6 +385,10 @@ export const resources = {
     search: ['po_number', 'project_id', 'client_name', 'quotation_no'],
     filters: ['project_id', 'payment_status', 'client_name', 'quotation_no', 'company_id'],
     dateFilter: 'po_date',
+    // ?live=1: not cancelled and not replaced by a revision, the POs the
+    // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
+    listClauses: async (q) => (String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+    computedFilters: ['live'],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',

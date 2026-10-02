@@ -28,7 +28,7 @@ test('drill-downs open the lists with the filters the server understands', () =>
   assert.equal(hrefs.client(12), '/companies/12');
   assert.equal(hrefs.client(null), '/collections');
   assert.equal(hrefs.awaitingMonth('', 4, '2026-11'), '/quotations?stage_id=4&close_month=2026-11');
-  assert.equal(hrefs.poStatus('To Invoice'), '/purchase-orders?payment_status=To+Invoice');
+  assert.equal(hrefs.poStatus('To Invoice'), '/purchase-orders?payment_status=To+Invoice&live=1', 'the live POs the chart counted');
   assert.equal(hrefs.period({ period: '2026-10', from: '2026-10-01', to: '2026-10-31' }, 'month'), '/cashflow?month=2026-10');
   assert.equal(hrefs.period({ period: '2026Q3', from: '2026-10-01', to: '2026-12-31' }, 'quarter'), '/cashflow?from=2026-10-01&to=2026-12-31');
 });

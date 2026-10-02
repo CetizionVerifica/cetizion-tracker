@@ -82,6 +82,20 @@ export function buildWhere(def, reqQuery, params, extra = []) {
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+/**
+ * The whole WHERE for a list read: the ownership predicate, the filters a
+ * resource works out itself (`listClauses`, e.g. the quotations "follow-up
+ * overdue" filter, which runs the follow-up rules), then the column filters.
+ *
+ * The list, its CSV/Excel export and a saved view's count all come through
+ * here, so the rows downloaded or counted are the rows the page shows.
+ */
+export async function listWhere(def, reqQuery, params, scope, alias) {
+  const scoped = resourceClause(def, scope, params, { alias });
+  const computed = def.listClauses ? await def.listClauses(reqQuery, { scope, params }) : [];
+  return buildWhere(def, reqQuery, params, [...(scoped ? [scoped] : []), ...computed]);
+}
+
 function buildOrder(def, sortParam) {
   if (!sortParam) return `ORDER BY ${def.defaultSort}`;
   const [rawCol, rawDir] = String(sortParam).split(':');
@@ -471,13 +485,7 @@ export function crudRouter(name, def) {
     // keyed on the free-text sales_person; ownership is owner_user_id and
     // only owner_user_id, so the predicate comes from the resource's
     // declared ownership instead. One engine, one truth.
-    const scope = scopeOf(req);
-    const scoped = resourceClause(def, scope, params, { alias: readFrom });
-    // Filters that are not a column: a resource may work them out itself
-    // (the quotations "follow-up overdue" filter runs the follow-up rules)
-    // and hand back parameterised clauses.
-    const computed = def.listClauses ? await def.listClauses(req.query, { scope, params }) : [];
-    const where = buildWhere(def, req.query, params, [...(scoped ? [scoped] : []), ...computed]);
+    const where = await listWhere(def, req.query, params, scopeOf(req), readFrom);
     const order = buildOrder(def, req.query.sort);
     const limit = Math.min(Number(req.query.limit) || 500, MAX_LIMIT);
     const offset = Math.max(Number(req.query.offset) || 0, 0);

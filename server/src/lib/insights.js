@@ -101,8 +101,8 @@ export async function insightsContext(db, today) {
  */
 export async function overdueFollowUps(db, scope, ctx) {
   const { today, settings, holidays, toInr } = ctx;
-  const records = (await loadRecords(db, [], { scope }))
-    .filter((r) => r.entity === 'quotation' && !closedReason(r, today));
+  const records = (await loadRecords(db, [], { scope, kinds: ['quotation'] }))
+    .filter((r) => !closedReason(r, today));
   const activity = await lastActivity(db, records.map(keyOf));
   const items = [];
   for (const rec of records) {
@@ -242,7 +242,7 @@ export async function firstOutbound(db, enquiryNos) {
 /** Every open enquiry in the scope that is at risk today, worst first. */
 export async function enquiriesAtRisk(db, scope, ctx) {
   const { today, settings, holidays, toInr } = ctx;
-  const records = (await loadRecords(db, [], { scope })).filter((r) => r.entity === 'enquiry');
+  const records = await loadRecords(db, [], { scope, kinds: ['enquiry'] });
   const [activity, first] = await Promise.all([
     lastActivity(db, records.map(keyOf)),
     firstOutbound(db, records.map((r) => r.entity_id)),
@@ -310,10 +310,11 @@ async function poPipelineSection(db, scope, ctx) {
     s.count += 1;
     if (p.rate === null || p.rate === undefined) { withoutRate += 1; continue; }
     const rate = Number(p.rate);
+    // A PO with no payment stages has billed nothing yet: all of it is to
+    // bill. Worked out once, so the funnel and the status chart agree.
+    const toBill = Math.max(0, p.payment_status === 'No stages' ? Number(p.po_value || 0) : Number(p.balance_to_bill || 0));
     s.value += Number(p.po_value || 0) * rate;
-    s.to_bill += Math.max(0, Number(p.balance_to_bill || 0)) * rate;
-    // A PO with no payment stages has billed nothing yet: all of it is to bill.
-    const toBill = p.payment_status === 'No stages' ? Number(p.po_value || 0) : Number(p.balance_to_bill || 0);
+    s.to_bill += toBill * rate;
     if (toBill > 0) { po.to_bill.count += 1; po.to_bill.value += toBill * rate; }
     else { po.billed.count += 1; po.billed.value += Math.max(0, Number(p.total_invoiced || 0) - Number(p.total_received || 0)) * rate; }
   }

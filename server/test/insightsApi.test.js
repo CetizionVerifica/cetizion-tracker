@@ -226,6 +226,45 @@ describe('insights API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' },
     assert.deepEqual(await list('meera', '/api/enquiries?risk=at_risk&owner=none'), [], 'every enquiry here has an owner');
   });
 
+  test('IN-10: a list exported or saved from an Insights link holds the same rows', async () => {
+    const csv = await get('meera', `/api/export/quotations.csv?follow_up=overdue&owner=${ids.ben}`);
+    assert.equal(csv.status, 200);
+    assert.match(csv.text, /Q-B1/);
+    assert.doesNotMatch(csv.text, /Q-A1/, 'the export is filtered like the page');
+    const saved = await request(app).post('/api/views').set('Cookie', cookies.meera)
+      .send({ name: 'Overdue follow-ups', resource: 'quotations', filters: { follow_up: 'overdue', overdue_days: '15+' } });
+    assert.ok([200, 201].includes(saved.status), JSON.stringify(saved.body));
+    const views = (await get('meera', '/api/views?counts=1')).body.data;
+    const view = views.find((v) => v.name === 'Overdue follow-ups');
+    assert.equal(view.count, 4, 'the sidebar counts what the list shows');
+  });
+
+  test('IN-11: live=1 leaves cancelled and revised POs out of the PO list', async () => {
+    await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, cancelled) VALUES ('PO-C', 'P-A', '2026-03-01', 10, true)`);
+    try {
+      const all = (await get('meera', '/api/purchase-orders')).body.data.map((r) => r.po_number);
+      const live = (await get('meera', '/api/purchase-orders?live=1')).body.data.map((r) => r.po_number);
+      assert.ok(all.includes('PO-C'));
+      assert.ok(!live.includes('PO-C'));
+      assert.equal(live.length, all.length - 1);
+    } finally {
+      await db.query(`DELETE FROM purchase_orders WHERE po_number = 'PO-C'`);
+    }
+  });
+
+  test('IN-12: a PO with no stages is all to bill, on both PO charts', async () => {
+    await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_date, po_value) VALUES ('PO-N', 'P-B', '2026-03-01', 5000)`);
+    try {
+      const d = await insights('ben');
+      const noStages = d.po_pipeline.po_status.find((s) => s.status === 'No stages');
+      assert.equal(noStages.to_bill, 5000);
+      const toBill = d.po_pipeline.stages.find((s) => s.key === 'po-to-bill');
+      assert.equal(toBill.value, 5000);
+    } finally {
+      await db.query(`DELETE FROM purchase_orders WHERE po_number = 'PO-N'`);
+    }
+  });
+
   test('IN-08: nonsense options fall back to the defaults', async () => {
     const d = await insights('asha', '?granularity=week&horizon=7&basis=x');
     assert.deepEqual([d.granularity, d.horizon, d.basis], ['month', 6, 'cash']);

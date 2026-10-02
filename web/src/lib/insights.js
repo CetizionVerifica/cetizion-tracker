@@ -56,7 +56,7 @@ export const hrefs = {
   risk: (owner, reason) => `/enquiries${queryString({ risk: reason || 'at_risk', ...withOwner(owner) })}`,
   stage: (owner, stageId) => `/quotations${queryString({ stage_id: stageId })}`,
   awaitingMonth: (owner, stageId, month) => `/quotations${queryString({ stage_id: stageId, close_month: month })}`,
-  poStatus: (status) => `/purchase-orders${queryString({ payment_status: status })}`,
+  poStatus: (status) => `/purchase-orders${queryString({ payment_status: status, live: 1 })}`,
   /** A cash period opens Cash flow on its month, or across its months. */
   period: (p, granularity) => (granularity === 'month'
     ? `/cashflow${queryString({ month: p.period })}`
