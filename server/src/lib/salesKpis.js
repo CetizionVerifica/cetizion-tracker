@@ -1,9 +1,47 @@
 import { query } from '../db.js';
 import { config } from '../config.js';
-import { RATES, rateOn } from './salesReport.js';
+import { RATES, poCountsAsSale, poQuotationNo, rateOn } from './salesReport.js';
 import { QUOTATION_STATUS, ENQUIRY_STATUS } from './statuses.js';
 import { listSalesTargets } from './salesTargets.js';
 import { ApiError } from '../middleware/error.js';
+
+/**
+ * Order intake, on the same basis as the Reports section's revenue
+ * (docs/sales-report-rework-plan.md §4.6): the POs that count as a sale (not
+ * cancelled, not replaced by a revision), dated in the window [$from, $to)
+ * by PO date, at their value as entered (incl. GST), converted at the rate
+ * on the PO date. Until the rework this was won quotations by quotation
+ * date, so a target set against the old figure moves.
+ *
+ * Each PO is credited to who originated the deal: its quotation's
+ * originating salesperson (the quotation poQuotationNo resolves it to), or
+ * its project's when it has no quotation. When both are known and differ,
+ * the PO is credited to nobody — the same unresolved conflict
+ * origin_conflict_deals reports — rather than to an arbitrary one of them.
+ *
+ * `$from` and `$to` are the statement's parameter numbers for the window.
+ */
+const creditedOrders = (fromParam, toParam) => `credited AS (
+  SELECT po.po_number,
+         po.currency,
+         NULLIF(po.po_value, 0) AS value,
+         r.rate,
+         CASE
+           WHEN COALESCE(q.originating_user_id, q.originating_user_snapshot_id) IS NOT NULL
+            AND COALESCE(pr.originating_user_id, pr.originating_user_snapshot_id) IS NOT NULL
+            AND COALESCE(q.originating_user_id, q.originating_user_snapshot_id)
+                <> COALESCE(pr.originating_user_id, pr.originating_user_snapshot_id)
+           THEN NULL
+           ELSE COALESCE(q.originating_user_id, q.originating_user_snapshot_id,
+                         pr.originating_user_id, pr.originating_user_snapshot_id)
+         END AS origin_id
+    FROM purchase_orders po
+    JOIN projects pr ON pr.project_id = po.project_id
+    LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
+    ${rateOn('r', 'po.currency', 'po.po_date')}
+   WHERE ${poCountsAsSale('po')}
+     AND po.po_date >= ${fromParam}::date AND po.po_date < ${toParam}::date
+)`;
 
 const WON_QUOTATION = QUOTATION_STATUS.won;
 const LOST_QUOTATION = QUOTATION_STATUS.lost;
@@ -122,18 +160,14 @@ export async function getSalespersonKpis({ userId, year }) {
       [uid, from, to]
     ),
 
-    // Category C: Order Intake Value (originating_user_id / snapshot)
+    // Category C: Order Intake Value — POs credited to their originator (creditedOrders)
     query(
-      `WITH ${RATES}
-       SELECT COALESCE(ROUND(SUM(q.quotation_value * r.rate), 2), 0) AS order_intake_inr,
-              COUNT(*) FILTER (WHERE r.rate IS NULL AND q.currency <> 'INR')::int AS unconverted_deals,
-              COALESCE(json_agg(json_build_object('currency', q.currency, 'amount', q.quotation_value))
-                       FILTER (WHERE q.quotation_value IS NOT NULL), '[]'::json) AS deals
-         FROM quotations q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE COALESCE(q.originating_user_id, q.originating_user_snapshot_id) = $1
-          AND q.status = '${WON_QUOTATION}'
-          AND q.quotation_date >= $2::date AND q.quotation_date < $3::date`,
+      `WITH ${RATES}, ${creditedOrders('$2', '$3')}
+       SELECT COALESCE(ROUND(SUM(value * rate), 2), 0) AS order_intake_inr,
+              COUNT(*)::int AS orders,
+              COUNT(*) FILTER (WHERE rate IS NULL AND value IS NOT NULL)::int AS unconverted_deals
+         FROM credited
+        WHERE origin_id = $1`,
       [uid, from, to]
     ),
 
@@ -267,7 +301,9 @@ export async function getSalespersonKpis({ userId, year }) {
       cohort_win_rate_percentage: cohortWinRate,
     },
     financial_performance: {
+      // POs that count as a sale, by PO date, incl. GST (creditedOrders).
       order_intake_inr: Number(intake.order_intake_inr),
+      order_intake_orders: intake.orders,
       order_intake_unconverted_deals: intake.unconverted_deals,
       collections: {
         status: 'unavailable',
@@ -312,34 +348,33 @@ export async function getTeamSalesKpis({ year }) {
         GROUP BY 1`
     ),
 
-    // Cohort Order Intake Summary (attributed to sales vs unattributed)
+    // Order intake, attributed to a salesperson or not (creditedOrders).
     query(
-      `WITH ${RATES}
-       SELECT CASE WHEN COALESCE(q.originating_user_id, q.originating_user_snapshot_id) IS NULL
-                   THEN 'unattributed' ELSE 'attributed' END AS bucket,
-              COUNT(*)::int AS won_count,
-              COALESCE(ROUND(SUM(q.quotation_value * r.rate), 2), 0) AS intake_inr
-         FROM quotations q
-         ${rateOn('r', 'q.currency', 'q.quotation_date')}
-        WHERE q.status = '${WON_QUOTATION}'
-          AND q.quotation_date >= $1::date AND q.quotation_date < $2::date
+      `WITH ${RATES}, ${creditedOrders('$1', '$2')}
+       SELECT CASE WHEN origin_id IS NULL THEN 'unattributed' ELSE 'attributed' END AS bucket,
+              COUNT(*)::int AS orders,
+              COALESCE(ROUND(SUM(value * rate), 2), 0) AS intake_inr
+         FROM credited
         GROUP BY 1`,
       [from, to]
     ),
 
     // Conflicting Origin Detection on Purchase Orders
     query(
+      // The same PO-to-quotation rule as the intake above, so every PO it
+      // credits to nobody for a conflict is listed here.
       `SELECT po.po_number,
               po.project_id,
-              po.quotation_no,
+              q.quotation_no,
               COALESCE(q.originating_user_id, q.originating_user_snapshot_id)  AS quotation_origin_id,
               q.originating_user_name                                         AS quotation_origin_name,
               COALESCE(pr.originating_user_id, pr.originating_user_snapshot_id) AS project_origin_id,
               pr.originating_user_name                                         AS project_origin_name
          FROM purchase_orders po
          JOIN projects pr ON pr.project_id = po.project_id
-         LEFT JOIN quotations q ON q.quotation_no = po.quotation_no
-        WHERE q.quotation_no IS NOT NULL
+         LEFT JOIN quotations q ON q.quotation_no = ${poQuotationNo('po')}
+        WHERE ${poCountsAsSale('po')}
+          AND q.quotation_no IS NOT NULL
           AND COALESCE(q.originating_user_id, q.originating_user_snapshot_id) IS NOT NULL
           AND COALESCE(pr.originating_user_id, pr.originating_user_snapshot_id) IS NOT NULL
           AND COALESCE(q.originating_user_id, q.originating_user_snapshot_id)
@@ -374,11 +409,12 @@ export async function getTeamSalesKpis({ year }) {
       total_pipeline_value_inr: Math.round(((Number(assignedPipeline?.value_inr) || 0) + (Number(unassignedPipeline?.value_inr) || 0)) * 100) / 100,
     },
     team_order_intake_summary: {
-      attributed_won_quotations: attributedIntake ? attributedIntake.won_count : 0,
+      basis: 'POs that count as a sale, by PO date, incl. GST',
+      attributed_orders: attributedIntake ? attributedIntake.orders : 0,
       attributed_intake_value_inr: attributedIntake ? Number(attributedIntake.intake_inr) : 0,
-      unattributed_won_quotations: unattributedIntake ? unattributedIntake.won_count : 0,
+      unattributed_orders: unattributedIntake ? unattributedIntake.orders : 0,
       unattributed_intake_value_inr: unattributedIntake ? Number(unattributedIntake.intake_inr) : 0,
-      total_won_quotations: (attributedIntake?.won_count || 0) + (unattributedIntake?.won_count || 0),
+      total_orders: (attributedIntake?.orders || 0) + (unattributedIntake?.orders || 0),
       total_intake_value_inr: Math.round(((Number(attributedIntake?.intake_inr) || 0) + (Number(unattributedIntake?.intake_inr) || 0)) * 100) / 100,
     },
     origin_conflict_deals: conflictRes.rows.map((r) => ({
