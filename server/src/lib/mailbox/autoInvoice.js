@@ -328,10 +328,9 @@ async function withStageOf(db, poNumbers, total) {
 export async function matchPo(db, inv, cand) {
   const company = await resolveCompany(db, { buyer: inv.buyer }, cand);
   const sameClient = (rows) => rows.filter((r) => !company || !r.company_id || r.company_id === company.id);
-  const one = async (where, params) => {
-    const { rows } = await db.query(`SELECT ${PO_COLUMNS} FROM purchase_orders po LEFT JOIN projects p ON p.project_id = po.project_id WHERE ${LIVE_PO} AND ${where}`, params);
-    return sameClient(rows);
-  };
+  const all = async (where, params) => (await db.query(
+    `SELECT ${PO_COLUMNS} FROM purchase_orders po LEFT JOIN projects p ON p.project_id = po.project_id WHERE ${LIVE_PO} AND ${where}`, params)).rows;
+  const one = async (where, params) => sameClient(await all(where, params));
   const narrow = async (rows) => {
     if (rows.length <= 1) return rows;
     const fit = await withStageOf(db, rows.map((r) => r.po_number), inv.total_value);
@@ -339,28 +338,52 @@ export async function matchPo(db, inv, cand) {
   };
   const answer = (rows) => (rows.length === 1 ? { po: rows[0] } : rows.length > 1 ? { review: 'several_pos', po_number: null } : null);
 
+  // The POs this conversation is on: the thread, or the client's PO email in it.
+  const threadPos = async () => {
+    if (!cand.m.conversation_id) return { numbers: [], project: null };
+    const { rows: [t] } = await db.query(`SELECT entity, entity_id FROM email_threads WHERE conversation_id = $1 AND entity IN ('purchase_order','project') LIMIT 1`, [cand.m.conversation_id]);
+    const { rows: fromPo } = await db.query(
+      `SELECT DISTINCT po_number FROM email_po_decisions WHERE conversation_id = $1 AND po_number IS NOT NULL AND outcome IN ('registered','linked','registered_by_hand')`, [cand.m.conversation_id]);
+    return { numbers: [...new Set([...(t?.entity === 'purchase_order' ? [t.entity_id] : []), ...fromPo.map((r) => r.po_number)])], project: t?.entity === 'project' ? t.entity_id : null };
+  };
+  // With the buyer unknown, a PO number alone is not proof: client PO
+  // numbers are short and repeat ("1001"). Only the conversation can say.
+  const confirmed = async (rows) => {
+    if (company || !rows.length) return rows;
+    const { numbers, project } = await threadPos();
+    const sure = rows.filter((r) => numbers.includes(r.po_number) || (project && r.project_id === project));
+    return sure.length ? sure : null;
+  };
+
   // 1. The PO number printed on the invoice.
   if (inv.po_reference) {
-    const found = answer(await narrow(await one(`lower(regexp_replace(po.po_number, '[^a-zA-Z0-9]', '', 'g')) = $1`, [String(inv.po_reference).toLowerCase().replace(/[^a-z0-9]/g, '')])));
+    const rows = await confirmed(await narrow(await one(`lower(regexp_replace(po.po_number, '[^a-zA-Z0-9]', '', 'g')) = $1`, [String(inv.po_reference).toLowerCase().replace(/[^a-z0-9]/g, '')])));
+    if (rows === null) return { review: 'client_unknown', po_number: null };
+    const found = answer(rows);
     if (found) return found;
   }
   // 2. The project it names.
   if (inv.project_reference) {
-    const found = answer(await narrow(await one('upper(po.project_id) = upper($1)', [inv.project_reference])));
+    const rows = await confirmed(await narrow(await one('upper(po.project_id) = upper($1)', [inv.project_reference])));
+    if (rows === null) return { review: 'client_unknown', po_number: null };
+    const found = answer(rows);
     if (found) return found;
   }
+  // The invoice names a PO or project the tracker does not have (for this
+  // client): it waits for that PO. Guessing another PO of the same client
+  // by amount recorded it on the wrong PO, and left the right one open.
+  if (inv.po_reference || inv.project_reference) return {};
+
   // 3. The thread: on a PO or a project, or holding the client's PO email.
   if (cand.m.conversation_id) {
-    const { rows: [t] } = await db.query(`SELECT entity, entity_id FROM email_threads WHERE conversation_id = $1 AND entity IN ('purchase_order','project') LIMIT 1`, [cand.m.conversation_id]);
-    const { rows: fromPo } = await db.query(
-      `SELECT DISTINCT po_number FROM email_po_decisions WHERE conversation_id = $1 AND po_number IS NOT NULL AND outcome IN ('registered','linked','registered_by_hand')`, [cand.m.conversation_id]);
-    const numbers = [...new Set([...(t?.entity === 'purchase_order' ? [t.entity_id] : []), ...fromPo.map((r) => r.po_number)])];
+    const { numbers, project } = await threadPos();
     let rows = numbers.length ? await one('po.po_number = ANY($1)', [numbers]) : [];
-    if (!rows.length && t?.entity === 'project') rows = await one('po.project_id = $1', [t.entity_id]);
+    if (!rows.length && project) rows = await one('po.project_id = $1', [project]);
     const found = answer(await narrow(rows));
     if (found) return found;
   }
-  // 4. The client's live POs with an open stage of that amount.
+  // 4. The client's live POs with an open stage of that amount, only for an
+  // invoice that cites nothing.
   if (company) {
     const rows = await one('p.company_id = $1', [company.id]);
     const fit = await withStageOf(db, rows.map((r) => r.po_number), inv.total_value);
@@ -398,7 +421,7 @@ async function notifyOutcomes(ctx) {
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',
     po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice',
-    low_confidence: 'it could not be read with confidence', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
+    low_confidence: 'it could not be read with confidence', client_unknown: 'its client could not be confirmed for the PO it names', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
     no_invoice_no: 'it has no invoice number', amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up',
     bad_currency: 'its currency is not one the tracker uses', bad_date: 'its date is missing or after the email',
   };

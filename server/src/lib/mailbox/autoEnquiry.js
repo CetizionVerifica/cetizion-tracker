@@ -26,7 +26,7 @@ import { addWorkingDays, businessToday } from '../businessDate.ts';
 import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
-import { domainOf } from './rules.js';
+import { domainOf, PUBLIC_DOMAINS } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
 import { queueFailures } from './readerQueue.js';
 
@@ -158,7 +158,9 @@ async function factsFor(account, cand, settings = {}) {
   if (c.direction === 'outbound') {
     // A domain we have only ever had bills or sales pitches from is a vendor,
     // and what we send them is not a quotation to a client.
-    const domains = [...new Set(c.external.map((p) => domainOf(p.email)).filter(Boolean))];
+    // Never a free-mail domain: one gmail.com sender's remittance advice
+    // made every quotation to any gmail.com client "to a vendor".
+    const domains = [...new Set(c.external.map((p) => domainOf(p.email)).filter((d) => d && !PUBLIC_DOMAINS.has(d)))];
     if (domains.length) {
       const { rows: [v] } = await query(
         `SELECT bool_or(kind IN ('billing','vendor_or_sales_pitch')) AND NOT bool_or(kind IN ('new_enquiry','quotation_sent')) AS vendor

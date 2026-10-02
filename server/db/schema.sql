@@ -2964,7 +2964,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                          ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
                           'value_mismatch','company_mismatch','amendment','cancellation','multiple_pos','unreadable',
                           -- the PO's own figures failed a check (pdfPurchaseOrder.js checkPo)
-                          'no_value','amounts_not_in_pdf','totals_do_not_add_up','bad_currency')),
+                          'no_value','amounts_not_in_pdf','totals_do_not_add_up','bad_currency',
+                          -- its client or currency could not be confirmed (071)
+                          'currency_mismatch','no_currency')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3025,7 +3027,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                            ('po_not_found','several_pos','amount_not_a_stage','po_without_stages','invoice_no_in_use',
                             'not_from_us','low_confidence','credit_note','revised','unreadable',
                             -- the invoice's own figures failed a check (invoiceDetect.js checkInvoice)
-                            'no_invoice_no','amounts_not_in_pdf','totals_do_not_add_up','bad_currency','bad_date')),
+                            'no_invoice_no','amounts_not_in_pdf','totals_do_not_add_up','bad_currency','bad_date',
+                            -- it names a PO, but its client could not be confirmed (071)
+                            'client_unknown')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),

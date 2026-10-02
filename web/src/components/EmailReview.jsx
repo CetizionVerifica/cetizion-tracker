@@ -34,6 +34,8 @@ const PO_REASONS = {
   amounts_not_in_pdf: 'Amounts not found in the PDF',
   totals_do_not_add_up: 'Totals do not add up',
   bad_currency: 'Currency the tracker does not use',
+  currency_mismatch: 'Currency differs from the quotation\'s',
+  no_currency: 'Currency could not be read',
 };
 
 const INVOICE_REASONS = {
@@ -52,6 +54,7 @@ const INVOICE_REASONS = {
   totals_do_not_add_up: 'Totals do not add up',
   bad_currency: 'Currency the tracker does not use',
   bad_date: 'Date missing, or after it was sent',
+  client_unknown: 'Its client could not be confirmed',
 };
 
 /** How many items wait in a queue, for a tab's count. Null while unknown. */

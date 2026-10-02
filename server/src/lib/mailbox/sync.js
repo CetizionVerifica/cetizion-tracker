@@ -115,14 +115,18 @@ export async function matchParticipants(db, external, { autoCreate }) {
     const first = external.map((p) => contacts.find((c) => c.email === p.email.toLowerCase())).find(Boolean);
     return { contact_id: first.id, company_id: first.company_id };
   }
-  // By domain: a company whose contacts or website use it.
+  // By domain: a company whose contacts or website use it. The website's
+  // host is compared, not its text: a substring match put a sender at
+  // pharma.com on the company whose website is sunpharma.com. A sender on
+  // a subdomain (mail.acme.com) is still Acme's.
   for (const p of external) {
     const d = domainOf(p.email);
     if (!d || PUBLIC_DOMAINS.has(d)) continue;
     const { rows: [co] } = await db.query(
       `SELECT c.id FROM companies c
-        WHERE lower(c.website) LIKE '%' || $1 || '%'
-           OR EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id AND lower(ct.email) LIKE '%@' || $1)
+        CROSS JOIN LATERAL (SELECT regexp_replace(lower(btrim(c.website)), '^([a-z]+://)?(www[0-9]*\\.)?([^/:?#]+).*$', '\\3') AS host) w
+        WHERE (c.website IS NOT NULL AND btrim(c.website) <> '' AND (w.host = $1 OR right($1, length(w.host) + 1) = '.' || w.host))
+           OR EXISTS (SELECT 1 FROM contacts ct WHERE ct.company_id = c.id AND split_part(lower(ct.email), '@', 2) = $1)
         ORDER BY c.id LIMIT 1`, [d]);
     if (!co) continue;
     let contactId = null;

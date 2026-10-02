@@ -92,9 +92,9 @@ test('a future or year-old PO date is replaced by the email date, and flagged', 
   assert.equal(checkPo(read({ po_date: '2026-09-23' }), opts).po.po_date, '2026-09-23', 'the same day is fine');
 });
 
-test('the currency must be the tracker\'s; none printed is INR', () => {
+test('the currency must be the tracker\'s; none printed stays unknown, for the quotation to settle', () => {
   assert.equal(checkPo(read({ currency: 'JPY' }), opts).reason, 'bad_currency');
-  assert.equal(checkPo(read({ currency: null }), opts).po.currency, 'INR');
+  assert.equal(checkPo(read({ currency: null }), opts).po.currency, null);
   assert.equal(checkPo(read({ currency: 'USD' }), opts).po.currency, 'USD');
 });
 

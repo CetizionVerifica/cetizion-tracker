@@ -313,6 +313,13 @@ export function valueAgrees(po, q, tolerancePercent, lines = []) {
 }
 
 /**
+ * Is the PO in the quotation's currency? A PO that prints none takes the
+ * quotation's. The values are compared as numbers, so without this a USD
+ * 12,000 PO "agreed" with an INR 12,000 quotation.
+ */
+export const sameCurrency = (po, q) => !po.currency || (q.currency || 'INR') === po.currency;
+
+/**
  * The quotations this email's conversation is about: our quotation email in
  * it, or a thread put on a quotation because a subject in it names that
  * quotation. The sync also links a thread to the client's latest open deal
@@ -350,6 +357,7 @@ export async function matchQuotation(db, { po, allText, cand, company, settings 
     if ((company && q.company_id && q.company_id !== company.id) || (buyerGstin && gstinOf(q.company_gstin) && gstinOf(q.company_gstin) !== buyerGstin)) {
       return { review: 'company_mismatch', suggested: [q.quotation_no] };
     }
+    if (!sameCurrency(po, q)) return { review: 'currency_mismatch', suggested: [q.quotation_no] };
     if (!valueAgrees(po, q, tol, await linesOf(q))) return { review: 'value_mismatch', suggested: [q.quotation_no] };
     return { quotation: q, how };
   };
@@ -378,7 +386,7 @@ export async function matchQuotation(db, { po, allText, cand, company, settings 
     const open = await quotationsWhere(db, `q.company_id = $1 AND ${OPEN} AND NOT EXISTS (SELECT 1 FROM purchase_orders p WHERE p.quotation_no = q.quotation_no)`, [company.id]);
     if (open.length) {
       const agreeing = [];
-      for (const q of open) if (valueAgrees(po, q, tol, await linesOf(q))) agreeing.push(q);
+      for (const q of open) if (sameCurrency(po, q) && valueAgrees(po, q, tol, await linesOf(q))) agreeing.push(q);
       if (agreeing.length === 1) return { quotation: agreeing[0], how: 'company' };
       return { review: agreeing.length ? 'several_matches' : 'no_match', suggested: (agreeing.length ? agreeing : open).map((q) => q.quotation_no) };
     }
@@ -415,7 +423,15 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
     `SELECT po.po_number, po.quotation_no, po.document_id, p.company_id FROM purchase_orders po LEFT JOIN projects p ON p.project_id = po.project_id
       WHERE lower(regexp_replace(po.po_number, '[^a-zA-Z0-9]', '', 'g')) = $1`, [po.po_number_norm]);
   if (same.length) {
-    const ours = same.find((s) => !company || !s.company_id || s.company_id === company.id);
+    // The same client's PO, provably: the buyer is known and is that PO's
+    // client, or this conversation is already on that PO. An unknown buyer
+    // (or a PO whose project names no client) used to match any of them,
+    // and a new client's PO was linked to — and its PDF attached to —
+    // another client's PO with the same number.
+    const { rows: [t] } = cand.threadId
+      ? await db.query(`SELECT entity_id FROM email_threads WHERE id = $1 AND entity = 'purchase_order'`, [cand.threadId])
+      : { rows: [] };
+    const ours = same.find((s) => (company && s.company_id === company.id) || (t && t.entity_id === s.po_number));
     if (!ours) {
       // The same number on another client's PO: SAP numbers repeat across companies.
       await logDecision(db, account, cand, { ...decision, outcome: 'review', review_reason: 'company_mismatch', suggested: same.map((s) => s.quotation_no).filter(Boolean) });
@@ -437,6 +453,17 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
     await logDecision(db, account, cand, { ...decision, outcome: 'review', review_reason: match.review, suggested: match.suggested });
     ctx.review.push({ account, cand, reason: match.review, po, suggested: match.suggested });
     return 'review';
+  }
+
+  if (match.create && !po.currency) {
+    // Nothing to take the currency from but the buyer: a GST registration
+    // means an Indian client, billed in INR. Otherwise a person says.
+    if (!gstinOf(po.buyer?.gstin) && !gstinOf(company?.gstin)) {
+      await logDecision(db, account, cand, { ...decision, outcome: 'review', review_reason: 'no_currency', suggested: [] });
+      ctx.review.push({ account, cand, reason: 'no_currency', po, suggested: [] });
+      return 'review';
+    }
+    po.currency = 'INR';
   }
 
   let quotation = match.quotation;
@@ -468,7 +495,7 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   ].filter(Boolean).join(' ');
 
   const data = await registerPurchaseOrder(db, {
-    quotation: quotation.quotation_no, po_number: po.po_number, po_date: po.po_date, po_value: poValue, currency: po.currency,
+    quotation: quotation.quotation_no, po_number: po.po_number, po_date: po.po_date, po_value: poValue, currency: po.currency || quotation.currency || undefined,
     payment_terms_days: po.credit_days, document_id: documentId ?? undefined,
     project_manager: po.project_manager?.name ?? undefined, project_manager_email: po.project_manager?.email ?? undefined,
     planned_delivery_date: po.delivery_date && po.delivery_date >= po.po_date ? po.delivery_date : undefined,
@@ -510,9 +537,12 @@ export async function linkThread(db, threadId, poNumber, quotationNo) {
  */
 async function quotationFromPo(db, account, cand, po, company) {
   const { m } = cand;
-  const client = po.buyer?.company_name
-    || (company ? (await db.query('SELECT name FROM companies WHERE id = $1', [company.id])).rows[0]?.name : null)
-    || companyNameFromEmail(m.from?.email) || m.from?.name || m.from?.email;
+  // The company already found (by GSTIN, thread or contact) by its own
+  // name: the quotation's trigger files it under company_for(client_name),
+  // and the PO's spelling ("TATA STEEL LIMITED" for "Tata Steel Ltd")
+  // made a second company.
+  const client = (company ? (await db.query('SELECT name FROM companies WHERE id = $1', [company.id])).rows[0]?.name : null)
+    || po.buyer?.company_name || companyNameFromEmail(m.from?.email) || m.from?.name || m.from?.email;
   const companyId = company?.id ?? (await db.query('SELECT company_for($1) AS id', [client])).rows[0].id;
   if (po.buyer?.gstin && companyId) await db.query(`UPDATE companies SET gstin = $2 WHERE id = $1 AND NULLIF(btrim(gstin), '') IS NULL`, [companyId, po.buyer.gstin]);
   const threadId = await keepDropped(db, account, cand, companyId);
@@ -585,6 +615,7 @@ async function notifyReview(ctx) {
     company_mismatch: 'its client differs from the quotation\'s', amendment: 'it amends an earlier PO', cancellation: 'it cancels a PO',
     multiple_pos: 'it holds more than one PO', unreadable: 'its PDF could not be opened', no_value: 'no value could be read',
     amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up', bad_currency: 'its currency is not one the tracker uses',
+    currency_mismatch: 'its currency differs from the quotation\'s', no_currency: 'its currency could not be read',
   };
   for (const r of ctx.review) {
     let owner = null;
