@@ -71,8 +71,22 @@ function openWorkbook(buffer) {
   const ole = buffer[0] === 0xd0 && buffer[1] === 0xcf;
   if (zip || ole || looksBinary(buffer)) return XLSX.read(buffer, { type: 'buffer', cellDates: false, cellNF: true });
   let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { text = new TextDecoder('windows-1252').decode(buffer); }
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { text = decodeWindows1252(buffer); }
   return XLSX.read(text.replace(/^﻿/, ''), { type: 'string', raw: true, cellNF: true });
+}
+
+/**
+ * Windows-1252 is Latin-1 except for 0x80–0x9F, where it has the dashes,
+ * curly quotes, € and ™ that Excel writes. Decoded here rather than by
+ * TextDecoder('windows-1252'), which some Node builds (23.x among them)
+ * decode as plain Latin-1 — leaving 0x96 a control character, not "–".
+ * The five bytes Windows-1252 leaves undefined stay as they are.
+ */
+const CP1252_HIGH = '€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008DŽ\u008F\u0090‘’“”•–—˜™š›œ\u009DžŸ';
+export function decodeWindows1252(buffer) {
+  let text = '';
+  for (const byte of buffer) text += byte >= 0x80 && byte <= 0x9f ? CP1252_HIGH[byte - 0x80] : String.fromCharCode(byte);
+  return text;
 }
 const looksBinary = (buffer) => buffer.subarray(0, 512).some((b) => b === 0);
 
