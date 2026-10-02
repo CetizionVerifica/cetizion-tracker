@@ -97,7 +97,7 @@ export default function Reports() {
             )}
             <a
               className="btn"
-              href={api.reportPdfUrl({ from, to, ...(grain && { grain }), ...(owner && { owner }), tz: Intl.DateTimeFormat().resolvedOptions().timeZone })}
+              href={api.reportPdfUrl({ from, to, ...(grain && { grain }), ...(owner && { owner }) })}
               download
               title="These six questions for this period, as a PDF"
             >
@@ -125,7 +125,7 @@ export default function Reports() {
             </div>
           </>
         )}
-        <MoreAnalysis from={from} to={to} />
+        <MoreAnalysis from={from} to={to} owner={owner} />
       </div>
     </>
   );
@@ -137,7 +137,7 @@ export default function Reports() {
  * not "what happened in the period", so they keep their own two controls
  * and sit below, folded until opened.
  */
-function MoreAnalysis({ from, to }) {
+function MoreAnalysis({ from, to, owner }) {
   const [open, setOpen] = useState(false);
   return (
     <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
@@ -145,15 +145,15 @@ function MoreAnalysis({ from, to }) {
         More analysis: pipeline, ageing, cash, win rate
       </summary>
       {open && <AnalysisCharts />}
-      {open && <DetailedDownloads from={from} to={to} />}
+      {open && <DetailedDownloads from={from} to={to} owner={owner} />}
     </details>
   );
 }
 
 /**
  * The detailed tables the old Sales reports page offered, as CSVs for the
- * period above. The six questions replaced that page; these answer the
- * questions it asked that they do not.
+ * period and owner above. The six questions replaced that page; these
+ * answer the questions it asked that they do not.
  */
 const DETAILED_CSVS = [
   ['sectors', 'Sector funnel: enquiries, quoted, lost and win rate'],
@@ -165,13 +165,13 @@ const DETAILED_CSVS = [
   ['overdue', 'Overdue invoices by client'],
 ];
 
-function DetailedDownloads({ from, to }) {
+function DetailedDownloads({ from, to, owner }) {
   return (
     <div className="mt-4 rounded-[10px] border border-border px-4 py-3 text-[13px]">
       <div className="font-medium text-foreground">Detailed tables for {date(from)} – {date(to)}</div>
       <ul className="mt-1.5 grid gap-1 @3xl:grid-cols-2">
         {DETAILED_CSVS.map(([name, label]) => (
-          <li key={name}><a href={api.reportCsvUrl(name, { from, to })} download>{label} (CSV)</a></li>
+          <li key={name}><a href={api.reportCsvUrl(name, { from, to, ...(owner && { owner }) })} download>{label} (CSV)</a></li>
         ))}
       </ul>
     </div>

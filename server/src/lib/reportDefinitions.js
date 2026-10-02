@@ -368,6 +368,64 @@ export function parseCategoryList(value) {
   return names;
 }
 
+/** The current list for a category setting, read on `db` (a pool or a transaction's client). */
+async function currentList(db, key) {
+  const { rows: [row] } = await db.query('SELECT value FROM settings WHERE key = $1', [key]);
+  return readCategoryList(row?.value, CATEGORY_SETTINGS[key]);
+}
+
+/**
+ * The category a write names, spelled as the list spells it, or a 422 saying
+ * which categories there are. Without this a typo — or a category since
+ * removed — is stored and quietly counts as Other in every report.
+ */
+async function canonical(db, key, value, field, what) {
+  const list = await currentList(db, key);
+  const match = list.find((name) => normalizeName(name) === normalizeName(value));
+  if (!match) {
+    throw new ApiError(422, `"${value}" is not one of the ${what}: ${list.join(', ')}`, { fields: { [field]: `Pick one of the ${what}` } });
+  }
+  return match;
+}
+
+/** onSave for a sector alias: its sector must be a headline sector, stored as the list spells it. */
+export async function saveSectorAlias(client, { before, after, input }) {
+  // Only when the sector is being set: an unrelated edit is not refused for
+  // a target that was valid when it was saved.
+  if (before && !Object.hasOwn(input ?? {}, 'sector')) return;
+  const sector = await canonical(client, 'report_sectors', after.sector, 'sector', 'headline sectors');
+  if (sector !== after.sector) await client.query('UPDATE sector_aliases SET sector = $1 WHERE id = $2', [sector, after.id]);
+}
+
+/** onSave for a catalogue service: a report line, when set, must be a listed one. */
+export async function saveServiceReportLine(client, { after, input }) {
+  if (!Object.hasOwn(input ?? {}, 'report_line')) return;
+  if (after.report_line == null || !String(after.report_line).trim()) {
+    if (after.report_line !== null) await client.query('UPDATE services SET report_line = NULL WHERE id = $1', [after.id]);
+    return;
+  }
+  const line = await canonical(client, 'report_service_lines', after.report_line, 'report_line', 'service lines');
+  if (line !== after.report_line) await client.query('UPDATE services SET report_line = $1 WHERE id = $2', [line, after.id]);
+}
+
+/**
+ * A category list about to replace the stored one may not drop a category
+ * something still points at: an alias's sector, or a service's report line.
+ * Dropped, they would count as Other with nothing on screen saying why. The
+ * 422 names them, so the admin moves or removes them first.
+ */
+export async function assertCategoriesUnused(db, key, names) {
+  const kept = new Set(names.map(normalizeName));
+  const { rows } = key === 'report_sectors'
+    ? await db.query(`SELECT 'alias "' || alias || '" → ' || sector AS what, sector AS category FROM sector_aliases`)
+    : await db.query(`SELECT 'service "' || name || '" → ' || report_line AS what, report_line AS category FROM services WHERE report_line IS NOT NULL`);
+  const orphaned = rows.filter((row) => !kept.has(normalizeName(row.category)));
+  if (orphaned.length) {
+    const list = orphaned.map((row) => row.what).join('; ');
+    throw new ApiError(422, `Still in use, so not removed: ${list}. Point ${orphaned.length === 1 ? 'it' : 'them'} at another category first.`, { fields: { value: 'A category in use' } });
+  }
+}
+
 /** A stored category list, or the default when it is missing or unreadable. */
 export function readCategoryList(value, fallback) {
   try { return parseCategoryList(value); } catch { return fallback; }
@@ -468,8 +526,10 @@ export function serviceMapper(categories, catalogue = []) {
  *      catalogue service where it has one
  *   3. the quotation's service text, by keywords
  *
- * A piece naming several lines is split equally between them, never counted
- * in full in each, so the lines add up to the PO. Returns
+ * Pieces weigh their own value (a ₹0 piece takes nothing); only when none
+ * has a value is the PO split equally between them. A piece naming several
+ * lines is split equally between those lines, never counted in full in
+ * each, so the lines add up to the PO. Returns
  * { source, shares: [{ line, value_inr }] } — value_inr null when the PO has
  * no INR value.
  *
@@ -489,13 +549,18 @@ export function serviceSplit(po, linesOf) {
     source = 'keywords';
     pieces = [{ text: po.service, weight: 1 }];
   }
-  // A piece with no value of its own (or all at zero) weighs the same as the rest.
-  const valued = pieces.every((p) => Number(p.weight) > 0);
-  const weights = pieces.map((p) => (valued ? Number(p.weight) : 1));
+  // Each piece weighs its own value; a free line, an optional one or one
+  // with no value weighs nothing, so it cannot take a share of the PO from
+  // the lines that are paid for. Only when no piece has a value at all is
+  // the PO split equally between them.
+  const values = pieces.map((p) => Math.max(Number(p.weight) || 0, 0));
+  const valuedTotal = values.reduce((n, w) => n + w, 0);
+  const weights = valuedTotal > 0 ? values : pieces.map(() => 1);
   const whole = weights.reduce((n, w) => n + w, 0);
 
   const totals = new Map();
   for (const [i, piece] of pieces.entries()) {
+    if (!weights[i]) continue;
     const lines = linesOf(piece.text);
     for (const line of lines) totals.set(line, (totals.get(line) || 0) + weights[i] / whole / lines.length);
   }
@@ -823,6 +888,10 @@ function outcomeRows({ from, to }, scope = UNRESTRICTED, today = businessToday()
             COALESCE(st.type = 'lost' OR q.status = '${QUOTATION_STATUS.lost}', false)
               AND COALESCE(((COALESCE(q.closed_at, q.stage_changed_at)) AT TIME ZONE $3)::date,
                            q.quotation_date, '-infinity'::date) <= ${asOf} AS quotation_lost,
+            -- The Quotations page's own "expired" (v_quotations.expired), as
+            -- at the period's end: only a quotation the client has and is
+            -- deciding on can run out. A Draft was never sent; one On Hold
+            -- was paused on purpose. Both stay in the pipeline until decided.
             COALESCE(q.status IN ('${QUOTATION_STATUS.submitted}', '${QUOTATION_STATUS.negotiating}')
                      AND q.valid_until < ${asOf}, false) AS quotation_expired,
             lr.name                                      AS lost_reason,

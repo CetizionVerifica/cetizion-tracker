@@ -380,7 +380,7 @@ function notesSection(report, { landscapeBefore }) {
  * `report` is salesReport()'s result. `owner` names the salesperson an admin
  * narrowed it to; `company` is the name from Settings → Company profile.
  */
-export function reportDocDefinition(report, { owner = null, company = 'Cetizion Verifica', generatedAt = new Date(), timeZone = 'Asia/Kolkata' } = {}) {
+export function reportDocDefinition(report, { owner = null, company = 'Cetizion Verifica', generatedAt = new Date(), timeZone = 'UTC' } = {}) {
   const periodText = periodLabel(report.period);
   const stamp = generatedStamp(generatedAt, timeZone);
   const revenue = revenueSection(report);

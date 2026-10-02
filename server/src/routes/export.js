@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import XLSX from 'xlsx';
+import { config } from '../config.js';
 import { query } from '../db.js';
 import { listWhere } from '../lib/crud.js';
 import { resources } from '../lib/resources.js';
@@ -47,12 +48,12 @@ function sendCsv(res, filename, rows) {
 const buildRevenue = (period, scope) => revenueReport(period, { scope });
 
 /**
- * The Reports section's report for a request: its period, its grain, and the
- * owner an admin narrowed it to (a sales user's own records, whatever they
- * asked). The screen, every section CSV and the PDF build it the same way.
+ * The Reports section's report for a request: its period and its grain, in
+ * the scope the CSV route has already narrowed to the owner an admin chose
+ * (a sales user's own records, whatever they asked).
  */
 const buildSections = (period, scope, reqQuery = {}) =>
-  salesReport(period, { grain: reportGrain(reqQuery, period), scope: reportScope(scope, reqQuery) });
+  salesReport(period, { grain: reportGrain(reqQuery, period), scope });
 
 const SALES_REPORTS = {
   // The Reports section, one CSV per question (docs/sales-report-rework-plan.md §5.1).
@@ -96,7 +97,7 @@ exportRouter.get('/sales-report.pdf', async (req, res) => {
     // A sales user's PDF is their own; only an admin's narrowed one names the owner.
     owner: scopeOf(req).unrestricted ? owner : null,
     generatedAt: new Date(),
-    timeZone: reportTimeZone(req.query.tz || 'Asia/Kolkata'),
+    timeZone: reportTimeZone(req.query.tz || config.businessTimeZone),
   });
 
   const span = period.from || period.to ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}` : '';
@@ -112,7 +113,9 @@ exportRouter.get('/sales-report/:report.csv', async (req, res) => {
 
   const period = reportPeriod(req.query);
   const report = SALES_REPORTS[name];
-  const rows = report.toRows(await report.build(period, scopeOf(req), req.query));
+  // Every CSV — section or detailed table — follows the owner an admin
+  // narrowed the page to, as the screen and the PDF do.
+  const rows = report.toRows(await report.build(period, reportScope(scopeOf(req), req.query), req.query));
 
   const span = period.from || period.to
     ? `-${period.from ?? 'start'}-to-${period.to ?? 'today'}`

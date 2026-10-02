@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { saveEnquiry } from './enquiries.js';
 import { saveProject } from './projects.js';
 import { linkPurchaseOrder } from './purchaseOrders.js';
-import { REPORT_LIST_KEYS, reportListClauses } from './reportDefinitions.js';
+import { REPORT_LIST_KEYS, reportListClauses, saveSectorAlias, saveServiceReportLine } from './reportDefinitions.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 
@@ -925,6 +925,8 @@ export const resources = {
     filters: ['sector'],
     columns: ['alias', 'sector'],
     schema: z.object({ alias: requiredStr(120), sector: requiredStr(120) }),
+    // The sector must be a headline sector (Settings → Report categories).
+    onSave: saveSectorAlias,
   },
 
   'lost-reasons': {
@@ -970,6 +972,8 @@ export const resources = {
       // The Reports section's service line (065); blank = matched by name.
       report_line: str(120),
     }),
+    // A report line, when set, must be one of the listed service lines.
+    onSave: saveServiceReportLine,
   },
 
   'quotation-lines': {

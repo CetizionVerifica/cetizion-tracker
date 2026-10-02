@@ -361,3 +361,19 @@ test('customers: new by first-ever PO, repeat by any later one, enquiries judged
   assert.deepEqual(section.new_customer_enquiries.map((e) => [e.enquiry_no, e.outcome]), [['E1', 'pipeline'], ['E4', 'lost']]);
   assert.equal(section.keyed_by_name, 1);
 });
+
+test('a free or unvalued line takes no share of the PO; an all-unvalued PO splits equally', () => {
+  const linesOf = defs.serviceMapper(['EcoVadis', 'ESIA', 'HSE'], []);
+  const byLine = (split) => Object.fromEntries(split.shares.map((s) => [s.line, s.value_inr]));
+  // A ₹0 optional line beside a paid one used to take half the PO.
+  assert.deepEqual(byLine(defs.serviceSplit({
+    po_value_inr: 1000, services: [], lines: [{ text: 'EcoVadis', value: 1000 }, { text: 'HAZOP study (optional)', value: 0 }],
+  }, linesOf)), { EcoVadis: 1000 });
+  assert.deepEqual(byLine(defs.serviceSplit({
+    po_value_inr: 900, services: [{ service: 'ESIA', value: 600 }, { service: 'HSE audit', value: null }, { service: 'EcoVadis', value: 300 }],
+  }, linesOf)), { ESIA: 600, EcoVadis: 300 });
+  // No piece has a value: nothing to weigh by, so equal.
+  assert.deepEqual(byLine(defs.serviceSplit({
+    po_value_inr: 1000, services: [{ service: 'ESIA', value: null }, { service: 'HSE', value: 0 }],
+  }, linesOf)), { ESIA: 500, HSE: 500 });
+});

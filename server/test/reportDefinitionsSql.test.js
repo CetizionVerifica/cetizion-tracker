@@ -279,6 +279,61 @@ describe('reports section figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL
     assert.deepEqual(params, [[]]);
   });
 
+  test('an expired Draft or On Hold quotation stays in the pipeline, as on the Quotations page', async () => {
+    await db.query(`
+      INSERT INTO quotations (quotation_no, client_name, status, quotation_date, valid_until) VALUES
+        ('Q-DRAFT', 'Nova', 'Draft', '2026-09-02', '2026-09-25'),
+        ('Q-HOLD',  'Nova', 'On Hold', '2026-09-02', '2026-09-25'),
+        ('Q-SENT',  'Nova', 'Submitted', '2026-09-02', '2026-09-25');
+      INSERT INTO enquiries (enquiry_no, client_name, enquiry_date, status, quotation_no) VALUES
+        ('E-DRAFT', 'Nova', '2026-11-01', 'Converted', 'Q-DRAFT'),
+        ('E-HOLD',  'Nova', '2026-11-01', 'Converted', 'Q-HOLD'),
+        ('E-SENT',  'Nova', '2026-11-01', 'Converted', 'Q-SENT');
+    `);
+    try {
+      const { outcomes } = await defs.salesReport({ from: '2026-11-01', to: '2026-11-30' }, { today: '2026-12-10' });
+      const outcome = (no) => outcomes.detail.find((d) => d.enquiry_no === no).outcome;
+      assert.deepEqual([outcome('E-DRAFT'), outcome('E-HOLD'), outcome('E-SENT')], ['pipeline', 'pipeline', 'quoted_not_won']);
+      // The same rule the Quotations page flags "expired" by.
+      const { rows } = await db.query(`SELECT quotation_no FROM v_quotations WHERE expired AND quotation_no IN ('Q-DRAFT', 'Q-HOLD', 'Q-SENT') ORDER BY 1`);
+      assert.deepEqual(rows.map((r) => r.quotation_no), ['Q-SENT']);
+    } finally {
+      await db.query(`DELETE FROM enquiries WHERE enquiry_no IN ('E-DRAFT', 'E-HOLD', 'E-SENT');
+                      DELETE FROM quotations WHERE quotation_no IN ('Q-DRAFT', 'Q-HOLD', 'Q-SENT')`);
+    }
+  });
+
+  test('an alias or a service line must name a listed category, and a list keeps what is in use', async () => {
+    const { rows: [alias] } = await db.query(`INSERT INTO sector_aliases (alias, sector) VALUES ('Zinc', 'metal industry') RETURNING *`);
+    try {
+      // Saved in the list's own spelling.
+      await defs.saveSectorAlias(db, { before: null, after: alias, input: { alias: 'Zinc', sector: 'metal industry' } });
+      assert.equal((await db.query('SELECT sector FROM sector_aliases WHERE id = $1', [alias.id])).rows[0].sector, 'Metal Industry');
+      // A sector the report does not list is refused, naming the ones it does.
+      await assert.rejects(defs.saveSectorAlias(db, { before: null, after: { ...alias, sector: 'Metals Industry' }, input: { sector: 'Metals Industry' } }),
+        (err) => err.status === 422 && /Metal Industry, Agriculture, Pharmaceutical/.test(err.message));
+      // An edit that does not touch the sector is not re-judged.
+      await defs.saveSectorAlias(db, { before: alias, after: { ...alias, sector: 'Gone' }, input: { alias: 'Zinc ' } });
+
+      const { rows: [service] } = await db.query(`INSERT INTO services (name, report_line) VALUES ('Impact study', 'esia') RETURNING *`);
+      await defs.saveServiceReportLine(db, { after: service, input: { report_line: 'esia' } });
+      assert.equal((await db.query('SELECT report_line FROM services WHERE id = $1', [service.id])).rows[0].report_line, 'ESIA');
+      await assert.rejects(defs.saveServiceReportLine(db, { after: { ...service, report_line: 'Climate' }, input: { report_line: 'Climate' } }),
+        (err) => err.status === 422);
+      await defs.saveServiceReportLine(db, { after: { ...service, report_line: 'Old line' }, input: { active: false } });
+
+      // Dropping a category something points at is refused, naming what.
+      await assert.rejects(defs.assertCategoriesUnused(db, 'report_sectors', ['Agriculture', 'Pharmaceutical']),
+        (err) => err.status === 422 && /alias "Zinc"/.test(err.message));
+      await assert.rejects(defs.assertCategoriesUnused(db, 'report_service_lines', ['EcoVadis']),
+        (err) => err.status === 422 && /service "Impact study"/.test(err.message));
+      await defs.assertCategoriesUnused(db, 'report_sectors', ['Pharmaceutical', 'Metal Industry', 'Agriculture', 'Mining']);
+      await db.query('DELETE FROM services WHERE id = $1', [service.id]);
+    } finally {
+      await db.query('DELETE FROM sector_aliases WHERE id = $1', [alias.id]);
+    }
+  });
+
   test('a sales user sees only their own records', async () => {
     const report = await defs.salesReport(SEPT, { today: TODAY, scope: { unrestricted: false, ownerId: 102 } });
     assert.deepEqual(report.outcomes.detail.map((d) => d.enquiry_no), ['E-2', 'E-3', 'E-5']);

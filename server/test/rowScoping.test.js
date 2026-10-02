@@ -606,6 +606,9 @@ describe('row-level ownership', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
       assert.equal(mine.status, 200);
       assert.ok(!text(mine).includes('Client B'), 'no customer of B’s');
       assert.ok(text(await get(admin.cookie, '/api/export/sales-report/customers.csv')).includes('Client B'));
+      // An admin who narrowed the page to one owner gets that owner's detailed CSV.
+      const narrowed = text(await get(admin.cookie, `/api/export/sales-report/customers.csv?owner=${salesA.user.id}`));
+      assert.ok(narrowed.includes('Client A') && !narrowed.includes('Client B'), 'the owner filter reaches the detailed tables');
     });
 
     test('the PDF builds for both, from each one’s own rows', async () => {
