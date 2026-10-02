@@ -913,7 +913,7 @@ export const resources = {
   },
 
   'sector-aliases': {
-    // A Settings list (064): a spelling of a sector that the Reports section
+    // A Settings list (065): a spelling of a sector that the Reports section
     // counts under one of its headline sectors ("Steel" -> Metal Industry).
     // Nothing on a quotation or enquiry changes. Admins curate it.
     adminOnlyWrites: true,
@@ -967,7 +967,7 @@ export const resources = {
       renewal_lead_days: int({ min: 0, max: 365 }).default(60),
       onboarding_template_id: int({ min: 1 }),
       payment_terms_template_id: int({ min: 1 }),
-      // The Reports section's service line (064); blank = matched by name.
+      // The Reports section's service line (065); blank = matched by name.
       report_line: str(120),
     }),
   },

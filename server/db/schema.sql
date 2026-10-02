@@ -233,7 +233,7 @@ CREATE TABLE services (
   renewal_lead_days       int NOT NULL DEFAULT 60,
   onboarding_template_id    int REFERENCES onboarding_templates(id) ON DELETE SET NULL,
   payment_terms_template_id int REFERENCES payment_terms_templates(id) ON DELETE SET NULL,
-  -- The Reports section's service line for this entry (064). Blank: the
+  -- The Reports section's service line for this entry (065). Blank: the
   -- name is matched against the keyword rules in lib/serviceLines.js.
   report_line               text
 );
@@ -2810,7 +2810,7 @@ CREATE TRIGGER zz_resolve_notifications AFTER UPDATE ON inbox_conversations
 
 -- ------------------------------------------------------ report categories
 -- The categories the Reports section groups free-text sectors and services
--- into (064, docs/sales-report-rework-plan.md §4.3, §4.4). services.report_line
+-- into (065, docs/sales-report-rework-plan.md §4.3, §4.4). services.report_line
 -- is declared with the services table above.
 CREATE TABLE IF NOT EXISTS sector_aliases (
   id     serial PRIMARY KEY,

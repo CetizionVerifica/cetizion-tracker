@@ -180,7 +180,7 @@ The category lists are saved through `/api/settings/report_sectors` and
 | `server/src/lib/reportCsv.js` | The section CSVs |
 | `server/src/lib/serviceLines.js` | The service-line keywords |
 | `server/src/lib/salesReport.js`, `revenueReport.js` | Shared SQL (periods, rates, the PO-to-quotation rule) and the detailed tables |
-| `server/db/migrations/064_report_categories.sql` | Sector aliases, `services.report_line`, the two category settings |
+| `server/db/migrations/065_report_categories.sql` | Sector aliases, `services.report_line`, the two category settings |
 | `web/src/pages/Reports.jsx`, `web/src/components/SalesReportSections.jsx` | The page |
 | `web/src/pages/ReportCategories.jsx` | Settings → Report categories |
 | `web/src/lib/reportPeriods.js` | Period presets and drill-down links |

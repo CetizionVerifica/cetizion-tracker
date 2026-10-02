@@ -1,5 +1,5 @@
 -- =====================================================================
--- 064_report_categories.sql
+-- 065_report_categories.sql
 -- The categories the Reports section groups sectors and services into
 -- (docs/sales-report-rework-plan.md §4.3, §4.4).
 --
