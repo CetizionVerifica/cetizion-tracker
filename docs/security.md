@@ -76,6 +76,16 @@ runs on every push.
   database name.
 - **Tokens** (acceptance links, portal links, API tokens) are stored only as
   hashes; mailbox tokens are encrypted.
+- **Personal mailboxes** ([per-user-mailboxes-plan.md](per-user-mailboxes-plan.md))
+  belong to a user account, not a typed name. Only the owner reads a
+  personal mailbox's mail, through every door (the mailbox list, threads on
+  records, the record timeline, the review queues); a shared mailbox is the
+  team's. The one exception is a thread filed on a record the viewer owns,
+  which they see whichever mailbox it landed in. Only the owner can change,
+  sync or disconnect their mailbox; an admin can reassign it (logged in the
+  activity log). Deactivating a user disconnects their mailboxes. Of a
+  personal mailbox, the readers see Inbox and Sent Items only until the
+  owner opens the other folders.
 - **What goes to the AI provider** (OpenRouter, only when
   `OPENROUTER_API_KEY` is set, routed with `data_collection: 'deny'` and
   zero data retention; a request that cannot be routed that way is not sent
