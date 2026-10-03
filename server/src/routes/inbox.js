@@ -15,6 +15,7 @@
  *   GET    /api/inbox/canned · POST · PATCH /canned/:id · DELETE /canned/:id
  */
 import { Router } from 'express';
+import { namedIn } from '../auth/ownership.js';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
@@ -151,9 +152,14 @@ async function ownCanned(req, res, next) {
   } catch (err) { return next(err); }
 }
 const identities = (req) => [req.user?.username || 'admin', req.user?.name || req.user?.username || 'admin'];
+// Members are typed names, so both sides are folded (076): "Asha Kumar" in
+// the setting and asha kumar signing in are one person. MCP's list_inbox
+// (lib/mcp/data.js) folds them the same way.
 const inboxScope = (req, from) => (isAdmin(req)
   ? { clause: 'TRUE', params: [] }
-  : { clause: `(i.members = '{}' OR i.members && ARRAY[$${from}, $${from + 1}]::text[] OR c.assignee IS NULL OR lower(c.assignee) IN (lower($${from}), lower($${from + 1})))`, params: identities(req) });
+  : { clause: `(i.members = '{}'
+       OR EXISTS (SELECT 1 FROM unnest(i.members) m WHERE ${namedIn('m', [`$${from}`, `$${from + 1}`])})
+       OR c.assignee IS NULL OR ${namedIn('c.assignee', [`$${from}`, `$${from + 1}`])})`, params: identities(req) });
 
 const LIST = `
   SELECT c.*, i.name AS inbox_name, ia.email AS inbox_email,
@@ -381,9 +387,18 @@ inboxRouter.patch('/:id', async (req, res) => {
   if (v.status === 'closed') set.push(['closed_at', new Date().toISOString()]);
   else if (v.status) set.push(['closed_at', null]);
   if (!set.length) throw new ApiError(422, 'Nothing to change');
-  const { rowCount } = await query(`UPDATE inbox_conversations SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')} WHERE id = $1`, [Number(req.params.id), ...set.map(([, x]) => x)]);
+  // Scoped like every read of a conversation (076): one in somebody else's
+  // queue answers as one that is not there, and is not changed.
+  const scope = inboxScope(req, set.length + 2);
+  const { rowCount } = await query(
+    `UPDATE inbox_conversations c SET ${set.map(([k], n) => `${k} = $${n + 2}`).join(', ')}
+       FROM inboxes i WHERE i.id = c.inbox_id AND c.id = $1 AND ${scope.clause}`,
+    [Number(req.params.id), ...set.map(([, x]) => x), ...scope.params]);
   if (!rowCount) throw new ApiError(404, 'Conversation not found');
-  res.json({ data: await loadConversation(Number(req.params.id), req) });
+  // The caller has just been allowed to change it; what they changed may
+  // have put it out of their scope (assigned to somebody else), and the
+  // answer to a change that was saved is the row, not a 404.
+  res.json({ data: await loadConversation(Number(req.params.id), null) });
 });
 
 inboxRouter.post('/:id/reply', async (req, res) => {

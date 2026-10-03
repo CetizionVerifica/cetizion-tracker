@@ -218,7 +218,7 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
     assert.equal(r.candidates[0].newThread, true, 'as the first real message in the thread');
   });
 
-  test('every folder is read but Junk and Deleted Items, and a message moved between folders is stored once', async () => {
+  test('every folder is read; Junk and Deleted Items are stored for display only; a message moved between folders is stored once', async () => {
     const box = await mailbox();
     const filed = mail(box, { subject: 'Filed by a rule', folder: 'Clients', internet_message_id: `<${uid('mid')}@acme>` });
     const junk = mail(box, { subject: 'Spam', folder: 'junkemail' });
@@ -229,11 +229,18 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
 
     const r = await sync.syncAccount(box.id);
     assert.equal(r.error, undefined, r.error);
-    const { rows } = await db.query('SELECT subject FROM email_messages WHERE account_id = $1', [box.id]);
-    assert.deepEqual(rows.map((x) => x.subject), ['Filed by a rule']);
-    assert.equal(r.skipped['already synced'], 1, 'the moved copy');
+    const { rows } = await db.query('SELECT subject, folder_id FROM email_messages WHERE account_id = $1 ORDER BY id', [box.id]);
+    assert.deepEqual(rows.map((x) => [x.subject, x.folder_id]), [['Filed by a rule', 'Archive'], ['Deleted', 'deleteditems'], ['Spam', 'junkemail']]);
+    // The moved copy is the same message, now known in Archive: one row, its folder updated (076).
+    assert.equal(r.updated, 1, 'the moved copy updates the row');
+    assert.equal(r.skipped['already synced'], undefined);
+    // Junk and Deleted Items are shown (076) but never reach the team queue or the readers.
+    const { rows: convs } = await db.query(`SELECT t.subject FROM inbox_conversations c JOIN email_threads t ON t.id = c.thread_id WHERE t.account_id = $1`, [box.id]);
+    assert.deepEqual(convs.map((c) => c.subject), ['Filed by a rule']);
+    const { rows: queued } = await db.query(`SELECT count(*)::int AS n FROM email_reader_queue q JOIN email_messages m ON m.account_id = q.account_id AND m.provider_id = q.provider_id WHERE q.account_id = $1 AND m.folder_id IN ('junkemail','deleteditems')`, [box.id]);
+    assert.equal(queued[0].n, 0);
     const { rows: folders } = await db.query('SELECT folder FROM mail_folders WHERE account_id = $1 ORDER BY id', [box.id]);
-    assert.deepEqual(folders.map((f) => f.folder), ['inbox', 'Clients', 'Archive', 'sentitems']);
+    assert.deepEqual(folders.map((f) => f.folder), ['inbox', 'Clients', 'Archive', 'sentitems', 'deleteditems', 'junkemail']);
   });
 
   test('a mailbox without an Inbox still filters as before', async () => {

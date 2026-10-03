@@ -85,7 +85,11 @@ runs on every push.
   sync or disconnect their mailbox; an admin can reassign it (logged in the
   activity log). Deactivating a user disconnects their mailboxes. Of a
   personal mailbox, the readers see Inbox and Sent Items only until the
-  owner opens the other folders.
+  owner opens the other folders. A shared mailbox whose team Inbox names
+  members is those members' (and the assignee's, or anybody's while a
+  conversation is unassigned), not the whole team's; members are matched
+  whatever case their name was typed in. Deleted Items and Junk are synced
+  for display and never read by the AI or routed to the queue.
 - **What goes to the AI provider** (OpenRouter, only when
   `OPENROUTER_API_KEY` is set, routed with `data_collection: 'deny'` and
   zero data retention; a request that cannot be routed that way is not sent

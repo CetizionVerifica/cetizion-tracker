@@ -537,9 +537,36 @@ export function mailboxClause(scope, params, { alias = 'a', kind = 'read' } = {}
   params.push(scope.ownerId);
   const n = params.length;
   if (kind === 'administer') return `${alias}.user_id = $${n}`;
-  if (kind === 'read') return `(${alias}.user_id = $${n} OR ${alias}.is_shared)`;
+  if (kind === 'read') return `(${alias}.user_id = $${n} OR (${alias}.is_shared AND ${inboxMemberOrOpen(alias, n)}))`;
   throw new Error(`Unknown mailbox access kind: ${kind}`);
 }
+
+/**
+ * A shared mailbox that feeds a team Inbox with named members is those
+ * members' (docs/inbox-outlook-plan.md §1, §3.2); one with no members, or
+ * no Inbox, is the whole team's. Members are typed names or addresses, so
+ * the signed-in user is matched on both, as routes/inbox.js matches them.
+ */
+/**
+ * A typed name or address matches one of several, whatever its case or
+ * surrounding spaces. The one spelling of the Inbox's member test, used
+ * here and in routes/inbox.js, so the two cannot drift apart again.
+ */
+export const namedIn = (expr, candidates) => `lower(btrim(${expr})) IN (${candidates.map((c) => `lower(${c})`).join(', ')})`;
+
+const inboxMemberOrOpen = (alias, n) => `NOT EXISTS (
+  SELECT 1 FROM inboxes mi WHERE mi.account_id = ${alias}.id AND mi.active AND mi.members <> '{}'
+     AND NOT EXISTS (SELECT 1 FROM unnest(mi.members) mm JOIN users mu ON mu.id = $${n}
+                      WHERE ${namedIn('mm', ['mu.email', 'mu.name'])}))`;
+
+/**
+ * The thread's conversation in the team Inbox is the caller's, or nobody's
+ * yet — the same rule the Inbox page lists by (routes/inbox.js inboxScope):
+ * an unassigned conversation is there for anybody to pick up.
+ */
+const inboxAssignee = (threadAlias, n) => `EXISTS (
+  SELECT 1 FROM inbox_conversations mc JOIN users mu ON mu.id = $${n}
+   WHERE mc.thread_id = ${threadAlias}.id AND (mc.assignee IS NULL OR ${namedIn('mc.assignee', ['mu.email', 'mu.name'])}))`;
 
 /**
  * "threads this caller may read": the mailboxes above, plus a thread that
@@ -556,5 +583,5 @@ export function mailboxClause(scope, params, { alias = 'a', kind = 'read' } = {}
 export function threadClause(scope, params, { accountAlias = 'a', threadAlias = 't' } = {}) {
   if (scope.unrestricted) return '';
   const mailbox = mailboxClause(scope, params, { alias: accountAlias, kind: 'read' });
-  return `(${mailbox} OR ${entityCase(threadAlias, params.length, { sharedAs: 'false' })})`;
+  return `(${mailbox} OR ${inboxAssignee(threadAlias, params.length)} OR ${entityCase(threadAlias, params.length, { sharedAs: 'false' })})`;
 }

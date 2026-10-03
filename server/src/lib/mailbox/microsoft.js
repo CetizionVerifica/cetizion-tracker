@@ -35,7 +35,10 @@ const SCOPES = [
   'Mail.Send',
   'Mail.Send.Shared',
 ];
-const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId,webLink';
+const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId,webLink,isRead,flag,importance';
+
+/** Folders synced for display only (docs/inbox-outlook-plan.md §3.5): shown in the Inbox, never read by the email readers or routed to the team queue. */
+export const DISPLAY_ONLY_FOLDERS = ['deleteditems', 'junkemail'];
 
 /**
  * Folders never read, with everything under them: spam, deleted mail,
@@ -89,9 +92,15 @@ export function microsoftProvider(account, tokens) {
   const who = `/users/${encodeURIComponent(account.email)}`;
   async function graph(path, { method = 'GET', body, headers = {} } = {}) {
     current = await freshTokens(current);
+    // Immutable ids (docs/inbox-outlook-plan.md §3.5): a message keeps its id
+    // when it is moved between folders, so a move is a change to one row,
+    // not a new message. A message stored under its old, mutable id is
+    // known again by its Internet Message-ID and its row takes the new id
+    // (sync.js ingestOne).
+    const prefer = ['IdType="ImmutableId"', headers.Prefer].filter(Boolean).join(', ');
     const r = await fetch(path.startsWith('http') ? path : `${GRAPH}${path}`, {
       method, signal: AbortSignal.timeout(30_000),
-      headers: { Authorization: `Bearer ${current.access_token}`, ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
+      headers: { Authorization: `Bearer ${current.access_token}`, ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers, Prefer: prefer },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (r.status === 204 || r.status === 202) return null;
@@ -106,19 +115,41 @@ export function microsoftProvider(account, tokens) {
     preview: m.bodyPreview, from: person(m.from), to: (m.toRecipients || []).map(person).filter(Boolean), cc: (m.ccRecipients || []).map(person).filter(Boolean),
     sent_at: m.sentDateTime || m.receivedDateTime, has_attachments: Boolean(m.hasAttachments), draft: Boolean(m.isDraft),
     web_link: m.webLink || null,
+    // Outlook's state of the message (076): facts, stored as they come.
+    folder_id: m.parentFolderId || null, is_read: typeof m.isRead === 'boolean' ? m.isRead : null,
+    flag_status: m.flag?.flagStatus || null, importance: m.importance || null,
+    bcc: (m.bccRecipients || []).map(person).filter(Boolean),
   });
 
-  /** Every folder under `url` (a mailFolders or childFolders list), depth first, each page followed. */
-  async function walk(url, visit) {
+  /**
+   * Every folder under `url` (a mailFolders or childFolders list), depth
+   * first, each page followed. Child folders are asked for the same
+   * fields as the top level (`select`), so a nested folder carries its
+   * name, parent and counts like any other.
+   */
+  async function walk(url, visit, select = 'id,childFolderCount') {
     for (let next = url; next;) {
       const j = await graph(next);
       for (const f of j.value || []) {
         if (await visit(f) === false) continue;
-        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=id,childFolderCount&$top=100`, visit);
+        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=${select}&$top=100`, visit, select);
       }
       next = j['@odata.nextLink'] || null;
     }
   }
+  /** The ids of the well-known folders, asked once per provider: they never change. */
+  let wellKnownIds = null;
+  const wellKnown = () => {
+    wellKnownIds ||= (async () => {
+      const known = new Map();
+      for (const name of ['inbox', 'sentitems', 'drafts', 'archive', 'deleteditems', 'junkemail', 'outbox']) {
+        const f = await graph(`${who}/mailFolders/${name}?$select=id`).catch(() => null);
+        if (f?.id) known.set(f.id, name);
+      }
+      return known;
+    })().catch((err) => { wellKnownIds = null; throw err; });
+    return wellKnownIds;
+  };
   /** The ids of SKIPPED_FOLDERS and of every folder under them; asked once per provider. */
   let skippedIds = null;
   const skipped = () => {
@@ -158,6 +189,40 @@ export function microsoftProvider(account, tokens) {
       return ['inbox', ...others, 'sentitems'];
     },
     /**
+     * Every folder of the mailbox as Outlook has it, with Outlook's own
+     * counts, for the folder switcher (076). Well-known names are read off
+     * the folders that answer by name; everything else is a plain folder.
+     */
+    async folderList() {
+      const known = await wellKnown();
+      const select = 'id,parentFolderId,displayName,childFolderCount,unreadItemCount,totalItemCount';
+      const out = [];
+      await walk(`${who}/mailFolders?$select=${select}&$top=100`, (f) => {
+        out.push({ folder_id: f.id, parent_id: f.parentFolderId || null, display_name: f.displayName || '', well_known: known.get(f.id) || null, unread_count: f.unreadItemCount || 0, total_count: f.totalItemCount || 0 });
+        return true;
+      }, select);
+      return out;
+    },
+    /**
+     * The immutable id of each message id given (Graph translateExchangeIds),
+     * as a Map old → new. Ids Graph cannot translate (a message gone since)
+     * are left out. At most 1,000 per call, as Graph allows.
+     */
+    async translateIds(ids) {
+      const out = new Map();
+      for (let i = 0; i < ids.length; i += 1000) {
+        const j = await graph(`${who}/translateExchangeIds`, { method: 'POST', body: { inputIds: ids.slice(i, i + 1000), sourceIdType: 'restId', targetIdType: 'restImmutableEntryId' } });
+        for (const r of j?.value || []) if (r.sourceId && r.targetId) out.set(r.sourceId, r.targetId);
+      }
+      return out;
+    },
+    /** The attachments of a message, metadata only (076): the file stays in Outlook. */
+    async attachmentList(providerId) {
+      const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size,isInline,contentId`);
+      return (j.value || []).filter((a) => !a['@odata.type'] || a['@odata.type'] === '#microsoft.graph.fileAttachment')
+        .map((a) => ({ provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: a.contentId || null }));
+    },
+    /**
      * New and changed messages in a folder since the last delta link, at
      * most `maxPages` pages of 50 at a time.
      *
@@ -170,14 +235,19 @@ export function microsoftProvider(account, tokens) {
      */
     async delta(folder, deltaLink, sinceIso, { maxPages = 50 } = {}) {
       let url = deltaLink || `${who}/mailFolders/${folder}/messages/delta?$select=${SELECT}${sinceIso ? `&$filter=receivedDateTime+ge+${sinceIso}` : ''}`;
-      const messages = []; let next = null;
+      const messages = []; const removed = []; let next = null;
       for (let page = 0; page < maxPages && url; page += 1) {
         const j = await graph(url, { headers: { Prefer: 'odata.maxpagesize=50, outlook.body-content-type="html"' } });
-        for (const m of j.value || []) if (!m['@removed'] && !m.isDraft) messages.push(toMessage(m));
+        for (const m of j.value || []) {
+          // Gone from this folder (076): a move shows it again elsewhere, a
+          // delete does not; sync.js decides after ten minutes.
+          if (m['@removed']) removed.push(m.id);
+          else if (!m.isDraft) messages.push(toMessage(m));
+        }
         url = j['@odata.nextLink'] || null;
         next = j['@odata.deltaLink'] || next;
       }
-      return { messages, deltaLink: url || next || deltaLink, more: Boolean(url) };
+      return { messages, removed, deltaLink: url || next || deltaLink, more: Boolean(url) };
     },
     /** One message by its id; a 404 when the mailbox no longer has it under that id. */
     async message(providerId) {
@@ -245,7 +315,8 @@ export function microsoftProvider(account, tokens) {
     },
     async subscribe(folder, clientState) {
       const expires = new Date(Date.now() + 4200 * 60 * 1000).toISOString(); // under Graph's mail limit of ~7 days
-      return graph('/subscriptions', { method: 'POST', body: { changeType: 'created', notificationUrl: ms().webhookUrl, lifecycleNotificationUrl: ms().webhookUrl, resource: `${who}/mailFolders('${folder}')/messages`, expirationDateTime: expires, clientState } });
+      // Read, flag and move changes made in Outlook arrive in seconds too (076), not only new mail.
+      return graph('/subscriptions', { method: 'POST', body: { changeType: 'created,updated,deleted', notificationUrl: ms().webhookUrl, lifecycleNotificationUrl: ms().webhookUrl, resource: `${who}/mailFolders('${folder}')/messages`, expirationDateTime: expires, clientState } });
     },
     async renew(subscriptionId) {
       const expires = new Date(Date.now() + 4200 * 60 * 1000).toISOString();
