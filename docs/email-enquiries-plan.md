@@ -17,6 +17,29 @@ place. It was written against commit `24af059`.
 
 ---
 
+## As built: where the code differs from this plan (read first)
+
+Phase 1 was built in #163 and changed by #173, #176, #179, #180 and #181.
+The plan below is kept as the design record. **Where it disagrees with
+this table, the code and this table are right.** The phase 2 plan
+([email-po-plan.md](email-po-plan.md)) has the matching table for POs and
+invoices.
+
+| Plan section | The plan says | The code does |
+| --- | --- | --- |
+| §1, §3.7 Sync | Every 5 minutes; Inbox and Sent Items | Every **60 s** (`MAIL_AUTOSYNC_SECONDS`, `autoSync.js`) under a per-mailbox lock. It reads **every folder**: Inbox, then the others, then Sent Items, leaving out Junk, Deleted, Drafts, Outbox, Conversation History and Sync Issues. Push subscriptions still cover Inbox and Sent Items only. A mailbox that feeds an Inbox **keeps all mail**, marking what the filters would have dropped in `filtered_as` (068). |
+| §3.2 Prefilter | Rules discard replies, later messages, bulk, billing and record numbers before the AI | With `email_read_everything` on (073, the default), **every email goes to the AI**, replies included. The old screen is used again only when rules end up deciding: no AI, the daily ceiling reached, or an AI error. The "first message" rule skips `filtered_as` mail. While the PO reader is on, an email waits for it, and is read for enquiries only once it is decided `not_po`. |
+| §3.6 Backfill | Inbox first, then Sent Items; 2 AI calls in flight; ceiling 1,500 | One **oldest-first stream over all folders** (`'all'`, 073), so the guarantee that "every emailed enquiry exists before the quotations are judged" no longer holds. 4 in flight (`email_reader_concurrency`, 1–8). Ceiling **5,000** (072). |
+| §3.3 Input size | About 4,000 characters | 10,000 characters of email text. The enquiry reader also reads up to 12,000 characters of PDF text from **client attachments** (no OCR), which §2 had ruled out. |
+| §3.9.2 PDF | 10 pages; OCR under about 200 characters | 40 pages; OCR under 50 characters (`pdfQuotation.js`). |
+| §3.9.7, §4.1 PDF totals | Kept in a "Read from PDF" revision snapshot | Kept on the decision row: `printed_subtotal`, `printed_tax_total`, `printed_total`. `quotation_totals()` reads them. |
+| §4.1 Migration | `065_email_enquiries.sql` | **`066_email_enquiries.sql`** (065 is report categories). It also adds `direction`, `ai_calls`, `mailbox_enquiry_backfills.folder` and `reached`. Later: 068 (`filtered_as`), 069, 070 (`email_reader_queue`), 072 (ceiling and concurrency), 073 (read everything). |
+| §5 Files | `quotationPdf.js`; creation inside `autoEnquiry.js` | `pdfQuotation.js`; `enquiryFromEmail.js`. Also `readAttachment.js`, `readLimits.js`, `promptRules.js`, `inLanes.js`, `readerQueue.js`, `autoSync.js`. |
+| §6.2, §6.5 What leaves the server, volume | Nothing for internal mail, robots or replies; a handful of calls a day | Every email in every read folder, except senders on the "Never sync" list, goes to the AI provider, often twice (enquiry and PO readers). |
+| §6.3 Re-run | Clears `not_enquiry` decisions | Also keeps today's AI-judged rows. It has `pos` and `invoices` variants, and no longer holds the next reader back (069). |
+
+---
+
 ## 0. Decisions already made by the product owner
 
 | Question | Decision |

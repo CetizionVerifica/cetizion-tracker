@@ -40,7 +40,7 @@ use that link.
 
 | Existing piece | Where | What it does today | Gap |
 | --- | --- | --- | --- |
-| Connected mailboxes | `connected_accounts` (migration 031), `routes/mailboxes.js` | Any signed-in user can connect a Microsoft 365 mailbox via OAuth. Sync runs every 5 min (`lib/mailbox/sync.js`). | Ownership is `username text` — whoever was signed in when it was connected — not a `users.id`. Matching is by lower-cased name or email strings. |
+| Connected mailboxes | `connected_accounts` (migration 031), `routes/mailboxes.js` | Any signed-in user can connect a Microsoft 365 mailbox via OAuth. Sync runs every 60 s and reads every folder (`lib/mailbox/sync.js`, `autoSync.js`; #173, #181). | Ownership is `username text` — whoever was signed in when it was connected — not a `users.id`. Matching is by lower-cased name or email strings. |
 | Mailbox list / settings API | `GET/PATCH /api/mailboxes`, `readable()`, `mayAdminister()` | Admin sees all. Sales sees shared mailboxes plus ones whose `username` matches their email or name. | String matching breaks when a name changes, and an admin connecting on someone's behalf makes the admin the owner. |
 | Settings UI | `web/src/pages/SettingsArea.jsx:104`, `web/src/pages/Mailboxes.jsx` | Settings → Mailboxes. | **`adminOnly: true`** — a salesperson cannot reach the page to connect their own mailbox at all. |
 | Owner of auto-created records | `lib/mailbox/autoEnquiry.js` `ownerFor()` / `salesUser()` | A personal mailbox's enquiries/quotations go to the salesperson matched by `account.username`, then `account.email`. | Same string matching; fails when the mailbox address differs from the login address. |
@@ -76,9 +76,9 @@ nowhere else (see §4.2).
 
 ---
 
-## 3. Schema — migration `068_mailbox_owner.sql`
+## 3. Schema — migration `074_mailbox_owner.sql`
 
-`067` is reserved by [email-po-plan.md](email-po-plan.md). Mirror the change
+Migrations 067–073 are taken on `main` (phase 2 and the readers); `074` is the next free number. Mirror the change
 in `server/db/schema.sql`, and keep `scripts/ci/check-migrations.sh` green.
 Safe on a live database; running it twice changes nothing.
 
@@ -166,10 +166,13 @@ names remains for mailboxes.
 2. Shared mailbox → unchanged (conversation assignee, then fallback).
 
 The same owner flows into quotations created from a PDF
-(`autoQuotation.js`) and, when phase 2 lands, POs and invoices read from
-email (`email-po-plan.md`) — that plan should call this same `ownerFor`.
+(`autoQuotation.js`). Phase 2 is now built, and it works differently (see
+§10): a PO takes **its quotation's** owner, and `ownerFor` is used only for
+a quotation created from a PO.
 
-Sync itself (`sync.js`) needs no change: it already reads per account.
+Sync itself (`sync.js`) reads per account, but since #181 it reads
+**every folder** of a personal mailbox. See §10 for the decision this
+needs.
 
 ### 4.5 Lifecycle
 
@@ -269,7 +272,7 @@ confirm each sees only their own mail and records, and the admin sees all.
 Each step is one reviewable PR (or one commit on a single branch), tests
 green at each step:
 
-1. Migration 068 + `schema.sql` + backfill diagnostics. No behaviour change.
+1. Migration 074 + `schema.sql` + backfill diagnostics. No behaviour change.
 2. `mailboxScope` helper and switch `routes/mailboxes.js` to it; connect
    flow writes `user_id`; owner-conflict refusal. Tests 2, 4, 5.
 3. Close the leaks: timeline, search, MCP, portal audit. Test 2 (timeline).
@@ -280,7 +283,7 @@ green at each step:
 
 ## 9. Files touched (expected)
 
-- `server/db/migrations/068_mailbox_owner.sql`, `server/db/schema.sql`,
+- `server/db/migrations/074_mailbox_owner.sql`, `server/db/schema.sql`,
   `server/db/diagnostics/mailbox-owner-backfill.sql`
 - `server/src/auth/ownership.js`
 - `server/src/routes/mailboxes.js`, `timeline.js`, `search.js`, `mcp.js`,
@@ -290,3 +293,64 @@ green at each step:
 - `server/test/mailboxOwnership.test.js` and existing authz tests
 - `web/src/pages/SettingsArea.jsx`, `web/src/pages/Mailboxes.jsx`, users admin page
 - `docs/security.md`, `docs/email-enquiries.md`, `PROGRESS.md`
+
+---
+
+## 10. Changes needed now that phase 2 and #173–#181 are on `main`
+
+This plan was written against `ced2701`. Since then, phase 2 (POs and
+invoices from email) and the reader changes (#173, #175–#177, #179–#181)
+have merged. Check these before building:
+
+1. **Migration number.** 067–073 are taken; this plan now uses **074**.
+2. **Every folder and every email of a personal mailbox go to the AI.**
+   With `email_read_everything` (073) on, a salesperson's own mailbox has
+   every folder read (Archive and personal subfolders included). Every
+   email in it, including colleague and robot mail, is sent to the AI
+   provider, often twice (enquiry and PO readers). The visibility default
+   proposed in §0 (`subject`) limits what is **stored**, not what is
+   **read**.
+   - **Decision needed:** should personal mailboxes read Inbox and Sent
+     Items only, with "read everything" applying to shared mailboxes?
+     Recommended: **yes**, with a per-mailbox switch the owner controls.
+     This needs a `read_scope` column on `connected_accounts` in 074, and
+     a check in `sync.js` `foldersOf()` and the readers' `forReaders`.
+3. **AI cost when several people connect.** Each new mailbox starts a
+   365-day backfill of all its folders, sharing one 5,000-a-day ceiling.
+   Several salespeople connecting in one week could hold every mailbox's
+   backfill back for days.
+   - Add a per-mailbox share of the ceiling, or a queue that backfills one
+     new mailbox at a time.
+   - Show "N days left to read" on Settings → My mailbox.
+4. **Who owns a record read from two mailboxes.** When the same email is
+   in A's and B's mailboxes, the second copy is only `linked`
+   (`joinElsewhere` in `autoEnquiry.js` and `autoPurchaseOrder.js`). The
+   record belongs to whoever's mailbox was read first, not to "the owner
+   of the mailbox it came from". Rule to add: if exactly one of the
+   mailboxes holding the email belongs to a salesperson, that person owns
+   the record; otherwise keep the first reader's owner.
+5. **PO and invoice owners.** §4.4 assumed phase 2 would call `ownerFor`.
+   As built, a PO takes its quotation's owner, and invoice decisions have
+   no owner. Keep that: a PO belongs to the deal. Scope the review queues
+   by the **mailbox owner** as well as the quotation owner. Today
+   `routes/poReview.js` and `routes/invoiceReview.js` scope sales users
+   by quotation owner only, so a review item from a salesperson's own
+   mailbox with no suggested quotation is visible to admins only.
+6. **Routes to add to §4.6's inventory:**
+   - `poReview`, `invoiceReview`;
+   - `POST /api/mailboxes/:id/auto-enquiries/rerun` (with its `kind`);
+   - the reader-queue failure notices to admins.
+7. **Lifecycle (§4.5).** `disconnect()` clears the enquiry backfill row
+   and the reader queue, but not `mailbox_po_backfills` or
+   `mailbox_invoice_backfills`, and does not reset the `past_*_read_at`
+   markers. Clear those too, or a reconnected mailbox never re-reads its
+   past POs and invoices.
+8. **No conflict with #173.** Keep-all applies only to mailboxes that feed
+   an Inbox, which matches "shared mailboxes unchanged". Thread scoping
+   must still allow for `filtered_as` (internal or robot) threads in
+   shared mailboxes.
+9. **The Outlook-style Inbox**
+   ([inbox-outlook-plan.md](inbox-outlook-plan.md)) shows each person's
+   own mailbox in the Inbox. It depends on this plan's `user_id` ownership
+   and access helper (§4.2), so build this plan first.
+

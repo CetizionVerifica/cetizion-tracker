@@ -27,6 +27,39 @@ place. It was written against commit `fd93cc1`.
 
 ---
 
+## As built: where the code differs from this plan (read first)
+
+Phase 2 was built in #166–#172. It was then changed by #173 (keep all
+mail, sync every 60 s), #175 (reading order), #176 (never lose mail),
+#177 (no guessing the client, PO or currency), #179–#180 (reading
+capacity and prompts) and #181 (read every email in every folder). The
+plan below is kept as the design record. **Where it disagrees with this
+table, the code and this table are right.**
+
+| Plan section | The plan says | The code does |
+| --- | --- | --- |
+| §3.1, §3.10.1 Candidates | Free rules first: PO words + PDF, invoice words, external recipients only, not bulk | With `email_read_everything` on (the default, migration 073), **every inbound email goes to the PO reader**, and every outbound email with a PDF that is not a proforma goes to the invoice reader (`poDetect.js` `poPrefilter`, `invoiceDetect.js`). Colleague and robot mail reaches the readers too (`rules.js` `forReaders`). The rules in §3.1 apply only when that setting is off. |
+| §3.9, §3.10.6, §4 Folders | PO backfill reads Inbox only; invoice backfill reads Sent Items only | Both read **every folder** as one oldest-first stream (`page('all')`), leaving out Junk, Deleted, Drafts, Outbox, Conversation History and Sync Issues. A message moved between folders is recognised by its Internet Message-ID and read once. |
+| §3.9 Order | The PO pass waits for the phase 1 backfill to finish | Each reader **follows the one before it** (enquiry → PO → invoice) up to its `reached` date. Live mail is queued in `email_reader_queue` (070) in the order PO → invoice → enquiry, with up to 8 attempts and backoff, then admins are told. |
+| §3.1 Hand-over | A PO email is never judged for enquiries | An email judged **not a PO** is handed to the enquiry reader. Most inbound mail therefore costs **two AI calls**. |
+| §4 Methods | `method = 'rules'` allowed | With no AI configured, the PO reader **reads nothing**. |
+| §3.6, §6 Failures | "Left undecided" | PO outcome **`retry`** with `retry_since`: read again by `pos.backfill`, then sent to review as `unreadable` after 7 days. Invoice outcome **`waiting`**, with what was read kept in `reading jsonb` so a retry needs no second AI call. Both tables have `settled_at`; `decided_at` stays the reading time. |
+| §4 Review reasons | The lists in §4 | Also, for POs: `no_value`, `amounts_not_in_pdf`, `totals_do_not_add_up`, `bad_currency`, `currency_mismatch`, `no_currency`. For invoices: `no_invoice_no`, `amounts_not_in_pdf`, `totals_do_not_add_up`, `bad_currency`, `bad_date`, `client_unknown` (067, 071). |
+| §3.2, §3.5 Currency | Taken from the PO | A PO with no printed currency takes its quotation's. A different currency goes to review. With no quotation at all, it is INR only if the buyer has a GSTIN, otherwise review `no_currency` (#177). |
+| §3.3 rule 2 Thread | Any thread linked to the quotation | Only our outbound quotation decision, or a thread whose **subject names** the quotation (#177). |
+| §3.6 Same PO number | Linked by normalised number | If the buyer is unknown, the thread must be on that PO. The same number on another client's PO goes to review as `company_mismatch`. |
+| §3.10.3 Invoice → PO | Company and amount as fallback | An invoice that cites a PO or project the tracker lacks **waits**. The amount rule applies only when the invoice cites nothing. If the client is unknown, a PO number needs the thread to confirm it, otherwise review `client_unknown`. |
+| §4 Index | Unique normalised PO-number index | Non-unique `purchase_orders_po_number_norm_idx`. Duplicates are refused in code. |
+| §3.8, §4 Webhooks | Suppressed in `webhook_record_events()` with `SET LOCAL` | Suppressed in `webhook_emit()`, using `set_config(…, true)`. |
+| §6 AI cost | About one call per PO candidate, under a 1,500 ceiling | Every inbound email is read, often twice, under a **5,000** shared daily ceiling (072). The readers work 4 emails at once (`email_reader_concurrency`, 1–8). Limits (`readLimits.js`): 120,000 characters of document text, 10,000 of email text, 40 PDF pages, an 8,192-token answer, and 120 s for a text read or 180 s for OCR. The prompts share `promptRules.js` and the service catalogue. |
+| §5 Files and routes | `routes/purchaseOrders*.js` / `workflow.js` | `routes/poReview.js` and `routes/invoiceReview.js`. Invoice review is at `/api/payment-stages/invoice-review…`, with `/record`. There is also `POST /api/purchase-orders/:poNumber/email-read-checked`. Re-run takes `kind: 'pos' \| 'invoices'`. New tables: `email_ai_calls` (reviewer re-reads) and `email_reader_queue`. |
+| §6 What leaves the server | Only candidates' text | **Every** email in every read folder, except senders on the "Never sync" list, with its PDFs. Update `docs/security.md` to say this. |
+
+Small clean-up for the next code change: the `pos.backfill` job description
+in `server/src/jobs.js` still says "past year of inbox mail".
+
+---
+
 ## 0. Carried over from phase 1, and assumed unchanged
 
 These phase 1 decisions also hold here:
