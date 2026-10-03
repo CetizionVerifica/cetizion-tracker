@@ -86,7 +86,7 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
   const before = ctx.aiUsed;
   const read = await readWithAi(account, { m, c: { direction: 'outbound', external: [] } }, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf',
-    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })) }),
+    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })), ourNames: settings.ourNames, ourGstin: settings.ourGstin }),
   });
   await countAiCalls(ctx.aiUsed - before, 'invoice_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'The invoice could not be read again: enter it from the email.' } });

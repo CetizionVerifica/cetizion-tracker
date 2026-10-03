@@ -51,7 +51,9 @@ export async function prepare(account, cand, verdict, ctx, chat) {
 
   const emailText = mainText(m.body_html || '', MAX_EMAIL_TEXT);
   const scanned = chosen && (text || '').replace(/\s+/g, '').length < SCANNED_BELOW;
-  const { system, user } = extractionPrompt({ pdfText: scanned ? null : text, emailSubject: m.subject, emailText, sentAt: m.sent_at });
+  const { system, user } = extractionPrompt({
+    pdfText: scanned ? null : text, emailSubject: m.subject, emailText, sentAt: m.sent_at, services: ctx.settings.services, ourNames: ctx.settings.ourNames,
+  });
   ctx.aiUsed += 1;
   let raw;
   try {

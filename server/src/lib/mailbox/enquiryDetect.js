@@ -16,6 +16,7 @@
 import { BULK, BULK_SENDER, domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
 import { poPrefilter } from './poDetect.js';
 import { MAX_EMAIL_TEXT } from './readLimits.js';
+import { RULES, serviceRule, whoWeAre } from './promptRules.js';
 import { SERVICE_LINES, serviceLinesFor, OTHER_SERVICE, NO_SERVICE } from '../serviceLines.js';
 
 export const KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
@@ -202,21 +203,41 @@ export function rulesVerdict(input) {
  * What the AI is asked. Only the sender, the subject, the new part of the
  * body and the text of any PDFs the client attached go out; whether the
  * company is known and has open deals, never what they are worth.
+ *
+ * Everything an enquiry is created with is asked for in this one call
+ * (enquiryFromEmail.js): the client, the contact, the service spelt as the
+ * catalogue spells it, the sector and the country, so nobody has to open
+ * the enquiry to finish it.
+ *
+ * options.services   the active catalogue's names (settings.services);
+ *                    without them, the report's service lines
+ * options.ourNames, options.ourGstin   who "us" is
  */
-export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {}) {
-  const lines = SERVICE_LINES.map((l) => l.name).join('; ');
+export function buildPrompt(input, { companyKnown = false, openDeals = 0, services = [], ourNames = [], ourGstin = null } = {}) {
   const system = [
     'You read one business email for Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, and say what it is.',
+    whoWeAre({ ourNames, ourGstin }),
     'Answer with one JSON object and nothing else:',
     '{"kind": one of ' + KINDS.map((k) => `"${k}"`).join(' | ') + ', "confidence": 0 to 1, "company_name": string|null, "contact_name": string|null, "contact_phone": string|null, "service": string|null, "sector": string|null, "country": string|null, "summary": string|null, "quoted_amount": number|null, "currency": string|null}',
-    'new_enquiry: a client or prospect asking us for new work: a quote, a proposal, pricing, an audit, a certification, an assessment, a consultation.',
-    'quotation_sent: an email WE send to a client carrying our quotation or proposal.',
-    'purchase_order: a client placing an order with us: a purchase order, work order, letter of intent or signed contract.',
-    'reply_or_followup: about work already under discussion. vendor_or_sales_pitch: someone selling to us. billing: invoices, payments, statements.',
-    'For inbound mail the company and contact are the sender\'s. For quotation_sent they are the RECIPIENT\'s, from the addressee and the letter, never from our own signature or letterhead.',
-    `service: one of these service lines when it fits, otherwise the client's own words: ${lines}.`,
-    'summary: one short sentence about what is asked, naming no one beyond the company. quoted_amount and currency only for quotation_sent, only if stated.',
-    'Never invent a value: use null when the email does not say.',
+    'kind, by what the email asks for or carries, not by its words alone:',
+    '- new_enquiry: a client or prospect asking us for new work: a quote, a proposal, pricing, an RFQ or tender invitation, an audit, a certification, an assessment, a consultation. A reply in an old thread that asks for a different, new service is new_enquiry too.',
+    '- quotation_sent: an email WE send to a client carrying our quotation or proposal, attached or in the body.',
+    '- purchase_order: a client placing an order with us: a purchase order, work order, letter of intent or award, or signed contract.',
+    '- reply_or_followup: about work or a quote already under discussion: questions, clarifications, documents, scheduling, negotiation.',
+    '- billing: invoices, payments, remittances, statements, TDS certificates.',
+    '- vendor_or_sales_pitch: someone selling to us, or asking to be our vendor or partner.',
+    '- marketing: newsletters, promotions, webinar and event invitations, mail sent to many.',
+    '- job_application: CVs, internship or job requests.',
+    '- spam: phishing, scams or junk. other: anything else, including automatic notifications and mail between our own people.',
+    'company_name and contact_name: for inbound mail the sender\'s, from their signature, their letter or the From name; for quotation_sent the RECIPIENT\'s, from the addressee and the letter. Never ours. contact_phone: their phone or mobile as printed in their signature.',
+    `${serviceRule(services, { fallback: SERVICE_LINES.map((l) => l.name) })} Several services: the main one first, comma-separated.`,
+    'sector: the client\'s industry in two or three words ("Steel", "Textiles and apparel", "Automotive components", "Pharmaceuticals") when the email, the signature or the company\'s name makes it plain; else null.',
+    'country: the client\'s country in English ("India", "Germany"), from their address, their phone code (+91 is India) or a country domain (.in, .co.uk); else null.',
+    'summary: one short sentence about what is asked, naming no one beyond the company.',
+    'quoted_amount and currency: only for quotation_sent, and only when the email or the quotation states the total: the grand total as a plain number without commas (147500), and the currency\'s ISO code (INR for ₹ or Rs.).',
+    RULES.names,
+    RULES.missing,
+    'confidence: how sure you are of the kind. A detail the email does not give is null and does not lower it.',
   ].join('\n');
   const user = [
     `Direction: ${input.direction === 'outbound' ? 'sent by us' : 'received by us'}`,

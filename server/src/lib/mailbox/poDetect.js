@@ -16,6 +16,7 @@ import { parseAmount } from './pdfQuotation.js';
 import { BULK, BULK_SENDER, addr, domainOf } from './rules.js';
 import { splitReference } from '../../import/parse.js';
 import { MAX_DOCUMENT_TEXT as MAX_PDF_TEXT, MAX_EMAIL_TEXT, MAX_LINES } from './readLimits.js';
+import { READING_RULES, serviceRule, whoWeAre } from './promptRules.js';
 
 export const DOCUMENT_TYPES = ['purchase_order', 'work_order', 'loi', 'contract', 'amendment', 'cancellation', 'other'];
 
@@ -108,10 +109,17 @@ export function poPrefilter(message, facts = {}) {
  * What the AI is asked. The email's new text and the PO's text go out, for
  * PO candidates only (security.md); for a scanned PO the file goes instead,
  * and pdfText is null.
+ *
+ * One call reads everything registration needs (checkPo, stagesFromTerms,
+ * autoPurchaseOrder.js): the lines without tax rows, so they add up to the
+ * basic value; the payment clause word for word, so its stages are read
+ * from it; and each line's service spelt as the catalogue spells it, so the
+ * service's payment terms and onboarding templates apply.
  */
-export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from }) {
+export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from, services = [], ourNames = [], ourGstin = null }) {
   const system = [
     'You read one document a client sent to Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, and say whether it is a purchase order to us, and what it says.',
+    whoWeAre({ ourNames, ourGstin }),
     'Answer with one JSON object and nothing else:',
     '{"is_purchase_order": boolean, "document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1,',
     ' "po_number": string|null, "po_date": "YYYY-MM-DD"|null, "amendment_no": integer,',
@@ -122,14 +130,21 @@ export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receive
     ' "basic_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null, "gst_extra": boolean,',
     ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null,',
     ' "project_manager": {"name": string|null, "email": string|null}}',
-    'The BUYER is the client who issues the order. The VENDOR (supplier, contractor, service provider) is who it is addressed to; for a PO to us that is Cetizion Verifica.',
-    'document_type: purchase_order, work_order, loi (letter of intent or award) or contract for a new order; amendment for a revised or amended order ("Amendment 1", "Rev 2"); cancellation for a cancelled order; other for anything else (a quotation, an invoice, a remittance, a reminder).',
-    'po_number: the order\'s own number as printed, never our quotation number. our_quotation_ref: our quotation or offer number the order cites ("Ref: your offer no. …"), else null.',
-    'amendment_no: 0 unless the document says it is an amendment or revision; then its number.',
-    'Copy amounts exactly as printed, as strings ("2,50,000.00"); do not compute or convert them. basic_value is before tax; total_value includes tax. gst_extra: true when the order says GST or taxes are extra or as applicable, with no tax amount printed.',
-    'payment_terms_text: the payment terms as printed. credit_days: the days to pay after an invoice, if stated.',
-    'Use null for anything the document does not say. Never invent a value.',
-    'confidence: how sure you are the document is an order to Cetizion Verifica and that you read its number, date and values correctly.',
+    'The BUYER is the client who issues the order: its name, GSTIN and state from the buyer, "Bill to" or letterhead block. The VENDOR (supplier, contractor, service provider) is who it is addressed to; for a PO to us that is Cetizion Verifica.',
+    'is_purchase_order: true for an order placed with us (purchase_order, work_order, loi, contract), including one raised through a procurement portal (Ariba, Coupa, SAP); false otherwise.',
+    'document_type: purchase_order, work_order, loi (letter of intent or award) or contract for a new order; amendment for a revised or amended order ("Amendment 1", "Rev 2"); cancellation for a cancelled order; other for anything else (a quotation, an invoice, a remittance, a reminder, an email that only promises an order).',
+    'po_number: the order\'s own number as printed, without its label ("PO No.: 4500012345" gives "4500012345"). Never our quotation number, a purchase requisition, an RFQ, a vendor code or a GSTIN. When the email itself is the order, the number it gives for it.',
+    'po_date: the order\'s date as printed, not the email\'s. amendment_no: 0 unless the document says it is an amendment or revision; then its number.',
+    'our_quotation_ref: our quotation or offer number the order cites ("Ref: your offer no. …", "Quotation No."), as printed; ours look like CTZ/QT/2026/014. Else null.',
+    'buyer.contact_name and contact_email: the client\'s person who raised, signed or is named as contact for the order. buyer.state: the Indian state of the buyer\'s billing address.',
+    'lines: one entry per priced line of the order, in order. Never a GST, tax, subtotal, round-off or grand-total row. qty: a number, 1 when not printed. rate: the unit rate before tax; amount: the line\'s value before tax; both as printed.',
+    serviceRule(services, { field: 'Each line\'s service' }),
+    'basic_value: the order value before tax (Sub-total, Basic value, Taxable value). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the grand total including tax. gst_extra: true when the order says GST or taxes are extra or as applicable, with no tax amount printed.',
+    'payment_terms_text: the payment terms copied word for word, every percentage and milestone in them ("30% advance against PO, 40% on submission of draft report, 30% on final report"), from the terms annexure if that is where they are. Leave out tax and penalty clauses.',
+    'credit_days: the days to pay after an invoice ("within 45 days of invoice", "45 days credit", "Net 45" give 45), if stated; never a delivery period.',
+    'delivery_date: the date the work must be completed or delivered by, only when printed as a date. project_manager: the client\'s person named as engineer-in-charge, coordinator or project manager for the work.',
+    ...READING_RULES,
+    'confidence: how sure you are the document is an order to Cetizion Verifica and that you read its number, date and values correctly. A field it does not print is null and does not lower confidence; doubt about what a printed value says does.',
   ].join('\n');
   const user = [
     `Email received ${String(receivedAt || '').slice(0, 10)} from ${from?.name || ''} <${from?.email || ''}>. Subject: ${emailSubject || ''}`,
