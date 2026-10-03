@@ -351,6 +351,20 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Update log
 
+- 2026-10-03: Groundwork for the **Inbox that works like Outlook**
+  (`feat/inbox-outlook`, step 1 of `docs/inbox-outlook-plan.md`; nothing
+  changes on screen yet). The tracker now records what Outlook knows about
+  each stored email — its folder, whether it is read, its flag and
+  importance — and keeps that current: something read, flagged, moved or
+  deleted in Outlook shows the same way here within a minute, instead of
+  being missed. Each mailbox's folders are stored with Outlook's own unread
+  counts, and what is attached to a message is recorded (names withheld
+  for a mailbox that stores metadata only). Three access gaps are closed: a
+  team Inbox with named members is theirs alone (names matched whatever
+  their capitals), a conversation in somebody else's queue cannot be
+  changed, and a thread in a members-only mailbox is not open to the whole
+  team.
+
 - 2026-10-03: The **Daily Sales Briefing** and the **Weekly Sales MIS** now
   come from the tracker (`feat/mis-reports`, the plan in
   `docs/mis-reports-plan.md`, the user doc in `docs/mis-reports.md`). Both

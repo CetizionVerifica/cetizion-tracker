@@ -26,6 +26,16 @@ folder switcher** above the list, and **action buttons** in the reading
 pane, which personal mailboxes and two-way sync need. A full folder pane
 and command bar can follow later (§9).
 
+**Status (3 October 2026):** step 0 (#184) is merged. **Step 1, sync
+foundations, is built** on `feat/inbox-outlook` as migration `076`: the
+message state columns, `mail_folder_list`, `email_attachments`, known
+messages updated rather than skipped, the removed-then-reappears rule, the
+display-only sync of Deleted Items and Junk, immutable ids (a message stored
+under its old id takes the new one when it is seen again, so the one-off
+translate script in §3.5 was not needed), subscriptions for created, updated
+and deleted, and the three access gaps in §1. The UI is unchanged. Steps
+2–5 follow, each its own PR.
+
 This file is written for the person (or Claude Code session) who builds it.
 Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md),
 [per-user-mailboxes-plan.md](per-user-mailboxes-plan.md) (**build that

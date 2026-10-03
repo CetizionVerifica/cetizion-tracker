@@ -12,7 +12,7 @@ import pg from 'pg';
 import { query, transaction } from '../../db.js';
 import { config } from '../../config.js';
 import { applyVisibility, classify, cleanHtml, domainOf, forReaders, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
-import { microsoftConfigured, microsoftProvider, SKIPPED_FOLDERS } from './microsoft.js';
+import { DISPLAY_ONLY_FOLDERS, microsoftConfigured, microsoftProvider, SKIPPED_FOLDERS } from './microsoft.js';
 import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
@@ -21,6 +21,11 @@ import { enqueue, retryQueued, runReaders } from './readerQueue.js';
 /** The two folders every mailbox has, read by name; push notifications come from these. */
 export const FOLDERS = ['inbox', 'sentitems'];
 const key = () => config.microsoft.tokenKey;
+
+/** Replaceable in tests: the clock the ten-minute "moved or deleted" rule reads. */
+export const clock = { now: () => new Date() };
+/** How long a message reported gone from its folder may stay unseen before it counts as deleted (docs/inbox-outlook-plan.md §3.5). */
+export const REMOVED_GRACE_MS = 10 * 60_000;
 
 /**
  * Whether this mailbox's every folder is read, or Inbox and Sent Items only
@@ -64,6 +69,9 @@ export const testPaging = { size: 50 };
 const testAttachments = new Map();
 /** Every message pushed, by id, for message(): the mailbox keeps mail after delta has handed it over. */
 const testMessages = new Map();
+/** The folder list a test mailbox reports (076); see testProvider.folderList. */
+const testFolders = new Map();
+export function pushTestFolders(accountId, folders) { testFolders.set(accountId, folders); }
 export function pushTestMessages(accountId, messages) {
   for (const m of messages) {
     if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
@@ -81,12 +89,28 @@ function testProvider(account) {
     const box = testBoxes.get(account.id) || [];
     const mine = box.filter((m) => !m.history && (m.folder || 'inbox') === folder);
     testBoxes.set(account.id, box.filter((m) => m.history || (m.folder || 'inbox') !== folder));
-    return mine;
+    // A message pushed with `removed: true` is one Outlook reports gone
+    // from that folder; the rest come with the folder they are in, so a
+    // move or a read in "Outlook" is a push of the same id again (076).
+    return {
+      messages: mine.filter((m) => !m.removed).map((m) => ({ folder_id: m.folder_id || folder, ...m })),
+      removed: mine.filter((m) => m.removed).map((m) => m.provider_id),
+    };
   };
   const sent = (m) => pushTestMessages(account.id, [{ folder: 'sentitems', provider_id: `sent-${crypto.randomUUID()}`, from: { email: account.email, name: account.display_name }, sent_at: new Date().toISOString(), ...m }]);
   return {
     tokens: () => null,
-    async delta(folder, deltaLink) { return { messages: take(folder), deltaLink: deltaLink || `test:${folder}` }; },
+    async delta(folder, deltaLink) { const { messages, removed } = take(folder); return { messages, removed, deltaLink: deltaLink || `test:${folder}` }; },
+    /** The folders a test pushed with pushTestFolders, else Inbox and Sent Items with no counts. */
+    async folderList() {
+      return testFolders.get(account.id) || [
+        { folder_id: 'inbox', parent_id: null, display_name: 'Inbox', well_known: 'inbox', unread_count: 0, total_count: 0 },
+        { folder_id: 'sentitems', parent_id: null, display_name: 'Sent Items', well_known: 'sentitems', unread_count: 0, total_count: 0 },
+      ];
+    },
+    async attachmentList(providerId) {
+      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null }));
+    },
     async message(providerId) {
       const m = testMessages.get(`${account.id}:${providerId}`);
       if (!m) throw Object.assign(new Error('Not found'), { status: 404 });
@@ -255,16 +279,31 @@ export async function ingestRules(account, db = { query }, { forInbox = false } 
  * "no matching client": the enquiry reader (autoEnquiry.js) passes the
  * company it has just created, once the email has turned out to be one.
  */
-export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null } = {}) {
+export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null, hooks = true } = {}) {
   // Kept only because the mailbox feeds an Inbox (ingestRules): the hooks
   // are told which filter would have dropped it.
   const filtered = c.filtered || null;
   // By id, or as the same email under another id: every folder is read
-  // (073), and a message moved from one to another comes back with a new id.
+  // (073), and a message stored under its old, mutable id comes back under
+  // its immutable one (076).
   const { rows: [dupe] } = await db.query(
-    `SELECT id FROM email_messages WHERE account_id = $1
+    `SELECT id, provider_id FROM email_messages WHERE account_id = $1
         AND (provider_id = $2 OR ($3::text IS NOT NULL AND lower(internet_message_id) = lower($3)))`, [account.id, m.provider_id, m.internet_message_id || null]);
-  if (dupe) return { skipped: 'already synced' };
+  if (dupe) {
+    // Known: Outlook's state of it moved, not the message (076). The folder,
+    // read flag, flag and importance are overwritten with what the provider
+    // says; a message seen again is not deleted, whatever delta said before.
+    // The readers are not told again: only new mail goes to them.
+    const { rows: [updated] } = await db.query(
+      `UPDATE email_messages SET provider_id = $2,
+              folder_id = COALESCE($3, folder_id), is_read = COALESCE($4, is_read), flag_status = COALESCE($5, flag_status), importance = COALESCE($6, importance),
+              web_link = COALESCE($7, web_link), removed_seen_at = NULL, removed_at = NULL
+        WHERE id = $1 AND (provider_id IS DISTINCT FROM $2 OR folder_id IS DISTINCT FROM $3::text OR is_read IS DISTINCT FROM $4::boolean
+                           OR flag_status IS DISTINCT FROM $5::text OR importance IS DISTINCT FROM $6::text OR removed_seen_at IS NOT NULL OR removed_at IS NOT NULL)
+        RETURNING id`,
+      [dupe.id, m.provider_id, m.folder_id || null, m.is_read ?? null, m.flag_status || null, m.importance || null, m.web_link || null]);
+    return { skipped: 'already synced', updated: Boolean(updated) };
+  }
   let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
   const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts });
   if (!who.company_id) {
@@ -294,13 +333,34 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
   const row = applyVisibility({ subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html }, account.visibility);
   const { rows: [saved] } = await db.query(
     `INSERT INTO email_messages (account_id, thread_id, provider_id, internet_message_id, direction, from_email, from_name, to_emails, cc_emails,
-                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by, filtered_as, web_link)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by, filtered_as, web_link,
+                                 folder_id, is_read, flag_status, importance, bcc_emails)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING *`,
     [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
       (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
-      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy, filtered, m.web_link || null]);
-  for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null, filtered });
+      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy, filtered, m.web_link || null,
+      m.folder_id || null, m.is_read ?? null, m.flag_status || null, m.importance || null, m.bcc?.length ? m.bcc.map((p) => p.email) : null]);
+  // Mail synced for display only (Deleted Items, Junk) is stored and shown,
+  // but opens no conversation in the team queue (076).
+  if (hooks) for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null, filtered });
   return { thread, message: saved, newThread };
+}
+
+/**
+ * What is attached to a stored message, metadata only (076): the file stays
+ * in Outlook and is fetched when somebody downloads it. The names are
+ * withheld for a mailbox that stores metadata only — a file name is content.
+ */
+async function storeAttachmentList(db, account, message, provider) {
+  if (!message.has_attachments || !provider?.attachmentList) return;
+  let list;
+  try { list = await provider.attachmentList(message.provider_id); } catch { return; }
+  for (const a of list || []) {
+    await db.query(
+      `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id`,
+      [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null]);
+  }
 }
 
 /**
@@ -314,10 +374,10 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
  * stored message in the same transaction that stores it — so an email
  * whose reading fails, or never starts, is read again.
  */
-export async function ingest(account, messages, { sentBy = null } = {}) {
+export async function ingest(account, messages, { sentBy = null, provider = null, displayOnly = false } = {}) {
   const judge = await ingestRules(account, undefined, { forInbox: true });
   const portals = await portalSenders();
-  const result = { stored: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [] };
+  const result = { stored: 0, updated: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [] };
   const skip = (why) => { result.skipped[why] = (result.skipped[why] || 0) + 1; };
   // The PO reader (autoPurchaseOrder.js) looks at every inbound message
   // that might hold an order, later ones in a thread included: that is
@@ -345,8 +405,9 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
     const c = judge(m);
     // What the readers see of it: while reading everything, mail between
     // our own people and from automatic senders too (rules.js forReaders).
-    const seen = forReaders(c, judge.readAll);
-    if (c.skip) {
+    // Nothing from a display-only folder (Deleted Items, Junk) goes to them.
+    const seen = displayOnly ? null : forReaders(c, judge.readAll);
+    if (c.skip && !displayOnly) {
       skip(c.skip);
       if (seen) {
         // Not stored, so not queued in a transaction, as for "no matching client" below.
@@ -365,8 +426,10 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
     let r;
     try {
       r = await transaction(async (db) => {
-        const stored = await ingestOne(db, account, m, c, { sentBy });
+        const stored = await ingestOne(db, account, m, c, { sentBy, hooks: !displayOnly });
         if (stored.skipped) return stored;
+        await storeAttachmentList(db, account, stored.message, provider);
+        if (displayOnly) return stored;
         // Stored for the Inbox only (ingestRules). The readers see it as they
         // would had the filters dropped it: while reading everything, as any
         // email (forReaders); otherwise a portal's notification still goes
@@ -385,8 +448,8 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
       throw err;
     }
     if (r.skipped) {
-      skip(r.skipped);
-      if (r.skipped === 'no matching client') {
+      if (r.updated) result.updated += 1; else skip(r.skipped);
+      if (r.skipped === 'no matching client' && !displayOnly) {
         // Not stored, so not queued in a transaction: should this fail, the
         // delta link has not moved and the next sync hands it over again.
         const cand = { m, c, threadId: null, newThread: false, dropped: true };
@@ -465,7 +528,11 @@ async function syncAccountUnlocked(id) {
     if (retried) out.retried = retried;
     const listed = readsAllFolders(account, (await settingsFor({ query })).readAll) ? await foldersOf(account, provider) : FOLDERS;
     const folders = listed || FOLDERS;
-    for (const folder of folders) {
+    // Deleted Items and Junk are synced for display only (076): they appear
+    // in the Inbox's folder switcher, and a message deleted in Outlook is
+    // seen arriving there (a move) rather than vanishing.
+    const displayOnly = DISPLAY_ONLY_FOLDERS.filter((f) => !folders.includes(f));
+    for (const folder of [...folders, ...displayOnly]) {
       const { rows: [f] } = await query(
         `INSERT INTO mail_folders (account_id, folder) VALUES ($1,$2) ON CONFLICT (account_id, folder) DO UPDATE SET folder = EXCLUDED.folder RETURNING *`, [account.id, folder]);
       const since = f.delta_link ? null : new Date(Date.now() - account.import_days * 864e5).toISOString();
@@ -480,19 +547,31 @@ async function syncAccountUnlocked(id) {
         folderLists.delete(account.id);
         continue;
       }
-      const { messages, deltaLink } = read;
+      const { messages, deltaLink, removed = [] } = read;
       // Which folder each message came from, for the Inbox's routing.
-      const r = await ingest(account, messages.map((m) => ({ ...m, folder: m.folder || folder })));
+      const r = await ingest(account, messages.map((m) => ({ ...m, folder: m.folder || folder })), { provider, displayOnly: displayOnly.includes(folder) });
       candidates.push(...r.candidates);
       poCandidates.push(...r.poCandidates);
       out.stored += r.stored;
+      out.updated = (out.updated || 0) + r.updated;
+      // Gone from this folder: noted, not acted on. Seen again in another
+      // folder it is a move (ingestOne clears the mark); ten minutes
+      // unseen, a delete (below).
+      if (removed.length) {
+        await query(`UPDATE email_messages SET removed_seen_at = COALESCE(removed_seen_at, $3) WHERE account_id = $1 AND provider_id = ANY($2) AND removed_at IS NULL`, [account.id, removed, clock.now()]);
+      }
       for (const [k, v] of Object.entries(r.skipped)) out.skipped[k] = (out.skipped[k] || 0) + v;
       await query('UPDATE mail_folders SET delta_link = $2 WHERE id = $1', [f.id, deltaLink]);
     }
     // Folders no longer listed (deleted, moved under Deleted Items, or every
     // other folder once reading everything is off) stop being read; their
     // cursor goes with them. Not after a listing that failed.
-    if (listed) await query(`DELETE FROM mail_folders WHERE account_id = $1 AND folder <> ALL($2) AND subscription_id IS NULL`, [account.id, folders]);
+    if (listed) await query(`DELETE FROM mail_folders WHERE account_id = $1 AND folder <> ALL($2) AND subscription_id IS NULL`, [account.id, [...folders, ...displayOnly]]);
+    const { rowCount: deleted } = await query(
+      `UPDATE email_messages SET removed_at = $2 WHERE account_id = $1 AND removed_at IS NULL AND removed_seen_at IS NOT NULL AND removed_seen_at <= $3`,
+      [account.id, clock.now(), new Date(clock.now().getTime() - REMOVED_GRACE_MS)]);
+    if (deleted) out.deleted = deleted;
+    await refreshFolderList(account, provider);
     await saveTokens(account, provider);
     await query('UPDATE connected_accounts SET last_synced_at = now(), last_error = NULL WHERE id = $1', [account.id]);
     // After the mail is stored, never inside its transactions: judging an
@@ -512,6 +591,29 @@ async function syncAccountUnlocked(id) {
     out.error = err.message;
   }
   return out;
+}
+
+/**
+ * The mailbox's folders as Outlook has them, with Outlook's own counts
+ * (076): what the Inbox's folder switcher shows. A folder deleted in
+ * Outlook disappears; its messages arrive as removed and move to Deleted
+ * Items. A listing that fails leaves the last one standing.
+ */
+export async function refreshFolderList(account, provider) {
+  if (!provider.folderList) return;
+  let list;
+  try { list = await provider.folderList(); } catch (err) { console.warn(`[mail.sync] ${account.email}: folder list not read:`, err.message); return; }
+  await transaction(async (db) => {
+    for (const f of list) {
+      await db.query(
+        `INSERT INTO mail_folder_list (account_id, folder_id, parent_id, display_name, well_known, unread_count, total_count, synced_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+         ON CONFLICT (account_id, folder_id) DO UPDATE SET parent_id = EXCLUDED.parent_id, display_name = EXCLUDED.display_name, well_known = EXCLUDED.well_known,
+           unread_count = EXCLUDED.unread_count, total_count = EXCLUDED.total_count, synced_at = now()`,
+        [account.id, f.folder_id, f.parent_id || null, f.display_name || '', f.well_known || null, f.unread_count || 0, f.total_count || 0]);
+    }
+    await db.query('DELETE FROM mail_folder_list WHERE account_id = $1 AND folder_id <> ALL($2)', [account.id, list.map((f) => f.folder_id)]);
+  });
 }
 
 /**

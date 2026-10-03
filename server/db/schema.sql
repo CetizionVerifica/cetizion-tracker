@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1905,12 +1905,50 @@ CREATE TABLE IF NOT EXISTS email_messages (
   filtered_as          text,
   -- Outlook's own link to the message (075): "Open in Outlook".
   web_link             text,
+  -- Outlook's state of the message (076, docs/inbox-outlook-plan.md §3.1):
+  -- facts from the provider, overwritten on each sync, never computed.
+  folder_id            text,
+  is_read              boolean,
+  flag_status          text CHECK (flag_status IN ('notFlagged','flagged','complete')),
+  importance           text CHECK (importance IN ('low','normal','high')),
+  bcc_emails           text[],
+  -- Reported gone from its folder by delta; a move shows it again in
+  -- another folder, ten minutes without that is a delete (removed_at).
+  removed_seen_at      timestamptz,
+  removed_at           timestamptz,
   created_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
 
 CREATE INDEX IF NOT EXISTS email_messages_thread_idx ON email_messages (thread_id, sent_at);
 CREATE INDEX IF NOT EXISTS email_messages_internet_message_idx ON email_messages (account_id, lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_messages_folder_idx ON email_messages (account_id, folder_id, sent_at DESC) WHERE removed_at IS NULL;
+
+-- Each mailbox's folders as Outlook has them, with Outlook's own counts (076).
+CREATE TABLE IF NOT EXISTS mail_folder_list (
+  account_id     int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  folder_id      text NOT NULL,
+  parent_id      text,
+  display_name   text NOT NULL,
+  well_known     text,
+  unread_count   int NOT NULL DEFAULT 0,
+  total_count    int NOT NULL DEFAULT 0,
+  synced_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (account_id, folder_id)
+);
+
+-- What is attached to a message: metadata only, the file stays in Outlook (076).
+CREATE TABLE IF NOT EXISTS email_attachments (
+  id            serial PRIMARY KEY,
+  message_id    int NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+  provider_id   text NOT NULL,
+  name          text,
+  content_type  text,
+  size_bytes    int,
+  is_inline     boolean NOT NULL DEFAULT false,
+  content_id    text,
+  UNIQUE (message_id, provider_id)
+);
 
 -- Addresses and domains never synced (newsletters, personal contacts).
 CREATE TABLE IF NOT EXISTS email_blocklist (

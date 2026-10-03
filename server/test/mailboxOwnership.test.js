@@ -306,6 +306,32 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
     await as(admin)('patch', `/api/mailboxes/${boxB.id}/owner`).send({ user_id: salesB.user.id });
   });
 
+  test('a shared mailbox with named Inbox members is theirs: membership is case-folded, the assignee counts, and the conversation update is scoped', async () => {
+    // The team Inbox names B by her name, typed with capitals (plan §1).
+    await db.query(`UPDATE inboxes SET members = ARRAY['Bea Sales'] WHERE account_id = $1`, [shared.id]);
+    const teamThread = await thread(shared, { subject: 'For the sales team' });
+    const { rows: [conv] } = await db.query(
+      `INSERT INTO inbox_conversations (inbox_id, thread_id, from_email, status, assignee) VALUES ((SELECT id FROM inboxes WHERE account_id = $1), $2, 'buyer@x.com', 'open', 'bea sales') RETURNING id`, [shared.id, teamThread.id]);
+    try {
+      const forB = await as(salesB)('get', `/api/mail/threads/${teamThread.id}`);
+      assert.equal(forB.status, 200, 'a member, whatever the case her name was typed in');
+      const forA = await as(salesA)('get', `/api/mail/threads/${teamThread.id}`);
+      assert.equal(forA.status, 404, 'neither a member nor the assignee: not there');
+      assert.ok(!(await as(salesA)('get', '/api/mailboxes')).body.data.some((m) => m.id === shared.id), 'nor listed as readable');
+
+      const patchA = await as(salesA)('patch', `/api/inbox/${conv.id}`).send({ priority: 'high' });
+      assert.equal(patchA.status, 404, 'a conversation in somebody else\'s queue is not there to change');
+      const patchB = await as(salesB)('patch', `/api/inbox/${conv.id}`).send({ assignee: 'Sam Sales' });
+      assert.equal(patchB.status, 200, JSON.stringify(patchB.body));
+
+      // Assigned to A: the thread is A's to read now, though A is no member.
+      const forAssigned = await as(salesA)('get', `/api/mail/threads/${teamThread.id}`);
+      assert.equal(forAssigned.status, 200, JSON.stringify(forAssigned.body));
+    } finally {
+      await db.query(`UPDATE inboxes SET members = '{}' WHERE account_id = $1`, [shared.id]);
+    }
+  });
+
   test('a review item from A\'s own mailbox is A\'s to see even with no quotation suggested', async () => {
     await db.query(
       `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, received_at, from_email, outcome, method, ai_calls, review_reason, mode)
