@@ -260,6 +260,11 @@ session is **401**, before any of these is considered.
 | `GET /api/lookups` | any |  |
 | `GET /api/lookups/next-id/:kind` | any |  |
 | **/api/mail** | | |
+| `GET /api/mail/folders/:accountId/:folderId/messages` | any | Scoped: mailbox-owner, mailbox-delegate. |
+| `GET /api/mail/mailboxes` | any | The caller's own mailboxes and the shared ones they are named on, with their folders; an admin sees every mailbox's folder list. |
+| `GET /api/mail/messages/:id` | any | What is stored, under the mailbox's visibility. The owner of a personal mailbox that stores less reads the body live from the provider; nothing is stored. |
+| `GET /api/mail/messages/:id/attachments/:attId` | any | Streamed from the provider with nosniff and a 25 MB cap; from a mailbox that stores metadata or subjects only, the owner alone. |
+| `GET /api/mail/messages/:id/inline/:contentId` | any | A cid: image of the message, images only, under the same rule as attachments. |
 | `POST /api/mail/notifications` | public | graph-client-state — Microsoft Graph posts here and has no session. A notification whose clientState does not match the stored subscription secret is ignored. |
 | `GET /api/mail/origin` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/threads` | any | Scoped: mailbox-owner, mailbox-delegate. |

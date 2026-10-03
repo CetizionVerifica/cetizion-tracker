@@ -38,8 +38,24 @@ cursor Graph refuses is dropped and the folder read again), subscriptions
 for created, updated and deleted, and the three access gaps in §1. The
 "ten minutes unseen means deleted" rule applies only to a mailbox that
 syncs every folder; one held to Inbox and Sent Items records a message as
-gone from a synced folder, never as deleted. The UI is unchanged. Steps 2–5
-follow, each its own PR.
+gone from a synced folder, never as deleted. **Step 2, reading, is built**
+on `feat/inbox-reading` (no migration): the routes in `routes/mail.js`
+(`/api/mail/mailboxes`, `/folders/:accountId/:folderId/messages`,
+`/messages/:id`, its `/attachments/:attId` and `/inline/:contentId`), the
+owner's live read, attachments streamed with `nosniff` and a 25 MB cap,
+`cid:` images through the inline route, and `/mail/threads/:id` now
+carrying To, Cc, Bcc (on our mail), state, `web_link` and the attachment
+list. The page gains the mailbox and folder switcher as its title, the
+folder view (`?mb=&f=&t=`, with Unread and Flagged filters and the search
+in `?q=`), and in every message To/Cc with Details, importance and flag
+marks, the attachment strip and Open in Outlook; the message view moved
+into `web/src/components/mail/`. Three choices made on the way: Drafts
+and Outbox stay out of the switcher until compose (step 4) lists drafts
+live; mail synced before 076 (no folder stored) shows in the Inbox or Sent
+Items by its direction until a sync hands it over again; and an admin
+looking at somebody else's personal mailbox downloads nothing from one
+that stores metadata or subjects only (§8 default 4). Steps 3–5 follow,
+each its own PR.
 
 This file is written for the person (or Claude Code session) who builds it.
 Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md),

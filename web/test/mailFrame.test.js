@@ -78,3 +78,32 @@ test('a message with no body still produces a valid document', () => {
     assert.doesNotMatch(doc, /null|undefined/, `${String(empty)} leaked into the document`);
   }
 });
+
+// --------------------------------------------------- inline images (docs/inbox-outlook-plan.md §3.3)
+import { inlineBase, rewriteCid } from '../src/lib/mailFrame.js';
+
+test('a cid: image is pointed at the message\'s own inline route, brackets and quoting notwithstanding', () => {
+  const out = rewriteCid('<p><img src="cid:logo@acme"> <img src=\'cid:<sig@x>\'> <img alt="x" src=cid:plain></p>', 42);
+  assert.ok(out.includes(`src="${inlineBase(42)}logo%40acme"`), out);
+  assert.ok(out.includes(`src="${inlineBase(42)}sig%40x"`), 'the angle brackets some clients write are not part of the name');
+  assert.ok(out.includes(`src="${inlineBase(42)}plain"`), 'an unquoted src is rewritten too');
+  assert.doesNotMatch(out, /cid:/, 'nothing is left for the browser to fail on');
+});
+
+test('only an <img> src is rewritten; a cid: anywhere else stays for the policy to refuse', () => {
+  const html = '<a href="cid:x">link</a><div style="background:url(cid:y)">t</div><img src="https://a.example/p.png">';
+  assert.equal(rewriteCid(html, 7), html);
+  assert.equal(rewriteCid('<img src="cid:a">', null), '<img src="cid:a">', 'no message id, no rewriting');
+});
+
+test('the policy opens the one inline path of that message, and nothing else of ours', () => {
+  const p = framePolicy(false, 42);
+  const img = p.split('; ').find((d) => d.startsWith('img-src'));
+  assert.ok(img.includes(inlineBase(42)), img);
+  assert.doesNotMatch(img, /'self'/, "'self' would open every route of ours to the message");
+  assert.doesNotMatch(p, /"/);
+  assert.equal(framePolicy(false), framePolicy(false, null), 'without a message id the policy is as before');
+  const doc = frameDoc('<img src="cid:logo">', false, { messageId: 42 });
+  assert.ok(doc.includes(`${inlineBase(42)}logo`), 'the document carries the rewritten src');
+  assert.ok(doc.includes(`content="${framePolicy(false, 42)}"`));
+});

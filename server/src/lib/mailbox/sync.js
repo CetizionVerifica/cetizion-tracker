@@ -138,6 +138,14 @@ function testProvider(account) {
     async attachments(providerId) {
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
     },
+    /** One attachment's bytes, by the id attachmentList gave it; a 404 for one the message does not have. */
+    async attachmentStream(providerId, attachmentId) {
+      const list = testAttachments.get(`${account.id}:${providerId}`) || [];
+      const i = list.findIndex((a, n) => (a.provider_id || `att-${n}`) === attachmentId);
+      if (i < 0) throw Object.assign(new Error('Not found'), { status: 404 });
+      const content = Buffer.from(list[i].content || '');
+      return { stream: new Blob([content]).stream(), size: content.length };
+    },
     /** Inbox, the other folders its mail was pushed to, Sent Items; never the skipped ones (microsoft.js). */
     async folders() {
       const others = (testBoxes.get(account.id) || []).map((m) => m.folder).filter((f) => f && !FOLDERS.includes(f) && !SKIPPED_FOLDERS.includes(f));
