@@ -66,7 +66,7 @@ export async function poSettings(db = { query }) {
     ourGstin: String(s.company_gstin || '').trim() || null,
     // The same "us" and the same daily AI ceiling as phase 1.
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit,
-    concurrency: shared.concurrency,
+    concurrency: shared.concurrency, services: shared.services,
   };
 }
 
@@ -265,7 +265,10 @@ export async function readPo(account, cand, ctx, chat, emailText) {
   return readWithAi(account, cand, ctx, chat, {
     // A PO's schedule of rates is often its own PDF: the annexures go too.
     rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf', annexures: true,
-    prompt: ({ pdfText }) => buildPoPrompt({ pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from }),
+    prompt: ({ pdfText }) => buildPoPrompt({
+      pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from,
+      services: ctx.settings.services, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+    }),
   });
 }
 

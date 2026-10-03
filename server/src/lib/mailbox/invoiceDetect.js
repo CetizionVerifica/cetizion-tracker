@@ -17,6 +17,7 @@ import { amountInText, near, parseAmount } from './pdfQuotation.js';
 import { isUs } from './enquiryDetect.js';
 import { STATUS } from '../statuses.js';
 import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT } from './readLimits.js';
+import { READING_RULES, whoWeAre } from './promptRules.js';
 
 /** An invoice number as compared: case, spaces and dashes ignored. */
 export const normaliseInvoiceNo = (s) => String(s || '').toLowerCase().replace(/[\s-]/g, '');
@@ -75,10 +76,16 @@ export function rankInvoicePdfs(files) {
   return [...files].sort((a, b) => score(b) - score(a) || (b.size || 0) - (a.size || 0));
 }
 
-/** What the AI is asked: the invoice's text (or the file, for a scan) and the covering email. */
-export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [] }) {
+/**
+ * What the AI is asked: the invoice's text (or the file, for a scan) and the
+ * covering email. One call reads what checkInvoice and pickStage need: the
+ * three amounts as printed, the PO it cites to match it, and the stage
+ * wording to pick which payment stage it bills.
+ */
+export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [], ourNames = [], ourGstin = null }) {
   const system = [
     'You read one document that Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, emailed to a client, and say whether it is our tax invoice, and what it says.',
+    whoWeAre({ ourNames, ourGstin }),
     'Answer with one JSON object and nothing else:',
     '{"document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1, "revised_or_cancelled": boolean,',
     ' "invoice_no": string|null, "invoice_date": "YYYY-MM-DD"|null,',
@@ -86,13 +93,15 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
     ' "po_reference": string|null, "project_reference": string|null, "quotation_reference": string|null, "currency": "INR"|...,',
     ' "taxable_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null,',
     ' "stage_hint": string|null, "due_date": "YYYY-MM-DD"|null}',
-    'The SELLER issues the invoice; for our invoice that is Cetizion Verifica. The BUYER is the client it is addressed to.',
-    'document_type: tax_invoice for a GST tax invoice; proforma for a proforma invoice or PI; credit_note or debit_note for those; other for anything else.',
-    'revised_or_cancelled: true when the document says it is revised, cancelled, a replacement or a duplicate of an earlier invoice.',
-    'po_reference: the client\'s PO or order number the invoice cites ("PO No.", "Your order ref"). project_reference: a project number like PRJ-2026-014, if printed.',
-    'stage_hint: what part of the order the invoice is for, as printed ("50% advance", "Balance", "Final", "Milestone 2"), else null.',
-    'Copy amounts exactly as printed, as strings ("1,47,500.00"); do not compute or convert them. taxable_value is before tax; total_value includes tax.',
-    'Use null for anything the document does not say. Never invent a value.',
+    'The SELLER issues the invoice; for our invoice that is Cetizion Verifica, with our GSTIN. The BUYER is the client it is addressed to: the "Bill to" or "Buyer" block, with that block\'s GSTIN.',
+    'document_type: tax_invoice for a GST tax invoice; proforma for a proforma invoice or PI; credit_note or debit_note for those; other for anything else (a quotation, a statement, a reminder, a receipt).',
+    'revised_or_cancelled: true when the document says it is revised, cancelled, a replacement or a duplicate of an earlier invoice. "Original for recipient" and "Duplicate for transporter" copy marks are not that.',
+    'invoice_no: the number as printed, without its label; ours look like CVPL/26-27/0013. invoice_date: the invoice\'s date, not the email\'s. due_date: only a due date printed as a date; never worked out from the terms.',
+    'po_reference: the client\'s PO or order number the invoice cites ("PO No.", "Your order ref"), without its label. project_reference: a project number like PRJ-2026-014, if printed. quotation_reference: our quotation number it cites (CTZ/QT/2026/014), if printed.',
+    'stage_hint: what part of the order the invoice is for, in the document\'s words ("50% advance", "Balance", "Final", "Milestone 2: draft report"), from the line description or a note; else null.',
+    'taxable_value: the value before tax (Taxable value, Sub-total). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the invoice total including tax (Grand total, Total invoice value), never an amount after TDS.',
+    ...READING_RULES,
+    'confidence: how sure you are the document is our tax invoice and that you read its number, date and amounts correctly. A field it does not print is null and does not lower confidence; doubt about what a printed value says does.',
   ].join('\n');
   const user = [
     `Email sent ${String(sentAt || '').slice(0, 10)} to ${to.map((p) => `${p.name || ''} <${p.email}>`).join(', ')}. Subject: ${emailSubject || ''}`,

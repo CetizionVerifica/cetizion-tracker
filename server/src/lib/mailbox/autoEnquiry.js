@@ -41,13 +41,16 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency'];
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
 
 export async function enquirySettings(db = { query }) {
   const { rows } = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [SETTING_KEYS]);
   const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  // The catalogue's names go into every reader's prompt, so a service is
+  // spelt the way the catalogue spells it and links to it (promptRules.js).
+  const { rows: services } = await db.query('SELECT name FROM services WHERE active ORDER BY sort_order, name');
   return {
     enabled: String(s.auto_enquiries_enabled ?? 'true').trim().toLowerCase() !== 'false',
     minConfidence: num(s.auto_enquiry_min_confidence, 0.7),
@@ -58,6 +61,8 @@ export async function enquirySettings(db = { query }) {
     backfillDays: num(s.auto_enquiry_backfill_days, 365),
     quotationMinConfidence: num(s.auto_quotation_min_confidence, 0.8),
     ourNames: [s.company_name].filter(Boolean),
+    ourGstin: String(s.company_gstin || '').trim() || null,
+    services: services.map((r) => r.name),
     internalDomains: String(s.internal_email_domains || '').split(',').map((d) => d.trim()).filter(Boolean),
     // The PO reader (autoPurchaseOrder.js) takes PO emails while it is on.
     poReader: String(s.auto_po_enabled ?? 'true').trim().toLowerCase() !== 'false',
@@ -217,7 +222,9 @@ async function classifyEmail(account, cand, input, ctx) {
       companyKnown = Boolean(t?.company_id); openDeals = t?.open || 0;
     }
     const attachmentText = await attachedText(account, cand, ctx);
-    const { system, user } = buildPrompt({ ...input, attachmentText }, { companyKnown, openDeals });
+    const { system, user } = buildPrompt({ ...input, attachmentText }, {
+      companyKnown, openDeals, services: ctx.settings.services, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+    });
     try {
       const v = parseVerdict(await chat(system, user, { maxTokens: 1000, timeoutMs: 60_000 }), ctx.settings);
       return { ...v, ai_calls: 1 };

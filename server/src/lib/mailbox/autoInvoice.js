@@ -182,7 +182,9 @@ export async function decideInvoice(account, cand, ctx) {
 
   const read = await readWithAi(account, cand, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf', requirePdf: true,
-    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external }),
+    prompt: ({ pdfText }) => buildInvoicePrompt({
+      pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+    }),
   });
   if (read.error) {
     ctx.errors += 1;
