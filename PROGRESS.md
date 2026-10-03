@@ -351,6 +351,26 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Update log
 
+- 2026-10-03: The email readers now read every email in every Outlook
+  folder (Archive and the folders people file client mail into included),
+  replies too; only Junk, Deleted Items, Drafts and Outbox are left out.
+  Nothing is screened out by the free rules any more: the AI decides what
+  each email is. Mail between colleagues and from automatic senders is
+  read too, but stays out of the shared Inbox's reply clock. Addresses on
+  the "Never sync" list stay out. A message moved between folders is
+  stored and read once. One new setting, on by default, puts the old
+  screening back if AI use needs cutting. More AI calls per day as a
+  result: each inbound email can cost two (PO and enquiry readers).
+
+- 2026-10-03: The email readers' instructions to the AI rewritten so an
+  enquiry, PO, invoice or quotation read from email is complete in one
+  reading: Indian dates read day first, amounts copied as printed, services
+  named as the catalogue names them (so a PO picks up its payment terms and
+  onboarding templates), and payment terms copied whole for the stages. The
+  bulk import is unchanged. Once deployed, each mailbox is re-run under
+  Settings → Mailboxes (enquiries, then POs, then invoices) so past mail is
+  read with the new instructions; nothing already made is made twice.
+
 - 2026-10-02: Enquiries from email (PR #161's plan, all six steps) built on
   `feat/email-enquiries`: live detection, the backfill of past mail,
   quotations read from PDFs, and the admin and review screens. On by

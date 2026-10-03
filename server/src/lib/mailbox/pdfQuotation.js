@@ -8,9 +8,12 @@
  */
 import { extractText, getDocumentProxy } from 'unpdf';
 import { isUs } from './enquiryDetect.js';
+import { READING_RULES, serviceRule, whoWeAre } from './promptRules.js';
 
 export const MAX_PDF_BYTES = 15 * 1024 * 1024;
-export const MAX_PAGES = 10;
+import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT, MAX_PAGES } from './readLimits.js';
+
+export { MAX_PAGES };
 /**
  * Below this many characters of text (spaces aside) a PDF is a scan and
  * needs OCR. A scan yields next to none; even a one-page quotation
@@ -170,24 +173,36 @@ export function checkExtraction(raw, { emailDate, sourceText = null, minConfiden
   };
 }
 
-/** What the AI is asked: the PDF's text (or the file, for a scan) and the covering email. */
-export function extractionPrompt({ pdfText: text, emailSubject, emailText, sentAt }) {
+/**
+ * What the AI is asked: the PDF's text (or the file, for a scan) and the
+ * covering email. One call reads the whole quotation as autoQuotation.js
+ * creates it: lines that add up (linesAddUp), each with its service spelt
+ * as the catalogue spells it, and the number without its revision mark so
+ * a revision finds the quotation it revises.
+ */
+export function extractionPrompt({ pdfText: text, emailSubject, emailText, sentAt, services = [], ourNames = [] }) {
   const system = [
     'You read a quotation that Cetizion Verifica (an Indian sustainability, ESG and certification consultancy) sent to a client, and extract it.',
+    whoWeAre({ ourNames }),
     'Answer with one JSON object and nothing else:',
     '{"quotation_no_printed": string|null, "revision": integer, "quotation_date": "YYYY-MM-DD"|null, "valid_until": "YYYY-MM-DD"|null,',
     ' "client": {"company_name": string|null, "gstin": string|null, "state": string|null, "country": string|null, "contact_name": string|null},',
     ' "currency": "INR"|..., "lines": [{"description": string, "qty": number, "unit": string|null, "rate": "amount as printed", "discount_percent": number, "gst_rate": number, "service": string|null}],',
     ' "subtotal": "amount as printed"|null, "tax_total": "amount as printed"|null, "total": "amount as printed"|null, "terms": string|null, "confidence": 0 to 1}',
-    'The client is the ADDRESSEE, never the letterhead: Cetizion Verifica is the sender, not the client.',
-    'Copy amounts exactly as printed, as strings ("2,50,000.00"); do not compute or convert them.',
-    'revision: 0 unless the document says Rev 1, R2 and so on. Use null for anything the document does not say. Never invent a value.',
-    'confidence: how sure you are the document is a quotation and that you read its lines and totals correctly.',
+    'The client is the ADDRESSEE, never the letterhead: Cetizion Verifica is the sender, not the client. client: from the "To" or "Kind attn." block: the company, its GSTIN, the Indian state of its address (the place of supply), its country, and the person it is addressed to.',
+    'quotation_no_printed: our number as printed, without its label and without any revision mark ("CTZ/QT/2026/014 Rev 1" gives "CTZ/QT/2026/014" and revision 1). revision: 0 unless the document says Rev 1, R2 and so on.',
+    'quotation_date: the date printed on the quotation. valid_until: the validity date printed; when validity is given in days ("valid for 30 days"), the quotation date plus those days; else null.',
+    'lines: one entry per priced line, in order. Never a GST, tax, subtotal, discount-total, round-off or grand-total row. description: the line\'s text as printed. qty: a number, 1 when not printed. unit: as printed ("site", "man-day", "engagement"), else null. rate: the unit price before discount and tax, as printed. discount_percent: the line\'s discount in percent, 0 when none. gst_rate: the line\'s GST percent, else the one rate the document applies to all lines (18), else null.',
+    serviceRule(services, { field: 'Each line\'s service' }),
+    'subtotal: the total before tax. tax_total: the total GST printed as one figure; null when only CGST and SGST are printed separately. total: the grand total including tax.',
+    'terms: the payment and commercial terms as printed (payment schedule, taxes, travel and expenses, validity), in up to a paragraph.',
+    ...READING_RULES,
+    'confidence: how sure you are the document is a quotation and that you read its lines and totals correctly. A field it does not print is null and does not lower confidence; doubt about what a printed value says does.',
   ].join('\n');
   const user = [
     `Covering email, sent ${String(sentAt).slice(0, 10)}. Subject: ${emailSubject || ''}`,
-    String(emailText || '').slice(0, 2000),
-    text ? `\nQuotation document text:\n${String(text).slice(0, 30_000)}` : '\nThe quotation document is attached.',
+    String(emailText || '').slice(0, MAX_EMAIL_TEXT),
+    text ? `\nQuotation document text:\n${String(text).slice(0, MAX_DOCUMENT_TEXT)}` : '\nThe quotation document is attached.',
   ].join('\n');
   return { system, user };
 }

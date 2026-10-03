@@ -13,16 +13,19 @@
  * The model proposes and code decides: nothing the AI returns is used
  * without passing through parseVerdict.
  */
-import { domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
+import { BULK, BULK_SENDER, domainOf, PUBLIC_DOMAINS, referencesIn, snippet } from './rules.js';
+import { poPrefilter } from './poDetect.js';
+import { MAX_EMAIL_TEXT } from './readLimits.js';
+import { RULES, serviceRule, whoWeAre } from './promptRules.js';
 import { SERVICE_LINES, serviceLinesFor, OTHER_SERVICE, NO_SERVICE } from '../serviceLines.js';
 
-export const KINDS = ['new_enquiry', 'quotation_sent', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
+export const KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'reply_or_followup', 'billing', 'vendor_or_sales_pitch', 'marketing', 'job_application', 'spam', 'other'];
 
 /** The bar rules alone must clear: they err towards missing an enquiry, not inventing one. */
 export const RULES_BAR = 0.85;
 
-/** How much of a body is read: the new part only, as text. */
-export const MAX_TEXT = 4000;
+/** How much of a body is read: the new part only, as text (readLimits.js). */
+export const MAX_TEXT = MAX_EMAIL_TEXT;
 export const MAX_RECIPIENTS = 5;
 
 const ENQUIRY_TERMS = [
@@ -32,8 +35,6 @@ const ENQUIRY_TERMS = [
 ];
 // A few phrasings that say "quote us" outright weigh more than a word in passing.
 const STRONG_TERMS = /\brfq\b|request for (a )?(quot|proposal)|please (send|share) (us )?(a |your )?(quot|proposal|offer)|need a quot|looking for a quot/i;
-const BULK = /\bunsubscribe\b|view (it |this (email|message) )?in (your |a )?browser|this is an automated (message|email)|do not reply to this (email|message)/i;
-const BULK_SENDER = /^(newsletters?|marketing|news|mailer|bounces?|campaigns?|updates|digest)[@.+-]/i;
 const BILLING_HR = /\binvoice\b|\bremittance\b|payment advice|statement of account|\bresume\b|\bcv\b|curriculum vitae|job application|applying for|\binternship\b/i;
 const JOB = /\bresume\b|\bcv\b|curriculum vitae|job application|applying for (the )?(post|position|role)|\binternship\b/i;
 const QUOTATION_WORDS = /\bquotation\b|\bquote\b|\bproposal\b|\boffer\b|techno[\s-]*commercial|fee proposal|commercial offer|\bprice\b/i;
@@ -59,12 +60,19 @@ const anyNumber = (refs) => refs.quotations.length + refs.enquiries.length + ref
  * Should this email be judged? Pure: the caller works out the facts that
  * need the database.
  *
- * message: { direction, subject, text, from: {email}, external: [...], has_attachments }
+ * message: { direction, subject, text, from: {email}, external: [...], has_attachments, attachments? }
  * facts:
  *   firstInConversation  inbound: nothing earlier is known in this conversation
  *   handled              the conversation is already linked to a record by
  *                        number, converted, or has an enquiry decision
  *   toVendor             outbound: a recipient is one of our vendors
+ *   poReader             inbound: the PO reader is on (auto_po_enabled)
+ *   notPo                inbound: the PO reader has decided it is not a PO
+ *   portalSenders        the po_portal_senders setting
+ *   readAll              email_read_everything: no email is screened out
+ *                        by these rules, replies included; the AI decides.
+ *                        What is already handled, and a PO the PO reader
+ *                        has not decided on yet, are still left alone.
  *
  * Returns { candidate: 'inbound' | 'quotation' | null, reason }.
  */
@@ -75,6 +83,7 @@ export function prefilter(message, facts = {}) {
   if (facts.handled) return { candidate: null, reason: 'already handled' };
 
   if (message.direction === 'outbound') {
+    if (facts.readAll) return { candidate: 'quotation', reason: null };
     if (FORWARD.test(subject)) return { candidate: null, reason: 'forward' };
     if ((message.external || []).length > MAX_RECIPIENTS) return { candidate: null, reason: 'too many recipients' };
     if (facts.toVendor) return { candidate: null, reason: 'to a vendor' };
@@ -83,6 +92,12 @@ export function prefilter(message, facts = {}) {
     return { candidate: null, reason: 'not a quotation' };
   }
 
+  // A client's PO is phase 2's (docs/email-po-plan.md §3.1): never an
+  // enquiry, and not judged here, so it is never logged not_enquiry. Only
+  // while the PO reader is on: off, nothing would ever read it. Once the
+  // PO reader has decided it is not a PO, it is judged as any email.
+  if (facts.poReader && !facts.notPo && poPrefilter(message, { portalSenders: facts.portalSenders }).candidate) return { candidate: null, reason: 'purchase order' };
+  if (facts.readAll) return { candidate: 'inbound', reason: null };
   if (!facts.firstInConversation) return { candidate: null, reason: 'not the first message' };
   if (REPLY.test(subject)) return { candidate: null, reason: 'reply' };
   if (anyNumber(referencesIn(subject))) return { candidate: null, reason: 'names a record' };
@@ -191,23 +206,44 @@ export function rulesVerdict(input) {
 }
 
 /**
- * What the AI is asked. Only the sender, the subject and the new part of
- * the body go out; whether the company is known and has open deals, never
- * what they are worth.
+ * What the AI is asked. Only the sender, the subject, the new part of the
+ * body and the text of any PDFs the client attached go out; whether the
+ * company is known and has open deals, never what they are worth.
+ *
+ * Everything an enquiry is created with is asked for in this one call
+ * (enquiryFromEmail.js): the client, the contact, the service spelt as the
+ * catalogue spells it, the sector and the country, so nobody has to open
+ * the enquiry to finish it.
+ *
+ * options.services   the active catalogue's names (settings.services);
+ *                    without them, the report's service lines
+ * options.ourNames, options.ourGstin   who "us" is
  */
-export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {}) {
-  const lines = SERVICE_LINES.map((l) => l.name).join('; ');
+export function buildPrompt(input, { companyKnown = false, openDeals = 0, services = [], ourNames = [], ourGstin = null } = {}) {
   const system = [
     'You read one business email for Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, and say what it is.',
+    whoWeAre({ ourNames, ourGstin }),
     'Answer with one JSON object and nothing else:',
     '{"kind": one of ' + KINDS.map((k) => `"${k}"`).join(' | ') + ', "confidence": 0 to 1, "company_name": string|null, "contact_name": string|null, "contact_phone": string|null, "service": string|null, "sector": string|null, "country": string|null, "summary": string|null, "quoted_amount": number|null, "currency": string|null}',
-    'new_enquiry: a client or prospect asking us for new work: a quote, a proposal, pricing, an audit, a certification, an assessment, a consultation.',
-    'quotation_sent: an email WE send to a client carrying our quotation or proposal.',
-    'reply_or_followup: about work already under discussion. vendor_or_sales_pitch: someone selling to us. billing: invoices, payments, statements.',
-    'For inbound mail the company and contact are the sender\'s. For quotation_sent they are the RECIPIENT\'s, from the addressee and the letter, never from our own signature or letterhead.',
-    `service: one of these service lines when it fits, otherwise the client's own words: ${lines}.`,
-    'summary: one short sentence about what is asked, naming no one beyond the company. quoted_amount and currency only for quotation_sent, only if stated.',
-    'Never invent a value: use null when the email does not say.',
+    'kind, by what the email asks for or carries, not by its words alone:',
+    '- new_enquiry: a client or prospect asking us for new work: a quote, a proposal, pricing, an RFQ or tender invitation, an audit, a certification, an assessment, a consultation. A reply in an old thread that asks for a different, new service is new_enquiry too.',
+    '- quotation_sent: an email WE send to a client carrying our quotation or proposal, attached or in the body.',
+    '- purchase_order: a client placing an order with us: a purchase order, work order, letter of intent or award, or signed contract.',
+    '- reply_or_followup: about work or a quote already under discussion: questions, clarifications, documents, scheduling, negotiation.',
+    '- billing: invoices, payments, remittances, statements, TDS certificates.',
+    '- vendor_or_sales_pitch: someone selling to us, or asking to be our vendor or partner.',
+    '- marketing: newsletters, promotions, webinar and event invitations, mail sent to many.',
+    '- job_application: CVs, internship or job requests.',
+    '- spam: phishing, scams or junk. other: anything else, including automatic notifications and mail between our own people.',
+    'company_name and contact_name: for inbound mail the sender\'s, from their signature, their letter or the From name; for quotation_sent the RECIPIENT\'s, from the addressee and the letter. Never ours. contact_phone: their phone or mobile as printed in their signature.',
+    `${serviceRule(services, { fallback: SERVICE_LINES.map((l) => l.name) })} Several services: the main one first, comma-separated.`,
+    'sector: the client\'s industry in two or three words ("Steel", "Textiles and apparel", "Automotive components", "Pharmaceuticals") when the email, the signature or the company\'s name makes it plain; else null.',
+    'country: the client\'s country in English ("India", "Germany"), from their address, their phone code (+91 is India) or a country domain (.in, .co.uk); else null.',
+    'summary: one short sentence about what is asked, naming no one beyond the company.',
+    'quoted_amount and currency: only for quotation_sent, and only when the email or the quotation states the total: the grand total as a plain number without commas (147500), and the currency\'s ISO code (INR for ₹ or Rs.).',
+    RULES.names,
+    RULES.missing,
+    'confidence: how sure you are of the kind. A detail the email does not give is null and does not lower it.',
   ].join('\n');
   const user = [
     `Direction: ${input.direction === 'outbound' ? 'sent by us' : 'received by us'}`,
@@ -219,6 +255,7 @@ export function buildPrompt(input, { companyKnown = false, openDeals = 0 } = {})
     `Subject: ${input.subject || ''}`,
     'Body (new part only):',
     String(input.text || '').slice(0, MAX_TEXT),
+    input.attachmentText ? `\nText of the PDFs attached:${input.attachmentText}` : null,
   ].filter((l) => l !== null).join('\n');
   return { system, user };
 }

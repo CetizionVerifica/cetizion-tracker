@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, transaction } from '../db.js';
-import { claimAttachment, purgeAfterCommit } from '../lib/documents.js';
-import { claimNextId, financialYear } from '../lib/sequences.js';
+import { purgeAfterCommit } from '../lib/documents.js';
+import { recordInvoice } from '../lib/invoices.js';
+import { settleInvoiceReview } from './invoiceReview.js';
+import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
@@ -348,9 +350,12 @@ poRouter.get('/:poNumber/full', async (req, res) => {
     query('SELECT * FROM v_travel_logs WHERE po_number = $1 ORDER BY travel_start_date NULLS LAST', [po]),
   ]);
 
+  const { poFromEmail } = await import('../lib/mailbox/autoPurchaseOrder.js');
   res.json({
     data: {
       purchase_order: header.rows[0],
+      // Registered automatically from the client's email: the banner (docs/email-po-plan.md).
+      from_email: await poFromEmail(po),
       services: services.rows,
       payment_stages: stages.rows,
       travel: travel.rows,
@@ -474,6 +479,7 @@ const invoiceSchema = z.object({
   invoice_no: z.preprocess(blank, z.string().trim().min(1).max(60).nullable().optional()),
   invoice_date: z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')),
   document_id: z.number().int().positive().nullable().optional(),
+  review_id: z.number().int().positive().optional(),
 });
 
 stageRouter.post('/:id/invoice', async (req, res) => {
@@ -481,35 +487,12 @@ stageRouter.post('/:id/invoice', async (req, res) => {
   const body = parse(invoiceSchema, req.body || {});
   const scope = scopeOf(req);
   const { id, replaced } = await transaction(async (client) => {
-    // Locked and scoped in one statement: the stage is only this user's if
-    // the purchase order above it is (#18 Phase 2C).
-    const params = [Number(req.params.id)];
-    const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
-    const { rows: [stage] } = await client.query(
-      `SELECT ps.id, ps.document_id FROM payment_stages ps
-        WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,
-      params
-    );
-    if (!stage) throw new ApiError(404, 'Payment stage not found');
-
-    // No file chosen keeps the invoice document already attached; a new one replaces it.
-    const { documentId, replaced } = await claimAttachment(client, {
-      current: stage.document_id,
-      requested: body.document_id,
+    const recorded = await recordInvoice(client, {
+      stageId: Number(req.params.id), invoiceNo: body.invoice_no ?? null, invoiceDate: body.invoice_date, documentId: body.document_id, scope,
     });
-
-    // Claimed here, inside the transaction, so concurrent callers queue for
-    // the number instead of being handed the same one. The financial year
-    // comes from the invoice's own date, not from today: an invoice dated
-    // 28 March belongs to the year that is ending, whenever it is entered.
-    const invoiceNo = body.invoice_no
-      ?? await claimNextId('invoice', client, financialYear(body.invoice_date));
-
-    await client.query(
-      'UPDATE payment_stages SET invoice_no = $1, invoice_date = $2, document_id = $3 WHERE id = $4',
-      [invoiceNo, body.invoice_date, documentId, stage.id]
-    );
-    return { id: stage.id, replaced };
+    // An invoice email from the review queue (invoiceReview.js), settled by this.
+    if (body.review_id) await settleInvoiceReview(client, req, body.review_id, { stageId: recorded.id, invoiceNo: recorded.invoice_no });
+    return recorded;
   });
 
   // The replaced file leaves Cloudinary only once the new one is committed.

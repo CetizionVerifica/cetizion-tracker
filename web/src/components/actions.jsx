@@ -57,9 +57,16 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLa
 
 /* --------------------------------------------------- record an invoice */
 
-export function RecordInvoiceDialog({ stage, onClose, onDone }) {
-  const [invoiceNo, setInvoiceNo] = useState(stage.invoice_no || '');
-  const [invoiceDate, setInvoiceDate] = useState(stage.invoice_date || today());
+/**
+ * From the invoices-to-review queue (docs/email-po-plan.md §3.10.5) it opens
+ * filled in from a fresh read of the email we sent — `prefill` — with the
+ * invoice PDF already stored; saving settles the review item (`reviewId`).
+ */
+export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, onClose, onDone }) {
+  const [invoiceNo, setInvoiceNo] = useState(prefill?.invoice_no || stage.invoice_no || '');
+  const [invoiceDate, setInvoiceDate] = useState(prefill?.invoice_date || stage.invoice_date || today());
+  // A document already on the stage is kept unless somebody chooses otherwise (decision 10).
+  const [emailDocument, setEmailDocument] = useState(stage.document_id ? null : prefill?.document_id || null);
   const [document, setDocument] = useState(null);
   const uploadDocument = useDocumentUploads();
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Invoice recorded' });
@@ -67,12 +74,13 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
   const submit = async (e) => {
     e.preventDefault();
     const ok = await run(async () => {
-      const documentId = document ? await uploadDocument(document, 'payment-stages') : null;
+      const documentId = document ? await uploadDocument(document, 'payment-stages') : emailDocument;
       return api.action(`/payment-stages/${stage.id}/invoice`, {
         invoice_no: invoiceNo,
         invoice_date: invoiceDate,
         // No file chosen keeps the document already attached.
         document_id: documentId,
+        ...(reviewId ? { review_id: reviewId } : {}),
       });
     });
     if (ok) onClose();
@@ -92,6 +100,13 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
       error={error}
       submitLabel="Save invoice"
     >
+      {prefill && (
+        <Alert tone="warning">
+          <strong>Read from the invoice we emailed: check the number and date before you save.</strong>
+          {prefill.total_value != null && Math.abs(Number(prefill.total_value) - Number(stage.stage_amount)) > Math.max(1, 0.005 * Number(prefill.total_value))
+            && <> The invoice is for {money(prefill.total_value, prefill.currency)}, not this stage's {money(stage.stage_amount, stage.currency)}.</>}
+        </Alert>
+      )}
       <Alert>
         Billing <strong>{money(stage.stage_amount, stage.currency)}</strong> to {stage.client_name}
         {stage.terms_days ? ` on ${stage.terms_days}-day terms` : ''}.
@@ -109,6 +124,12 @@ export function RecordInvoiceDialog({ stage, onClose, onDone }) {
         error={fieldErrors.document_id}
       >
         <Input type="file" onChange={(e) => setDocument(e.target.files?.[0] || null)} />
+        {emailDocument && !document && (
+          <div className="small muted">
+            <a href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The invoice from the email</a> will be attached
+            {' · '}<button type="button" className="underline" onClick={() => setEmailDocument(null)}>don't attach it</button>
+          </div>
+        )}
         {stage.document_id && (
           <div className="small muted">
             Current:{' '}

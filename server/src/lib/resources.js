@@ -392,11 +392,13 @@ export const resources = {
     // sales figures and Insights count (docs/insights-dashboard-plan.md §5.3).
     // And the records behind a Reports chart (?report_from=&report_sector=…),
     // picked by the report's own rules, so the list holds what the bar counted.
+    // ?from_email=1: POs registered automatically from a client's email.
     listClauses: async (q, ctx) => [
       ...(String(q.live ?? '') === '1' ? ['NOT cancelled AND replaced_by_po_number IS NULL'] : []),
+      ...fromEmailClause('purchase-orders', q),
       ...await reportListClauses('pos', q, ctx),
     ],
-    computedFilters: ['live', ...REPORT_LIST_KEYS],
+    computedFilters: ['live', 'from_email', ...REPORT_LIST_KEYS],
     // quotation_no: the won quotation this PO fulfils (linkPurchaseOrder).
     columns: [
       'po_number', 'project_id', 'quotation_no', 'po_date', 'po_value', 'currency',
@@ -464,6 +466,8 @@ export const resources = {
     table: 'payment_stages',
     view: 'v_payment_stages',
     label: 'Payment stage',
+    computedFilters: ['from_past_po', 'from_email'],
+    listClauses: async (q) => [...fromPastPoClause(q), ...fromEmailClause('payment-stages', q)],
     // The invoice document: replaced on edit, deleted from Cloudinary with the stage.
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
@@ -1176,9 +1180,28 @@ async function quotationListClauses(q, { scope, params }) {
  */
 function fromEmailClause(resource, q) {
   if (!['1', 'true', 'yes'].includes(String(q.from_email ?? '').toLowerCase())) return [];
+  // POs registered automatically from a client's email (docs/email-po-plan.md).
+  // Invoices recorded automatically from one we emailed (§3.10).
+  if (resource === 'payment-stages') return [`id IN (SELECT stage_id FROM email_invoice_decisions WHERE outcome = 'recorded' AND stage_id IS NOT NULL)`];
+  if (resource === 'purchase-orders') return [`po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND po_number IS NOT NULL)`];
   return resource === 'enquiries'
     ? [`enquiry_no IN (SELECT enquiry_no FROM email_enquiry_decisions WHERE outcome = 'created' AND enquiry_no IS NOT NULL)`]
     : [`quotation_no IN (SELECT quotation_no FROM email_enquiry_decisions WHERE quotation_extraction IN ('created','revised') AND quotation_no IS NOT NULL)`];
+}
+
+/**
+ * ?from_past_po=1   "Past POs and invoices to settle" (docs/email-po-plan.md
+ *                   §3.8, §3.10.4): the stages of POs registered from past
+ *                   mail, and the stages whose invoice was recorded from
+ *                   past mail, that have no payment recorded yet. Their
+ *                   invoices and payments very likely happened outside the
+ *                   tracker; finance records them from this list.
+ */
+function fromPastPoClause(q) {
+  if (!['1', 'true', 'yes'].includes(String(q.from_past_po ?? '').toLowerCase())) return [];
+  return [`(po_number IN (SELECT po_number FROM email_po_decisions WHERE outcome = 'registered' AND mode = 'history' AND po_number IS NOT NULL)
+            OR id IN (SELECT stage_id FROM email_invoice_decisions WHERE outcome = 'recorded' AND mode = 'history' AND stage_id IS NOT NULL))
+           AND COALESCE(amount_received, 0) = 0`];
 }
 
 /** ?risk=at_risk | no_reply | follow_up_missed | decision_near | idle, and &owner= as above */

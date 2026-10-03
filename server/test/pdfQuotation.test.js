@@ -108,3 +108,12 @@ test('the email date is taken in IST: a quotation dated 2 October and emailed at
   assert.equal(r.extraction.quotation_date, '2026-10-02');
   assert.equal(r.extraction.valid_until, '2026-11-01');
 });
+
+test('pdfText reads 40 pages of a long PDF, where it used to stop at 10', async () => {
+  const { pdfText } = await import('../src/lib/mailbox/pdfQuotation.js');
+  const { default: pdfmake } = await import('../src/lib/pdf.js');
+  const content = Array.from({ length: 45 }, (_, i) => ({ text: `Page ${i + 1} of the schedule`, pageBreak: i ? 'before' : undefined }));
+  const pages = await pdfText(await pdfmake.createPdf({ content }).getBuffer());
+  assert.equal(pages.length, 40);
+  assert.match(pages[39], /Page 40 of the schedule/);
+});

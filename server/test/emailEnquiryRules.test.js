@@ -116,3 +116,11 @@ test('the prompt carries the new text and no deal values', () => {
   assert.match(user, /open deals with them: 2/);
   assert.doesNotMatch(user, /₹|INR \d/);
 });
+
+test('free-mail domains never become a company, however the address is spelt', async () => {
+  const { companyNameFromEmail } = await import('../src/lib/mailbox/enquiryDetect.js');
+  for (const email of ['a@yahoo.in', 'b@ymail.com', 'c@outlook.in', 'd@googlemail.com', 'e@hotmail.co.uk', 'f@me.com', 'g@rediff.com', 'h@live.in']) {
+    assert.equal(companyNameFromEmail(email), null, email);
+  }
+  assert.equal(companyNameFromEmail('ravi@acme-steel.co.in'), 'Acme Steel');
+});

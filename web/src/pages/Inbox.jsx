@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader, SidebarContext } from '../App.jsx';
-import { ChevronRight, MoreHorizontal, PanelLeft, Paperclip, Reply } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, PanelLeft, Paperclip, Reply } from 'lucide-react';
 import { Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -50,6 +50,12 @@ const VIEWS = [
   { key: 'mine', label: 'Mine' },
   { key: 'closed', label: 'Done' },
 ];
+
+/** Conversations per page; the server's default too. */
+const PAGE_SIZE = 50;
+/** How often the open page asks the server to pull mail, and re-reads what it has. */
+const SYNC_EVERY_MS = 60_000;
+const REFRESH_EVERY_MS = 20_000;
 
 const since = (iso) => {
   const mins = Math.round((Date.now() - new Date(iso)) / 60000);
@@ -101,6 +107,10 @@ function Tag({ tone = 'plain', mono = false, children }) {
  * reference number.
  */
 function stateTag(row) {
+  // Kept because the Inbox shows everything, though the filters would have
+  // dropped it. Said first, so a robot never reads as a lead.
+  if (row.filtered_as === 'internal only') return <Tag>Internal</Tag>;
+  if (row.filtered_as) return <Tag>Automated</Tag>;
   if (row.looks_new) return <Tag tone="waiting">New enquiry</Tag>;
   if (row.for_finance) return <Tag tone="settled">Payment · for finance</Tag>;
   if (!row.company_name) return <Tag>no company match</Tag>;
@@ -379,14 +389,54 @@ export default function Inbox() {
   const selected = params.get('c');
   const [q, setQ] = useState('');
   const sidebar = useContext(SidebarContext);
+  const page = Math.max(1, Number.parseInt(params.get('p'), 10) || 1);
   const summary = useFetch(() => api.raw('/inbox/summary'), [view, selected]);
-  const listUrl = view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`;
+  const listUrl = `${view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`}&page=${page}&page_size=${PAGE_SIZE}`;
   const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : api.raw(listUrl)), [listUrl]);
   const s = summary.data?.data;
   const put = (k, v) => { const n = new URLSearchParams(params); if (v) n.set(k, v); else n.delete(k); setParams(n, { replace: true }); };
   const rows = list.data?.data ?? [];
+  const meta = list.data?.meta;
   const rowRefs = useRef([]);
   const at = rows.findIndex((r) => String(r.id) === selected);
+
+  /**
+   * New mail arrives without anybody asking for it.
+   *
+   * The server pulls mail every minute by itself; this page also asks for
+   * a pull when it opens and every minute after, so what reaches the
+   * mailbox shows here within a minute or so, and re-reads the list, the
+   * counts and the open thread every 20 seconds to pick it up. Only while
+   * the tab is visible: a background tab polling all day is load for
+   * nobody, and coming back to it catches up at once.
+   */
+  const [tick, setTick] = useState(0);
+  // Past page 1 the rows stay put: re-reading page 2 at the same offset
+  // after new mail arrives slides rows between pages, so paging on would
+  // repeat some and skip others. Page 1 is where new mail lands anyway.
+  const onFirstPage = useRef(page === 1);
+  onFirstPage.current = page === 1;
+  const { refetch: refetchList } = list;
+  const { refetch: refetchSummary } = summary;
+  useEffect(() => {
+    if (view === 'setup') return undefined;
+    const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    const pull = () => { if (visible()) api.action('/inbox/sync', {}).catch(() => {}); };
+    const refresh = () => { if (!visible()) return; if (onFirstPage.current) refetchList(); refetchSummary(); setTick((n) => n + 1); };
+    const onVisible = () => { if (visible()) { pull(); refresh(); } };
+    pull();
+    const pulling = setInterval(pull, SYNC_EVERY_MS);
+    const refreshing = setInterval(refresh, REFRESH_EVERY_MS);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(pulling); clearInterval(refreshing); document.removeEventListener('visibilitychange', onVisible); };
+  }, [view, refetchList, refetchSummary]);
+
+  // A page that no longer exists — the last few threads on it were closed
+  // or the search narrowed — goes to the last one that does.
+  useEffect(() => {
+    if (meta && page > meta.pages) put('p', meta.pages > 1 ? String(meta.pages) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta?.pages, page]);
 
   /**
    * Up and down move through the list; Enter and Space open. Home and End
@@ -408,8 +458,13 @@ export default function Inbox() {
 
   // Selection follows the keyboard, so focus has to follow it too —
   // otherwise the next arrow press starts from wherever focus was left.
+  // Only from inside the list: the list now refreshes itself, and a new
+  // thread arriving above the selected one moves its index, which must not
+  // pull focus out of the reply box or the search field.
+  const listRef = useRef(null);
   useEffect(() => {
-    if (at >= 0) rowRefs.current[at]?.focus({ preventScroll: false });
+    if (at < 0 || !listRef.current?.contains(document.activeElement)) return;
+    rowRefs.current[at]?.focus({ preventScroll: false });
   }, [at]);
 
   if (view === 'setup') {
@@ -489,10 +544,11 @@ export default function Inbox() {
           </div>
 
           <div className="px-5 pb-3">
-            <Input placeholder="Search subject, sender, company…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input placeholder="Search subject, sender, company…" value={q} onChange={(e) => { setQ(e.target.value); put('p', null); }} />
           </div>
 
           <div
+            ref={listRef}
             role="listbox"
             aria-label="Conversations"
             onKeyDown={onListKey}
@@ -501,7 +557,7 @@ export default function Inbox() {
             {list.loading && !list.data ? (
               <div className="p-5"><div className="skeleton" style={{ height: 120 }} /></div>
             ) : rows.length === 0 ? (
-              <Empty title="Nothing here" text="New email to a shared mailbox appears here after the next sync." />
+              <Empty title="Nothing here" text="New email to a shared mailbox appears here on its own, within a minute or so." />
             ) : rows.map((row, i) => (
               <ThreadRow
                 key={row.id}
@@ -512,6 +568,21 @@ export default function Inbox() {
               />
             ))}
           </div>
+
+          {meta && meta.total > 0 && (
+            <Pager
+              page={Math.min(page, meta.pages)}
+              pages={meta.pages}
+              total={meta.total}
+              pageSize={meta.page_size}
+              onPage={(n) => {
+                rowRefs.current = [];
+                // A new page is read from its top, not from where the last one was left.
+                listRef.current?.scrollTo({ top: 0 });
+                put('p', n > 1 ? String(n) : null);
+              }}
+            />
+          )}
         </div>
 
         {/* The reading pane. On a phone it takes the screen, and the back
@@ -520,6 +591,7 @@ export default function Inbox() {
           {selected ? (
             <Conversation
               id={selected}
+              refreshKey={tick}
               onBack={() => put('c', null)}
               onChanged={() => { list.refetch(); summary.refetch(); }}
             />
@@ -534,10 +606,38 @@ export default function Inbox() {
   );
 }
 
-function Conversation({ id, onBack, onChanged }) {
+/**
+ * Which conversations are on show, and the way to the others.
+ *
+ * Under the list rather than over it, where a mail client keeps it: the
+ * list is read top down and the pager is what you reach at the bottom.
+ */
+function Pager({ page, pages, total, pageSize, onPage }) {
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(total, page * pageSize);
+  return (
+    <nav aria-label="Pages of conversations" className="flex items-center gap-2 border-t border-border px-5 py-2.5">
+      <span className="num text-[12px] text-muted-foreground" aria-live="polite">
+        {first}–{last} of {total}
+      </span>
+      <div className="flex-1" />
+      <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Newer conversations">
+        <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" /> Newer
+      </Button>
+      <span className="num text-[12px] text-secondary-text">{page} / {pages}</span>
+      <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Older conversations">
+        Older <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
+      </Button>
+    </nav>
+  );
+}
+
+function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
   const toast = useToast();
   const lookups = useLookups();
-  const conv = useFetch(() => api.raw(`/inbox/${id}`), [id]);
+  // refreshKey is the page's poll: a reply that arrives while the thread
+  // is open shows up in it, through message_count and the fetch below.
+  const conv = useFetch(() => api.raw(`/inbox/${id}`), [id, refreshKey]);
   const c = conv.data?.data;
   const thread = useFetch(() => (c ? api.raw(`/mail/threads/${c.thread_id}`) : Promise.resolve(null)), [c?.thread_id, c?.message_count]);
   const canned = useFetch(() => api.raw('/inbox/canned'));
