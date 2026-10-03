@@ -44,11 +44,14 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
     process.env.EMAIL_MODE = 'log';
     delete process.env.SMTP_HOST;
+    // No real model: the AI path is exercised with a fake chat below.
+    delete process.env.OPENROUTER_API_KEY;
 
     ({ default: app } = await import('../src/app.js'));
     ({ pool } = await import('../src/db.js'));
     misSend = await import('../src/lib/misSend.js');
     mail = await import('../src/lib/mail.js');
+    (await import('../src/lib/ai.js')).aiConfig.enabled = false;
     agent = request.agent(app);
     await agent.post('/api/auth/login').send({ username: 'admin', password: 'a-good-long-test-password' }).expect(200);
 
@@ -183,6 +186,51 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
 
     const noPdf = await agent.get(`/api/mis-reports/runs/${send.body.data.id}/pdf`);
     assert.equal(noPdf.status, 404, 'no document storage in tests, so no PDF kept');
+  });
+
+  test('with an AI, the briefing carries its highlights, checked; at the ceiling it goes without them', async () => {
+    const misAi = await import('../src/lib/misAi.js');
+    // A thread from yesterday in the shared mailbox, stored in full.
+    await db.query(`UPDATE connected_accounts SET visibility = 'share_everything' WHERE id = $1`, [mailbox.id]);
+    const { rows: [t] } = await db.query(
+      `INSERT INTO email_threads (account_id, conversation_id, subject, first_message_at, last_message_at, message_count, last_direction)
+       VALUES ($1, 'conv-ai', 'Revised scope for 3 plants', '2026-10-04 05:00+00', '2026-10-04 05:00+00', 1, 'inbound') RETURNING id`, [mailbox.id]);
+    await db.query(
+      `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, from_name, to_emails, subject, body_html, sent_at)
+       VALUES ($1, $2, 'm-ai', 'inbound', 'ravi@acme.com', 'Ravi', ARRAY['sales@cetizionverifica.com'], 'Revised scope for 3 plants', '<p>Please revise the quotation for 3 plants, budget about 4,50,000.</p>', '2026-10-04 05:00+00')`,
+      [mailbox.id, t.id]);
+    const asked = [];
+    misAi.deps.chat = async (system, user) => {
+      asked.push({ system, user });
+      return { highlights: [
+        { thread_id: t.id, client: 'Acme', summary: 'Wants the quotation revised for 3 plants, budget about 4,50,000.', action: 'Send the revision', owner: 'Priya' },
+        { thread_id: t.id, client: 'Acme', summary: 'Mentioned 7 plants.', action: null },
+      ], actions_wording: [] };
+    };
+    try {
+      const r = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'shyam' });
+      assert.equal(r.status, 'sent', JSON.stringify(r));
+      assert.equal(r.ai_used, true);
+      assert.equal(r.ai.highlights, 1, 'the summary with a figure the thread lacks is dropped');
+      assert.equal(asked.length, 1);
+      assert.match(asked[0].user, /Revised scope for 3 plants/);
+      assert.match(asked[0].system, /never invent a number/);
+      const { rows: [log] } = await db.query('SELECT body_text FROM email_log WHERE id = $1', [r.email_log_id]);
+      assert.match(log.body_text, /Acme: Wants the quotation revised for 3 plants/);
+      const { rows: [{ n }] } = await db.query(`SELECT count(*)::int AS n FROM email_ai_calls WHERE purpose = 'mis_daily'`);
+      assert.equal(n, 1, 'counted against the readers\' ceiling');
+
+      // The ceiling reached: the report still goes, on the record-based highlights.
+      await db.query(`UPDATE settings SET value = '1' WHERE key = 'auto_enquiry_daily_ai_limit'`);
+      const r2 = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'shyam' });
+      assert.equal(r2.status, 'sent');
+      assert.equal(r2.ai_used, false);
+      assert.match(r2.ai.why, /ceiling/);
+      assert.equal(asked.length, 1, 'the model was not asked again');
+    } finally {
+      misAi.deps.chat = null;
+      await db.query(`UPDATE settings SET value = '5000' WHERE key = 'auto_enquiry_daily_ai_limit'`);
+    }
   });
 
   test('the jobs are registered on the plan\'s schedule', async () => {

@@ -26,8 +26,14 @@ Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md),
 [sales-report-rework-plan.md](sales-report-rework-plan.md) (the report
 definitions this reuses) and [email-po-plan.md](email-po-plan.md) first.
 It follows the two design rules: nothing derived is stored, and each fact
-is typed in one place. It was written against commit `d764c56`. **Plan
-only; no code in this step.**
+is typed in one place. It was written against commit `d764c56`.
+
+**Status (3 October 2026): built** on `feat/mis-reports`, steps 1–4, as
+planned; the user doc is [mis-reports.md](mis-reports.md). Step 5, the
+cut-over, is the account owner's (§6). The §9 defaults stand: every day
+including Sundays, tracker links in the email, admins only. Two departures:
+the PDFs are set in Roboto, the font every PDF here is built with, not
+Helvetica; and the migration is `075` (074 is the per-user mailboxes).
 
 ---
 

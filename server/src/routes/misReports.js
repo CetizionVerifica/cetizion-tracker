@@ -55,15 +55,16 @@ misReportsRouter.get('/runs/:id/pdf', async (req, res) => {
   res.send(body);
 });
 
+// ?ai=1 has the AI word the preview too; it is a counted call, so not by default.
 misReportsRouter.get('/:kind/preview', async (req, res) => {
   const kind = kindOf(req.params.kind);
-  const built = await buildReport(kind, { today: dateOf(req.query.date) });
-  res.json({ data: { kind, period: built.data.period, file_name: built.fileName, email: { subject: built.email.subject, text: built.email.text }, report: built.data, settings: { to: built.settings.to, cc: built.settings.cc, sender_account_id: built.settings.senderAccountId, enabled: kind === 'daily_briefing' ? built.settings.dailyEnabled : built.settings.weeklyEnabled } } });
+  const built = await buildReport(kind, { today: dateOf(req.query.date), ai: req.query.ai === '1' });
+  res.json({ data: { kind, period: built.data.period, file_name: built.fileName, email: { subject: built.email.subject, text: built.email.text }, report: built.data, ai: built.ai, settings: { to: built.settings.to, cc: built.settings.cc, sender_account_id: built.settings.senderAccountId, enabled: kind === 'daily_briefing' ? built.settings.dailyEnabled : built.settings.weeklyEnabled } } });
 });
 
 misReportsRouter.get('/:kind/preview.pdf', async (req, res) => {
   const kind = kindOf(req.params.kind);
-  const built = await buildReport(kind, { today: dateOf(req.query.date) });
+  const built = await buildReport(kind, { today: dateOf(req.query.date), ai: req.query.ai === '1' });
   const pdf = await misPdf(built.data, { company: built.company, generatedAt: new Date(), timeZone: config.businessTimeZone });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('X-Page-Count', String(pdfPageCount(pdf)));

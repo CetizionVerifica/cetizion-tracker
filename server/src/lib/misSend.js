@@ -26,6 +26,7 @@ import { sendViaMailbox } from './mail.js';
 import { providerFor } from './mailbox/sync.js';
 import { KINDS, dailyBriefing, misSettings, periodFor, weeklyMis } from './misReports.js';
 import { REPORT_TITLE, misFileName, misPdf, pdfPageCount } from './misPdf.js';
+import { wordReport } from './misAi.js';
 import { raiseAlert } from './ops/alerts.js';
 
 /** Replaceable in tests: the mailbox provider, and the clock. */
@@ -33,15 +34,19 @@ export const deps = { providerFor, now: () => new Date() };
 
 const TEMPLATE = { daily_briefing: 'mis_daily', weekly_mis: 'mis_weekly' };
 
-/** The figures, the email and the PDF for one report, as the send builds them. */
-export async function buildReport(kind, { today = businessToday(), db = { query }, settings = null, commentary = null } = {}) {
+/**
+ * The figures, the email and the PDF for one report, as the send builds
+ * them. `ai: true` has the AI word it (misAi.js) — the send does, a preview
+ * does not unless asked, since each is a counted call.
+ */
+export async function buildReport(kind, { today = businessToday(), db = { query }, settings = null, ai = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown report kind: ${kind}`);
   const s = settings || await misSettings(db);
   const data = kind === 'daily_briefing' ? await dailyBriefing({ today, db, settings: s }) : await weeklyMis({ today, db, settings: s });
-  if (commentary) data.commentary = commentary;
+  const worded = ai ? await wordReport(data, { db }) : { used: false, why: 'not asked' };
   const email = kind === 'daily_briefing' ? dailyEmail({ data, appUrl: s.appUrl }) : weeklyEmail({ data, appUrl: s.appUrl });
   const { rows: [{ company }] } = await db.query(`SELECT (SELECT value FROM settings WHERE key = 'company_name') AS company`);
-  return { kind, data, email, settings: s, company: company?.trim() || 'Cetizion Verifica', fileName: misFileName(data) };
+  return { kind, data, email, settings: s, company: company?.trim() || 'Cetizion Verifica', fileName: misFileName(data), ai: worded };
 }
 
 async function record(db, run) {
@@ -65,7 +70,7 @@ async function senderMailbox(db, settings) {
  * Returns the report_runs row, with `skipped` when the schedule had nothing
  * to do (the report is off, or that period was already sent).
  */
-export async function runReport(kind, { today = businessToday(), startedBy = 'schedule', db = { query }, commentary = null } = {}) {
+export async function runReport(kind, { today = businessToday(), startedBy = 'schedule', db = { query }, ai = true } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown report kind: ${kind}`);
   const settings = await misSettings(db);
   const period = periodFor(kind, today);
@@ -79,7 +84,7 @@ export async function runReport(kind, { today = businessToday(), startedBy = 'sc
 
   let built;
   try {
-    built = await buildReport(kind, { today, db, settings, commentary });
+    built = await buildReport(kind, { today, db, settings, ai });
     const pdf = await misPdf(built.data, { company: built.company, generatedAt: deps.now(), timeZone: config.businessTimeZone });
     const attachments = [{ name: built.fileName, contentType: 'application/pdf', content: pdf }];
 
@@ -94,7 +99,7 @@ export async function runReport(kind, { today = businessToday(), startedBy = 'sc
     }
 
     if (!settings.to.length) {
-      const run = await record(db, { kind, period, status: 'failed', document_id: documentId, error: 'No recipients set (Settings → Scheduled reports)', triggered_by: startedBy, ai_used: Boolean(commentary) });
+      const run = await record(db, { kind, period, status: 'failed', document_id: documentId, error: 'No recipients set (Settings → Scheduled reports)', triggered_by: startedBy, ai_used: built.ai.used });
       await raiseAlert('mis', `${REPORT_TITLE[kind]} not sent`, 'No recipients are set under Reports → Scheduled reports.').catch(() => {});
       return run;
     }
@@ -110,11 +115,11 @@ export async function runReport(kind, { today = businessToday(), startedBy = 'sc
     const failed = sent.row.status === 'failed';
     const run = await record(db, {
       kind, period, status: failed ? 'failed' : 'sent', sent_via: failed ? null : sent.via, recipients: [...settings.to, ...settings.cc],
-      document_id: documentId, email_log_id: sent.row.id, ai_used: Boolean(commentary), error: failed ? sent.error : null, triggered_by: startedBy,
+      document_id: documentId, email_log_id: sent.row.id, ai_used: built.ai.used, error: failed ? sent.error : null, triggered_by: startedBy,
     });
     if (failed) await raiseAlert('mis', `${REPORT_TITLE[kind]} not sent`, sent.error || 'the email failed').catch(() => {});
     else if (sent.via === 'smtp' && sent.error) await raiseAlert('mis', `${REPORT_TITLE[kind]} went by SMTP, not the sales mailbox`, sent.error, { every: 'day' }).catch(() => {});
-    return { ...run, pages: pdfPageCount(pdf), suppressed: sent.via === 'log' ? sent.row.reason : null };
+    return { ...run, pages: pdfPageCount(pdf), suppressed: sent.via === 'log' ? sent.row.reason : null, ai: built.ai };
   } catch (err) {
     const run = await record(db, { kind, period, status: 'failed', error: err.message, triggered_by: startedBy }).catch(() => ({ kind, period, status: 'failed', error: err.message }));
     await raiseAlert('mis', `${REPORT_TITLE[kind]} failed`, err.message).catch(() => {});
