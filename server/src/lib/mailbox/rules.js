@@ -24,12 +24,13 @@ export const PUBLIC_DOMAINS = new Set([
   'gmx.com', 'gmx.net', 'mail.com', 'yandex.com', 'tutanota.com',
 ]);
 
-export function isBlocked(email, blocklist = []) {
+/** On the "Never sync" list, or (with `robots`, the default) an automatic sender. */
+export function isBlocked(email, blocklist = [], { robots = true } = {}) {
   const e = addr(email); const d = domainOf(e);
   return blocklist.some((p) => {
     const x = addr(p).replace(/^\*?@/, '');
     return x === e || x === d || (x.startsWith('*.') && d.endsWith(x.slice(1)));
-  }) || /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?)@/.test(e);
+  }) || (robots && /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?)@/.test(e));
 }
 
 /**
@@ -53,8 +54,27 @@ export function classify(message, { accountEmail, internalDomains = [], blocklis
   });
   if (!external.length) return { direction, external, skip: excludeInternal ? 'internal only' : null };
   const kept = external.filter((p) => !isBlocked(p.email, blocklist));
-  if (!kept.length) return { direction, external: [], skip: 'blocked sender' };
+  if (!kept.length) {
+    // Dropped only by the automatic-sender rule, not by the "Never sync"
+    // list: the readers still read it while reading everything (forReaders).
+    const robot = !external.some((p) => isBlocked(p.email, blocklist, { robots: false }));
+    return { direction, external: [], skip: 'blocked sender', robot, robots: external };
+  }
   return { direction, external: kept, skip: null };
+}
+
+/**
+ * What the email readers see of a classified message (073). Kept mail as
+ * it is. While reading everything (email_read_everything), also the mail
+ * the filters keep out of the Inbox — between our own people, or from an
+ * automatic sender — with its people restored; never mail from an address
+ * on the "Never sync" list, an admin's own choice. Null: not for the readers.
+ */
+export function forReaders(c, readAll) {
+  const why = c.skip || c.filtered;
+  if (!why) return c;
+  if (!readAll || !(why === 'internal only' || (why === 'blocked sender' && c.robot))) return null;
+  return { ...c, skip: null, filtered: null, external: c.robots || c.external };
 }
 
 /** What a mailbox's owner agreed to share. */

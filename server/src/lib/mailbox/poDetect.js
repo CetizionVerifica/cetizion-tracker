@@ -78,6 +78,8 @@ export function poNumbersIn(text) {
  * facts:
  *   decided        it already has a PO decision in this mailbox
  *   portalSenders  the po_portal_senders setting
+ *   readAll        email_read_everything: every inbound email is read, the
+ *                  AI decides whether it is an order
  *
  * Returns { candidate: boolean, reason }. Runs on every inbound message,
  * replies included: that is where most POs arrive.
@@ -85,6 +87,7 @@ export function poNumbersIn(text) {
 export function poPrefilter(message, facts = {}) {
   if (facts.decided) return { candidate: false, reason: 'already decided' };
   if (message.direction !== 'inbound') return { candidate: false, reason: 'outbound' };
+  if (facts.readAll) return { candidate: true, reason: null };
   const subject = String(message.subject || '');
   const text = String(message.text || '');
   const files = (message.attachments || []).map((a) => String(a?.name || ''));

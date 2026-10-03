@@ -35,7 +35,14 @@ const SCOPES = [
   'Mail.Send',
   'Mail.Send.Shared',
 ];
-const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft';
+const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId';
+
+/**
+ * Folders never read, with everything under them: spam, deleted mail,
+ * drafts, mail not sent yet, and Outlook's own (Teams chat history, sync
+ * conflicts). Every other folder is (073).
+ */
+export const SKIPPED_FOLDERS = ['junkemail', 'deleteditems', 'drafts', 'outbox', 'conversationhistory', 'syncissues'];
 
 const ms = () => config.microsoft;
 export const microsoftConfigured = () => Boolean(ms().clientId && ms().clientSecret && ms().tenantId && ms().redirectUri);
@@ -100,9 +107,55 @@ export function microsoftProvider(account, tokens) {
     sent_at: m.sentDateTime || m.receivedDateTime, has_attachments: Boolean(m.hasAttachments), draft: Boolean(m.isDraft),
   });
 
+  /** Every folder under `url` (a mailFolders or childFolders list), depth first, each page followed. */
+  async function walk(url, visit) {
+    for (let next = url; next;) {
+      const j = await graph(next);
+      for (const f of j.value || []) {
+        if (await visit(f) === false) continue;
+        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=id,childFolderCount&$top=100`, visit);
+      }
+      next = j['@odata.nextLink'] || null;
+    }
+  }
+  /** The ids of SKIPPED_FOLDERS and of every folder under them; asked once per provider. */
+  let skippedIds = null;
+  const skipped = () => {
+    skippedIds ||= (async () => {
+      const ids = new Set();
+      for (const name of SKIPPED_FOLDERS) {
+        // A mailbox without one of them (no Teams history) just has nothing to skip there.
+        const f = await graph(`${who}/mailFolders/${name}?$select=id,childFolderCount`).catch(() => null);
+        if (!f?.id) continue;
+        ids.add(f.id);
+        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=id,childFolderCount&$top=100`, (c) => { ids.add(c.id); });
+      }
+      return ids;
+    })().catch((err) => { skippedIds = null; throw err; });
+    return skippedIds;
+  };
+
   return {
     tokens: () => current,
     async me() { return graph(`${who}?$select=displayName,mail,userPrincipalName`); },
+    /**
+     * Every folder mail is read from (073): Inbox first and Sent Items last,
+     * by name, and between them every other folder by id: Archive, the
+     * folders people file client mail into, their subfolders. Never
+     * SKIPPED_FOLDERS or anything under them.
+     */
+    async folders() {
+      const skip = await skipped();
+      const named = new Map();
+      for (const name of ['inbox', 'sentitems']) named.set((await graph(`${who}/mailFolders/${name}?$select=id`)).id, name);
+      const others = [];
+      await walk(`${who}/mailFolders?$select=id,childFolderCount&$top=100`, (f) => {
+        if (skip.has(f.id)) return false;
+        if (!named.has(f.id)) others.push(f.id);
+        return true;
+      });
+      return ['inbox', ...others, 'sentitems'];
+    },
     /**
      * New and changed messages in a folder since the last delta link, at
      * most `maxPages` pages of 50 at a time.
@@ -133,11 +186,20 @@ export function microsoftProvider(account, tokens) {
      * One page of a folder, oldest first, from a date — for reading back
      * through past mail. A plain list rather than delta, so the live sync's
      * cursor is never touched. `cursor` is the nextLink of the page before.
+     *
+     * folder 'all': the whole mailbox as one stream, oldest first, without
+     * SKIPPED_FOLDERS (073). A page can come back with fewer messages than
+     * asked for, or none, and still have a next one.
      */
     async page(folder, { sinceIso, cursor = null, top = 50 } = {}) {
-      const url = cursor || `${who}/mailFolders/${folder}/messages?$select=${SELECT}&$filter=receivedDateTime+ge+${sinceIso}&$orderby=receivedDateTime+asc&$top=${top}`;
+      const base = folder === 'all' ? `${who}/messages` : `${who}/mailFolders/${folder}/messages`;
+      const url = cursor || `${base}?$select=${SELECT}&$filter=receivedDateTime+ge+${sinceIso}&$orderby=receivedDateTime+asc&$top=${top}`;
       const j = await graph(url, { headers: { Prefer: 'outlook.body-content-type="html"' } });
-      return { messages: (j.value || []).filter((m) => !m.isDraft).map(toMessage), next: j['@odata.nextLink'] || null };
+      const skip = folder === 'all' ? await skipped() : null;
+      return {
+        messages: (j.value || []).filter((m) => !m.isDraft && !(skip && skip.has(m.parentFolderId))).map(toMessage),
+        next: j['@odata.nextLink'] || null,
+      };
     },
     /**
      * A message's file attachments, as buffers. Graph returns small files

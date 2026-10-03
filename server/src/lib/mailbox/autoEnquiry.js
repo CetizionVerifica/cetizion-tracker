@@ -26,7 +26,7 @@ import { addWorkingDays, businessToday } from '../businessDate.ts';
 import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
-import { domainOf, PUBLIC_DOMAINS } from './rules.js';
+import { domainOf, forReaders, PUBLIC_DOMAINS } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
 import { queueFailures } from './readerQueue.js';
 import { inLanes } from './inLanes.js';
@@ -41,7 +41,8 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency'];
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency',
+  'email_read_everything'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
 
@@ -67,6 +68,9 @@ export async function enquirySettings(db = { query }) {
     // The PO reader (autoPurchaseOrder.js) takes PO emails while it is on.
     poReader: String(s.auto_po_enabled ?? 'true').trim().toLowerCase() !== 'false',
     portalSenders: String(s.po_portal_senders || ''),
+    // Every email goes to the AI, replies included; the free rules that
+    // screen mail out are skipped (073). The duplicate guards stay.
+    readAll: String(s.email_read_everything ?? 'true').trim().toLowerCase() !== 'false',
   };
 }
 
@@ -159,7 +163,7 @@ async function factsFor(account, cand, settings = {}) {
   // not a reason to skip it: what matters there is whether it has an
   // enquiry (plan §3.8), which quotationEnquiry() works out.
   const onRecord = c.direction === 'inbound' && await linkedByNumber(cand);
-  const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped };
+  const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped, readAll: Boolean(settings.readAll) };
   // Only while the PO reader can read: without an AI it reads nothing, and
   // holding PO-looking mail back for it would hide it from everyone.
   if (c.direction === 'inbound' && settings.poReader && (await import('./autoPurchaseOrder.js')).poReaderCanRead()) {
@@ -373,7 +377,11 @@ export async function decide(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || !m.conversation_id) return 'incomplete';
 
-  const { rows: [seen] } = await query('SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  // By id, or as the same email under another id: Outlook gives a message
+  // a new id when it is moved to another folder, and every folder is read.
+  const { rows: [seen] } = await query(
+    `SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1
+        AND (provider_id = $2 OR ($3::text IS NOT NULL AND lower(internet_message_id) = lower($3)))`, [account.id, m.provider_id, m.internet_message_id || null]);
   if (seen) return 'seen';
 
   // The same email, read in another mailbox, already made or joined an
@@ -383,11 +391,18 @@ export async function decide(account, cand, ctx) {
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
   const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments, attachments: m.attachments };
-  const pf = prefilter(input, await factsFor(account, cand, ctx.settings));
+  const facts = await factsFor(account, cand, ctx.settings);
+  const pf = prefilter(input, facts);
   if (!pf.candidate) { ctx.skipped += 1; return 'skipped'; }
 
   const verdict = await classifyEmail(account, cand, input, ctx);
   if (!verdict) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+  // Reading everything lets the AI judge what the free rules would have
+  // skipped. When the rules decide instead (no AI, the day's ceiling, an
+  // AI error), their own screening is part of the decision — for our own
+  // mail it is all of it — so it applies as before: otherwise every email
+  // we send would become an enquiry.
+  if (facts.readAll && verdict.method === 'rules' && !prefilter(input, { ...facts, readAll: false }).candidate) { ctx.skipped += 1; return 'skipped'; }
   const wanted = pf.candidate === 'quotation' ? 'quotation_sent' : 'new_enquiry';
   const bar = verdict.method === 'ai' ? ctx.settings.minConfidence : RULES_BAR;
   if (verdict.kind !== wanted || verdict.confidence < bar) {
@@ -566,6 +581,13 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
   // Not in the tracker: made in Word or Excel and emailed.
   const client = (await companyName(db, companyId)) || prepared?.extraction?.client?.company_name || verdict.company_name
     || companyNameFromEmail(recipient.email) || recipient.name || recipient.email;
+  // Mail between our own people is read too (073): a "quotation" with no
+  // client anywhere, on the PDF or among the recipients, makes nothing.
+  if (!client) {
+    await logDecision(db, account, cand, { outcome: 'not_enquiry', ...decisionOf(verdict) });
+    ctx.notEnquiry += 1;
+    return 'not_enquiry';
+  }
   const { rows: [{ id: newCompanyId }] } = await db.query('SELECT company_for($1) AS id', [client]);
   const threadId = await keepDropped(db, account, cand, newCompanyId);
   const owner = await ownerFor(db, account, threadId);
@@ -667,8 +689,8 @@ async function pastCandidates(account, judge, messages) {
   const out = [];
   for (const m of messages) {
     if (!m.provider_id || !m.conversation_id || m.draft) continue;
-    const c = judge(m);
-    if (c.skip) continue;
+    const c = forReaders(judge(m), judge.readAll);
+    if (!c) continue;
     const { rows: [stored] } = await query(
       `SELECT t.id AS thread_id,
               NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3 AND o.filtered_as IS NULL) AS first
@@ -681,13 +703,15 @@ async function pastCandidates(account, judge, messages) {
 }
 
 /**
- * Read one mailbox's past mail, oldest first, Inbox before Sent Items, for
- * up to `budgetMs`. Resumable: progress is stored after every page, so a
- * restart or a stop at the day's AI ceiling loses nothing.
+ * Read one mailbox's past mail, oldest first, for up to `budgetMs`: every
+ * folder as one stream while reading everything (folder 'all', 073), else
+ * Inbox before Sent Items. Resumable: progress is stored after every page,
+ * so a restart or a stop at the day's AI ceiling loses nothing.
  */
 export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET_MS } = {}) {
   const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
-  await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, 'inbox') ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
+  await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO NOTHING`,
+    [account.id, since, ctx.settings.readAll ? 'all' : 'inbox']);
   let { rows: [row] } = await query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, created: 0, linked: 0 };
   const started = Date.now();

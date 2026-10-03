@@ -38,6 +38,7 @@ import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
 import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs } from './invoiceDetect.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
+import { forReaders } from './rules.js';
 import { ingestRules, providerFor, saveTokens } from './sync.js';
 import { isPdf } from './pdfQuotation.js';
 import { MAX_EMAIL_TEXT } from './readLimits.js';
@@ -60,7 +61,7 @@ export async function invoiceSettings(db = { query }) {
     historyAfterDays: num(s.auto_po_history_after_days, 30),
     ourGstin: String(s.company_gstin || '').trim() || null,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit, backfillDays: shared.backfillDays,
-    concurrency: shared.concurrency,
+    concurrency: shared.concurrency, readAll: shared.readAll,
   };
 }
 
@@ -136,13 +137,16 @@ const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.pa
 export async function decideInvoice(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || c.direction !== 'outbound') return 'incomplete';
+  // By id, or as the same email under another id (moved to another folder).
   const { rows: [seen] } = await query(
-    `SELECT 1 FROM email_invoice_decisions WHERE account_id = $1 AND provider_id = $2 AND NOT (outcome = 'waiting' AND $3)`, [account.id, m.provider_id, Boolean(cand.retry)]);
+    `SELECT 1 FROM email_invoice_decisions WHERE account_id = $1 AND NOT (outcome = 'waiting' AND $3)
+        AND (provider_id = $2 OR ($4::text IS NOT NULL AND lower(internet_message_id) = lower($4)))`,
+    [account.id, m.provider_id, Boolean(cand.retry), m.internet_message_id || null]);
   if (seen) return 'seen';
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''), MAX_EMAIL_TEXT);
   // A retry was a candidate when it was sent; its stored copy may hold no text.
-  const pf = cand.retry ? { candidate: true } : invoicePrefilter({ direction: 'outbound', subject: m.subject, text, external: c.external, attachments: m.attachments, has_attachments: m.has_attachments });
+  const pf = cand.retry ? { candidate: true } : invoicePrefilter({ direction: 'outbound', subject: m.subject, text, external: c.external, attachments: m.attachments, has_attachments: m.has_attachments }, { readAll: ctx.settings.readAll });
   if (!pf.candidate) {
     if (pf.reason === 'proforma') {
       // Decided by the rules: a proforma is never recorded, and never uses up a number.
@@ -493,8 +497,8 @@ async function pastInvoiceCandidates(account, judge, messages) {
   const out = [];
   for (const m of messages) {
     if (!m.provider_id || !m.conversation_id || m.draft) continue;
-    const c = judge(m);
-    if (c.skip || c.direction !== 'outbound') continue;
+    const c = forReaders(judge(m), judge.readAll);
+    if (!c || c.direction !== 'outbound') continue;
     const { rows: [t] } = await query('SELECT id FROM email_threads WHERE account_id = $1 AND conversation_id = $2', [account.id, m.conversation_id]);
     out.push({ m, c, threadId: t?.id ?? null, newThread: false, dropped: !t });
   }
@@ -551,7 +555,9 @@ export async function backfillInvoiceAccount(account, ctx, { budgetMs = 4 * 60_0
     if (!provider.page) throw new Error(`Reading past mail is not supported for ${account.provider} mailboxes`);
     const judge = await ingestRules(account);
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
-      const page = await provider.page('sentitems', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      // Every folder while reading everything (073): our invoices are often
+      // filed away from Sent Items. pastInvoiceCandidates keeps what we sent.
+      const page = await provider.page(ctx.settings.readAll ? 'all' : 'sentitems', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       // A page that runs past where the PO readers have got is left for a
       // later run: the cursor stays, so it is fetched again then.
       if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {

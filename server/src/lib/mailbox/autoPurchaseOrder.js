@@ -38,7 +38,7 @@ import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrde
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
-import { referencesIn } from './rules.js';
+import { forReaders, referencesIn } from './rules.js';
 import { inLanes } from './inLanes.js';
 
 /**
@@ -66,7 +66,7 @@ export async function poSettings(db = { query }) {
     ourGstin: String(s.company_gstin || '').trim() || null,
     // The same "us" and the same daily AI ceiling as phase 1.
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit,
-    concurrency: shared.concurrency, services: shared.services,
+    concurrency: shared.concurrency, services: shared.services, readAll: shared.readAll,
   };
 }
 
@@ -139,8 +139,11 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export async function decidePo(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || c.direction !== 'inbound') return 'incomplete';
+  // By id, or as the same email under another id (moved to another folder).
   const { rows: [seen] } = await query(
-    `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND NOT (outcome = 'retry' AND $3)`, [account.id, m.provider_id, Boolean(cand.retrySince)]);
+    `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND NOT (outcome = 'retry' AND $3)
+        AND (provider_id = $2 OR ($4::text IS NOT NULL AND lower(internet_message_id) = lower($4)))`,
+    [account.id, m.provider_id, Boolean(cand.retrySince), m.internet_message_id || null]);
   if (seen) return 'seen';
 
   // The same text the enquiry reader's prefilter reads (mainText's default
@@ -149,7 +152,7 @@ export async function decidePo(account, cand, ctx) {
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
   const input = { direction: 'inbound', subject: m.subject, text, from: m.from, attachments: m.attachments, has_attachments: m.has_attachments };
   // A retry was a candidate when it arrived; its stored copy may hold no text.
-  const pf = cand.retrySince ? { candidate: true } : poPrefilter(input, { portalSenders: ctx.settings.portalSenders });
+  const pf = cand.retrySince ? { candidate: true } : poPrefilter(input, { portalSenders: ctx.settings.portalSenders, readAll: ctx.settings.readAll });
   if (!pf.candidate) { ctx.skipped += 1; return 'skipped'; }
 
   // The same email, read in another mailbox: no second AI call.
@@ -739,7 +742,8 @@ async function pastPoCandidates(account, judge, messages, portals) {
   const out = [];
   for (const m of messages) {
     if (!m.provider_id || !m.conversation_id || m.draft) continue;
-    let c = judge(m);
+    const judged = judge(m);
+    let c = forReaders(judged, judge.readAll) || judged;
     if (c.skip === 'blocked sender' && isPortalSender(m.from?.email, portals)) c = { ...c, skip: null, direction: 'inbound', external: [m.from] };
     if (c.skip || c.direction !== 'inbound') continue;
     const { rows: [stored] } = await query(
@@ -764,7 +768,7 @@ async function enquiriesFromNotPo(account, cands, enquiryCtx, provider) {
     `SELECT provider_id FROM email_po_decisions WHERE account_id = $1 AND provider_id = ANY($2) AND outcome = 'not_po'`,
     [account.id, cands.map((c) => c.m.provider_id)]);
   const notPo = new Set(rows.map((r) => r.provider_id));
-  const handBack = cands.filter((c) => notPo.has(c.m.provider_id) && (c.newThread || c.dropped));
+  const handBack = cands.filter((c) => notPo.has(c.m.provider_id) && (enquiryCtx.settings.readAll || c.newThread || c.dropped));
   if (handBack.length) await processCandidates(account, handBack, { ctx: enquiryCtx, notifyEach: false, provider });
 }
 
@@ -775,14 +779,16 @@ async function enquiriesFromNotPo(account, cands, enquiryCtx, provider) {
  * again does not undo that, since what it made stays. Otherwise the date
  * the enquiry reader has reached in Sent Items, where the quotations we
  * sent are read, after the whole Inbox. Null while it is still on the
- * Inbox: a PO read then could find no quotation and make one.
+ * Inbox: a PO read then could find no quotation and make one. Reading the
+ * whole mailbox as one stream (folder 'all'), the date it has reached is
+ * how far everything, quotations included, has been read.
  */
 export async function enquiriesReadUpTo(accountId) {
   const { rows: [r] } = await query(
     `SELECT a.past_enquiries_read_at, e.finished_at, e.folder, e.reached
        FROM connected_accounts a LEFT JOIN mailbox_enquiry_backfills e ON e.account_id = a.id WHERE a.id = $1`, [accountId]);
   if (r?.past_enquiries_read_at || r?.finished_at) return true;
-  return r?.folder === 'sentitems' && r.reached ? new Date(r.reached) : null;
+  return ['sentitems', 'all'].includes(r?.folder) && r.reached ? new Date(r.reached) : null;
 }
 
 /**
@@ -811,7 +817,8 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
     const judge = await ingestRules(account);
     const eCtx = enquiryCtx || await runContext({ backfill: true });
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
-      const page = await provider.page('inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      // Every folder while reading everything (073); pastPoCandidates keeps the inbound mail.
+      const page = await provider.page(ctx.settings.readAll ? 'all' : 'inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       // A page that runs past where the enquiry reader has got is left for
       // a later run: the cursor stays, so it is fetched again then.
       if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {
@@ -879,7 +886,7 @@ export async function runPoBackfills({ budgetMs = PO_BACKFILL_BUDGET_MS } = {}) 
        LEFT JOIN mailbox_enquiry_backfills e ON e.account_id = a.id
        LEFT JOIN mailbox_po_backfills b ON b.account_id = a.id
       WHERE a.status = 'active' AND b.finished_at IS NULL
-        AND (a.past_enquiries_read_at IS NOT NULL OR e.finished_at IS NOT NULL OR (e.folder = 'sentitems' AND e.reached IS NOT NULL))
+        AND (a.past_enquiries_read_at IS NOT NULL OR e.finished_at IS NOT NULL OR (e.folder IN ('sentitems','all') AND e.reached IS NOT NULL))
       ORDER BY a.id`);
   const started = Date.now();
   const results = [];
