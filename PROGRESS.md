@@ -351,6 +351,24 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Update log
 
+- 2026-10-03: The **Inbox now reads like Outlook** (`feat/inbox-reading`,
+  step 2 of `docs/inbox-outlook-plan.md`). The title of the Inbox page is
+  now a switcher: the team's shared inbox as before, then each person's
+  own mailbox with all its folders as Outlook has them, nested, with
+  Outlook's own unread counts; an admin sees every mailbox's folder list.
+  Picking a folder lists its conversations newest first, with the unread
+  dot, flag, paperclip and importance, who it is from (or who it went to,
+  in Sent Items), and filters for unread and flagged. Every message now
+  shows To and Cc (with a Details view for Bcc on our own mail and the full
+  header), what is attached — with download, and a new-tab preview for
+  PDFs and images — pictures embedded in the email, and an Open in Outlook
+  link. The owner of a mailbox that stores only subjects or metadata reads
+  their own mail in full: the body is fetched from Microsoft for that one
+  request and never stored, and nobody else sees more than the owner chose
+  to share. Attachments pass straight through from Microsoft with the
+  browser told not to guess their type, and nothing larger than 25 MB.
+  Nothing writes to Outlook yet; marking read, flagging, moving and
+  deleting are the next step.
 - 2026-10-03: Groundwork for the **Inbox that works like Outlook**
   (`feat/inbox-outlook`, step 1 of `docs/inbox-outlook-plan.md`; nothing
   changes on screen yet). The tracker now records what Outlook knows about

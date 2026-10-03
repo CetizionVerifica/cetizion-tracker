@@ -298,6 +298,23 @@ export function microsoftProvider(account, tokens) {
       }
       return out;
     },
+    /**
+     * One attachment's bytes, as a stream straight from Graph's $value
+     * (docs/inbox-outlook-plan.md §3.3), for a download or a preview. The
+     * file never lands on our disk; `maxBytes` refuses one Graph says is
+     * larger before a byte is read, and the caller counts the rest. Returns
+     * { stream, size } — a web ReadableStream and Content-Length when known.
+     */
+    async attachmentStream(providerId, attachmentId, { maxBytes = 25 * 1024 * 1024 } = {}) {
+      current = await freshTokens(current);
+      const r = await fetch(`${GRAPH}${who}/messages/${providerId}/attachments/${attachmentId}/$value`, {
+        headers: { Authorization: `Bearer ${current.access_token}`, Prefer: 'IdType="ImmutableId"' }, signal: AbortSignal.timeout(120_000),
+      });
+      if (!r.ok) { await r.body?.cancel().catch(() => {}); const e = new Error(`Graph ${r.status}`); e.status = r.status; e.reconnect = r.status === 401; throw e; }
+      const size = Number(r.headers.get('content-length')) || null;
+      if (size && size > maxBytes) { await r.body?.cancel().catch(() => {}); throw Object.assign(new Error('The attachment is larger than the tracker will download'), { status: 413 }); }
+      return { stream: r.body, size };
+    },
     /** Reply in the same conversation; Outlook keeps it in Sent Items. */
     async reply(providerId, html, { replyAll = true } = {}) {
       await graph(`${who}/messages/${providerId}/${replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: { comment: html } });

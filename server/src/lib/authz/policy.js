@@ -357,6 +357,13 @@ export const routes = [
   { method: 'GET', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'PATCH', path: '/api/mail/threads/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
   { method: 'POST', path: '/api/mail/threads/:id/reply', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
+  // Reading mail as Outlook shows it (docs/inbox-outlook-plan.md §3.3). Every
+  // route answers 404 for a mailbox or message the caller may not read.
+  { method: 'GET', path: '/api/mail/mailboxes', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'The caller\'s own mailboxes and the shared ones they are named on, with their folders; an admin sees every mailbox\'s folder list.' },
+  { method: 'GET', path: '/api/mail/folders/:accountId/:folderId/messages', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'] },
+  { method: 'GET', path: '/api/mail/messages/:id', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'What is stored, under the mailbox\'s visibility. The owner of a personal mailbox that stores less reads the body live from the provider; nothing is stored.' },
+  { method: 'GET', path: '/api/mail/messages/:id/attachments/:attId', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'Streamed from the provider with nosniff and a 25 MB cap; from a mailbox that stores metadata or subjects only, the owner alone.' },
+  { method: 'GET', path: '/api/mail/messages/:id/inline/:contentId', access: signedIn, restrictions: ['mailbox-owner', 'mailbox-delegate'], note: 'A cid: image of the message, images only, under the same rule as attachments.' },
 
   // ---------------------------------------------------------------- inbox
   { method: 'GET', path: '/api/inbox', access: signedIn, restrictions: ['mailbox-delegate'] },

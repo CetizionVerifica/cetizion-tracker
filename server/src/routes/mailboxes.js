@@ -512,13 +512,42 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // this route should answer.
   const params = [Number(req.params.id)];
   const { rows: [t] } = await query(
-    `SELECT t.*, a.email AS mailbox, a.visibility, a.status AS mailbox_status, c.name AS company_name, ct.name AS contact_name
+    `SELECT t.*, a.email AS mailbox, a.visibility, a.status AS mailbox_status, a.is_shared, a.user_id, c.name AS company_name, ct.name AS contact_name
        FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id
        LEFT JOIN companies c ON c.id = t.company_id LEFT JOIN contacts ct ON ct.id = t.contact_id
       WHERE t.id = $1 AND ${readableThread(req, params)}`, params);
   if (!t) throw new ApiError(404, 'Thread not found');
-  const { rows } = await query('SELECT id, direction, from_email, from_name, to_emails, cc_emails, subject, snippet, body_html, has_attachments, sent_at, sent_from_tracker_by FROM email_messages WHERE thread_id = $1 ORDER BY sent_at', [t.id]);
-  res.json({ data: { ...(t.visibility === 'metadata' ? { ...t, subject: null } : t), messages: rows.map((m) => applyVisibility(m, t.visibility)) } });
+  // Outlook's state of each message and what is attached to it (076), for
+  // the reading pane (docs/inbox-outlook-plan.md §3.3). Bcc only on mail we
+  // sent; a message deleted in Outlook keeps its place with no body.
+  const { rows } = await query(
+    `SELECT m.id, m.direction, m.from_email, m.from_name, m.to_emails, m.cc_emails,
+            CASE WHEN m.direction = 'outbound' THEN COALESCE(m.bcc_emails, '{}') ELSE '{}' END AS bcc_emails,
+            m.subject, CASE WHEN m.removed_at IS NULL THEN m.snippet END AS snippet, CASE WHEN m.removed_at IS NULL THEN m.body_html END AS body_html,
+            m.has_attachments, m.sent_at, m.sent_from_tracker_by, m.is_read, m.flag_status, m.importance, m.web_link, m.folder_id, m.removed_at,
+            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id) ORDER BY x.is_inline, x.id)
+                        FROM email_attachments x WHERE x.message_id = m.id), '[]'::json) AS attachments
+       FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id]);
+  // The owner of a personal mailbox that stores less than the whole message
+  // reads the rest live (GET /api/mail/messages/:id) and downloads its
+  // attachments; so does anybody, from a mailbox that shares everything.
+  const owner = !t.is_shared && t.user_id !== null && t.user_id === (req.user?.id ?? null);
+  const canDownload = t.visibility === 'share_everything' || owner;
+  const { user_id, ...thread } = t;
+  res.json({
+    data: {
+      ...(thread.visibility === 'metadata' ? { ...thread, subject: null } : thread),
+      can_download: canDownload,
+      messages: rows.map((m) => {
+        const v = applyVisibility(m, t.visibility);
+        return {
+          ...v,
+          attachments: v.attachments.map((a) => ({ ...a, url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null })),
+          can_read_live: owner && !v.body_html && !m.removed_at && t.visibility !== 'share_everything' && t.mailbox_status === 'active',
+        };
+      }),
+    },
+  });
 });
 
 mailThreadRouter.patch('/threads/:id', async (req, res) => {
