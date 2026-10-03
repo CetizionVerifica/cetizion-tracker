@@ -339,7 +339,7 @@ export const routes = [
   { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'GET', path: '/api/mailboxes/auto-enquiries', access: mustBeAdmin, why: 'Counts what every mailbox\'s mail was judged to be, the whole team\'s included.' },
-  { method: 'POST', path: '/api/mailboxes/:id/auto-enquiries/rerun', access: mustBeAdmin, why: 'Has a mailbox\'s mail judged again for enquiries, which spends the AI budget everybody shares.' },
+  { method: 'POST', path: '/api/mailboxes/:id/auto-enquiries/rerun', access: mustBeAdmin, why: 'Has a mailbox\'s mail judged again for enquiries, or read again for POs or invoices, which spends the AI budget everybody shares.' },
   { method: 'GET', path: '/api/mailboxes/blocklist', access: signedIn },
   { method: 'POST', path: '/api/mailboxes/blocklist', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody.' },
   { method: 'DELETE', path: '/api/mailboxes/blocklist/:id', access: mustBeAdmin, why: 'The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again.' },
@@ -354,6 +354,7 @@ export const routes = [
   // ---------------------------------------------------------------- inbox
   { method: 'GET', path: '/api/inbox', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'GET', path: '/api/inbox/summary', access: signedIn, restrictions: ['mailbox-delegate'] },
+  { method: 'POST', path: '/api/inbox/sync', access: signedIn, note: 'Starts the same sweep the API runs every minute, at most once every 15 seconds; returns nothing from any mailbox.' },
   { method: 'GET', path: '/api/inbox/:id', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'PATCH', path: '/api/inbox/:id', access: signedIn, restrictions: ['mailbox-delegate'] },
   { method: 'POST', path: '/api/inbox/:id/reply', access: signedIn, restrictions: ['mailbox-delegate'] },
@@ -439,9 +440,18 @@ export const routes = [
   { method: 'GET', path: '/api/projects/:projectId/full', access: signedIn },
   { method: 'POST', path: '/api/projects/:projectId/onboarding/apply-template', access: signedIn },
   { method: 'GET', path: '/api/purchase-orders/:poNumber/full', access: signedIn },
+  // POs read from email that need a person (docs/email-po-plan.md §3.7).
+  { method: 'GET', path: '/api/purchase-orders/review', access: signedIn, restrictions: ['record-owner'], note: 'A salesperson sees the items whose suggested quotation is theirs; an admin sees all.' },
+  { method: 'POST', path: '/api/purchase-orders/review/:id/register', access: signedIn, restrictions: ['record-owner'], note: 'Reads the PO again for the Register PO dialog; saves nothing but an unattached upload.' },
+  { method: 'POST', path: '/api/purchase-orders/review/:id/dismiss', access: signedIn, restrictions: ['record-owner'] },
+  { method: 'POST', path: '/api/purchase-orders/:poNumber/email-read-checked', access: signedIn, restrictions: ['parent-owner'] },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
   { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },
+  // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
+  { method: 'GET', path: '/api/payment-stages/invoice-review', access: signedIn, restrictions: ['parent-owner'], note: 'A salesperson sees the items on POs they may open; one matched to no PO is an admin\'s.' },
+  { method: 'POST', path: '/api/payment-stages/invoice-review/:id/record', access: signedIn, restrictions: ['parent-owner'], note: 'Reads the invoice again for the invoice dialog; saves nothing but an unattached upload.' },
+  { method: 'POST', path: '/api/payment-stages/invoice-review/:id/dismiss', access: signedIn, restrictions: ['parent-owner'] },
   { method: 'POST', path: '/api/payment-stages/:id/payment', access: signedIn },
 
   // --------------------------------------------------------- quotations

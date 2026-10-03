@@ -61,6 +61,10 @@ export const config = {
     appOnly: process.env.MS_APP_ONLY === 'true',
     webhookUrl: process.env.MAIL_WEBHOOK_URL || '',
     tokenKey: process.env.MAIL_TOKEN_KEY || '',
+    // How often the API itself pulls new mail, in seconds, so the Inbox
+    // fills without anybody pressing Sync and whether or not the worker
+    // is deployed. 0 switches it off.
+    autoSyncSeconds: process.env.MAIL_AUTOSYNC_SECONDS === undefined ? 60 : Math.max(0, Number(process.env.MAIL_AUTOSYNC_SECONDS) || 0),
     // Sign-in reuses the Entra app the mailbox sync already needs, but not
     // its redirect: a consent granted for reading mail must not come back
     // as a sign-in. Blank means "no Microsoft button".

@@ -296,12 +296,13 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
 
   test('the AI path: a fake model decides, and code holds it to the threshold and the kind', async () => {
     const box = await mailbox({ shared: true });
-    const answers = [
-      { kind: 'new_enquiry', confidence: 0.95, company_name: 'Model Named Pvt Ltd', contact_name: 'Dev', service: 'ESG', summary: 'Wants an ESG strategy.' },
-      { kind: 'new_enquiry', confidence: 0.5, company_name: 'Unsure Ltd' },
-      { kind: 'vendor_or_sales_pitch', confidence: 0.99, company_name: 'Seller Ltd' },
-    ];
-    auto.deps.chat = async () => answers.shift();
+    // Answered by sender: the three are from three clients, so they are read side by side.
+    const answers = {
+      'model-named.com': { kind: 'new_enquiry', confidence: 0.95, company_name: 'Model Named Pvt Ltd', contact_name: 'Dev', service: 'ESG', summary: 'Wants an ESG strategy.' },
+      'unsure.com': { kind: 'new_enquiry', confidence: 0.5, company_name: 'Unsure Ltd' },
+      'seller.com': { kind: 'vendor_or_sales_pitch', confidence: 0.99, company_name: 'Seller Ltd' },
+    };
+    auto.deps.chat = async (system, user) => answers[/Sender domain: (\S+)/.exec(user)[1]];
     await deliver(box, [
       rfq({ from: { email: 'dev@model-named.com', name: 'Dev' }, subject: 'Hello', body_html: '<p>Can we talk about an ESG strategy?</p>' }),
       rfq({ from: { email: 'x@unsure.com' }, subject: 'Question' }),
@@ -311,8 +312,25 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.equal(made.length, 1);
     assert.equal(made[0].client_name, 'Model Named Pvt Ltd');
     assert.match(made[0].notes, /Wants an ESG strategy/);
-    const ds = await decisions(box.id);
-    assert.deepEqual(ds.map((d) => [d.outcome, d.method, d.ai_calls]), [['created', 'ai', 1], ['not_enquiry', 'ai', 1], ['not_enquiry', 'ai', 1]]);
+    const ds = (await decisions(box.id)).sort((a, b) => a.from_email.localeCompare(b.from_email));
+    assert.deepEqual(ds.map((d) => [d.from_email, d.outcome, d.method, d.ai_calls]),
+      [['dev@model-named.com', 'created', 'ai', 1], ['x@unsure.com', 'not_enquiry', 'ai', 1], ['y@seller.com', 'not_enquiry', 'ai', 1]]);
+  });
+
+  test('the AI reads the text of the PDF a client attached, not only the email', async () => {
+    const box = await mailbox({ shared: true });
+    const { default: pdfmake } = await import('../src/lib/pdf.js');
+    const rfqPdf = await pdfmake.createPdf({ content: ['REQUEST FOR QUOTATION', 'Scope: BRSR reasonable assurance for FY 2025-26, three plants'] }).getBuffer();
+    const prompts = [];
+    auto.deps.chat = async (system, user) => { prompts.push(user); return { kind: 'new_enquiry', confidence: 0.9, company_name: 'Attached Rfq Ltd', service: 'BRSR' }; };
+    await deliver(box, [rfq({
+      from: { email: 'buyer@attached-rfq.com', name: 'Buyer' }, subject: 'RFQ', body_html: '<p>Please see attached.</p>', has_attachments: true,
+      attachments: [{ name: 'RFQ.pdf', contentType: 'application/pdf', content: rfqPdf }],
+    })]);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /Text of the PDFs attached:\n--- RFQ\.pdf ---\nREQUEST FOR QUOTATION/);
+    assert.match(prompts[0], /BRSR reasonable assurance/);
+    assert.equal((await enquiriesFrom(box.id)).length, 1);
   });
 
   test('the AI failing falls back to rules, and never stops the sync', async () => {

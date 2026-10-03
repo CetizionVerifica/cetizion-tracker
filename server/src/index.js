@@ -3,6 +3,7 @@ import { authConfig } from './auth/config.js';
 import { config } from './config.js';
 import { logger } from './lib/ops/logger.js';
 import { watchProcess } from './lib/ops/errors.js';
+import { startAutoSync } from './lib/mailbox/autoSync.js';
 
 watchProcess('api', logger);
 
@@ -16,8 +17,11 @@ const server = app.listen(config.port, () => {
   logger.info(`[auth] mode: ${authConfig.mode}`);
 });
 
+// New mail reaches the Inbox on its own, worker or no worker.
+const stopAutoSync = startAutoSync({ log: logger });
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => server.close(() => process.exit(0)));
+  process.on(signal, () => { stopAutoSync(); server.close(() => process.exit(0)); });
 }
 
 export default app;

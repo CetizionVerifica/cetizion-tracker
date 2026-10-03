@@ -96,6 +96,8 @@ UPDATE email_messages SET subject = '[subject removed]', snippet = NULL, body_ht
        from_email = CASE WHEN direction = 'inbound' THEN 'sender' || id || '@example.test' ELSE from_email END, from_name = NULL,
        to_emails = ARRAY['recipient' || id || '@example.test'], cc_emails = '{}';
 UPDATE email_enquiry_decisions SET from_email = NULL, internet_message_id = NULL;
+UPDATE email_po_decisions SET from_email = NULL, internet_message_id = NULL;
+UPDATE email_invoice_decisions SET to_emails = NULL, internet_message_id = NULL, reading = NULL;
 UPDATE email_log SET to_email = 'recipient' || id || '@example.test', cc = NULL, body_text = NULL, body_html = NULL;
 UPDATE quotation_acceptances SET sent_to = NULL, decided_by_name = CASE WHEN decided_by_name IS NULL THEN NULL ELSE 'Client signatory' END,
        decided_by_email = NULL, ip = NULL, user_agent = NULL, comments = NULL, snapshot = NULL;

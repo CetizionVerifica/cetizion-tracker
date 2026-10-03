@@ -26,8 +26,12 @@ import { addWorkingDays, businessToday } from '../businessDate.ts';
 import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
-import { domainOf } from './rules.js';
+import { domainOf, forReaders, PUBLIC_DOMAINS } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
+import { queueFailures } from './readerQueue.js';
+import { inLanes } from './inLanes.js';
+import { MAX_PDF_BYTES, SCANNED_BELOW, isPdf, pdfText } from './pdfQuotation.js';
+import { MAX_ENQUIRY_ATTACHMENT_TEXT } from './readLimits.js';
 
 /**
  * Replaceable in tests: `chat` stands in for the AI, so no test reaches the
@@ -37,30 +41,48 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'internal_email_domains'];
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency',
+  'email_read_everything'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
 
 export async function enquirySettings(db = { query }) {
   const { rows } = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [SETTING_KEYS]);
   const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  // The catalogue's names go into every reader's prompt, so a service is
+  // spelt the way the catalogue spells it and links to it (promptRules.js).
+  const { rows: services } = await db.query('SELECT name FROM services WHERE active ORDER BY sort_order, name');
   return {
     enabled: String(s.auto_enquiries_enabled ?? 'true').trim().toLowerCase() !== 'false',
     minConfidence: num(s.auto_enquiry_min_confidence, 0.7),
     sameSenderDays: num(s.auto_enquiry_same_sender_days, 30),
-    dailyAiLimit: num(s.auto_enquiry_daily_ai_limit, 1500),
+    dailyAiLimit: num(s.auto_enquiry_daily_ai_limit, 5000),
+    // How many emails each reader reads at once (inLanes.js); 1 is one after another.
+    concurrency: Math.min(8, Math.max(1, Math.trunc(num(s.email_reader_concurrency, 4)))),
     backfillDays: num(s.auto_enquiry_backfill_days, 365),
     quotationMinConfidence: num(s.auto_quotation_min_confidence, 0.8),
     ourNames: [s.company_name].filter(Boolean),
+    ourGstin: String(s.company_gstin || '').trim() || null,
+    services: services.map((r) => r.name),
     internalDomains: String(s.internal_email_domains || '').split(',').map((d) => d.trim()).filter(Boolean),
+    // The PO reader (autoPurchaseOrder.js) takes PO emails while it is on.
+    poReader: String(s.auto_po_enabled ?? 'true').trim().toLowerCase() !== 'false',
+    portalSenders: String(s.po_portal_senders || ''),
+    // Every email goes to the AI, replies included; the free rules that
+    // screen mail out are skipped (073). The duplicate guards stay.
+    readAll: String(s.email_read_everything ?? 'true').trim().toLowerCase() !== 'false',
   };
 }
 
 /** Model calls made today (business day), against the daily ceiling. */
 export async function aiCallsToday(db = { query }) {
+  // One ceiling for every email reader: enquiries, quotations, POs and invoices (docs/email-po-plan.md §3.9).
   const { rows: [r] } = await db.query(
-    `SELECT COALESCE(sum(ai_calls), 0)::int AS n FROM email_enquiry_decisions
-      WHERE decided_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')`);
+    `WITH day AS (SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata' AS start)
+     SELECT (SELECT COALESCE(sum(ai_calls), 0) FROM email_enquiry_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_po_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT COALESCE(sum(ai_calls), 0) FROM email_invoice_decisions, day WHERE decided_at >= day.start)::int
+          + (SELECT count(*) FROM email_ai_calls, day WHERE made_at >= day.start)::int AS n`);
   return r.n;
 }
 
@@ -77,19 +99,27 @@ export async function runContext({ backfill = false } = {}) {
  * null when the feature is switched off. One email failing never stops the
  * rest, and never fails the sync that found it.
  */
-export async function processCandidates(account, candidates, { ctx: given = null, notifyEach = true, provider = null } = {}) {
+export async function processCandidates(account, candidates, { ctx: given = null, notifyEach = true, provider = null, onSettled = null } = {}) {
   const ctx = given || await runContext();
   if (provider) ctx.provider = provider;
   if (!ctx.settings.enabled) return null;
-  for (const cand of candidates) {
-    if (ctx.stopped) break;
-    try {
-      await decide(account, cand, ctx);
-    } catch (err) {
-      ctx.errors += 1;
-      console.error('[auto-enquiry]', account.email, cand.m?.provider_id, err.message);
-    }
-  }
+  await inLanes(candidates, {
+    concurrency: ctx.settings.concurrency,
+    stopped: () => Boolean(ctx.stopped),
+    each: async (cand) => {
+      // Told for every email reached, so the reader queue (readerQueue.js)
+      // can keep the ones that failed. One left unreached stays queued.
+      let failure = null;
+      try {
+        await decide(account, cand, ctx);
+      } catch (err) {
+        failure = err;
+        ctx.errors += 1;
+        console.error('[auto-enquiry]', account.email, cand.m?.provider_id, err.message);
+      }
+      if (onSettled) await onSettled(cand, failure);
+    },
+  });
   if (notifyEach) {
     for (const e of ctx.created) {
       await notify({
@@ -122,7 +152,7 @@ async function logDecision(db, account, cand, d) {
 // ------------------------------------------------------------ facts
 
 /** The facts prefilter() needs that only the database knows. */
-async function factsFor(account, cand) {
+async function factsFor(account, cand, settings = {}) {
   const { m, c } = cand;
   const { rows: [conv] } = await query(
     `SELECT EXISTS (SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1 AND conversation_id = $2 AND outcome IN ('created','linked')) AS decided,
@@ -133,11 +163,21 @@ async function factsFor(account, cand) {
   // not a reason to skip it: what matters there is whether it has an
   // enquiry (plan §3.8), which quotationEnquiry() works out.
   const onRecord = c.direction === 'inbound' && await linkedByNumber(cand);
-  const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped };
+  const facts = { handled: conv.decided || conv.converted || onRecord, firstInConversation: cand.newThread || cand.dropped, readAll: Boolean(settings.readAll) };
+  // Only while the PO reader can read: without an AI it reads nothing, and
+  // holding PO-looking mail back for it would hide it from everyone.
+  if (c.direction === 'inbound' && settings.poReader && (await import('./autoPurchaseOrder.js')).poReaderCanRead()) {
+    // A PO email is the PO reader's, until it has decided otherwise.
+    const { rows: [po] } = await query(
+      `SELECT 1 FROM email_po_decisions WHERE account_id = $1 AND provider_id = $2 AND outcome IN ('not_po','dismissed')`, [account.id, m.provider_id]);
+    Object.assign(facts, { poReader: true, notPo: Boolean(po), portalSenders: settings.portalSenders });
+  }
   if (c.direction === 'outbound') {
     // A domain we have only ever had bills or sales pitches from is a vendor,
     // and what we send them is not a quotation to a client.
-    const domains = [...new Set(c.external.map((p) => domainOf(p.email)).filter(Boolean))];
+    // Never a free-mail domain: one gmail.com sender's remittance advice
+    // made every quotation to any gmail.com client "to a vendor".
+    const domains = [...new Set(c.external.map((p) => domainOf(p.email)).filter((d) => d && !PUBLIC_DOMAINS.has(d)))];
     if (domains.length) {
       const { rows: [v] } = await query(
         `SELECT bool_or(kind IN ('billing','vendor_or_sales_pitch')) AND NOT bool_or(kind IN ('new_enquiry','quotation_sent')) AS vendor
@@ -185,9 +225,12 @@ async function classifyEmail(account, cand, input, ctx) {
            FROM email_threads t WHERE t.id = $1`, [cand.threadId]);
       companyKnown = Boolean(t?.company_id); openDeals = t?.open || 0;
     }
-    const { system, user } = buildPrompt(input, { companyKnown, openDeals });
+    const attachmentText = await attachedText(account, cand, ctx);
+    const { system, user } = buildPrompt({ ...input, attachmentText }, {
+      companyKnown, openDeals, services: ctx.settings.services, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+    });
     try {
-      const v = parseVerdict(await chat(system, user, { maxTokens: 600, timeoutMs: 30_000 }), ctx.settings);
+      const v = parseVerdict(await chat(system, user, { maxTokens: 1000, timeoutMs: 60_000 }), ctx.settings);
       return { ...v, ai_calls: 1 };
     } catch (err) {
       // Not answered (no route, a timeout): the rules decide this one.
@@ -200,6 +243,33 @@ async function classifyEmail(account, cand, input, ctx) {
   // same way throughout.
   if (chat && ctx.backfill) return null;
   return { ...rulesVerdict(input), ai_calls: 0 };
+}
+
+/**
+ * The text of the PDFs a client attached: a request for quotation or a scope
+ * of work often says in its PDF what the email only points to. Text PDFs
+ * only, no OCR, at most MAX_ENQUIRY_ATTACHMENT_TEXT; anything that fails
+ * leaves the email judged on its own, as before.
+ */
+async function attachedText(account, cand, ctx) {
+  const { m, c } = cand;
+  if (c.direction !== 'inbound' || !m.has_attachments) return '';
+  let files;
+  try {
+    files = (await (ctx.provider || providerFor(account)).attachments(m.provider_id))
+      .filter((a) => isPdf(a) && a.content && a.content.length <= MAX_PDF_BYTES);
+  } catch (err) {
+    console.warn('[auto-enquiry] attachments not read:', err.message);
+    return '';
+  }
+  let out = '';
+  for (const f of files) {
+    if (out.length >= MAX_ENQUIRY_ATTACHMENT_TEXT) break;
+    const text = (await pdfText(f.content).catch(() => [])).join('\n\n');
+    if (text.replace(/\s+/g, '').length < SCANNED_BELOW) continue;
+    out += `\n--- ${f.name || 'attachment.pdf'} ---\n${text}`;
+  }
+  return out.slice(0, MAX_ENQUIRY_ATTACHMENT_TEXT);
 }
 
 // ------------------------------------------------------------ owners
@@ -218,7 +288,7 @@ async function salesUser(db, ref) {
  * assignee, if that is a salesperson. Otherwise nobody — visibly unassigned
  * rather than wrongly given to someone (the rule ownerForNewRecord follows).
  */
-async function ownerFor(db, account, threadId, fallbackUserId = null) {
+export async function ownerFor(db, account, threadId, fallbackUserId = null) {
   if (!account.is_shared) return (await salesUser(db, account.username)) || (await salesUser(db, account.email));
   if (threadId) {
     const { rows: [conv] } = await db.query('SELECT assignee FROM inbox_conversations WHERE thread_id = $1', [threadId]);
@@ -290,7 +360,7 @@ async function threadCompany(db, threadId) {
  * The thread a dropped email gets once it is an enquiry: stored now, under
  * the new company, with the mailbox's visibility applied as for any mail.
  */
-async function keepDropped(db, account, cand, companyId) {
+export async function keepDropped(db, account, cand, companyId) {
   if (cand.threadId) return cand.threadId;
   const r = await ingestOne(db, account, cand.m, cand.c, { forceCompanyId: companyId });
   if (r.thread) return r.thread.id;
@@ -307,7 +377,11 @@ export async function decide(account, cand, ctx) {
   const { m, c } = cand;
   if (!m.provider_id || !m.conversation_id) return 'incomplete';
 
-  const { rows: [seen] } = await query('SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  // By id, or as the same email under another id: Outlook gives a message
+  // a new id when it is moved to another folder, and every folder is read.
+  const { rows: [seen] } = await query(
+    `SELECT 1 FROM email_enquiry_decisions WHERE account_id = $1
+        AND (provider_id = $2 OR ($3::text IS NOT NULL AND lower(internet_message_id) = lower($3)))`, [account.id, m.provider_id, m.internet_message_id || null]);
   if (seen) return 'seen';
 
   // The same email, read in another mailbox, already made or joined an
@@ -316,12 +390,19 @@ export async function decide(account, cand, ctx) {
   if (elsewhere) return transaction((db) => joinElsewhere(db, account, cand, elsewhere, ctx));
 
   const text = mainText(m.body_html || (m.preview ? `<p>${m.preview}</p>` : ''));
-  const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments };
-  const pf = prefilter(input, await factsFor(account, cand));
+  const input = { direction: c.direction, subject: m.subject, text, from: m.from, to: m.to, external: c.external, has_attachments: m.has_attachments, attachments: m.attachments };
+  const facts = await factsFor(account, cand, ctx.settings);
+  const pf = prefilter(input, facts);
   if (!pf.candidate) { ctx.skipped += 1; return 'skipped'; }
 
   const verdict = await classifyEmail(account, cand, input, ctx);
   if (!verdict) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
+  // Reading everything lets the AI judge what the free rules would have
+  // skipped. When the rules decide instead (no AI, the day's ceiling, an
+  // AI error), their own screening is part of the decision — for our own
+  // mail it is all of it — so it applies as before: otherwise every email
+  // we send would become an enquiry.
+  if (facts.readAll && verdict.method === 'rules' && !prefilter(input, { ...facts, readAll: false }).candidate) { ctx.skipped += 1; return 'skipped'; }
   const wanted = pf.candidate === 'quotation' ? 'quotation_sent' : 'new_enquiry';
   const bar = verdict.method === 'ai' ? ctx.settings.minConfidence : RULES_BAR;
   if (verdict.kind !== wanted || verdict.confidence < bar) {
@@ -500,6 +581,13 @@ async function quotationEnquiry(db, account, cand, verdict, prepared, ctx) {
   // Not in the tracker: made in Word or Excel and emailed.
   const client = (await companyName(db, companyId)) || prepared?.extraction?.client?.company_name || verdict.company_name
     || companyNameFromEmail(recipient.email) || recipient.name || recipient.email;
+  // Mail between our own people is read too (073): a "quotation" with no
+  // client anywhere, on the PDF or among the recipients, makes nothing.
+  if (!client) {
+    await logDecision(db, account, cand, { outcome: 'not_enquiry', ...decisionOf(verdict) });
+    ctx.notEnquiry += 1;
+    return 'not_enquiry';
+  }
   const { rows: [{ id: newCompanyId }] } = await db.query('SELECT company_for($1) AS id', [client]);
   const threadId = await keepDropped(db, account, cand, newCompanyId);
   const owner = await ownerFor(db, account, threadId);
@@ -601,11 +689,11 @@ async function pastCandidates(account, judge, messages) {
   const out = [];
   for (const m of messages) {
     if (!m.provider_id || !m.conversation_id || m.draft) continue;
-    const c = judge(m);
-    if (c.skip) continue;
+    const c = forReaders(judge(m), judge.readAll);
+    if (!c) continue;
     const { rows: [stored] } = await query(
       `SELECT t.id AS thread_id,
-              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3) AS first
+              NOT EXISTS (SELECT 1 FROM email_messages o WHERE o.thread_id = t.id AND o.sent_at < $3 AND o.filtered_as IS NULL) AS first
          FROM email_threads t WHERE t.account_id = $1 AND t.conversation_id = $2`, [account.id, m.conversation_id, m.sent_at]);
     out.push(stored
       ? { m, c, threadId: stored.thread_id, newThread: stored.first, dropped: false }
@@ -615,13 +703,15 @@ async function pastCandidates(account, judge, messages) {
 }
 
 /**
- * Read one mailbox's past mail, oldest first, Inbox before Sent Items, for
- * up to `budgetMs`. Resumable: progress is stored after every page, so a
- * restart or a stop at the day's AI ceiling loses nothing.
+ * Read one mailbox's past mail, oldest first, for up to `budgetMs`: every
+ * folder as one stream while reading everything (folder 'all', 073), else
+ * Inbox before Sent Items. Resumable: progress is stored after every page,
+ * so a restart or a stop at the day's AI ceiling loses nothing.
  */
 export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET_MS } = {}) {
   const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
-  await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, 'inbox') ON CONFLICT (account_id) DO NOTHING`, [account.id, since]);
+  await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO NOTHING`,
+    [account.id, since, ctx.settings.readAll ? 'all' : 'inbox']);
   let { rows: [row] } = await query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, created: 0, linked: 0 };
   const started = Date.now();
@@ -635,7 +725,7 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       const page = await provider.page(row.folder, { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       const before = { created: ctx.created.length, linked: ctx.linked };
-      await processCandidates(account, await pastCandidates(account, judge, page.messages), { ctx, notifyEach: false, provider });
+      await processCandidates(account, await pastCandidates(account, judge, page.messages), { ctx, notifyEach: false, provider, onSettled: queueFailures(account, 'enquiry') });
       const created = ctx.created.length - before.created; const linked = ctx.linked - before.linked;
       tally.pages += 1; tally.created += created; tally.linked += linked;
       // Stopped part-way through this page (the day's AI ceiling): read it
@@ -654,7 +744,12 @@ export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET
       // Re-run or a disconnect removed the row while this ran: stop here;
       // the next run starts afresh.
       if (!row) { tally.restarted = true; break; }
-      if (row.finished_at) break;
+      if (row.finished_at) {
+        // Kept on the mailbox, where a re-run does not clear it: the PO
+        // reader goes by it (autoPurchaseOrder.js enquiriesReadUpTo).
+        await query('UPDATE connected_accounts SET past_enquiries_read_at = $2 WHERE id = $1', [account.id, row.finished_at]);
+        break;
+      }
     }
     await saveTokens(account, provider);
   } catch (err) {
