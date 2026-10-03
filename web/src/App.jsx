@@ -29,6 +29,7 @@ import Account from './pages/account/index.jsx';
 const Reports = lazy(() => import('./pages/Reports.jsx'));
 // Insights draws charts too, so it is loaded the same way.
 const Insights = lazy(() => import('./pages/Insights.jsx'));
+const ScheduledReports = lazy(() => import('./pages/ScheduledReports.jsx'));
 import Profitability from './pages/Profitability.jsx';
 import Accounting from './pages/Accounting.jsx';
 import Notifications from './pages/Notifications.jsx';
@@ -564,6 +565,7 @@ export default function App() {
           <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
           <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Insights /></Suspense>} />
+          <Route path="/reports/scheduled" element={<AdminOnly><Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><ScheduledReports /></Suspense></AdminOnly>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />

@@ -32,7 +32,11 @@ export function mailConfigured() {
   return Boolean(config.mail.host && config.mail.from);
 }
 
-/** Where a given address would go under the current mode and switches. */
+/** The addresses in a To or Cc string, or list. */
+export const addressesIn = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map((a) => String(a).trim()).filter(Boolean);
+const onAllowlist = (address, allowlist) => allowlist.some((a) => a.toLowerCase() === address.toLowerCase() || (a.startsWith('@') && address.toLowerCase().endsWith(a.toLowerCase())));
+
+/** Where a given address (or comma-separated addresses) would go under the current mode and switches. */
 export function decideDelivery({ to, mode = config.mail.mode, enabled = true, allowlist = config.mail.allowlist, optedOut = false, configured = mailConfigured() }) {
   if (!enabled) return { deliver: false, reason: 'emails_enabled is false' };
   if (optedOut) return { deliver: false, reason: 'contact opted out of automatic email' };
@@ -40,8 +44,13 @@ export function decideDelivery({ to, mode = config.mail.mode, enabled = true, al
   // Staging never emails anyone for real (#35); sandbox to the team still works.
   if (isStaging() && mode !== 'sandbox') return { deliver: false, reason: 'staging: outbound email is off' };
   if (mode === 'sandbox') {
-    const ok = allowlist.some((a) => a.toLowerCase() === String(to).toLowerCase() || (a.startsWith('@') && String(to).toLowerCase().endsWith(a.toLowerCase())));
-    return ok ? { deliver: true } : { deliver: false, reason: `EMAIL_MODE=sandbox and ${to} is not on EMAIL_ALLOWLIST` };
+    // Each recipient on its own: "a@team.com, b@client.com" is two addresses,
+    // and the second being off the allowlist suppresses the email. The
+    // joined string used to be compared whole, which never matched and so
+    // suppressed every email with more than one recipient — or, had an
+    // allowlist entry been the joined string, would have let one through.
+    const bad = addressesIn(to).find((address) => !onAllowlist(address, allowlist));
+    return bad === undefined ? { deliver: true } : { deliver: false, reason: `EMAIL_MODE=sandbox and ${bad} is not on EMAIL_ALLOWLIST` };
   }
   if (!configured) return { deliver: false, reason: 'SMTP_HOST or EMAIL_FROM not set' };
   return { deliver: true };
@@ -94,5 +103,59 @@ export async function sendMail({ to, cc = null, subject, text, html, template, e
       [row.id, String(err.message || err).slice(0, 1000)]
     );
     return failed;
+  }
+}
+
+/**
+ * Send one email from a connected mailbox, through the same switches as
+ * every other email (docs/mis-reports-plan.md §3.6): emails_enabled,
+ * EMAIL_MODE, staging, the sandbox allowlist, and a row in email_log either
+ * way. `send` is the mailbox provider's send (lib/mailbox/microsoft.js), so
+ * the message leaves from that mailbox and lands in its Sent Items; when it
+ * fails — the mailbox needs reconnecting, Graph is down — the same message
+ * goes by SMTP with the same attachments, and the row says which way it went.
+ *
+ * `attachments`: [{ name, contentType, content: Buffer }] for both paths.
+ * Returns { row, via: 'graph' | 'smtp' | 'log' | null, error }.
+ */
+export async function sendViaMailbox({ send, from = null, to, cc = [], subject, text, html, template, entity = null, entityId = null, sentBy = 'system', attachments = [] }, db = { query }) {
+  const recipients = addressesIn(to);
+  const copies = addressesIn(cc);
+  const enabled = await emailsEnabled(db);
+  const decision = recipients.length
+    ? decideDelivery({ to: [...recipients, ...copies].join(', '), enabled, configured: Boolean(send) || mailConfigured() })
+    : { deliver: false, reason: 'no recipients' };
+  const { rows: [row] } = await db.query(
+    `INSERT INTO email_log (to_email, cc, subject, template, entity, entity_id, status, mode, reason, body_text, body_html, sent_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+    [recipients.join(', '), copies.join(', ') || null, subject, template, entity, entityId === null ? null : String(entityId), decision.deliver ? 'queued' : 'suppressed', config.mail.mode, decision.reason || null, text, html, sentBy]
+  );
+  if (!decision.deliver) return { row, via: 'log', error: null };
+
+  const mark = (status, extra, values) => db.query(`UPDATE email_log SET status = $2, ${extra} WHERE id = $1 RETURNING *`, [row.id, status, ...values]).then((r) => r.rows[0]);
+  let graphError = null;
+  if (send) {
+    try {
+      await send({ to: recipients, cc: copies, subject, html, attachments });
+      return { row: await mark('sent', 'sent_at = now(), provider_message_id = $3', [`graph:${from || 'mailbox'}`]), via: 'graph', error: null };
+    } catch (err) {
+      graphError = String(err.message || err).slice(0, 500);
+    }
+  }
+  if (!mailConfigured()) {
+    const error = graphError ? `${graphError}; SMTP_HOST or EMAIL_FROM not set, so no fallback` : 'SMTP_HOST or EMAIL_FROM not set';
+    return { row: await mark('failed', 'error = $3', [error]), via: null, error };
+  }
+  try {
+    const info = await smtp().sendMail({
+      from: config.mail.from, to: recipients.join(', '), cc: copies.join(', ') || undefined, replyTo: config.mail.replyTo || undefined,
+      bcc: config.mail.bcc || undefined, subject, text, html,
+      attachments: attachments.map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
+    });
+    const note = graphError ? `smtp after graph failed: ${graphError}` : null;
+    return { row: await mark('sent', 'sent_at = now(), provider_message_id = $3, reason = $4', [info.messageId || null, note]), via: 'smtp', error: graphError };
+  } catch (err) {
+    const error = [graphError, String(err.message || err).slice(0, 500)].filter(Boolean).join('; ');
+    return { row: await mark('failed', 'error = $3', [error]), via: null, error };
   }
 }

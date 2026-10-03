@@ -318,3 +318,116 @@ ${linkTable(['Record', 'Client', 'Respond by'], items.map((i) => [label(i), reco
 <p>Logging a call, email, meeting or note on the record closes it.</p>`);
   return { subject, text, html };
 }
+
+// ---------------------------------------------------------------------
+// The scheduled sales reports (docs/mis-reports-plan.md §3.6)
+// ---------------------------------------------------------------------
+
+const lakh = (v) => {
+  if (v === null || v === undefined) return '—';
+  const n = Number(v); const abs = Math.abs(n);
+  if (abs >= 1e7) return `₹${(abs / 1e7).toFixed(2).replace(/\.?0+$/, '')} Cr`;
+  if (abs >= 1e5) return `₹${(abs / 1e5).toFixed(1).replace(/\.?0+$/, '')} L`;
+  return inr(n);
+};
+const FX_NOTE = 'Converted at the exchange rate on each record\'s date (ECB). Earlier reports used fixed rates of USD 88 and EUR 103.';
+const link = (appUrl, path, text) => (appUrl ? `<a href="${esc(appUrl)}${esc(path)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
+
+/**
+ * The Daily Sales Briefing email: the headline figures, the highlights, the
+ * overdue items and the top actions, with the PDF attached. `data` is
+ * misReports.js dailyBriefing(); links go to tracker pages (a sign-in).
+ */
+export function dailyBriefing({ data, appUrl = '' }) {
+  const g = data.at_a_glance;
+  const day = date(data.period.from);
+  const overdue = [...data.pending.invoices.rows, ...data.pending.pos.rows, ...data.pending.quotations.rows].filter((r) => r.overdue).sort((a, b) => b.score - a.score).slice(0, 10);
+  const subject = `Daily Sales Briefing – ${day}: ${g.new_enquiries} new enquir${g.new_enquiries === 1 ? 'y' : 'ies'}, ${g.pos_received} PO${g.pos_received === 1 ? '' : 's'}, ${g.overdue} overdue`;
+  const figures = [
+    ['New enquiries', g.new_enquiries], ['Quotations sent', g.quotations_sent],
+    ['POs received', `${g.pos_received} · ${lakh(g.pos_received_inr)}`], ['Invoices raised', `${g.invoices_raised} · ${lakh(g.invoices_raised_inr)}`],
+    ['Payments received', `${g.payments_received} · ${lakh(g.payments_received_inr)}`],
+    ['Pending invoices / POs / quotations', `${g.pending_invoices} / ${g.pending_pos} / ${g.pending_quotations}`],
+    [`Overdue (more than ${data.overdue_days} days)`, g.overdue],
+  ];
+  const actionLine = (a) => `${a.client}: ${a.wording || `${a.next_action} — ${a.reference}`} (${a.days} d${a.amount_inr != null ? `, ${lakh(a.amount_inr)}` : ''}${a.owner ? `, ${a.owner}` : ''})`;
+  const text = `Good morning,
+
+Here is the sales briefing for ${day}.
+
+${figures.map(([k, v]) => `${k}: ${v}`).join('\n')}
+
+HIGHLIGHTS
+${data.highlights.length ? data.highlights.map((h) => `- ${h.client}: ${h.summary}${h.action ? ` → ${h.action}` : ''}`).join('\n') : '- Nothing was created or changed from email yesterday.'}
+
+TOP ACTIONS FOR TODAY
+${data.top_actions.length ? data.top_actions.map((a, i) => `${i + 1}. ${actionLine(a)}`).join('\n') : '- Nothing is pending.'}
+
+OVERDUE (${overdue.length}${overdue.length === 10 ? '+' : ''})
+${overdue.length ? overdue.map((r) => `- ${r.client} · ${r.reference} · ${r.days} days${r.amount_inr != null ? ` · ${lakh(r.amount_inr)}` : ''}`).join('\n') : '- Nothing overdue.'}
+
+The full briefing is attached as a PDF. ${FX_NOTE}
+
+Regards,
+Cetizion Tracker
+`;
+  const html = layout(`Daily Sales Briefing, ${day}`, `
+<p>Good morning,</p>
+<p>Here is the sales briefing for <strong>${esc(day)}</strong>.</p>
+${table([], figures.map(([k, v]) => [k, String(v)]))}
+<h3 style="font-size:14px;margin:16px 0 4px">Highlights</h3>
+${data.highlights.length
+    ? `<ul>${data.highlights.map((h) => `<li><strong>${esc(h.client)}:</strong> ${esc(h.summary)}${h.action ? ` → ${esc(h.action)}` : ''}${h.link ? ` · ${link(appUrl, h.link, 'open')}` : ''}</li>`).join('')}</ul>`
+    : '<p style="color:#64748b">Nothing was created or changed from email yesterday.</p>'}
+<h3 style="font-size:14px;margin:16px 0 4px">Top actions for today</h3>
+${data.top_actions.length
+    ? `<ol>${data.top_actions.map((a) => `<li>${esc(actionLine(a))} · ${link(appUrl, a.link, 'open')}</li>`).join('')}</ol>`
+    : '<p style="color:#64748b">Nothing is pending.</p>'}
+<h3 style="font-size:14px;margin:16px 0 4px">Overdue (${overdue.length}${overdue.length === 10 ? '+' : ''})</h3>
+${overdue.length
+    ? table(['Client', 'Reference', 'Days', 'Amount'], overdue.map((r) => [r.client, r.reference, String(r.days), r.amount_inr == null ? (r.amount == null ? '—' : 'no rate') : lakh(r.amount_inr)]))
+    : '<p style="color:#64748b">Nothing overdue.</p>'}
+<p>The full briefing is attached as a PDF.</p>
+<p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
+<p>Regards,<br>Cetizion Tracker</p>`);
+  return { subject, text, html };
+}
+
+/** The Weekly Sales MIS email: the headline figures and bullets, with the PDF attached. `data` is misReports.js weeklyMis(). */
+export function weeklyMis({ data, appUrl = '' }) {
+  const period = `${date(data.period.from)} – ${date(data.period.to)}`;
+  const converted = data.outcomes.slices.find((s) => s.key === 'converted');
+  const headline = data.commentary?.headline?.length ? data.commentary.headline : [data.narrative?.enquiries, data.narrative?.outcomes, data.narrative?.revenue, data.narrative?.customers].filter(Boolean);
+  const subject = `Weekly Sales MIS – ${period}: ${data.enquiries.total} enquiries, ${data.revenue.total.pos} POs (${lakh(data.revenue.total.po_value_inr)})`;
+  const figures = [
+    ['Enquiries', `${data.enquiries.total} (month to date ${data.enquiries.month_to_date})`],
+    ['Converted to PO', converted ? `${converted.count} of ${data.outcomes.total} (${converted.pct}%)` : '—'],
+    ['POs received', `${data.revenue.total.pos} · ${lakh(data.revenue.total.po_value_inr)}`],
+    ['Invoiced / received this week', `${lakh(data.billing.week.invoiced_inr)} / ${lakh(data.billing.week.received_inr)}`],
+    ['Receivables over 90 days', `${lakh(data.receivables.over_90.amount_inr)} (${data.receivables.over_90.count} invoices)`],
+    ['Overdue items', `${data.pending.invoices.overdue + data.pending.pos.overdue + data.pending.quotations.overdue} pending more than ${data.overdue_days} days`],
+    ['Open pipeline', `${lakh(data.speed.pipeline.value_inr)} (weighted ${lakh(data.speed.pipeline.weighted_inr)})`],
+  ];
+  const text = `Good morning,
+
+Here is the sales MIS for the week of ${period}.
+
+${headline.map((t) => `- ${t}`).join('\n')}
+
+${figures.map(([k, v]) => `${k}: ${v}`).join('\n')}
+
+The full report is attached as a PDF, with the enquiry table, sector-wise and service-wise sales, customer analysis, pending items and conversion figures. ${FX_NOTE}
+
+Regards,
+Cetizion Tracker
+`;
+  const html = layout(`Weekly Sales MIS, ${period}`, `
+<p>Good morning,</p>
+<p>Here is the sales MIS for the week of <strong>${esc(period)}</strong>.</p>
+${headline.length ? `<ul>${headline.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+${table([], figures.map(([k, v]) => [k, String(v)]))}
+<p>The full report is attached as a PDF, with the enquiry table, sector-wise and service-wise sales, customer analysis, pending items and conversion figures.${appUrl ? ` ${link(appUrl, '/reports', 'Open the Reports page')}.` : ''}</p>
+<p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
+<p>Regards,<br>Cetizion Tracker</p>`);
+  return { subject, text, html };
+}

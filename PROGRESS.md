@@ -351,6 +351,20 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Update log
 
+- 2026-10-03: The **Daily Sales Briefing** and the **Weekly Sales MIS** now
+  come from the tracker (`feat/mis-reports`, the plan in
+  `docs/mis-reports-plan.md`, the user doc in `docs/mis-reports.md`). Both
+  are built from the records the readers and the team have entered, with
+  the same definitions as the Reports page, in ₹ at the rate on each
+  record's date, and are emailed from the sales mailbox with a two-page
+  PDF attached: the briefing at 08:56 IST for the previous day, the MIS
+  every Monday at 08:54 for the previous week. The AI words the briefing's
+  highlights and the MIS commentary but cannot change a figure; without it
+  the reports still go. Admins run, preview, send and resend them under
+  Reports → Scheduled reports. Both start off: the plan's cut-over week
+  (one recipient, beside the Claude routines) comes first, then the two
+  routines are switched off.
+
 - 2026-10-03: Each salesperson can connect **their own mailbox** under
   Settings → My mailbox (`feat/per-user-mailboxes`, the plan in
   `docs/per-user-mailboxes-plan.md`). A personal mailbox belongs to the

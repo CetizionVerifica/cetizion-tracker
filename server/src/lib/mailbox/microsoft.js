@@ -35,7 +35,7 @@ const SCOPES = [
   'Mail.Send',
   'Mail.Send.Shared',
 ];
-const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId';
+const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId,webLink';
 
 /**
  * Folders never read, with everything under them: spam, deleted mail,
@@ -105,6 +105,7 @@ export function microsoftProvider(account, tokens) {
     subject: m.subject, body_html: m.body?.contentType === 'html' ? m.body.content : `<pre>${String(m.body?.content || '').replace(/</g, '&lt;')}</pre>`,
     preview: m.bodyPreview, from: person(m.from), to: (m.toRecipients || []).map(person).filter(Boolean), cc: (m.ccRecipients || []).map(person).filter(Boolean),
     sent_at: m.sentDateTime || m.receivedDateTime, has_attachments: Boolean(m.hasAttachments), draft: Boolean(m.isDraft),
+    web_link: m.webLink || null,
   });
 
   /** Every folder under `url` (a mailFolders or childFolders list), depth first, each page followed. */
@@ -231,9 +232,16 @@ export function microsoftProvider(account, tokens) {
     async reply(providerId, html, { replyAll = true } = {}) {
       await graph(`${who}/messages/${providerId}/${replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: { comment: html } });
     },
-    async send({ to, cc = [], subject, html }) {
+    /**
+     * Send a new message from the mailbox; it lands in its Sent Items.
+     * `attachments`: [{ name, contentType, content: Buffer }], sent inline
+     * as Graph's fileAttachment, which takes a file of up to about 3 MB —
+     * plenty for a report PDF (docs/mis-reports-plan.md §3.6).
+     */
+    async send({ to, cc = [], subject, html, attachments = [] }) {
       const rec = (list) => list.map((address) => ({ emailAddress: { address } }));
-      await graph(`${who}/sendMail`, { method: 'POST', body: { message: { subject, body: { contentType: 'HTML', content: html }, toRecipients: rec(to), ccRecipients: rec(cc) }, saveToSentItems: true } });
+      const files = attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType || 'application/octet-stream', contentBytes: Buffer.from(a.content).toString('base64') }));
+      await graph(`${who}/sendMail`, { method: 'POST', body: { message: { subject, body: { contentType: 'HTML', content: html }, toRecipients: rec(to), ccRecipients: rec(cc), ...(files.length ? { attachments: files } : {}) }, saveToSentItems: true } });
     },
     async subscribe(folder, clientState) {
       const expires = new Date(Date.now() + 4200 * 60 * 1000).toISOString(); // under Graph's mail limit of ~7 days

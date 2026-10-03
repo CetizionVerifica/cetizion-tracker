@@ -23,7 +23,7 @@ if (storageReady) {
 const ASSET = { resource_type: 'raw', type: 'authenticated' };
 
 /** Record types that carry a document; each gets its own Cloudinary folder. */
-const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments', 'deliverables', 'project-costs']);
+const OWNERS = new Set(['quotations', 'purchase-orders', 'payment-stages', 'attachments', 'deliverables', 'project-costs', 'reports']);
 export const isDocumentOwner = (owner) => OWNERS.has(owner);
 
 // A document may be attached, or deleted, only while no record points at it.
@@ -36,7 +36,8 @@ const UNATTACHED = `NOT EXISTS (SELECT 1 FROM quotations q WHERE q.document_id =
                 AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM deliverables dl WHERE dl.document_id = d.id)
                 AND NOT EXISTS (SELECT 1 FROM project_costs pc WHERE pc.document_id = d.id)
-                AND NOT EXISTS (SELECT 1 FROM quotation_acceptances qa WHERE qa.pdf_document_id = d.id)`;
+                AND NOT EXISTS (SELECT 1 FROM quotation_acceptances qa WHERE qa.pdf_document_id = d.id)
+                AND NOT EXISTS (SELECT 1 FROM report_runs rr WHERE rr.document_id = d.id)`;
 
 // Browsers display these themselves, and none of them can run script here.
 const INLINE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'text/plain']);
