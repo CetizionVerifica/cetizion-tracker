@@ -362,6 +362,10 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     let r = await auto.backfillAccount(box, ctx, { budgetMs: 0 });
     assert.equal(r.pages, 1);
     assert.equal(r.created, 2);
+    // The emails on one page are read several at a time, so the order they
+    // are created in is not fixed. What is fixed is which page went first.
+    assert.deepEqual((await enquiriesFrom(box.id)).map((e) => e.client_name).sort(), ['Hist One', 'Hist Two'],
+      'the oldest page is read first');
     let { rows: [row] } = await db.query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [box.id]);
     assert.equal(row.next_link, '2', 'it stopped with a cursor to resume from');
     assert.equal(row.finished_at, null);
@@ -373,7 +377,9 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.equal(row.scanned, 4);
 
     const made = await enquiriesFrom(box.id);
-    assert.deepEqual(made.map((e) => e.client_name), ['Hist One', 'Hist Two', 'Hist Three']);
+    // Ordered by the date each enquiry was given, which is its email's date.
+    const byDate = [...made].sort((x, y) => new Date(x.enquiry_date) - new Date(y.enquiry_date));
+    assert.deepEqual(byDate.map((e) => e.client_name), ['Hist One', 'Hist Two', 'Hist Three']);
     const { rows: [first] } = await db.query(`SELECT enquiry_date::text AS d, enquiry_no FROM enquiries WHERE client_name = 'Hist One'`);
     assert.equal(first.d, old.slice(0, 10), 'dated by the email, not by today');
     assert.match(first.enquiry_no, new RegExp(`/${old.slice(0, 4)}/`), 'numbered in the email\'s year');
