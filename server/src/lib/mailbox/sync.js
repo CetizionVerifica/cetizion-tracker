@@ -561,9 +561,9 @@ export async function refreshBodies(id, { days } = {}) {
           account.visibility
         );
         const { rowCount } = await query(
-          `UPDATE email_messages SET body_html = $3, snippet = $4, web_link = COALESCE($5, web_link)
+          `UPDATE email_messages SET body_html = $3, snippet = $4, web_link = COALESCE($5::text, web_link)
             WHERE account_id = $1 AND provider_id = $2
-              AND (body_html IS DISTINCT FROM $3 OR snippet IS DISTINCT FROM $4 OR (web_link IS NULL AND $5 IS NOT NULL))`,
+              AND (body_html IS DISTINCT FROM $3 OR snippet IS DISTINCT FROM $4 OR (web_link IS NULL AND $5::text IS NOT NULL))`,
           [account.id, m.provider_id, row.body_html, row.snippet, m.web_link || null]
         );
         if (rowCount) out.updated += 1; else out.unchanged += 1;
