@@ -10,7 +10,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -1903,6 +1903,8 @@ CREATE TABLE IF NOT EXISTS email_messages (
   -- Kept only because its mailbox feeds an Inbox: the filter that would
   -- have dropped it ('internal only', 'blocked sender'), else NULL.
   filtered_as          text,
+  -- Outlook's own link to the message (075): "Open in Outlook".
+  web_link             text,
   created_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );
@@ -2947,6 +2949,38 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.'),
   ('email_read_everything', 'true', 'Read every email in every folder (except Junk, Deleted Items, Drafts and Outbox), replies included: the AI decides what each one is. Off puts back the free rules that skip replies, newsletters, automatic senders and mail with no PO or invoice words, which saves AI calls.'),
   ('personal_mailbox_default_visibility', 'subject', 'What a newly connected personal mailbox stores for the tracker: metadata (who and when), subject, or share_everything. Its owner can change it afterwards; mailboxes already connected keep their setting.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ------------------------------------------- the scheduled sales reports (075)
+-- One row per Daily Sales Briefing or Weekly Sales MIS generated
+-- (docs/mis-reports-plan.md §4): what was sent, to whom, how, and the PDF.
+CREATE TABLE IF NOT EXISTS report_runs (
+  id            serial PRIMARY KEY,
+  kind          text NOT NULL CHECK (kind IN ('daily_briefing','weekly_mis')),
+  period_from   date NOT NULL,
+  period_to     date NOT NULL,
+  status        text NOT NULL CHECK (status IN ('sent','preview','failed','skipped')),
+  sent_via      text CHECK (sent_via IN ('graph','smtp','log')),
+  recipients    text[],
+  document_id   int REFERENCES documents(id),
+  email_log_id  int REFERENCES email_log(id) ON DELETE SET NULL,
+  ai_used       boolean NOT NULL DEFAULT false,
+  error         text,
+  triggered_by  text NOT NULL DEFAULT 'schedule',
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS report_runs_sent_once
+  ON report_runs (kind, period_from) WHERE status = 'sent' AND triggered_by = 'schedule';
+CREATE INDEX IF NOT EXISTS report_runs_recent_idx ON report_runs (kind, created_at DESC);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('mis_daily_enabled', 'false', 'Send the Daily Sales Briefing at 08:56 IST every day, for the previous day.'),
+  ('mis_weekly_enabled', 'false', 'Send the Weekly Sales MIS every Monday at 08:54 IST, for the previous Monday to Sunday.'),
+  ('mis_to', '', 'Recipients of both reports, comma-separated.'),
+  ('mis_cc', '', 'Copied on both reports, comma-separated.'),
+  ('mis_sender_account_id', '', 'The connected mailbox the reports are sent from (sales@). Blank: the SMTP sender.'),
+  ('mis_overdue_days', '7', 'Days after which a pending invoice, PO or quotation is marked Overdue in the reports.')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES

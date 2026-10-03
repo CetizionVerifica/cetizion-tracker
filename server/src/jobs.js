@@ -16,6 +16,7 @@ import { runBackfills } from './lib/mailbox/autoEnquiry.js';
 import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
 import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
 import { runVisitReminders } from './lib/visits.js';
+import { runDailyBriefing, runWeeklyMis } from './lib/misSend.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
 import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
@@ -110,6 +111,18 @@ export const JOBS = {
     cron: '*/10 * * * *',
     quiet: (r) => r.recorded > 0 || r.review > 0 || r.errors > 0,
     run: () => runInvoiceBackfills(),
+  },
+  // The scheduled sales reports (docs/mis-reports-plan.md §3.7). Each
+  // period is sent once: a run that finds it already sent does nothing.
+  'reports.daily_briefing': {
+    description: 'Email management the Daily Sales Briefing for the previous day, from the sales mailbox with the PDF attached',
+    cron: '56 8 * * *',
+    run: (opts) => runDailyBriefing(opts),
+  },
+  'reports.weekly_mis': {
+    description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the sales mailbox with the PDF attached',
+    cron: '54 8 * * 1',
+    run: (opts) => runWeeklyMis(opts),
   },
   'deliverables.daily': {
     description: 'Mark expired certificates and deliverables; remind owners before expiry with a task',

@@ -289,6 +289,9 @@ session is **401**, before any of these is considered.
 | **/api/mis-reports** | | |
 | `GET /api/mis-reports/:kind/preview` | **admin** | The Daily Sales Briefing and Weekly MIS are management reports over every record and every mailbox's readers; nothing is scoped to the caller. |
 | `GET /api/mis-reports/:kind/preview.pdf` | **admin** | The same report as a PDF, built over the whole book. |
+| `POST /api/mis-reports/:kind/send` | **admin** | Emails management a report now, from the sales mailbox; not a preview. |
+| `GET /api/mis-reports/runs` | **admin** | Every report sent to management, with its recipients. |
+| `GET /api/mis-reports/runs/:id/pdf` | **admin** | The PDF that went to management, over the whole book. |
 | **/api/notifications** | | |
 | `GET /api/notifications` | any | Scoped: record-owner. |
 | `POST /api/notifications/:id/read` | any | Scoped: record-owner. |

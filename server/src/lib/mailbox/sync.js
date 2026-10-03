@@ -294,11 +294,11 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
   const row = applyVisibility({ subject: m.subject, snippet: m.preview ? snippet(m.preview) : snippet(html), body_html: html }, account.visibility);
   const { rows: [saved] } = await db.query(
     `INSERT INTO email_messages (account_id, thread_id, provider_id, internet_message_id, direction, from_email, from_name, to_emails, cc_emails,
-                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by, filtered_as)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+                                 subject, snippet, body_html, has_attachments, sent_at, company_id, contact_id, sent_from_tracker_by, filtered_as, web_link)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
     [account.id, thread.id, m.provider_id, m.internet_message_id || null, c.direction, m.from?.email || null, m.from?.name || null,
       (m.to || []).map((p) => p.email), (m.cc || []).map((p) => p.email), row.subject, row.snippet, row.body_html, Boolean(m.has_attachments),
-      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy, filtered]);
+      m.sent_at, thread.company_id || who.company_id || null, who.contact_id || null, sentBy, filtered, m.web_link || null]);
   for (const hook of messageHooks) await hook({ db, account, thread, message: saved, participants: c.external, folder: m.folder || null, filtered });
   return { thread, message: saved, newThread };
 }
@@ -561,10 +561,10 @@ export async function refreshBodies(id, { days } = {}) {
           account.visibility
         );
         const { rowCount } = await query(
-          `UPDATE email_messages SET body_html = $3, snippet = $4
+          `UPDATE email_messages SET body_html = $3, snippet = $4, web_link = COALESCE($5, web_link)
             WHERE account_id = $1 AND provider_id = $2
-              AND (body_html IS DISTINCT FROM $3 OR snippet IS DISTINCT FROM $4)`,
-          [account.id, m.provider_id, row.body_html, row.snippet]
+              AND (body_html IS DISTINCT FROM $3 OR snippet IS DISTINCT FROM $4 OR (web_link IS NULL AND $5 IS NOT NULL))`,
+          [account.id, m.provider_id, row.body_html, row.snippet, m.web_link || null]
         );
         if (rowCount) out.updated += 1; else out.unchanged += 1;
       }

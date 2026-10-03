@@ -78,7 +78,8 @@ export const monthToDate = (date) => ({ from: `${date.slice(0, 7)}-01`, to: date
 
 export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_overdue_days', 'public_app_url'];
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
-const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter(Boolean);
+// Only things that are addresses: a setting cannot be saved blank, so "none" clears a list.
+const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
 
 export async function misSettings(db = { query }) {
   const { rows } = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [SETTING_KEYS]);

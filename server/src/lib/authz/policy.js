@@ -216,6 +216,9 @@ export const routes = [
   // ---------------------------------------------------- scheduled reports
   { method: 'GET', path: '/api/mis-reports/:kind/preview', access: mustBeAdmin, why: 'The Daily Sales Briefing and Weekly MIS are management reports over every record and every mailbox\'s readers; nothing is scoped to the caller.' },
   { method: 'GET', path: '/api/mis-reports/:kind/preview.pdf', access: mustBeAdmin, why: 'The same report as a PDF, built over the whole book.' },
+  { method: 'GET', path: '/api/mis-reports/runs', access: mustBeAdmin, why: 'Every report sent to management, with its recipients.' },
+  { method: 'GET', path: '/api/mis-reports/runs/:id/pdf', access: mustBeAdmin, why: 'The PDF that went to management, over the whole book.' },
+  { method: 'POST', path: '/api/mis-reports/:kind/send', access: mustBeAdmin, why: 'Emails management a report now, from the sales mailbox; not a preview.' },
   { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 
   // --------------------------------------------------------- saved views
