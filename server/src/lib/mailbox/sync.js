@@ -704,9 +704,6 @@ export async function disconnect(id, { removeBodies = true } = {}) {
   await query('DELETE FROM mailbox_po_backfills WHERE account_id = $1', [id]);
   await query('DELETE FROM mailbox_invoice_backfills WHERE account_id = $1', [id]);
   await query('DELETE FROM email_reader_queue WHERE account_id = $1', [id]);
-  // Where the readers had got with its past mail goes too, so a mailbox
-  // connected again is read from the start, not from where it stopped.
-  await query('UPDATE connected_accounts SET past_enquiries_read_at = NULL, past_pos_read_at = NULL WHERE id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
   return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };
 }

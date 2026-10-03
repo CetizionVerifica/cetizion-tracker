@@ -469,8 +469,10 @@ async function joinElsewhere(db, account, cand, elsewhere, ctx, aiCalls = 0) {
   await linkThread(db, threadId, elsewhere.enquiry_no);
   if (!account.is_shared) {
     const owner = await ownerFor(db, account, threadId);
+    // Only an enquiry nobody is named on: one carrying a sales_person with
+    // no owner_user_id is a workbook attribution, not an unowned record.
     if (owner) {
-      await db.query(`UPDATE enquiries SET owner_user_id = $2, sales_person = $3 WHERE enquiry_no = $1 AND owner_user_id IS NULL`, [elsewhere.enquiry_no, owner.id, owner.name]);
+      await db.query(`UPDATE enquiries SET owner_user_id = $2, sales_person = $3 WHERE enquiry_no = $1 AND owner_user_id IS NULL AND sales_person IS NULL`, [elsewhere.enquiry_no, owner.id, owner.name]);
     }
   }
   await logDecision(db, account, cand, {
@@ -732,8 +734,16 @@ async function pastCandidates(account, judge, messages) {
  */
 export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET_MS } = {}) {
   const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
+  const everyFolder = readsAllFolders(account, ctx.settings.readAll);
   await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO NOTHING`,
-    [account.id, since, readsAllFolders(account, ctx.settings.readAll) ? 'all' : 'inbox']);
+    [account.id, since, everyFolder ? 'all' : 'inbox']);
+  // A read of every folder that is under way when the mailbox is held to
+  // Inbox and Sent Items (read_scope, 074) starts again on Inbox: its
+  // cursor points into the whole mailbox, and the owner's private folders
+  // must not be read on. Nothing is made twice; the decisions stay.
+  if (!everyFolder) {
+    await query(`UPDATE mailbox_enquiry_backfills SET folder = 'inbox', next_link = NULL, reached = NULL WHERE account_id = $1 AND folder = 'all' AND finished_at IS NULL`, [account.id]);
+  }
   let { rows: [row] } = await query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, created: 0, linked: 0 };
   const started = Date.now();

@@ -233,12 +233,14 @@ userRouter.patch('/:id', async (req, res) => {
   // for the admin. Records already made keep their owner until an admin
   // reassigns them. Not inside updateUser's transaction: disconnecting talks
   // to Microsoft, and a provider that is slow or down must not hold the
-  // deactivation up or roll it back.
+  // deactivation up or roll it back. The stored mail stays: a client's
+  // thread on a project somebody else now owns is still that project's
+  // history, and removing bodies is the explicit Disconnect dialog's choice.
   if (changes.active === false) {
     const { rows } = await pool.query(`SELECT id, email FROM connected_accounts WHERE user_id = $1 AND status <> 'disconnected'`, [id]);
     const disconnected = [];
     for (const a of rows) {
-      try { await disconnectMailbox(a.id, { removeBodies: true }); disconnected.push(a.email); } catch { /* the row records its own error; the admin sees it under Mailboxes */ }
+      try { await disconnectMailbox(a.id, { removeBodies: false }); disconnected.push(a.email); } catch { /* the row records its own error; the admin sees it under Mailboxes */ }
     }
     updated.mailboxes_disconnected = disconnected;
   }

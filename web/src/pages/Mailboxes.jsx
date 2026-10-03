@@ -68,7 +68,7 @@ export default function Mailboxes() {
   // their own and the shared one; the team-wide controls — the shared
   // connect, the blocklist, the readers' panel, the owner column — are the
   // admin's (docs/per-user-mailboxes-plan.md §5).
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [params, setParams] = useSearchParams();
   const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
   const block = useFetch(() => (isAdmin ? api.raw('/mailboxes/blocklist') : Promise.resolve(null)), [isAdmin]);
@@ -316,10 +316,15 @@ export default function Mailboxes() {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    {/* Reconnecting is a Microsoft sign-in as the mailbox's
+                        owner, so only they (or anybody, for a shared or
+                        unassigned one) can do it; an admin is told who. */}
                     {row.status !== 'disconnected' && (broken ? (
-                      <Button size="sm" className={cn(ROW_BUTTON, 'border border-primary bg-primary/15 text-primary hover:bg-primary/25')} asChild={Boolean(cfg?.microsoft)}>
-                        {cfg?.microsoft ? <a href={connectUrl(row.is_shared)}>Reconnect</a> : <span>Reconnect</span>}
-                      </Button>
+                      (row.is_shared || !row.user_id || row.user_id === user?.id) ? (
+                        <Button size="sm" className={cn(ROW_BUTTON, 'border border-primary bg-primary/15 text-primary hover:bg-primary/25')} asChild={Boolean(cfg?.microsoft)}>
+                          {cfg?.microsoft ? <a href={connectUrl(row.is_shared)}>Reconnect</a> : <span>Reconnect</span>}
+                        </Button>
+                      ) : <span className="text-[12px] text-muted-foreground">{row.owner?.name} reconnects it</span>
                     ) : (
                       <Button
                         variant="secondary"
@@ -640,8 +645,8 @@ function ChangeOwnerDialog({ row, users, onClose, onSaved }) {
   async function save() {
     setBusy(true);
     try {
-      await api.raw(`/mailboxes/${row.id}/owner`, { method: 'PATCH', body: { user_id: userId === NOBODY ? null : Number(userId) } });
-      onSaved(chosen ? `${row.email} is now ${chosen.name}'s` : `${row.email} has no owner`);
+      const r = await api.raw(`/mailboxes/${row.id}/owner`, { method: 'PATCH', body: { user_id: userId === NOBODY ? null : Number(userId) } });
+      onSaved(r.data?.warning || (chosen ? `${row.email} is now ${chosen.name}'s` : `${row.email} has no owner`));
     } catch (err) {
       toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger');
       setBusy(false);

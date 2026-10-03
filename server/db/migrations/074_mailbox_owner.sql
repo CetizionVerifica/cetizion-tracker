@@ -62,6 +62,16 @@ UPDATE connected_accounts SET connected_by = user_id WHERE connected_by IS NULL 
 -- Personal mailboxes read Inbox and Sent Items only, until their owner says otherwise.
 UPDATE connected_accounts SET read_scope = 'inbox_sent' WHERE NOT is_shared AND read_scope = 'all';
 
+-- A read of past mail under way across every folder of a personal mailbox
+-- holds a cursor into the whole mailbox. It starts its stream again on the
+-- narrower scope; decisions stay, so nothing is made twice.
+UPDATE mailbox_enquiry_backfills b SET folder = 'inbox', next_link = NULL, reached = NULL
+  FROM connected_accounts a WHERE a.id = b.account_id AND NOT a.is_shared AND b.folder = 'all' AND b.finished_at IS NULL;
+UPDATE mailbox_po_backfills b SET next_link = NULL, reached = NULL
+  FROM connected_accounts a WHERE a.id = b.account_id AND NOT a.is_shared AND b.finished_at IS NULL;
+UPDATE mailbox_invoice_backfills b SET next_link = NULL, reached = NULL
+  FROM connected_accounts a WHERE a.id = b.account_id AND NOT a.is_shared AND b.finished_at IS NULL;
+
 INSERT INTO settings (key, value, notes) VALUES
   ('personal_mailbox_default_visibility', 'subject', 'What a newly connected personal mailbox stores for the tracker: metadata (who and when), subject, or share_everything. Its owner can change it afterwards; mailboxes already connected keep their setting.')
 ON CONFLICT (key) DO NOTHING;

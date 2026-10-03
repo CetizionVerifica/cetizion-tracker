@@ -24,7 +24,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
-import { mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
+import { isUnrestricted, mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { pool, query } from '../db.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { config } from '../config.js';
@@ -39,7 +39,7 @@ export const mailThreadRouter = Router();
 export const mailWebhookRouter = Router();
 
 const who = (req) => req.user?.username || 'admin';
-const isAdmin = (req) => req.user?.role === 'admin' || req.user?.mode === 'shared';
+const isAdmin = (req) => isUnrestricted(req.user);
 
 /**
  * Whose mailbox this is, and who may do what with it
@@ -127,7 +127,10 @@ mailboxRouter.get('/oauth/microsoft', async (req, res) => {
   // success and failure alike — into a silent return to the page.
   const back = (msg) => res.redirect(`/settings/mailboxes?${new URLSearchParams(msg)}`);
   const state = readState(req.query.state);
-  if (!state || state.u !== who(req)) return back({ error: 'The sign-in could not be verified. Please try again.' });
+  // The session that comes back must be the one that set out: the mailbox
+  // is attributed to it (user_id), so a session changed on the way — a
+  // re-login, a shared machine — would hand one person's mail to another.
+  if (!state || state.u !== who(req) || (state.uid ?? null) !== (req.user?.id ?? null)) return back({ error: 'The sign-in could not be verified. Please try again.' });
   if (req.query.error) return back({ error: String(req.query.error_description || req.query.error).slice(0, 200) });
   try {
     const tokens = await exchangeCode(String(req.query.code || ''));
@@ -208,6 +211,13 @@ mailboxRouter.patch('/:id', async (req, res) => {
   if (!set.length) throw new ApiError(422, 'Nothing to change');
   // A shared mailbox has no personal owner (connected_accounts_shared_unowned).
   if (parsed.data.is_shared === true) set.push(['user_id', null]);
+  // Making a mailbox personal while an Inbox routes it would leave the team
+  // reading, and replying from, mail that is now one person's. The Inbox
+  // goes first (Inbox → settings), then the mailbox can change hands.
+  if (parsed.data.is_shared === false) {
+    const { rows: [inbox] } = await query('SELECT name FROM inboxes WHERE account_id = $1', [Number(req.params.id)]);
+    if (inbox) throw new ApiError(409, `This mailbox feeds the Inbox "${inbox.name}". Remove that Inbox first, then make the mailbox personal.`);
+  }
   const { rows: [a] } = await query(`UPDATE connected_accounts SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id, visibility, import_days, exclude_internal, auto_create_contacts, read_scope, is_shared, user_id`, [Number(req.params.id), ...set.map(([, v]) => v)]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
   // A stricter level applies to what is already stored, too.
@@ -228,6 +238,15 @@ mailboxRouter.patch('/:id', async (req, res) => {
   if (parsed.data.import_days !== undefined) {
     await query('UPDATE mail_folders SET delta_link = NULL WHERE account_id = $1', [a.id]);
   }
+  // A change of which folders are read: the PO and invoice reads of past
+  // mail hold a cursor into whichever stream they were on, so they start
+  // their stream again. Decisions stay; nothing is made twice. The enquiry
+  // read checks its own folder on each run (autoEnquiry.js backfillAccount).
+  if (parsed.data.read_scope !== undefined) {
+    await query('UPDATE mailbox_po_backfills SET next_link = NULL, reached = NULL WHERE account_id = $1 AND finished_at IS NULL', [a.id]);
+    await query('UPDATE mailbox_invoice_backfills SET next_link = NULL, reached = NULL WHERE account_id = $1 AND finished_at IS NULL', [a.id]);
+    if (parsed.data.read_scope === 'all') await query(`UPDATE mailbox_enquiry_backfills SET folder = 'all', next_link = NULL, reached = NULL WHERE account_id = $1 AND finished_at IS NULL`, [a.id]);
+  }
   res.json({ data: a });
 });
 
@@ -245,19 +264,22 @@ mailboxRouter.patch('/:id/owner', requireAdmin, async (req, res) => {
   if (a.is_shared) throw new ApiError(422, 'A shared mailbox has no owner; it is the team\'s');
   let owner = null;
   if (parsed.data.user_id !== null) {
-    const { rows: [u] } = await query('SELECT id, name, active FROM users WHERE id = $1', [parsed.data.user_id]);
+    const { rows: [u] } = await query('SELECT id, name, role, active FROM users WHERE id = $1', [parsed.data.user_id]);
     if (!u || !u.active) throw new ApiError(422, 'Please check the highlighted fields', { fields: { user_id: 'Choose an active user' } });
     owner = u;
   }
   const { rows: [updated] } = await query(
     `UPDATE connected_accounts SET user_id = $2 WHERE id = $1 RETURNING id, email, is_shared, user_id`, [a.id, owner?.id ?? null]);
+  // Allowed, but said out loud: records are owned by salespeople (ownerFor),
+  // so an admin's mailbox makes records nobody owns, for an admin to hand out.
+  const warning = owner && owner.role !== 'sales' ? `${owner.name} is an admin: enquiries and POs read from this mailbox will be unassigned until an admin hands them out.` : null;
   if (a.user_id !== (owner?.id ?? null)) {
     await logActivity(pool, {
       actor: actorFrom(req.user), action: ACTIONS.MAILBOX_OWNER_CHANGED, entityType: 'mailbox', entityId: a.id,
       metadata: { mailbox: a.email, old_user_id: a.user_id, new_user_id: owner?.id ?? null },
     });
   }
-  res.json({ data: { ...updated, owner: owner ? { id: owner.id, name: owner.name } : null } });
+  res.json({ data: { ...updated, owner: owner ? { id: owner.id, name: owner.name } : null, warning } });
 });
 
 mailboxRouter.post('/:id/sync', async (req, res) => {

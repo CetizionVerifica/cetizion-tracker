@@ -255,6 +255,25 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
     assert.equal(after.sales_person, 'Sam Sales');
   });
 
+  test('an enquiry that already names a salesperson is not re-attributed when a copy lands in A\'s mailbox', async () => {
+    const m = rfq({ from: { email: 'buyer@attributed-only.com', name: 'B' } });
+    await deliver(shared, [m]);
+    const { rows: [d] } = await db.query(`SELECT enquiry_no FROM email_enquiry_decisions WHERE account_id = $1 AND outcome = 'created' ORDER BY id DESC LIMIT 1`, [shared.id]);
+    // A workbook attribution: a name, no users row.
+    await db.query(`UPDATE enquiries SET sales_person = 'Ramesh (left 2024)' WHERE enquiry_no = $1`, [d.enquiry_no]);
+    await deliver(boxA, [{ ...m, provider_id: uid('m') }]);
+    const { rows: [e] } = await db.query('SELECT owner_user_id, sales_person FROM enquiries WHERE enquiry_no = $1', [d.enquiry_no]);
+    assert.equal(e.owner_user_id, null);
+    assert.equal(e.sales_person, 'Ramesh (left 2024)');
+  });
+
+  test('a shared mailbox that feeds an Inbox cannot be made personal until the Inbox goes', async () => {
+    const res = await as(admin)('patch', `/api/mailboxes/${shared.id}`).send({ is_shared: false });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    const { rows: [a] } = await db.query('SELECT is_shared FROM connected_accounts WHERE id = $1', [shared.id]);
+    assert.equal(a.is_shared, true);
+  });
+
   test('reassigning a mailbox: new mail goes to the new owner, old records stay, and it is logged', async () => {
     const res = await as(admin)('patch', `/api/mailboxes/${boxB.id}/owner`).send({ user_id: salesA.user.id });
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -306,6 +325,9 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
     const { rows: [a] } = await db.query('SELECT status, tokens_encrypted, user_id FROM connected_accounts WHERE id = $1', [boxA.id]);
     assert.equal(a.status, 'disconnected');
     assert.equal(a.tokens_encrypted, null);
+    // The mail it held stays: it is the records' history, not the leaver's.
+    const { rows: [kept] } = await db.query(`SELECT count(*)::int AS n FROM email_messages WHERE account_id = $1 AND body_html IS NOT NULL`, [boxA.id]);
+    assert.ok(kept.n > 0, 'bodies kept on deactivation');
     assert.equal(a.user_id, salesA.user.id, 'still listed as A\'s, for the admin');
     const r = await sync.syncAccount(boxA.id);
     assert.equal(r.skipped, 'not active');
