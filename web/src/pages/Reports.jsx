@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
 import { PageHeader } from '../App.jsx';
 import { AGE_COLOUR, AXIS, BAR, BAR_LABEL, CASH_BANDS, ChartCard, ChartTip, GRID, HOVER, ROW_CHART, ZERO_BAR } from '../components/charts.jsx';
@@ -103,6 +103,7 @@ export default function Reports() {
             >
               Download PDF
             </a>
+            {isAdmin && <Link className="btn" to="/reports/scheduled" title="The daily briefing and weekly MIS the tracker emails">Scheduled reports</Link>}
           </>
         )}
       />

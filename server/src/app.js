@@ -36,6 +36,7 @@ import { collectionsRouter } from './routes/collections.js';
 import { renewalsRouter } from './routes/renewals.js';
 import { cashflowRouter } from './routes/cashflow.js';
 import { reportsRouter } from './routes/reports.js';
+import { misReportsRouter } from './routes/misReports.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { followUpsRouter } from './routes/followUps.js';
 import { insightsRouter } from './routes/insights.js';
@@ -160,6 +161,8 @@ app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);
 app.use('/api/cashflow', cashflowRouter);
 app.use('/api/reports', reportsRouter);
+// The scheduled sales reports (docs/mis-reports-plan.md): previews, runs, sending.
+app.use('/api/mis-reports', misReportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/follow-ups', followUpsRouter);
 app.use('/api/insights', insightsRouter);

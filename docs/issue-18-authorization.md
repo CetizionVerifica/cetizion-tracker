@@ -286,6 +286,9 @@ session is **401**, before any of these is considered.
 | `DELETE /api/mcp` | public | none — A fixed 405 with an empty body, for MCP clients that try to end a session this stateless server never opened. |
 | `GET /api/mcp` | public | none — A fixed 405 telling a client to use POST. It reads nothing and reveals nothing. |
 | `POST /api/mcp` | public | api-token — MCP clients authenticate with an API token instead of a session (#50). No token, no answer. |
+| **/api/mis-reports** | | |
+| `GET /api/mis-reports/:kind/preview` | **admin** | The Daily Sales Briefing and Weekly MIS are management reports over every record and every mailbox's readers; nothing is scoped to the caller. |
+| `GET /api/mis-reports/:kind/preview.pdf` | **admin** | The same report as a PDF, built over the whole book. |
 | **/api/notifications** | | |
 | `GET /api/notifications` | any | Scoped: record-owner. |
 | `POST /api/notifications/:id/read` | any | Scoped: record-owner. |
