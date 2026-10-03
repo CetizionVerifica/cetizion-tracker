@@ -148,7 +148,7 @@ async function followUpsSection(db, scope, ctx) {
 
 /* ---------------------------------------------------------- 2. receivables */
 
-async function receivablesSection(db, scope, ctx) {
+export async function receivablesSection(db, scope, ctx) {
   const params = [];
   const src = scopedSources(scope, params);
   // The same rows /collections ages — invoiced, not paid — narrowed to the
