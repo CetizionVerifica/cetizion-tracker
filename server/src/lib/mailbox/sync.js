@@ -11,15 +11,40 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import { query, transaction } from '../../db.js';
 import { config } from '../../config.js';
-import { applyVisibility, classify, cleanHtml, domainOf, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
-import { microsoftConfigured, microsoftProvider } from './microsoft.js';
+import { applyVisibility, classify, cleanHtml, domainOf, forReaders, openTokens, PUBLIC_DOMAINS, referencesIn, sealTokens, snippet } from './rules.js';
+import { microsoftConfigured, microsoftProvider, SKIPPED_FOLDERS } from './microsoft.js';
 import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
 import { enqueue, retryQueued, runReaders } from './readerQueue.js';
 
+/** The two folders every mailbox has, read by name; push notifications come from these. */
 export const FOLDERS = ['inbox', 'sentitems'];
 const key = () => config.microsoft.tokenKey;
+
+/**
+ * The folders a mailbox's mail is synced from: every folder the provider
+ * lists (073), Inbox first and Sent Items last. Listing them costs a few
+ * calls, so the list is kept for a quarter of an hour; a folder made since
+ * is picked up then. A provider that cannot list folders gets Inbox and
+ * Sent Items; a listing that fails, the last one, else null: the caller
+ * reads Inbox and Sent Items and forgets no other folder's cursor.
+ */
+const folderLists = new Map();
+const FOLDER_LIST_MS = 15 * 60_000;
+export async function foldersOf(account, provider) {
+  if (!provider.folders) return FOLDERS;
+  const held = folderLists.get(account.id);
+  if (held && Date.now() - held.at < FOLDER_LIST_MS) return held.folders;
+  try {
+    const folders = await provider.folders();
+    folderLists.set(account.id, { at: Date.now(), folders });
+    return folders;
+  } catch (err) {
+    console.warn(`[mail.sync] ${account.email}: folders not listed:`, err.message);
+    return held?.folders || null;
+  }
+}
 
 // ------------------------------------------------------------ test provider
 // A mailbox that lives in memory, for local runs and tests (provider 'test',
@@ -61,9 +86,15 @@ function testProvider(account) {
     async attachments(providerId) {
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
     },
+    /** Inbox, the other folders its mail was pushed to, Sent Items; never the skipped ones (microsoft.js). */
+    async folders() {
+      const others = (testBoxes.get(account.id) || []).map((m) => m.folder).filter((f) => f && !FOLDERS.includes(f) && !SKIPPED_FOLDERS.includes(f));
+      return ['inbox', ...new Set(others), 'sentitems'];
+    },
     async page(folder, { sinceIso, cursor = null } = {}) {
+      const inFolder = (m) => (folder === 'all' ? !SKIPPED_FOLDERS.includes(m.folder) : (m.folder || 'inbox') === folder);
       const past = (testBoxes.get(account.id) || [])
-        .filter((m) => m.history && (m.folder || 'inbox') === folder && new Date(m.sent_at) >= new Date(sinceIso))
+        .filter((m) => m.history && inFolder(m) && new Date(m.sent_at) >= new Date(sinceIso))
         .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
       const from = Number(cursor || 0);
       const to = from + testPaging.size;
@@ -101,11 +132,15 @@ export async function saveTokens(account, provider) {
 
 // ------------------------------------------------------------ matching
 async function settingsFor(db) {
-  const { rows } = await db.query(`SELECT key, value FROM settings WHERE key = 'internal_email_domains'`);
-  const internalDomains = String(rows[0]?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const { rows } = await db.query(`SELECT key, value FROM settings WHERE key IN ('internal_email_domains', 'email_read_everything')`);
+  const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const internalDomains = String(s.internal_email_domains || '').split(',').map((x) => x.trim()).filter(Boolean);
   const { rows: bl } = await db.query('SELECT pattern FROM email_blocklist');
-  return { internalDomains, blocklist: bl.map((r) => r.pattern) };
+  return { internalDomains, blocklist: bl.map((r) => r.pattern), readAll: readsEverything(s.email_read_everything) };
 }
+
+/** email_read_everything, on unless set to false (073). */
+export const readsEverything = (value) => String(value ?? 'true').trim().toLowerCase() !== 'false';
 
 /** The contact and company behind a set of external participants. */
 export async function matchParticipants(db, external, { autoCreate }) {
@@ -193,11 +228,14 @@ export async function ingestRules(account, db = { query }, { forInbox = false } 
   // Only live ingest asks for this. The enquiry, PO and invoice backfills
   // call ingestRules too and must keep seeing the filters' verdict.
   const keepAll = forInbox && await feedsInbox(account, db);
-  return (m) => {
+  const judge = (m) => {
     const c = classify(m, { accountEmail: account.email, excludeInternal: account.exclude_internal, ...rules });
     if (!keepAll || !c.skip) return c;
     return { ...c, skip: null, filtered: c.skip };
   };
+  // ingest routes every email to its readers when this is on.
+  judge.readAll = rules.readAll;
+  return judge;
 }
 
 /**
@@ -212,7 +250,11 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
   // Kept only because the mailbox feeds an Inbox (ingestRules): the hooks
   // are told which filter would have dropped it.
   const filtered = c.filtered || null;
-  const { rows: [dupe] } = await db.query('SELECT id FROM email_messages WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  // By id, or as the same email under another id: every folder is read
+  // (073), and a message moved from one to another comes back with a new id.
+  const { rows: [dupe] } = await db.query(
+    `SELECT id FROM email_messages WHERE account_id = $1
+        AND (provider_id = $2 OR ($3::text IS NOT NULL AND lower(internet_message_id) = lower($3)))`, [account.id, m.provider_id, m.internet_message_id || null]);
   if (dupe) return { skipped: 'already synced' };
   let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
   const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts });
@@ -271,15 +313,20 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
   // The PO reader (autoPurchaseOrder.js) looks at every inbound message
   // that might hold an order, later ones in a thread included: that is
   // where most POs arrive. A cheap test; its prefilter does the rest.
-  const mayBePo = (m, c) => c.direction === 'inbound' && (m.has_attachments || MAY_BE_PO.test(`${m.subject || ''} ${m.preview || ''}`));
+  // Reading everything (email_read_everything): every inbound email may be
+  // an order, and every email, replies included, goes to the enquiry reader.
+  const mayBePo = (m, c) => c.direction === 'inbound' && (judge.readAll || m.has_attachments || MAY_BE_PO.test(`${m.subject || ''} ${m.preview || ''}`));
   const isPortal = (m) => isPortalSender(m.from?.email, portals);
   const portalCand = (m, c, threadId, newThread) => ({ m, c: { ...c, direction: 'inbound', external: [m.from] }, threadId, newThread, dropped: !threadId });
-  /** Which readers a candidate goes to: the enquiry reader takes outbound mail and new threads, the invoice reader outbound mail. */
-  const readersOf = (cand, { enquiry }) => [
-    ...(mayBePo(cand.m, cand.c) ? ['po'] : []),
-    ...(enquiry && cand.c.direction === 'outbound' ? ['invoice'] : []),
-    ...(enquiry ? ['enquiry'] : []),
-  ];
+  /** Which readers a candidate goes to: the enquiry reader takes outbound mail and new threads (every email when reading everything), the invoice reader outbound mail. */
+  const readersOf = (cand, { enquiry: firstOrOurs }) => {
+    const enquiry = firstOrOurs || judge.readAll;
+    return [
+      ...(mayBePo(cand.m, cand.c) ? ['po'] : []),
+      ...(enquiry && cand.c.direction === 'outbound' ? ['invoice'] : []),
+      ...(enquiry ? ['enquiry'] : []),
+    ];
+  };
   const route = (cand, readers) => {
     if (readers.includes('enquiry')) result.candidates.push(cand);
     if (readers.includes('po')) result.poCandidates.push(cand);
@@ -287,10 +334,19 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
   for (const m of messages.sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at))) {
     if (!m.provider_id || !m.conversation_id || m.draft) { skip('incomplete'); continue; }
     const c = judge(m);
+    // What the readers see of it: while reading everything, mail between
+    // our own people and from automatic senders too (rules.js forReaders).
+    const seen = forReaders(c, judge.readAll);
     if (c.skip) {
       skip(c.skip);
-      // A procurement portal's notification reads as a robot; for POs it is not one.
-      if (c.skip === 'blocked sender' && isPortal(m)) {
+      if (seen) {
+        // Not stored, so not queued in a transaction, as for "no matching client" below.
+        const cand = { m, c: seen, threadId: null, newThread: false, dropped: true };
+        const readers = readersOf(cand, { enquiry: true });
+        await enqueue({ query }, account, cand, readers);
+        route(cand, readers);
+      } else if (c.skip === 'blocked sender' && isPortal(m)) {
+        // A procurement portal's notification reads as a robot; for POs it is not one.
         const cand = portalCand(m, c, null, false);
         await enqueue({ query }, account, cand, ['po']);
         route(cand, ['po']);
@@ -302,13 +358,15 @@ export async function ingest(account, messages, { sentBy = null } = {}) {
       r = await transaction(async (db) => {
         const stored = await ingestOne(db, account, m, c, { sentBy });
         if (stored.skipped) return stored;
-        // Stored for the Inbox only (ingestRules). The readers see it exactly
-        // as they did when the filters dropped it: a portal's notification
-        // still goes to the PO reader, nothing else goes anywhere.
-        const cand = c.filtered
-          ? (c.filtered === 'blocked sender' && isPortal(m) ? portalCand(m, c, stored.thread.id, stored.newThread) : null)
-          : { m, c, threadId: stored.thread.id, newThread: stored.newThread, dropped: false };
-        const readers = !cand ? [] : c.filtered ? ['po'] : readersOf(cand, { enquiry: c.direction === 'outbound' || stored.newThread });
+        // Stored for the Inbox only (ingestRules). The readers see it as they
+        // would had the filters dropped it: while reading everything, as any
+        // email (forReaders); otherwise a portal's notification still goes
+        // to the PO reader, and nothing else goes anywhere.
+        const portalOnly = c.filtered && !seen;
+        const cand = !portalOnly
+          ? { m, c: seen, threadId: stored.thread.id, newThread: stored.newThread, dropped: false }
+          : (c.filtered === 'blocked sender' && isPortal(m) ? portalCand(m, c, stored.thread.id, stored.newThread) : null);
+        const readers = !cand ? [] : portalOnly ? ['po'] : readersOf(cand, { enquiry: cand.c.direction === 'outbound' || stored.newThread });
         if (readers.length) await enqueue(db, account, cand, readers);
         return { ...stored, cand, readers };
       });
@@ -396,11 +454,24 @@ async function syncAccountUnlocked(id) {
     // What earlier syncs could not read, before the new mail: oldest first.
     const retried = await retryQueued(account, provider);
     if (retried) out.retried = retried;
-    for (const folder of FOLDERS) {
+    const listed = (await settingsFor({ query })).readAll ? await foldersOf(account, provider) : FOLDERS;
+    const folders = listed || FOLDERS;
+    for (const folder of folders) {
       const { rows: [f] } = await query(
         `INSERT INTO mail_folders (account_id, folder) VALUES ($1,$2) ON CONFLICT (account_id, folder) DO UPDATE SET folder = EXCLUDED.folder RETURNING *`, [account.id, folder]);
       const since = f.delta_link ? null : new Date(Date.now() - account.import_days * 864e5).toISOString();
-      const { messages, deltaLink } = await provider.delta(folder, f.delta_link, since);
+      let read;
+      try {
+        read = await provider.delta(folder, f.delta_link, since);
+      } catch (err) {
+        // A folder deleted or moved away since it was listed: forget it and
+        // go on with the rest. Inbox and Sent Items failing is the mailbox failing.
+        if (err.status !== 404 || FOLDERS.includes(folder)) throw err;
+        await query('DELETE FROM mail_folders WHERE id = $1', [f.id]);
+        folderLists.delete(account.id);
+        continue;
+      }
+      const { messages, deltaLink } = read;
       // Which folder each message came from, for the Inbox's routing.
       const r = await ingest(account, messages.map((m) => ({ ...m, folder: m.folder || folder })));
       candidates.push(...r.candidates);
@@ -409,6 +480,10 @@ async function syncAccountUnlocked(id) {
       for (const [k, v] of Object.entries(r.skipped)) out.skipped[k] = (out.skipped[k] || 0) + v;
       await query('UPDATE mail_folders SET delta_link = $2 WHERE id = $1', [f.id, deltaLink]);
     }
+    // Folders no longer listed (deleted, moved under Deleted Items, or every
+    // other folder once reading everything is off) stop being read; their
+    // cursor goes with them. Not after a listing that failed.
+    if (listed) await query(`DELETE FROM mail_folders WHERE account_id = $1 AND folder <> ALL($2) AND subscription_id IS NULL`, [account.id, folders]);
     await saveTokens(account, provider);
     await query('UPDATE connected_accounts SET last_synced_at = now(), last_error = NULL WHERE id = $1', [account.id]);
     // After the mail is stored, never inside its transactions: judging an
@@ -496,11 +571,15 @@ export async function refreshBodies(id, { days } = {}) {
   return out;
 }
 
-/** Keep push notifications alive; the delta sweep covers any gap. */
+/**
+ * Keep push notifications alive; the delta sweep covers any gap. Inbox and
+ * Sent Items only: mail filed into other folders is picked up by the sync
+ * every minute (autoSync.js), without a subscription per folder.
+ */
 export async function ensureSubscriptions(account, provider = providerFor(account)) {
   if (account.provider !== 'microsoft' || !config.microsoft.webhookUrl) return 0;
   let changed = 0;
-  const { rows } = await query('SELECT * FROM mail_folders WHERE account_id = $1', [account.id]);
+  const { rows } = await query('SELECT * FROM mail_folders WHERE account_id = $1 AND folder = ANY($2)', [account.id, FOLDERS]);
   for (const f of rows) {
     const soon = !f.subscription_expires_at || new Date(f.subscription_expires_at) < new Date(Date.now() + 12 * 3600 * 1000);
     if (!soon) continue;

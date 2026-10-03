@@ -69,6 +69,10 @@ const anyNumber = (refs) => refs.quotations.length + refs.enquiries.length + ref
  *   poReader             inbound: the PO reader is on (auto_po_enabled)
  *   notPo                inbound: the PO reader has decided it is not a PO
  *   portalSenders        the po_portal_senders setting
+ *   readAll              email_read_everything: no email is screened out
+ *                        by these rules, replies included; the AI decides.
+ *                        What is already handled, and a PO the PO reader
+ *                        has not decided on yet, are still left alone.
  *
  * Returns { candidate: 'inbound' | 'quotation' | null, reason }.
  */
@@ -79,6 +83,7 @@ export function prefilter(message, facts = {}) {
   if (facts.handled) return { candidate: null, reason: 'already handled' };
 
   if (message.direction === 'outbound') {
+    if (facts.readAll) return { candidate: 'quotation', reason: null };
     if (FORWARD.test(subject)) return { candidate: null, reason: 'forward' };
     if ((message.external || []).length > MAX_RECIPIENTS) return { candidate: null, reason: 'too many recipients' };
     if (facts.toVendor) return { candidate: null, reason: 'to a vendor' };
@@ -92,6 +97,7 @@ export function prefilter(message, facts = {}) {
   // while the PO reader is on: off, nothing would ever read it. Once the
   // PO reader has decided it is not a PO, it is judged as any email.
   if (facts.poReader && !facts.notPo && poPrefilter(message, { portalSenders: facts.portalSenders }).candidate) return { candidate: null, reason: 'purchase order' };
+  if (facts.readAll) return { candidate: 'inbound', reason: null };
   if (!facts.firstInConversation) return { candidate: null, reason: 'not the first message' };
   if (REPLY.test(subject)) return { candidate: null, reason: 'reply' };
   if (anyNumber(referencesIn(subject))) return { candidate: null, reason: 'names a record' };

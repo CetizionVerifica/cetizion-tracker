@@ -137,14 +137,34 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
     assert.equal(now.filtered_as, null);
     assert.ok(now.response_due_at);
 
-    // The filters still decide what the readers are handed: ingest() is
-    // what syncAccount passes to the enquiry and PO readers.
-    const fresh = await mailbox();
-    const again = [colleague, robot, blocked, client].map((m) => ({ ...m, provider_id: uid('m'), conversation_id: uid('conv'), folder: 'inbox' }));
-    const r2 = await sync.ingest(fresh, again);
+    // With reading everything off, the filters still decide what the readers
+    // are handed: ingest() is what syncAccount passes to the enquiry and PO readers.
+    const copies = () => [colleague, robot, blocked, client].map((m) => ({ ...m, provider_id: uid('m'), conversation_id: uid('conv'), folder: 'inbox' }));
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_read_everything'`);
+    let r2;
+    try {
+      r2 = await sync.ingest(await mailbox(), copies());
+    } finally {
+      await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_read_everything'`);
+    }
     assert.equal(r2.stored, 4);
     assert.deepEqual(r2.candidates.map((x) => x.m.subject), ['Quotation please'], 'only the client mail goes to the enquiry reader');
     assert.deepEqual(r2.poCandidates, []);
+
+    // Reading everything (the default, 073): the readers get the colleague's
+    // and the robot's mail too, never the "Never sync" sender's. The Inbox
+    // still keeps them filtered, with no clock.
+    const fresh = await mailbox();
+    const third = copies();
+    const r3 = await sync.ingest(fresh, third);
+    assert.equal(r3.stored, 4);
+    assert.deepEqual(r3.candidates.map((x) => x.m.subject).sort(), ['Internal: site visit plan', 'Quotation please', 'Your password was changed']);
+    assert.deepEqual(r3.poCandidates.map((x) => x.m.subject).sort(), ['Quotation please', 'Your password was changed'], 'every inbound email may be an order');
+    const robotCand = r3.candidates.find((x) => x.m.subject === 'Your password was changed');
+    assert.deepEqual(robotCand.c.external.map((p) => p.email), ['no-reply@portal.example'], 'the sender is restored for the readers');
+    const kept = Object.fromEntries((await conversations(fresh.id)).map((c) => [c.conversation_id, c]));
+    assert.equal(kept[third[0].conversation_id].filtered_as, 'internal only');
+    assert.equal(kept[third[0].conversation_id].response_due_at, null);
   });
 
   test('a colleague replying on an open conversation still counts as our reply', async () => {
@@ -196,6 +216,24 @@ describe('the inbox keeps all mail, syncs itself and pages', { skip: !ADMIN_URL 
     const r = await sync.ingest(box, [client]);
     assert.equal(r.candidates.length, 1, 'the client message goes to the enquiry reader');
     assert.equal(r.candidates[0].newThread, true, 'as the first real message in the thread');
+  });
+
+  test('every folder is read but Junk and Deleted Items, and a message moved between folders is stored once', async () => {
+    const box = await mailbox();
+    const filed = mail(box, { subject: 'Filed by a rule', folder: 'Clients', internet_message_id: `<${uid('mid')}@acme>` });
+    const junk = mail(box, { subject: 'Spam', folder: 'junkemail' });
+    const binned = mail(box, { subject: 'Deleted', folder: 'deleteditems' });
+    // Outlook gives a moved message a new id; its Internet Message-ID stays.
+    const moved = { ...filed, provider_id: uid('m'), folder: 'Archive', sent_at: new Date(Date.now() + 1000).toISOString() };
+    sync.pushTestMessages(box.id, [filed, junk, binned, moved]);
+
+    const r = await sync.syncAccount(box.id);
+    assert.equal(r.error, undefined, r.error);
+    const { rows } = await db.query('SELECT subject FROM email_messages WHERE account_id = $1', [box.id]);
+    assert.deepEqual(rows.map((x) => x.subject), ['Filed by a rule']);
+    assert.equal(r.skipped['already synced'], 1, 'the moved copy');
+    const { rows: folders } = await db.query('SELECT folder FROM mail_folders WHERE account_id = $1 ORDER BY id', [box.id]);
+    assert.deepEqual(folders.map((f) => f.folder), ['inbox', 'Clients', 'Archive', 'sentitems']);
   });
 
   test('a mailbox without an Inbox still filters as before', async () => {

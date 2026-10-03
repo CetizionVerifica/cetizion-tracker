@@ -38,6 +38,12 @@ const isPdfFile = (a) => /application\/pdf/i.test(a?.contentType || '') || /\.pd
  *
  * message: { direction, subject, text, external: [...], attachments?, has_attachments }
  * facts:   { decided }   it already has an invoice decision in this mailbox
+ *          { readAll }   email_read_everything: every email we send with a
+ *                        PDF is read, forwards and mail to colleagues
+ *                        included; the AI and checkInvoice decide. Without
+ *                        a PDF there is no invoice to read, and a proforma
+ *                        is still answered by the rules: it is a decision,
+ *                        not a filter, and needs no AI call.
  *
  * Returns { candidate: boolean, reason }. A proforma is answered here, by
  * the rules: reason 'proforma', which the caller logs not_invoice.
@@ -50,11 +56,13 @@ export function invoicePrefilter(message, facts = {}) {
   const files = (message.attachments || []).map((a) => String(a?.name || ''));
   const words = `${subject}\n${text}\n${files.join('\n')}`;
   const external = message.external || [];
-  if (!external.length) return { candidate: false, reason: 'no client' };
-  if (external.length > MAX_RECIPIENTS) return { candidate: false, reason: 'too many recipients' };
-  if (FORWARD.test(subject)) return { candidate: false, reason: 'forward' };
-  if (BULK.test(text)) return { candidate: false, reason: 'bulk' };
   const pdf = message.attachments ? message.attachments.some(isPdfFile) : Boolean(message.has_attachments);
+  if (!facts.readAll) {
+    if (!external.length) return { candidate: false, reason: 'no client' };
+    if (external.length > MAX_RECIPIENTS) return { candidate: false, reason: 'too many recipients' };
+    if (FORWARD.test(subject)) return { candidate: false, reason: 'forward' };
+    if (BULK.test(text)) return { candidate: false, reason: 'bulk' };
+  }
   if (!pdf) return { candidate: false, reason: 'no PDF' };
   // A subject or file name that says proforma decides it; the body saying
   // so only when it does not also call this a tax invoice ("tax invoice
@@ -63,7 +71,7 @@ export function invoicePrefilter(message, facts = {}) {
   if ((PROFORMA.test(heading) && !/\btax\s+invoice\b/i.test(heading)) || (PROFORMA.test(text) && !/\btax\s+invoice\b/i.test(words))) {
     return { candidate: false, reason: 'proforma' };
   }
-  if (!INVOICE_WORDS.test(words) && !NOTE_WORDS.test(words)) return { candidate: false, reason: 'no invoice words' };
+  if (!facts.readAll && !INVOICE_WORDS.test(words) && !NOTE_WORDS.test(words)) return { candidate: false, reason: 'no invoice words' };
   return { candidate: true, reason: null };
 }
 

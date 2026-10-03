@@ -349,12 +349,23 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
   test('words alone, an unreadable answer and no AI: nothing registered, nothing lost', async () => {
     const box = await mailbox();
     await client('Acme Words Ltd', 'anil@acme-words.co.in');
-    // Words alone: not even read.
+    // Words alone, with the free rules on: not even read.
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_read_everything'`);
     const words = poEmail({ from: { email: 'anil@acme-words.co.in' }, subject: 'RE: EcoVadis', body_html: '<p>We will send the PO next week.</p>', has_attachments: false });
-    const calls = ai(reading());
-    await deliver(box, [words]);
+    let calls = ai(reading());
+    try {
+      await deliver(box, [words]);
+    } finally {
+      await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_read_everything'`);
+    }
     assert.equal(calls.length, 0);
     assert.equal(await decision(box.id, words.provider_id), undefined);
+    // Reading everything (the default): the same email is read, and the AI says it is no order.
+    const promise = poEmail({ from: { email: 'anil@acme-words.co.in' }, subject: 'RE: EcoVadis', body_html: '<p>We will send the PO next week.</p>', has_attachments: false });
+    calls = ai(reading({ is_purchase_order: false, document_type: 'other', po_number: null }));
+    await deliver(box, [promise]);
+    assert.equal(calls.length, 1);
+    assert.equal((await decision(box.id, promise.provider_id)).outcome, 'not_po');
     // The AI failing keeps it for a retry: nothing registered, nothing lost.
     autoPo.deps.chat = async () => { throw new Error('timeout'); };
     const failed = poEmail({ from: { email: 'anil@acme-words.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ buyer: 'Acme Words Ltd' }) }] });

@@ -1841,7 +1841,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS connected_accounts_email_key ON connected_acco
 CREATE TABLE IF NOT EXISTS mail_folders (
   id                        serial PRIMARY KEY,
   account_id                int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
-  folder                    text NOT NULL CHECK (folder IN ('inbox','sentitems')),
+  -- 'inbox', 'sentitems', or the provider's id of any other folder (073).
+  folder                    text NOT NULL,
   delta_link                text,
   subscription_id           text,
   subscription_client_state text,
@@ -1896,6 +1897,7 @@ CREATE TABLE IF NOT EXISTS email_messages (
 );
 
 CREATE INDEX IF NOT EXISTS email_messages_thread_idx ON email_messages (thread_id, sent_at);
+CREATE INDEX IF NOT EXISTS email_messages_internet_message_idx ON email_messages (account_id, lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
 
 -- Addresses and domains never synced (newsletters, personal contacts).
 CREATE TABLE IF NOT EXISTS email_blocklist (
@@ -2909,8 +2911,9 @@ CREATE INDEX IF NOT EXISTS email_enquiry_decisions_decided_idx ON email_enquiry_
 CREATE TABLE IF NOT EXISTS mailbox_enquiry_backfills (
   account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,
   since       timestamptz NOT NULL,
-  -- Inbox first, then Sent Items; null once both are read.
-  folder      text CHECK (folder IN ('inbox','sentitems')),
+  -- 'all': every folder as one stream, oldest first (073). A read begun
+  -- before that goes Inbox first, then Sent Items. Null once read.
+  folder      text CONSTRAINT mailbox_enquiry_backfills_folder_check CHECK (folder IN ('inbox','sentitems','all')),
   next_link   text,
   -- The date of the last message read, so progress can be shown in days.
   reached     timestamptz,
@@ -2930,7 +2933,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiry_same_sender_days', '30', 'A new email from a client who already has an open enquiry this recent is linked to it instead of making another.'),
   ('auto_enquiry_daily_ai_limit', '5000', 'The most AI calls the email readers (enquiries, quotations, POs, invoices) may make in one day, together. Reading past mail stops for the day when it is reached.'),
   ('email_reader_concurrency', '4', 'How many emails each email reader reads at once, 1 to 8. Emails from one client or one conversation are still read one after another, oldest first.'),
-  ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.')
+  ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.'),
+  ('email_read_everything', 'true', 'Read every email in every folder (except Junk, Deleted Items, Drafts and Outbox), replies included: the AI decides what each one is. Off puts back the free rules that skip replies, newsletters, automatic senders and mail with no PO or invoice words, which saves AI calls.')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES
