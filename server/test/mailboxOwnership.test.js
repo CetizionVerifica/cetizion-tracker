@@ -327,6 +327,11 @@ describe('each salesperson\'s own mailbox', { skip: !ADMIN_URL && 'set TEST_DATA
       // Assigned to A: the thread is A's to read now, though A is no member.
       const forAssigned = await as(salesA)('get', `/api/mail/threads/${teamThread.id}`);
       assert.equal(forAssigned.status, 200, JSON.stringify(forAssigned.body));
+      // A hands it back to B: the change is saved and answered with the row, not a 404 for a conversation now out of A's scope.
+      const handBack = await as(salesA)('patch', `/api/inbox/${conv.id}`).send({ assignee: 'Bea Sales' });
+      assert.equal(handBack.status, 200, JSON.stringify(handBack.body));
+      assert.equal(handBack.body.data.assignee, 'Bea Sales');
+      assert.equal((await as(salesA)('get', `/api/mail/threads/${teamThread.id}`)).status, 404, 'and it is gone from A\'s view');
     } finally {
       await db.query(`UPDATE inboxes SET members = '{}' WHERE account_id = $1`, [shared.id]);
     }

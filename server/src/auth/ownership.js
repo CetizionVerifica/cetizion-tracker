@@ -547,10 +547,17 @@ export function mailboxClause(scope, params, { alias = 'a', kind = 'read' } = {}
  * no Inbox, is the whole team's. Members are typed names or addresses, so
  * the signed-in user is matched on both, as routes/inbox.js matches them.
  */
+/**
+ * A typed name or address matches one of several, whatever its case or
+ * surrounding spaces. The one spelling of the Inbox's member test, used
+ * here and in routes/inbox.js, so the two cannot drift apart again.
+ */
+export const namedIn = (expr, candidates) => `lower(btrim(${expr})) IN (${candidates.map((c) => `lower(${c})`).join(', ')})`;
+
 const inboxMemberOrOpen = (alias, n) => `NOT EXISTS (
   SELECT 1 FROM inboxes mi WHERE mi.account_id = ${alias}.id AND mi.active AND mi.members <> '{}'
      AND NOT EXISTS (SELECT 1 FROM unnest(mi.members) mm JOIN users mu ON mu.id = $${n}
-                      WHERE lower(btrim(mm)) IN (lower(mu.email), lower(mu.name))))`;
+                      WHERE ${namedIn('mm', ['mu.email', 'mu.name'])}))`;
 
 /**
  * The thread's conversation in the team Inbox is the caller's, or nobody's
@@ -559,7 +566,7 @@ const inboxMemberOrOpen = (alias, n) => `NOT EXISTS (
  */
 const inboxAssignee = (threadAlias, n) => `EXISTS (
   SELECT 1 FROM inbox_conversations mc JOIN users mu ON mu.id = $${n}
-   WHERE mc.thread_id = ${threadAlias}.id AND (mc.assignee IS NULL OR lower(btrim(mc.assignee)) IN (lower(mu.email), lower(mu.name))))`;
+   WHERE mc.thread_id = ${threadAlias}.id AND (mc.assignee IS NULL OR ${namedIn('mc.assignee', ['mu.email', 'mu.name'])}))`;
 
 /**
  * "threads this caller may read": the mailboxes above, plus a thread that

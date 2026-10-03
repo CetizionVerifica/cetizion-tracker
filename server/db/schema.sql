@@ -1841,6 +1841,8 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   -- Which folders the email readers read: every folder (073) or Inbox and
   -- Sent Items only. Personal mailboxes start on inbox_sent.
   read_scope         text NOT NULL DEFAULT 'all' CHECK (read_scope IN ('all','inbox_sent')),
+  -- Stored message ids are Graph's immutable ids (076); translated once on the first sync after it.
+  immutable_ids      boolean NOT NULL DEFAULT false,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT connected_accounts_shared_unowned CHECK (NOT (is_shared AND user_id IS NOT NULL))
@@ -1916,6 +1918,8 @@ CREATE TABLE IF NOT EXISTS email_messages (
   -- another folder, ten minutes without that is a delete (removed_at).
   removed_seen_at      timestamptz,
   removed_at           timestamptz,
+  -- When the attachment list was last read; NULL with has_attachments means still to read.
+  attachments_listed_at timestamptz,
   created_at           timestamptz NOT NULL DEFAULT now(),
   UNIQUE (account_id, provider_id)
 );

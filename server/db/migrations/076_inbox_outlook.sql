@@ -29,6 +29,14 @@ ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS importance text;
 ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS bcc_emails text[];
 ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS removed_seen_at timestamptz;
 ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS removed_at timestamptz;
+-- When the attachment list was last read from the provider; NULL with
+-- has_attachments means it is still to be read (retried by the sync).
+ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS attachments_listed_at timestamptz;
+
+-- Whether a mailbox's stored message ids are Graph's immutable ids. Off for
+-- every mailbox connected before 076; the first sync after it translates
+-- the stored ids once (sync.js translateStoredIds) and switches this on.
+ALTER TABLE connected_accounts ADD COLUMN IF NOT EXISTS immutable_ids boolean NOT NULL DEFAULT false;
 
 ALTER TABLE email_messages DROP CONSTRAINT IF EXISTS email_messages_flag_status_check;
 ALTER TABLE email_messages ADD CONSTRAINT email_messages_flag_status_check CHECK (flag_status IN ('notFlagged','flagged','complete'));

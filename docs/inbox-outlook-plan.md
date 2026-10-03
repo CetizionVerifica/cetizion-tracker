@@ -30,11 +30,16 @@ and command bar can follow later (§9).
 foundations, is built** on `feat/inbox-outlook` as migration `076`: the
 message state columns, `mail_folder_list`, `email_attachments`, known
 messages updated rather than skipped, the removed-then-reappears rule, the
-display-only sync of Deleted Items and Junk, immutable ids (a message stored
-under its old id takes the new one when it is seen again, so the one-off
-translate script in §3.5 was not needed), subscriptions for created, updated
-and deleted, and the three access gaps in §1. The UI is unchanged. Steps
-2–5 follow, each its own PR.
+display-only sync of Deleted Items and Junk (stored and shown, but no
+contact is made and no record linked from them), immutable ids (each
+mailbox's stored ids are translated once by the first sync after the
+deploy, `translateStoredIds`, in place of the one-off script in §3.5; a
+cursor Graph refuses is dropped and the folder read again), subscriptions
+for created, updated and deleted, and the three access gaps in §1. The
+"ten minutes unseen means deleted" rule applies only to a mailbox that
+syncs every folder; one held to Inbox and Sent Items records a message as
+gone from a synced folder, never as deleted. The UI is unchanged. Steps 2–5
+follow, each its own PR.
 
 This file is written for the person (or Claude Code session) who builds it.
 Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md),

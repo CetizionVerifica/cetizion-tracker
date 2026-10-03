@@ -167,6 +167,122 @@ describe('sync foundations for the Outlook-style Inbox', { skip: !ADMIN_URL && '
     sync.clock.now = () => new Date();
   });
 
+  test('restored from Deleted Items in the same sweep: the Inbox sighting comes first and the later removal does not count', async () => {
+    const box = await mailbox();
+    const m = mail({ subject: 'Binned then restored' });
+    sync.pushTestMessages(box.id, [{ ...m, folder: 'deleteditems' }]);
+    await sync.syncAccount(box.id);
+    assert.equal((await message(m.provider_id)).folder_id, 'deleteditems');
+    // Restored in Outlook: Inbox hands it over, Deleted Items reports it gone — in that order within one sweep.
+    sync.pushTestMessages(box.id, [{ ...m, folder: 'inbox' }, { provider_id: m.provider_id, folder: 'deleteditems', removed: true }]);
+    await sync.syncAccount(box.id);
+    let row = await message(m.provider_id);
+    assert.equal(row.folder_id, 'inbox');
+    assert.equal(row.removed_seen_at, null, 'seen in this sweep: the removal is the move\'s other half');
+    // And a removal reported from a folder the row is no longer in is ignored even across sweeps.
+    sync.pushTestMessages(box.id, [{ provider_id: m.provider_id, folder: 'deleteditems', removed: true }]);
+    await sync.syncAccount(box.id);
+    row = await message(m.provider_id);
+    assert.equal(row.removed_seen_at, null, 'the row says Inbox, the removal says Deleted Items: not this row');
+  });
+
+  test('mail kept for display only adds no contact and links no record', async () => {
+    const box = await mailbox();
+    await db.query(`UPDATE connected_accounts SET auto_create_contacts = true WHERE id = $1`, [box.id]);
+    const { rows: [co] } = await db.query(`INSERT INTO companies (name, website) VALUES ('Spammed Pharma', 'spammed-pharma.com') RETURNING id`);
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, company_id, status) VALUES ('CTZ/QT/2027/777', 'Spammed Pharma', $1, 'Submitted')`, [co.id]);
+    const spam = mail({ subject: 'Re: CTZ/QT/2027/777 urgent payment', folder: 'junkemail', from: { email: 'accounts@spammed-pharma.com', name: 'Accounts' } });
+    sync.pushTestMessages(box.id, [spam]);
+    await sync.syncAccount(box.id);
+    const row = await message(spam.provider_id);
+    assert.ok(row, 'stored, to be shown under Junk');
+    const { rows: contacts } = await db.query(`SELECT 1 FROM contacts WHERE lower(email) = 'accounts@spammed-pharma.com'`);
+    assert.equal(contacts.length, 0, 'no contact made from Junk');
+    const { rows: [t] } = await db.query('SELECT entity, entity_id FROM email_threads WHERE id = $1', [row.thread_id]);
+    assert.deepEqual([t.entity, t.entity_id], [null, null], 'no record linked from a subject line in Junk');
+    const { rows: convs } = await db.query('SELECT 1 FROM inbox_conversations WHERE thread_id = $1', [row.thread_id]);
+    assert.equal(convs.length, 0);
+  });
+
+  test('a delta cursor the provider refuses is dropped and the folder read again from the window', async () => {
+    const box = await mailbox();
+    sync.pushTestMessages(box.id, [mail({ subject: 'First' })]);
+    await sync.syncAccount(box.id);
+    const { rows: [before] } = await db.query(`SELECT delta_link FROM mail_folders WHERE account_id = $1 AND folder = 'inbox'`, [box.id]);
+    assert.ok(before.delta_link, 'a cursor is held');
+    sync.pushTestFailure(box.id, { delta: { folder: 'inbox', status: 400, message: 'The id type of the delta token does not match' } });
+    const second = mail({ subject: 'After the cursor was refused' });
+    sync.pushTestMessages(box.id, [second]);
+    const r = await sync.syncAccount(box.id);
+    assert.equal(r.error, undefined, r.error);
+    assert.equal(r.stored, 1, 'the folder was read again and the new mail stored');
+    assert.ok(await message(second.provider_id));
+  });
+
+  test('a mailbox held to Inbox and Sent Items never calls a message deleted: it may sit in a folder not synced', async () => {
+    const box = await mailbox({ shared: false });
+    await db.query(`UPDATE connected_accounts SET read_scope = 'inbox_sent' WHERE id = $1`, [box.id]);
+    await db.query(`INSERT INTO companies (name, website) VALUES ('Zeta Foods', 'zeta-foods.com')`);
+    const m = mail({ subject: 'To be archived', from: { email: 'buyer@zeta-foods.com', name: 'B' } });
+    sync.pushTestMessages(box.id, [m]);
+    await sync.syncAccount(box.id);
+    assert.ok(await message(m.provider_id), 'stored (a known client)');
+    const t0 = new Date('2026-10-05T04:00:00Z');
+    sync.clock.now = () => t0;
+    sync.pushTestMessages(box.id, [{ provider_id: m.provider_id, removed: true }]);
+    await sync.syncAccount(box.id);
+    sync.clock.now = () => new Date(t0.getTime() + 30 * 60_000);
+    const r = await sync.syncAccount(box.id);
+    assert.equal(r.deleted, undefined);
+    const row = await message(m.provider_id);
+    assert.ok(row.removed_seen_at, 'known to have left a synced folder');
+    assert.equal(row.removed_at, null, 'but not called deleted: Archive is not synced for this mailbox');
+    sync.clock.now = () => new Date();
+  });
+
+  test('an attachment list the provider would not give is read on a later sync', async () => {
+    const box = await mailbox();
+    const m = mail({ has_attachments: true, attachments: [{ provider_id: 'att-9', name: 'Order.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF') }] });
+    sync.pushTestFailure(box.id, { attachments: true });
+    sync.pushTestMessages(box.id, [m]);
+    // The call made as the message is stored is throttled; the sweep's own
+    // retry, later in the same sync, reads the list.
+    const r = await sync.syncAccount(box.id);
+    assert.equal(r.attachments_listed, 1, 'read by the retry, not the first call');
+    const row = await message(m.provider_id);
+    assert.ok(row.attachments_listed_at);
+    assert.deepEqual((await db.query('SELECT name FROM email_attachments WHERE message_id = $1', [row.id])).rows, [{ name: 'Order.pdf' }]);
+  });
+
+  test('a mailbox from before immutable ids has its stored ids translated once; after that a second copy of an email is a second copy', async () => {
+    const box = await mailbox();
+    const a = mail({ subject: 'Old id A' });
+    const b = mail({ subject: 'Old id B' });
+    sync.pushTestMessages(box.id, [a, b]);
+    await sync.syncAccount(box.id);
+    assert.equal((await db.query('SELECT immutable_ids FROM connected_accounts WHERE id = $1', [box.id])).rows[0].immutable_ids, false);
+    // The provider now translates ids; B is gone from the mailbox so it stays as it was.
+    sync.pushTestIdTranslation(box.id, { [a.provider_id]: `imm-${a.provider_id}` });
+    const r = await sync.syncAccount(box.id);
+    assert.equal(r.ids_translated, true);
+    assert.ok(await message(`imm-${a.provider_id}`), 'A is known by its immutable id');
+    assert.ok(await message(b.provider_id), 'B keeps its id');
+    assert.equal((await db.query('SELECT immutable_ids FROM connected_accounts WHERE id = $1', [box.id])).rows[0].immutable_ids, true);
+    // A removal under the new id finds the row.
+    const t0 = new Date('2026-10-06T04:00:00Z');
+    sync.clock.now = () => t0;
+    sync.pushTestMessages(box.id, [{ provider_id: `imm-${a.provider_id}`, removed: true }]);
+    await sync.syncAccount(box.id);
+    assert.ok((await message(`imm-${a.provider_id}`)).removed_seen_at);
+    sync.clock.now = () => new Date();
+    // sales@ was on copy of its own mail: the Sent Items copy shares B's Message-ID but is another message. Left alone.
+    sync.pushTestMessages(box.id, [{ ...b, provider_id: uid('copy'), folder: 'sentitems' }]);
+    const r2 = await sync.syncAccount(box.id);
+    assert.equal(r2.skipped['already synced'], 1);
+    assert.equal(r2.updated, 0, 'B\'s row is not rewritten to the copy\'s id');
+    assert.equal((await message(b.provider_id)).folder_id, 'inbox');
+  });
+
   test('the mailbox\'s folders are stored with Outlook\'s own counts, and a folder gone from Outlook goes', async () => {
     const box = await mailbox();
     sync.pushTestFolders(box.id, [

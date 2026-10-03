@@ -72,6 +72,19 @@ const testMessages = new Map();
 /** The folder list a test mailbox reports (076); see testProvider.folderList. */
 const testFolders = new Map();
 export function pushTestFolders(accountId, folders) { testFolders.set(accountId, folders); }
+/** Failures a test mailbox's next call makes: { delta: { folder, status }, attachments: true }. Each fires once. */
+const testFailures = new Map();
+export function pushTestFailure(accountId, failure) { testFailures.set(accountId, { ...(testFailures.get(accountId) || {}), ...failure }); }
+/** An id translation a test mailbox offers (old → new); set, the provider has translateIds. */
+const testIdMaps = new Map();
+export function pushTestIdTranslation(accountId, map) { testIdMaps.set(accountId, new Map(Object.entries(map))); }
+const takeFailure = (accountId, key) => {
+  const f = testFailures.get(accountId);
+  if (!f?.[key]) return null;
+  const { [key]: taken, ...rest } = f;
+  testFailures.set(accountId, rest);
+  return taken;
+};
 export function pushTestMessages(accountId, messages) {
   for (const m of messages) {
     if (m.attachments) testAttachments.set(`${accountId}:${m.provider_id}`, m.attachments);
@@ -100,7 +113,12 @@ function testProvider(account) {
   const sent = (m) => pushTestMessages(account.id, [{ folder: 'sentitems', provider_id: `sent-${crypto.randomUUID()}`, from: { email: account.email, name: account.display_name }, sent_at: new Date().toISOString(), ...m }]);
   return {
     tokens: () => null,
-    async delta(folder, deltaLink) { const { messages, removed } = take(folder); return { messages, removed, deltaLink: deltaLink || `test:${folder}` }; },
+    async delta(folder, deltaLink) {
+      const fail = testFailures.get(account.id)?.delta;
+      if (fail && fail.folder === folder) { takeFailure(account.id, 'delta'); throw Object.assign(new Error(fail.message || 'cursor refused'), { status: fail.status || 400 }); }
+      const { messages, removed } = take(folder); return { messages, removed, deltaLink: deltaLink || `test:${folder}` };
+    },
+    ...(testIdMaps.has(account.id) ? { async translateIds(ids) { const map = testIdMaps.get(account.id); return new Map(ids.filter((id) => map.has(id)).map((id) => [id, map.get(id)])); } } : {}),
     /** The folders a test pushed with pushTestFolders, else Inbox and Sent Items with no counts. */
     async folderList() {
       return testFolders.get(account.id) || [
@@ -109,6 +127,7 @@ function testProvider(account) {
       ];
     },
     async attachmentList(providerId) {
+      if (takeFailure(account.id, 'attachments')) throw Object.assign(new Error('throttled'), { status: 429 });
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null }));
     },
     async message(providerId) {
@@ -279,16 +298,23 @@ export async function ingestRules(account, db = { query }, { forInbox = false } 
  * "no matching client": the enquiry reader (autoEnquiry.js) passes the
  * company it has just created, once the email has turned out to be one.
  */
-export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null, hooks = true } = {}) {
+export async function ingestOne(db, account, m, c, { sentBy = null, forceCompanyId = null, hooks = true, displayOnly = false } = {}) {
   // Kept only because the mailbox feeds an Inbox (ingestRules): the hooks
   // are told which filter would have dropped it.
   const filtered = c.filtered || null;
-  // By id, or as the same email under another id: every folder is read
-  // (073), and a message stored under its old, mutable id comes back under
-  // its immutable one (076).
-  const { rows: [dupe] } = await db.query(
-    `SELECT id, provider_id FROM email_messages WHERE account_id = $1
-        AND (provider_id = $2 OR ($3::text IS NOT NULL AND lower(internet_message_id) = lower($3)))`, [account.id, m.provider_id, m.internet_message_id || null]);
+  // Known by its id, or — while the mailbox's stored ids are still the
+  // old, mutable ones (immutable_ids false) — as the same email under
+  // another id (073: a moved message got a new id). Once the ids are
+  // immutable a move keeps the id, and a second copy with the same
+  // Internet Message-ID (Sent Items and Inbox, when we were on copy) is
+  // a second copy: left alone, as before, never merged into one row.
+  const { rows: [byId] } = await db.query('SELECT id, provider_id FROM email_messages WHERE account_id = $1 AND provider_id = $2', [account.id, m.provider_id]);
+  let dupe = byId;
+  if (!dupe && m.internet_message_id) {
+    const { rows: [byImid] } = await db.query('SELECT id, provider_id FROM email_messages WHERE account_id = $1 AND lower(internet_message_id) = lower($2) LIMIT 1', [account.id, m.internet_message_id]);
+    if (byImid && account.immutable_ids) return { skipped: 'already synced', copy: true };
+    dupe = byImid;
+  }
   if (dupe) {
     // Known: Outlook's state of it moved, not the message (076). The folder,
     // read flag, flag and importance are overwritten with what the provider
@@ -305,8 +331,11 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
     return { skipped: 'already synced', updated: Boolean(updated) };
   }
   let { rows: [thread] } = await db.query('SELECT * FROM email_threads WHERE account_id = $1 AND conversation_id = $2 FOR UPDATE', [account.id, m.conversation_id]);
-  const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts });
-  if (!who.company_id) {
+  // Mail kept for display only (Deleted Items, Junk) is matched to people
+  // already on file but makes nothing: no contact is added for a sender
+  // found in Junk, and no record is linked to by a subject line there.
+  const who = thread?.company_id ? { company_id: thread.company_id, contact_id: thread.contact_id } : await matchParticipants(db, c.external, { autoCreate: account.auto_create_contacts && !displayOnly });
+  if (!who.company_id && !displayOnly) {
     // A record number in the subject names the client even from a free-mail address.
     const named = await linkRecord(db, m.subject, null);
     if (named.entity) Object.assign(who, { company_id: (await resolveParties(named.entity, named.entity_id, db)).company_id || null });
@@ -320,12 +349,12 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
   if (!thread) {
     // A personal mailbox keeps only client mail; a shared one keeps everything external (new leads).
     if (!who.company_id && !account.is_shared) return { skipped: 'no matching client' };
-    const link = await linkRecord(db, m.subject, who.company_id);
+    const link = displayOnly ? { entity: null, entity_id: null } : await linkRecord(db, m.subject, who.company_id);
     ({ rows: [thread] } = await db.query(
       `INSERT INTO email_threads (account_id, conversation_id, subject, company_id, contact_id, entity, entity_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [account.id, m.conversation_id, account.visibility === 'metadata' ? null : m.subject, who.company_id, who.contact_id, link.entity, link.entity_id]));
-  } else if (!thread.company_id && who.company_id) {
+  } else if (!thread.company_id && who.company_id && !displayOnly) {
     const link = thread.entity ? { entity: thread.entity, entity_id: thread.entity_id } : await linkRecord(db, m.subject, who.company_id);
     await db.query('UPDATE email_threads SET company_id = $2, contact_id = $3, entity = $4, entity_id = $5 WHERE id = $1', [thread.id, who.company_id, who.contact_id, link.entity, link.entity_id]);
   }
@@ -351,16 +380,34 @@ export async function ingestOne(db, account, m, c, { sentBy = null, forceCompany
  * in Outlook and is fetched when somebody downloads it. The names are
  * withheld for a mailbox that stores metadata only — a file name is content.
  */
-async function storeAttachmentList(db, account, message, provider) {
-  if (!message.has_attachments || !provider?.attachmentList) return;
+async function storeAttachmentList(account, message, provider) {
+  if (!message.has_attachments || !provider?.attachmentList) return false;
+  // One provider call per message, after the message's own transaction:
+  // not while a thread row is locked. A call that fails (throttled, timed
+  // out) leaves attachments_listed_at empty, and the sync tries again later.
   let list;
-  try { list = await provider.attachmentList(message.provider_id); } catch { return; }
-  for (const a of list || []) {
-    await db.query(
-      `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id`,
-      [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null]);
-  }
+  try { list = await provider.attachmentList(message.provider_id); } catch { return false; }
+  await transaction(async (db) => {
+    for (const a of list || []) {
+      await db.query(
+        `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id`,
+        [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null]);
+    }
+    await db.query('UPDATE email_messages SET attachments_listed_at = now() WHERE id = $1', [message.id]);
+  });
+  return true;
+}
+
+/** Messages whose attachment list is still to be read (a failed call earlier), newest first, a few per sync. */
+async function retryAttachmentLists(account, provider, { limit = 25 } = {}) {
+  if (!provider?.attachmentList) return 0;
+  const { rows } = await query(
+    `SELECT id, provider_id, has_attachments FROM email_messages WHERE account_id = $1 AND has_attachments AND attachments_listed_at IS NULL AND removed_at IS NULL
+      ORDER BY sent_at DESC LIMIT $2`, [account.id, limit]);
+  let n = 0;
+  for (const m of rows) if (await storeAttachmentList(account, m, provider)) n += 1;
+  return n;
 }
 
 /**
@@ -377,7 +424,7 @@ async function storeAttachmentList(db, account, message, provider) {
 export async function ingest(account, messages, { sentBy = null, provider = null, displayOnly = false } = {}) {
   const judge = await ingestRules(account, undefined, { forInbox: true });
   const portals = await portalSenders();
-  const result = { stored: 0, updated: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [] };
+  const result = { stored: 0, updated: 0, skipped: {}, threads: new Set(), candidates: [], poCandidates: [], seen: new Set() };
   const skip = (why) => { result.skipped[why] = (result.skipped[why] || 0) + 1; };
   // The PO reader (autoPurchaseOrder.js) looks at every inbound message
   // that might hold an order, later ones in a thread included: that is
@@ -426,9 +473,8 @@ export async function ingest(account, messages, { sentBy = null, provider = null
     let r;
     try {
       r = await transaction(async (db) => {
-        const stored = await ingestOne(db, account, m, c, { sentBy, hooks: !displayOnly });
+        const stored = await ingestOne(db, account, m, c, { sentBy, hooks: !displayOnly, displayOnly });
         if (stored.skipped) return stored;
-        await storeAttachmentList(db, account, stored.message, provider);
         if (displayOnly) return stored;
         // Stored for the Inbox only (ingestRules). The readers see it as they
         // would had the filters dropped it: while reading everything, as any
@@ -447,6 +493,7 @@ export async function ingest(account, messages, { sentBy = null, provider = null
       if (err.code === '23505' && err.constraint?.startsWith('email_messages')) { skip('already synced'); continue; }
       throw err;
     }
+    if (r.skipped !== 'no matching client') result.seen.add(m.provider_id);
     if (r.skipped) {
       if (r.updated) result.updated += 1; else skip(r.skipped);
       if (r.skipped === 'no matching client' && !displayOnly) {
@@ -460,6 +507,7 @@ export async function ingest(account, messages, { sentBy = null, provider = null
       continue;
     }
     result.stored += 1;
+    await storeAttachmentList(account, r.message, provider);
     result.threads.add(r.thread.id);
     if (r.cand) route(r.cand, r.readers);
   }
@@ -526,8 +574,17 @@ async function syncAccountUnlocked(id) {
     // What earlier syncs could not read, before the new mail: oldest first.
     const retried = await retryQueued(account, provider);
     if (retried) out.retried = retried;
-    const listed = readsAllFolders(account, (await settingsFor({ query })).readAll) ? await foldersOf(account, provider) : FOLDERS;
+    // A mailbox connected before immutable ids (076) has its stored ids
+    // translated once, so a change or a removal Graph reports under the
+    // new id finds its row.
+    if (await translateStoredIds(account, provider)) out.ids_translated = true;
+    const readsAll = readsAllFolders(account, (await settingsFor({ query })).readAll);
+    const listed = readsAll ? await foldersOf(account, provider) : FOLDERS;
     const folders = listed || FOLDERS;
+    // Every id handed over in this sweep: a removal reported for one of
+    // them (it left one folder for another) is a move, not a deletion.
+    const seen = new Set();
+    let removedAny = false;
     // Deleted Items and Junk are synced for display only (076): they appear
     // in the Inbox's folder switcher, and a message deleted in Outlook is
     // seen arriving there (a move) rather than vanishing.
@@ -540,12 +597,22 @@ async function syncAccountUnlocked(id) {
       try {
         read = await provider.delta(folder, f.delta_link, since);
       } catch (err) {
-        // A folder deleted or moved away since it was listed: forget it and
-        // go on with the rest. Inbox and Sent Items failing is the mailbox failing.
-        if (err.status !== 404 || FOLDERS.includes(folder)) throw err;
-        await query('DELETE FROM mail_folders WHERE id = $1', [f.id]);
-        folderLists.delete(account.id);
-        continue;
+        if (err.status === 404 && !FOLDERS.includes(folder)) {
+          // A folder deleted or moved away since it was listed: forget it and
+          // go on with the rest. Inbox and Sent Items failing is the mailbox failing.
+          await query('DELETE FROM mail_folders WHERE id = $1', [f.id]);
+          folderLists.delete(account.id);
+          continue;
+        }
+        // A cursor the provider will not continue (one minted under the
+        // old id type, or expired): drop it and start the folder again
+        // from the import window. Stored messages are known again by id or
+        // Internet Message-ID, so nothing is stored twice. Fails again:
+        // the mailbox failing, as before.
+        if (!f.delta_link || err.status === 401) throw err;
+        console.warn(`[mail.sync] ${account.email}/${folder}: delta cursor refused (${err.message}); starting the folder again`);
+        await query('UPDATE mail_folders SET delta_link = NULL WHERE id = $1', [f.id]);
+        read = await provider.delta(folder, null, new Date(Date.now() - account.import_days * 864e5).toISOString());
       }
       const { messages, deltaLink, removed = [] } = read;
       // Which folder each message came from, for the Inbox's routing.
@@ -554,11 +621,21 @@ async function syncAccountUnlocked(id) {
       poCandidates.push(...r.poCandidates);
       out.stored += r.stored;
       out.updated = (out.updated || 0) + r.updated;
+      for (const id of r.seen) seen.add(id);
       // Gone from this folder: noted, not acted on. Seen again in another
       // folder it is a move (ingestOne clears the mark); ten minutes
-      // unseen, a delete (below).
-      if (removed.length) {
-        await query(`UPDATE email_messages SET removed_seen_at = COALESCE(removed_seen_at, $3) WHERE account_id = $1 AND provider_id = ANY($2) AND removed_at IS NULL`, [account.id, removed, clock.now()]);
+      // unseen, a delete (below). Not for a message this sweep has already
+      // seen elsewhere (restored to the Inbox, then reported gone from
+      // Deleted Items), and only while the row still says it is in the
+      // folder it was reported gone from.
+      const gone = removed.filter((id) => !seen.has(id));
+      if (gone.length) {
+        removedAny = true;
+        const folderIds = await folderIdsOf(account, folder);
+        await query(
+          `UPDATE email_messages SET removed_seen_at = COALESCE(removed_seen_at, $3)
+            WHERE account_id = $1 AND provider_id = ANY($2) AND removed_at IS NULL AND (folder_id IS NULL OR folder_id = ANY($4))`,
+          [account.id, gone, clock.now(), folderIds]);
       }
       for (const [k, v] of Object.entries(r.skipped)) out.skipped[k] = (out.skipped[k] || 0) + v;
       await query('UPDATE mail_folders SET delta_link = $2 WHERE id = $1', [f.id, deltaLink]);
@@ -567,10 +644,22 @@ async function syncAccountUnlocked(id) {
     // other folder once reading everything is off) stop being read; their
     // cursor goes with them. Not after a listing that failed.
     if (listed) await query(`DELETE FROM mail_folders WHERE account_id = $1 AND folder <> ALL($2) AND subscription_id IS NULL`, [account.id, [...folders, ...displayOnly]]);
-    const { rowCount: deleted } = await query(
-      `UPDATE email_messages SET removed_at = $2 WHERE account_id = $1 AND removed_at IS NULL AND removed_seen_at IS NOT NULL AND removed_seen_at <= $3`,
-      [account.id, clock.now(), new Date(clock.now().getTime() - REMOVED_GRACE_MS)]);
-    if (deleted) out.deleted = deleted;
+    // A removal may be a move into a folder made in Outlook just now: list
+    // the folders afresh next time rather than in fifteen minutes.
+    if (removedAny) folderLists.delete(account.id);
+    // "Not seen again anywhere" means deleted only when every folder a
+    // message could move to is one this mailbox syncs. Held to Inbox and
+    // Sent Items (read_scope), a message gone from the Inbox may sit in
+    // Archive unseen: it stays marked as gone from a synced folder, never
+    // as deleted.
+    if (readsAll) {
+      const { rowCount: deleted } = await query(
+        `UPDATE email_messages SET removed_at = $2 WHERE account_id = $1 AND removed_at IS NULL AND removed_seen_at IS NOT NULL AND removed_seen_at <= $3`,
+        [account.id, clock.now(), new Date(clock.now().getTime() - REMOVED_GRACE_MS)]);
+      if (deleted) out.deleted = deleted;
+    }
+    const listedAttachments = await retryAttachmentLists(account, provider);
+    if (listedAttachments) out.attachments_listed = listedAttachments;
     await refreshFolderList(account, provider);
     await saveTokens(account, provider);
     await query('UPDATE connected_accounts SET last_synced_at = now(), last_error = NULL WHERE id = $1', [account.id]);
@@ -591,6 +680,39 @@ async function syncAccountUnlocked(id) {
     out.error = err.message;
   }
   return out;
+}
+
+/**
+ * The ids a message in `folder` carries in folder_id: the folder's own id,
+ * and for a well-known folder read by name (inbox, sentitems, deleteditems,
+ * junkemail) the id Outlook gave it, from the stored folder list.
+ */
+async function folderIdsOf(account, folder) {
+  const { rows } = await query('SELECT folder_id FROM mail_folder_list WHERE account_id = $1 AND well_known = $2', [account.id, folder]);
+  return [folder, ...rows.map((r) => r.folder_id)];
+}
+
+/**
+ * Translate a mailbox's stored message ids to the provider's immutable ids,
+ * once (076, docs/inbox-outlook-plan.md §3.5). Until this has run, a
+ * change or a removal Graph reports under an immutable id would find no
+ * row. Ids the provider cannot translate (messages gone since) are left as
+ * they are. Returns true when it ran.
+ */
+export async function translateStoredIds(account, provider) {
+  if (account.immutable_ids || !provider.translateIds) return false;
+  const { rows } = await query('SELECT provider_id FROM email_messages WHERE account_id = $1', [account.id]);
+  const ids = rows.map((r) => r.provider_id);
+  const map = ids.length ? await provider.translateIds(ids) : new Map();
+  await transaction(async (db) => {
+    for (const [from, to] of map) {
+      if (from === to) continue;
+      await db.query('UPDATE email_messages SET provider_id = $3 WHERE account_id = $1 AND provider_id = $2 AND NOT EXISTS (SELECT 1 FROM email_messages x WHERE x.account_id = $1 AND x.provider_id = $3)', [account.id, from, to]);
+    }
+    await db.query('UPDATE connected_accounts SET immutable_ids = true WHERE id = $1', [account.id]);
+  });
+  account.immutable_ids = true;
+  return true;
 }
 
 /**

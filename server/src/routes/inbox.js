@@ -15,6 +15,7 @@
  *   GET    /api/inbox/canned · POST · PATCH /canned/:id · DELETE /canned/:id
  */
 import { Router } from 'express';
+import { namedIn } from '../auth/ownership.js';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { query, transaction } from '../db.js';
@@ -157,8 +158,8 @@ const identities = (req) => [req.user?.username || 'admin', req.user?.name || re
 const inboxScope = (req, from) => (isAdmin(req)
   ? { clause: 'TRUE', params: [] }
   : { clause: `(i.members = '{}'
-       OR EXISTS (SELECT 1 FROM unnest(i.members) m WHERE lower(btrim(m)) IN (lower($${from}), lower($${from + 1})))
-       OR c.assignee IS NULL OR lower(btrim(c.assignee)) IN (lower($${from}), lower($${from + 1})))`, params: identities(req) });
+       OR EXISTS (SELECT 1 FROM unnest(i.members) m WHERE ${namedIn('m', [`$${from}`, `$${from + 1}`])})
+       OR c.assignee IS NULL OR ${namedIn('c.assignee', [`$${from}`, `$${from + 1}`])})`, params: identities(req) });
 
 const LIST = `
   SELECT c.*, i.name AS inbox_name, ia.email AS inbox_email,
@@ -394,7 +395,10 @@ inboxRouter.patch('/:id', async (req, res) => {
        FROM inboxes i WHERE i.id = c.inbox_id AND c.id = $1 AND ${scope.clause}`,
     [Number(req.params.id), ...set.map(([, x]) => x), ...scope.params]);
   if (!rowCount) throw new ApiError(404, 'Conversation not found');
-  res.json({ data: await loadConversation(Number(req.params.id), req) });
+  // The caller has just been allowed to change it; what they changed may
+  // have put it out of their scope (assigned to somebody else), and the
+  // answer to a change that was saved is the row, not a 404.
+  res.json({ data: await loadConversation(Number(req.params.id), null) });
 });
 
 inboxRouter.post('/:id/reply', async (req, res) => {

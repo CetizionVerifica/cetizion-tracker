@@ -121,17 +121,35 @@ export function microsoftProvider(account, tokens) {
     bcc: (m.bccRecipients || []).map(person).filter(Boolean),
   });
 
-  /** Every folder under `url` (a mailFolders or childFolders list), depth first, each page followed. */
-  async function walk(url, visit) {
+  /**
+   * Every folder under `url` (a mailFolders or childFolders list), depth
+   * first, each page followed. Child folders are asked for the same
+   * fields as the top level (`select`), so a nested folder carries its
+   * name, parent and counts like any other.
+   */
+  async function walk(url, visit, select = 'id,childFolderCount') {
     for (let next = url; next;) {
       const j = await graph(next);
       for (const f of j.value || []) {
         if (await visit(f) === false) continue;
-        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=id,childFolderCount&$top=100`, visit);
+        if (f.childFolderCount > 0) await walk(`${who}/mailFolders/${f.id}/childFolders?$select=${select}&$top=100`, visit, select);
       }
       next = j['@odata.nextLink'] || null;
     }
   }
+  /** The ids of the well-known folders, asked once per provider: they never change. */
+  let wellKnownIds = null;
+  const wellKnown = () => {
+    wellKnownIds ||= (async () => {
+      const known = new Map();
+      for (const name of ['inbox', 'sentitems', 'drafts', 'archive', 'deleteditems', 'junkemail', 'outbox']) {
+        const f = await graph(`${who}/mailFolders/${name}?$select=id`).catch(() => null);
+        if (f?.id) known.set(f.id, name);
+      }
+      return known;
+    })().catch((err) => { wellKnownIds = null; throw err; });
+    return wellKnownIds;
+  };
   /** The ids of SKIPPED_FOLDERS and of every folder under them; asked once per provider. */
   let skippedIds = null;
   const skipped = () => {
@@ -176,16 +194,26 @@ export function microsoftProvider(account, tokens) {
      * the folders that answer by name; everything else is a plain folder.
      */
     async folderList() {
-      const known = new Map();
-      for (const name of ['inbox', 'sentitems', 'drafts', 'archive', 'deleteditems', 'junkemail', 'outbox']) {
-        const f = await graph(`${who}/mailFolders/${name}?$select=id`).catch(() => null);
-        if (f?.id) known.set(f.id, name);
-      }
+      const known = await wellKnown();
+      const select = 'id,parentFolderId,displayName,childFolderCount,unreadItemCount,totalItemCount';
       const out = [];
-      await walk(`${who}/mailFolders?$select=id,parentFolderId,displayName,childFolderCount,unreadItemCount,totalItemCount&$top=100`, (f) => {
+      await walk(`${who}/mailFolders?$select=${select}&$top=100`, (f) => {
         out.push({ folder_id: f.id, parent_id: f.parentFolderId || null, display_name: f.displayName || '', well_known: known.get(f.id) || null, unread_count: f.unreadItemCount || 0, total_count: f.totalItemCount || 0 });
         return true;
-      });
+      }, select);
+      return out;
+    },
+    /**
+     * The immutable id of each message id given (Graph translateExchangeIds),
+     * as a Map old → new. Ids Graph cannot translate (a message gone since)
+     * are left out. At most 1,000 per call, as Graph allows.
+     */
+    async translateIds(ids) {
+      const out = new Map();
+      for (let i = 0; i < ids.length; i += 1000) {
+        const j = await graph(`${who}/translateExchangeIds`, { method: 'POST', body: { inputIds: ids.slice(i, i + 1000), sourceIdType: 'restId', targetIdType: 'restImmutableEntryId' } });
+        for (const r of j?.value || []) if (r.sourceId && r.targetId) out.set(r.sourceId, r.targetId);
+      }
       return out;
     },
     /** The attachments of a message, metadata only (076): the file stays in Outlook. */
