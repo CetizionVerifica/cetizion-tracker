@@ -22,14 +22,16 @@ import { ago, date } from '../lib/format.js';
  */
 
 const KINDS = [
-  { kind: 'daily_briefing', key: 'mis_daily_enabled', title: 'Daily Sales Briefing', when: 'Every day at 08:56 IST, for the previous day', what: 'What happened yesterday, the pending invoices, POs and quotations with Overdue marked, and the top five actions for today.' },
-  { kind: 'weekly_mis', key: 'mis_weekly_enabled', title: 'Weekly Sales MIS Report', when: 'Every Monday at 08:54 IST, for the previous Monday to Sunday', what: 'The eight management questions: enquiries per day with first-response times, outcomes, sector-wise and service-wise sales, customers, invoiced and received, receivables over 90 days, pending follow-ups, conversion and speed.' },
+  { kind: 'daily_briefing', settingKey: 'mis_daily_enabled', title: 'Daily Sales Briefing', when: 'Every day at 08:56 IST, for the previous day', what: 'What happened yesterday, the pending invoices, POs and quotations with Overdue marked, and the top five actions for today.' },
+  { kind: 'weekly_mis', settingKey: 'mis_weekly_enabled', title: 'Weekly Sales MIS Report', when: 'Every Monday at 08:54 IST, for the previous Monday to Sunday', what: 'The eight management questions: enquiries per day with first-response times, outcomes, sector-wise and service-wise sales, customers, invoiced and received, receivables over 90 days, pending follow-ups, conversion and speed.' },
 ];
 const TITLE = Object.fromEntries(KINDS.map((k) => [k.kind, k.title]));
 
 const setting = (list, key) => (list ?? []).find((s) => s.key === key)?.value ?? '';
+// The addresses in a To/Cc setting, as the server reads them: a setting cannot be blank, so "none" means nobody.
+const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
 
-function ReportCard({ kind, key: settingKey, title, when, what, settings, onChanged }) {
+function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }) {
   const toast = useToast();
   const enabled = setting(settings, settingKey) === 'true';
   // "As of": the report is run as if this were today, so a past period can
@@ -94,7 +96,7 @@ function ReportCard({ kind, key: settingKey, title, when, what, settings, onChan
         <ConfirmDialog
           tone="normal"
           title={`Send the ${title} now?`}
-          message={`It goes to ${setting(settings, 'mis_to') || 'nobody — set the recipients first'}${setting(settings, 'mis_cc') ? `, copying ${setting(settings, 'mis_cc')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
+          message={`It goes to ${addresses(setting(settings, 'mis_to')).join(', ') || 'nobody — set the recipients first'}${addresses(setting(settings, 'mis_cc')).length ? `, copying ${addresses(setting(settings, 'mis_cc')).join(', ')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
           confirmLabel="Send"
           busy={busy === 'send'}
           onClose={() => setSending(false)}
@@ -107,10 +109,11 @@ function ReportCard({ kind, key: settingKey, title, when, what, settings, onChan
 
 function SharedSettings({ settings, mailboxes, onChanged }) {
   const toast = useToast();
-  const [to, setTo] = useState(setting(settings, 'mis_to'));
-  const [cc, setCc] = useState(setting(settings, 'mis_cc'));
+  const [to, setTo] = useState(addresses(setting(settings, 'mis_to')).join(', '));
+  const [cc, setCc] = useState(addresses(setting(settings, 'mis_cc')).join(', '));
   const [overdue, setOverdue] = useState(setting(settings, 'mis_overdue_days') || '7');
-  const sender = setting(settings, 'mis_sender_account_id') || 'smtp';
+  // A non-numeric value ('none', blank) is the SMTP sender.
+  const sender = /^\d+$/.test(setting(settings, 'mis_sender_account_id')) ? setting(settings, 'mis_sender_account_id') : 'smtp';
   const [busy, setBusy] = useState(false);
   const shared = (mailboxes ?? []).filter((m) => m.is_shared && m.status === 'active');
 
@@ -180,7 +183,7 @@ function Runs({ runs, onChanged }) {
         columns={[
           { key: 'kind', header: 'Report', render: (r) => TITLE[r.kind] },
           { key: 'period', header: 'Period', render: period },
-          { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{r.sent_via === 'log' ? 'logged only' : `sent · ${r.sent_via}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : <Chip>{r.status}</Chip>) },
+          { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{`sent · ${r.sent_via === 'graph' ? 'sales mailbox' : r.sent_via}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>) },
           { key: 'recipients', header: 'To', className: 'wrap', render: (r) => (r.recipients || []).join(', ') || '—' },
           { key: 'created_at', header: 'When', render: (r) => `${ago(r.created_at)} · ${r.triggered_by}` },
           { key: 'error', header: 'Note', className: 'wrap small', render: (r) => r.error || (r.ai_used ? 'AI commentary' : '') },

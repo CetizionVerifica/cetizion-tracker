@@ -80,6 +80,6 @@ misReportsRouter.post('/:kind/send', async (req, res) => {
   const kind = kindOf(req.params.kind);
   const parsed = z.object({ date: z.string().optional() }).safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields');
-  const run = await runReport(kind, { today: dateOf(parsed.data.date), startedBy: req.user?.username || 'admin' });
+  const run = await runReport(kind, { today: dateOf(parsed.data.date), startedBy: req.user?.username || 'admin', guarded: false });
   res.status(run.status === 'failed' ? 502 : 200).json({ data: run });
 });

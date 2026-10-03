@@ -24,7 +24,7 @@ import { query } from '../db.js';
 import { aiConfig, chatJSON } from './ai.js';
 import { aiCallsToday, enquirySettings } from './mailbox/autoEnquiry.js';
 import { snippet } from './mailbox/rules.js';
-import { recordLink } from './followUps.js';
+import { linkFor } from './misReports.js';
 import { r2 } from './reportMath.ts';
 import { config } from '../config.js';
 
@@ -156,7 +156,7 @@ export function checkHighlights(raw, threads, actions) {
     if (action && !numbersAllowed(action, allowed)) continue;
     highlights.push({
       thread_id: t.thread_id, client: String(h.client || t.company || 'a client').trim(), summary, action, owner: h.owner ? String(h.owner).trim() : null,
-      link: t.entity ? recordLink(t.entity, t.entity_id) : `/inbox?thread=${t.thread_id}`, web_link: t.web_link, source: 'ai',
+      link: t.entity ? linkFor(t.entity, t.entity_id) : `/inbox?thread=${t.thread_id}`, web_link: t.web_link, source: 'ai',
     });
   }
   const byKey = new Map(actions.map((a) => [a.key, a]));
@@ -185,7 +185,7 @@ export function commentaryInput(data) {
     enquiries: { total: data.enquiries.total, per_day: data.enquiries.per_day, month_to_date: data.enquiries.month_to_date, sources: data.enquiries.sources, tat: data.enquiries.tat, rows: slim(data.enquiries.rows, 20).map((r) => ({ client: r.client, country: r.country, sector: r.sector, service: r.service, source: r.source, first_response_hours: r.first_response_hours })) },
     outcomes: { total: data.outcomes.total, slices: data.outcomes.slices, quoted_not_won_reasons: data.outcomes.quoted_not_won_reasons },
     sectors: data.sectors.rows, services: data.services.rows, customers: data.customers.tiles,
-    pos: slim(data.pos, 20).map((p) => ({ client: p.customer, country: p.country, service: p.service, value_inr: p.po_value_inr, repeat: p.repeat })),
+    pos: slim(data.pos, 20).map((p) => ({ client: p.client || p.customer, country: p.country, service: p.service, value_inr: p.po_value_inr, repeat: p.repeat })),
     revenue: data.revenue.total, billing: data.billing,
     receivables: { outstanding_inr: data.receivables.outstanding_inr, overdue_inr: data.receivables.overdue_inr, over_90: data.receivables.over_90, oldest_days: data.receivables.oldest_days },
     pending: { invoices: { count: data.pending.invoices.count, overdue: data.pending.invoices.overdue, value_inr: data.pending.invoices.value_inr }, pos: { count: data.pending.pos.count, overdue: data.pending.pos.overdue, value_inr: data.pending.pos.value_inr }, quotations: { count: data.pending.quotations.count, overdue: data.pending.quotations.overdue, value_inr: data.pending.quotations.value_inr }, follow_ups_overdue: data.follow_ups_overdue.count },

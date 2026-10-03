@@ -89,11 +89,12 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     assert.equal((await runs()).length, 0, 'nothing recorded for a report that is off');
   });
 
-  test('in log mode a scheduled run writes email_log and report_runs, and nothing leaves the server', async () => {
+  test('in log mode a scheduled run composes and logs the report, records it as not delivered, and tells admins', async () => {
     await db.query(`UPDATE settings SET value = 'true' WHERE key = 'mis_daily_enabled'`);
     const r = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'schedule' });
-    assert.equal(r.status, 'sent', JSON.stringify(r));
+    assert.equal(r.status, 'skipped', JSON.stringify(r));
     assert.equal(r.sent_via, 'log');
+    assert.match(r.error, /Composed and logged only: EMAIL_MODE=log/);
     assert.equal(String(r.period_from).slice(0, 10), '2026-10-04');
     assert.deepEqual(r.recipients, ['md@cetizionverifica.com', 'head@cetizionverifica.com']);
     assert.equal(r.pages <= 2, true);
@@ -104,16 +105,31 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     assert.equal(log.reason, 'EMAIL_MODE=log');
     assert.match(log.subject, /Daily Sales Briefing – 04 Oct 2026/);
     assert.equal(log.to_email, 'md@cetizionverifica.com, head@cetizionverifica.com');
+    const { rows: alerts } = await db.query(`SELECT title FROM notifications WHERE kind = 'alert' AND title LIKE '%composed but not delivered%'`);
+    assert.equal(alerts.length, 1, 'admins are told once a day');
   });
 
-  test('a second scheduled run for the same period is skipped; Send now sends again', async () => {
+  test('a period is sent once by the schedule; a logged-only run does not count; Run now on the Jobs page keeps the guards; Send now sends again', async () => {
+    const { config } = await import('../src/config.js');
+    config.mail.mode = 'live'; // the fake mailbox provider "sends" from here on
+    const first = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'schedule' });
+    assert.equal(first.status, 'sent', 'the logged-only run above did not use up the period');
+    assert.equal(first.sent_via, 'graph');
     const again = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'schedule' });
     assert.equal(again.status, 'skipped');
     assert.match(again.skipped, /already sent for 2026-10-04/);
-    const byHand = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'shyam' });
+    // The Jobs page's Run now passes a username, but it is still the job: the guards apply.
+    const viaJob = await misSend.runDailyBriefing({ startedBy: 'shyam', today: TODAY });
+    assert.equal(viaJob.status, 'skipped', JSON.stringify(viaJob));
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'mis_weekly_enabled'`);
+    const off = await misSend.runWeeklyMis({ startedBy: 'shyam', today: TODAY });
+    assert.match(off.skipped, /switched off/);
+    // Send now is a decision: it sends, and says who.
+    const byHand = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'shyam', guarded: false });
     assert.equal(byHand.status, 'sent');
     assert.equal(byHand.triggered_by, 'shyam');
     assert.equal((await runs()).filter((x) => x.status === 'sent').length, 2);
+    sent.length = 0;
   });
 
   test('with delivery on, the report leaves from the sales mailbox with the PDF attached', async () => {
@@ -124,7 +140,7 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
       const r = await misSend.runReport('weekly_mis', { today: TODAY, startedBy: 'shyam' });
       assert.equal(r.status, 'sent', JSON.stringify(r));
       assert.equal(r.sent_via, 'graph');
-      assert.equal(sent.length, 1);
+      assert.equal(sent.length, 1, 'one send, from the fake mailbox');
       assert.equal(sent[0].account, 'sales@cetizionverifica.com');
       assert.deepEqual(sent[0].to, ['md@cetizionverifica.com', 'head@cetizionverifica.com']);
       assert.equal(sent[0].attachments.length, 1);
@@ -177,7 +193,7 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     await agent.get('/api/mis-reports/daily_briefing/preview?date=yesterday').expect(422);
 
     const send = await agent.post('/api/mis-reports/daily_briefing/send').send({ date: TODAY }).expect(200);
-    assert.equal(send.body.data.status, 'sent');
+    assert.equal(send.body.data.status, 'sent', JSON.stringify(send.body.data));
     assert.equal(send.body.data.triggered_by, 'admin');
 
     const list = await agent.get('/api/mis-reports/runs').expect(200);

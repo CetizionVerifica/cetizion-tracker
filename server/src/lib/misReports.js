@@ -393,6 +393,14 @@ export async function readerEvents(db, { from, to }) {
   return rows;
 }
 
+/** Where a record of any kind an email thread can sit on opens in the app. */
+export function linkFor(entity, id) {
+  if (entity === 'purchase_order') return `/purchase-orders?q=${encodeURIComponent(String(id))}`;
+  if (entity === 'project') return `/projects?q=${encodeURIComponent(String(id))}`;
+  if (entity === 'invoice') return '/payment-stages';
+  return recordLink(entity, id);
+}
+
 /** A highlight from a reader event, worded in code: used when there is no AI. */
 export function eventHighlight(ev) {
   const client = ev.client || 'a client';
@@ -402,7 +410,7 @@ export function eventHighlight(ev) {
     purchase_order: `PO ${ev.number} from ${client}${ev.detail ? ` (${ev.detail})` : ''} registered from email`,
     invoice: `Invoice ${ev.number} to ${client}${ev.detail ? ` on ${ev.detail}` : ''} recorded from the email we sent`,
   }[ev.kind];
-  const link = { enquiry: recordLink('enquiry', ev.number), quotation: recordLink('quotation', ev.number), purchase_order: `/purchase-orders?q=${encodeURIComponent(ev.number)}`, invoice: '/payment-stages' }[ev.kind];
+  const link = linkFor(ev.kind, ev.number);
   return { thread_id: ev.thread_id ?? null, client, summary: text, action: null, owner: null, link, source: 'records' };
 }
 

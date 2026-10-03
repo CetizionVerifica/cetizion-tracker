@@ -67,18 +67,21 @@ async function senderMailbox(db, settings) {
 
 /**
  * Build and send one report. `startedBy` is 'schedule' or a username.
- * Returns the report_runs row, with `skipped` when the schedule had nothing
- * to do (the report is off, or that period was already sent).
+ * `guarded` applies the schedule's rules — the report must be on, and the
+ * period not yet sent — and is the default for the schedule and for the
+ * jobs' Run now; Send now and Resend (routes/misReports.js) pass false,
+ * because a person pressing the button has decided.
+ * Returns the report_runs row, with `skipped` when the guards said no.
  */
-export async function runReport(kind, { today = businessToday(), startedBy = 'schedule', db = { query }, ai = true } = {}) {
+export async function runReport(kind, { today = businessToday(), startedBy = 'schedule', guarded = startedBy === 'schedule', db = { query }, ai = true } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown report kind: ${kind}`);
   const settings = await misSettings(db);
   const period = periodFor(kind, today);
-  const scheduled = startedBy === 'schedule';
-  if (scheduled) {
+  if (guarded) {
     const enabled = kind === 'daily_briefing' ? settings.dailyEnabled : settings.weeklyEnabled;
     if (!enabled) return { kind, period, status: 'skipped', skipped: `${kind} is switched off` };
-    const { rows: [sent] } = await db.query(`SELECT id FROM report_runs WHERE kind = $1 AND period_from = $2 AND status = 'sent' LIMIT 1`, [kind, period.from]);
+    // A run that only logged (delivery was off) did not reach anybody and does not count as sent.
+    const { rows: [sent] } = await db.query(`SELECT id FROM report_runs WHERE kind = $1 AND period_from = $2 AND status = 'sent' AND sent_via <> 'log' LIMIT 1`, [kind, period.from]);
     if (sent) return { kind, period, status: 'skipped', skipped: `already sent for ${period.from} (run ${sent.id})` };
   }
 
@@ -113,11 +116,15 @@ export async function runReport(kind, { today = businessToday(), startedBy = 'sc
     }, db);
 
     const failed = sent.row.status === 'failed';
+    // report_runs_sent_once holds one scheduled *sent* row per period; a
+    // log-only run must not take that slot, or the real send could not be recorded.
+    const loggedOnly = !failed && sent.via === 'log';
     const run = await record(db, {
-      kind, period, status: failed ? 'failed' : 'sent', sent_via: failed ? null : sent.via, recipients: [...settings.to, ...settings.cc],
-      document_id: documentId, email_log_id: sent.row.id, ai_used: built.ai.used, error: failed ? sent.error : null, triggered_by: startedBy,
+      kind, period, status: failed ? 'failed' : loggedOnly ? 'skipped' : 'sent', sent_via: failed ? null : sent.via, recipients: [...settings.to, ...settings.cc],
+      document_id: documentId, email_log_id: sent.row.id, ai_used: built.ai.used, error: failed ? sent.error : loggedOnly ? `Composed and logged only: ${sent.row.reason}` : null, triggered_by: startedBy,
     });
     if (failed) await raiseAlert('mis', `${REPORT_TITLE[kind]} not sent`, sent.error || 'the email failed').catch(() => {});
+    else if (sent.via === 'log' && guarded) await raiseAlert('mis', `${REPORT_TITLE[kind]} was composed but not delivered`, sent.row.reason || 'delivery is off', { every: 'day' }).catch(() => {});
     else if (sent.via === 'smtp' && sent.error) await raiseAlert('mis', `${REPORT_TITLE[kind]} went by SMTP, not the sales mailbox`, sent.error, { every: 'day' }).catch(() => {});
     return { ...run, pages: pdfPageCount(pdf), suppressed: sent.via === 'log' ? sent.row.reason : null, ai: built.ai };
   } catch (err) {
@@ -127,8 +134,9 @@ export async function runReport(kind, { today = businessToday(), startedBy = 'sc
   }
 }
 
-export const runDailyBriefing = (opts = {}) => runReport('daily_briefing', { startedBy: opts.startedBy || 'schedule' });
-export const runWeeklyMis = (opts = {}) => runReport('weekly_mis', { startedBy: opts.startedBy || 'schedule' });
+// The jobs, scheduled or pressed on the Jobs page: either way the guards apply.
+export const runDailyBriefing = (opts = {}) => runReport('daily_briefing', { startedBy: opts.startedBy || 'schedule', guarded: true, ...(opts.today ? { today: opts.today } : {}) });
+export const runWeeklyMis = (opts = {}) => runReport('weekly_mis', { startedBy: opts.startedBy || 'schedule', guarded: true, ...(opts.today ? { today: opts.today } : {}) });
 
 /** The run history, newest first. */
 export async function listRuns(db = { query }, { limit = 50 } = {}) {
