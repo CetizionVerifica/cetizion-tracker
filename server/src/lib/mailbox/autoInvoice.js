@@ -39,7 +39,7 @@ import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
-import { ingestRules, providerFor, saveTokens } from './sync.js';
+import { ingestRules, providerFor, readsAllFolders, saveTokens } from './sync.js';
 import { isPdf } from './pdfQuotation.js';
 import { MAX_EMAIL_TEXT } from './readLimits.js';
 import { inLanes } from './inLanes.js';
@@ -557,7 +557,7 @@ export async function backfillInvoiceAccount(account, ctx, { budgetMs = 4 * 60_0
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       // Every folder while reading everything (073): our invoices are often
       // filed away from Sent Items. pastInvoiceCandidates keeps what we sent.
-      const page = await provider.page(ctx.settings.readAll ? 'all' : 'sentitems', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      const page = await provider.page(readsAllFolders(account, ctx.settings.readAll) ? 'all' : 'sentitems', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       // A page that runs past where the PO readers have got is left for a
       // later run: the cursor stays, so it is fetched again then.
       if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {

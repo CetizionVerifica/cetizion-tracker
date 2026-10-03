@@ -1832,11 +1832,22 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   -- Kept across a re-run, so the next reader is not held back (069).
   past_enquiries_read_at timestamptz,
   past_pos_read_at   timestamptz,
+  -- The owner of a personal mailbox (074, docs/per-user-mailboxes-plan.md):
+  -- its records belong to this user, and only they see its mail. Null for
+  -- a shared mailbox, or when the owner could not be determined. `username`
+  -- is the older, string-matched record of the same thing; nothing new reads it.
+  user_id            int REFERENCES users(id) ON DELETE SET NULL,
+  connected_by       int REFERENCES users(id) ON DELETE SET NULL,
+  -- Which folders the email readers read: every folder (073) or Inbox and
+  -- Sent Items only. Personal mailboxes start on inbox_sent.
+  read_scope         text NOT NULL DEFAULT 'all' CHECK (read_scope IN ('all','inbox_sent')),
   created_at         timestamptz NOT NULL DEFAULT now(),
-  updated_at         timestamptz NOT NULL DEFAULT now()
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT connected_accounts_shared_unowned CHECK (NOT (is_shared AND user_id IS NOT NULL))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS connected_accounts_email_key ON connected_accounts (lower(email)) WHERE status <> 'disconnected';
+CREATE INDEX IF NOT EXISTS connected_accounts_user_idx ON connected_accounts (user_id) WHERE status <> 'disconnected';
 
 CREATE TABLE IF NOT EXISTS mail_folders (
   id                        serial PRIMARY KEY,
@@ -2934,7 +2945,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiry_daily_ai_limit', '5000', 'The most AI calls the email readers (enquiries, quotations, POs, invoices) may make in one day, together. Reading past mail stops for the day when it is reached.'),
   ('email_reader_concurrency', '4', 'How many emails each email reader reads at once, 1 to 8. Emails from one client or one conversation are still read one after another, oldest first.'),
   ('auto_quotation_min_confidence', '0.8', 'How sure the AI must be (0 to 1) of a quotation read from a PDF before the quotation is created.'),
-  ('email_read_everything', 'true', 'Read every email in every folder (except Junk, Deleted Items, Drafts and Outbox), replies included: the AI decides what each one is. Off puts back the free rules that skip replies, newsletters, automatic senders and mail with no PO or invoice words, which saves AI calls.')
+  ('email_read_everything', 'true', 'Read every email in every folder (except Junk, Deleted Items, Drafts and Outbox), replies included: the AI decides what each one is. Off puts back the free rules that skip replies, newsletters, automatic senders and mail with no PO or invoice words, which saves AI calls.'),
+  ('personal_mailbox_default_visibility', 'subject', 'What a newly connected personal mailbox stores for the tracker: metadata (who and when), subject, or share_everything. Its owner can change it afterwards; mailboxes already connected keep their setting.')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO settings (key, value, notes) VALUES

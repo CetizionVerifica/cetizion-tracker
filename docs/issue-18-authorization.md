@@ -268,9 +268,10 @@ session is **401**, before any of these is considered.
 | `POST /api/mail/threads/:id/reply` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | **/api/mailboxes** | | |
 | `GET /api/mailboxes` | any | Scoped: mailbox-owner, mailbox-delegate. |
-| `PATCH /api/mailboxes/:id` | any | Scoped: mailbox-owner. |
+| `PATCH /api/mailboxes/:id` | any | is_shared is an admin's to change; a sales user may change only how their own mailbox syncs. |
 | `POST /api/mailboxes/:id/auto-enquiries/rerun` | **admin** | Has a mailbox's mail judged again for enquiries, or read again for POs or invoices, which spends the AI budget everybody shares. |
 | `POST /api/mailboxes/:id/disconnect` | any | Scoped: mailbox-owner. |
+| `PATCH /api/mailboxes/:id/owner` | **admin** | Decides whose records a personal mailbox's mail makes from now on, and who may read it; recorded in the activity log. |
 | `POST /api/mailboxes/:id/refresh-bodies` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
@@ -372,7 +373,7 @@ session is **401**, before any of these is considered.
 | **/api/tasks** | | |
 | `GET /api/tasks/summary` | any |  |
 | **/api/timeline** | | |
-| `GET /api/timeline` | any |  |
+| `GET /api/timeline` | any | The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own. |
 | **/api/travel-logs** | | |
 | `GET /api/travel-logs/:travelId/full` | any |  |
 | **/api/users** | | |

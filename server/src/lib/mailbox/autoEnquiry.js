@@ -23,7 +23,7 @@ import { query, transaction } from '../../db.js';
 import { aiConfig, chatJSON } from '../ai.js';
 import { notify } from '../notify.js';
 import { addWorkingDays, businessToday } from '../businessDate.ts';
-import { ingestOne, ingestRules, providerFor, saveTokens } from './sync.js';
+import { ingestOne, ingestRules, providerFor, readsAllFolders, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
 import { domainOf, forReaders, PUBLIC_DOMAINS } from './rules.js';
@@ -284,12 +284,22 @@ async function salesUser(db, ref) {
 
 /**
  * Who an automatically created record belongs to. A personal mailbox: its
- * person, if they are a salesperson. A shared one: the conversation's
- * assignee, if that is a salesperson. Otherwise nobody — visibly unassigned
- * rather than wrongly given to someone (the rule ownerForNewRecord follows).
+ * owner (connected_accounts.user_id, 074), if they are an active
+ * salesperson. A shared one: the conversation's assignee, if that is a
+ * salesperson. Otherwise nobody — visibly unassigned rather than wrongly
+ * given to someone (the rule ownerForNewRecord follows).
+ *
+ * The owner is a users row, not a name: the string matching on the
+ * mailbox's username and address that stood here failed as soon as a
+ * mailbox address differed from the login one. Migration 074 turned those
+ * strings into user_id once; nothing matches names here any more.
  */
 export async function ownerFor(db, account, threadId, fallbackUserId = null) {
-  if (!account.is_shared) return (await salesUser(db, account.username)) || (await salesUser(db, account.email));
+  if (!account.is_shared) {
+    if (!account.user_id) return null;
+    const { rows: [u] } = await db.query(`SELECT id, name, email FROM users WHERE id = $1 AND active AND role = 'sales'`, [account.user_id]);
+    return u || null;
+  }
   if (threadId) {
     const { rows: [conv] } = await db.query('SELECT assignee FROM inbox_conversations WHERE thread_id = $1', [threadId]);
     const u = await salesUser(db, conv?.assignee);
@@ -447,10 +457,22 @@ async function sameEmailElsewhere(db, m) {
   return d || null;
 }
 
-/** This mailbox's copy of an email another mailbox already turned into (or onto) an enquiry. */
+/**
+ * This mailbox's copy of an email another mailbox already turned into (or
+ * onto) an enquiry. The enquiry belongs to whoever's mailbox was read first;
+ * when that left it unowned (a shared mailbox, say) and this copy is in a
+ * salesperson's own mailbox, it is theirs (docs/per-user-mailboxes-plan.md
+ * §10.4). An owner already set is never changed here.
+ */
 async function joinElsewhere(db, account, cand, elsewhere, ctx, aiCalls = 0) {
   const threadId = await keepDropped(db, account, cand, elsewhere.company_id);
   await linkThread(db, threadId, elsewhere.enquiry_no);
+  if (!account.is_shared) {
+    const owner = await ownerFor(db, account, threadId);
+    if (owner) {
+      await db.query(`UPDATE enquiries SET owner_user_id = $2, sales_person = $3 WHERE enquiry_no = $1 AND owner_user_id IS NULL`, [elsewhere.enquiry_no, owner.id, owner.name]);
+    }
+  }
   await logDecision(db, account, cand, {
     outcome: 'linked', kind: elsewhere.kind, confidence: elsewhere.confidence, method: elsewhere.method, ai_calls: aiCalls,
     enquiry_no: elsewhere.enquiry_no, quotation_no: elsewhere.quotation_no, thread_id: threadId,
@@ -711,7 +733,7 @@ async function pastCandidates(account, judge, messages) {
 export async function backfillAccount(account, ctx, { budgetMs = BACKFILL_BUDGET_MS } = {}) {
   const since = new Date(Date.now() - ctx.settings.backfillDays * 864e5).toISOString();
   await query(`INSERT INTO mailbox_enquiry_backfills (account_id, since, folder) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO NOTHING`,
-    [account.id, since, ctx.settings.readAll ? 'all' : 'inbox']);
+    [account.id, since, readsAllFolders(account, ctx.settings.readAll) ? 'all' : 'inbox']);
   let { rows: [row] } = await query('SELECT * FROM mailbox_enquiry_backfills WHERE account_id = $1', [account.id]);
   if (row.finished_at) return { id: account.id, finished: true, created: 0, linked: 0 };
   const started = Date.now();

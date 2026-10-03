@@ -6,7 +6,7 @@
  *   GET /api/tasks/summary                       counts for the sidebar and the Tasks page
  */
 import { Router } from 'express';
-import { assertRecordReachable, parentClause, scopeOf } from '../auth/ownership.js';
+import { assertRecordReachable, parentClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 
@@ -14,6 +14,16 @@ export const timelineRouter = Router();
 export const taskSummaryRouter = Router();
 
 const TOUCH = { call: 'Call', whatsapp: 'WhatsApp', meeting: 'Meeting', sms: 'SMS', email: 'Email', other: 'Contact' };
+
+/** The email threads on a record, narrowed to the mailboxes the caller may read (auth/ownership.js threadClause). */
+function threadsFor(req, entity, id) {
+  const params = [id, entity];
+  const mine = threadClause(scopeOf(req), params, { accountAlias: 'a', threadAlias: 't' });
+  return query(
+    `SELECT t.id AS thread_id, t.subject, t.message_count, t.last_message_at, t.last_direction, a.email AS mailbox, a.visibility, ct.name AS contact_name
+       FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id LEFT JOIN contacts ct ON ct.id = t.contact_id
+      WHERE (($2 = 'company' AND t.company_id::text = $1) OR (t.entity = $2 AND t.entity_id = $1)) ${mine ? `AND ${mine}` : ''}`, params);
+}
 const ENTITIES = new Set(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']);
 
 /** The record's own dated milestones, as timeline events. */
@@ -127,7 +137,10 @@ timelineRouter.get('/', async (req, res) => {
     wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
     wants('email') ? query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE ${emailWhere}`, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
     wants('event') ? recordEvents(entity, id) : [],
-    wants('email') ? query(`SELECT t.id AS thread_id, t.subject, t.message_count, t.last_message_at, t.last_direction, a.email AS mailbox, a.visibility, ct.name AS contact_name FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id LEFT JOIN contacts ct ON ct.id = t.contact_id WHERE ($2 = 'company' AND t.company_id::text = $1) OR (t.entity = $2 AND t.entity_id = $1)`, [id, entity]) : { rows: [] },
+    // Threads follow the mailbox rule as well as the record's (074): a
+    // company's timeline is open to everybody, but the subjects of a
+    // colleague's personal mail about it are not.
+    wants('email') ? threadsFor(req, entity, id) : { rows: [] },
     wants('touch') ? query(`SELECT cm.*, ct.name AS contact_name FROM communications cm LEFT JOIN contacts ct ON ct.id = cm.contact_id WHERE (cm.entity = $2 AND cm.entity_id = $1) OR ($2 = 'company' AND cm.company_id::text = $1)`, [id, entity]) : { rows: [] },
   ]);
   const items = [

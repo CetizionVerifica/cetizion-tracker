@@ -33,13 +33,14 @@ export async function countAiCalls(n, purpose) {
   for (let i = 0; i < n; i += 1) await query('INSERT INTO email_ai_calls (purpose) VALUES ($1)', [purpose]);
 }
 
-/** The review rows this caller may see: admins all, sales the ones on their quotations. */
+/** The review rows this caller may see: admins all, sales the ones on their quotations, or read from their own mailbox (074). */
 function scoped(req, params) {
   const scope = scopeOf(req);
   if (scope.unrestricted) return '';
   params.push(scope.ownerId);
-  return `AND EXISTS (SELECT 1 FROM quotations q WHERE q.owner_user_id = $${params.length}
-                        AND (q.quotation_no = ANY(COALESCE(d.suggested_quotations, '{}')) OR q.quotation_no = d.quotation_no))`;
+  return `AND (EXISTS (SELECT 1 FROM quotations q WHERE q.owner_user_id = $${params.length}
+                        AND (q.quotation_no = ANY(COALESCE(d.suggested_quotations, '{}')) OR q.quotation_no = d.quotation_no))
+            OR EXISTS (SELECT 1 FROM connected_accounts ma WHERE ma.id = d.account_id AND ma.user_id = $${params.length}))`;
 }
 
 async function item(req, id) {

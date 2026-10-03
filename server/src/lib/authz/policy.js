@@ -278,7 +278,7 @@ export const routes = [
   { method: 'POST', path: '/api/pipeline/:key/move', access: signedIn },
 
   // ------------------------------------------------------------- timeline
-  { method: 'GET', path: '/api/timeline', access: signedIn },
+  { method: 'GET', path: '/api/timeline', access: signedIn, restrictions: ['record-owner', 'mailbox-owner'], note: 'The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own.' },
   { method: 'GET', path: '/api/tasks/summary', access: signedIn },
 
   // ---------------------------------------------------------- collections
@@ -334,7 +334,8 @@ export const routes = [
   { method: 'GET', path: '/api/mailboxes/oauth/microsoft', access: signedIn },
   { method: 'POST', path: '/api/mailboxes/test', access: mustBeAdmin, why: 'Probes the Microsoft app registration — a credential check, not a mailbox action.' },
   { method: 'POST', path: '/api/mailboxes/:id/test-messages', access: mustBeAdmin, why: 'Writes sample messages into a real connected mailbox.' },
-  { method: 'PATCH', path: '/api/mailboxes/:id', access: signedIn, restrictions: ['mailbox-owner'] },
+  { method: 'PATCH', path: '/api/mailboxes/:id', access: signedIn, restrictions: ['mailbox-owner', 'protected-fields'], note: 'is_shared is an admin\'s to change; a sales user may change only how their own mailbox syncs.' },
+  { method: 'PATCH', path: '/api/mailboxes/:id/owner', access: mustBeAdmin, why: 'Decides whose records a personal mailbox\'s mail makes from now on, and who may read it; recorded in the activity log.' },
   { method: 'POST', path: '/api/mailboxes/:id/sync', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
