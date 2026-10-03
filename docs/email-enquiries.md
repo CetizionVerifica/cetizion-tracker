@@ -14,8 +14,11 @@ behaves and how to run it.
   records, newsletters, invoices and CVs are dropped at that stage. What is
   left is judged by the AI, or by stricter rules when no AI key is set. A new
   enquiry is created with status **New** and source **Inbound email or call**.
-  It is dated by the email, owned by the mailbox's person if they are a
-  salesperson, and has a one-line note. The body is never copied.
+  It is dated by the email, owned by the mailbox's owner if they are a
+  salesperson (the owner is set when the mailbox is connected, under
+  Settings → My mailbox), and has a one-line note. The body is never copied.
+  The same email arriving in the shared mailbox first and a salesperson's
+  own mailbox later makes the enquiry theirs, if nobody owned it yet.
 - **We send a quotation first.** Some requests come by phone or WhatsApp,
   so the first email is our quotation. That also makes an enquiry, with
   source **Other**:

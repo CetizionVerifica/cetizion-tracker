@@ -23,6 +23,15 @@ export const FOLDERS = ['inbox', 'sentitems'];
 const key = () => config.microsoft.tokenKey;
 
 /**
+ * Whether this mailbox's every folder is read, or Inbox and Sent Items only
+ * (074, docs/per-user-mailboxes-plan.md §10.2). email_read_everything opens
+ * every folder; a mailbox's own read_scope can hold it to the two, which is
+ * where a personal mailbox starts — its Archive and private folders are
+ * its owner's to open to the readers, not read by default.
+ */
+export const readsAllFolders = (account, readAll) => Boolean(readAll) && account.read_scope !== 'inbox_sent';
+
+/**
  * The folders a mailbox's mail is synced from: every folder the provider
  * lists (073), Inbox first and Sent Items last. Listing them costs a few
  * calls, so the list is kept for a quarter of an hour; a folder made since
@@ -454,7 +463,7 @@ async function syncAccountUnlocked(id) {
     // What earlier syncs could not read, before the new mail: oldest first.
     const retried = await retryQueued(account, provider);
     if (retried) out.retried = retried;
-    const listed = (await settingsFor({ query })).readAll ? await foldersOf(account, provider) : FOLDERS;
+    const listed = readsAllFolders(account, (await settingsFor({ query })).readAll) ? await foldersOf(account, provider) : FOLDERS;
     const folders = listed || FOLDERS;
     for (const folder of folders) {
       const { rows: [f] } = await query(
@@ -692,6 +701,8 @@ export async function disconnect(id, { removeBodies = true } = {}) {
   await query('DELETE FROM mail_folders WHERE account_id = $1', [id]);
   // Its sweep of past mail stops with it; the decisions stay, for the record.
   await query('DELETE FROM mailbox_enquiry_backfills WHERE account_id = $1', [id]);
+  await query('DELETE FROM mailbox_po_backfills WHERE account_id = $1', [id]);
+  await query('DELETE FROM mailbox_invoice_backfills WHERE account_id = $1', [id]);
   await query('DELETE FROM email_reader_queue WHERE account_id = $1', [id]);
   if (removeBodies) await query('UPDATE email_messages SET body_html = NULL, snippet = NULL WHERE account_id = $1', [id]);
   return { id, status: 'disconnected', bodies_removed: removeBodies, upstream, withdraw_consent_at: CONSENT_URL };

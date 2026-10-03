@@ -37,7 +37,7 @@ import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './po
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
-import { ingestRules, matchParticipants, providerFor, saveTokens } from './sync.js';
+import { ingestRules, matchParticipants, providerFor, readsAllFolders, saveTokens } from './sync.js';
 import { forReaders, referencesIn } from './rules.js';
 import { inLanes } from './inLanes.js';
 
@@ -818,7 +818,7 @@ export async function backfillPoAccount(account, ctx, { budgetMs = PO_BACKFILL_B
     const eCtx = enquiryCtx || await runContext({ backfill: true });
     for (let first = true; first || (Date.now() - started < budgetMs && !ctx.stopped); first = false) {
       // Every folder while reading everything (073); pastPoCandidates keeps the inbound mail.
-      const page = await provider.page(ctx.settings.readAll ? 'all' : 'inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
+      const page = await provider.page(readsAllFolders(account, ctx.settings.readAll) ? 'all' : 'inbox', { sinceIso: new Date(row.since).toISOString(), cursor: row.next_link });
       // A page that runs past where the enquiry reader has got is left for
       // a later run: the cursor stays, so it is fetched again then.
       if (page.messages.length && beyondUpTo(page.messages[page.messages.length - 1].sent_at)) {

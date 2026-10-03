@@ -11,8 +11,18 @@ Read [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md), the row-scoping rule in
 [issue-18-row-scoping.md](issue-18-row-scoping.md) and
 [email-enquiries-plan.md](email-enquiries-plan.md) first. It follows the two
 design rules there: nothing derived is stored, and each fact is typed in one
-place. It was written against commit `ced2701`. **No code is written in this
-step; this is the plan only.**
+place. It was written against commit `ced2701`.
+
+**Status (3 October 2026): built** on `feat/per-user-mailboxes`, steps 1–7,
+with the §10 decisions taken as recommended: personal mailboxes read Inbox
+and Sent Items only (`read_scope`, the owner can widen it); the review
+queues show a salesperson items from their own mailbox; a record left
+unowned by the first mailbox becomes the salesperson's when the same email
+is in their own mailbox; disconnecting clears the PO and invoice backfills.
+Not built, as §6 says: inbox members by user id, Gmail/IMAP, delegation,
+dropping `username`. The MCP tools' email-thread listing still follows the
+token's `sales_person` rule rather than this one; it is listed in §6 below
+as a follow-up.
 
 ---
 
@@ -234,6 +244,9 @@ stay green.
 - Gmail / IMAP providers (`provider` already allows `imap`).
 - A salesperson delegating their mailbox to a colleague (cover leave).
 - Dropping `connected_accounts.username`.
+- The MCP `get_activity` tool (`lib/mcp/data.js`) lists a record's email
+  threads under the token's `sales_person` rule, not this one. Its scope is
+  a person's name, not a users row, so it cannot ask `threadClause` yet.
 
 ---
 

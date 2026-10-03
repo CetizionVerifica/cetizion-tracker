@@ -49,6 +49,11 @@ const fieldErrors = (err) => err?.fields ?? {};
 export function UsersAdmin() {
   const toast = useToast();
   const { data, loading, error, refetch } = useFetch(() => api.users.list());
+  // Each person's connected mailbox(es), so "whose mail is this" can be
+  // answered from the roster (docs/per-user-mailboxes-plan.md §5.3). Admins
+  // list every mailbox; the owner column on each is a users row.
+  const mailboxes = useFetch(() => api.raw('/mailboxes'));
+  const mailboxesOf = (user) => (mailboxes.data?.data ?? []).filter((m) => m.user_id === user.id);
   const [editing, setEditing] = useState(null); // user | 'new' | null
   const [resetting, setResetting] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -118,6 +123,14 @@ export function UsersAdmin() {
                       <div className="text-[12px] break-words text-muted-foreground">
                         {user.email ?? <em>no email — attribution only, from the workbook</em>}
                       </div>
+                      {mailboxesOf(user).map((m) => (
+                        <div key={m.id} className="text-[12px] break-words text-muted-foreground">
+                          Mailbox {m.email}
+                          {m.status === 'active' ? <span className="text-settled"> · syncing</span>
+                            : m.status === 'needs_reconnect' ? <span className="text-late"> · needs reconnecting</span>
+                            : <span> · disconnected</span>}
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -183,7 +196,7 @@ export function UsersAdmin() {
         <p className="max-w-[70ch] text-[12px]/[1.6] text-muted-foreground">
           Hiding a screen from a role is a courtesy; every route stays behind <code className="mono">requireAdmin</code> on
           the server. Passwords are {minPassword}+ characters. Deactivating somebody ends their session on their next
-          request — there is no deleting, so the records they are attached to keep making sense.
+          request and disconnects their mailbox — there is no deleting, so the records they are attached to keep making sense.
         </p>
       </SettingsPane>
 

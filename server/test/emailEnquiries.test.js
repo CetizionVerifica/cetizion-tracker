@@ -25,10 +25,10 @@ let n = 0;
 const uid = (p) => `${p}-${process.pid}-${(n += 1)}`;
 const at = (daysAgo, hour = 10) => new Date(Date.now() - daysAgo * 864e5 + hour * 3600e3 - 10 * 3600e3).toISOString();
 
-async function mailbox({ shared = false, visibility = 'share_everything', username = 'admin', email = `${uid('box')}@cetizionverifica.com` } = {}) {
+async function mailbox({ shared = false, visibility = 'share_everything', username = 'admin', email = `${uid('box')}@cetizionverifica.com`, userId = null } = {}) {
   const { rows: [a] } = await db.query(
-    `INSERT INTO connected_accounts (username, provider, email, is_shared, visibility, import_days) VALUES ($1,'test',$2,$3,$4,30) RETURNING *`,
-    [username, email, shared, visibility]);
+    `INSERT INTO connected_accounts (username, provider, email, is_shared, visibility, import_days, user_id) VALUES ($1,'test',$2,$3,$4,30,$5) RETURNING *`,
+    [username, email, shared, visibility, shared ? null : userId]);
   if (shared) await db.query(`INSERT INTO inboxes (name, account_id, default_assignment) VALUES ($1, $2, 'unassigned')`, [`Inbox ${a.id}`, a.id]);
   return a;
 }
@@ -195,7 +195,9 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
   test('9. a sales user\'s personal mailbox makes them the owner; a shared mailbox leaves it unowned', async () => {
     const { rows: [u] } = await db.query(`INSERT INTO users (name, email, role, active) VALUES ('Priya Sales', 'priya@cetizionverifica.com', 'sales', false) RETURNING id`);
     await db.query(`UPDATE users SET active = true, password_hash = 'x' WHERE id = $1`, [u.id]);
-    const mine = await mailbox({ username: 'priya@cetizionverifica.com', email: 'priya@cetizionverifica.com' });
+    // The owner is the users row on the mailbox (074), not the address: it
+    // still works when the mailbox address differs from the login address.
+    const mine = await mailbox({ username: 'priya@cetizionverifica.com', email: 'priya.s@cetizionverifica.com', userId: u.id });
     await deliver(mine, [rfq({ from: { email: 'owner@owned-foods.com', name: 'O' } })]);
     const [e] = await enquiriesFrom(mine.id);
     assert.equal(e.owner_user_id, u.id);

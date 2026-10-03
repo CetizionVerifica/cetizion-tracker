@@ -27,12 +27,13 @@ import { countAiCalls } from './poReview.js';
 
 export const invoiceReviewRouter = Router();
 
-/** The rows this caller may see: admins all, sales the ones on POs they may open. */
+/** The rows this caller may see: admins all, sales the ones on POs they may open, or sent from their own mailbox (074). */
 function scoped(req, params) {
   const scope = scopeOf(req);
   if (scope.unrestricted) return '';
-  return `AND EXISTS (SELECT 1 FROM purchase_orders po WHERE po.po_number = d.po_number
-                        AND ${purchaseOrderClause(scope, params, { alias: 'po' })})`;
+  const po = purchaseOrderClause(scope, params, { alias: 'po' });
+  return `AND (EXISTS (SELECT 1 FROM purchase_orders po WHERE po.po_number = d.po_number AND ${po})
+            OR EXISTS (SELECT 1 FROM connected_accounts ma WHERE ma.id = d.account_id AND ma.user_id = $${params.length}))`;
 }
 
 async function item(req, id) {

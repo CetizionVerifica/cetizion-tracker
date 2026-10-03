@@ -587,20 +587,24 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
 
   describe('mailboxes and the shared inbox', () => {
     /**
-     * A connected mailbox is somebody's correspondence with clients. The
-     * person who connected it administers it, an admin administers all of
-     * them, and a shared mailbox is the team's — which is the point of
-     * marking one shared.
+     * A connected mailbox is somebody's correspondence with clients. Its
+     * owner (connected_accounts.user_id, 074) administers it, an admin
+     * administers all of them, and a shared mailbox is the team's — which
+     * is the point of marking one shared.
      *
      * The review of #60 found every one of these open: read a colleague's
      * client mail, reply from their mailbox so it lands in their Sent Items,
      * wipe what is stored by changing their visibility, or flip their
      * personal mailbox into the team queue.
+     *
+     * The refusal is a 404, like every other ownership refusal (#18 Phase
+     * 2C): whether a colleague has connected a mailbox is not a question
+     * this API answers.
      */
     test('a sales user cannot administer a mailbox that is not theirs', async () => {
       const { rows: [a] } = await db.query(
-        `INSERT INTO connected_accounts (username, provider, email, status)
-         VALUES ('someone.else@example.test', 'microsoft', 'someone.else@example.test', 'active') RETURNING id`);
+        `INSERT INTO connected_accounts (username, provider, email, status, user_id)
+         VALUES ('someone.else@example.test', 'microsoft', 'someone.else@example.test', 'active', $1) RETURNING id`, [admin.user.id]);
 
       for (const [verb, path, body] of [
         ['patch', `/api/mailboxes/${a.id}`, { visibility: 'metadata' }],
@@ -608,7 +612,7 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
         ['post', `/api/mailboxes/${a.id}/disconnect`, {}],
       ]) {
         const res = await as(sales.cookie)(verb, path).send(body);
-        assert.equal(res.status, 403, `${verb} ${path} -> ${res.status}`);
+        assert.equal(res.status, 404, `${verb} ${path} -> ${res.status}`);
       }
 
       // and nothing was destroyed on the way past
@@ -653,14 +657,15 @@ describe('operational and global-data authorisation', { skip: !ADMIN_URL && 'set
       // #29 asks for this in so many words: "a sales user sees threads on
       // their own records". The client replies to whoever they have always
       // written to, so the thread about your own deal usually lands in
-      // somebody else's mailbox.
+      // somebody else's mailbox. "Their own" is owner_user_id (#18 Phase
+      // 2C), the same column every other scoped read asks.
       const { rows: [a] } = await db.query(
         `INSERT INTO connected_accounts (username, provider, email, status, visibility)
          VALUES ('colleague@example.test', 'microsoft', 'colleague@example.test', 'active', 'share_everything') RETURNING id`);
       const no = `CTZ/QT/2026/9${Math.floor(Math.random() * 90) + 10}`;
       await db.query(
-        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person)
-         VALUES ($1, 'Their Client Ltd', '2026-09-01', 50000, 'Submitted', $2)`, [no, sales.user.name]);
+        `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sales_person, owner_user_id)
+         VALUES ($1, 'Their Client Ltd', '2026-09-01', 50000, 'Submitted', $2, $3)`, [no, sales.user.name, sales.user.id]);
       const { rows: [t] } = await db.query(
         `INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id, first_message_at, last_message_at)
          VALUES ($1, $2, 'About your quotation', 'quotation', $3, now(), now()) RETURNING id`,

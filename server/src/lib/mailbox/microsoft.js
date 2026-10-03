@@ -195,7 +195,10 @@ export function microsoftProvider(account, tokens) {
       const base = folder === 'all' ? `${who}/messages` : `${who}/mailFolders/${folder}/messages`;
       const url = cursor || `${base}?$select=${SELECT}&$filter=receivedDateTime+ge+${sinceIso}&$orderby=receivedDateTime+asc&$top=${top}`;
       const j = await graph(url, { headers: { Prefer: 'outlook.body-content-type="html"' } });
-      const skip = folder === 'all' ? await skipped() : null;
+      // A cursor carries its own query, which may run over every folder
+      // whatever `folder` now says, so the skip list applies to it too; for
+      // a single folder's cursor it simply matches nothing.
+      const skip = (folder === 'all' || cursor) ? await skipped() : null;
       return {
         messages: (j.value || []).filter((m) => !m.isDraft && !(skip && skip.has(m.parentFolderId))).map(toMessage),
         next: j['@odata.nextLink'] || null,

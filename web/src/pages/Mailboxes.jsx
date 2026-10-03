@@ -63,18 +63,30 @@ function Ready({ label, ok, okLabel = 'Set', missing = 'Not set' }) {
 
 export default function Mailboxes() {
   const toast = useToast();
+  // The same pane for both roles, showing different things: the server
+  // lists only the mailboxes this person may read, so a salesperson sees
+  // their own and the shared one; the team-wide controls — the shared
+  // connect, the blocklist, the readers' panel, the owner column — are the
+  // admin's (docs/per-user-mailboxes-plan.md §5).
+  const { isAdmin, user } = useAuth();
   const [params, setParams] = useSearchParams();
   const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
-  const block = useFetch(() => api.raw('/mailboxes/blocklist'));
+  const block = useFetch(() => (isAdmin ? api.raw('/mailboxes/blocklist') : Promise.resolve(null)), [isAdmin]);
+  const people = useFetch(() => (isAdmin ? api.users.list() : Promise.resolve(null)), [isAdmin]);
   const [pattern, setPattern] = useState('');
   const [busy, setBusy] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
   const [tuning, setTuning] = useState(null);
   const [rereading, setRereading] = useState(null);
+  const [reowning, setReowning] = useState(null);
 
-  const rows = data?.data ?? [];
+  // A salesperson's list is their own mailbox(es) and the shared one; the
+  // shared one is the team's to read, not theirs to run, so it sits apart.
+  const all = data?.data ?? [];
+  const rows = isAdmin ? all : all.filter((r) => !r.is_shared);
   const cfg = data?.configured;
   const blocked = block.data?.data ?? [];
+  const users = (people.data?.data ?? []).filter((u) => u.active && u.email);
 
   /**
    * `what` is running, not only where.
@@ -176,16 +188,20 @@ export default function Mailboxes() {
   return (
     <>
       <SettingsPane
-        title="Mailboxes"
-        description="Client email from a connected mailbox appears on the company, deal and enquiry it belongs to. Mail only between colleagues is never synced."
+        title={isAdmin ? 'Mailboxes' : 'My mailbox'}
+        description={isAdmin
+          ? 'Client email from a connected mailbox appears on the company, deal and enquiry it belongs to. A personal mailbox is read only by its owner; a shared one by the team. Mail only between colleagues is never synced.'
+          : 'Connect your work email so enquiries and replies from your clients appear on your records automatically. Only you see your mail; the records it creates are yours.'}
         actions={<>
-          <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={!cfg?.microsoft} asChild={Boolean(cfg?.microsoft)}>
-            {cfg?.microsoft ? <a href={connectUrl(true)}>Connect a shared mailbox</a> : <span>Connect a shared mailbox</span>}
-          </Button>
+          {isAdmin && (
+            <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={!cfg?.microsoft} asChild={Boolean(cfg?.microsoft)}>
+              {cfg?.microsoft ? <a href={connectUrl(true)}>Connect a shared mailbox</a> : <span>Connect a shared mailbox</span>}
+            </Button>
+          )}
           <Button size="sm" className="h-8 px-4 text-[13px]" disabled={!cfg?.microsoft} asChild={Boolean(cfg?.microsoft)}>
-            {cfg?.microsoft ? <a href={connectUrl(false)}>Connect my mailbox</a> : <span>Connect my mailbox</span>}
+            {cfg?.microsoft ? <a href={connectUrl(false)}>Connect my Microsoft 365 mailbox</a> : <span>Connect my Microsoft 365 mailbox</span>}
           </Button>
-          {cfg?.test_mailboxes && (
+          {isAdmin && cfg?.test_mailboxes && (
             <Button
               variant="secondary"
               size="sm"
@@ -208,15 +224,17 @@ export default function Mailboxes() {
         {cfg && !cfg.microsoft && (
           <Alert tone="warning">
             <span>
-              Microsoft 365 is not set up on this server, so no mailbox can be connected yet. The lead registers an
-              app in Microsoft Entra ID and sets <code className="mono">MS_TENANT_ID</code>,{' '}
-              <code className="mono">MS_CLIENT_ID</code>, <code className="mono">MS_CLIENT_SECRET</code>,{' '}
-              <code className="mono">MS_REDIRECT_URI</code> and <code className="mono">MAIL_TOKEN_KEY</code> — Server
-              setup below says which are still missing.
+              {isAdmin ? <>
+                Microsoft 365 is not set up on this server, so no mailbox can be connected yet. The lead registers an
+                app in Microsoft Entra ID and sets <code className="mono">MS_TENANT_ID</code>,{' '}
+                <code className="mono">MS_CLIENT_ID</code>, <code className="mono">MS_CLIENT_SECRET</code>,{' '}
+                <code className="mono">MS_REDIRECT_URI</code> and <code className="mono">MAIL_TOKEN_KEY</code> — Server
+                setup below says which are still missing.
+              </> : 'Microsoft 365 is not set up on this server yet, so no mailbox can be connected. Ask an admin.'}
             </span>
           </Alert>
         )}
-        {cfg?.microsoft && !cfg.webhook && (
+        {isAdmin && cfg?.microsoft && !cfg.webhook && (
           <Alert tone="info">
             <span>
               <code className="mono">MAIL_WEBHOOK_URL</code> is not set, so new mail arrives on the five-minute sweep
@@ -227,7 +245,7 @@ export default function Mailboxes() {
 
         <div className="overflow-hidden rounded-[10px] border border-border bg-card">
           <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
-            <span>Mailbox</span><span>Status</span><span>Team sees</span><span>Synced</span><span />
+            <span>Mailbox</span><span>Status</span><span>{isAdmin ? 'Team sees' : 'The tracker stores'}</span><span>Synced</span><span />
           </div>
 
           {/* The wait and the answer are different things. Without this the
@@ -237,7 +255,9 @@ export default function Mailboxes() {
           {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
           : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
-              No mailbox is connected. Connect your Microsoft 365 mailbox to see client email on the records it belongs to.
+              {isAdmin
+                ? 'No mailbox is connected. Connect the shared sales mailbox, or your own, to see client email on the records it belongs to.'
+                : 'Connect your work email so enquiries and replies from your clients appear on your records automatically.'}
             </p>
           ) : rows.map((row, i) => {
             const broken = row.status === 'needs_reconnect';
@@ -257,7 +277,13 @@ export default function Mailboxes() {
                           mailbox with no inboxes row stores every thread
                           and routes none of them, while the page said it
                           was feeding the Inbox. */}
-                      {!row.is_shared ? (row.display_name || row.username)
+                      {/* A personal mailbox names its owner (a users row,
+                          074). One with none is a mailbox whose mail makes
+                          records nobody owns, so it is flagged for the admin
+                          to assign, not shown as somebody's by its typed name. */}
+                      {!row.is_shared
+                        ? (row.owner ? (isAdmin ? `${row.owner.name}'s` : 'Yours')
+                          : <span className="text-waiting">Unassigned · an admin sets the owner</span>)
                         : row.feeds_inbox ? 'Feeds the Inbox'
                         : <span className="text-waiting">Shared · no Inbox set up for it yet</span>}
                       {' · '}{row.provider === 'test' ? 'Test' : 'Microsoft 365'}
@@ -290,10 +316,15 @@ export default function Mailboxes() {
                   </div>
 
                   <div className="flex items-center gap-1">
+                    {/* Reconnecting is a Microsoft sign-in as the mailbox's
+                        owner, so only they (or anybody, for a shared or
+                        unassigned one) can do it; an admin is told who. */}
                     {row.status !== 'disconnected' && (broken ? (
-                      <Button size="sm" className={cn(ROW_BUTTON, 'border border-primary bg-primary/15 text-primary hover:bg-primary/25')} asChild={Boolean(cfg?.microsoft)}>
-                        {cfg?.microsoft ? <a href={connectUrl(row.is_shared)}>Reconnect</a> : <span>Reconnect</span>}
-                      </Button>
+                      (row.is_shared || !row.user_id || row.user_id === user?.id) ? (
+                        <Button size="sm" className={cn(ROW_BUTTON, 'border border-primary bg-primary/15 text-primary hover:bg-primary/25')} asChild={Boolean(cfg?.microsoft)}>
+                          {cfg?.microsoft ? <a href={connectUrl(row.is_shared)}>Reconnect</a> : <span>Reconnect</span>}
+                        </Button>
+                      ) : <span className="text-[12px] text-muted-foreground">{row.owner?.name} reconnects it</span>
                     ) : (
                       <Button
                         variant="secondary"
@@ -319,6 +350,11 @@ export default function Mailboxes() {
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setRereading(row)}>
                             Re-read stored mail…
                           </DropdownMenuItem>
+                          {isAdmin && !row.is_shared && (
+                            <DropdownMenuItem className="text-[13px]" onSelect={() => setReowning(row)}>
+                              Change owner…
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setDisconnecting(row)}>
                             Disconnect this mailbox
                           </DropdownMenuItem>
@@ -365,9 +401,18 @@ export default function Mailboxes() {
           })}
         </div>
 
+        {!isAdmin && (
+          <p className="max-w-[70ch] text-[12px]/[1.6] text-muted-foreground">
+            What the tracker stores is your choice: who and when only, the subjects too, or everything. Whatever you
+            choose, the readers that turn client email into enquiries, quotations and purchase orders read your Inbox
+            and Sent Items only, unless you open your other folders to them under “What this mailbox syncs”. An admin
+            sees that your mailbox is connected, not its mail.
+          </p>
+        )}
+
         <AutoEnquiries />
 
-        <div className="grid gap-4 @3xl:grid-cols-2">
+        {isAdmin && <div className="grid gap-4 @3xl:grid-cols-2">
           <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
             <p className="text-[12.5px]/[1.6] text-secondary-text">
@@ -421,7 +466,7 @@ export default function Mailboxes() {
               <code className="mono">MS_TENANT_ID · MS_CLIENT_ID · MAIL_TOKEN_KEY · MAIL_WEBHOOK_URL</code>
             </p>
           </div>
-        </div>
+        </div>}
       </SettingsPane>
 
       {tuning && (
@@ -429,6 +474,15 @@ export default function Mailboxes() {
           row={tuning}
           onClose={() => setTuning(null)}
           onSaved={(message) => { setTuning(null); toast(message, 'success'); refetch(); }}
+        />
+      )}
+
+      {reowning && (
+        <ChangeOwnerDialog
+          row={reowning}
+          users={users}
+          onClose={() => setReowning(null)}
+          onSaved={(message) => { setReowning(null); toast(message, 'success'); refetch(); }}
         />
       )}
 
@@ -492,6 +546,7 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
   const [days, setDays] = useState(String(row.import_days ?? 30));
   const [internal, setInternal] = useState(!row.exclude_internal);
   const [contacts, setContacts] = useState(Boolean(row.auto_create_contacts));
+  const [everyFolder, setEveryFolder] = useState(row.read_scope === 'all');
   const [busy, setBusy] = useState(false);
   const daysChanged = Number(days) !== Number(row.import_days ?? 30);
 
@@ -500,7 +555,7 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
     try {
       await api.raw(`/mailboxes/${row.id}`, {
         method: 'PATCH',
-        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts },
+        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts, read_scope: everyFolder ? 'all' : 'inbox_sent' },
       });
       // Changing the window drops the sync cursor, so the older mail only
       // appears on the next pass. Saying "Saved" and leaving an unchanged
@@ -552,6 +607,84 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
             </span>
           </span>
         </label>
+
+        {/* Which folders are read (074). A personal mailbox starts on Inbox
+            and Sent Items: its Archive and private folders are its owner's
+            to open, not read by default. A shared mailbox starts on every
+            folder, as the readers have since 073. */}
+        <label className="flex items-start gap-2 text-[13px]">
+          <input type="checkbox" className="mt-0.5" checked={everyFolder} onChange={(e) => setEveryFolder(e.target.checked)} />
+          <span>
+            Read every folder
+            <span className="block text-[12px] text-muted-foreground">
+              {row.is_shared
+                ? 'On: Archive and the folders client mail is filed into are read as well as Inbox and Sent Items. Junk, Deleted Items and Drafts never are.'
+                : 'Off by default: only your Inbox and Sent Items are synced and read for enquiries, quotations and POs. On opens your Archive and your own folders to them too (never Junk, Deleted Items or Drafts).'}
+            </span>
+          </span>
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Who a personal mailbox belongs to (docs/per-user-mailboxes-plan.md §5.2).
+ *
+ * Mail read from now on makes records for the new owner; records already
+ * made stay where they are, and the note says so — moving them is the
+ * ownership-transfer screen's job, which keeps the handover history honest.
+ */
+function ChangeOwnerDialog({ row, users, onClose, onSaved }) {
+  const toast = useToast();
+  const NOBODY = 'nobody';
+  const [userId, setUserId] = useState(row.owner?.id ? String(row.owner.id) : NOBODY);
+  const [busy, setBusy] = useState(false);
+  const chosen = users.find((u) => String(u.id) === userId);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const r = await api.raw(`/mailboxes/${row.id}/owner`, { method: 'PATCH', body: { user_id: userId === NOBODY ? null : Number(userId) } });
+      onSaved(r.data?.warning || (chosen ? `${row.email} is now ${chosen.name}'s` : `${row.email} has no owner`));
+    } catch (err) {
+      toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Who does ${row.email} belong to?`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button size="sm" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field label="Owner" hint="Only they see this mailbox's mail, and the records it creates from now on are theirs.">
+          <Select value={userId} onValueChange={setUserId}>
+            <SelectTrigger className="w-full text-[13px]" aria-label={`Owner of ${row.email}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NOBODY} className="text-[13px]">Nobody (unassigned)</SelectItem>
+              {users.map((u) => (
+                <SelectItem key={u.id} value={String(u.id)} className="text-[13px]">
+                  {u.name}{u.role === 'admin' ? ' (admin)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <p className="text-[12px]/[1.6] text-muted-foreground">
+          Enquiries, quotations and POs already made from this mailbox keep their present owner. To move those too, use the
+          ownership transfer on the records themselves, which records the handover.
+          {chosen && chosen.role !== 'sales' && ' An admin owning a mailbox makes its records unassigned, for an admin to hand out.'}
+        </p>
       </div>
     </Modal>
   );

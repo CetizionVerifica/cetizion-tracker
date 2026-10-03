@@ -2,7 +2,7 @@
 
 A plain-language account of what has been built, what is being built, and what
 is waiting on a decision. Updated with every pull request. Last update:
-2 October 2026.
+3 October 2026.
 
 ## Where things stand
 
@@ -350,6 +350,22 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-03: Each salesperson can connect **their own mailbox** under
+  Settings → My mailbox (`feat/per-user-mailboxes`, the plan in
+  `docs/per-user-mailboxes-plan.md`). A personal mailbox belongs to the
+  user account that connected it, not to a typed name, so it works when the
+  mailbox address differs from the login address. Only its owner sees its
+  mail, through every screen: the record timeline used to show a
+  salesperson the subjects of colleagues' personal threads on a shared
+  client, and no longer does. Enquiries, quotations and POs read from a
+  personal mailbox belong to its owner; the shared sales mailbox is
+  unchanged. Admins see every mailbox with its owner, can reassign one
+  (records already made stay put), and deactivating somebody disconnects
+  their mailbox. A personal mailbox's Inbox and Sent Items are read; the
+  owner can open their other folders to the readers. Needs migration 074,
+  which assigns existing personal mailboxes to users by email, then name,
+  and leaves the rest for an admin to assign.
 
 - 2026-10-03: The email readers now read every email in every Outlook
   folder (Archive and the folders people file client mail into included),

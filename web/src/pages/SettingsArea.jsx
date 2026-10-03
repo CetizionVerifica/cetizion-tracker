@@ -101,7 +101,10 @@ const GROUPS = [
   {
     label: 'Connections',
     items: [
-      { to: 'mailboxes', label: 'Mailboxes', element: <Mailboxes />, adminOnly: true },
+      // Every role: a salesperson connects their own mailbox here, and sees
+      // only that (docs/per-user-mailboxes-plan.md §5). The admin's view of
+      // every mailbox is the same pane, titled for what it shows.
+      { to: 'mailboxes', label: 'Mailboxes', salesLabel: 'My mailbox', element: <Mailboxes /> },
       { to: 'webhooks', label: 'Webhooks', element: <Webhooks />, adminOnly: true },
     ],
   },
@@ -117,7 +120,12 @@ const GROUPS = [
 export default function SettingsArea() {
   const { isAdmin } = useAuth();
   const groups = GROUPS
-    .map((group) => ({ ...group, items: group.items.filter((item) => isAdmin || !item.adminOnly) }))
+    .map((group) => ({
+      ...group,
+      items: group.items
+        .filter((item) => isAdmin || !item.adminOnly)
+        .map((item) => (!isAdmin && item.salesLabel ? { ...item, label: item.salesLabel } : item)),
+    }))
     .filter((group) => group.items.length > 0);
   /**
    * Where /settings lands, stated rather than inferred.

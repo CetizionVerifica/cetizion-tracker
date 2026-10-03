@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
 import { pool } from '../db.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { disconnect as disconnectMailbox } from '../lib/mailbox/sync.js';
 import { MIN_PASSWORD_LENGTH, passwordProblem } from '../lib/passwords.js';
 import {
   ActiveNeedsLoginError, DuplicateEmailError, LastAdminError, ROLES,
@@ -226,6 +227,23 @@ userRouter.patch('/:id', async (req, res) => {
     throw asApiError(err);
   }
   if (!updated) throw new ApiError(404, 'User not found');
+
+  // Somebody switched off stops syncing their mail (docs/per-user-mailboxes-plan.md
+  // §4.5): tokens destroyed, subscriptions removed, the mailbox left listed
+  // for the admin. Records already made keep their owner until an admin
+  // reassigns them. Not inside updateUser's transaction: disconnecting talks
+  // to Microsoft, and a provider that is slow or down must not hold the
+  // deactivation up or roll it back. The stored mail stays: a client's
+  // thread on a project somebody else now owns is still that project's
+  // history, and removing bodies is the explicit Disconnect dialog's choice.
+  if (changes.active === false) {
+    const { rows } = await pool.query(`SELECT id, email FROM connected_accounts WHERE user_id = $1 AND status <> 'disconnected'`, [id]);
+    const disconnected = [];
+    for (const a of rows) {
+      try { await disconnectMailbox(a.id, { removeBodies: false }); disconnected.push(a.email); } catch { /* the row records its own error; the admin sees it under Mailboxes */ }
+    }
+    updated.mailboxes_disconnected = disconnected;
+  }
 
   res.json({ data: updated });
 });

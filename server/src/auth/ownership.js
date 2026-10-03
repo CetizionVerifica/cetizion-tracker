@@ -273,15 +273,17 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
  * Takes the parameter index rather than pushing, so a caller that already
  * pushed the owner id (documentClause) references the same one.
  */
-function entityCase(alias, n) {
+function entityCase(alias, n, { sharedAs = 'true' } = {}) {
   const poOwned = (po) => `(EXISTS (SELECT 1 FROM quotations eq
                                      WHERE eq.quotation_no = ${po}.quotation_no AND eq.${OWNER_COLUMN} = $${n})
                          OR EXISTS (SELECT 1 FROM projects ep
                                      WHERE ep.project_id = ${po}.project_id AND ep.${OWNER_COLUMN} = $${n}))`;
   const branches = Object.entries(ENTITY_RECORDS).map(([entity, def]) => {
     // Master data is everybody's: a note on a company is not one
-    // salesperson's, the same as the company itself is not.
-    if (def.shared) return `WHEN '${entity}' THEN true`;
+    // salesperson's, the same as the company itself is not. A caller for
+    // whom "on a company" is not a reason to see the row (an email thread,
+    // mailboxClause below) says so with sharedAs.
+    if (def.shared) return `WHEN '${entity}' THEN ${sharedAs}`;
     const match = `x.${def.key}${def.key === 'id' ? '::text' : ''} = ${alias}.entity_id`;
     if (def.parent === 'own') {
       return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
@@ -505,4 +507,54 @@ export function whereFrom(clauses) {
 export function ownerForNewRecord(user) {
   const scope = ownershipScope(user);
   return scope.unrestricted ? null : scope.ownerId;
+}
+
+/**
+ * Who may see which mailbox, and which email thread
+ * (docs/per-user-mailboxes-plan.md §2, §4.2).
+ *
+ *   admin, or the legacy shared login   every mailbox, every thread
+ *   a sales user                        mailboxes where user_id = me,
+ *                                       plus shared mailboxes (read only)
+ *                                       threads in those mailboxes,
+ *                                       plus threads on a record they own
+ *
+ * One helper, and `routes/mailboxes.js`, `routes/timeline.js` and anything
+ * else that returns mail ask it. Before this the rule was string matching
+ * on `connected_accounts.username` against the caller's name or email,
+ * written in one route file and not written at all in the timeline, which
+ * showed a salesperson the subjects of colleagues' personal threads.
+ *
+ *   read        a mailbox the caller may read mail from: their own, or a
+ *               shared one. The shared inbox stays the team's.
+ *   administer  a mailbox the caller may change, sync or disconnect: their
+ *               own only. Shared mailboxes are an admin's to run.
+ *
+ * '' when unrestricted, like every other predicate here.
+ */
+export function mailboxClause(scope, params, { alias = 'a', kind = 'read' } = {}) {
+  if (scope.unrestricted) return '';
+  params.push(scope.ownerId);
+  const n = params.length;
+  if (kind === 'administer') return `${alias}.user_id = $${n}`;
+  if (kind === 'read') return `(${alias}.user_id = $${n} OR ${alias}.is_shared)`;
+  throw new Error(`Unknown mailbox access kind: ${kind}`);
+}
+
+/**
+ * "threads this caller may read": the mailboxes above, plus a thread that
+ * sits on a record they own — the client's reply about your own deal is
+ * yours to see whichever mailbox it landed in. Ownership is owner_user_id,
+ * through the same entity convention every other (entity, entity_id) table
+ * uses; an email thread's entity is never a company, and a thread on
+ * nothing is reachable only through its mailbox.
+ *
+ * Reading only. Replying stays on `mailboxClause`: a reply leaves from the
+ * mailbox and lands in its Sent Items, and seeing a thread and speaking as
+ * somebody else are different questions.
+ */
+export function threadClause(scope, params, { accountAlias = 'a', threadAlias = 't' } = {}) {
+  if (scope.unrestricted) return '';
+  const mailbox = mailboxClause(scope, params, { alias: accountAlias, kind: 'read' });
+  return `(${mailbox} OR ${entityCase(threadAlias, params.length, { sharedAs: 'false' })})`;
 }
