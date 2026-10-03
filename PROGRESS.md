@@ -351,6 +351,15 @@ Each batch is five issues. A batch is finished when all five are reviewed.
 
 ## Update log
 
+- 2026-10-03: The email readers' instructions to the AI rewritten so an
+  enquiry, PO, invoice or quotation read from email is complete in one
+  reading: Indian dates read day first, amounts copied as printed, services
+  named as the catalogue names them (so a PO picks up its payment terms and
+  onboarding templates), and payment terms copied whole for the stages. The
+  bulk import is unchanged. Once deployed, each mailbox is re-run under
+  Settings → Mailboxes (enquiries, then POs, then invoices) so past mail is
+  read with the new instructions; nothing already made is made twice.
+
 - 2026-10-02: Enquiries from email (PR #161's plan, all six steps) built on
   `feat/email-enquiries`: live detection, the backfill of past mail,
   quotations read from PDFs, and the admin and review screens. On by
