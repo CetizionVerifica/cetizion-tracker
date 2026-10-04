@@ -1,6 +1,6 @@
 /**
  * The Daily Sales Briefing and Weekly Sales MIS as PDFs
- * (docs/mis-reports-plan.md §3.5): two pages of A4, built with pdfmake from
+ * (docs/mis-reports-plan.md §3.5), built with pdfmake from
  * the figures misReports.js computed, on the same blocks and type as the
  * sales report PDF (pdfBlocks.js, pdfCharts.js). No browser, no images;
  * Roboto, the font every PDF here is set in, so ₹ prints.
@@ -13,13 +13,17 @@
  *
  * Where the AI has worded a section (data.commentary, misAi.js) that wording
  * is used; otherwise the one-sentence narrative the Reports page prints.
- * Tables are capped at MAX_ROWS with "+N more in the tracker".
+ * The weekly report's tables are capped with "+N more in the tracker", to
+ * keep it to two pages of A4. The daily briefing follows the reference
+ * format (docs/mis-briefing-fix-plan.md §3): its four sections, and every
+ * pending row, over as many pages as they take.
  */
 import pdfmake from './pdf.js';
 import { COLORS, horizontalBars } from './pdfCharts.js';
 import { INK, MARGIN_X, PDF_STYLES, dateLabel, generatedStamp, periodLabel, reportTable, rule, tile } from './pdfBlocks.js';
 import { compactInr, money, number, plural } from './reportFormat.js';
 import { windowNote } from './misWindow.js';
+import { closingLine, dayParagraph, glanceRows, sourceLine } from './misBriefing.js';
 
 export const MAX_ROWS = 12;
 /** The weekly report's lists are shorter: eight sections share two pages. */
@@ -112,7 +116,7 @@ function pendingTable(section, { empty, cap = MAX_ROWS }) {
 
 const fxNote = { text: 'Converted at the exchange rate on each record\'s date (ECB). Earlier reports used fixed rates of USD 88 and EUR 103.', style: 'small', margin: [0, 10, 0, 0] };
 
-function docShell({ title, periodText, company, generatedAt, timeZone, content, info, footnote = null }) {
+function docShell({ title, periodText, company, generatedAt, timeZone, content, info, footnote = null, footerText = null }) {
   return {
     pageSize: 'A4',
     pageOrientation: 'portrait',
@@ -128,13 +132,14 @@ function docShell({ title, periodText, company, generatedAt, timeZone, content, 
     }),
     // The footnote (the exchange-rate note, the data notes) is said once,
     // at the foot of the first page, so it costs the body no room.
+    // footerText, when given, replaces the generated stamp on every page.
     footer: (page, pages) => ({
       stack: [
         page === 1 && footnote ? { text: footnote, style: 'footer', margin: [0, 0, 0, 2] } : null,
         {
           columns: [
-            { text: `Generated ${generatedStamp(generatedAt, timeZone)}  ·  ${company}, confidential`, style: 'footer' },
-            { text: `Page ${page} of ${pages}`, style: 'footer', alignment: 'right' },
+            { text: footerText || `Generated ${generatedStamp(generatedAt, timeZone)}  ·  ${company}, confidential`, style: 'footer' },
+            { text: `Page ${page} of ${pages}`, style: 'footer', alignment: 'right', ...(footerText ? { width: 60 } : {}) },
           ],
         },
       ].filter(Boolean),
@@ -146,50 +151,145 @@ function docShell({ title, periodText, company, generatedAt, timeZone, content, 
 }
 
 // ---------------------------------------------------------------------
-// Daily Sales Briefing
+// Daily Sales Briefing: the reference's four sections, and every pending
+// row (docs/mis-briefing-fix-plan.md §3)
 // ---------------------------------------------------------------------
 
+const RED = '#b42318';
+const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const weekday = (d) => WEEKDAY[new Date(`${d}T00:00:00Z`).getUTCDay()];
+
+/** A link the reader can open: Outlook's are whole; a tracker path needs the app's address, and is plain text without it. */
+const href = (appUrl, path) => (!path ? null : /^https?:/i.test(path) ? path : appUrl ? `${appUrl}${path}` : null);
+const linked = (text, url) => (url ? { text, link: url, color: COLORS.blue, decoration: 'underline' } : { text });
+
+/** In ₹ when converted, in its own currency when there was no rate, "not stated" when there is no amount. */
+const amountOf = (r) => (r.amount_inr != null ? short(r.amount_inr) : r.amount != null ? money(r.amount, r.currency || 'INR') : 'not stated');
+
+const heading = (no, title) => [
+  { text: [{ text: `${no}.`, color: COLORS.blue }, `  ${title}`], style: 'h1', margin: [0, 14, 0, 0] },
+  rule([0, 3, 0, 5]),
+];
+const subheading = (text) => ({ text, bold: true, fontSize: 8.5, color: INK[700], margin: [0, 7, 0, 3] });
+const closing = (text) => ({ text, style: 'lead', italics: true, margin: [0, 3, 0, 0] });
+
+/** A pending table as the reference has it: every row, the overdue ones in red. */
+function briefingTable(section, { empty, appUrl, grandTotal = false }) {
+  const red = (row, content, extra = {}) => ({ text: content ?? '—', ...(row.overdue ? { color: RED, fillColor: OVERDUE_FILL } : {}), ...extra });
+  return [
+    reportTable({
+      compact: true,
+      fontSize: 7,
+      columns: [
+        { header: 'Client', value: (r) => red(r, r.client), width: 74, totalLabel: 'Grand total' },
+        { header: 'Reference', value: (r) => red(r, r.reference), width: '*' },
+        { header: 'Amount', value: (r) => red(r, amountOf(r)), align: 'right', width: 54, total: (t) => t },
+        { header: 'Last activity', value: (r) => red(r, r.last_activity ? dateLabel(r.last_activity).slice(0, 6) : '—'), width: 40 },
+        { header: 'Days', value: (r) => red(r, number(r.days), r.overdue ? { bold: true } : {}), align: 'right', width: 26 },
+        { header: 'Owner', value: (r) => red(r, r.owner || '—'), width: 48 },
+        { header: 'Next action', value: (r) => red(r, r.next_action), width: 90 },
+        { header: 'Email', value: (r) => { const url = href(appUrl, r.email_link); return url ? { ...linked('Open', url), ...(r.overdue ? { fillColor: OVERDUE_FILL } : {}) } : red(r, '—'); }, width: 28 },
+      ],
+      rows: section.rows,
+      total: grandTotal && section.rows.length ? short(section.value_inr) : undefined,
+      empty,
+    }),
+    section.unconverted ? { text: `${plural(section.unconverted, 'amount')} had no exchange rate for its date: shown in its own currency${grandTotal ? ', and left out of the total' : ''}.`, style: 'lead', margin: [0, 2, 0, 0] } : null,
+  ].filter(Boolean);
+}
+
+/** One highlight: what happened, the action and owner, the source email, earlier emails. */
+function highlightItem(h, appUrl) {
+  const label = (text) => ({ text, bold: true, color: INK[700] });
+  const outlook = /^https?:/i.test(h.web_link || '');
+  const source = href(appUrl, h.web_link) ? linked(outlook ? 'open in Outlook' : 'open in the Inbox', href(appUrl, h.web_link))
+    : href(appUrl, h.link) ? linked('open the record', href(appUrl, h.link)) : { text: 'not linked', color: INK[500] };
+  return {
+    stack: [
+      { text: [{ text: `${h.client}: `, bold: true }, h.summary] },
+      h.action ? { text: [label('Action / owner: '), `${h.action}${h.owner ? ` (${h.owner})` : ''}`], margin: [0, 1, 0, 0] } : null,
+      { text: [label('Source email: '), source], margin: [0, 1, 0, 0] },
+      h.related?.length ? {
+        stack: [label('Related earlier emails:'), { ul: h.related.map((r) => linked(`${dateLabel(r.day).slice(0, 6)} · ${r.from} · ${r.subject}`, href(appUrl, r.link))) }],
+        margin: [0, 1, 0, 0],
+      } : null,
+    ].filter(Boolean),
+    margin: [0, 0, 0, 5],
+  };
+}
+
 export function dailyBriefingDoc(data, { company = 'Cetizion Verifica', generatedAt = new Date(), timeZone = 'Asia/Kolkata' } = {}) {
-  const g = data.at_a_glance;
   const day = dateLabel(data.period.from);
+  const appUrl = data.app_url || '';
   const highlights = data.highlights || [];
   const actions = data.top_actions || [];
+  const reminders = data.reminders || [];
+  const p = data.pending;
+  const t = data.invoice_tables;
+  const boxes = (data.mailboxes?.read || []).map((b) => b.email);
   const content = [
-    header(REPORT_TITLE.daily_briefing, `For ${day}`, company),
-    { text: data.quiet ? `A quiet day: no new enquiries, quotations, POs, invoices or payments on ${day}. The pending work below still stands.` : `What happened on ${day}, and what is waiting.`, style: 'body', margin: [0, 8, 0, 0] },
-    { text: 'AT A GLANCE', style: 'kicker' },
-    tiles([
-      [number(g.new_enquiries), 'New enquiries', 'received'],
-      [number(g.quotations_sent), 'Quotations sent', 'by email or from the tracker'],
-      [`${number(g.pos_received)} · ${short(g.pos_received_inr)}`, 'POs received', g.pos_registered_late ? `+${g.pos_registered_late} older PO${g.pos_registered_late === 1 ? '' : 's'} registered` : 'by PO date'],
-      [`${number(g.invoices_raised)} · ${short(g.invoices_raised_inr)}`, 'Invoices raised', 'by invoice date'],
-      [`${number(g.payments_received)} · ${short(g.payments_received_inr)}`, 'Payments received', 'by receipt date'],
-      [number(g.pending_invoices), 'Pending invoices', `${number(data.pending.invoices.overdue)} overdue`],
-      [number(g.pending_pos), 'Pending POs', `${number(data.pending.pos.overdue)} overdue`],
-      [number(g.pending_quotations), 'Pending quotations', `${number(data.pending.quotations.overdue)} overdue`],
-    ]),
-    { text: `Overdue: pending for more than ${data.overdue_days} days. ${number(g.overdue)} item${g.overdue === 1 ? '' : 's'} in all, shaded in the tables.`, style: 'lead' },
+    header(REPORT_TITLE.daily_briefing, `${weekday(data.period.from)}, ${day}`, company),
+    { text: `Generated ${generatedStamp(generatedAt, timeZone)}  ·  Source: ${sourceLine(data.mailboxes, timeZone)}`, style: 'lead', margin: [0, 6, 0, 0] },
+    { text: dayParagraph(data), style: 'body', margin: [0, 4, 0, 0] },
 
-    h2('Highlights of yesterday'),
+    ...heading(1, 'At a glance'),
+    reportTable({
+      fontSize: 8,
+      columns: [
+        { header: 'Metric', value: (r) => ({ text: r.metric, bold: true }), width: 120 },
+        { header: 'Count', value: (r) => r.count, align: 'right', width: 70 },
+        { header: 'Detail', value: (r) => r.detail || '—', width: '*' },
+      ],
+      rows: glanceRows(data, { money: short }),
+    }),
+
+    ...heading(2, 'Key highlights'),
     highlights.length
-      ? { ul: highlights.map((h) => ({ text: [{ text: `${h.client}: `, bold: true }, h.summary, h.action ? { text: `  →  ${h.action}${h.owner ? ` (${h.owner})` : ''}`, color: COLORS.blue } : ''] })), style: 'body' }
-      : { text: 'Nothing was created or changed from email yesterday.', style: 'empty' },
-    ...(data.mail_window ? [{ text: windowNote(data.mail_window), style: 'lead' }] : []),
+      ? { ol: highlights.map((h) => highlightItem(h, appUrl)), style: 'body' }
+      : { text: `Nothing to highlight from the mail of ${day}.`, style: 'empty' },
+    data.mail_window ? { text: windowNote(data.mail_window), style: 'lead' } : null,
+    subheading('Reminders carried forward'),
+    reminders.length
+      ? { ul: reminders.map((r) => linked(r.text, href(appUrl, r.link))), style: 'body' }
+      : { text: 'No visit or meeting in the next three days, and no PO waiting to be registered.', style: 'empty' },
 
-    h2(`Pending invoices (${number(data.pending.invoices.count)})`),
-    ...pendingTable(data.pending.invoices, { empty: 'Nothing to invoice and nothing outstanding.' }),
-    h2(`Pending POs (${number(data.pending.pos.count)})`),
-    ...pendingTable(data.pending.pos, { empty: 'No quotation is waiting for its PO.' }),
-    h2(`Pending quotations (${number(data.pending.quotations.count)})`),
-    ...pendingTable(data.pending.quotations, { empty: 'Every enquiry is quoted and every quotation answered.' }),
+    ...heading(3, 'Pending tasks'),
+    {
+      text: `Days are counted to today: an invoice to raise from its milestone, delivery or PO date; an invoice awaiting payment from its due date; a PO from the client's yes; a quotation from when it was sent or last followed up; an enquiry from when it came in. Overdue means waiting more than ${data.overdue_days} days; overdue rows are in red. Last activity is the latest email on the record.`,
+      style: 'lead',
+    },
+    h2(`(a) Invoices (${number(p.invoices.count)})`),
+    subheading(`Invoice actions: read from email, to check (${number(t.actions.count)})`),
+    ...briefingTable(t.actions, { appUrl, empty: 'Nothing to check.' }),
+    subheading(`Pending for invoicing (${number(t.to_raise.count)})`),
+    ...briefingTable(t.to_raise, { appUrl, empty: 'Nothing to invoice.' }),
+    subheading(`Receivables: sundry debtors (${number(t.receivables.count)})`),
+    ...briefingTable(t.receivables, { appUrl, grandTotal: true, empty: 'Nothing outstanding.' }),
+    closing(closingLine('invoices', data)),
+    h2(`(b) POs (${number(p.pos.count)})`),
+    ...briefingTable(p.pos, { appUrl, empty: 'No quotation is waiting for its PO.' }),
+    closing(closingLine('pos', data)),
+    h2(`(c) Quotations (${number(p.quotations.count)})`),
+    ...briefingTable(p.quotations, { appUrl, empty: 'Every enquiry is quoted and every quotation answered.' }),
+    closing(closingLine('quotations', data)),
 
-    h2('Top 5 actions for today'),
+    ...heading(4, 'Action items for today (top 5)'),
     actions.length
-      ? { ol: actions.map((a) => ({ text: [{ text: `${a.client}: `, bold: true }, a.wording || `${a.next_action} — ${a.reference}`, { text: `  (${days(a.days)}${a.amount_inr != null ? `, ${short(a.amount_inr)}` : ''}${a.owner ? `, ${a.owner}` : ''})`, color: INK[500] }] })), style: 'body' }
+      ? {
+        ol: actions.map((a) => ({
+          text: [
+            { text: `${a.client}: `, bold: true }, a.wording || `${a.next_action} — ${a.reference}`,
+            { text: `  (${days(a.days)}${a.amount_inr != null ? `, ${short(a.amount_inr)}` : ''}; owner: ${a.owner || 'not set'})  `, color: INK[500] },
+            linked('open', href(appUrl, a.email_link || a.link)),
+          ],
+        })),
+        style: 'body',
+      }
       : { text: 'Nothing is pending.', style: 'empty' },
     fxNote,
   ];
-  return docShell({ title: REPORT_TITLE.daily_briefing, periodText: day, company, generatedAt, timeZone, content, info: `For ${day}` });
+  const footerText = `Prepared automatically from the ${boxes.length ? `${boxes.join(', ')} mailbox${boxes.length === 1 ? '' : 'es'}` : 'shared mailboxes'} and the tracker's records  ·  ${REPORT_TITLE.daily_briefing}, ${day}`;
+  return docShell({ title: REPORT_TITLE.daily_briefing, periodText: day, company, generatedAt, timeZone, content, info: `For ${day}`, footerText });
 }
 
 // ---------------------------------------------------------------------

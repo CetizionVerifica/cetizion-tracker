@@ -9,6 +9,8 @@ import pg from 'pg';
  * docs/mis-briefing-fix-plan.md §2 and decision 3, against the database:
  * yesterday's mail in every shared mailbox, without what is not sales
  * business, each email once, and the mailboxes it could not read named.
+ * And §3: each pending row's last email, earlier emails on a highlight,
+ * and the reminders carried forward.
  * Needs TEST_DATABASE_URL.
  */
 
@@ -113,5 +115,52 @@ describe('the briefing reads the right mail', { skip: !ADMIN_URL && 'set TEST_DA
     await db.query(`INSERT INTO email_enquiry_decisions (account_id, provider_id, direction, outcome, kind, method, enquiry_no) VALUES ($1, 'e1', 'inbound', 'created', 'new_enquiry', 'ai', 'CTZ/ENQ/2026/901'), ($1, 'e2', 'inbound', 'created', 'marketing', 'ai', 'CTZ/ENQ/2026/902')`, [ids.sales]);
     const data = await misReports.dailyBriefing({ today: '2026-10-05', db });
     assert.equal(data.at_a_glance.new_enquiries, 2, 'the reader-made one from a marketing mail does not count');
+    assert.deepEqual(data.glance_detail.new_enquiries, ['Acme Steel', 'Walk-in client'], 'the Detail column names the same two');
+  });
+
+  test('a pending row shows its latest shared email; a highlight its earlier ones', async () => {
+    await db.query(`UPDATE email_messages SET web_link = 'https://outlook.office.com/mail/item/q1' WHERE thread_id = $1`, [ids.internalOnRecord]);
+    await db.query(`UPDATE email_messages SET folder_id = 'inbox-1' WHERE thread_id = $1`, [ids.enquiry]);
+    // A personal mailbox's later mail on the same record is not the briefing's to show.
+    const { rows: [mine] } = await db.query(`INSERT INTO connected_accounts (username, provider, email, is_shared) VALUES ('priya', 'test', 'priya@cetizionverifica.com', false) RETURNING id`);
+    const { rows: [own] } = await db.query(`INSERT INTO email_threads (account_id, conversation_id, subject, entity, entity_id) VALUES ($1, 'conv-personal', 'Coreal', 'quotation', 'CTZ/QT/2026/001') RETURNING id`, [mine.id]);
+    await db.query(
+      `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, subject, sent_at, web_link)
+       VALUES ($1, $2, 'p-personal', 'outbound', 'priya@cetizionverifica.com', 'Coreal', '2026-10-05T09:00:00Z', 'https://outlook.office.com/mail/item/personal')`, [mine.id, own.id]);
+    const rows = await misReports.attachMail(db, [
+      { mail: { entity: 'quotation', id: 'CTZ/QT/2026/001' } },
+      { mail: { thread_id: ids.enquiry } },
+      { mail: { entity: 'enquiry', id: 'CTZ/ENQ/2026/999' }, last_activity: null, email_link: null },
+    ]);
+    assert.deepEqual(rows.map((r) => [r.last_activity, r.email_link]), [
+      ['2026-10-04', 'https://outlook.office.com/mail/item/q1'],
+      ['2026-10-04', `/inbox?mb=${ids.sales}&f=inbox-1&t=${ids.enquiry}`],
+      [null, null],
+    ]);
+
+    await db.query(
+      `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, from_name, subject, sent_at)
+       VALUES ($1, $2, 'p-earlier', 'outbound', 'sales@cetizionverifica.com', 'Sales', 'RFQ: EcoVadis for 3 sites', '2026-10-01T06:00:00Z')`, [ids.sales, ids.enquiry]);
+    const highlights = [{ thread_id: ids.enquiry, client: 'Acme Steel', source: 'records' }, { thread_id: null, client: 'Walk-in client', source: 'records' }];
+    await misReports.attachRelated(db, highlights, { from: DAY });
+    assert.deepEqual(highlights[0].related, [{ day: '2026-10-01', from: 'Sales', subject: 'RFQ: EcoVadis for 3 sites', link: `/inbox?mb=${ids.sales}` }]);
+    assert.equal(highlights[0].web_link, `/inbox?mb=${ids.sales}&f=inbox-1&t=${ids.enquiry}`, 'a highlight worded from a record gets its source email');
+    assert.deepEqual(highlights[1].related, [], 'no thread, nothing earlier');
+  });
+
+  test('the reminders carried forward are the next three days\' visits and meetings; the source line names the mailboxes', async () => {
+    const visit = (title, startsAt, status = 'planned', type = 'audit') => db.query(
+      `INSERT INTO visits (title, type, status, starts_at, ends_at, city) VALUES ($1, $2, $3, $4, $4, 'Pune')`, [title, type, status, startsAt]);
+    await visit('EcoVadis audit at Acme', '2026-10-06T04:30:00Z', 'confirmed');
+    await visit('Kick-off call', '2026-10-08T04:30:00Z', 'planned', 'meeting');
+    await visit('Too far ahead', '2026-10-09T04:30:00Z');
+    await visit('Called off', '2026-10-06T04:30:00Z', 'cancelled');
+    const data = await misReports.dailyBriefing({ today: '2026-10-05', db });
+    assert.deepEqual(data.reminders.map((r) => r.text), ['Visit: EcoVadis audit at Acme, 6 Oct, Pune (confirmed)', 'Meeting: Kick-off call, 8 Oct, Pune (planned)']);
+    assert.deepEqual(data.mailboxes, {
+      read: [{ email: 'info@cetizionverifica.com', folders: 'all folders' }, { email: 'sales@cetizionverifica.com', folders: 'all folders' }],
+      not_read: [{ email: 'hr@cetizionverifica.com', shared_as: 'subject' }],
+    });
+    assert.deepEqual(Object.keys(data.invoice_tables), ['actions', 'to_raise', 'receivables']);
   });
 });

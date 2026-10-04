@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { MAX_ROWS, dailyBriefingDoc, misFileName, misPdf, pdfPageCount, weeklyMisDoc } from '../src/lib/misPdf.js';
+import { dailyBriefingDoc, misFileName, misPdf, pdfPageCount, weeklyMisDoc } from '../src/lib/misPdf.js';
 import { dailyBriefing as dailyEmail, weeklyMis as weeklyEmail } from '../src/lib/emailTemplates.js';
 import { daily, weekly } from './misPdfFixture.mjs';
 
 /**
  * The two report PDFs and their emails (docs/mis-reports-plan.md §3.5, §3.6,
- * §8): each at most two A4 pages for a busy week, the right file names, and
+ * §8): the weekly MIS on two A4 pages, the daily briefing in the reference
+ * format (docs/mis-briefing-fix-plan.md §3), the right file names, and
  * figures that reach the page. Built from a fixture shaped like
  * misReports.js's output, so no database is needed.
  */
@@ -17,15 +18,27 @@ describe('the report PDFs', () => {
     assert.equal(misFileName(weekly), 'Sales_MIS_Report_28Sep-04Oct2026.pdf');
   });
 
-  test('the daily briefing is at most two pages even with every table full, and the tables are capped', async () => {
+  test('the daily briefing follows the reference: four sections and every pending row, over as many pages as it takes', async () => {
     const pdf = await misPdf(daily);
     assert.ok(pdf.length < 150 * 1024, `under 150 KB: ${pdf.length}`);
-    assert.ok(pdfPageCount(pdf) <= 2, `${pdfPageCount(pdf)} pages`);
-    const text = JSON.stringify(dailyBriefingDoc(daily).content);
-    assert.match(text, /\+8 more in the tracker/);
-    assert.match(text, /Highlights of yesterday/);
-    assert.match(text, /Top 5 actions for today/);
-    assert.equal(MAX_ROWS, 12);
+    assert.ok(pdfPageCount(pdf) > 2, `no two-page cap: ${pdfPageCount(pdf)} pages`);
+    const doc = dailyBriefingDoc(daily);
+    const text = JSON.stringify(doc.content);
+    for (const heading of ['At a glance', 'Key highlights', 'Reminders carried forward', 'Pending tasks', 'Action items for today (top 5)']) assert.match(text, new RegExp(heading.replace(/[()]/g, '\\$&')));
+    assert.match(text, /Sunday, 04 Oct 2026/, 'the date with its weekday');
+    assert.match(text, /Source: sales@cetizionverifica\.com, info@cetizionverifica\.com — Inbox \+ Sent Items, 00:00–23:59 IST/);
+    assert.doesNotMatch(text, /more in the tracker/, 'nothing is cut');
+    assert.equal((text.match(/Client 19/g) || []).length, 2, 'the last PO and quotation rows are both there');
+    for (const sub of ['Invoice actions: read from email, to check \\(2\\)', 'Pending for invoicing \\(6\\)', 'Receivables: sundry debtors \\(12\\)', 'Grand total']) assert.match(text, new RegExp(sub));
+    assert.match(text, /not stated/, 'an invoice read from email with no amount');
+    assert.match(text, /No PO received or closed|1 PO received on 4 Oct\./);
+    assert.match(text, /"link":"https:\/\/tracker\.example\/inbox\?mb=1&f=sent&t=9"/, 'a tracker link is made whole');
+    assert.match(text, /"link":"https:\/\/outlook\.office\.com\/mail\/item\/0"/, 'the source email opens in Outlook');
+    assert.match(text, /28 Sep · Ravi · RFQ: EcoVadis for 3 sites/, 'related earlier emails');
+    assert.match(text, /Other sales activity/);
+    assert.match(text, /"color":"#b42318"/, 'overdue rows are red');
+    assert.match(JSON.stringify(doc.footer(3, 4)), /Prepared automatically from the sales@cetizionverifica\.com, info@cetizionverifica\.com mailboxes/, 'the footer on every page');
+    assert.match(JSON.stringify(doc.footer(3, 4)), /Page 3 of 4/);
   });
 
   test('the weekly MIS is two pages, with the eight sections and one chart', async () => {
@@ -51,24 +64,30 @@ describe('the report PDFs', () => {
     assert.match(text, /3 of 14 \(21%\) converted/, 'a section the AI did not word keeps the narrative');
   });
 
-  test('a quiet day says so and keeps the pending tables', () => {
-    const quiet = { ...daily, quiet: true, highlights: [], at_a_glance: { ...daily.at_a_glance, new_enquiries: 0, quotations_sent: 0, pos_received: 0, invoices_raised: 0, payments_received: 0 } };
+  test('a quiet day says so and keeps the pending tables and the reminders', () => {
+    const quiet = { ...daily, quiet: true, highlights: [], mail_window: null, at_a_glance: { ...daily.at_a_glance, new_enquiries: 0, quotations_sent: 0, pos_received: 0, invoices_raised: 0, payments_received: 0 } };
     const text = JSON.stringify(dailyBriefingDoc(quiet).content);
-    assert.match(text, /A quiet day/);
-    assert.match(text, /Pending invoices \(20\)/);
-    assert.match(text, /Nothing was created or changed from email yesterday/);
+    assert.match(text, /No new enquiry, quotation, PO, invoice or payment on 4 Oct\. No pending item was closed\./);
+    assert.match(text, /\(a\) Invoices \(20\)/);
+    assert.match(text, /Nothing to highlight from the mail of 04 Oct 2026/);
+    assert.match(text, /No PO received or closed on 4 Oct\./);
+    assert.match(text, /Visit: EcoVadis audit, Hindalco, 6 Oct, Pune \(confirmed\)/);
   });
 });
 
 describe('the report emails', () => {
-  test('the daily briefing names the day, the figures and the overdue items, and says the PDF is attached', () => {
+  test('the daily briefing follows the PDF in short: at a glance, highlights with their source email, reminders, top 5', () => {
     const e = dailyEmail({ data: daily, appUrl: 'https://tracker.example' });
     assert.match(e.subject, /Daily Sales Briefing – 04 Oct 2026: 3 new enquiries, 1 PO, 39 overdue/);
-    assert.match(e.text, /New enquiries: 3/);
-    assert.match(e.text, /TOP ACTIONS FOR TODAY\n1\. Client 0: Raise the Advance invoice/);
+    assert.match(e.text, /1\. AT A GLANCE\nNew enquiries: 3 \(Acme Steel; Beta Metals; Coreal\)/);
+    assert.match(e.text, /Overdue \(over 7 days\): 39 \(12 invoices, 17 POs, 17 quotations\)/);
+    assert.match(e.text, /2\. KEY HIGHLIGHTS\n1\. Client 0: .*\n {3}Action \/ owner: Send the revision \(Priya\)\n {3}Source email: https:\/\/outlook\.office\.com\/mail\/item\/0/);
+    assert.match(e.text, /Reminders carried forward:\n- Visit: EcoVadis audit/);
+    assert.match(e.text, /3\. ACTION ITEMS FOR TODAY \(TOP 5\)\n1\. Client 0: Raise the Advance invoice — PO-1000 · Advance \(5 d, ₹1 L; owner: Priya\)/);
     assert.match(e.text, /attached as a PDF/);
     assert.match(e.text, /USD 88 and EUR 103/);
-    assert.match(e.html, /href="https:\/\/tracker\.example\/quotations\/x"/);
+    assert.match(e.html, /href="https:\/\/outlook\.office\.com\/mail\/item\/0"[^>]*>open in Outlook/);
+    assert.match(e.html, /href="https:\/\/tracker\.example\/schedule\?visit=4"/);
     assert.doesNotMatch(e.html, /<script/);
   });
 

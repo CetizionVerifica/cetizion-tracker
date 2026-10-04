@@ -11,8 +11,15 @@ and the team have entered. The plan is in
 | **Weekly Sales MIS Report** | every Monday at 08:54 IST | the previous Monday to Sunday |
 
 Both go to the same recipients, **from the shared sales mailbox** with the
-**PDF attached** (two A4 pages). The email carries the headline figures and
-the top actions; the PDF carries the tables.
+**PDF attached**. The weekly PDF is two A4 pages. The daily PDF follows the
+reference briefing ([mis-briefing-fix-plan.md](mis-briefing-fix-plan.md) §3):
+at a glance (Metric / Count / Detail), key highlights with their source
+email and earlier emails, reminders carried forward (visits and meetings in
+the next three days, POs received by email and not registered), every
+pending row with its last email (overdue rows in red; invoices in three
+tables: to check, to raise, receivables with a grand total), and the top
+five actions, over as many pages as that takes. The email carries the same
+sections in short; the PDF carries the tables.
 
 ## Where the numbers come from
 
@@ -47,7 +54,7 @@ email have none: their response time would be artificial.
 
 With an AI key set, one call per report words what the tracker computed:
 
-- **Daily:** the "Highlights of yesterday" from the threads in the
+- **Daily:** the "Key highlights" from the threads in the
   **shared** mailboxes that store everything (a personal mailbox is never
   read), and the wording of the five actions already chosen.
 - **Weekly:** four headline bullets and a short paragraph per section, from

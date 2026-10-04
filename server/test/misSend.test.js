@@ -97,7 +97,7 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     assert.match(r.error, /Composed and logged only: EMAIL_MODE=log/);
     assert.equal(String(r.period_from).slice(0, 10), '2026-10-04');
     assert.deepEqual(r.recipients, ['md@cetizionverifica.com', 'head@cetizionverifica.com']);
-    assert.equal(r.pages <= 2, true);
+    assert.ok(r.pages >= 1, 'the PDF was built; the daily briefing has no page cap (docs/mis-briefing-fix-plan.md §3)');
     assert.equal(sent.length, 0, 'the mailbox was not asked to send');
     const { rows: [log] } = await db.query('SELECT * FROM email_log WHERE id = $1', [r.email_log_id]);
     assert.equal(log.status, 'suppressed');
@@ -187,7 +187,7 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
 
     const pdf = await agent.get(`/api/mis-reports/daily_briefing/preview.pdf?date=${TODAY}`).expect(200);
     assert.equal(pdf.headers['content-type'], 'application/pdf');
-    assert.ok(Number(pdf.headers['x-page-count']) <= 2);
+    assert.ok(Number(pdf.headers['x-page-count']) >= 1, 'the page count is sent; the daily briefing has no page cap');
 
     await agent.get('/api/mis-reports/monthly/preview').expect(404);
     await agent.get('/api/mis-reports/daily_briefing/preview?date=yesterday').expect(422);

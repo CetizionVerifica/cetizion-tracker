@@ -24,7 +24,7 @@ import { query } from '../db.js';
 import { aiConfig, chatJSON } from './ai.js';
 import { aiCallsToday, enquirySettings } from './mailbox/autoEnquiry.js';
 import { BULK, BULK_SENDER, isBlocked, snippet } from './mailbox/rules.js';
-import { linkFor } from './misReports.js';
+import { linkFor, threadLink } from './misReports.js';
 import { r2 } from './reportMath.ts';
 import { config } from '../config.js';
 
@@ -150,11 +150,11 @@ export async function selectThreads(db, { from, to }) {
   const { rows: boxes } = await db.query(
     `SELECT email, visibility FROM connected_accounts WHERE is_shared AND status <> 'disconnected' ORDER BY email`);
   const { rows } = await db.query(
-    `SELECT t.id AS thread_id, t.subject, t.entity, t.entity_id, co.name AS company, t.last_message_at, a.email AS mailbox,
+    `SELECT t.id AS thread_id, t.account_id, t.subject, t.entity, t.entity_id, co.name AS company, t.last_message_at, a.email AS mailbox,
             EXISTS (SELECT 1 FROM email_messages x WHERE x.thread_id = t.id AND x.direction = 'inbound'
                       AND (x.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2) AS external_yesterday,
             (SELECT json_agg(json_build_object('direction', m.direction, 'from', COALESCE(m.from_name, m.from_email), 'from_email', m.from_email,
-                      'at', m.sent_at, 'body', m.body_html, 'web_link', m.web_link, 'subject', m.subject, 'filtered_as', m.filtered_as,
+                      'at', m.sent_at, 'body', m.body_html, 'web_link', m.web_link, 'folder_id', m.folder_id, 'subject', m.subject, 'filtered_as', m.filtered_as,
                       'internet_message_id', m.internet_message_id,
                       'kind', (SELECT d.kind FROM email_enquiry_decisions d WHERE d.account_id = m.account_id AND d.provider_id = m.provider_id),
                       'own_report', EXISTS (SELECT 1 FROM email_log l WHERE l.template IN ('mis_daily','mis_weekly') AND l.subject = m.subject))
@@ -193,6 +193,8 @@ export async function selectThreads(db, { from, to }) {
     threads.push({
       thread_id: r.thread_id, subject: r.subject, company: r.company, entity: r.entity, entity_id: r.entity_id, record_status: r.record_status,
       mailbox: r.mailbox, messages, text, web_link: messages.find((m) => m.web_link)?.web_link || null,
+      // Where the thread opens in the Inbox: its mailbox and the folder of its latest message.
+      account_id: r.account_id, folder_id: raw.at(-1)?.folder_id ?? null,
       // What threadVerdict needs to look again at a highlight the model picks (checkHighlights).
       verdictInput: { entity: r.entity, messages: raw.map(({ kind, subject, own_report: ownReport, from_email: fromEmail, filtered_as: filteredAs }) => ({ kind, subject, own_report: ownReport, from_email: fromEmail, filtered_as: filteredAs })) },
     });
@@ -246,7 +248,7 @@ export function checkHighlights(raw, threads, actions) {
     if (action && !numbersAllowed(action, allowed)) continue;
     highlights.push({
       thread_id: t.thread_id, client: String(h.client || t.company || 'a client').trim(), summary, action, owner: h.owner ? String(h.owner).trim() : null,
-      link: t.entity ? linkFor(t.entity, t.entity_id) : `/inbox?thread=${t.thread_id}`, web_link: t.web_link, source: 'ai',
+      link: t.entity ? linkFor(t.entity, t.entity_id) : threadLink(t), web_link: t.web_link || threadLink(t), source: 'ai',
     });
   }
   const byKey = new Map(actions.map((a) => [a.key, a]));

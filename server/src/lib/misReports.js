@@ -34,6 +34,7 @@ import { salesReport } from './reportDefinitions.js';
 import { r2 } from './reportMath.ts';
 import { RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn } from './salesReport.js';
 import { QUOTATION_STATUS } from './statuses.js';
+import { shortDay } from './misBriefing.js';
 
 export const KINDS = ['daily_briefing', 'weekly_mis'];
 
@@ -106,11 +107,13 @@ export async function misSettings(db = { query }) {
  * days × INR value, so an old small item and a young large one both
  * surface, and a row with no value still ranks by its age.
  */
-export function pendingRow({ kind, key, client, reference, amount_inr: amountInr = null, currency = null, amount = null, since, days, owner = null, next_action: nextAction, link, record = null }, overdueDays) {
+export function pendingRow({ kind, key, client, reference, amount_inr: amountInr = null, currency = null, amount = null, since, days, owner = null, next_action: nextAction, link, record = null, mail = null }, overdueDays) {
   const waited = Math.max(0, Math.trunc(days ?? 0));
   return {
     kind, key, client: client || 'Unknown client', reference, amount_inr: amountInr == null ? null : r2(Number(amountInr)), currency, amount,
     since: since || null, days: waited, overdue: waited > overdueDays, owner: owner || null, next_action: nextAction, link, record,
+    // Where the row's email is (§3 "Last activity" and "Email"): { entity, id } for a record's threads, or { thread_id }.
+    mail, last_activity: null, email_link: null,
     score: waited * Math.max(Number(amountInr) || 0, 1),
   };
 }
@@ -166,6 +169,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
         amount: Number(s.stage_amount), currency: s.currency, amount_inr: rate == null ? null : Number(s.stage_amount) * rate,
         since, days: since ? daysBetween(since, today) : 0, owner: s.owner,
         next_action: `Raise the ${s.stage_name} invoice`, link: `/payment-stages?status=To%20Invoice&q=${encodeURIComponent(s.po_number)}`,
+        mail: { entity: 'purchase_order', id: s.po_number },
       }, overdueDays));
       continue;
     }
@@ -177,11 +181,11 @@ export async function pendingInvoices(db, { today, overdueDays }) {
       amount: owed, currency: s.currency, amount_inr: rate == null ? null : owed * rate,
       since: due, days: late, owner: s.owner,
       next_action: late > 0 ? `Chase payment, ${late} day${late === 1 ? '' : 's'} overdue` : `Due ${due ? `on ${due}` : 'soon'}`,
-      link: recordLink('payment_stage', s.id),
+      link: recordLink('payment_stage', s.id), mail: { entity: 'purchase_order', id: s.po_number },
     }, overdueDays));
   }
   const { rows: review } = await db.query(
-    `SELECT d.id, d.sent_at, d.to_emails, d.invoice_no, d.po_number, d.review_reason, a.email AS mailbox
+    `SELECT d.id, d.sent_at, d.to_emails, d.invoice_no, d.po_number, d.review_reason, d.thread_id, a.email AS mailbox
        FROM email_invoice_decisions d JOIN connected_accounts a ON a.id = d.account_id
       WHERE d.outcome = 'review' ORDER BY d.sent_at`);
   for (const d of review) {
@@ -189,7 +193,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
     out.push(pendingRow({
       kind: 'invoice_review', key: `invoice-review:${d.id}`, client: d.to_emails?.[0] || d.mailbox, reference: `Invoice ${d.invoice_no || '(unread)'}${d.po_number ? ` · ${d.po_number}` : ''}`,
       since, days: since ? daysBetween(since, today) : 0,
-      next_action: 'Check the invoice read from email', link: '/payment-stages?tab=invoice-review',
+      next_action: 'Check the invoice read from email', link: '/payment-stages?tab=invoice-review', mail: d.thread_id ? { thread_id: d.thread_id } : null,
     }, overdueDays));
   }
   return out;
@@ -231,11 +235,11 @@ export async function pendingPos(db, { today, overdueDays }) {
       amount: q.amount == null ? null : Number(q.amount), currency: q.currency, amount_inr: rate == null || q.amount == null ? null : Number(q.amount) * rate,
       since, days: since ? daysBetween(since, today) : 0, owner: q.owner,
       next_action: won ? 'Register the PO the client sent' : (q.next_step || 'Ask the client for the PO'),
-      link: recordLink('quotation', q.quotation_no),
+      link: recordLink('quotation', q.quotation_no), mail: { entity: 'quotation', id: q.quotation_no },
     }, overdueDays));
   }
   const { rows: review } = await db.query(
-    `SELECT d.id, d.received_at, d.from_email, d.review_reason, d.suggested_quotations, a.email AS mailbox,
+    `SELECT d.id, d.received_at, d.from_email, d.review_reason, d.suggested_quotations, d.thread_id, a.email AS mailbox,
             (SELECT c.name FROM companies c JOIN contacts ct ON ct.company_id = c.id WHERE lower(ct.email) = lower(d.from_email) LIMIT 1) AS company_name
        FROM email_po_decisions d JOIN connected_accounts a ON a.id = d.account_id
       WHERE d.outcome = 'review' ORDER BY d.received_at`);
@@ -244,7 +248,7 @@ export async function pendingPos(db, { today, overdueDays }) {
     out.push(pendingRow({
       kind: 'po_review', key: `po-review:${d.id}`, client: d.company_name || d.from_email || d.mailbox, reference: `PO received by email${d.suggested_quotations?.length ? ` (${d.suggested_quotations.join(', ')}?)` : ''}`,
       since, days: since ? daysBetween(since, today) : 0,
-      next_action: 'PO received, not registered: check it', link: '/purchase-orders?tab=review',
+      next_action: 'PO received, not registered: check it', link: '/purchase-orders?tab=review', mail: d.thread_id ? { thread_id: d.thread_id } : null,
     }, overdueDays));
   }
   return out;
@@ -286,7 +290,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
       amount: e.estimated_value == null ? null : Number(e.estimated_value), currency: e.currency,
       amount_inr: rate == null || e.estimated_value == null ? null : Number(e.estimated_value) * rate,
       since, days: since ? daysBetween(since, today) : 0, owner: e.owner,
-      next_action: 'Send the quotation', link: recordLink('enquiry', e.enquiry_no),
+      next_action: 'Send the quotation', link: recordLink('enquiry', e.enquiry_no), mail: { entity: 'enquiry', id: e.enquiry_no },
     }, overdueDays));
   }
   const activity = await lastActivity(db, quotations.map((q) => keyOf({ entity: 'quotation', entity_id: q.quotation_no })));
@@ -299,7 +303,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
       kind: 'quotation_open', key: `quotation:${q.quotation_no}`, client: q.client_name, reference: `${q.quotation_no} · ${q.status}`,
       amount: q.amount == null ? null : Number(q.amount), currency: q.currency, amount_inr: rate == null || q.amount == null ? null : Number(q.amount) * rate,
       since, days: since ? daysBetween(since, today) : 0, owner: q.owner,
-      next_action: q.next_step || 'Follow up with the client', link: recordLink('quotation', q.quotation_no),
+      next_action: q.next_step || 'Follow up with the client', link: recordLink('quotation', q.quotation_no), mail: { entity: 'quotation', id: q.quotation_no },
     }, overdueDays));
   }
   return out;
@@ -416,6 +420,160 @@ export function eventHighlight(ev) {
   return { thread_id: ev.thread_id ?? null, client, summary: text, action: null, owner: null, link, source: 'records' };
 }
 
+// ---------------------------------------------------------------------
+// What the reference briefing adds (docs/mis-briefing-fix-plan.md §3)
+// ---------------------------------------------------------------------
+
+/**
+ * A thread in the Inbox: its mailbox, the folder its latest message is in,
+ * and the thread (the Inbox's ?mb=&f=&t=). The mailbox alone when the
+ * folder is not known.
+ */
+export function threadLink({ account_id: mb, folder_id: f, thread_id: t }) {
+  if (!mb) return '/inbox';
+  return f ? `/inbox?mb=${mb}&f=${encodeURIComponent(f)}&t=${t}` : `/inbox?mb=${mb}`;
+}
+
+/** Outlook's link to the message when the provider gave one, else the thread in the Inbox. */
+const emailLink = (m) => m.web_link || threadLink(m);
+
+/**
+ * "Last activity" and "Email" on each pending row (§3): the latest message
+ * on its record's threads, or on its own thread for a review item. Only
+ * the shared mailboxes' mail, the mail the briefing may show.
+ */
+export async function attachMail(db, rows) {
+  const keys = [...new Set(rows.filter((r) => r.mail?.entity).map((r) => `${r.mail.entity}:${r.mail.id}`))];
+  const threadIds = [...new Set(rows.filter((r) => r.mail?.thread_id).map((r) => r.mail.thread_id))];
+  if (!keys.length && !threadIds.length) return rows;
+  const { rows: found } = await db.query(
+    `WITH mail AS (
+       SELECT t.id AS thread_id, t.entity, t.entity_id, (m.sent_at AT TIME ZONE $3)::date::text AS day, m.sent_at, m.web_link, m.account_id, m.folder_id
+         FROM email_threads t
+         JOIN connected_accounts a ON a.id = t.account_id AND a.is_shared
+         JOIN email_messages m ON m.thread_id = t.id AND m.removed_at IS NULL
+        WHERE t.id = ANY($2) OR (t.entity IS NOT NULL AND t.entity || ':' || t.entity_id = ANY($1)))
+     SELECT DISTINCT ON (k) * FROM (
+       SELECT 'thread:' || thread_id AS k, * FROM mail WHERE thread_id = ANY($2)
+       UNION ALL
+       SELECT entity || ':' || entity_id, * FROM mail WHERE entity IS NOT NULL AND entity || ':' || entity_id = ANY($1)
+     ) x ORDER BY k, sent_at DESC`, [keys, threadIds, config.businessTimeZone]);
+  const latest = new Map(found.map((r) => [r.k, r]));
+  for (const row of rows) {
+    const hit = row.mail?.thread_id ? latest.get(`thread:${row.mail.thread_id}`) : row.mail?.entity ? latest.get(`${row.mail.entity}:${row.mail.id}`) : null;
+    if (!hit) continue;
+    row.last_activity = hit.day;
+    row.email_link = emailLink(hit);
+  }
+  return rows;
+}
+
+/**
+ * Up to three earlier messages on each highlight's thread or record
+ * (§3 "Related earlier emails"), from the shared mailboxes the briefing
+ * reads. Changes the highlights in place.
+ */
+export async function attachRelated(db, highlights, { from }) {
+  const ids = [...new Set(highlights.map((h) => h.thread_id).filter((id) => id != null))];
+  if (!ids.length) return highlights;
+  const { rows } = await db.query(
+    `SELECT h.id AS for_thread, r.*
+       FROM email_threads h
+       JOIN LATERAL (
+         SELECT m.subject, COALESCE(m.from_name, m.from_email) AS sender, (m.sent_at AT TIME ZONE $3)::date::text AS day,
+                m.web_link, m.account_id, m.folder_id, m.thread_id
+           FROM email_messages m
+           JOIN email_threads t ON t.id = m.thread_id AND m.removed_at IS NULL
+           JOIN connected_accounts a ON a.id = t.account_id AND a.is_shared AND a.visibility = 'share_everything'
+          WHERE (m.sent_at AT TIME ZONE $3)::date < $2
+            AND (t.id = h.id OR (h.entity IS NOT NULL AND t.entity = h.entity AND t.entity_id = h.entity_id))
+          ORDER BY m.sent_at DESC LIMIT 3) r ON true
+      WHERE h.id = ANY($1)`, [ids, from, config.businessTimeZone]);
+  // The source email of a highlight worded from a record, which has none yet.
+  const { rows: source } = await db.query(
+    `SELECT DISTINCT ON (m.thread_id) m.thread_id, m.web_link, m.account_id, m.folder_id
+       FROM email_messages m JOIN email_threads t ON t.id = m.thread_id JOIN connected_accounts a ON a.id = t.account_id AND a.is_shared
+      WHERE m.thread_id = ANY($1) AND m.removed_at IS NULL ORDER BY m.thread_id, m.sent_at DESC`, [ids]);
+  const sourceOf = new Map(source.map((m) => [m.thread_id, m]));
+  for (const h of highlights) {
+    if (!h.web_link && sourceOf.has(h.thread_id)) h.web_link = emailLink(sourceOf.get(h.thread_id));
+    h.related = rows.filter((r) => r.for_thread === h.thread_id)
+      .map((r) => ({ day: r.day, from: r.sender, subject: r.subject || '(no subject)', link: emailLink(r) }));
+  }
+  return highlights;
+}
+
+/** The clients and numbers behind each at-a-glance count: the Detail column. */
+async function glanceDetail(db, { from, to }) {
+  const tz = config.businessTimeZone;
+  // The time zone only for the queries that use it: Postgres refuses a parameter a query does not use.
+  const list = async (sql) => (await db.query(sql, sql.includes('$3') ? [from, to, tz] : [from, to])).rows.map((r) => r.label).filter(Boolean);
+  const [newEnquiries, quotationsSent, posReceived, invoicesRaised, paymentsReceived] = await Promise.all([
+    list(`SELECT e.client_name AS label FROM enquiries e WHERE ${ENQUIRY_DAY('e', '$3')} BETWEEN $1 AND $2
+            AND NOT EXISTS (SELECT 1 FROM email_enquiry_decisions d WHERE d.enquiry_no = e.enquiry_no AND d.outcome = 'created' AND d.kind <> 'new_enquiry')
+          ORDER BY e.enquiry_no`),
+    list(`SELECT q.client_name || ' (' || q.quotation_no || ')' AS label FROM quotations q
+           WHERE q.quotation_no IN (
+             SELECT x.quotation_no FROM quotations x WHERE (x.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2
+             UNION
+             SELECT d.quotation_no FROM email_enquiry_decisions d
+              WHERE d.kind = 'quotation_sent' AND d.quotation_no IS NOT NULL AND d.outcome IN ('created','linked')
+                AND (d.received_at AT TIME ZONE $3)::date BETWEEN $1 AND $2)
+           ORDER BY q.quotation_no`),
+    list(`SELECT COALESCE(pr.client_name, '') || ' (' || po.po_number || ')' AS label
+            FROM purchase_orders po LEFT JOIN projects pr ON pr.project_id = po.project_id
+           WHERE po.po_date BETWEEN $1 AND $2 AND ${poCountsAsSale('po')} ORDER BY po.po_number`),
+    list(`SELECT COALESCE(s.client_name, '') || ' (' || COALESCE(s.invoice_no, s.po_number) || ')' AS label
+            FROM v_payment_stages s WHERE s.invoice_date BETWEEN $1 AND $2 ORDER BY s.invoice_no`),
+    list(`SELECT COALESCE(s.client_name, '') || ' (' || COALESCE(s.invoice_no, s.po_number) || ')' AS label
+            FROM payments p JOIN v_payment_stages s ON s.id = p.stage_id WHERE p.received_on BETWEEN $1 AND $2 ORDER BY p.id`),
+  ]);
+  return { new_enquiries: newEnquiries, quotations_sent: quotationsSent, pos_received: posReceived, invoices_raised: invoicesRaised, payments_received: paymentsReceived };
+}
+
+/**
+ * Reminders carried forward (§3): visits and meetings in the next three
+ * days, and POs that came by email and are still not registered. The
+ * tracker has no "PO acknowledged" mark; a PO still in review is the
+ * nearest thing to one not acknowledged.
+ */
+async function remindersAhead(db, { today, pos }) {
+  const tz = config.businessTimeZone;
+  const { rows: visits } = await db.query(
+    `SELECT v.id, v.title, v.type, v.status, v.city, (v.starts_at AT TIME ZONE $3)::date::text AS day, COALESCE(c.name, pr.client_name) AS client
+       FROM visits v LEFT JOIN companies c ON c.id = v.company_id LEFT JOIN projects pr ON pr.project_id = v.project_id
+      WHERE v.status IN ('planned','confirmed') AND (v.starts_at AT TIME ZONE $3)::date BETWEEN $1 AND $2
+      ORDER BY v.starts_at, v.id`, [today, addDays(today, 3), tz]);
+  return [
+    ...visits.map((v) => ({
+      kind: 'visit',
+      text: `${v.type === 'meeting' ? 'Meeting' : 'Visit'}: ${v.title}${v.client && !v.title.includes(v.client) ? `, ${v.client}` : ''}, ${shortDay(v.day)}${v.city ? `, ${v.city}` : ''} (${v.status})`,
+      link: `/schedule?visit=${v.id}`,
+    })),
+    ...pos.filter((r) => r.kind === 'po_review').map((r) => ({
+      kind: 'po_not_registered',
+      text: `PO from ${r.client}, received ${r.since ? shortDay(r.since) : 'by email'}, is still not registered`,
+      link: r.link,
+    })),
+  ];
+}
+
+/** The shared mailboxes the briefing reads (decision 3), with their folders, and the ones it cannot read. */
+async function briefingMailboxes(db) {
+  const { rows } = await db.query(`SELECT email, visibility, read_scope FROM connected_accounts WHERE is_shared AND status <> 'disconnected' ORDER BY email`);
+  return {
+    read: rows.filter((r) => r.visibility === 'share_everything').map((r) => ({ email: r.email, folders: r.read_scope === 'inbox_sent' ? 'Inbox + Sent Items' : 'all folders' })),
+    not_read: rows.filter((r) => r.visibility !== 'share_everything').map((r) => ({ email: r.email, shared_as: r.visibility })),
+  };
+}
+
+/** The invoices in the reference's three tables: actions (review), to raise, receivables. */
+export const invoiceTables = (rows) => ({
+  actions: summarise(rows.filter((r) => r.kind === 'invoice_review')),
+  to_raise: summarise(rows.filter((r) => r.kind === 'to_invoice')),
+  receivables: summarise(rows.filter((r) => r.kind === 'invoice_due')),
+});
+
 const summarise = (rows) => ({
   count: rows.length,
   overdue: rows.filter((r) => r.overdue).length,
@@ -432,9 +590,12 @@ export async function dailyBriefing({ today = businessToday(), db = { query }, s
   const s = settings || await misSettings(db);
   const period = yesterdayOf(today);
   const ctx = { today, overdueDays: s.overdueDays };
-  const [glance, invoices, pos, quotations, readers, events] = await Promise.all([
+  const [glance, invoices, pos, quotations, readers, events, detail, mailboxes] = await Promise.all([
     atAGlance(db, period), pendingInvoices(db, ctx), pendingPos(db, ctx), pendingQuotations(db, ctx), readersDay(db, period), readerEvents(db, period),
+    glanceDetail(db, period), briefingMailboxes(db),
   ]);
+  await attachMail(db, [...invoices, ...pos, ...quotations]);
+  const reminders = await remindersAhead(db, { today, pos });
   const pending = { invoices: summarise(invoices), pos: summarise(pos), quotations: summarise(quotations) };
   const all = [...invoices, ...pos, ...quotations];
   return {
@@ -448,6 +609,13 @@ export async function dailyBriefing({ today = businessToday(), db = { query }, s
       overdue: all.filter((r) => r.overdue).length,
     },
     pending,
+    // The reference's pieces (§3): what is behind each count, the invoices
+    // in three tables, what is coming up, and where the mail was read.
+    glance_detail: detail,
+    invoice_tables: invoiceTables(invoices),
+    reminders,
+    mailboxes,
+    app_url: s.appUrl,
     top_actions: topActions(all),
     readers,
     events,
