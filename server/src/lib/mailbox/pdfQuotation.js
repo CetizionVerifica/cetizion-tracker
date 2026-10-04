@@ -60,7 +60,8 @@ export function rankPdfs(files) {
 export function parseAmount(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
   if (v === null || v === undefined) return null;
-  const s = String(v).replace(/(rs\.?|inr|usd|eur|gbp|₹|\$|€|£)/gi, '').replace(/\/-\s*$/, '').replace(/[\s,]/g, '');
+  // A label printed against the figure goes too: "Indian Rupee24,63,840.00", "Total: 5,90,000".
+  const s = String(v).replace(/(rs\.?|inr|usd|eur|gbp|₹|\$|€|£)/gi, '').replace(/^[^\d-]*[a-z][^\d-]*(?=-?\d)/i, '').replace(/\/-\s*$/, '').replace(/[\s,]/g, '');
   if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;

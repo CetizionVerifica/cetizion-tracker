@@ -16,7 +16,7 @@ import { BULK } from './rules.js';
 import { amountInText, near, parseAmount } from './pdfQuotation.js';
 import { STATUS } from '../statuses.js';
 import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT } from './readLimits.js';
-import { READING_RULES, whoWeAre } from './promptRules.js';
+import { READING_RULES, TOTALS_RULES, parseTaxBreakup, taxFromBreakup, whoWeAre, wordsAgree } from './promptRules.js';
 import { gstinOf, ourParty } from './ourParties.js';
 
 /** An invoice number as compared: case, spaces and dashes ignored. */
@@ -100,6 +100,7 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
     ' "seller": {"company_name": string|null, "gstin": string|null}, "buyer": {"company_name": string|null, "gstin": string|null},',
     ' "po_reference": string|null, "project_reference": string|null, "quotation_reference": string|null, "currency": "INR"|...,',
     ' "taxable_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null,',
+    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
     ' "stage_hint": string|null, "due_date": "YYYY-MM-DD"|null}',
     'The SELLER issues the invoice; for our invoice that is Cetizion Verifica, with our GSTIN. The BUYER is the client it is addressed to: the "Bill to" or "Buyer" block, with that block\'s GSTIN.',
     'document_type: tax_invoice for a GST tax invoice; proforma for a proforma invoice or PI; credit_note or debit_note for those; other for anything else (a quotation, a statement, a reminder, a receipt).',
@@ -108,6 +109,7 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
     'po_reference: the client\'s PO or order number the invoice cites ("PO No.", "Your order ref"), without its label. project_reference: a project number like PRJ-2026-014, if printed. quotation_reference: our quotation number it cites (CTZ/QT/2026/014), if printed.',
     'stage_hint: what part of the order the invoice is for, in the document\'s words ("50% advance", "Balance", "Final", "Milestone 2: draft report"), from the line description or a note; else null.',
     'taxable_value: the value before tax (Taxable value, Sub-total). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the invoice total including tax (Grand total, Total invoice value), never an amount after TDS.',
+    ...TOTALS_RULES,
     ...READING_RULES,
     'confidence: how sure you are the document is our tax invoice and that you read its number, date and amounts correctly. A field it does not print is null and does not lower confidence; doubt about what a printed value says does.',
   ].join('\n');
@@ -128,7 +130,8 @@ export function parseInvoiceVerdict(raw) {
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = null; } }
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     return { document_type: 'other', confidence: 0, revised_or_cancelled: false, invoice_no: null, invoice_date: null, seller: {}, buyer: {},
-      po_reference: null, project_reference: null, quotation_reference: null, currency: null, taxable_value: null, tax_value: null, total_value: null, stage_hint: null, due_date: null };
+      po_reference: null, project_reference: null, quotation_reference: null, currency: null, taxable_value: null, tax_value: null, total_value: null, stage_hint: null, due_date: null,
+      tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null };
   }
   const c = Number(v.confidence);
   return {
@@ -146,6 +149,8 @@ export function parseInvoiceVerdict(raw) {
     taxable_value: parseAmount(v.taxable_value),
     tax_value: parseAmount(v.tax_value),
     total_value: parseAmount(v.total_value),
+    tax_breakup: parseTaxBreakup(v.tax_breakup, parseAmount),
+    total_in_words: clean(v.total_in_words, 300),
     stage_hint: clean(v.stage_hint, 120),
     due_date: isoDate(v.due_date),
   };
@@ -186,15 +191,21 @@ export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 
   if (!STATUS.currency.includes(currency)) return fail('bad_currency');
 
   let { taxable_value: taxable, tax_value: tax, total_value: total } = v;
+  // The GST rows, added here (§2): the tax when only CGST and SGST are printed; a check when one figure is too.
+  const rows = taxFromBreakup(v.tax_breakup);
+  if (tax === null) tax = rows;
+  else if (rows !== null && !near(tax, rows)) return fail('totals_do_not_add_up');
   if (total === null && taxable !== null && tax !== null) total = round2(taxable + tax);
   if (!(total > 0)) return fail('totals_do_not_add_up');
   if (taxable !== null && tax !== null && !near(taxable + tax, total)) return fail('totals_do_not_add_up');
-  if (sourceText !== null && ![total, taxable, tax].filter((n) => n !== null && n > 0).every((n) => amountInText(n, sourceText))) return fail('amounts_not_in_pdf');
+  if (!wordsAgree(v.total_in_words, [total, taxable], near)) return fail('totals_do_not_add_up');
+  const b = v.tax_breakup || {};
+  if (sourceText !== null && ![total, taxable, v.tax_value, b.igst, b.cgst, b.sgst].filter((n) => n !== null && n !== undefined && n > 0).every((n) => amountInText(n, sourceText))) return fail('amounts_not_in_pdf');
 
   return {
     ok: true,
     invoice: {
-      ...v, currency, total_value: total, invoice_no_norm: normaliseInvoiceNo(v.invoice_no),
+      ...v, currency, tax_value: tax, total_value: total, invoice_no_norm: normaliseInvoiceNo(v.invoice_no),
       issuing_gstin: gstinOf(v.seller?.gstin) || null, through_partner: seller.kind === 'partner' ? seller.name : null,
     },
   };

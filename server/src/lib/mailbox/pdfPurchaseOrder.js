@@ -14,6 +14,7 @@ import { norm, paymentSplit } from '../../import/rules.js';
 import { STATUS } from '../statuses.js';
 import { amountInText, near } from './pdfQuotation.js';
 import { addressedInText, ourParty } from './ourParties.js';
+import { taxFromBreakup, wordsAgree } from './promptRules.js';
 
 // ----------------------------------------------------------- which PDF
 
@@ -113,14 +114,22 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // Values. The total includes tax; with "GST extra" only the basic value
   // is printed, and registration grosses it up (grossUp).
   let { basic_value: basic, tax_value: tax, total_value: total } = v;
+  // The GST rows, added here (docs/email-po-invoice-prompt-plan.md §2): the
+  // tax when only CGST and SGST are printed; a check when one figure is too.
+  const rows = taxFromBreakup(v.tax_breakup);
+  if (tax === null) tax = rows;
+  else if (rows !== null && !near(tax, rows)) return fail('totals_do_not_add_up');
   if (total === null && basic !== null && tax !== null) total = round2(basic + tax);
   if (basic !== null && tax !== null && total !== null && !near(basic + tax, total)) return fail('totals_do_not_add_up');
   if (!(total > 0) && !(v.gst_extra && basic > 0)) return fail('no_value');
+  // The amount in words says the total too; a line that cannot be read is let be.
+  if (!wordsAgree(v.total_in_words, [total, basic], near)) return fail('totals_do_not_add_up');
 
   // Every amount used must be printed: a value the document does not show
-  // is a value the model made up.
+  // is a value the model made up. The tax counts as printed when its rows are.
   if (sourceText !== null) {
-    const used = [total, basic, tax].filter((n) => n !== null && n > 0);
+    const b = v.tax_breakup || {};
+    const used = [total, basic, v.tax_value, b.igst, b.cgst, b.sgst].filter((n) => n !== null && n !== undefined && n > 0);
     if (!used.every((n) => amountInText(n, text))) return fail('amounts_not_in_pdf');
   }
 

@@ -16,7 +16,7 @@ import { parseAmount } from './pdfQuotation.js';
 import { BULK, BULK_SENDER, addr, domainOf } from './rules.js';
 import { splitReference } from '../../import/parse.js';
 import { MAX_DOCUMENT_TEXT as MAX_PDF_TEXT, MAX_EMAIL_TEXT, MAX_LINES } from './readLimits.js';
-import { READING_RULES, serviceRule, whoWeAre } from './promptRules.js';
+import { READING_RULES, TOTALS_RULES, parseTaxBreakup, serviceRule, whoWeAre } from './promptRules.js';
 
 export const DOCUMENT_TYPES = ['purchase_order', 'work_order', 'loi', 'contract', 'amendment', 'cancellation', 'other'];
 
@@ -131,6 +131,7 @@ export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receive
     ' "our_quotation_ref": string|null, "currency": "INR"|...,',
     ' "lines": [{"description": string, "qty": number, "rate": "amount as printed", "amount": "amount as printed", "service": string|null}],',
     ' "basic_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null, "gst_extra": boolean,',
+    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
     ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null,',
     ' "project_manager": {"name": string|null, "email": string|null}}',
     'The BUYER is the client who issues the order: its name, GSTIN and state from the buyer, "Bill to" or letterhead block. The VENDOR (supplier, contractor, service provider) is who it is addressed to; for a PO to us that is Cetizion Verifica.',
@@ -143,6 +144,7 @@ export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receive
     'lines: one entry per priced line of the order, in order. Never a GST, tax, subtotal, round-off or grand-total row. qty: a number, 1 when not printed. rate: the unit rate before tax; amount: the line\'s value before tax; both as printed.',
     serviceRule(services, { field: 'Each line\'s service' }),
     'basic_value: the order value before tax (Sub-total, Basic value, Taxable value). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the grand total including tax. gst_extra: true when the order says GST or taxes are extra or as applicable, with no tax amount printed.',
+    ...TOTALS_RULES,
     'payment_terms_text: the payment terms copied word for word, every percentage and milestone in them ("30% advance against PO, 40% on submission of draft report, 30% on final report"), from the terms annexure if that is where they are. Leave out tax and penalty clauses.',
     'credit_days: the days to pay after an invoice ("within 45 days of invoice", "45 days credit", "Net 45" give 45), if stated; never a delivery period.',
     'delivery_date: the date the work must be completed or delivered by, only when printed as a date. project_manager: the client\'s person named as engineer-in-charge, coordinator or project manager for the work.',
@@ -168,6 +170,7 @@ const NOT_A_PO = Object.freeze({
   is_purchase_order: false, document_type: 'other', confidence: 0, po_number: null, po_date: null, amendment_no: 0,
   buyer: {}, vendor: {}, our_quotation_ref: null, currency: null, lines: [], basic_value: null, tax_value: null, total_value: null,
   gst_extra: false, payment_terms_text: null, credit_days: null, delivery_date: null, project_manager: {},
+  tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null,
 });
 
 /**
@@ -206,6 +209,8 @@ export function parsePoVerdict(raw) {
     tax_value: parseAmount(v.tax_value),
     total_value: parseAmount(v.total_value),
     gst_extra: v.gst_extra === true,
+    tax_breakup: parseTaxBreakup(v.tax_breakup, parseAmount),
+    total_in_words: clean(v.total_in_words, 300),
     payment_terms_text: clean(v.payment_terms_text, 1000),
     credit_days: wholeNumber(v.credit_days, 365),
     delivery_date: isoDate(v.delivery_date),
