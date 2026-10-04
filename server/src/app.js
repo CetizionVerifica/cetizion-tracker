@@ -45,6 +45,7 @@ import { acceptanceRouter, publicAcceptanceRouter } from './routes/acceptance.js
 import { deliverablesRouter } from './routes/deliverables.js';
 import { mailboxRouter, mailThreadRouter, mailWebhookRouter } from './routes/mailboxes.js';
 import { inboxRouter } from './routes/inbox.js';
+import { mailRouter } from './routes/mail.js';
 import { profitabilityRouter } from './routes/profitability.js';
 import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
@@ -170,6 +171,8 @@ app.use('/api/communications', communicationsRouter);
 app.use('/api/deliverables', deliverablesRouter);
 app.use('/api/mailboxes', mailboxRouter);
 app.use('/api/mail', mailThreadRouter);
+// Reading mail as Outlook shows it (docs/inbox-outlook-plan.md §3.3): folders, conversations, messages, attachments.
+app.use('/api/mail', mailRouter);
 app.use('/api/inbox', inboxRouter);
 app.use('/api/profitability', profitabilityRouter);
 app.use('/api/visits', visitsRouter);

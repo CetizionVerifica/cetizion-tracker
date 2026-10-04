@@ -103,17 +103,58 @@ export function cleanMail(html, showImages = false) {
 }
 
 /**
+ * Where a message's own inline images are served from
+ * (docs/inbox-outlook-plan.md §3.3): the tracker's own route, which streams
+ * the image from the mailbox for the one message it belongs to. A `cid:`
+ * reference is a name inside the message; a browser cannot fetch one, so
+ * every `src="cid:…"` is pointed here instead, and the frame's policy
+ * allows this one path and nothing else of ours.
+ */
+export const inlineBase = (messageId) => `/api/mail/messages/${encodeURIComponent(messageId)}/inline/`;
+
+/**
+ * Point the message's `cid:` images at the inline route. Only the `src` of
+ * an <img>: a `cid:` anywhere else (a link, a style) stays as it is and the
+ * policy refuses it. The content id is the bare name, without the angle
+ * brackets some clients write it with.
+ */
+export function rewriteCid(html, messageId) {
+  if (!messageId) return String(html ?? '');
+  const base = inlineBase(messageId);
+  return String(html ?? '').replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["']?)cid:(<[^<>"'\s]+>|[^"'\s>]+)\2/gi, (_, before, quote, cid) => {
+    // A content id is whatever the sender wrote; one with a stray "%" is
+    // not percent-encoded and must not take the reading pane down with it.
+    let decoded = cid;
+    try { decoded = decodeURIComponent(cid); } catch { /* not percent-encoded: use it as written */ }
+    const id = decoded.replace(/^<|>$/g, '');
+    return `${before}"${base}${encodeURIComponent(id)}"`;
+  });
+}
+
+/**
+ * The origin the inline route is read from, as the policy must spell it:
+ * a srcdoc frame has its parent's origin, and `'self'` would open every
+ * path of ours to the message. In Node (a unit test) there is no origin,
+ * and no fetch happens either way.
+ */
+const inlineOrigin = () => (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null);
+
+/**
  * `img-src data: cid:` keeps the images that travelled with the message and
  * drops every one that would go to the network. The rest of the list costs
  * nothing and is the second answer if the sanitiser is ever wrong about a
  * tag: no script, no frame, no form to post our session at, no connection
  * out, and `base-uri 'none'` so an email cannot repoint the <base> below
  * against us.
+ *
+ * `messageId` adds the one path of ours the frame may draw from: that
+ * message's inline images (rewriteCid). Only that message's — a frame
+ * showing one email cannot read another's attachments through it.
  */
-export const framePolicy = (showImages) => [
+export const framePolicy = (showImages, messageId = null) => [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
-  `img-src data: cid:${showImages ? ' https:' : ''}`,
+  `img-src data: cid:${messageId ? ` ${inlineOrigin() || ''}${inlineBase(messageId)}` : ''}${showImages ? ' https:' : ''}`,
   "script-src 'none'",
   "frame-src 'none'",
   "object-src 'none'",
@@ -189,12 +230,14 @@ small { color: #6b6f76; }
  * without them a link loads the client's website *inside* the message,
  * which looks like the tracker and is not.
  */
-export const frameDoc = (html, showImages) => {
-  const ours = `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages)}">`
+export const frameDoc = (html, showImages, { messageId = null } = {}) => {
+  const ours = `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages, messageId)}">`
     + `<base target="_blank" rel="noopener noreferrer">`
     + `<style>${STYLE}</style>`;
   const plain = hasOwnStyling(html) ? '' : ' class="plain"';
-  const clean = cleanMail(html, showImages);
+  // The cid: images first, so the sanitiser sees an ordinary same-origin
+  // src and the policy's one allowed path matches it.
+  const clean = cleanMail(rewriteCid(html, messageId), showImages);
 
   // Sanitised as a whole document, the message comes back with its own
   // <style> lifted into a head. Ours is put in ahead of it, so that where

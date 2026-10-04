@@ -131,12 +131,23 @@ function testProvider(account) {
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null }));
     },
     async message(providerId) {
+      // pushTestFailure(id, { message: { status, reconnect, message } }): the next live read fails like Graph would.
+      const fail = takeFailure(account.id, 'message');
+      if (fail) throw Object.assign(new Error(fail.message || 'AADSTS70000: the refresh token has expired'), { status: fail.status, reconnect: Boolean(fail.reconnect) });
       const m = testMessages.get(`${account.id}:${providerId}`);
       if (!m) throw Object.assign(new Error('Not found'), { status: 404 });
       return m;
     },
     async attachments(providerId) {
       return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a) => ({ size: a.content?.length || 0, ...a }));
+    },
+    /** One attachment's bytes, by the id attachmentList gave it; a 404 for one the message does not have. */
+    async attachmentStream(providerId, attachmentId) {
+      const list = testAttachments.get(`${account.id}:${providerId}`) || [];
+      const i = list.findIndex((a, n) => (a.provider_id || `att-${n}`) === attachmentId);
+      if (i < 0) throw Object.assign(new Error('Not found'), { status: 404 });
+      const content = Buffer.from(list[i].content || '');
+      return { stream: new Blob([content]).stream(), size: content.length };
     },
     /** Inbox, the other folders its mail was pushed to, Sent Items; never the skipped ones (microsoft.js). */
     async folders() {

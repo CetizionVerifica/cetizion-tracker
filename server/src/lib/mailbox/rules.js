@@ -77,6 +77,20 @@ export function forReaders(c, readAll) {
   return { ...c, skip: null, filtered: null, external: c.robots || c.external };
 }
 
+/**
+ * Whose mailbox it is. The owner of a personal mailbox, and nobody else,
+ * reads past what the mailbox stores: that is their own mail, which Outlook
+ * shows them in full whatever they chose to share with the team. Spelled
+ * once, here, because two routes answer on it — the thread route promises
+ * `can_read_live`, and GET /api/mail/messages/:id has to keep that promise.
+ */
+export const isOwner = (userId, account) => !account.is_shared && account.user_id !== null && account.user_id !== undefined && account.user_id === (userId ?? null);
+/** Whether the caller may see the content the mailbox holds back — bodies read live, attachments downloaded. */
+export const mayReadContent = (userId, account) => account.visibility === 'share_everything' || isOwner(userId, account);
+/** Whether a stored message's body is read live from the provider for this caller (docs/inbox-outlook-plan.md §3.3). */
+export const canReadLive = (userId, account, message) => isOwner(userId, account) && !message.body_html && !message.removed_at
+  && account.visibility !== 'share_everything' && account.status === 'active';
+
 /** What a mailbox's owner agreed to share. */
 export function applyVisibility(msg, visibility) {
   if (visibility === 'share_everything') return msg;
