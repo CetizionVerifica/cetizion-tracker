@@ -119,10 +119,12 @@ export function poPrefilter(message, facts = {}) {
  * from it; and each line's service spelt as the catalogue spells it, so the
  * service's payment terms and onboarding templates apply.
  */
-export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from, services = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [] }) {
+export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from, services = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [], clientNotes = null }) {
   const system = [
     'You read one document a client sent to Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, and say whether it is a purchase order to us, and what it says.',
     whoWeAre({ ourNames, ourGstin, ourGstins, partners }),
+    // What an admin wrote about this client's documents (documentProfiles.js).
+    ...(clientNotes ? [clientNotes] : []),
     'Answer with one JSON object and nothing else:',
     '{"is_purchase_order": boolean, "document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1,',
     ' "po_number": string|null, "po_date": "YYYY-MM-DD"|null, "amendment_no": integer,',

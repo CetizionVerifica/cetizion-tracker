@@ -90,10 +90,11 @@ export function rankInvoicePdfs(files) {
  * three amounts as printed, the PO it cites to match it, and the stage
  * wording to pick which payment stage it bills.
  */
-export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [] }) {
+export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [], clientNotes = null }) {
   const system = [
     'You read one document that Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, emailed to a client, and say whether it is our tax invoice, and what it says.',
     whoWeAre({ ourNames, ourGstin, ourGstins, partners }),
+    ...(clientNotes ? [clientNotes] : []),
     'Answer with one JSON object and nothing else:',
     '{"document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1, "revised_or_cancelled": boolean,',
     ' "invoice_no": string|null, "invoice_date": "YYYY-MM-DD"|null,',

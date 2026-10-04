@@ -344,6 +344,46 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
   });
 
+  test('9c. a client\'s document note goes into the prompt, and a PO number not of its shape goes to review', async () => {
+    const box = await mailbox();
+    const companyId = await client('Acme Pattern Ltd', 'anil@acme-pattern.co.in');
+    await quotation('Acme Pattern Ltd');
+    // Saved in Settings by an admin: that approves it.
+    const { body: saved } = await agent.post('/api/document-profiles').send({
+      company_id: companyId, doc_type: 'po', sender_domains: 'acme-pattern.co.in', po_number_pattern: '^45\\d{8}$', hint: 'SAP orders; "Your Ref" is our quotation.',
+    }).expect(201);
+    const { rows: [p] } = await db.query('SELECT approved_at, sender_domains FROM company_document_profiles WHERE id = $1', [saved.data.id]);
+    assert.ok(p.approved_at, 'saving approves it');
+    assert.deepEqual(p.sender_domains, ['acme-pattern.co.in']);
+    await agent.post('/api/document-profiles').send({ company_id: companyId, doc_type: 'invoice', po_number_pattern: '([' }).expect(422);
+
+    const msg = poEmail({ from: { email: 'anil@acme-pattern.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'AP-77', buyer: 'Acme Pattern Ltd' }) }] });
+    const calls = ai(reading({ po_number: 'AP-77', buyer: { company_name: 'Acme Pattern Ltd' } }));
+    await deliver(box, [msg]);
+    assert.match(calls[0].system, /Notes on documents from Acme Pattern Ltd: SAP orders; "Your Ref" is our quotation\./);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'po_number_pattern']);
+    assert.equal(d.review_note, "Acme Pattern Ltd's PO numbers match ^45\\d{8}$; this one reads AP-77.");
+    assert.equal(await poRow('AP-77'), undefined, 'nothing registered');
+  });
+
+  test('9d. three of a client\'s items settled by hand suggest a note, which is not used until an admin saves it', async () => {
+    const { noteCorrection, loadProfiles } = await import('../src/lib/mailbox/documentProfiles.js');
+    const companyId = await client('Acme Corrected Ltd', 'anil@acme-corrected.co.in');
+    assert.equal(await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' }), null);
+    await noteCorrection(db, { companyId, docType: 'po', reason: 'amendment', by: 'Priya' });
+    const suggested = await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' });
+    assert.ok(suggested, 'the third suggests one');
+    const { rows: [p] } = await db.query('SELECT hint, approved_at FROM company_document_profiles WHERE id = $1', [suggested]);
+    assert.match(p.hint, /^Suggested: 3 of this client's POs needed a person in 90 days \(amendment, no_match\)/);
+    assert.equal(p.approved_at, null);
+    assert.ok(!(await loadProfiles(db, 'po')).some((x) => x.id === suggested), 'not used while only suggested');
+    await agent.patch(`/api/document-profiles/${suggested}`).send({ hint: 'Orders come as SAP PDFs.' }).expect(200);
+    assert.ok((await loadProfiles(db, 'po')).some((x) => x.id === suggested), 'used once an admin saved it');
+    const { body: list } = await agent.get('/api/document-profiles').expect(200);
+    assert.ok(list.data.some((r) => r.id === suggested && r.company_name === 'Acme Corrected Ltd' && r.approved === true));
+  });
+
   test('9b. a PO addressed to our partner company is registered as ours, through the partner, with the GSTIN it was addressed to', async () => {
     const box = await mailbox();
     await client('Acme Partner Ltd', 'anil@acme-partner.co.in');

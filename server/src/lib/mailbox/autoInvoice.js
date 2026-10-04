@@ -37,6 +37,7 @@ import { aiCallsToday, enquirySettings } from './autoEnquiry.js';
 import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
 import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, splitFor, wrongGstin } from './invoiceDetect.js';
 import { advanceShare } from '../../import/ai.js';
+import { loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
@@ -186,11 +187,15 @@ export async function decideInvoice(account, cand, ctx) {
     return 'waiting';
   }
 
+  // The client's document note, picked before the call by the recipient's domain, the thread's client, or its GSTIN in the PDF (§6).
+  ctx.profiles ??= await loadProfiles({ query }, 'invoice');
+  const { rows: [thread] } = cand.threadId ? await query('SELECT company_id FROM email_threads WHERE id = $1', [cand.threadId]) : { rows: [] };
   const read = await readWithAi(account, cand, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf', requirePdf: true,
     prompt: ({ pdfText }) => buildInvoicePrompt({
       pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
       ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners,
+      clientNotes: profileNote(pickProfile(ctx.profiles, { senderEmail: c.external?.[0]?.email, companyId: thread?.company_id ?? null, text: pdfText })),
     }),
   });
   if (read.error) {

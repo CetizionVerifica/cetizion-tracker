@@ -16,6 +16,7 @@ import { Router } from 'express';
 import { query, transaction } from '../db.js';
 import { purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { splitStage } from '../lib/invoices.js';
+import { noteCorrection } from '../lib/mailbox/documentProfiles.js';
 import { ApiError } from '../middleware/error.js';
 import * as autoInvoice from '../lib/mailbox/autoInvoice.js';
 import { aiCallsToday } from '../lib/mailbox/autoEnquiry.js';
@@ -88,7 +89,7 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
   const before = ctx.aiUsed;
   const read = await readWithAi(account, { m, c: { direction: 'outbound', external: [] } }, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf',
-    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })), ourNames: settings.ourNames, ourGstin: settings.ourGstin }),
+    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })), ourNames: settings.ourNames, ourGstin: settings.ourGstin, ourGstins: settings.ourGstins, partners: settings.partners }),
   });
   await countAiCalls(ctx.aiUsed - before, 'invoice_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'The invoice could not be read again: enter it from the email.' } });
@@ -152,4 +153,8 @@ export async function settleInvoiceReview(client, req, reviewId, { stageId, invo
       WHERE d.id = $1 AND d.outcome = 'review' ${mine}`,
     [...params, stageId, invoiceNo, po?.po_number ?? null, req.user?.name || req.user?.username || null]);
   if (!rowCount) throw new ApiError(409, 'That review item is already settled');
+  // A person did what the reader could not: counted against the client, towards a suggested document note (§6).
+  const { rows: [r] } = await client.query(
+    `SELECT pr.company_id, d.review_reason FROM email_invoice_decisions d JOIN purchase_orders p ON p.po_number = d.po_number JOIN projects pr ON pr.project_id = p.project_id WHERE d.id = $1`, [reviewId]);
+  if (r) await noteCorrection(client, { companyId: r.company_id, docType: 'invoice', reason: r.review_reason, by: req.user?.name || req.user?.username || null });
 }

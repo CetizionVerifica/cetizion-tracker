@@ -37,6 +37,7 @@ const PO_REASONS = {
   currency_mismatch: 'Currency differs from the quotation\'s',
   no_currency: 'Currency could not be read',
   wrong_gstin: 'Addressed to a GSTIN we do not invoice from',
+  po_number_pattern: 'PO number not of the client\'s usual shape',
 };
 
 const INVOICE_REASONS = {

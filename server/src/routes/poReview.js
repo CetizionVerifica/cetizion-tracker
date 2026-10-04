@@ -25,6 +25,7 @@ import { aiConfig, chatJSON } from '../lib/ai.js';
 import { aiCallsToday } from '../lib/mailbox/autoEnquiry.js';
 import { mainText } from '../lib/mailbox/enquiryDetect.js';
 import { MAX_EMAIL_TEXT } from '../lib/mailbox/readLimits.js';
+import { noteCorrection } from '../lib/mailbox/documentProfiles.js';
 
 export const poReviewRouter = Router();
 
@@ -166,4 +167,8 @@ export async function settleReview(client, req, reviewId, { poNumber, quotationN
       WHERE d.id = $1 AND d.outcome = 'review' ${mine}`,
     [...params, poNumber, quotationNo, req.user?.name || req.user?.username || null]);
   if (!rowCount) throw new ApiError(409, 'That review item is already settled');
+  // A person did what the reader could not: counted against the client, towards a suggested document note (§6).
+  const { rows: [r] } = await client.query(
+    `SELECT pr.company_id, d.review_reason FROM email_po_decisions d JOIN purchase_orders p ON p.po_number = d.po_number JOIN projects pr ON pr.project_id = p.project_id WHERE d.id = $1`, [reviewId]);
+  if (r) await noteCorrection(client, { companyId: r.company_id, docType: 'po', reason: r.review_reason, by: req.user?.name || req.user?.username || null });
 }

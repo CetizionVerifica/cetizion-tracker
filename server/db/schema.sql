@@ -3109,7 +3109,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                           -- its client or currency could not be confirmed (071)
                           'currency_mismatch','no_currency',
                           -- addressed to a GSTIN we do not invoice from (079)
-                          'wrong_gstin')),
+                          'wrong_gstin',
+                          -- a PO number not of the client's shape (081)
+                          'po_number_pattern')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3218,6 +3220,34 @@ CREATE TABLE IF NOT EXISTS email_ai_calls (
   made_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS email_ai_calls_made_idx ON email_ai_calls (made_at);
+
+-- ------------------------------------------- client document notes (081)
+-- What is particular about one client's POs or invoices, for the email
+-- readers (docs/email-po-invoice-prompt-plan.md §6), and the corrections
+-- reviewers made that suggest one.
+CREATE TABLE IF NOT EXISTS company_document_profiles (
+  id                 serial PRIMARY KEY,
+  company_id         int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  doc_type           text NOT NULL CHECK (doc_type IN ('po','invoice')),
+  sender_domains     text[] NOT NULL DEFAULT '{}',
+  po_number_pattern  text,
+  label_aliases      text,
+  hint               text CHECK (char_length(hint) <= 500),
+  approved_by        text,
+  approved_at        timestamptz,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, doc_type)
+);
+
+CREATE TABLE IF NOT EXISTS document_profile_corrections (
+  id             serial PRIMARY KEY,
+  company_id     int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  doc_type       text NOT NULL CHECK (doc_type IN ('po','invoice')),
+  review_reason  text,
+  decided_by     text,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS document_profile_corrections_idx ON document_profile_corrections (company_id, doc_type, created_at);
 
 CREATE TABLE IF NOT EXISTS mailbox_invoice_backfills (
   account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,

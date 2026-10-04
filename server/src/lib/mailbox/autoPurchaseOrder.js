@@ -37,6 +37,7 @@ import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './po
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
 import { near } from './pdfQuotation.js';
 import { readWithAi } from './readAttachment.js';
+import { fitsPattern, loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, readsAllFolders, saveTokens } from './sync.js';
 import { forReaders, referencesIn } from './rules.js';
@@ -173,7 +174,9 @@ export async function decidePo(account, cand, ctx) {
     return 'retry';
   }
 
-  const read = await readPo(account, cand, ctx, chat, text);
+  ctx.profiles ??= await loadProfiles({ query }, 'po');
+  const { rows: [thread] } = cand.threadId ? await query('SELECT company_id FROM email_threads WHERE id = $1', [cand.threadId]) : { rows: [] };
+  const read = await readPo(account, cand, ctx, chat, text, { senderEmail: m.from?.email, companyId: thread?.company_id ?? null });
   if (read.error) {
     ctx.errors += 1;
     await keepForRetry(account, cand, 1);
@@ -197,6 +200,11 @@ export async function decidePo(account, cand, ctx) {
   }
 
   const po = checked.po;
+  // A PO number not of the shape this client's numbers have: a misread, or not its PO (§6).
+  if (!fitsPattern(cand.profile, po.po_number)) {
+    const note = `${cand.profile.company_name}'s PO numbers match ${cand.profile.po_number_pattern}; this one reads ${po.po_number}.`;
+    return review(account, cand, ctx, { ...decision, review_reason: 'po_number_pattern', review_note: note, suggested: [] }, po);
+  }
   const mode = daysBetween(po.po_date, businessToday()) > ctx.settings.historyAfterDays ? 'history' : 'live';
   Object.assign(decision, { mode });
   // Stored before the transaction, because it is a network call; if the
@@ -265,15 +273,20 @@ async function storePdf(pdf) {
  * sourceText is what amounts are checked against: the PDF's text, the
  * email's when the email is the order, or null for a scan.
  */
-export async function readPo(account, cand, ctx, chat, emailText) {
+export async function readPo(account, cand, ctx, chat, emailText, facts = {}) {
   const { m } = cand;
   return readWithAi(account, cand, ctx, chat, {
     // A PO's schedule of rates is often its own PDF: the annexures go too.
     rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf', annexures: true,
-    prompt: ({ pdfText }) => buildPoPrompt({
-      pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from,
-      services: ctx.settings.services, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
-    }),
+    prompt: ({ pdfText }) => {
+      // The client's document note, picked before the call: no extra AI call (§6). Kept for the PO-number check.
+      cand.profile = pickProfile(ctx.profiles, { ...facts, text: pdfText });
+      return buildPoPrompt({
+        pdfText, emailSubject: m.subject, emailText, receivedAt: m.sent_at, from: m.from,
+        services: ctx.settings.services, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+        ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners, clientNotes: profileNote(cand.profile),
+      });
+    },
   });
 }
 
