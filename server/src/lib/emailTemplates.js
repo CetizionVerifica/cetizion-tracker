@@ -4,8 +4,9 @@
  * library: there is no build step, and finance can read the text version
  * in the email log exactly as the client received it.
  */
+import { windowNote } from './misWindow.js';
 
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc =(s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const inr = (n, currency = 'INR') => {
   const v = Number(n || 0);
   const sym = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SGD: 'S$' }[currency] || `${currency} `;
@@ -358,7 +359,7 @@ Here is the sales briefing for ${day}.
 ${figures.map(([k, v]) => `${k}: ${v}`).join('\n')}
 
 HIGHLIGHTS
-${data.highlights.length ? data.highlights.map((h) => `- ${h.client}: ${h.summary}${h.action ? ` → ${h.action}` : ''}`).join('\n') : '- Nothing was created or changed from email yesterday.'}
+${data.highlights.length ? data.highlights.map((h) => `- ${h.client}: ${h.summary}${h.action ? ` → ${h.action}` : ''}`).join('\n') : '- Nothing was created or changed from email yesterday.'}${data.mail_window ? `\n(${windowNote(data.mail_window)})` : ''}
 
 TOP ACTIONS FOR TODAY
 ${data.top_actions.length ? data.top_actions.map((a, i) => `${i + 1}. ${actionLine(a)}`).join('\n') : '- Nothing is pending.'}
@@ -379,6 +380,7 @@ ${table([], figures.map(([k, v]) => [k, String(v)]))}
 ${data.highlights.length
     ? `<ul>${data.highlights.map((h) => `<li><strong>${esc(h.client)}:</strong> ${esc(h.summary)}${h.action ? ` → ${esc(h.action)}` : ''}${h.link ? ` · ${link(appUrl, h.link, 'open')}` : ''}</li>`).join('')}</ul>`
     : '<p style="color:#64748b">Nothing was created or changed from email yesterday.</p>'}
+${data.mail_window ? `<p style="color:#64748b;font-size:12px;margin:4px 0 0">${esc(windowNote(data.mail_window))}</p>` : ''}
 <h3 style="font-size:14px;margin:16px 0 4px">Top actions for today</h3>
 ${data.top_actions.length
     ? `<ol>${data.top_actions.map((a) => `<li>${esc(actionLine(a))} · ${link(appUrl, a.link, 'open')}</li>`).join('')}</ol>`

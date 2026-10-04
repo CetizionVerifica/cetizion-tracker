@@ -19,6 +19,7 @@ import pdfmake from './pdf.js';
 import { COLORS, horizontalBars } from './pdfCharts.js';
 import { INK, MARGIN_X, PDF_STYLES, dateLabel, generatedStamp, periodLabel, reportTable, rule, tile } from './pdfBlocks.js';
 import { compactInr, money, number, plural } from './reportFormat.js';
+import { windowNote } from './misWindow.js';
 
 export const MAX_ROWS = 12;
 /** The weekly report's lists are shorter: eight sections share two pages. */
@@ -173,6 +174,7 @@ export function dailyBriefingDoc(data, { company = 'Cetizion Verifica', generate
     highlights.length
       ? { ul: highlights.map((h) => ({ text: [{ text: `${h.client}: `, bold: true }, h.summary, h.action ? { text: `  →  ${h.action}${h.owner ? ` (${h.owner})` : ''}`, color: COLORS.blue } : ''] })), style: 'body' }
       : { text: 'Nothing was created or changed from email yesterday.', style: 'empty' },
+    ...(data.mail_window ? [{ text: windowNote(data.mail_window), style: 'lead' }] : []),
 
     h2(`Pending invoices (${number(data.pending.invoices.count)})`),
     ...pendingTable(data.pending.invoices, { empty: 'Nothing to invoice and nothing outstanding.' }),

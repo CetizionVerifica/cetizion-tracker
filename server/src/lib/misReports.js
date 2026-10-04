@@ -317,7 +317,9 @@ async function atAGlance(db, { from, to }) {
   const { rows: [r] } = await db.query(
     `WITH ${RATES}
      SELECT
-       (SELECT count(*) FROM enquiries e WHERE ${ENQUIRY_DAY('e', '$3')} BETWEEN $1 AND $2)::int AS new_enquiries,
+       (SELECT count(*) FROM enquiries e WHERE ${ENQUIRY_DAY('e', '$3')} BETWEEN $1 AND $2
+          -- An enquiry the email reader made from mail it did not call a new enquiry is not one (docs/mis-briefing-fix-plan.md §2).
+          AND NOT EXISTS (SELECT 1 FROM email_enquiry_decisions d WHERE d.enquiry_no = e.enquiry_no AND d.outcome = 'created' AND d.kind <> 'new_enquiry'))::int AS new_enquiries,
        (SELECT count(DISTINCT no) FROM (
           SELECT q.quotation_no AS no FROM quotations q WHERE (q.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2
           UNION

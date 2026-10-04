@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import { checkCommentary, checkHighlights, commentaryInput, figuresIn, numbersAllowed, numbersOf } from '../src/lib/misAi.js';
+import { checkCommentary, checkHighlights, commentaryInput, figuresIn, messageVerdict, numbersAllowed, numbersOf, threadVerdict, windowNote } from '../src/lib/misAi.js';
 import { weekly } from './misPdfFixture.mjs';
 
 /**
@@ -85,5 +85,53 @@ describe('the weekly commentary is checked', () => {
     assert.ok(!('highlights' in input));
     assert.ok(!JSON.stringify(input).includes('body'));
     assert.equal(input.enquiries.total, 14);
+  });
+});
+
+/**
+ * docs/mis-briefing-fix-plan.md §2: mail that is not sales business never
+ * becomes a highlight. Decided before the model sees it, and again after.
+ */
+describe('which mail may become a highlight', () => {
+  const msg = (over) => ({ kind: null, subject: 'Hello', from_email: 'ravi@acmesteel.in', body: 'A question about the audit.', filtered_as: null, own_report: false, ...over });
+
+  test('one message: what the readers decided, our own reports, automatic and bulk senders, internal-only mail', () => {
+    assert.equal(messageVerdict(msg({ kind: 'new_enquiry', body: 'unsubscribe' })), null, 'a reader-made sales decision always stands');
+    assert.equal(messageVerdict(msg({ kind: 'marketing' })), 'marketing mail');
+    assert.equal(messageVerdict(msg({ kind: 'vendor_or_sales_pitch' })), "a vendor's pitch");
+    assert.equal(messageVerdict(msg({ kind: 'job_application' })), 'a job application');
+    assert.equal(messageVerdict(msg({ subject: 'Daily Sales Briefing – 03 Oct 2026: 2 new enquiries' })), 'our own report');
+    assert.equal(messageVerdict(msg({ subject: 'RE: Weekly Sales MIS – 28 Sep' })), 'our own report');
+    assert.equal(messageVerdict(msg({ own_report: true, subject: 'anything' })), 'our own report');
+    assert.equal(messageVerdict(msg({ from_email: 'newsletter@vendor.com' })), 'an automatic or bulk sender');
+    assert.equal(messageVerdict(msg({ from_email: 'no-reply@portal.com' })), 'an automatic or bulk sender');
+    assert.equal(messageVerdict(msg({ body: 'Big offers! Click to unsubscribe.' })), 'bulk mail');
+    assert.equal(messageVerdict(msg({ filtered_as: 'internal only' })), 'internal only');
+    assert.equal(messageVerdict(msg()), null);
+  });
+
+  test('a thread: kept on a record or with any sales message; dropped when every message has a reason; our own report goes even on a record', () => {
+    assert.equal(threadVerdict({ entity: 'enquiry', messages: [msg({ filtered_as: 'internal only' })] }), null, 'internal, but about a client (the Coreal reminder)');
+    assert.equal(threadVerdict({ entity: null, messages: [msg({ filtered_as: 'internal only' })] }), 'internal only');
+    assert.equal(threadVerdict({ entity: null, messages: [msg({ kind: 'marketing' }), msg({ kind: 'reply_or_followup' })] }), null);
+    assert.equal(threadVerdict({ entity: null, messages: [msg({ kind: 'marketing' }), msg({ kind: 'marketing' }), msg({ from_email: 'no-reply@x.com' })] }), 'marketing mail', 'the commonest reason');
+    assert.equal(threadVerdict({ entity: null, messages: [msg({ kind: 'marketing' }), msg()] }), null, 'one ordinary message keeps it');
+    assert.equal(threadVerdict({ entity: 'quotation', messages: [msg({ subject: 'Daily Sales Briefing – 03 Oct 2026' })] }), 'our own report');
+  });
+
+  test('the model may skip a thread, and a highlight on a thread the rules drop is dropped again', () => {
+    const threads = [
+      { thread_id: 21, subject: 'RFQ', company: 'Acme', entity: null, text: 'From Ravi: please quote.', verdictInput: { entity: null, messages: [msg({ kind: 'new_enquiry' })] } },
+      { thread_id: 22, subject: 'Offer', company: 'Vendor', entity: null, text: 'Buy our ERP.', verdictInput: { entity: null, messages: [msg({ kind: 'vendor_or_sales_pitch' })] } },
+      { thread_id: 23, subject: 'Lunch', company: null, entity: null, text: 'Team lunch on Friday.', verdictInput: { entity: null, messages: [msg()] } },
+    ];
+    const raw = { highlights: [{ thread_id: 21, summary: 'Asked for a quotation.' }, { thread_id: 22, summary: 'An ERP vendor wrote.' }, { thread_id: 23, summary: 'Team lunch.' }], skip: [23] };
+    assert.deepEqual(checkHighlights(raw, threads, []).highlights.map((h) => h.thread_id), [21]);
+  });
+
+  test('the footnote says how much mail there was, what was left out and why, and what could not be read', () => {
+    assert.equal(windowNote({ threads: 2, kept: 1, cut: 0, excluded: [{ reason: 'our own report', count: 1 }], not_read: [] }), '2 threads in the window; 1 left out: 1 our own report');
+    assert.equal(windowNote({ threads: 1, kept: 1, cut: 0, excluded: [], not_read: [{ email: 'info@x.com', shared_as: 'subject' }] }), '1 thread in the window; not read: info@x.com (shared as subject only)');
+    assert.equal(windowNote(null), '');
   });
 });
