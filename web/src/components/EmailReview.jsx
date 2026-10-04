@@ -217,6 +217,17 @@ export function InvoiceReviewList() {
     finally { setBusy(null); }
   }
 
+  // The split the item suggests (an invoice for part of a PO with one 100% stage): the stage is split, then the invoice dialog opens on the new share.
+  async function split(row) {
+    setBusy(row.id);
+    try {
+      await api.action(`/payment-stages/invoice-review/${row.id}/split`);
+      refetch();
+      setChoosing({ ...row, split_suggestion: null, stages: null });
+    } catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+
   const columns = [
     { key: 'sent_at', header: 'Sent', render: (r) => <>{date(r.sent_at)}<div className="small muted">{r.mailbox}</div></> },
     { key: 'to_emails', header: 'To', className: 'small', render: (r) => (r.to_emails || []).join(', ') || <span className="muted">—</span> },
@@ -231,7 +242,8 @@ export function InvoiceReviewList() {
       render: (r) => (
         <div className="table__actions">
           <OpenEmail threadId={r.thread_id} />
-          <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
+          {r.split_suggestion && <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => split(r)}>Split {r.split_suggestion.percent}% and record</Button>}
+          <Button size="sm" variant={r.split_suggestion ? 'secondary' : undefined} className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
           <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</Button>
         </div>
       ),

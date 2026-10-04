@@ -13,8 +13,9 @@
  * An item matched to no PO is an admin's.
  */
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
 import { purchaseOrderClause, scopeOf } from '../auth/ownership.js';
+import { splitStage } from '../lib/invoices.js';
 import { ApiError } from '../middleware/error.js';
 import * as autoInvoice from '../lib/mailbox/autoInvoice.js';
 import { aiCallsToday } from '../lib/mailbox/autoEnquiry.js';
@@ -49,7 +50,7 @@ invoiceReviewRouter.get('/invoice-review', async (req, res) => {
   const params = [];
   const mine = scoped(req, params);
   const { rows } = await query(
-    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.review_note, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
+    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.review_note, d.split_suggestion, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
             a.email AS mailbox,
             COALESCE((SELECT json_agg(json_build_object('id', s.id, 'stage_no', s.stage_no, 'stage_name', s.stage_name, 'stage_amount', s.stage_amount,
                                                         'invoice_no', s.invoice_no, 'currency', s.currency) ORDER BY s.stage_no)
@@ -109,6 +110,24 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
       },
     },
   });
+});
+
+/**
+ * Accept the split the item suggests (docs/email-po-invoice-prompt-plan.md
+ * §5): the PO's one 100% stage becomes this invoice's share and the rest.
+ * The item then names the new stage, and the invoice dialog (record) opens
+ * on it; nothing is recorded until a person saves it there.
+ */
+invoiceReviewRouter.post('/invoice-review/:id/split', async (req, res) => {
+  const d = await item(req, req.params.id);
+  const split = d.split_suggestion;
+  if (!split?.stage_id) throw new ApiError(409, 'This item has no split to accept');
+  const stageId = await transaction(async (client) => {
+    const id = await splitStage(client, { stageId: split.stage_id, percent: split.percent, stageName: split.stage_name, triggerEvent: split.trigger_event, scope: scopeOf(req) });
+    await client.query('UPDATE email_invoice_decisions SET stage_id = $2, split_suggestion = NULL WHERE id = $1', [d.id, id]);
+    return id;
+  });
+  res.json({ data: { id: d.id, stage_id: stageId } });
 });
 
 invoiceReviewRouter.post('/invoice-review/:id/dismiss', async (req, res) => {

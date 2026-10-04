@@ -4,7 +4,7 @@ import { RULES, TOTALS_RULES, parseTaxBreakup, taxFromBreakup, wordsToAmount } f
 import { parseAmount } from '../src/lib/mailbox/pdfQuotation.js';
 import { buildPoPrompt, parsePoVerdict } from '../src/lib/mailbox/poDetect.js';
 import { checkPo } from '../src/lib/mailbox/pdfPurchaseOrder.js';
-import { buildInvoicePrompt, checkInvoice, parseInvoiceVerdict } from '../src/lib/mailbox/invoiceDetect.js';
+import { buildInvoicePrompt, checkInvoice, parseInvoiceVerdict, splitFor } from '../src/lib/mailbox/invoiceDetect.js';
 
 /**
  * The shared reading rules (docs/email-po-invoice-prompt-plan.md §2), from
@@ -107,6 +107,28 @@ describe('what the invoice prompt asks (§4)', () => {
     assert.match(system, /with the GSTIN it is raised from \(we have more than one\), or one of our partners/);
     assert.equal(parseInvoiceVerdict({ document_type: 'tax_invoice', po_date: '2026-05-20' }).po_date, '2026-05-20');
     assert.equal(parseInvoiceVerdict({ document_type: 'tax_invoice', po_date: '20-May-26' }).po_date, null, 'only as YYYY-MM-DD');
+  });
+});
+
+describe('the split for an invoice that is a share of a 100% stage (§5)', () => {
+  const stage = { id: 7, stage_no: 1, stage_name: 'On delivery (100%)', trigger_event: 'On Delivery', stage_percent: '1.0000', stage_amount: '590000.00', invoice_no: null, on_hold: false };
+  const inv = (over = {}) => ({ total_value: 295000, stage_hint: '50% Advance Payment As Per P.O.', ...over });
+
+  test('the share the invoice names, as an advance, when it is the invoice\'s amount', () => {
+    assert.deepEqual(splitFor([stage], inv()), { stage_id: 7, percent: 50, stage_name: 'Advance (50%)', trigger_event: 'On PO Registration', basis: 'invoice' });
+    assert.equal(splitFor([stage], inv({ total_value: 200000 })), null, 'another amount: no split');
+  });
+
+  test("the quotation's advance when the invoice names no share", () => {
+    assert.equal(splitFor([stage], inv({ stage_hint: null }), { quotationAdvance: 50 }).basis, 'quotation');
+    assert.equal(splitFor([stage], inv({ stage_hint: null })), null);
+  });
+
+  test('only for a PO with one open 100% stage', () => {
+    assert.equal(splitFor([stage, { ...stage, id: 8, stage_no: 2 }], inv()), null);
+    assert.equal(splitFor([{ ...stage, stage_percent: '0.5' }], inv()), null);
+    assert.equal(splitFor([{ ...stage, invoice_no: 'X' }], inv()), null);
+    assert.equal(splitFor([stage], inv({ stage_hint: '100% on delivery' })), null);
   });
 });
 

@@ -35,7 +35,8 @@ import { near } from './pdfQuotation.js';
 import { mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings } from './autoEnquiry.js';
 import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
-import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, wrongGstin } from './invoiceDetect.js';
+import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, splitFor, wrongGstin } from './invoiceDetect.js';
+import { advanceShare } from '../../import/ai.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
@@ -309,9 +310,18 @@ async function recordUnderLock(db, account, cand, ctx, { inv, decision, po, docu
   }
 
   const { rows: stages } = await db.query(
-    `SELECT id, stage_no, stage_name, trigger_event, milestone_name, stage_amount, invoice_no, on_hold FROM v_payment_stages WHERE po_number = $1 ORDER BY stage_no`,
+    `SELECT id, stage_no, stage_name, trigger_event, milestone_name, stage_percent, stage_amount, invoice_no, on_hold, currency FROM v_payment_stages WHERE po_number = $1 ORDER BY stage_no`,
     [po.po_number]);
   const pick = pickStage(stages, inv.total_value, inv.stage_hint);
+  if (pick.reason === 'amount_not_a_stage') {
+    // A share of a PO with one 100% stage: offer the split (§5). The quotation's terms give the share when the invoice does not.
+    const { rows: [q] } = await db.query('SELECT terms FROM quotations WHERE quotation_no = $1', [po.quotation_no]);
+    const split = splitFor(stages, inv, { quotationAdvance: advanceShare(String(q?.terms || '')).percent });
+    const note = split
+      ? `Its PO has one 100% stage of ${stages[0].currency || 'INR'} ${Number(stages[0].stage_amount).toLocaleString('en-IN')}; this invoice is ${split.percent}% of it. Accept the split to record it as "${split.stage_name}" and leave ${100 - split.percent}% open.`
+      : null;
+    return toReview(db, account, cand, ctx, { ...decision, review_reason: pick.reason, po_number: po.po_number, review_note: note, split_suggestion: split ? { ...split, invoice_no: inv.invoice_no, invoice_date: inv.invoice_date } : null });
+  }
   if (pick.reason) return toReview(db, account, cand, ctx, { ...decision, review_reason: pick.reason, po_number: po.po_number });
 
   const recorded = await recordInvoice(db, {

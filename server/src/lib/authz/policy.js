@@ -465,6 +465,7 @@ export const routes = [
   // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
   { method: 'GET', path: '/api/payment-stages/invoice-review', access: signedIn, restrictions: ['parent-owner'], note: 'A salesperson sees the items on POs they may open; one matched to no PO is an admin\'s.' },
   { method: 'POST', path: '/api/payment-stages/invoice-review/:id/record', access: signedIn, restrictions: ['parent-owner'], note: 'Reads the invoice again for the invoice dialog; saves nothing but an unattached upload.' },
+  { method: 'POST', path: '/api/payment-stages/invoice-review/:id/split', access: signedIn, restrictions: ['parent-owner'], note: 'Splits the PO\'s one open 100% stage as the item suggests; records nothing.' },
   { method: 'POST', path: '/api/payment-stages/invoice-review/:id/dismiss', access: signedIn, restrictions: ['parent-owner'] },
   { method: 'POST', path: '/api/payment-stages/:id/payment', access: signedIn },
 

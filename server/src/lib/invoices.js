@@ -31,6 +31,35 @@ export const NORMALISED_INVOICE_NO = (column = 'invoice_no') => `lower(regexp_re
  *
  * Returns { id, invoice_no, replaced, document_kept_existing }.
  */
+/**
+ * Split a PO's one open 100% stage in two (docs/email-po-invoice-prompt-plan.md §5):
+ * the share an invoice bills becomes a stage of its own, first in order, and
+ * the stage keeps the rest. Refused for anything else, so a stage that is
+ * invoiced, paid, on hold or already a part is never touched.
+ * Returns the new stage's id.
+ */
+export async function splitStage(client, { stageId, percent, stageName, triggerEvent = 'Manual', scope = UNRESTRICTED }) {
+  const params = [Number(stageId)];
+  const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
+  const { rows: [s] } = await client.query(
+    `SELECT ps.* FROM payment_stages ps WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`, params);
+  if (!s) throw new ApiError(404, 'Payment stage not found');
+  const { rows: others } = await client.query('SELECT id FROM payment_stages WHERE po_number = $1 AND id <> $2 FOR UPDATE', [s.po_number, s.id]);
+  if (others.length || s.invoice_no || Number(s.amount_received) > 0 || s.on_hold || Math.abs(Number(s.stage_percent) - 1) > 0.0001) {
+    throw new ApiError(409, 'The PO no longer has one open 100% stage to split');
+  }
+  const share = Math.round(percent * 100) / 10000;
+  const rest = Math.round((1 - share) * 10000) / 10000;
+  const restName = String(s.stage_name).replace(/\s*\(100(\.0+)?%\)\s*$/, '');
+  await client.query('UPDATE payment_stages SET stage_no = stage_no + 1, stage_percent = $2, stage_name = $3 WHERE id = $1',
+    [s.id, rest, `${restName} (${Math.round(rest * 10000) / 100}%)`]);
+  const { rows: [created] } = await client.query(
+    `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [s.po_number, s.stage_no, stageName, triggerEvent, share, s.credit_days]);
+  return created.id;
+}
+
 export async function recordInvoice(client, { stageId, invoiceNo = null, invoiceDate, documentId, keepExistingDocument = false, scope = UNRESTRICTED, mode = 'live' }) {
   if (mode === 'history') {
     // For this transaction only: webhook_emit() stays quiet (067).

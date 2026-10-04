@@ -329,6 +329,39 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal((await decision(box.id, right.provider_id)).outcome, 'recorded');
   });
 
+  test('25d. Alembic: a 50% advance invoice on a PO with one 100% stage is offered the split; accepting it splits the stage and the dialog opens on the share', async () => {
+    const box = await mailbox();
+    const email = 'accounts@alembic-split.co.in';
+    const { rows: [{ id: companyId }] } = await db.query('SELECT company_for($1) AS id', ['Alembic Split Ltd']);
+    await db.query(`INSERT INTO contacts (company_id, name, email, is_billing) VALUES ($1, 'Accounts', $2, true)`, [companyId, email]);
+    const { body } = await agent.post('/api/quotations').send({ client_name: 'Alembic Split Ltd', service_quoted: 'EcoVadis', quotation_date: day(30) }).expect(201);
+    await agent.post('/api/quotation-lines').send({ quotation_id: body.data.id, description: 'EcoVadis assessment', qty: 1, rate: 500000, gst_rate: 18 }).expect(201);
+    await agent.post(`/api/quotations/${encodeURIComponent(body.data.quotation_no)}/register`).send({
+      po_number: '3700101318', po_date: day(30), stages: [{ stage_name: 'On delivery (100%)', trigger_event: 'On Delivery', percent: 100 }],
+    }).expect(201);
+    const advance = reading({ invoice_no: 'CVPL/2026-27/037', buyer: { company_name: 'Alembic Split Ltd' }, po_reference: '3700101318', taxable: 250000, tax: 45000, stage_hint: '50% Advance Payment As Per P.O.' });
+    ai(advance);
+    const msg = invoiceEmail(box, email, { no: 'CVPL/2026-27/037', buyer: 'Alembic Split Ltd', po: '3700101318', taxable: 250000, tax: 45000 });
+    await deliver(box, [msg]);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'amount_not_a_stage']);
+    assert.equal(d.split_suggestion.percent, 50);
+    assert.equal(d.split_suggestion.stage_name, 'Advance (50%)');
+    assert.match(d.review_note, /one 100% stage of INR 5,90,000; this invoice is 50% of it\. Accept the split to record it as "Advance \(50%\)" and leave 50% open\./);
+    assert.ok((await stagesOf('3700101318')).every((s) => !s.invoice_no), 'nothing recorded, nothing split, until a person accepts');
+
+    const { body: split } = await agent.post(`/api/payment-stages/invoice-review/${d.id}/split`).expect(200);
+    const stages = await stagesOf('3700101318');
+    assert.deepEqual(stages.map((s) => [s.stage_no, s.stage_name, s.trigger_event, Number(s.stage_amount)]), [
+      [1, 'Advance (50%)', 'On PO Registration', 295000], [2, 'On delivery (50%)', 'On Delivery', 295000],
+    ]);
+    assert.equal(split.data.stage_id, stages[0].id);
+    ai(advance);
+    const { body: dialog } = await agent.post(`/api/payment-stages/invoice-review/${d.id}/record`).expect(200);
+    assert.equal(dialog.data.suggested_stage_id, stages[0].id, 'the invoice dialog opens on the new share');
+    await agent.post(`/api/payment-stages/invoice-review/${d.id}/split`).expect(409);
+  });
+
   test('25c. the PO date printed beside the PO number must be the PO\'s: another date goes to review, saying both', async () => {
     const box = await mailbox();
     const client = await poFor('Acme Dated Ltd', '4500025027', { poDate: day(30) });

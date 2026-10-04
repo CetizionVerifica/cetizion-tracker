@@ -309,6 +309,7 @@ session is **401**, before any of these is considered.
 | `GET /api/payment-stages/invoice-review` | any | A salesperson sees the items on POs they may open; one matched to no PO is an admin's. |
 | `POST /api/payment-stages/invoice-review/:id/dismiss` | any | Scoped: parent-owner. |
 | `POST /api/payment-stages/invoice-review/:id/record` | any | Reads the invoice again for the invoice dialog; saves nothing but an unattached upload. |
+| `POST /api/payment-stages/invoice-review/:id/split` | any | Splits the PO's one open 100% stage as the item suggests; records nothing. |
 | **/api/pipeline** | | |
 | `GET /api/pipeline` | any |  |
 | `POST /api/pipeline/:key/move` | any |  |

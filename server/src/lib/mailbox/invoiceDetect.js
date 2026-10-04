@@ -221,6 +221,35 @@ export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 
 export const wrongGstin = (invoice, po) => Boolean(invoice?.issuing_gstin && po?.addressed_gstin && gstinOf(invoice.issuing_gstin) !== gstinOf(po.addressed_gstin));
 
 const ADVANCE_HINT = /\badvance|mobili[sz]ation|first|on (po|order)\b/i;
+const HINT_PERCENT = /\b(\d{1,2}(?:\.\d+)?)\s*%/;
+
+/**
+ * When an invoice is a share of a PO whose only stage is 100% (Alembic:
+ * "50% Advance Payment As Per P.O." against a PO that says "Against
+ * delivery"), the split a reviewer may accept: this invoice's share as a
+ * stage of its own, the rest left open (docs/email-po-invoice-prompt-plan.md §5).
+ * The share is the one the invoice names, else the advance the quotation's
+ * terms give; it must be the invoice's amount. Never applied here.
+ *
+ * stages: [{ id, stage_no, stage_name, trigger_event, stage_percent, stage_amount, invoice_no, on_hold }]
+ * Returns { stage_id, percent, stage_name, trigger_event, basis } or null.
+ */
+export function splitFor(stages, invoice, { quotationAdvance = null } = {}) {
+  if (stages.length !== 1) return null;
+  const [s] = stages;
+  if (s.invoice_no || s.on_hold || Math.abs(Number(s.stage_percent) - 1) > 0.0001) return null;
+  const hinted = HINT_PERCENT.exec(String(invoice.stage_hint || ''));
+  const percent = hinted ? Number(hinted[1]) : quotationAdvance;
+  if (!(percent > 0 && percent < 100)) return null;
+  if (!near(Number(s.stage_amount) * (percent / 100), invoice.total_value)) return null;
+  const advance = hinted ? ADVANCE_HINT.test(invoice.stage_hint) : true;
+  return {
+    stage_id: s.id, percent,
+    stage_name: advance ? `Advance (${percent}%)` : `${String(invoice.stage_hint).slice(0, 60)}`,
+    trigger_event: advance ? 'On PO Registration' : 'Manual',
+    basis: hinted ? 'invoice' : 'quotation',
+  };
+}
 const FINAL_HINT = /\bfinal|balance|remaining|completion|delivery|last\b/i;
 
 /**
