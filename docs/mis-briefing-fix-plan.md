@@ -169,7 +169,7 @@ pages with `MAX_ROWS`) does not:
 | A short **day paragraph** (how many emails, what was skipped, "no pending item was closed") | none | Build it in code from the thread counts and filter counts; the AI may only reword it |
 | **2. Key highlights**, numbered, each with Action / owner, **Source email (open in Outlook)**, **Related earlier emails** and **Reminders carried forward** | Highlights, one line each | Add `web_link` (already stored) and up to three earlier messages on the same thread or record. Carried-forward reminders come from upcoming visits/meetings in the next 3 days and from POs that are still not acknowledged |
 | **3. Pending tasks** with a note on how days are counted and what "Overdue" means; red rows for overdue | Three tables, capped | Add the note, colour overdue rows red, **remove the two-page cap** (list every row, as the reference does over four pages) |
-| (a) Invoices in **three sub-tables**: invoice actions; pending for invoicing; **receivables (sundry debtors)** with a grand total | One pending-invoices table | Split `pendingInvoices` by type (to raise / awaiting payment). Receivables from the tracker's outstanding stages, aged, with a total. *Open question:* the reference uses Finance's emailed Sundry Debtors list. Use the tracker's books (Zoho sync), or read that list from the email? |
+| (a) Invoices in **three sub-tables**: invoice actions; pending for invoicing; **receivables (sundry debtors)** with a grand total | One pending-invoices table | Split `pendingInvoices` by type (to raise / awaiting payment). Receivables from the tracker, reconciled with Finance's emailed list: see §3a |
 | Columns: Client, Reference, Amount, **Last activity**, Days, Owner, Next action, **Email** link | Client, Reference, Amount, Days, Next action | Add `last_activity` (the latest message on the thread or record), owner, and an email link (thread `web_link`) |
 | "Amount: **not stated**" where no figure exists | blank / "not converted" | Print "not stated" when the amount is null |
 | Closing line per table ("No PO received or closed on 3 Oct") | none | Generate it from the at-a-glance counts |
@@ -195,14 +195,74 @@ and tests (`misPdf.test.js`, `misPdfFixture.mjs`). Update
    line). Small, one PR.
 3. §2 relevance filter. One PR, with tests built from the real offending
    thread.
-4. §3 format. One PR, with the sample PDF regenerated and checked against
-   the reference before merging.
+4. §3 format, with the mailbox list in the header and the decisions
+   below. One PR, with the sample PDF regenerated and checked against the
+   reference before merging.
+5. §3a receivables: the debtors-list reader, its table and the
+   reconciliation. A migration and one PR.
 
-## Questions for the user
+## Decisions (04 Oct 2026)
 
-- Receivables: the tracker's own outstanding stages and Zoho, or Finance's
-  emailed Sundry Debtors list as in the reference?
-- Should the briefing also go on Sundays and holidays (the reference
-  covers a Saturday), or skip days with no business?
-- Which mailbox counts as "the source": only sales@, or every shared
-  mailbox?
+1. **Receivables: the tracker plus the emails.** The tracker's outstanding
+   payment stages are the base. Finance's emailed Sundry Debtors list is
+   read alongside them and the two are reconciled (§3a below).
+2. **Every day, weekends and holidays included.** The cron is already
+   `56 8 * * *` and `runDailyBriefing` does not check holidays, so nothing
+   needs to change. Add a test that pins this, so that a later "skip
+   holidays" change (as `followups.daily` has) cannot quietly apply to the
+   briefing. A quiet day still goes, with the at-a-glance zeros and the
+   carried-forward items, as in the reference (a Saturday).
+3. **Every shared mailbox.** `candidateThreads` already reads every
+   shared mailbox with `share_everything`. Changes:
+   - the header's source line lists every mailbox read ("sales@, info@, …
+     — Inbox + Sent Items, 00:00–23:59 IST"), not only the sender;
+   - a shared mailbox shared as `subject` or `metadata` cannot give the
+     AI any text. List it in the footnote as "not read (shared as subject
+     only)" so the gap is visible, rather than dropping it silently;
+   - if one email reached two shared mailboxes (sales@ cc'd on info@), it
+     appears once: group threads by `internet_message_id`/`conversation_id`
+     across accounts before ranking;
+   - the cap (`MAX_THREADS` 40, `MAX_CHARS` 30,000) now applies across more
+     mailboxes. Raise the cap only if the relevance filter (§2) does not
+     leave enough room, and say in the footnote when threads were cut.
+   Personal mailboxes are still never read.
+
+## 3a. Receivables from the tracker and the emails
+
+**Tracker (base).** Every payment stage that is invoiced and not fully
+paid: client, invoice no., amount outstanding in INR (at the rate on the
+record's date), days since the invoice date, the last chase or payment
+note, and the email link from the stage's thread. Then the "pending for
+invoicing" table: stages due to be invoiced but not yet raised, with days
+waited.
+
+**Emails.** The readers look for Finance's latest Sundry Debtors /
+pending-for-invoicing list in any shared mailbox:
+- **Find it:** the subject or attachment name contains "sundry debtors",
+  "debtors", "outstanding" or "receivable", it comes from an internal
+  sender, and it is the newest one within the last 14 days. The phrases
+  and sender list are settings, not hard-coded.
+- **Read it:** for an Excel attachment, use `xlsx`, which is already a
+  dependency. For a PDF, use the same PDF text path as the invoice
+  reader, and the AI pulls out the rows (client, amount, days, and
+  whether it is "pending for invoicing"). The checks are the same as
+  elsewhere: every amount must be in the file, and the grand total must
+  equal the sum of the rows, or the list is not used.
+- **Store it:** one row per list (`receivable_lists`: message, date, grand
+  total) and its lines. Each list is read only once and does not use up
+  the AI ceiling again on the next day's run.
+
+**Reconcile.** Match the list lines to the tracker by client (company
+match, the same as the readers use), then by amount:
+- matched → one row, showing the tracker figure, and the list figure if
+  they differ ("list: 2,44,530; tracker: 2,10,000");
+- on the list only → shown with the source "list" (as in the reference),
+  and as a Finance action: "record in tracker";
+- in the tracker only → shown with the source "tracker", plus a note
+  "not on Finance's list of 1 Oct".
+Grand totals from both sources, and the date of the list. When no list
+has arrived in 14 days, the table is built from the tracker alone and the
+note says so.
+
+The "Email" column then shows `open` (thread link) or `list` (the
+debtors-list email), as in the reference.
