@@ -98,6 +98,18 @@ const invoice = (over = {}) => parseInvoiceVerdict({
 });
 const invOpts = { emailDate: '2026-05-22T09:00:00Z', sourceText: INV_TEXT, ourNames: ['Cetizion Verifica Pvt. Ltd.'] };
 
+describe('what the invoice prompt asks (§4)', () => {
+  const { system } = buildInvoicePrompt({ emailSubject: 'Invoice', emailText: 'Attached.', sentAt: '2026-05-22T09:00:00Z', pdfText: 'x' });
+  test('the PO number from the boxes that hold it, never the reference boxes, and its date', () => {
+    assert.match(system, /"Buyer's Order No\.", "PO No\.", "Order Ref", "Work Order No\." or "Your Ref"\. Never from the "Reference No\. & Date", "Other References", "Delivery Note" or "Dispatch Doc No\." boxes unless they say PO/);
+    assert.match(system, /po_date: the date printed beside that number \("Dated 20-May-26"\)/);
+    assert.match(system, /ours look like CVPL\/2026-27\/037/);
+    assert.match(system, /with the GSTIN it is raised from \(we have more than one\), or one of our partners/);
+    assert.equal(parseInvoiceVerdict({ document_type: 'tax_invoice', po_date: '2026-05-20' }).po_date, '2026-05-20');
+    assert.equal(parseInvoiceVerdict({ document_type: 'tax_invoice', po_date: '20-May-26' }).po_date, null, 'only as YYYY-MM-DD');
+  });
+});
+
 describe('the invoice checks use them', () => {
   test('IGST and the words agree with the total', () => {
     const r = checkInvoice(invoice(), invOpts);

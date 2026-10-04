@@ -111,20 +111,20 @@ async function saveDecision(db, account, cand, d) {
   const { m, c } = cand;
   const values = [d.outcome, d.document_type || null, d.review_reason || null, d.mode || null, d.confidence ?? null, d.method || 'ai',
     d.stage_id ?? null, d.po_number || null, d.invoice_no || null, Boolean(d.document_kept_existing), d.outcome === 'waiting' && d.reading ? JSON.stringify(d.reading) : null,
-    d.thread_id ?? cand.threadId ?? null];
+    d.thread_id ?? cand.threadId ?? null, d.review_note || null, d.split_suggestion ? JSON.stringify(d.split_suggestion) : null];
   if (cand.decisionId) {
     await db.query(
       `UPDATE email_invoice_decisions SET outcome = $2, document_type = $3, review_reason = $4, mode = $5, confidence = $6, method = $7,
               stage_id = $8, po_number = $9, invoice_no = $10, document_kept_existing = $11, reading = $12, thread_id = COALESCE($13, thread_id),
-              ai_calls = ai_calls + $14
+              review_note = $14, split_suggestion = $15, ai_calls = ai_calls + $16
         WHERE id = $1 AND outcome = 'waiting'`, [cand.decisionId, ...values, cand.retry ? d.ai_calls || 0 : 0]);
     return;
   }
   await db.query(
     `INSERT INTO email_invoice_decisions (account_id, provider_id, internet_message_id, conversation_id, to_emails, sent_at,
                                           outcome, document_type, review_reason, mode, confidence, method, stage_id, po_number, invoice_no,
-                                          document_kept_existing, reading, thread_id, ai_calls)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+                                          document_kept_existing, reading, thread_id, review_note, split_suggestion, ai_calls)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      ON CONFLICT (account_id, provider_id) DO NOTHING`,
     [account.id, m.provider_id, m.internet_message_id || null, m.conversation_id || null, (c.external || []).map((p) => p.email), m.sent_at || null,
       ...values, d.ai_calls || 0]);
@@ -251,6 +251,11 @@ async function settle(account, cand, ctx, inv, base, pdf) {
 
   // Raised from a registration other than the one the PO was addressed to: the client would reject it (§1).
   if (wrongGstin(inv, match.po)) return toReview({ query }, account, cand, ctx, { ...decision, review_reason: 'wrong_gstin', po_number: match.po.po_number });
+  // The PO date printed beside its number must be the PO's (§4): another date is another order, or a slip.
+  const poDate = match.po.po_date ? String(match.po.po_date).slice(0, 10) : null;
+  if (inv.po_date && poDate && inv.po_date !== poDate) {
+    return toReview({ query }, account, cand, ctx, { ...decision, review_reason: 'po_date_mismatch', po_number: match.po.po_number, review_note: `The invoice gives PO ${match.po.po_number} dated ${inv.po_date}; the tracker's PO is dated ${poDate}.` });
+  }
 
   const file = pdf || await refetchPdf(account, cand, ctx);
   const documentId = await storePdf(file);
@@ -323,7 +328,7 @@ async function recordUnderLock(db, account, cand, ctx, { inv, decision, po, docu
 // ------------------------------------------------------------ matching (§3.10.3)
 
 const LIVE_PO = `NOT po.cancelled AND NOT EXISTS (SELECT 1 FROM purchase_orders r WHERE r.replaces_po_number = po.po_number)`;
-const PO_COLUMNS = 'po.po_number, po.quotation_no, po.project_id, p.company_id, po.addressed_gstin';
+const PO_COLUMNS = 'po.po_number, po.quotation_no, po.project_id, p.company_id, po.addressed_gstin, po.po_date';
 
 /** Of these POs, the ones with an open stage of the invoice's amount. */
 async function withStageOf(db, poNumbers, total) {
@@ -437,7 +442,7 @@ async function notifyOutcomes(ctx) {
   }
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',
-    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice', wrong_gstin: 'it is raised from a GSTIN other than the one its PO is addressed to',
+    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice', wrong_gstin: 'it is raised from a GSTIN other than the one its PO is addressed to', po_date_mismatch: 'the PO date it gives is not the PO\'s',
     low_confidence: 'it could not be read with confidence', client_unknown: 'its client could not be confirmed for the PO it names', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
     no_invoice_no: 'it has no invoice number', amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up',
     bad_currency: 'its currency is not one the tracker uses', bad_date: 'its date is missing or after the email',

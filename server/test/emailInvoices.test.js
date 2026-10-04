@@ -329,6 +329,22 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal((await decision(box.id, right.provider_id)).outcome, 'recorded');
   });
 
+  test('25c. the PO date printed beside the PO number must be the PO\'s: another date goes to review, saying both', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Dated Ltd', '4500025027', { poDate: day(30) });
+    const read = (no, poDate) => reading({ invoice_no: no, buyer: { company_name: 'Acme Dated Ltd' }, po_reference: '4500025027', po_date: poDate });
+    ai(read('INV-25D', day(40)));
+    const other = invoiceEmail(box, client.email, { no: 'INV-25D', buyer: 'Acme Dated Ltd', po: '4500025027' });
+    await deliver(box, [other]);
+    const d = await decision(box.id, other.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'po_date_mismatch']);
+    assert.equal(d.review_note, `The invoice gives PO 4500025027 dated ${day(40)}; the tracker's PO is dated ${day(30)}.`);
+    ai(read('INV-25E', day(30)));
+    const same = invoiceEmail(box, client.email, { no: 'INV-25E', buyer: 'Acme Dated Ltd', po: '4500025027' });
+    await deliver(box, [same]);
+    assert.equal((await decision(box.id, same.provider_id)).outcome, 'recorded');
+  });
+
   test('26. the invoice backfill waits for the PO backfill, then puts the past invoice on the past PO\'s stage', async () => {
     const box = await mailbox();
     const email = 'buyer@acme-twentysix.co.in';

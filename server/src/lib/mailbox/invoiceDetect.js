@@ -98,15 +98,15 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
     '{"document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1, "revised_or_cancelled": boolean,',
     ' "invoice_no": string|null, "invoice_date": "YYYY-MM-DD"|null,',
     ' "seller": {"company_name": string|null, "gstin": string|null}, "buyer": {"company_name": string|null, "gstin": string|null},',
-    ' "po_reference": string|null, "project_reference": string|null, "quotation_reference": string|null, "currency": "INR"|...,',
+    ' "po_reference": string|null, "po_date": "YYYY-MM-DD"|null, "project_reference": string|null, "quotation_reference": string|null, "currency": "INR"|...,',
     ' "taxable_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null,',
     ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
     ' "stage_hint": string|null, "due_date": "YYYY-MM-DD"|null}',
-    'The SELLER issues the invoice; for our invoice that is Cetizion Verifica, with our GSTIN. The BUYER is the client it is addressed to: the "Bill to" or "Buyer" block, with that block\'s GSTIN.',
+    'The SELLER issues the invoice; for our invoice that is Cetizion Verifica, with the GSTIN it is raised from (we have more than one), or one of our partners. The BUYER is the client it is addressed to: the "Bill to" or "Buyer" block, with that block\'s GSTIN.',
     'document_type: tax_invoice for a GST tax invoice; proforma for a proforma invoice or PI; credit_note or debit_note for those; other for anything else (a quotation, a statement, a reminder, a receipt).',
     'revised_or_cancelled: true when the document says it is revised, cancelled, a replacement or a duplicate of an earlier invoice. "Original for recipient" and "Duplicate for transporter" copy marks are not that.',
-    'invoice_no: the number as printed, without its label; ours look like CVPL/26-27/0013. invoice_date: the invoice\'s date, not the email\'s. due_date: only a due date printed as a date; never worked out from the terms.',
-    'po_reference: the client\'s PO or order number the invoice cites ("PO No.", "Your order ref"), without its label. project_reference: a project number like PRJ-2026-014, if printed. quotation_reference: our quotation number it cites (CTZ/QT/2026/014), if printed.',
+    'invoice_no: the number as printed, without its label; ours look like CVPL/2026-27/037 (older ones CVPL/26-27/0013). invoice_date: the invoice\'s date, not the email\'s. due_date: only a due date printed as a date; never worked out from the terms.',
+    'po_reference: the client\'s PO or order number the invoice cites, without its label, from a box labelled "Buyer\'s Order No.", "PO No.", "Order Ref", "Work Order No." or "Your Ref". Never from the "Reference No. & Date", "Other References", "Delivery Note" or "Dispatch Doc No." boxes unless they say PO. po_date: the date printed beside that number ("Dated 20-May-26"), else null. project_reference: a project number like PRJ-2026-014, if printed. quotation_reference: our quotation number it cites (CTZ/QT/2026/014), if printed.',
     'stage_hint: what part of the order the invoice is for, in the document\'s words ("50% advance", "Balance", "Final", "Milestone 2: draft report"), from the line description or a note; else null.',
     'taxable_value: the value before tax (Taxable value, Sub-total). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the invoice total including tax (Grand total, Total invoice value), never an amount after TDS.',
     ...TOTALS_RULES,
@@ -130,7 +130,7 @@ export function parseInvoiceVerdict(raw) {
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = null; } }
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     return { document_type: 'other', confidence: 0, revised_or_cancelled: false, invoice_no: null, invoice_date: null, seller: {}, buyer: {},
-      po_reference: null, project_reference: null, quotation_reference: null, currency: null, taxable_value: null, tax_value: null, total_value: null, stage_hint: null, due_date: null,
+      po_reference: null, po_date: null, project_reference: null, quotation_reference: null, currency: null, taxable_value: null, tax_value: null, total_value: null, stage_hint: null, due_date: null,
       tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null };
   }
   const c = Number(v.confidence);
@@ -143,6 +143,7 @@ export function parseInvoiceVerdict(raw) {
     seller: { company_name: clean(v.seller?.company_name, 200), gstin: clean(v.seller?.gstin, 20)?.toUpperCase() ?? null },
     buyer: { company_name: clean(v.buyer?.company_name, 200), gstin: clean(v.buyer?.gstin, 20)?.toUpperCase() ?? null },
     po_reference: clean(v.po_reference, 60),
+    po_date: isoDate(v.po_date),
     project_reference: clean(v.project_reference, 40),
     quotation_reference: clean(v.quotation_reference, 60),
     currency: clean(v.currency, 3)?.toUpperCase() ?? null,
@@ -158,7 +159,7 @@ export function parseInvoiceVerdict(raw) {
 
 /** Why an invoice read from email is not recorded. Matches email_invoice_decisions.review_reason, plus not_invoice. */
 export const INVOICE_REASONS = ['not_invoice', 'credit_note', 'low_confidence', 'revised', 'not_from_us', 'no_invoice_no',
-  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf', 'wrong_gstin'];
+  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf', 'wrong_gstin', 'po_date_mismatch'];
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const round2 = (n) => Math.round(n * 100) / 100;

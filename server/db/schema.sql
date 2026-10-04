@@ -3177,7 +3177,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                             -- it names a PO, but its client could not be confirmed (071)
                             'client_unknown',
                             -- raised from another GSTIN than its PO was addressed to (079)
-                            'wrong_gstin')),
+                            'wrong_gstin',
+                            -- the PO date it prints is not the matched PO's (080)
+                            'po_date_mismatch')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3194,6 +3196,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   reading                jsonb,
   -- One line of figures beside the reason, never the email's text (080).
   review_note            text,
+  -- An invoice for part of a PO with one 100% stage: the split a reviewer
+  -- may accept with one click (080, docs/email-po-invoice-prompt-plan.md §5).
+  split_suggestion       jsonb,
   decided_by             text,
   settled_at             timestamptz,
   decided_at             timestamptz NOT NULL DEFAULT now(),

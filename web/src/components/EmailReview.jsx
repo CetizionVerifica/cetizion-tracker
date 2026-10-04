@@ -57,6 +57,7 @@ const INVOICE_REASONS = {
   bad_date: 'Date missing, or after it was sent',
   client_unknown: 'Its client could not be confirmed',
   wrong_gstin: 'Raised from another GSTIN than its PO was addressed to',
+  po_date_mismatch: 'The PO date it gives is not the PO\'s',
 };
 
 /** How many items wait in a queue, for a tab's count. Null while unknown. */
