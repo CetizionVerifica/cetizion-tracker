@@ -90,6 +90,21 @@ runs on every push.
   conversation is unassigned), not the whole team's; members are matched
   whatever case their name was typed in. Deleted Items and Junk are synced
   for display and never read by the AI or routed to the queue.
+- **Reading mail in the Inbox** ([inbox-outlook-plan.md](inbox-outlook-plan.md) §3.3).
+  What the Inbox shows of a mailbox is what the mailbox stores, under its
+  visibility setting. Two things pass through without being stored, and only
+  for the **owner** of a personal mailbox that stores less than the whole
+  message: the body, read live from Microsoft Graph for that one request,
+  cleaned like a stored body and never written; and attachment downloads.
+  Anybody may download from a mailbox that shares everything; an admin
+  looking at somebody else's mailbox gets neither. Attachments are streamed
+  from Graph, never kept on disk, with `X-Content-Type-Options: nosniff`, a
+  25 MB cap, and `Content-Disposition: attachment` for everything but a PDF
+  or an image, which may open in a new tab under a policy of its own
+  (`default-src 'none'; sandbox`), so nothing in it runs in the app's
+  origin. A message's own `cid:` images are served by a route that answers
+  for that message's images only; the reading pane's frame policy allows
+  that one path of ours and no other.
 - **What goes to the AI provider** (OpenRouter, only when
   `OPENROUTER_API_KEY` is set, routed with `data_collection: 'deny'` and
   zero data retention; a request that cannot be routed that way is not sent
