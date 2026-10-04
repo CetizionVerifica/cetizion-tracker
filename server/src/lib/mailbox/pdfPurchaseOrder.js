@@ -12,8 +12,8 @@ import { advanceShare } from '../../import/ai.js';
 import { splitReference } from '../../import/parse.js';
 import { norm, paymentSplit } from '../../import/rules.js';
 import { STATUS } from '../statuses.js';
-import { isUs } from './enquiryDetect.js';
 import { amountInText, near } from './pdfQuotation.js';
+import { addressedInText, ourParty } from './ourParties.js';
 
 // ----------------------------------------------------------- which PDF
 
@@ -43,17 +43,9 @@ export function rankPoPdfs(files) {
 export const PO_REASONS = ['not_po', 'low_confidence', 'amendment', 'cancellation', 'not_to_us', 'no_po_number',
   'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency'];
 
-const gstinOf = (v) => String(v || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const days = (a, b) => (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5;
 const round2 = (n) => Math.round(n * 100) / 100;
-
-/** Is a party us: by GSTIN when both are known, else by name. */
-function partyIsUs(party, us) {
-  const g = gstinOf(party?.gstin);
-  if (g && us.gstin) return g === us.gstin;
-  return isUs(party?.company_name, us);
-}
 
 /**
  * The AI's reading of a PO (parsePoVerdict's shape), checked (§3.2). The
@@ -69,10 +61,15 @@ function partyIsUs(party, us) {
  *                  order; null for a scan read by OCR (nothing to check
  *                  amounts against, so they are taken as read)
  *   minConfidence  auto_po_min_confidence
- *   ourNames, ourGstin, internalDomains   who "us" is
+ *   ourNames, ourGstin(s), internalDomains   who "us" is
+ *   partners       the companies clients also order through (ourParties.js)
+ *
+ * A PO addressed to a partner is ours: po.partner_name says which, and
+ * po.addressed_gstin is the GSTIN it was addressed to (ours or the
+ * partner's), for the invoice to be raised from.
  */
-export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, internalDomains = [] } = {}) {
-  const us = { ourNames, internalDomains, gstin: gstinOf(ourGstin) || null };
+export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, ourGstins = null, partners = [], internalDomains = [] } = {}) {
+  const parties = { ourGstins: ourGstins ?? (ourGstin ? [ourGstin] : []), partners, ourNames, internalDomains };
   const po = { ...v };
   const fail = (reason) => ({ ok: false, reason, po });
 
@@ -85,12 +82,13 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
 
   // Addressed to us, by us neither: a PO we issued to a vendor reads the
   // other way round.
-  if (partyIsUs(v.buyer, us)) return fail('not_to_us');
+  if (ourParty(v.buyer, parties)?.kind === 'us') return fail('not_to_us');
   const text = String(sourceText || '');
-  const upper = text.toUpperCase();
-  const vendorIsUs = partyIsUs(v.vendor, us)
-    || (!v.vendor?.company_name && !v.vendor?.gstin && ((us.gstin && upper.replace(/\s/g, '').includes(us.gstin)) || /cetizion/i.test(text) || ourNames.some((n) => n && upper.includes(String(n).toUpperCase()))));
-  if (!vendorIsUs) return fail('not_to_us');
+  const addressed = ourParty(v.vendor, parties)
+    || (!v.vendor?.company_name && !v.vendor?.gstin ? addressedInText(text, parties) : null);
+  if (!addressed) return fail('not_to_us');
+  po.addressed_gstin = addressed.gstin || null;
+  po.partner_name = addressed.kind === 'partner' ? addressed.name : null;
 
   // The number as printed, refused when it is a promise rather than a number.
   const { number } = splitReference(v.po_number);

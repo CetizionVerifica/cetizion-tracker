@@ -624,6 +624,10 @@ CREATE TABLE purchase_orders (
   replaces_po_number     text REFERENCES purchase_orders(po_number)
                            ON UPDATE CASCADE ON DELETE SET NULL,
   cancelled              boolean NOT NULL DEFAULT false,
+  -- Who the client addressed it to: one of our GSTINs, or a partner's, and
+  -- which partner (079). The invoice must be raised from that GSTIN.
+  addressed_gstin        text,
+  partner_name           text,
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT purchase_orders_not_replacing_itself CHECK (replaces_po_number <> po_number)
@@ -1992,7 +1996,9 @@ DROP TRIGGER IF EXISTS email_message_touch ON email_messages;
 CREATE TRIGGER email_message_touch AFTER INSERT ON email_messages FOR EACH ROW EXECUTE FUNCTION email_message_touch();
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.')
+  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.'),
+  ('company_gstins', '07AAKCC0860B1Z2,09AAKCC0860B1ZY', 'Every GSTIN we are registered under (Delhi, UP), comma separated. The email readers take a PO addressed to, or an invoice raised from, any of them.'),
+  ('partner_companies', 'Innovative CSR Solutions India Pvt. Ltd. | 07AACCI8342L1ZA', 'Companies clients also order through, one per line: name | GSTIN | other names, comma separated. A PO addressed to one is registered as ours, marked as through it.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------
@@ -3101,7 +3107,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                           -- the PO's own figures failed a check (pdfPurchaseOrder.js checkPo)
                           'no_value','amounts_not_in_pdf','totals_do_not_add_up','bad_currency',
                           -- its client or currency could not be confirmed (071)
-                          'currency_mismatch','no_currency')),
+                          'currency_mismatch','no_currency',
+                          -- addressed to a GSTIN we do not invoice from (079)
+                          'wrong_gstin')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3164,7 +3172,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                             -- the invoice's own figures failed a check (invoiceDetect.js checkInvoice)
                             'no_invoice_no','amounts_not_in_pdf','totals_do_not_add_up','bad_currency','bad_date',
                             -- it names a PO, but its client could not be confirmed (071)
-                            'client_unknown')),
+                            'client_unknown',
+                            -- raised from another GSTIN than its PO was addressed to (079)
+                            'wrong_gstin')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),

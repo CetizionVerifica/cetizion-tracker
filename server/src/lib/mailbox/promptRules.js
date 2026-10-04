@@ -14,13 +14,21 @@
  * The bulk import (src/import/) has its own prompt and does not use these.
  */
 
-/** Who "we" are: the names and GSTIN the settings hold, so the model can tell our side from the client's. */
-export function whoWeAre({ ourNames = [], ourGstin = null } = {}) {
+/**
+ * Who "we" are: the names and GSTINs the settings hold, so the model can
+ * tell our side from the client's; and the partner companies clients also
+ * order through (docs/email-po-invoice-prompt-plan.md §1).
+ */
+export function whoWeAre({ ourNames = [], ourGstin = null, ourGstins = null, partners = [] } = {}) {
   const names = [...new Set(['Cetizion Verifica', ...ourNames.filter(Boolean)])];
+  const gstins = (ourGstins?.length ? ourGstins : [ourGstin]).filter(Boolean);
+  // Characters 3 to 12 of a GSTIN are the PAN: the same for each state we are registered in.
+  const pan = gstins.length > 1 ? String(gstins[0]).slice(2, 12) : null;
   return [
-    `We are ${names.map((n) => `"${n}"`).join(' or ')}${ourGstin ? `, GSTIN ${ourGstin}` : ''}.`,
+    `We are ${names.map((n) => `"${n}"`).join(' or ')}${gstins.length ? `, GSTIN ${gstins.join(' or ')}` : ''}${pan ? ` (one company, registered in more than one state; PAN ${pan})` : ''}.`,
     'Our own name, letterhead, GSTIN, bank details and signature are never the client\'s.',
-  ].join(' ');
+    partners.length ? `We also take orders through our partner${partners.length === 1 ? '' : 's'} ${partners.map((p) => `"${p.name}"${p.gstin ? ` (GSTIN ${p.gstin})` : ''}`).join(', ')}: an order addressed to one of them is an order to us. Say which party the document is addressed to.` : null,
+  ].filter(Boolean).join(' ');
 }
 
 /** One rule each, so a reader can leave out what does not apply to it. */

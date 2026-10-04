@@ -419,6 +419,8 @@ SELECT
   -- Revised or cancelled: out of the sales figures, still billed as usual.
   po.replaces_po_number,
   po.cancelled,
+  po.addressed_gstin,
+  po.partner_name,
   (SELECT r.po_number FROM purchase_orders r
     WHERE r.replaces_po_number = po.po_number)        AS replaced_by_po_number,
   sv.service_count,

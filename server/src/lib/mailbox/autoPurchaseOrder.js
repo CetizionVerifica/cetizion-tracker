@@ -65,6 +65,7 @@ export async function poSettings(db = { query }) {
     portalSenders: String(s.po_portal_senders || ''),
     ourGstin: String(s.company_gstin || '').trim() || null,
     // The same "us" and the same daily AI ceiling as phase 1.
+    ourGstins: shared.ourGstins, partners: shared.partners,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit,
     concurrency: shared.concurrency, services: shared.services, readAll: shared.readAll,
   };
@@ -182,7 +183,7 @@ export async function decidePo(account, cand, ctx) {
 
   const checked = checkPo(read.verdict, {
     emailDate: m.sent_at, sourceText: read.sourceText, minConfidence: ctx.settings.minConfidence,
-    ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin, internalDomains: ctx.settings.internalDomains,
+    ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin, ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners, internalDomains: ctx.settings.internalDomains,
   });
   if (!checked.ok && checked.reason === 'not_po') {
     await logDecision({ query }, account, cand, { ...decision, outcome: 'not_po' });
@@ -504,11 +505,13 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
     po.payment_terms_text && terms.source === 'template' ? `Payment stages are the default; the PO says: ${po.payment_terms_text}` : null,
     po.payment_terms_text && terms.source === 'po_terms' ? `Payment terms on the PO: ${po.payment_terms_text}` : null,
     flags.includes('po_date_from_email') ? 'The PO date was not readable; the email date is used.' : null,
+    po.partner_name ? `Addressed to our partner ${po.partner_name}${po.addressed_gstin ? ` (GSTIN ${po.addressed_gstin})` : ''}.` : null,
   ].filter(Boolean).join(' ');
 
   const data = await registerPurchaseOrder(db, {
     quotation: quotation.quotation_no, po_number: po.po_number, po_date: po.po_date, po_value: poValue, currency: po.currency || quotation.currency || undefined,
     payment_terms_days: po.credit_days, document_id: documentId ?? undefined,
+    addressed_gstin: po.addressed_gstin ?? undefined, partner_name: po.partner_name ?? undefined,
     project_manager: po.project_manager?.name ?? undefined, project_manager_email: po.project_manager?.email ?? undefined,
     planned_delivery_date: po.delivery_date && po.delivery_date >= po.po_date ? po.delivery_date : undefined,
     stages: terms.source === 'po_terms' ? terms.stages : undefined,

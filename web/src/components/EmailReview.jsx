@@ -36,6 +36,7 @@ const PO_REASONS = {
   bad_currency: 'Currency the tracker does not use',
   currency_mismatch: 'Currency differs from the quotation\'s',
   no_currency: 'Currency could not be read',
+  wrong_gstin: 'Addressed to a GSTIN we do not invoice from',
 };
 
 const INVOICE_REASONS = {
@@ -55,6 +56,7 @@ const INVOICE_REASONS = {
   bad_currency: 'Currency the tracker does not use',
   bad_date: 'Date missing, or after it was sent',
   client_unknown: 'Its client could not be confirmed',
+  wrong_gstin: 'Raised from another GSTIN than its PO was addressed to',
 };
 
 /** How many items wait in a queue, for a tab's count. Null while unknown. */

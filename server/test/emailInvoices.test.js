@@ -313,6 +313,22 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_from_us');
   });
 
+  test('25b. an invoice raised from another of our GSTINs than its PO was addressed to goes to review; from the right one it is recorded', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Gstin Ltd', '4500025026');
+    await db.query(`UPDATE purchase_orders SET addressed_gstin = '09AAKCC0860B1ZY' WHERE po_number = '4500025026'`);
+    const read = (no, gstin) => reading({ invoice_no: no, seller: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin }, buyer: { company_name: 'Acme Gstin Ltd' }, po_reference: '4500025026' });
+    ai(read('INV-25B', '07AAKCC0860B1Z2'));
+    const wrong = invoiceEmail(box, client.email, { no: 'INV-25B', buyer: 'Acme Gstin Ltd', po: '4500025026' });
+    await deliver(box, [wrong]);
+    const d = await decision(box.id, wrong.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason, d.po_number], ['review', 'wrong_gstin', '4500025026']);
+    ai(read('INV-25C', '09AAKCC0860B1ZY'));
+    const right = invoiceEmail(box, client.email, { no: 'INV-25C', buyer: 'Acme Gstin Ltd', po: '4500025026' });
+    await deliver(box, [right]);
+    assert.equal((await decision(box.id, right.provider_id)).outcome, 'recorded');
+  });
+
   test('26. the invoice backfill waits for the PO backfill, then puts the past invoice on the past PO\'s stage', async () => {
     const box = await mailbox();
     const email = 'buyer@acme-twentysix.co.in';

@@ -14,10 +14,10 @@
  */
 import { BULK } from './rules.js';
 import { amountInText, near, parseAmount } from './pdfQuotation.js';
-import { isUs } from './enquiryDetect.js';
 import { STATUS } from '../statuses.js';
 import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT } from './readLimits.js';
 import { READING_RULES, whoWeAre } from './promptRules.js';
+import { gstinOf, ourParty } from './ourParties.js';
 
 /** An invoice number as compared: case, spaces and dashes ignored. */
 export const normaliseInvoiceNo = (s) => String(s || '').toLowerCase().replace(/[\s-]/g, '');
@@ -90,10 +90,10 @@ export function rankInvoicePdfs(files) {
  * three amounts as printed, the PO it cites to match it, and the stage
  * wording to pick which payment stage it bills.
  */
-export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [], ourNames = [], ourGstin = null }) {
+export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, sentAt, to = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [] }) {
   const system = [
     'You read one document that Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, emailed to a client, and say whether it is our tax invoice, and what it says.',
-    whoWeAre({ ourNames, ourGstin }),
+    whoWeAre({ ourNames, ourGstin, ourGstins, partners }),
     'Answer with one JSON object and nothing else:',
     '{"document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1, "revised_or_cancelled": boolean,',
     ' "invoice_no": string|null, "invoice_date": "YYYY-MM-DD"|null,',
@@ -153,9 +153,8 @@ export function parseInvoiceVerdict(raw) {
 
 /** Why an invoice read from email is not recorded. Matches email_invoice_decisions.review_reason, plus not_invoice. */
 export const INVOICE_REASONS = ['not_invoice', 'credit_note', 'low_confidence', 'revised', 'not_from_us', 'no_invoice_no',
-  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf'];
+  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf', 'wrong_gstin'];
 
-const gstinOf = (v) => String(v || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -163,20 +162,22 @@ const round2 = (n) => Math.round(n * 100) / 100;
  * The AI's reading of an invoice, checked (§3.10.2). Returns
  *   { ok: true, invoice }       record it (after matching, §3.10.3)
  *   { ok: false, reason }       not_invoice: log it and stop; anything else: review
+ *
+ * The seller is one of our registrations, or a partner (the invoice for a
+ * PO addressed to that partner): invoice.issuing_gstin is the GSTIN it was
+ * raised from, checked against the PO's (wrongGstin).
  */
-export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, internalDomains = [] } = {}) {
-  const us = { ourNames, internalDomains };
-  const ours = gstinOf(ourGstin);
+export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, ourGstins = null, partners = [], internalDomains = [] } = {}) {
+  const parties = { ourGstins: ourGstins ?? (ourGstin ? [ourGstin] : []), partners, ourNames, internalDomains };
   const fail = (reason) => ({ ok: false, reason, invoice: v });
   if (!v || v.document_type === 'other' || v.document_type === 'proforma') return fail('not_invoice');
   if (!(v.confidence >= minConfidence)) return fail('low_confidence');
   if (v.document_type === 'credit_note' || v.document_type === 'debit_note') return fail('credit_note');
   if (v.revised_or_cancelled) return fail('revised');
 
-  // The seller is us, the buyer is not: a vendor's bill we forwarded reads the other way.
-  const sellerIsUs = (gstinOf(v.seller?.gstin) && ours) ? gstinOf(v.seller.gstin) === ours : isUs(v.seller?.company_name, us);
-  const buyerIsUs = (gstinOf(v.buyer?.gstin) && ours) ? gstinOf(v.buyer.gstin) === ours : isUs(v.buyer?.company_name, us);
-  if (!sellerIsUs || buyerIsUs) return fail('not_from_us');
+  // The seller is us (or a partner), the buyer is not: a vendor's bill we forwarded reads the other way.
+  const seller = ourParty(v.seller, parties);
+  if (!seller || ourParty(v.buyer, parties)?.kind === 'us') return fail('not_from_us');
 
   if (!v.invoice_no || v.invoice_no.length < 2 || !/\d/.test(v.invoice_no)) return fail('no_invoice_no');
   const emailDay = istDay(emailDate);
@@ -190,8 +191,22 @@ export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 
   if (taxable !== null && tax !== null && !near(taxable + tax, total)) return fail('totals_do_not_add_up');
   if (sourceText !== null && ![total, taxable, tax].filter((n) => n !== null && n > 0).every((n) => amountInText(n, sourceText))) return fail('amounts_not_in_pdf');
 
-  return { ok: true, invoice: { ...v, currency, total_value: total, invoice_no_norm: normaliseInvoiceNo(v.invoice_no) } };
+  return {
+    ok: true,
+    invoice: {
+      ...v, currency, total_value: total, invoice_no_norm: normaliseInvoiceNo(v.invoice_no),
+      issuing_gstin: gstinOf(v.seller?.gstin) || null, through_partner: seller.kind === 'partner' ? seller.name : null,
+    },
+  };
 }
+
+/**
+ * Was the invoice raised from the registration the PO was addressed to?
+ * Clients reject an invoice from the wrong one (§1). Only when both GSTINs
+ * are known: a PO with no addressed GSTIN, or an invoice that prints none,
+ * passes.
+ */
+export const wrongGstin = (invoice, po) => Boolean(invoice?.issuing_gstin && po?.addressed_gstin && gstinOf(invoice.issuing_gstin) !== gstinOf(po.addressed_gstin));
 
 const ADVANCE_HINT = /\badvance|mobili[sz]ation|first|on (po|order)\b/i;
 const FINAL_HINT = /\bfinal|balance|remaining|completion|delivery|last\b/i;

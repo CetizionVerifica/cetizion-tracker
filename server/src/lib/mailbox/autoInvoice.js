@@ -35,7 +35,7 @@ import { near } from './pdfQuotation.js';
 import { mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings } from './autoEnquiry.js';
 import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
-import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs } from './invoiceDetect.js';
+import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, wrongGstin } from './invoiceDetect.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
@@ -60,6 +60,7 @@ export async function invoiceSettings(db = { query }) {
     waitDays: num(s.auto_invoice_wait_days, 7),
     historyAfterDays: num(s.auto_po_history_after_days, 30),
     ourGstin: String(s.company_gstin || '').trim() || null,
+    ourGstins: shared.ourGstins, partners: shared.partners,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit, backfillDays: shared.backfillDays,
     concurrency: shared.concurrency, readAll: shared.readAll,
   };
@@ -188,6 +189,7 @@ export async function decideInvoice(account, cand, ctx) {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf', requirePdf: true,
     prompt: ({ pdfText }) => buildInvoicePrompt({
       pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
+      ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners,
     }),
   });
   if (read.error) {
@@ -208,7 +210,7 @@ export async function decideInvoice(account, cand, ctx) {
 
   const checked = checkInvoice(read.verdict, {
     emailDate: m.sent_at, sourceText: read.sourceText, minConfidence: ctx.settings.minConfidence,
-    ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin, internalDomains: ctx.settings.internalDomains,
+    ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin, ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners, internalDomains: ctx.settings.internalDomains,
   });
   if (!checked.ok && checked.reason === 'not_invoice') {
     await saveDecision({ query }, account, cand, { ...base, outcome: 'not_invoice' });
@@ -246,6 +248,9 @@ async function settle(account, cand, ctx, inv, base, pdf) {
     ctx.waiting += 1;
     return 'waiting';
   }
+
+  // Raised from a registration other than the one the PO was addressed to: the client would reject it (§1).
+  if (wrongGstin(inv, match.po)) return toReview({ query }, account, cand, ctx, { ...decision, review_reason: 'wrong_gstin', po_number: match.po.po_number });
 
   const file = pdf || await refetchPdf(account, cand, ctx);
   const documentId = await storePdf(file);
@@ -318,7 +323,7 @@ async function recordUnderLock(db, account, cand, ctx, { inv, decision, po, docu
 // ------------------------------------------------------------ matching (§3.10.3)
 
 const LIVE_PO = `NOT po.cancelled AND NOT EXISTS (SELECT 1 FROM purchase_orders r WHERE r.replaces_po_number = po.po_number)`;
-const PO_COLUMNS = 'po.po_number, po.quotation_no, po.project_id, p.company_id';
+const PO_COLUMNS = 'po.po_number, po.quotation_no, po.project_id, p.company_id, po.addressed_gstin';
 
 /** Of these POs, the ones with an open stage of the invoice's amount. */
 async function withStageOf(db, poNumbers, total) {
@@ -432,7 +437,7 @@ async function notifyOutcomes(ctx) {
   }
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',
-    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice',
+    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice', wrong_gstin: 'it is raised from a GSTIN other than the one its PO is addressed to',
     low_confidence: 'it could not be read with confidence', client_unknown: 'its client could not be confirmed for the PO it names', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
     no_invoice_no: 'it has no invoice number', amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up',
     bad_currency: 'its currency is not one the tracker uses', bad_date: 'its date is missing or after the email',

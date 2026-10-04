@@ -299,6 +299,22 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
   });
 
+  test('9b. a PO addressed to our partner company is registered as ours, through the partner, with the GSTIN it was addressed to', async () => {
+    const box = await mailbox();
+    await client('Acme Partner Ltd', 'anil@acme-partner.co.in');
+    const q = await quotation('Acme Partner Ltd');
+    const vendor = 'Innovative CSR Solutions India Pvt. Ltd.';
+    const msg = poEmail({ from: { email: 'anil@acme-partner.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500090010', buyer: 'Acme Partner Ltd', vendor }) }] });
+    ai(reading({ po_number: '4500090010', buyer: { company_name: 'Acme Partner Ltd' }, vendor: { company_name: vendor, gstin: '07AACCI8342L1ZA' } }));
+    await deliver(box, [msg]);
+    const row = await poRow('4500090010');
+    assert.equal(row?.quotation_no, q.quotation_no, JSON.stringify(await decision(box.id, msg.provider_id)));
+    assert.deepEqual([row.partner_name, row.addressed_gstin], [vendor, '07AACCI8342L1ZA']);
+    assert.match(row.remarks, /Addressed to our partner Innovative CSR Solutions India Pvt\. Ltd\. \(GSTIN 07AACCI8342L1ZA\)/);
+    const { rows: [view] } = await db.query('SELECT partner_name FROM v_purchase_orders WHERE po_number = $1', ['4500090010']);
+    assert.equal(view.partner_name, vendor, 'the PO and project pages read it from the view');
+  });
+
   test('11a. a PO 5% under its quotation goes to review with both values; 1.5% under registers', async () => {
     const box = await mailbox();
     await client('Acme Eleven Ltd', 'anil@acme-eleven.co.in');
