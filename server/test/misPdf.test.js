@@ -29,7 +29,7 @@ describe('the report PDFs', () => {
     assert.match(text, /Source: sales@cetizionverifica\.com, info@cetizionverifica\.com — Inbox \+ Sent Items, 00:00–23:59 IST/);
     assert.doesNotMatch(text, /more in the tracker/, 'nothing is cut');
     assert.equal((text.match(/Client 19/g) || []).length, 2, 'the last PO and quotation rows are both there');
-    for (const sub of ['Invoice actions: read from email, to check \\(2\\)', 'Pending for invoicing \\(6\\)', 'Receivables: sundry debtors \\(12\\)', 'Grand total']) assert.match(text, new RegExp(sub));
+    for (const sub of ['Invoice actions: read from email, to check \\(2\\)', 'Pending for invoicing \\(6\\)', 'Receivables: sundry debtors \\(13\\)', 'Grand total']) assert.match(text, new RegExp(sub));
     assert.match(text, /not stated/, 'an invoice read from email with no amount');
     assert.match(text, /No PO received or closed|1 PO received on 4 Oct\./);
     assert.match(text, /"link":"https:\/\/tracker\.example\/inbox\?mb=1&f=sent&t=9"/, 'a tracker link is made whole');
@@ -37,6 +37,10 @@ describe('the report PDFs', () => {
     assert.match(text, /28 Sep · Ravi · RFQ: EcoVadis for 3 sites/, 'related earlier emails');
     assert.match(text, /Other sales activity/);
     assert.match(text, /"color":"#b42318"/, 'overdue rows are red');
+    assert.match(text, /Grand total \(tracker\)/);
+    assert.match(text, /Reconciled with Finance's list of 3 Oct \(grand total ₹15 L\): 1 matched, 1 line on the list only/);
+    assert.match(text, /list: 1,05,000; tracker: 1,00,000/, 'both figures where the list and the tracker differ');
+    assert.match(text, /"text":"list","link":"https:\/\/outlook\.office\.com\/mail\/item\/list"/, "a line on the list only links to Finance's email");
     assert.match(JSON.stringify(doc.footer(3, 4)), /Prepared automatically from the sales@cetizionverifica\.com, info@cetizionverifica\.com mailboxes/, 'the footer on every page');
     assert.match(JSON.stringify(doc.footer(3, 4)), /Page 3 of 4/);
   });

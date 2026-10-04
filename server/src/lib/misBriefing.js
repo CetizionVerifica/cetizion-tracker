@@ -13,6 +13,16 @@ export const shortDay = (d) => { const [, m, day] = String(d).slice(0, 10).split
 
 const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** How old Finance's debtors list may be and still be used: it comes every week or two (docs/mis-briefing-fix-plan.md §3a). */
+export const LIST_MAX_AGE_DAYS = 14;
+
+/** The line under the receivables: which list of Finance's they were reconciled with, or why none was. */
+export function listNote(list, { money = (v) => String(v) } = {}) {
+  if (!list) return `No debtors list from Finance in the last ${LIST_MAX_AGE_DAYS} days: the receivables are the tracker's alone.`;
+  if (list.rejected) return `Finance's list of ${shortDay(list.date)} was not used (${list.reason}): the receivables are the tracker's alone.`;
+  return `Reconciled with Finance's list of ${shortDay(list.date)}${list.grand_total != null ? ` (grand total ${money(list.grand_total)})` : ''}: ${list.matched} matched, ${count(list.list_only, 'line')} on the list only (Finance to record in the tracker), ${list.tracker_only} in the tracker only.`;
+}
+
 /** The header's source line: "sales@…, info@… — Inbox + Sent Items, 00:00–23:59 IST". */
 export function sourceLine(mailboxes, timeZone) {
   const read = mailboxes?.read || [];

@@ -22,7 +22,12 @@ export const daily = {
   invoice_tables: {
     actions: section(invoices.filter((r) => r.kind === 'invoice_review')),
     to_raise: section(invoices.filter((r) => r.kind === 'to_invoice')),
-    receivables: section(invoices.filter((r) => r.kind === 'invoice_due')),
+    // Reconciled with Finance's list (§3a): one figure differs, one line is on the list only.
+    receivables: section([
+      ...invoices.filter((r) => r.kind === 'invoice_due').map((r, i) => ({ ...r, age: r.days + 30, source: i === 0 ? 'both' : 'tracker', note: i === 0 ? 'list: 1,05,000; tracker: 1,00,000' : "not on Finance's list of 3 Oct" })),
+      { ...row(30), kind: 'list_receivable', key: 'list:1:4', client: 'Gamma & Sons', reference: "On Finance's list", next_action: 'Finance: record in tracker', overdue: false, source: 'list', age: 40, email_link: 'https://outlook.office.com/mail/item/list' },
+    ]),
+    list: { id: 1, date: '2026-10-03', file_name: 'Sundry Debtors.xlsx', grand_total: 1500000, matched: 1, list_only: 1, tracker_only: 11 },
   },
   glance_detail: {
     new_enquiries: ['Acme Steel', 'Beta Metals', 'Coreal'], quotations_sent: ['Acme Steel (CTZ/QT/2026/101)', 'Dasami (CTZ/QT/2026/102)'], pos_received: ['Hindalco (PO-77)'],

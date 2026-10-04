@@ -34,7 +34,7 @@ import { salesReport } from './reportDefinitions.js';
 import { r2 } from './reportMath.ts';
 import { RATES, inPeriod, poCountsAsSale, poQuotationNo, rateOn } from './salesReport.js';
 import { QUOTATION_STATUS } from './statuses.js';
-import { shortDay } from './misBriefing.js';
+import { LIST_MAX_AGE_DAYS, shortDay } from './misBriefing.js';
 
 export const KINDS = ['daily_briefing', 'weekly_mis'];
 
@@ -147,7 +147,8 @@ export async function pendingInvoices(db, { today, overdueDays }) {
     `WITH ${RATES}
      SELECT ps.id, ps.po_number, ps.stage_name, ps.stage_status, ps.invoice_no, ps.invoice_date, ps.invoice_due_date,
             ps.currency, ps.stage_amount, ps.amount_received, ps.due_now_amount,
-            ps.milestone_reached_on, ps.delivery_date, ps.po_date, ps.on_hold, ps.promise_to_pay_date,
+            ps.milestone_reached_on, ps.delivery_date, ps.po_date, ps.on_hold, ps.hold_reason, ps.promise_to_pay_date,
+            ps.reminder_sent_on, ps.reminder_level, ps.payment_received_date,
             COALESCE(c.name, ps.client_name) AS client_name, u.name AS owner,
             r.rate
        FROM v_payment_stages ps
@@ -176,13 +177,23 @@ export async function pendingInvoices(db, { today, overdueDays }) {
     const owed = Number(s.stage_amount) - Number(s.amount_received || 0);
     const due = dateOf(s.invoice_due_date);
     const late = due ? daysBetween(due, today) : 0;
-    out.push(pendingRow({
+    // The last chase or payment, as the receivables table shows it (docs/mis-briefing-fix-plan.md §3a).
+    const chased = [
+      s.reminder_sent_on ? `reminder ${s.reminder_level || 1} sent ${shortDay(dateOf(s.reminder_sent_on))}` : null,
+      Number(s.amount_received) > 0 && s.payment_received_date ? `part paid ${shortDay(dateOf(s.payment_received_date))}` : null,
+      s.promise_to_pay_date ? `promised for ${shortDay(dateOf(s.promise_to_pay_date))}` : null,
+      s.on_hold ? `on hold${s.hold_reason ? `: ${s.hold_reason}` : ''}` : null,
+    ].filter(Boolean);
+    const row = pendingRow({
       kind: 'invoice_due', key: `stage:${s.id}`, client: clientName(s), reference: `Invoice ${s.invoice_no || '—'} · ${s.po_number}`,
       amount: owed, currency: s.currency, amount_inr: rate == null ? null : owed * rate,
       since: due, days: late, owner: s.owner,
-      next_action: late > 0 ? `Chase payment, ${late} day${late === 1 ? '' : 's'} overdue` : `Due ${due ? `on ${due}` : 'soon'}`,
+      next_action: `${late > 0 ? `Chase payment, ${late} day${late === 1 ? '' : 's'} overdue` : `Due ${due ? `on ${due}` : 'soon'}`}${chased.length ? `; ${chased.join('; ')}` : ''}`,
       link: recordLink('payment_stage', s.id), mail: { entity: 'purchase_order', id: s.po_number },
-    }, overdueDays));
+    }, overdueDays);
+    // Days since the invoice date, as Finance ages a debt; `days` stays the days past due, which marks Overdue.
+    row.age = s.invoice_date ? daysBetween(dateOf(s.invoice_date), today) : null;
+    out.push(row);
   }
   const { rows: review } = await db.query(
     `SELECT d.id, d.sent_at, d.to_emails, d.invoice_no, d.po_number, d.review_reason, d.thread_id, a.email AS mailbox
@@ -567,12 +578,110 @@ async function briefingMailboxes(db) {
   };
 }
 
-/** The invoices in the reference's three tables: actions (review), to raise, receivables. */
-export const invoiceTables = (rows) => ({
-  actions: summarise(rows.filter((r) => r.kind === 'invoice_review')),
-  to_raise: summarise(rows.filter((r) => r.kind === 'to_invoice')),
-  receivables: summarise(rows.filter((r) => r.kind === 'invoice_due')),
-});
+/**
+ * Finance's newest debtors list from the 14 days up to `today`, with its
+ * lines and its email (§3a). A newest list that was not used comes back as
+ * { rejected, reason }: the receivables are then the tracker's alone, not
+ * an older list's.
+ */
+export async function latestList(db, { today }) {
+  const { rows: [l] } = await db.query(
+    `SELECT l.id, l.list_date::text AS list_date, l.file_name, l.grand_total::float8 AS grand_total, l.status, l.reason,
+            m.web_link, m.account_id, m.folder_id, m.thread_id
+       FROM receivable_lists l LEFT JOIN email_messages m ON m.id = l.message_id
+      WHERE (l.received_at AT TIME ZONE $2)::date BETWEEN $1::date - $3::int AND $1::date
+      ORDER BY l.received_at DESC, l.id DESC LIMIT 1`, [today, config.businessTimeZone, LIST_MAX_AGE_DAYS]);
+  if (!l) return null;
+  const list = { id: l.id, date: l.list_date, file_name: l.file_name, grand_total: l.grand_total, link: l.thread_id ? emailLink(l) : null };
+  if (l.status !== 'used') return { ...list, rejected: true, reason: l.reason };
+  const { rows: lines } = await db.query(
+    'SELECT line_no, client, invoice_no, amount::float8 AS amount, days, pending_for_invoicing FROM receivable_list_lines WHERE list_id = $1 ORDER BY line_no', [l.id]);
+  return { ...list, lines };
+}
+
+/** A client's name as the list and the tracker may both spell it: no punctuation, no "Pvt Ltd". */
+export const clientKey = (name) => String(name ?? '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\b(private|pvt|limited|ltd|llp|inc|incorporated|co|company|corporation|corp|india|the)\b/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
+/** Equal within ₹1 or 0.5%, as the readers compare amounts. */
+const same = (a, b) => a != null && b != null && Math.abs(a - b) <= Math.max(1, 0.005 * Math.max(Math.abs(a), Math.abs(b)));
+const lakhs = (v) => Math.round(v).toLocaleString('en-IN');
+
+/**
+ * Finance's list against the tracker's rows (§3a), client by client: equal
+ * amounts pair first; what is left of a client on both sides is one match
+ * showing both figures ("list: 2,44,530; tracker: 2,10,000"); a list line
+ * left over is on the list only, for Finance to record in the tracker; a
+ * tracker row left over is not on the list.
+ */
+export function reconcile(rows, lines, { list, overdueDays, kind }) {
+  const out = rows.map((r) => ({ ...r, source: 'tracker', list_amount: null, note: null }));
+  const group = (items) => {
+    const by = new Map();
+    for (const x of items) { const k = clientKey(x.client); by.set(k, [...(by.get(k) || []), x]); }
+    return by;
+  };
+  const tracker = group(out);
+  const listOnly = [];
+  for (const [key, ls] of group(lines)) {
+    const open = [...(tracker.get(key) || [])];
+    const left = [];
+    for (const l of ls) {
+      const i = open.findIndex((t) => same(t.amount_inr, l.amount));
+      if (i < 0) { left.push(l); continue; }
+      Object.assign(open[i], { source: 'both', list_amount: l.amount });
+      open.splice(i, 1);
+    }
+    if (left.length && open.length) {
+      const onList = left.reduce((n, l) => n + l.amount, 0);
+      const inTracker = open.reduce((n, t) => n + (t.amount_inr || 0), 0);
+      for (const t of open) t.source = 'both';
+      Object.assign(open[0], { list_amount: onList, note: `list: ${lakhs(onList)}; tracker: ${lakhs(inTracker)}` });
+      continue;
+    }
+    listOnly.push(...left);
+  }
+  for (const t of out) if (t.source === 'tracker') t.note = `not on Finance's list of ${shortDay(list.date)}`;
+  const fromList = listOnly.map((l) => ({
+    ...pendingRow({
+      kind: kind === 'to_raise' ? 'list_to_invoice' : 'list_receivable', key: `list:${list.id}:${l.line_no}`, client: l.client,
+      reference: l.invoice_no ? `Invoice ${l.invoice_no}` : "On Finance's list", amount_inr: l.amount, amount: l.amount, currency: 'INR',
+      days: l.days ?? 0, next_action: 'Finance: record in tracker', link: '/payment-stages',
+    }, overdueDays),
+    // A Finance action, not a chase: never counted Overdue.
+    overdue: false, source: 'list', list_amount: l.amount, email_link: list.link, age: l.days ?? null,
+  }));
+  return { rows: out, fromList };
+}
+
+/**
+ * The invoices in the reference's three tables: to check (review), to
+ * raise, receivables. With Finance's list, the last two are reconciled
+ * with it; their value is the tracker's, the list's total beside it.
+ */
+export function invoiceTables(rows, { list = null, overdueDays = 7 } = {}) {
+  const pick = (kind) => rows.filter((r) => r.kind === kind);
+  const actions = summarise(pick('invoice_review'));
+  if (!list || list.rejected) {
+    return { actions, to_raise: summarise(pick('to_invoice')), receivables: summarise(pick('invoice_due')), list: list ? { ...list, lines: undefined } : null };
+  }
+  const table = (kind, pending) => {
+    const lines = list.lines.filter((l) => l.pending_for_invoicing === pending);
+    const r = reconcile(pick(kind), lines, { list, overdueDays, kind: pending ? 'to_raise' : 'receivables' });
+    return { ...summarise([...r.rows, ...r.fromList]), value_inr: r2(r.rows.reduce((n, x) => n + (x.amount_inr || 0), 0)), list_total: r2(lines.reduce((n, l) => n + l.amount, 0)) };
+  };
+  const toRaise = table('to_invoice', true);
+  const receivables = table('invoice_due', false);
+  const both = [...toRaise.rows, ...receivables.rows];
+  const count = (source) => both.filter((x) => x.source === source).length;
+  return {
+    actions,
+    to_raise: toRaise,
+    receivables,
+    list: { id: list.id, date: list.date, file_name: list.file_name, link: list.link, grand_total: list.grand_total, matched: count('both'), list_only: count('list'), tracker_only: count('tracker') },
+  };
+}
 
 const summarise = (rows) => ({
   count: rows.length,
@@ -590,9 +699,9 @@ export async function dailyBriefing({ today = businessToday(), db = { query }, s
   const s = settings || await misSettings(db);
   const period = yesterdayOf(today);
   const ctx = { today, overdueDays: s.overdueDays };
-  const [glance, invoices, pos, quotations, readers, events, detail, mailboxes] = await Promise.all([
+  const [glance, invoices, pos, quotations, readers, events, detail, mailboxes, list] = await Promise.all([
     atAGlance(db, period), pendingInvoices(db, ctx), pendingPos(db, ctx), pendingQuotations(db, ctx), readersDay(db, period), readerEvents(db, period),
-    glanceDetail(db, period), briefingMailboxes(db),
+    glanceDetail(db, period), briefingMailboxes(db), latestList(db, { today }),
   ]);
   await attachMail(db, [...invoices, ...pos, ...quotations]);
   const reminders = await remindersAhead(db, { today, pos });
@@ -612,7 +721,7 @@ export async function dailyBriefing({ today = businessToday(), db = { query }, s
     // The reference's pieces (§3): what is behind each count, the invoices
     // in three tables, what is coming up, and where the mail was read.
     glance_detail: detail,
-    invoice_tables: invoiceTables(invoices),
+    invoice_tables: invoiceTables(invoices, { list, overdueDays: s.overdueDays }),
     reminders,
     mailboxes,
     app_url: s.appUrl,

@@ -23,7 +23,7 @@ import { COLORS, horizontalBars } from './pdfCharts.js';
 import { INK, MARGIN_X, PDF_STYLES, dateLabel, generatedStamp, periodLabel, reportTable, rule, tile } from './pdfBlocks.js';
 import { compactInr, money, number, plural } from './reportFormat.js';
 import { windowNote } from './misWindow.js';
-import { closingLine, dayParagraph, glanceRows, sourceLine } from './misBriefing.js';
+import { closingLine, dayParagraph, glanceRows, listNote, sourceLine } from './misBriefing.js';
 
 export const MAX_ROWS = 12;
 /** The weekly report's lists are shorter: eight sections share two pages. */
@@ -173,22 +173,26 @@ const heading = (no, title) => [
 const subheading = (text) => ({ text, bold: true, fontSize: 8.5, color: INK[700], margin: [0, 7, 0, 3] });
 const closing = (text) => ({ text, style: 'lead', italics: true, margin: [0, 3, 0, 0] });
 
-/** A pending table as the reference has it: every row, the overdue ones in red. */
-function briefingTable(section, { empty, appUrl, grandTotal = false }) {
+/**
+ * A pending table as the reference has it: every row, the overdue ones in
+ * red. A row reconciled with Finance's list carries its note beside the
+ * reference; a row only on the list links to the list's email.
+ */
+function briefingTable(section, { empty, appUrl, grandTotal = false, totalLabel = 'Grand total', daysOf = (r) => r.days }) {
   const red = (row, content, extra = {}) => ({ text: content ?? '—', ...(row.overdue ? { color: RED, fillColor: OVERDUE_FILL } : {}), ...extra });
   return [
     reportTable({
       compact: true,
       fontSize: 7,
       columns: [
-        { header: 'Client', value: (r) => red(r, r.client), width: 74, totalLabel: 'Grand total' },
-        { header: 'Reference', value: (r) => red(r, r.reference), width: '*' },
+        { header: 'Client', value: (r) => red(r, r.client), width: 74, totalLabel },
+        { header: 'Reference', value: (r) => red(r, r.note ? `${r.reference} (${r.note})` : r.reference), width: '*' },
         { header: 'Amount', value: (r) => red(r, amountOf(r)), align: 'right', width: 54, total: (t) => t },
         { header: 'Last activity', value: (r) => red(r, r.last_activity ? dateLabel(r.last_activity).slice(0, 6) : '—'), width: 40 },
-        { header: 'Days', value: (r) => red(r, number(r.days), r.overdue ? { bold: true } : {}), align: 'right', width: 26 },
+        { header: 'Days', value: (r) => red(r, daysOf(r) == null ? '—' : number(daysOf(r)), r.overdue ? { bold: true } : {}), align: 'right', width: 26 },
         { header: 'Owner', value: (r) => red(r, r.owner || '—'), width: 48 },
         { header: 'Next action', value: (r) => red(r, r.next_action), width: 90 },
-        { header: 'Email', value: (r) => { const url = href(appUrl, r.email_link); return url ? { ...linked('Open', url), ...(r.overdue ? { fillColor: OVERDUE_FILL } : {}) } : red(r, '—'); }, width: 28 },
+        { header: 'Email', value: (r) => { const url = href(appUrl, r.email_link); return url ? { ...linked(r.source === 'list' ? 'list' : 'Open', url), ...(r.overdue ? { fillColor: OVERDUE_FILL } : {}) } : red(r, '—'); }, width: 28 },
       ],
       rows: section.rows,
       total: grandTotal && section.rows.length ? short(section.value_inr) : undefined,
@@ -255,7 +259,7 @@ export function dailyBriefingDoc(data, { company = 'Cetizion Verifica', generate
 
     ...heading(3, 'Pending tasks'),
     {
-      text: `Days are counted to today: an invoice to raise from its milestone, delivery or PO date; an invoice awaiting payment from its due date; a PO from the client's yes; a quotation from when it was sent or last followed up; an enquiry from when it came in. Overdue means waiting more than ${data.overdue_days} days; overdue rows are in red. Last activity is the latest email on the record.`,
+      text: `Days are counted to today: an invoice to raise from its milestone, delivery or PO date; a receivable from its invoice date, as Finance ages it, and red once more than ${data.overdue_days} days past its due date; a PO from the client's yes; a quotation from when it was sent or last followed up; an enquiry from when it came in. Overdue means waiting more than ${data.overdue_days} days; overdue rows are in red. Last activity is the latest email on the record.`,
       style: 'lead',
     },
     h2(`(a) Invoices (${number(p.invoices.count)})`),
@@ -264,7 +268,8 @@ export function dailyBriefingDoc(data, { company = 'Cetizion Verifica', generate
     subheading(`Pending for invoicing (${number(t.to_raise.count)})`),
     ...briefingTable(t.to_raise, { appUrl, empty: 'Nothing to invoice.' }),
     subheading(`Receivables: sundry debtors (${number(t.receivables.count)})`),
-    ...briefingTable(t.receivables, { appUrl, grandTotal: true, empty: 'Nothing outstanding.' }),
+    ...briefingTable(t.receivables, { appUrl, grandTotal: true, totalLabel: t.list && !t.list.rejected ? 'Grand total (tracker)' : 'Grand total', daysOf: (r) => r.age ?? r.days, empty: 'Nothing outstanding.' }),
+    { text: listNote(t.list, { money: short }), style: 'lead', margin: [0, 3, 0, 0] },
     closing(closingLine('invoices', data)),
     h2(`(b) POs (${number(p.pos.count)})`),
     ...briefingTable(p.pos, { appUrl, empty: 'No quotation is waiting for its PO.' }),

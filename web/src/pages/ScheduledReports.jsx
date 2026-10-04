@@ -158,6 +158,37 @@ function SharedSettings({ settings, mailboxes, onChanged }) {
   );
 }
 
+/** What finds Finance's Sundry Debtors list in the shared mailboxes (docs/mis-briefing-fix-plan.md §3a). */
+function DebtorsList({ settings, onChanged }) {
+  const toast = useToast();
+  const [phrases, setPhrases] = useState(setting(settings, 'receivables_list_phrases') || 'sundry debtors,debtors,outstanding,receivable');
+  const saved = setting(settings, 'receivables_list_senders');
+  const [senders, setSenders] = useState(saved && saved !== 'none' ? saved : '');
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try {
+      // A setting cannot be saved blank: no senders is "none", anyone at our own domains.
+      await api.update('settings', 'receivables_list_phrases', { value: phrases.trim() || 'sundry debtors' });
+      await api.update('settings', 'receivables_list_senders', { value: senders.trim() || 'none' });
+      toast('Saved', 'success'); onChanged();
+    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+      <div className="text-[14px] font-semibold text-foreground">Finance's debtors list</div>
+      <p className="text-[12.5px]/[1.6] text-secondary-text">The daily briefing reconciles the receivables with the newest Sundry Debtors list Finance emailed to a shared mailbox in the last 14 days, as an Excel file or a PDF. Each list is read once. One whose rows do not add up to its grand total is not used, and the briefing says so.</p>
+      <div className="grid gap-3 @3xl:grid-cols-2">
+        <Field label="Subject or file name has" hint="Any of these words, comma-separated"><Input value={phrases} onChange={(e) => setPhrases(e.target.value)} /></Field>
+        <Field label="Sent by" hint="Comma-separated, or blank for anyone at our own email domains"><Input value={senders} onChange={(e) => setSenders(e.target.value)} placeholder="accounts@company.com" /></Field>
+      </div>
+      <div><Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</Button></div>
+    </div>
+  );
+}
+
 function Runs({ runs, onChanged }) {
   const toast = useToast();
   const [resending, setResending] = useState(null);
@@ -239,6 +270,7 @@ export default function ScheduledReports() {
           </div>
         )}
         {list && <SharedSettings key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
+        {list && <DebtorsList key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} onChanged={refetch} />}
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
     </>

@@ -4,13 +4,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
 import pg from 'pg';
+import XLSX from 'xlsx';
 
 /**
  * docs/mis-briefing-fix-plan.md §2 and decision 3, against the database:
  * yesterday's mail in every shared mailbox, without what is not sales
  * business, each email once, and the mailboxes it could not read named.
  * And §3: each pending row's last email, earlier emails on a highlight,
- * and the reminders carried forward.
+ * and the reminders carried forward; §3a: Finance's debtors list, read once.
  * Needs TEST_DATABASE_URL.
  */
 
@@ -161,6 +162,55 @@ describe('the briefing reads the right mail', { skip: !ADMIN_URL && 'set TEST_DA
       read: [{ email: 'info@cetizionverifica.com', folders: 'all folders' }, { email: 'sales@cetizionverifica.com', folders: 'all folders' }],
       not_read: [{ email: 'hr@cetizionverifica.com', shared_as: 'subject' }],
     });
-    assert.deepEqual(Object.keys(data.invoice_tables), ['actions', 'to_raise', 'receivables']);
+    assert.deepEqual(Object.keys(data.invoice_tables), ['actions', 'to_raise', 'receivables', 'list']);
+  });
+
+  test("Finance's debtors list: the newest from Finance is read once, used when it adds up, and not when it does not", async () => {
+    const { refreshReceivableList } = await import('../src/lib/mailbox/receivablesList.js');
+    const workbook = (grand) => {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+        ['Particulars', 'Closing Balance', 'Days'], ['Hindalco Industries Ltd', 244530, 49], ['Pending for invoicing'], ['Aragen Life Sciences', 100000, 10], ['Grand Total', grand],
+      ]), 'Debtors');
+      return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    };
+    let asked = 0;
+    let file = workbook(344530);
+    const provider = { attachments: async () => { asked += 1; return [{ name: 'Sundry Debtors.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: file }]; } };
+    const email = async (from, subject, at, attachment = null) => {
+      const { rows: [t] } = await db.query(`INSERT INTO email_threads (account_id, conversation_id, subject) VALUES ($1, $2, $3) RETURNING id`, [ids.sales, `debtors-${at}`, subject]);
+      const { rows: [m] } = await db.query(
+        `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, subject, sent_at, has_attachments) VALUES ($1, $2, $3, 'inbound', $4, $5, $6, $7) RETURNING id`,
+        [ids.sales, t.id, `debtors-${at}`, from, subject, at, Boolean(attachment)]);
+      if (attachment) await db.query(`INSERT INTO email_attachments (message_id, provider_id, name) VALUES ($1, 'a1', $2)`, [m.id, attachment]);
+      return m.id;
+    };
+    await email('accounts@cetizionverifica.com', 'Debtors as on 03-10-2026', '2026-10-04T05:00:00Z', 'Sundry Debtors.xlsx');
+    // Newer, but from a client: not Finance's list.
+    await email('ravi@acmesteel.in', 'Outstanding payment query', '2026-10-04T08:00:00Z');
+
+    const first = await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider });
+    assert.equal(first.stored.status, 'used', JSON.stringify(first));
+    assert.equal(first.stored.method, 'xlsx');
+    assert.equal(String(first.stored.list_date).slice(0, 10), '2026-10-04', "no date read from a sheet: the email's");
+    const again = await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider });
+    assert.ok(again.already, 'read once');
+    assert.equal(asked, 1, 'the mailbox was asked once');
+
+    let data = await misReports.dailyBriefing({ today: '2026-10-05', db });
+    assert.deepEqual([data.invoice_tables.list.list_only, data.invoice_tables.list.matched], [2, 0], 'nothing in this tracker: both lines are on the list only');
+    assert.equal(data.invoice_tables.receivables.rows[0].client, 'Hindalco Industries Ltd');
+    assert.equal(data.invoice_tables.to_raise.rows[0].client, 'Aragen Life Sciences', 'pending for invoicing goes with the invoices to raise');
+    assert.equal(data.invoice_tables.list.link, `/inbox?mb=${ids.sales}`);
+
+    // Finance's next list does not add up: it is not used, and no older list stands in for it.
+    file = workbook(999999);
+    await email('accounts@cetizionverifica.com', 'Sundry debtors', '2026-10-05T02:00:00Z', 'Sundry Debtors.xlsx');
+    const bad = await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider });
+    assert.equal(bad.stored.status, 'rejected');
+    assert.match(bad.stored.reason, /not the grand total 999999/);
+    data = await misReports.dailyBriefing({ today: '2026-10-05', db });
+    assert.equal(data.invoice_tables.list.rejected, true);
+    assert.equal(data.invoice_tables.receivables.count, 0);
   });
 });

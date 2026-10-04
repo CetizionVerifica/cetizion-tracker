@@ -50,6 +50,30 @@ The first-response time runs from the enquiry (or its first email) to our
 first reply. Enquiries the readers made from **our own** quotation or PO
 email have none: their response time would be artificial.
 
+## Finance's debtors list
+
+The receivables in the daily briefing are the tracker's (every invoiced
+stage not fully paid, aged from its invoice date, with its last reminder,
+part payment or promise), reconciled with the Sundry Debtors list Finance
+emails ([mis-briefing-fix-plan.md](mis-briefing-fix-plan.md) §3a):
+
+- **Found:** the newest email in a shared mailbox, in the last 14 days,
+  from Finance (Settings → Scheduled reports → Finance's debtors list; by
+  default anyone at our own domains) whose subject or attachment name has
+  one of the words there.
+- **Read once:** an Excel file in code; a PDF by the AI, one call, only on
+  the scheduled send or a preview that asks for the AI. Every amount must be
+  in the file and the rows must add up to the grand total, or the list is
+  not used and the briefing says why.
+- **Reconciled** client by client: equal amounts match; otherwise both
+  figures are shown ("list: 2,44,530; tracker: 2,10,000"); a line only on
+  the list is a Finance action, "record in tracker", linked to the list's
+  email; a tracker row not on the list says so. Lines under "Pending for
+  invoicing" go with the invoices to raise.
+
+With no list in 14 days, or the newest one not used, the receivables are
+the tracker's alone, and the line under the table says which.
+
 ## What the AI does, and cannot do
 
 With an AI key set, one call per report words what the tracker computed:
