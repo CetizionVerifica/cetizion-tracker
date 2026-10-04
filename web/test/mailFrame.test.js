@@ -90,6 +90,12 @@ test('a cid: image is pointed at the message\'s own inline route, brackets and q
   assert.doesNotMatch(out, /cid:/, 'nothing is left for the browser to fail on');
 });
 
+test('a content id with a stray "%" is used as written, not thrown on', () => {
+  const out = rewriteCid('<img src="cid:logo%E0@acme"><img src="cid:ok%40x">', 5);
+  assert.ok(out.includes(`src="${inlineBase(5)}logo%25E0%40acme"`), out);
+  assert.ok(out.includes(`src="${inlineBase(5)}ok%40x"`), 'a genuinely encoded one is still decoded');
+});
+
 test('only an <img> src is rewritten; a cid: anywhere else stays for the policy to refuse', () => {
   const html = '<a href="cid:x">link</a><div style="background:url(cid:y)">t</div><img src="https://a.example/p.png">';
   assert.equal(rewriteCid(html, 7), html);

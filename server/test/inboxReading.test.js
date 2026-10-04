@@ -180,9 +180,11 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(sent.body.data[0].direction, 'outbound');
     assert.deepEqual(sent.body.data[0].to_emails, ['ravi@acme-steel.co.in'], 'Sent Items shows who it went to');
 
-    // Somebody else's mailbox is not there; nor is a folder the mailbox does not have.
+    // Somebody else's mailbox is not there; nor is a folder the mailbox does not have — by any name, well-known or not — nor one the switcher hides.
     assert.equal((await as(salesA)('get', `/api/mail/folders/${box.id}/inbox/messages`)).status, 404);
     assert.equal((await as(salesB)('get', `/api/mail/folders/${box.id}/nowhere/messages`)).status, 404);
+    assert.equal((await as(salesB)('get', `/api/mail/folders/${box.id}/archive/messages`)).status, 404, 'a well-known folder this mailbox has not got');
+    assert.equal((await as(salesA)('get', `/api/mail/folders/${boxA.id}/drafts/messages`)).status, 404, 'drafts is in the folder list and still not served');
     // An admin may list it.
     assert.equal((await as(admin)('get', `/api/mail/folders/${box.id}/inbox/messages`)).status, 200);
   });
@@ -207,7 +209,10 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(d.body_html, '<p>Please quote.</p>');
     assert.equal(d.live, false);
     assert.equal(d.can_download, true);
-    assert.ok(!('provider_id' in d), 'the provider id stays inside');
+    for (const k of ['provider_id', 'internet_message_id', 'conversation_id', 'mailbox_user_id', 'removed_seen_at', 'attachments_listed_at', 'mailbox_status', 'thread_subject', 'filtered_as']) {
+      assert.ok(!(k in d), `${k} stays inside`);
+    }
+    assert.ok(!('provider_id' in d.attachments[0]), 'nor an attachment\'s');
     assert.deepEqual(d.attachments.map((a) => [a.name, a.content_type, a.is_inline, a.content_id]), [['spec.pdf', 'application/pdf', false, null], ['logo.png', 'image/png', true, 'logo@acme']]);
     assert.equal(d.attachments[0].url, `/api/mail/messages/${row.id}/attachments/${d.attachments[0].id}`);
 
@@ -233,6 +238,10 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(down.headers['content-type'], 'application/pdf');
     assert.match(down.headers['content-disposition'], /^attachment; filename="spec\.pdf"/);
     assert.equal(down.body.toString(), '%PDF-1.4 test');
+    // A name outside ASCII: the real one in filename*, a plain ASCII stand-in for a client that ignores it.
+    await db.query(`UPDATE email_attachments SET name = 'Angebot für Müller & Co.pdf' WHERE id = $1`, [xls.id]);
+    const named = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${xls.id}`);
+    assert.equal(named.headers['content-disposition'], `attachment; filename="Angebot f_r M_ller & Co.pdf"; filename*=UTF-8''${encodeURIComponent('Angebot für Müller & Co.pdf')}`);
 
     const inline = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}?inline=1`);
     assert.match(inline.headers['content-disposition'], /^inline;/);
@@ -292,6 +301,50 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(asAdmin.body.data.messages[0].can_read_live, false);
     assert.equal(asAdmin.body.data.can_download, false);
     assert.ok(!('user_id' in asAdmin.body.data));
+  });
+
+  test('the owner of a metadata-only mailbox sees attachment names and inline images live; a revoked grant marks the mailbox for reconnecting, in the owner\'s words not Azure\'s', async () => {
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com`, visibility: 'metadata' });
+    const m = mail({ subject: 'Terms', body_html: '<p>Logo: <img src="cid:logo@acme"></p>', has_attachments: true,
+      attachments: [
+        { provider_id: 'att-terms', name: 'Q4 terms.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF') },
+        { provider_id: 'att-logo', name: 'logo.png', contentType: 'image/png', content: Buffer.from('PNG bytes'), is_inline: true, content_id: 'logo@acme' },
+      ] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const { rows: atts } = await db.query('SELECT name, content_id FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.deepEqual(atts, [{ name: null, content_id: null }, { name: null, content_id: null }], 'the mailbox stores neither names nor content ids');
+
+    const own = await as(salesB)('get', `/api/mail/messages/${row.id}`);
+    assert.equal(own.status, 200, JSON.stringify(own.body));
+    assert.equal(own.body.data.live, true);
+    assert.deepEqual(own.body.data.attachments.map((a) => [a.name, a.content_id]), [['Q4 terms.pdf', null], ['logo.png', 'logo@acme']], 'read from the provider with the body');
+    const pdf = own.body.data.attachments[0];
+    const down = await as(salesB)('get', pdf.url);
+    assert.match(down.headers['content-disposition'], /^attachment; filename="Q4 terms\.pdf"/, 'saved under its name');
+    const cid = await as(salesB)('get', `/api/mail/messages/${row.id}/inline/logo@acme`).buffer(true).parse((res, cb) => { const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))); });
+    assert.equal(cid.status, 200, JSON.stringify(cid.body));
+    assert.equal(cid.body.toString(), 'PNG bytes');
+    const { rows: still } = await db.query('SELECT name, content_id FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.deepEqual(still, atts, 'and nothing was written');
+    // An admin sees what is stored: no names, no body, no inline image.
+    const other = await as(admin)('get', `/api/mail/messages/${row.id}`);
+    assert.equal(other.body.data.attachments[0].name, null);
+    assert.equal((await as(admin)('get', `/api/mail/messages/${row.id}/inline/logo@acme`)).status, 404);
+
+    // The grant is revoked: the live read fails, the mailbox is marked, the client hears a fixed sentence.
+    sync.pushTestFailure(box.id, { message: { reconnect: true, message: 'AADSTS70000: invalid_grant' } });
+    const failed = await as(salesB)('get', `/api/mail/messages/${row.id}`);
+    assert.equal(failed.status, 200);
+    assert.equal(failed.body.data.live, false);
+    assert.equal(failed.body.data.live_error, 'The mailbox needs to be reconnected before it can be read');
+    assert.ok(!JSON.stringify(failed.body).includes('AADSTS'), 'Azure\'s words stay on the server');
+    const { rows: [acc] } = await db.query('SELECT status, last_error FROM connected_accounts WHERE id = $1', [box.id]);
+    assert.equal(acc.status, 'needs_reconnect');
+    assert.match(acc.last_error, /AADSTS70000/);
+    const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.body.data.messages[0].can_read_live, false, 'no more live reads are promised until it is reconnected');
+    assert.equal((await as(salesB)('get', pdf.url)).status, 409);
   });
 
   test('a message deleted in Outlook is in no folder, and the thread keeps its place with no body', async () => {

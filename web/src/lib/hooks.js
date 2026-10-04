@@ -6,23 +6,24 @@ import { api } from './api.js';
  * mutation elsewhere on the page can pull fresh totals.
  */
 export function useFetch(fetcher, deps = []) {
-  const [state, setState] = useState({ data: null, loading: true, error: null });
+  const [state, setState] = useState({ data: null, loading: true, error: null, errorStatus: null });
   const [tick, setTick] = useState(0);
   const latest = useRef(0);
 
   useEffect(() => {
     const run = ++latest.current;
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true, error: null }));
+    setState((s) => ({ ...s, loading: true, error: null, errorStatus: null }));
 
     Promise.resolve(fetcher())
       .then((result) => {
         if (cancelled || run !== latest.current) return;
-        setState({ data: result, loading: false, error: null });
+        setState({ data: result, loading: false, error: null, errorStatus: null });
       })
       .catch((err) => {
         if (cancelled || err.name === 'AbortError' || run !== latest.current) return;
-        setState({ data: null, loading: false, error: err.message });
+        // The status rides along so a screen can tell "not found" from "not now".
+        setState({ data: null, loading: false, error: err.message, errorStatus: err.status ?? null });
       });
 
     return () => {

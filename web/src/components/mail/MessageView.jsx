@@ -181,10 +181,15 @@ export function Message({ m, openByDefault }) {
 
   // The owner of a mailbox that stores less than the whole message reads
   // the rest live from Outlook when they open it (plan §3.3); nothing is
-  // stored. Asked for once the message is open, never for a shut one.
+  // stored. Asked for the first time the message is open, and kept: a
+  // message shut and opened again is the same message, not another call
+  // to Graph.
+  const [wanted, setWanted] = useState(Boolean(openByDefault && m.can_read_live));
+  useEffect(() => { if (open && m.can_read_live) setWanted(true); }, [open, m.can_read_live]);
+  useEffect(() => { setWanted(Boolean(openByDefault && m.can_read_live)); }, [m.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const live = useFetch(
-    () => (open && m.can_read_live ? api.raw(`/mail/messages/${m.id}`) : Promise.resolve(null)),
-    [m.id, open, m.can_read_live]
+    () => (wanted ? api.raw(`/mail/messages/${m.id}`) : Promise.resolve(null)),
+    [m.id, wanted]
   );
   const liveData = live.data?.data;
   const body = liveData?.body_html ?? m.body_html;

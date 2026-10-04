@@ -22,7 +22,7 @@ import { Router } from 'express';
 import { mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { cleanHtml, snippet } from '../lib/mailbox/rules.js';
+import { canReadLive, cleanHtml, isOwner, mayReadContent, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
 
@@ -39,14 +39,21 @@ const FOLDER_RANK = ['inbox', 'sentitems', 'archive', 'deleteditems', 'junkemail
 const readable = (req, params, alias = 'a') => mailboxClause(scopeOf(req), params, { alias, kind: 'read' }) || 'TRUE';
 const readableThread = (req, params) => threadClause(scopeOf(req), params, { accountAlias: 'a', threadAlias: 't' }) || 'TRUE';
 
+/** Who is asking, for the owner rule (rules.js: isOwner, mayReadContent, canReadLive — shared with the thread route). */
+const userOf = (req) => req.user?.id ?? null;
+
 /**
- * Whose mailbox it is. The owner of a personal mailbox, and nobody else,
- * reads past what the mailbox stores: that is their own mail, which Outlook
- * shows them in full whatever they chose to share with the team.
+ * A provider that would not answer a route. A revoked or expired grant
+ * (`err.reconnect`, microsoft.js) marks the mailbox the way the sync does,
+ * so the thread route stops promising live reads and the switcher shows
+ * the reconnect; anything else is left for the next sync to judge. The
+ * provider's own words never reach the client: a fixed message does.
  */
-const isOwner = (req, account) => !account.is_shared && account.user_id !== null && account.user_id === (req.user?.id ?? null);
-/** Whether the caller may see the content the mailbox holds back — bodies read live, attachments downloaded. */
-const mayReadContent = (req, account) => account.visibility === 'share_everything' || isOwner(req, account);
+async function providerFailed(accountId, err) {
+  if (!err?.reconnect) return;
+  await query(`UPDATE connected_accounts SET status = 'needs_reconnect', last_error = $2 WHERE id = $1 AND status = 'active'`,
+    [accountId, String(err.message || 'The mailbox needs to be reconnected').slice(0, 500)]).catch(() => {});
+}
 
 const pageOf = (req, { size = 50, max = 200 } = {}) => ({
   pageSize: Math.min(max, Math.max(1, Number.parseInt(req.query.page_size, 10) || size)),
@@ -93,8 +100,13 @@ async function folderOf(account, folderId) {
   const { rows: [f] } = await query(
     'SELECT folder_id, well_known, display_name FROM mail_folder_list WHERE account_id = $1 AND (folder_id = $2 OR well_known = $2) ORDER BY (folder_id = $2) DESC LIMIT 1',
     [account.id, folderId]);
-  const wellKnown = f?.well_known || (FOLDER_RANK.includes(folderId) || folderId === 'drafts' ? folderId : null);
-  if (!f && !wellKnown) throw new ApiError(404, 'Folder not found');
+  // Until the first folder list is stored, the Inbox and Sent Items still
+  // answer by name: the sync reads them by it, and mail from before 076
+  // carries no folder at all (legacyFolderSql). No other folder is served
+  // without a row to serve it from, and a hidden one (drafts) is not
+  // served at all: the switcher never lists it.
+  const wellKnown = f?.well_known || (['inbox', 'sentitems'].includes(folderId) ? folderId : null);
+  if ((!f && !wellKnown) || HIDDEN_FOLDERS.includes(wellKnown)) throw new ApiError(404, 'Folder not found');
   return { ids: [...new Set([folderId, f?.folder_id, f?.well_known].filter(Boolean))], wellKnown, name: f?.display_name || null };
 }
 
@@ -142,17 +154,20 @@ mailRouter.get('/folders/:accountId/:folderId/messages', async (req, res) => {
     LEFT JOIN companies co ON co.id = t.company_id
     LEFT JOIN contacts ct ON ct.id = t.contact_id
     ${filter}`;
-  const [{ rows }, { rows: [{ total }] }] = await Promise.all([
-    query(`${base.replace('FROM newest c', `SELECT c.thread_id AS id, c.message_id, c.sent_at, c.direction, c.from_email, c.from_name, c.to_emails, c.cc_emails,
+  // The total rides on the page itself: the list is refetched every few
+  // seconds and on every search keystroke, and the conversations are
+  // grouped once, not once more to count them. Only a page past the end
+  // has no row to carry it and counts on its own.
+  const { rows } = await query(`${base.replace('FROM newest c', `SELECT c.thread_id AS id, c.message_id, c.sent_at, c.direction, c.from_email, c.from_name, c.to_emails, c.cc_emails,
                  COALESCE(c.subject, t.subject) AS subject, c.snippet, c.flag_status, c.importance, c.is_read, c.web_link,
                  g.in_folder, g.unread, g.has_attachments, g.flagged, g.high,
-                 t.message_count, t.entity, t.entity_id, t.company_id, co.name AS company_name, ct.name AS contact_name
+                 t.message_count, t.entity, t.entity_id, t.company_id, co.name AS company_name, ct.name AS contact_name,
+                 count(*) OVER ()::int AS total
             FROM newest c`)}
-          ORDER BY c.sent_at DESC, c.message_id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`, params),
-    query(base.replace('FROM newest c', 'SELECT count(*)::int AS total FROM newest c'), params),
-  ]);
+          ORDER BY c.sent_at DESC, c.message_id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`, params);
+  const total = rows.length ? rows[0].total : page === 1 ? 0 : (await query(base.replace('FROM newest c', 'SELECT count(*)::int AS total FROM newest c'), params)).rows[0].total;
   res.json({
-    data: rows.map((r) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })),
+    data: rows.map(({ total: _total, ...r }) => ({ ...r, snippet: trimQuotedPreview(r.snippet) })),
     meta: { page, page_size: pageSize, total, pages: Math.max(1, Math.ceil(total / pageSize)), folder: { id: folder.ids[0], well_known: folder.wellKnown, name: folder.name } },
   });
 });
@@ -174,38 +189,79 @@ async function readableMessage(req, id) {
 }
 const accountOf = (m) => ({ id: m.account_id, is_shared: m.is_shared, user_id: m.mailbox_user_id, visibility: m.visibility, status: m.mailbox_status });
 
-/** What a message answers with: no provider id, no tokens, Bcc only on mail we sent. */
+/**
+ * The columns a message answers with — named, so that what the join
+ * happens to carry (provider ids, Graph's conversation id, the sync's
+ * bookkeeping, the mailbox's owner) never leaves with it.
+ */
+const PUBLIC_COLUMNS = ['id', 'thread_id', 'account_id', 'direction', 'from_email', 'from_name', 'to_emails', 'cc_emails', 'has_attachments', 'sent_at',
+  'sent_from_tracker_by', 'web_link', 'folder_id', 'is_read', 'flag_status', 'importance', 'removed_at', 'created_at',
+  'mailbox', 'visibility', 'company_id', 'contact_id', 'company_name', 'contact_name', 'entity', 'entity_id', 'live_error'];
+
+/** What a message answers with: the public columns, Bcc only on mail we sent, no body once deleted in Outlook. */
 function publicMessage(m, { attachments, live = false, canDownload }) {
-  const { provider_id, internet_message_id, mailbox_user_id, thread_company_id, body_html, snippet: preview, ...rest } = m;
   // Deleted in Outlook: the record timeline still shows that the email
   // existed, with no body (plan §3.4).
   const gone = Boolean(m.removed_at);
   return {
-    ...rest,
+    ...Object.fromEntries(PUBLIC_COLUMNS.filter((k) => k in m).map((k) => [k, m[k]])),
+    company_id: m.company_id ?? m.thread_company_id ?? null,
     subject: m.subject ?? m.thread_subject ?? null,
-    snippet: gone ? null : preview,
-    body_html: gone ? null : body_html,
+    snippet: gone ? null : m.snippet,
+    body_html: gone ? null : m.body_html,
     bcc_emails: m.direction === 'outbound' ? m.bcc_emails || [] : [],
-    attachments: attachments.map((a) => ({ ...a, url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null })),
+    attachments: attachments.map((a) => ({
+      id: a.id, name: a.name, content_type: a.content_type, size_bytes: a.size_bytes, is_inline: a.is_inline, content_id: a.content_id,
+      url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null,
+    })),
     live,
     can_download: canDownload,
   };
 }
 
 const attachmentsOf = async (messageId) => (await query(
-  'SELECT id, name, content_type, size_bytes, is_inline, content_id FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
+  'SELECT id, provider_id, name, content_type, size_bytes, is_inline, content_id FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
+
+/**
+ * A mailbox that stores metadata only keeps no attachment names and no
+ * content ids (sync.js: a file name is content). Its owner sees them all
+ * the same, as they see the body: read from the provider for the request
+ * and never written. Returns the list, or null when the provider would not
+ * answer, so the stored rows stand as they are.
+ */
+async function liveAttachmentList(m) {
+  const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [m.account_id]);
+  if (!a || a.status !== 'active') return null;
+  const provider = providerFor(a);
+  if (!provider.attachmentList) return null;
+  try {
+    const list = await provider.attachmentList(m.provider_id);
+    await saveTokens(a, provider).catch(() => {});
+    return list || [];
+  } catch (err) {
+    await providerFailed(a.id, err);
+    return null;
+  }
+}
+/** The stored rows, with what the owner may see of a withheld list filled in from the provider's. */
+const withLiveNames = (stored, live) => (live ? stored.map((s) => {
+  const l = live.find((x) => x.provider_id === s.provider_id);
+  return l ? { ...s, name: s.name ?? l.name ?? null, content_id: s.content_id ?? l.content_id ?? null } : s;
+}) : stored);
+/** The owner of a metadata-only mailbox is the one reader the stored attachment rows are not enough for. */
+const needsLiveNames = (req, m, account) => account.visibility === 'metadata' && m.has_attachments && !m.removed_at && isOwner(userOf(req), account);
 
 mailRouter.get('/messages/:id', async (req, res) => {
   const m = await readableMessage(req, req.params.id);
   const account = accountOf(m);
-  const canDownload = mayReadContent(req, account);
+  const canDownload = mayReadContent(userOf(req), account);
   let live = false;
   // The owner's live read (plan §3.3): the mailbox stores less than the
   // whole message, and this is its owner asking. The body comes from the
   // provider for this request, is cleaned the way a stored body is, and
   // is returned — never written. A provider that cannot answer (throttled,
   // disconnected) leaves the stored message as it is.
-  if (!m.body_html && !m.removed_at && isOwner(req, account) && account.visibility !== 'share_everything' && account.status === 'active') {
+  if (canReadLive(userOf(req), account, m)) {
     try {
       const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [account.id]);
       const provider = providerFor(a);
@@ -215,10 +271,15 @@ mailRouter.get('/messages/:id', async (req, res) => {
       Object.assign(m, { body_html: html, subject: fresh.subject ?? m.subject, snippet: fresh.preview ? snippet(fresh.preview) : snippet(html) });
       live = true;
     } catch (err) {
-      m.live_error = err.status === 404 ? 'The message is no longer in the mailbox' : 'The mailbox could not be read just now';
+      await providerFailed(account.id, err);
+      m.live_error = err.status === 404 ? 'The message is no longer in the mailbox'
+        : err.reconnect ? 'The mailbox needs to be reconnected before it can be read'
+          : 'The mailbox could not be read just now';
     }
   }
-  res.json({ data: publicMessage(m, { attachments: await attachmentsOf(m.id), live, canDownload }) });
+  const stored = await attachmentsOf(m.id);
+  const attachments = needsLiveNames(req, m, account) ? withLiveNames(stored, await liveAttachmentList(m)) : stored;
+  res.json({ data: publicMessage(m, { attachments, live, canDownload }) });
 });
 
 // ------------------------------------------------------------ attachments
@@ -240,14 +301,24 @@ async function streamAttachment(req, res, { m, att, inline }) {
   if (!provider.attachmentStream) throw new ApiError(501, 'This mailbox cannot serve attachments');
   let got;
   try { got = await provider.attachmentStream(m.provider_id, att.provider_id, { maxBytes: ATTACHMENT_MAX_BYTES }); }
-  catch (err) { throw new ApiError(err.status === 404 ? 404 : err.status === 413 ? 413 : 502, err.status === 404 ? 'The attachment is no longer in the mailbox' : err.message); }
+  catch (err) {
+    await providerFailed(a.id, err);
+    if (err.status === 404) throw new ApiError(404, 'The attachment is no longer in the mailbox');
+    if (err.status === 413) throw new ApiError(413, 'This attachment is larger than 25 MB; open it in Outlook');
+    if (err.reconnect) throw new ApiError(409, 'The mailbox needs to be reconnected before its attachments can be read');
+    throw new ApiError(502, 'The attachment could not be read from the mailbox just now');
+  }
   await saveTokens(a, provider).catch(() => {});
-  const name = String(att.name || 'attachment').replace(/[\r\n"]/g, '_').slice(0, 200);
+  const name = String(att.name || 'attachment').replace(/[\r\n"\\]/g, '_').slice(0, 200);
+  // RFC 6266: the real name goes in filename*, and the plain filename= is
+  // for a client that ignores it — so plain ASCII, with anything else
+  // replaced, rather than a percent-encoded name it would save as typed.
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_');
   const type = inline && previewable(att.content_type) ? att.content_type : (att.content_type || 'application/octet-stream');
   res.status(200);
   res.setHeader('Content-Type', type);
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `${inline && previewable(att.content_type) ? 'inline' : 'attachment'}; filename="${encodeURIComponent(name).replace(/%20/g, ' ')}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Content-Disposition', `${inline && previewable(att.content_type) ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
   // A preview is somebody else's file drawn by the browser: it gets a
   // document policy of its own, so a PDF's scripts and a crafted image
   // cannot touch the app's origin or the network.
@@ -274,21 +345,32 @@ mailRouter.get('/messages/:id/attachments/:attId', async (req, res) => {
   const m = await readableMessage(req, req.params.id);
   // Content the mailbox holds back is not reachable by its id either: a
   // metadata-only mailbox's attachments are its owner's.
-  if (!mayReadContent(req, accountOf(m))) throw new ApiError(404, 'Attachment not found');
-  const { rows: [att] } = await query('SELECT * FROM email_attachments WHERE message_id = $1 AND id = $2', [m.id, Number(req.params.attId) || 0]);
+  const account = accountOf(m);
+  if (!mayReadContent(userOf(req), account)) throw new ApiError(404, 'Attachment not found');
+  let { rows: [att] } = await query('SELECT * FROM email_attachments WHERE message_id = $1 AND id = $2', [m.id, Number(req.params.attId) || 0]);
   if (!att) throw new ApiError(404, 'Attachment not found');
+  // The owner of a metadata-only mailbox saves the file under its name, not "attachment".
+  if (!att.name && needsLiveNames(req, m, account)) [att] = withLiveNames([att], await liveAttachmentList(m));
   await streamAttachment(req, res, { m, att, inline: req.query.inline === '1' });
 });
 
 mailRouter.get('/messages/:id/inline/:contentId', async (req, res) => {
   const m = await readableMessage(req, req.params.id);
-  if (!mayReadContent(req, accountOf(m))) throw new ApiError(404, 'Image not found');
+  const account = accountOf(m);
+  if (!mayReadContent(userOf(req), account)) throw new ApiError(404, 'Image not found');
   const cid = String(req.params.contentId).replace(/^<|>$/g, '');
   // An inline image only: a cid: in the HTML that points at a PDF, or at
   // anything that is not a picture, draws nothing.
-  const { rows: [att] } = await query(
+  let { rows: [att] } = await query(
     `SELECT * FROM email_attachments WHERE message_id = $1 AND content_id IN ($2, '<' || $2 || '>') AND content_type ILIKE 'image/%' ORDER BY is_inline DESC, id LIMIT 1`,
     [m.id, cid]);
+  // A metadata-only mailbox stores no content ids; its owner's body was
+  // read live and names its images by them, so the list is read the same way.
+  if (!att && needsLiveNames(req, m, account)) {
+    const live = withLiveNames(await attachmentsOf(m.id), await liveAttachmentList(m));
+    att = live.filter((x) => x.content_id && String(x.content_id).replace(/^<|>$/g, '') === cid && /^image\//i.test(x.content_type || ''))
+      .sort((x, y) => Number(y.is_inline) - Number(x.is_inline) || x.id - y.id)[0] || null;
+  }
   if (!att) throw new ApiError(404, 'Image not found');
   await streamAttachment(req, res, { m, att, inline: true });
 });

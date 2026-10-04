@@ -18,7 +18,18 @@ import { Message } from './MessageView.jsx';
 export function ReadingPane({ threadId, refreshKey = 0, onBack }) {
   const thread = useFetch(() => api.raw(`/mail/threads/${threadId}`), [threadId, refreshKey]);
   const t = thread.data?.data;
-  if (thread.error) return <div className="p-6"><Empty title="Not found" text="This conversation is not in a mailbox you can read." /></div>;
+  // Only a 404 means the conversation is not ours to read. A server that
+  // would not answer, or a connection that dropped, says what happened
+  // instead of sending the reader to an admin about permissions.
+  if (thread.error) {
+    return (
+      <div className="p-6">
+        {thread.errorStatus === 404
+          ? <Empty title="Not found" text="This conversation is not in a mailbox you can read." />
+          : <Empty title="Not available" text={thread.error} />}
+      </div>
+    );
+  }
   if (!t) return <div className="p-6"><div className="skeleton" style={{ height: 200 }} /></div>;
   const newest = [...t.messages].reverse().find((m) => m.web_link) || null;
   const stored = t.messages.filter((m) => !m.removed_at);

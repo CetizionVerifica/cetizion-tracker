@@ -29,7 +29,7 @@ import { pool, query } from '../db.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
-import { applyVisibility, sealTokens } from '../lib/mailbox/rules.js';
+import { applyVisibility, canReadLive, mayReadContent, sealTokens } from '../lib/mailbox/rules.js';
 import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
 import { disconnect, ensureSubscriptions, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
@@ -531,8 +531,8 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // The owner of a personal mailbox that stores less than the whole message
   // reads the rest live (GET /api/mail/messages/:id) and downloads its
   // attachments; so does anybody, from a mailbox that shares everything.
-  const owner = !t.is_shared && t.user_id !== null && t.user_id === (req.user?.id ?? null);
-  const canDownload = t.visibility === 'share_everything' || owner;
+  const account = { is_shared: t.is_shared, user_id: t.user_id, visibility: t.visibility, status: t.mailbox_status };
+  const canDownload = mayReadContent(req.user?.id, account);
   const { user_id, ...thread } = t;
   res.json({
     data: {
@@ -543,7 +543,7 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
         return {
           ...v,
           attachments: v.attachments.map((a) => ({ ...a, url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null })),
-          can_read_live: owner && !v.body_html && !m.removed_at && t.visibility !== 'share_everything' && t.mailbox_status === 'active',
+          can_read_live: canReadLive(req.user?.id, account, v),
         };
       }),
     },

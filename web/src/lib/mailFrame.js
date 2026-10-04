@@ -122,7 +122,11 @@ export function rewriteCid(html, messageId) {
   if (!messageId) return String(html ?? '');
   const base = inlineBase(messageId);
   return String(html ?? '').replace(/(<img\b[^>]*?\bsrc\s*=\s*)(["']?)cid:(<[^<>"'\s]+>|[^"'\s>]+)\2/gi, (_, before, quote, cid) => {
-    const id = decodeURIComponent(cid).replace(/^<|>$/g, '');
+    // A content id is whatever the sender wrote; one with a stray "%" is
+    // not percent-encoded and must not take the reading pane down with it.
+    let decoded = cid;
+    try { decoded = decodeURIComponent(cid); } catch { /* not percent-encoded: use it as written */ }
+    const id = decoded.replace(/^<|>$/g, '');
     return `${before}"${base}${encodeURIComponent(id)}"`;
   });
 }
