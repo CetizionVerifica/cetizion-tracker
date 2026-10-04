@@ -369,6 +369,8 @@ mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
     data: {
       enabled: settings.enabled,
       purchase_orders_enabled: po.enabled,
+      // The rollout of the new PO and invoice prompts (docs/email-po-invoice-prompt-plan.md §7).
+      review_only: po.reviewOnly, auto_clients: po.autoClients,
       invoices_enabled: (await invoiceSettings()).enabled,
       ai: { configured: aiConfig.enabled, used_today: await aiCallsToday(), daily_limit: settings.dailyAiLimit },
       backfill_days: settings.backfillDays,

@@ -1997,6 +1997,8 @@ CREATE TRIGGER email_message_touch AFTER INSERT ON email_messages FOR EACH ROW E
 
 INSERT INTO settings (key, value, notes) VALUES
   ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.'),
+  ('email_readers_review_only', 'false', 'The PO and invoice readers send everything they would register to review instead, saying what they would have done (the rollout of the new prompts). Off: they register as before.'),
+  ('email_readers_auto_clients', 'none', 'While the readers are review-only: the clients whose POs and invoices are registered automatically again, comma separated.'),
   ('company_gstins', '07AAKCC0860B1Z2,09AAKCC0860B1ZY', 'Every GSTIN we are registered under (Delhi, UP), comma separated. The email readers take a PO addressed to, or an invoice raised from, any of them.'),
   ('partner_companies', 'Innovative CSR Solutions India Pvt. Ltd. | 07AACCI8342L1ZA', 'Companies clients also order through, one per line: name | GSTIN | other names, comma separated. A PO addressed to one is registered as ours, marked as through it.')
 ON CONFLICT (key) DO NOTHING;
@@ -3111,7 +3113,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                           -- addressed to a GSTIN we do not invoice from (079)
                           'wrong_gstin',
                           -- a PO number not of the client's shape (081)
-                          'po_number_pattern')),
+                          'po_number_pattern',
+                          -- read and checked, held while the readers are review-only (082)
+                          'review_only')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3181,7 +3185,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                             -- raised from another GSTIN than its PO was addressed to (079)
                             'wrong_gstin',
                             -- the PO date it prints is not the matched PO's (080)
-                            'po_date_mismatch')),
+                            'po_date_mismatch',
+                            -- read and checked, held while the readers are review-only (082)
+                            'review_only')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),

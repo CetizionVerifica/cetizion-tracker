@@ -362,6 +362,24 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     await agent.post(`/api/payment-stages/invoice-review/${d.id}/split`).expect(409);
   });
 
+  test('25e. review only: an invoice that would be recorded waits for a person, naming the stage it would go on', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Held Ltd', '4500025028');
+    await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_readers_review_only'`);
+    try {
+      ai(reading({ invoice_no: 'INV-25F', buyer: { company_name: 'Acme Held Ltd' }, po_reference: '4500025028' }));
+      const msg = invoiceEmail(box, client.email, { no: 'INV-25F', buyer: 'Acme Held Ltd', po: '4500025028' });
+      await deliver(box, [msg]);
+      const d = await decision(box.id, msg.provider_id);
+      const [first] = await stagesOf('4500025028');
+      assert.deepEqual([d.outcome, d.review_reason, d.stage_id], ['review', 'review_only', first.id]);
+      assert.match(d.review_note, /^Read and checked: it would be recorded on "Advance \(50%\)" of PO 4500025028\./);
+      assert.ok((await stagesOf('4500025028')).every((s) => !s.invoice_no), 'nothing recorded');
+    } finally {
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_readers_review_only'`);
+    }
+  });
+
   test('25c. the PO date printed beside the PO number must be the PO\'s: another date goes to review, saying both', async () => {
     const box = await mailbox();
     const client = await poFor('Acme Dated Ltd', '4500025027', { poDate: day(30) });

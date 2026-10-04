@@ -225,7 +225,8 @@ export function stagesFromTerms(text) {
   if (!t) return { source: 'template' };
 
   // Each percentage with the clause it sits in, tax ones left out.
-  const clauses = t.split(/[;\n|]|,(?!\d)|\.\s|\band\b(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
+  // "&" joins two clauses as "and" does: "50% Advance Against PI & 50% Against work Completion" (Dasami).
+  const clauses = t.split(/[;\n|]|,(?!\d)|\.\s|(?:\band\b|&)(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
   const parts = [];
   for (const c of clauses) {
     const ps = [...c.matchAll(PERCENT)].map((m) => Number(m[1]));

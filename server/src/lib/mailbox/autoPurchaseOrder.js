@@ -67,7 +67,7 @@ export async function poSettings(db = { query }) {
     portalSenders: String(s.po_portal_senders || ''),
     ourGstin: String(s.company_gstin || '').trim() || null,
     // The same "us" and the same daily AI ceiling as phase 1.
-    ourGstins: shared.ourGstins, partners: shared.partners,
+    ourGstins: shared.ourGstins, partners: shared.partners, reviewOnly: shared.reviewOnly, autoClients: shared.autoClients,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit,
     concurrency: shared.concurrency, services: shared.services, readAll: shared.readAll,
   };
@@ -491,6 +491,14 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
     return 'review';
   }
 
+  // The rollout (§7): read and checked, then held for a person, saying what would have been done; a client turned back on registers.
+  if (heldForReview(ctx.settings, match.quotation?.client_name || po.buyer?.company_name)) {
+    const note = `Read and checked: it would be registered against ${match.quotation ? match.quotation.quotation_no : 'a quotation made from it'}. The PO reader is review-only while its new prompts are checked.`;
+    await logDecision(db, account, cand, { ...decision, outcome: 'review', review_reason: 'review_only', suggested: match.quotation ? [match.quotation.quotation_no] : [], review_note: note });
+    ctx.review.push({ account, cand, reason: 'review_only', po, suggested: [], note });
+    return 'review';
+  }
+
   if (match.create && !po.currency) {
     // Nothing to take the currency from but the buyer: a GST registration
     // means an Indian client, billed in INR. Otherwise a person says.
@@ -551,6 +559,15 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   });
   ctx.registered.push({ ...data, mode: decision.mode, how: match.how || 'created' });
   return 'registered';
+}
+
+const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(pvt|private|ltd|limited|llp|inc)\b/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** While the readers are review-only (§7): whether this client's document waits for a person, or is one turned back on. */
+export function heldForReview(settings, clientName) {
+  if (!settings.reviewOnly) return false;
+  const k = nameKey(clientName);
+  return !(k && (settings.autoClients || []).some((n) => nameKey(n) === k));
 }
 
 const inr = (v, currency) => `${currency || 'INR'} ${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -677,7 +694,7 @@ async function quotationFromPo(db, account, cand, po, company) {
 async function notifyReview(ctx) {
   if (ctx.backfill) return;
   const WHY = {
-    no_match: 'no quotation matches it', several_matches: 'more than one quotation could be it', not_to_us: 'it is not addressed to us',
+    review_only: 'it was read and checked, and waits for a person while the reader is review-only', no_match: 'no quotation matches it', several_matches: 'more than one quotation could be it', not_to_us: 'it is not addressed to us',
     low_confidence: 'it could not be read with confidence', no_po_number: 'it has no PO number', value_mismatch: 'its value differs from the quotation',
     company_mismatch: 'its client differs from the quotation\'s', amendment: 'it amends an earlier PO', cancellation: 'it cancels a PO',
     multiple_pos: 'it holds more than one PO', unreadable: 'its PDF could not be opened', no_value: 'no value could be read',

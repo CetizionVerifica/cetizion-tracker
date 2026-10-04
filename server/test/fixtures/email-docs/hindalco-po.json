@@ -1,0 +1,24 @@
+{
+  "name": "Hindalco PO 13522317007",
+  "kind": "po",
+  "pins": "Addressed to our partner, registered with partner_name; Amal E as the client's contact; credit days 30; travel at actuals kept as a remark.",
+  "email": { "from": "buyer@hindalco-example.in", "subject": "PO 13522317007", "sent_at": "2026-08-09T05:00:00Z" },
+  "text": "HINDALCO INDUSTRIES LIMITED\nPURCHASE ORDER 13522317007   Date: 08-AUG-2026\nSupplier: INNOVATIVE CSR SOLUTIONS INDIA PVT. LTD.   GSTIN 07AACCI8342L1ZA\nOur Contact: Amal E\n1 Sustainability assessment  1 Each  4,00,000.00  4,00,000.00\nSub Total 4,00,000.00\nIGST 18% 72,000.00\nTotal 4,72,000.00\nPayment Terms: Within 30 Days from the invoice date\nAnnexure: travel and stay extra at actuals.\nBuyer GSTIN: 32AAACH1201R1ZW",
+  "answer": {
+    "is_purchase_order": true, "document_type": "purchase_order", "confidence": 0.9,
+    "po_number": "13522317007", "po_date": "2026-08-08", "amendment_no": 0, "revision_marks": null,
+    "buyer": { "company_name": "Hindalco Industries Limited", "gstin": "32AAACH1201R1ZW", "state": "Kerala", "contact_name": "Amal E", "contact_email": null },
+    "vendor": { "company_name": "Innovative CSR Solutions India Pvt. Ltd.", "gstin": "07AACCI8342L1ZA" },
+    "our_quotation_ref": null, "client_reference": null, "currency": "INR",
+    "lines": [{ "description": "Sustainability assessment", "qty": 1, "rate": "4,00,000.00", "amount": "4,00,000.00", "service": null }],
+    "basic_value": "4,00,000.00", "tax_value": "72,000.00", "total_value": "4,72,000.00", "gst_extra": false,
+    "tax_breakup": { "igst": "72,000.00", "cgst": null, "sgst": null }, "total_in_words": null,
+    "payment_terms_text": "Within 30 Days from the invoice date", "credit_days": 30, "delivery_date": null, "remarks": "Travel and stay extra at actuals.",
+    "project_manager": { "name": null, "email": null }
+  },
+  "expect": {
+    "ok": true,
+    "fields": { "po_number": "13522317007", "partner_name": "Innovative CSR Solutions India Pvt. Ltd.", "addressed_gstin": "07AACCI8342L1ZA", "credit_days": 30, "contact_name": "Amal E", "remarks": "Travel and stay extra at actuals.", "total_value": 472000 },
+    "stages": null
+  }
+}

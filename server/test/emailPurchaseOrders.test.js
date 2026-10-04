@@ -344,6 +344,32 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
   });
 
+  test('9e. review only: a PO that would register waits for a person, saying against what; a client turned back on registers', async () => {
+    const box = await mailbox();
+    await client('Acme Rollout Ltd', 'anil@acme-rollout.co.in');
+    const q = await quotation('Acme Rollout Ltd');
+    await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_readers_review_only'`);
+    try {
+      const held = poEmail({ from: { email: 'anil@acme-rollout.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500099001', buyer: 'Acme Rollout Ltd' }) }] });
+      ai(reading({ po_number: '4500099001', buyer: { company_name: 'Acme Rollout Ltd' } }));
+      await deliver(box, [held]);
+      const d = await decision(box.id, held.provider_id);
+      assert.deepEqual([d.outcome, d.review_reason, d.suggested_quotations], ['review', 'review_only', [q.quotation_no]]);
+      assert.equal(d.review_note, `Read and checked: it would be registered against ${q.quotation_no}. The PO reader is review-only while its new prompts are checked.`);
+      assert.equal(await poRow('4500099001'), undefined);
+
+      await db.query(`UPDATE settings SET value = 'Acme Rollout Ltd' WHERE key = 'email_readers_auto_clients'`);
+      const q2 = await quotation('Acme Rollout Ltd', 300000);
+      const back = poEmail({ from: { email: 'anil@acme-rollout.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500099002', buyer: 'Acme Rollout Ltd', basic: 300000, tax: 54000 }) }] });
+      ai(reading({ po_number: '4500099002', buyer: { company_name: 'Acme Rollout Ltd' }, our_quotation_ref: q2.quotation_no, basic: 300000, tax: 54000 }));
+      await deliver(box, [back]);
+      assert.equal((await poRow('4500099002'))?.quotation_no, q2.quotation_no, 'a client turned back on is registered');
+    } finally {
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_readers_review_only'`);
+      await db.query(`UPDATE settings SET value = 'none' WHERE key = 'email_readers_auto_clients'`);
+    }
+  });
+
   test('9c. a client\'s document note goes into the prompt, and a PO number not of its shape goes to review', async () => {
     const box = await mailbox();
     const companyId = await client('Acme Pattern Ltd', 'anil@acme-pattern.co.in');

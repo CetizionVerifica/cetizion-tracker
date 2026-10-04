@@ -1,0 +1,24 @@
+{
+  "name": "Alembic PO 3700101318",
+  "kind": "po",
+  "pins": "Our UP GSTIN; our quotation from \"YOUR REF\"; one on-delivery stage.",
+  "email": { "from": "purchase@alembic-example.in", "subject": "Purchase Order 3700101318", "sent_at": "2026-05-21T05:00:00Z" },
+  "text": "ALEMBIC PHARMACEUTICALS LIMITED\nPURCHASE ORDER\nPO No. 3700101318   PO Date 20.05.2026\nVendor: CETIZION VERIFICA PRIVATE LIMITED\nVendor GSTIN: 09AAKCC0860B1ZY\nYOUR REF: QTN-04/2026\nItem 10  EcoVadis assessment  Qty 1.000 EA  Rate 500,000.000  Value 500,000.000\nBasic Value 500,000.000\nIGST 18% 90,000.000\nTotal Value 590,000.000\nPayment Terms: Against delivery\nTerms and conditions: A certificate of analysis (COA) must accompany each batch. Marine insurance policy to be arranged by the vendor. Payment within 60 days of receipt of material.",
+  "answer": {
+    "is_purchase_order": true, "document_type": "purchase_order", "confidence": 0.93,
+    "po_number": "3700101318", "po_date": "2026-05-20", "amendment_no": 0, "revision_marks": null,
+    "buyer": { "company_name": "Alembic Pharmaceuticals Limited", "gstin": null, "state": "Gujarat", "contact_name": null, "contact_email": null },
+    "vendor": { "company_name": "Cetizion Verifica Private Limited", "gstin": "09AAKCC0860B1ZY" },
+    "our_quotation_ref": "QTN-04/2026", "client_reference": null, "currency": "INR",
+    "lines": [{ "description": "EcoVadis assessment", "qty": 1, "rate": "500,000.000", "amount": "500,000.000", "service": null }],
+    "basic_value": "500,000.000", "tax_value": "90,000.000", "total_value": "590,000.000", "gst_extra": false,
+    "tax_breakup": { "igst": "90,000.000", "cgst": null, "sgst": null }, "total_in_words": null,
+    "payment_terms_text": "Against delivery", "credit_days": null, "delivery_date": null, "remarks": null,
+    "project_manager": { "name": null, "email": null }
+  },
+  "expect": {
+    "ok": true,
+    "fields": { "po_number": "3700101318", "addressed_gstin": "09AAKCC0860B1ZY", "partner_name": null, "our_quotation_ref": "QTN-04/2026", "total_value": 590000, "tax_value": 90000, "lines": 1 },
+    "stages": [["On Delivery", 100]]
+  }
+}

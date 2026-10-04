@@ -42,7 +42,7 @@ export const deps = { chat: null, readQuotation: autoQuotation };
 
 const OPEN_ENQUIRY = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SETTING_KEYS = ['auto_enquiries_enabled', 'auto_enquiry_min_confidence', 'auto_enquiry_same_sender_days', 'auto_enquiry_daily_ai_limit',
-  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'company_gstins', 'partner_companies', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency',
+  'auto_enquiry_backfill_days', 'auto_quotation_min_confidence', 'company_name', 'company_gstin', 'company_gstins', 'partner_companies', 'email_readers_review_only', 'email_readers_auto_clients', 'internal_email_domains', 'auto_po_enabled', 'po_portal_senders', 'email_reader_concurrency',
   'email_read_everything'];
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
@@ -67,6 +67,9 @@ export async function enquirySettings(db = { query }) {
     // Every registration of ours, and the companies clients also order through (docs/email-po-invoice-prompt-plan.md §1).
     ourGstins: gstinList(s.company_gstin, s.company_gstins),
     partners: partnersOf(s.partner_companies),
+    // The rollout of the new PO and invoice prompts (docs/email-po-invoice-prompt-plan.md §7).
+    reviewOnly: String(s.email_readers_review_only ?? 'false').trim().toLowerCase() === 'true',
+    autoClients: String(s.email_readers_auto_clients || '').split(',').map((n) => n.trim()).filter((n) => n && n.toLowerCase() !== 'none'),
     services: services.map((r) => r.name),
     internalDomains: String(s.internal_email_domains || '').split(',').map((d) => d.trim()).filter(Boolean),
     // The PO reader (autoPurchaseOrder.js) takes PO emails while it is on.

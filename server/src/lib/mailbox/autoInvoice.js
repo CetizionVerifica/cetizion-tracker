@@ -38,6 +38,7 @@ import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
 import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, splitFor, wrongGstin } from './invoiceDetect.js';
 import { advanceShare } from '../../import/ai.js';
 import { loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
+import { heldForReview } from './autoPurchaseOrder.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
@@ -62,7 +63,7 @@ export async function invoiceSettings(db = { query }) {
     waitDays: num(s.auto_invoice_wait_days, 7),
     historyAfterDays: num(s.auto_po_history_after_days, 30),
     ourGstin: String(s.company_gstin || '').trim() || null,
-    ourGstins: shared.ourGstins, partners: shared.partners,
+    ourGstins: shared.ourGstins, partners: shared.partners, reviewOnly: shared.reviewOnly, autoClients: shared.autoClients,
     ourNames: shared.ourNames, internalDomains: shared.internalDomains, dailyAiLimit: shared.dailyAiLimit, backfillDays: shared.backfillDays,
     concurrency: shared.concurrency, readAll: shared.readAll,
   };
@@ -329,6 +330,15 @@ async function recordUnderLock(db, account, cand, ctx, { inv, decision, po, docu
   }
   if (pick.reason) return toReview(db, account, cand, ctx, { ...decision, review_reason: pick.reason, po_number: po.po_number });
 
+  // The rollout (§7): read, matched and checked, then held for a person with the stage it would go on.
+  const { rows: [client] } = await db.query('SELECT name FROM companies WHERE id = $1', [po.company_id]);
+  if (heldForReview(ctx.settings, client?.name)) {
+    return toReview(db, account, cand, ctx, {
+      ...decision, review_reason: 'review_only', po_number: po.po_number, stage_id: pick.stage.id,
+      review_note: `Read and checked: it would be recorded on "${pick.stage.stage_name}" of PO ${po.po_number}. The invoice reader is review-only while its new prompts are checked.`,
+    });
+  }
+
   const recorded = await recordInvoice(db, {
     stageId: pick.stage.id, invoiceNo: inv.invoice_no, invoiceDate: inv.invoice_date, documentId, keepExistingDocument: true, mode: decision.mode,
   });
@@ -457,7 +467,7 @@ async function notifyOutcomes(ctx) {
   }
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',
-    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice', wrong_gstin: 'it is raised from a GSTIN other than the one its PO is addressed to', po_date_mismatch: 'the PO date it gives is not the PO\'s',
+    po_without_stages: 'its PO has no payment stages', invoice_no_in_use: 'its number is already on another stage', not_from_us: 'it is not our invoice', wrong_gstin: 'it is raised from a GSTIN other than the one its PO is addressed to', review_only: 'it was read and checked, and waits for a person while the reader is review-only', po_date_mismatch: 'the PO date it gives is not the PO\'s',
     low_confidence: 'it could not be read with confidence', client_unknown: 'its client could not be confirmed for the PO it names', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
     no_invoice_no: 'it has no invoice number', amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up',
     bad_currency: 'its currency is not one the tracker uses', bad_date: 'its date is missing or after the email',

@@ -1,0 +1,22 @@
+{
+  "name": "Invoice CVPL/2026-27/037 to Alembic",
+  "kind": "invoice",
+  "pins": "Our UP GSTIN; po_reference 3700101318; the split suggested against that PO.",
+  "email": { "to": "accounts@alembic-example.in", "subject": "Invoice CVPL/2026-27/037", "sent_at": "2026-05-22T09:00:00Z" },
+  "text": "TAX INVOICE\nCETIZION VERIFICA PRIVATE LIMITED\nGSTIN/UIN: 09AAKCC0860B1ZY\nInvoice No. CVPL/2026-27/037   Dated 22-May-26\nBuyer's Order No. 3700101318   Dated 20-May-26\nOther References: QTN-04/2026\nBuyer (Bill to): Alembic Pharmaceuticals Limited\n1 EcoVadis assessment - 50% Advance Payment As Per P.O.  2,50,000.00\nTaxable Value 2,50,000.00\nIGST 18% 45,000.00\nTotal 2,95,000.00\nAmount Chargeable (in words): INR Two Lakh Ninety Five Thousand Only",
+  "answer": {
+    "document_type": "tax_invoice", "confidence": 0.94, "revised_or_cancelled": false,
+    "invoice_no": "CVPL/2026-27/037", "invoice_date": "2026-05-22",
+    "seller": { "company_name": "Cetizion Verifica Private Limited", "gstin": "09AAKCC0860B1ZY" },
+    "buyer": { "company_name": "Alembic Pharmaceuticals Limited", "gstin": null },
+    "po_reference": "3700101318", "po_date": "2026-05-20", "project_reference": null, "quotation_reference": "QTN-04/2026", "currency": "INR",
+    "taxable_value": "2,50,000.00", "tax_value": "45,000.00", "total_value": "2,95,000.00",
+    "tax_breakup": { "igst": "45,000.00", "cgst": null, "sgst": null }, "total_in_words": "INR Two Lakh Ninety Five Thousand Only",
+    "stage_hint": "50% Advance Payment As Per P.O.", "due_date": null
+  },
+  "expect": {
+    "ok": true,
+    "fields": { "invoice_no": "CVPL/2026-27/037", "issuing_gstin": "09AAKCC0860B1ZY", "po_reference": "3700101318", "po_date": "2026-05-20", "total_value": 295000 },
+    "split": { "po_stage": { "id": 1, "stage_no": 1, "stage_name": "On delivery (100%)", "trigger_event": "On Delivery", "stage_percent": 1, "stage_amount": 590000, "invoice_no": null, "on_hold": false }, "percent": 50, "stage_name": "Advance (50%)" }
+  }
+}

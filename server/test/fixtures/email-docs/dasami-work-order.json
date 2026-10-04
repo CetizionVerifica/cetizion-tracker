@@ -1,0 +1,30 @@
+{
+  "name": "Dasami work order DL26SW060-1132 (amended, unlabelled)",
+  "kind": "po",
+  "pins": "Five services, LCA at qty 2; CGST and SGST with the IGST row blank; 50/50 stages; the client's own quotation number kept apart. Read again with a changed value it goes to review as an amendment (emailPurchaseOrders.test.js 5b).",
+  "email": { "from": "purchase@dasami-example.in", "subject": "Work Order DL26SW060-1132", "sent_at": "2026-08-04T05:00:00Z" },
+  "text": "DASAMI LAB PVT LTD\nWORK ORDER\nWork Order No: DL26SW060-1132   Date: 03-08-2026\nQuotation No & Date DL26SWR60-1317 / 28-07-2026\nTo: Cetizion Verifica Pvt Ltd   Vendor GSTIN:\n1 Carbon footprint 1 4,00,000.00\n2 LCA 2 1,08,000.00 2,16,000.00\n3 EPD 1 6,00,000.00\n4 Water footprint 1 5,00,000.00\n5 Training 1 3,72,000.00\nTaxable Value 20,88,000.00\nCGST 9% 1,87,920.00\nSGST 9% 1,87,920.00\nIGST\nGrand Total Indian Rupee24,63,840.00\nAmount in words: Rupees Twenty Four Lakh Sixty Three Thousand Eight Hundred Forty Only\nPayment Terms: 50% Advance Against PI & 50% Against work Completion",
+  "answer": {
+    "is_purchase_order": true, "document_type": "work_order", "confidence": 0.9,
+    "po_number": "DL26SW060-1132", "po_date": "2026-08-03", "amendment_no": 0, "revision_marks": null,
+    "buyer": { "company_name": "Dasami Lab Pvt Ltd", "gstin": null, "state": null, "contact_name": null, "contact_email": null },
+    "vendor": { "company_name": "Cetizion Verifica Pvt Ltd", "gstin": null },
+    "our_quotation_ref": null, "client_reference": "DL26SWR60-1317", "currency": "INR",
+    "lines": [
+      { "description": "Carbon footprint", "qty": 1, "rate": "4,00,000.00", "amount": "4,00,000.00", "service": null },
+      { "description": "LCA", "qty": 2, "rate": "1,08,000.00", "amount": "2,16,000.00", "service": null },
+      { "description": "EPD", "qty": 1, "rate": "6,00,000.00", "amount": "6,00,000.00", "service": null },
+      { "description": "Water footprint", "qty": 1, "rate": "5,00,000.00", "amount": "5,00,000.00", "service": null },
+      { "description": "Training", "qty": 1, "rate": "3,72,000.00", "amount": "3,72,000.00", "service": null }
+    ],
+    "basic_value": "20,88,000.00", "tax_value": null, "total_value": "24,63,840.00", "gst_extra": false,
+    "tax_breakup": { "igst": null, "cgst": "1,87,920.00", "sgst": "1,87,920.00" }, "total_in_words": "Rupees Twenty Four Lakh Sixty Three Thousand Eight Hundred Forty Only",
+    "payment_terms_text": "50% Advance Against PI & 50% Against work Completion", "credit_days": null, "delivery_date": null, "remarks": null,
+    "project_manager": { "name": null, "email": null }
+  },
+  "expect": {
+    "ok": true,
+    "fields": { "po_number": "DL26SW060-1132", "our_quotation_ref": null, "client_reference": "DL26SWR60-1317", "tax_value": 375840, "total_value": 2463840, "lines": 5 },
+    "stages": [["On PO Registration", 50], ["On Delivery", 50]]
+  }
+}

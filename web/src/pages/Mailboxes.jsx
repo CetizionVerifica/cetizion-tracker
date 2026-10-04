@@ -695,6 +695,19 @@ function ChangeOwnerDialog({ row, users, onClose, onSaved }) {
  * budget, and per mailbox how far the read of past mail has got and what
  * it found. Admin only — it counts every mailbox's mail.
  */
+/** The clients registered automatically again while the readers are review-only. */
+function AutoClients({ value, busy, onSave }) {
+  const [text, setText] = useState(value);
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <Field label="Automatic again for" hint="Client names as in the tracker, comma-separated">
+        <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Alembic Pharmaceuticals Ltd, Aragen Life Sciences Ltd" className="h-8 min-w-[320px] text-[13px]" />
+      </Field>
+      <Button size="sm" variant="secondary" className="h-8 px-4 text-[13px]" disabled={busy || text === value} onClick={() => onSave(text)}>Save</Button>
+    </div>
+  );
+}
+
 function AutoEnquiries() {
   const { isAdmin } = useAuth();
   const toast = useToast();
@@ -717,6 +730,10 @@ function AutoEnquiries() {
     s.purchase_orders_enabled ? 'Automatic POs are off' : 'Automatic POs are on');
   const toggleInvoices = () => act('switch-invoices', () => api.update('settings', 'auto_invoice_enabled', { value: s.invoices_enabled ? 'false' : 'true' }),
     s.invoices_enabled ? 'Automatic invoices are off' : 'Automatic invoices are on');
+  // The rollout of the new PO and invoice prompts (docs/email-po-invoice-prompt-plan.md §7).
+  const toggleReviewOnly = () => act('review-only', () => api.update('settings', 'email_readers_review_only', { value: s.review_only ? 'false' : 'true' }),
+    s.review_only ? 'POs and invoices are registered automatically again' : 'POs and invoices now wait for a person');
+  const saveAutoClients = (value) => act('auto-clients', () => api.update('settings', 'email_readers_auto_clients', { value: value.trim() || 'none' }), 'Saved');
 
   /** The PO and invoice reads of past mail, after the enquiry one. */
   function laterProgress(m) {
@@ -761,8 +778,20 @@ function AutoEnquiries() {
           <Button size="sm" variant={s.invoices_enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy === 'switch-invoices'} onClick={toggleInvoices}>
             {s.invoices_enabled ? 'Invoices: switch off' : 'Invoices: switch on'}
           </Button>
+          <Button size="sm" variant={s.review_only ? 'default' : 'secondary'} className="h-8 px-4 text-[13px]" disabled={busy === 'review-only'} onClick={toggleReviewOnly}>
+            {s.review_only ? 'Review only: switch off' : 'Review only: switch on'}
+          </Button>
         </div>
       </div>
+      {s.review_only && (
+        <div className="flex flex-col gap-2 rounded-[8px] border border-border p-3">
+          <p className="text-[12.5px]/[1.6] text-secondary-text">
+            Review only: every PO and invoice the readers would register waits in review, saying what they would have done, so the new prompts can be checked against what you enter by hand.
+            Turn automatic registration back on client by client here, then switch review only off.
+          </p>
+          <AutoClients key={(s.auto_clients || []).join(',')} value={(s.auto_clients || []).join(', ')} busy={busy === 'auto-clients'} onSave={saveAutoClients} />
+        </div>
+      )}
       <p className="text-[12px] text-muted-foreground">
         Enquiries {s.enabled ? 'on' : 'off'}, POs {s.purchase_orders_enabled ? 'on' : 'off'}, invoices {s.invoices_enabled ? 'on' : 'off'}; switching one off stops it reading, and what it made stays.{' '}
         {s.ai.configured ? '' : 'POs and invoices need the AI key: without it they are left unread. '}
