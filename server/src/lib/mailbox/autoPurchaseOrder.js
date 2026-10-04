@@ -35,6 +35,7 @@ import { companyNameFromEmail, mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates, runContext } from './autoEnquiry.js';
 import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
 import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
+import { near } from './pdfQuotation.js';
 import { readWithAi } from './readAttachment.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, readsAllFolders, saveTokens } from './sync.js';
@@ -121,13 +122,13 @@ async function logDecision(db, account, cand, d) {
   await db.query(
     `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, conversation_id, thread_id, from_email, received_at,
                                      outcome, document_type, review_reason, mode, confidence, method, ai_calls, po_number, quotation_no,
-                                     suggested_quotations, created_quotation, stages_source, retry_since)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+                                     suggested_quotations, created_quotation, stages_source, retry_since, review_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      ON CONFLICT (account_id, provider_id) DO NOTHING`,
     [account.id, m.provider_id, m.internet_message_id || null, m.conversation_id || null, d.thread_id ?? cand.threadId ?? null,
       m.from?.email || null, m.sent_at || null, d.outcome, d.document_type || null, d.review_reason || null, d.mode || null,
       d.confidence ?? null, d.method || 'ai', d.ai_calls || 0, d.po_number || null, d.quotation_no || null,
-      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null]);
+      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null, d.review_note || null]);
 }
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -451,6 +452,15 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
       ctx.review.push({ account, cand, reason: 'company_mismatch', po, suggested: [] });
       return 'review';
     }
+    // The same number with other values is an amendment, whether or not it
+    // says so (Dasami's work order DL26SW060-1132): a person compares them.
+    // The same values: the same PO again.
+    const changed = await changedFrom(db, ours.po_number, po);
+    if (changed) {
+      await logDecision(db, account, cand, { ...decision, outcome: 'review', review_reason: 'amendment', po_number: ours.po_number, quotation_no: ours.quotation_no, review_note: changed });
+      ctx.review.push({ account, cand, reason: 'amendment', po, suggested: [], note: changed });
+      return 'review';
+    }
     if (!ours.document_id && documentId) {
       await db.query(`UPDATE purchase_orders SET document_id = $2 WHERE po_number = $1 AND document_id IS NULL AND EXISTS (SELECT 1 FROM documents WHERE id = $2)`, [ours.po_number, documentId]);
     }
@@ -506,6 +516,9 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
     po.payment_terms_text && terms.source === 'po_terms' ? `Payment terms on the PO: ${po.payment_terms_text}` : null,
     flags.includes('po_date_from_email') ? 'The PO date was not readable; the email date is used.' : null,
     po.partner_name ? `Addressed to our partner ${po.partner_name}${po.addressed_gstin ? ` (GSTIN ${po.addressed_gstin})` : ''}.` : null,
+    // Whose reference is whose (docs/email-po-invoice-prompt-plan.md §3): the client's own number, and charges outside the value.
+    po.client_reference ? `The client's reference: ${po.client_reference}.` : null,
+    po.remarks ? `The PO also says: ${po.remarks}` : null,
   ].filter(Boolean).join(' ');
 
   const data = await registerPurchaseOrder(db, {
@@ -525,6 +538,32 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   });
   ctx.registered.push({ ...data, mode: decision.mode, how: match.how || 'created' });
   return 'registered';
+}
+
+const inr = (v, currency) => `${currency || 'INR'} ${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const lineCount = (n) => `${n} line${n === 1 ? '' : 's'}`;
+const shares = (values) => { const t = values.reduce((n, v) => n + v, 0); return values.map((v) => (t ? v / t : 0)).sort((a, b) => a - b); };
+
+/**
+ * How a PO read again differs from the one registered under its number, as
+ * one line of figures for the reviewer, or null when it does not: its value
+ * (with GST, or before it for a PO registered without), and the number and
+ * split of its lines when the registered lines came from the PO itself.
+ */
+export async function changedFrom(db, poNumber, po) {
+  const { rows: [r] } = await db.query(
+    `SELECT po.po_value::float8 AS po_value, po.currency,
+            (SELECT array_agg(s.service_value::float8) FROM po_services s WHERE s.po_number = po.po_number) AS values,
+            EXISTS (SELECT 1 FROM email_po_decisions d WHERE d.po_number = po.po_number AND d.outcome = 'registered' AND d.created_quotation) AS lines_from_po
+       FROM purchase_orders po WHERE po.po_number = $1`, [poNumber]);
+  if (!r) return null;
+  const value = po.total_value ?? (po.basic_value !== null ? grossUp(po.basic_value) : null);
+  const valueDiffers = value !== null && !near(r.po_value, value) && !(po.basic_value !== null && near(r.po_value, po.basic_value));
+  const had = (r.values || []).filter((v) => v !== null);
+  const lines = po.linesOk && r.lines_from_po ? po.lines.map((l) => Number(l.amount)) : null;
+  const linesDiffer = Boolean(lines) && (lines.length !== had.length || shares(lines).some((s, i) => Math.abs(s - shares(had)[i]) > 0.005));
+  if (!valueDiffers && !linesDiffer) return null;
+  return `Registered: ${inr(r.po_value, r.currency)}${lines ? `, ${lineCount(had.length)}` : ''}. This email: ${inr(value ?? po.basic_value, po.currency || r.currency)}${lines ? `, ${lineCount(lines.length)}` : ''}.`;
 }
 
 /**

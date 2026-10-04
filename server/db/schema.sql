@@ -3118,6 +3118,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   quotation_no         text REFERENCES quotations(quotation_no) ON UPDATE CASCADE ON DELETE SET NULL,
   -- The quotations a reviewer is offered (§3.7).
   suggested_quotations text[],
+  -- One line of figures beside the reason, never the email's text (080):
+  -- a PO number read again with other values, old and new side by side.
+  review_note          text,
   -- No quotation was on file, so one was made from the PO (§3.3).
   created_quotation    boolean NOT NULL DEFAULT false,
   stages_source        text CHECK (stages_source IN ('po_terms','template','none')),
@@ -3189,6 +3192,8 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   -- amounts, references; never its text), so a retry needs no second AI
   -- call. Cleared once it is decided.
   reading                jsonb,
+  -- One line of figures beside the reason, never the email's text (080).
+  review_note            text,
   decided_by             text,
   settled_at             timestamptz,
   decided_at             timestamptz NOT NULL DEFAULT now(),

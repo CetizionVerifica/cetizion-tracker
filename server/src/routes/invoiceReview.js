@@ -49,7 +49,7 @@ invoiceReviewRouter.get('/invoice-review', async (req, res) => {
   const params = [];
   const mine = scoped(req, params);
   const { rows } = await query(
-    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
+    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.review_note, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
             a.email AS mailbox,
             COALESCE((SELECT json_agg(json_build_object('id', s.id, 'stage_no', s.stage_no, 'stage_name', s.stage_name, 'stage_amount', s.stage_amount,
                                                         'invoice_no', s.invoice_no, 'currency', s.currency) ORDER BY s.stage_no)

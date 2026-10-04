@@ -44,6 +44,8 @@ export function rankPoPdfs(files) {
 export const PO_REASONS = ['not_po', 'low_confidence', 'amendment', 'cancellation', 'not_to_us', 'no_po_number',
   'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency'];
 
+// Revision wording printed on an order (§3 revision_marks): "Amendment 1", "Rev 2", "Revised PO", "supersedes …".
+const REVISED = /\bamend|\brevis|\brev\b\.?\s*\d|\bR\d+\b|supersed|in (lieu|place) of/i;
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const days = (a, b) => (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5;
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -79,7 +81,7 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // A changed or cancelled order may already have been invoiced: a person
   // decides (§3.6).
   if (v.document_type === 'cancellation') return fail('cancellation');
-  if (v.document_type === 'amendment' || v.amendment_no > 0) return fail('amendment');
+  if (v.document_type === 'amendment' || v.amendment_no > 0 || REVISED.test(v.revision_marks || '')) return fail('amendment');
 
   // Addressed to us, by us neither: a PO we issued to a vendor reads the
   // other way round.
@@ -136,18 +138,43 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // Its own lines, only when every one is whole and they add up to the
   // basic value (or, with no basic value, to the total). Otherwise the
   // quotation's lines are used, as for a PO typed in by hand.
-  const lines = v.lines || [];
+  const read = v.lines || [];
   const lineAmount = (l) => l.amount ?? (l.rate !== null && l.qty !== null ? round2(l.rate * l.qty) : null);
-  const whole = lines.length > 0 && lines.every((l) => l.description && lineAmount(l) !== null && lineAmount(l) >= 0
+  const whole = read.length > 0 && read.every((l) => l.description && lineAmount(l) !== null && lineAmount(l) >= 0
     && (sourceText === null || amountInText(lineAmount(l), text)));
-  const lineSum = whole ? round2(lines.reduce((n, l) => n + lineAmount(l), 0)) : null;
-  po.linesOk = whole && near(lineSum, basic ?? total);
+  const sum = (ls) => round2(ls.reduce((n, l) => n + lineAmount(l), 0));
+  let lines = read;
+  po.linesOk = whole && near(sum(read), basic ?? total);
+  // One line printed on two rows (Aragen: a description row and a code row,
+  // the same ₹2,50,000 on each) reads as two and adds up to twice the value.
+  if (whole && !po.linesOk) {
+    const merged = twoRowLines(read, lineAmount);
+    if (merged.length < read.length && near(sum(merged), basic ?? total)) {
+      lines = merged;
+      po.linesOk = true;
+      flags.push('two_row_lines_merged');
+    }
+  }
   po.lines = po.linesOk ? lines.map((l) => ({ ...l, amount: lineAmount(l) })) : [];
-  if (!po.linesOk && lines.length) flags.push('lines_not_used');
+  if (!po.linesOk && read.length) flags.push('lines_not_used');
 
   Object.assign(po, { basic_value: basic, tax_value: tax, total_value: total > 0 ? total : null, credit_days: v.credit_days ?? 30 });
   if (v.credit_days === null || v.credit_days === undefined) flags.push('credit_days_default');
   return { ok: true, po, flags };
+}
+
+/** Rows next to each other with the same quantity and amount, as one line: the description row and its code row. */
+export function twoRowLines(lines, lineAmount) {
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const a = lines[i];
+    const b = lines[i + 1];
+    if (b && a.qty === b.qty && lineAmount(a) !== null && lineAmount(a) === lineAmount(b)) {
+      out.push({ ...a, description: `${a.description} ${b.description}`.trim(), service: a.service || b.service });
+      i += 1;
+    } else out.push(a);
+  }
+  return out;
 }
 
 // ----------------------------------------------------------- money

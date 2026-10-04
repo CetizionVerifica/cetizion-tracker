@@ -99,7 +99,7 @@ export function PoReviewList() {
     { key: 'from_email', header: 'From', className: 'small', render: (r) => r.from_email || <span className="muted">—</span> },
     {
       key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{PO_REASONS[r.review_reason] || r.review_reason}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
+      render: (r) => <>{PO_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
     },
     {
       key: 'suggested', header: 'Suggested quotation',
@@ -223,7 +223,7 @@ export function InvoiceReviewList() {
     { key: 'po_number', header: 'PO', className: 'mono small', render: (r) => r.po_number || <span className="muted">—</span> },
     {
       key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{INVOICE_REASONS[r.review_reason] || r.review_reason}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
+      render: (r) => <>{INVOICE_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
     },
     {
       key: 'act', header: '', align: 'right',

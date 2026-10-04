@@ -59,7 +59,7 @@ poReviewRouter.get('/review', async (req, res) => {
   // suggested for the same PO stays out of sight (#18 row scoping).
   const ownSuggestions = mine ? `AND q.owner_user_id = $${params.length}` : '';
   const { rows } = await query(
-    `SELECT d.id, d.received_at, d.from_email, d.review_reason, d.document_type, d.confidence, d.thread_id, d.mode,
+    `SELECT d.id, d.received_at, d.from_email, d.review_reason, d.review_note, d.document_type, d.confidence, d.thread_id, d.mode,
             a.email AS mailbox,
             COALESCE((SELECT json_agg(json_build_object('quotation_no', q.quotation_no, 'client_name', q.client_name,
                                                         'total', COALESCE(q.total, q.quotation_value), 'currency', q.currency, 'status', q.status)

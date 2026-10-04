@@ -256,6 +256,51 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.ok((await poRow('PO-55123')).document_id, 'the PDF it had not got');
   });
 
+  test('5b. Dasami\'s work order: five services; read again with another value it is an amendment for review, old and new side by side; unchanged it is linked', async () => {
+    const box = await mailbox();
+    await client('Dasami Lab Pvt Ltd', 'purchase@dasami-lab.co.in');
+    const order = (lines) => {
+      const basic = lines.reduce((n, [, , a]) => n + a, 0);
+      const gst = Math.round(basic * 0.09 * 100) / 100;
+      const total = basic + 2 * gst;
+      return {
+        pdf: () => pdfmake.createPdf({ content: ['WORK ORDER', 'Dasami Lab Pvt Ltd', 'To: Cetizion Verifica Pvt. Ltd.', 'Work Order No: DL26SW060-1132', 'Quotation No & Date DL26SWR60-1317',
+          ...lines.map(([d, qty, a]) => `${d} ${qty} ${money(a)}`), `Taxable ${money(basic)}`, `CGST 9% ${money(gst)}`, `SGST 9% ${money(gst)}`, 'IGST', `Grand Total Indian Rupee${money(total)}`] }).getBuffer(),
+        reading: reading({
+          po_number: 'DL26SW060-1132', document_type: 'work_order', buyer: { company_name: 'Dasami Lab Pvt Ltd' }, our_quotation_ref: null, client_reference: 'DL26SWR60-1317',
+          lines: lines.map(([d, qty, a]) => ({ description: d, qty, rate: money(a / qty), amount: money(a) })),
+          basic_value: money(basic), tax_value: null, total_value: `Indian Rupee${money(total)}`, tax_breakup: { igst: null, cgst: money(gst), sgst: money(gst) },
+          payment_terms_text: '50% Advance Against PI & 50% Against work Completion',
+        }),
+      };
+    };
+    const first = [['Carbon footprint', 1, 400000], ['LCA', 2, 216000], ['EPD', 1, 600000], ['Water footprint', 1, 500000], ['Training', 1, 372000]];
+    const send = async (lines) => {
+      const o = order(lines);
+      const msg = poEmail({ from: { email: 'purchase@dasami-lab.co.in' }, attachments: [{ name: 'PO_Dasami.pdf', contentType: 'application/pdf', content: await o.pdf() }] });
+      ai(o.reading);
+      await deliver(box, [msg]);
+      return decision(box.id, msg.provider_id);
+    };
+
+    assert.equal((await send(first)).outcome, 'registered');
+    const po = await poRow('DL26SW060-1132');
+    assert.equal(Number(po.po_value), 2463840, 'CGST and SGST added to the taxable value');
+    assert.match(po.remarks, /The client's reference: DL26SWR60-1317\./);
+    const { rows: services } = await db.query('SELECT service, service_value::float8 AS v FROM po_services WHERE po_number = $1 ORDER BY id', [po.po_number]);
+    assert.equal(services.length, 5, 'one PO, one project, every line a service');
+    assert.equal(services[1].service, 'LCA');
+    assert.equal(Math.round(services[1].v), Math.round(216000 * 1.18), 'LCA at qty 2, with its GST');
+
+    const amended = await send(first.map((l) => (l[0] === 'Training' ? ['Training', 1, 500000] : l)));
+    assert.deepEqual([amended.outcome, amended.review_reason, amended.po_number], ['review', 'amendment', 'DL26SW060-1132']);
+    assert.equal(amended.review_note, 'Registered: INR 24,63,840, 5 lines. This email: INR 26,14,880, 5 lines.');
+    assert.equal(Number((await poRow('DL26SW060-1132')).po_value), 2463840, 'the registered PO is untouched');
+
+    const again = await send(first);
+    assert.equal(again.outcome, 'linked', 'the same values: the same PO again');
+  });
+
   test('6. the same email in two mailboxes gives one registration and one AI call', async () => {
     const personal = await mailbox();
     const shared = await mailbox({ shared: true });
