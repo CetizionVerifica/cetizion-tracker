@@ -113,6 +113,13 @@ for (const [name, role] of [['Ritu Sharma', 'Lead auditor'], ['Vikram Rao', 'Aud
   staff[name] = (await api('post', '/visits/staff', { name, role, email: `${name.toLowerCase().replace(' ', '.')}@demo.example.com` })).id;
 }
 
+// The salespeople as user accounts, so records have owners (Insights by owner, the owner columns).
+// Their passwords are random and kept nowhere: in shared sign-in nobody signs in as them.
+const users = {};
+// The app keeps at least one admin account before any other: one for the demo first.
+await api('post', '/users', { name: 'Demo Admin', email: 'admin@demo.example.com', role: 'admin', password: randomBytes(18).toString('base64url') });
+for (const s of SALES) users[s.name] = (await api('post', '/users', { name: s.name, email: s.email, role: 'sales', password: randomBytes(18).toString('base64url') })).id;
+
 // ---------------------------------------------------------------- companies and contacts (all invented)
 const COMPANIES = [
   { key: 'nw', name: 'Northwind Polymers Pvt Ltd', sector: 'Chemicals', city: 'Pune', gstin: '27AAZCN0101K1Z3', contact: ['Priya Nair', 'Head of Sustainability'] },
@@ -158,6 +165,7 @@ const ENQUIRIES = [
   { k: 'eh', at: -6, source: 'Event or webinar', service: 'Sustainability report Preparation', value: 550000, sales: 1, followUp: 2, status: 'Contacted' },
   { k: 'gf', at: -3, source: 'Existing client', service: 'Assurance', value: 300000, sales: 0, followUp: 1 },
   { k: 'va', at: -1, source: 'Inbound email or call', service: 'GHG report preparation', value: 420000, sales: 1, followUp: 3 },
+  { k: 'lp', at: -2, source: 'Existing client', service: 'GHG report preparation', value: 380000, sales: 0, followUp: 2 },
 ];
 const enq = [];
 for (const e of ENQUIRIES) {
@@ -173,12 +181,12 @@ for (const e of ENQUIRIES) {
 console.log(`✓ ${enq.length} enquiries`);
 
 // ---------------------------------------------------------------- quotations
-async function quotation(e, { lines, stage, sentAfter = 2, lost = null, nextStep = null }) {
+async function quotation(e, { lines, stage, sentAfter = 2, lost = null, nextStep = null, close = null }) {
   const c = co[e.k];
   const s = SALES[e.sales];
   const q = await api('post', '/quotations', {
     client_name: c.name, contact_person: c.contact[0], contact_email: c.email, service_quoted: e.service, sector: c.sector, country: c.country,
-    sales_person: s.name, sales_person_email: s.email, quotation_date: d(e.at + sentAfter), currency: e.currency || 'INR', valid_until: d(e.at + sentAfter + 30),
+    sales_person: s.name, sales_person_email: s.email, quotation_date: d(e.at + sentAfter), currency: e.currency || 'INR', valid_until: d(e.at + sentAfter + 90), expected_close_date: close === null ? undefined : d(close),
     terms: '50% advance on PO, balance on submission of the final report. GST extra as applicable.',
     next_step: nextStep,
   });
@@ -195,15 +203,24 @@ Q.nw = await quotation(enq[0], { lines: [['Ecovadis Assessment (consulting)', 1,
 Q.bp = await quotation(enq[1], { lines: [['GHG report preparation', 1, 420000], ['Assurance', 1, 120000]], stage: 'Sent' });
 Q.gf = await quotation(enq[2], { lines: [['Sustainability report Preparation', 1, 600000], ['GHG report preparation', 1, 150000]], stage: 'Sent' });
 Q.va = await quotation(enq[3], { lines: [['ISO audits', 3, 95000]], stage: 'Sent' });
-Q.sl = await quotation(enq[4], { lines: [['PSCI audits', 2, 210000]], stage: 'Verbal yes, awaiting PO', nextStep: 'Collect the PO from purchase' });
-Q.cw = await quotation(enq[5], { lines: [['CBAM verification', 1, 640000]], stage: 'Negotiation', nextStep: 'Send the revised scope' });
-Q.lp = await quotation(enq[6], { lines: [['Supply chain audit', 4, 70000]], stage: 'Sent', nextStep: 'Follow up on the decision' });
+Q.sl = await quotation(enq[4], { lines: [['PSCI audits', 2, 210000]], stage: 'Verbal yes, awaiting PO', nextStep: 'Collect the PO from purchase', close: 10 });
+Q.cw = await quotation(enq[5], { lines: [['CBAM verification', 1, 640000]], stage: 'Negotiation', nextStep: 'Send the revised scope', close: 21 });
+Q.lp = await quotation(enq[6], { lines: [['Supply chain audit', 4, 70000]], stage: 'Sent', nextStep: 'Follow up on the decision', close: 14 });
 Q.ml = await quotation(enq[7], { lines: [['ESG project', 1, 850000]], stage: 'Lost', lost: 'Price' });
-Q.sc = await quotation(enq[8], { lines: [['Ecovadis Assessment (consulting)', 1, 360000]], stage: 'Sent' });
-Q.ae = await quotation(enq[9], { lines: [['ASI audit', 1, 580000]], stage: 'Draft' });
+Q.sc = await quotation(enq[8], { lines: [['Ecovadis Assessment (consulting)', 1, 360000]], stage: 'Sent', close: 30 });
+Q.ae = await quotation(enq[9], { lines: [['ASI audit', 1, 580000]], stage: 'Draft', close: 45 });
 Q.nm = await quotation(enq[10], { lines: [['CBAM verification', 1, 16500]], stage: 'Sent' });
-Q.pc = await quotation(enq[11], { lines: [['Ecovadis Assessment (consulting)', 1, 8500]], stage: 'Sent', sentAfter: 14 });
-console.log(`✓ ${Object.keys(Q).length} quotations, Draft to Lost`);
+Q.pc = await quotation(enq[11], { lines: [['Ecovadis Assessment (consulting)', 1, 8500]], stage: 'Sent', sentAfter: 14, close: 35 });
+// What months of real use leave behind: owners, first replies, and how long each deal has sat in its stage.
+for (const s of SALES) {
+  await db.query('UPDATE enquiries SET owner_user_id = $1 WHERE sales_person = $2', [users[s.name], s.name]);
+  await db.query('UPDATE quotations SET owner_user_id = $1 WHERE sales_person = $2', [users[s.name], s.name]);
+}
+await db.query(`UPDATE enquiries SET first_responded_at = (enquiry_date + 1)::timestamp + interval '11 hours' WHERE enquiry_date < $1`, [d(-1)]);
+await db.query(`UPDATE quotations SET stage_changed_at = sent_at + interval '3 days' WHERE sent_at IS NOT NULL`);
+// The later-stage deals moved recently: two left to go stale, to show the board flagging them.
+await db.query(`UPDATE quotations SET stage_changed_at = now() - interval '6 days' WHERE status = 'Under Negotiation'`);
+console.log(`✓ ${Object.keys(Q).length} quotations, Draft to Lost, with owners`);
 
 // ---------------------------------------------------------------- POs, stages, invoices, payments
 const register = (q, body) => api('post', `/quotations/${encodeURIComponent(q.quotation_no)}/register`, body);
@@ -212,37 +229,42 @@ const invoice = (stage, date) => api('post', `/payment-stages/${stage.id}/invoic
 const pay = (stage, amount, date, mode = 'bank_transfer') => api('post', `/payment-stages/${stage.id}/payment`, { amount_received: amount, payment_received_date: date, payment_mode: mode, reference: 'Demo receipt' });
 
 // Northwind: 50/50, advance invoiced and paid, delivered this week (balance to invoice).
-await register(Q.nw, { po_number: 'NWP/PO/2026/0412', po_date: d(-58), payment_terms_days: 30, project_manager: 'Ananya Iyer', planned_start_date: d(-55), planned_delivery_date: d(-3),
+await register(Q.nw, { po_number: 'NWP/PO/2026/0412', po_date: d(-58), payment_terms_days: 30, project_manager: 'Ananya Iyer', project_manager_email: 'ananya.iyer@demo.example.com', planned_start_date: d(-55), planned_delivery_date: d(-3),
   stages: [{ stage_name: 'Advance (50%)', trigger_event: 'On PO Registration', percent: 50 }, { stage_name: 'On delivery (50%)', trigger_event: 'On Delivery', percent: 50 }] });
 let st = await stagesOf('NWP/PO/2026/0412');
 await invoice(st[0], d(-55));
 await pay(st[0], st[0].amount, d(-38));
 await api('patch', `/purchase-orders/${encodeURIComponent('NWP/PO/2026/0412')}`, { actual_initiation_date: d(-52), actual_delivery_date: d(-3) });
+st = await stagesOf('NWP/PO/2026/0412');
+await invoice(st[1], d(-2));
 
 // Bluepeak: 50/50, advance invoiced and not paid: overdue.
-await register(Q.bp, { po_number: '4500088123', po_date: d(-50), payment_terms_days: 30, project_manager: 'Kabir Singh', planned_delivery_date: d(20),
+await register(Q.bp, { po_number: '4500088123', po_date: d(-50), payment_terms_days: 30, project_manager: 'Kabir Singh', project_manager_email: 'kabir.singh@demo.example.com', planned_delivery_date: d(20),
   stages: [{ stage_name: 'Advance (50%)', trigger_event: 'On PO Registration', percent: 50 }, { stage_name: 'On delivery (50%)', trigger_event: 'On Delivery', percent: 50 }] });
 st = await stagesOf('4500088123');
 await invoice(st[0], d(-48));
+await api('patch', '/purchase-orders/4500088123', { actual_initiation_date: d(-45) });
 
 // Greenfield: 30 / 40 on the draft report / 30, advance paid, draft reached: the milestone invoice is to raise.
-await register(Q.gf, { po_number: 'GAF/WO/2026/77', po_date: d(-45), payment_terms_days: 45, project_manager: 'Ananya Iyer', planned_delivery_date: d(25),
+await register(Q.gf, { po_number: 'GAF/WO/2026/77', po_date: d(-45), payment_terms_days: 45, project_manager: 'Ananya Iyer', project_manager_email: 'ananya.iyer@demo.example.com', planned_delivery_date: d(25),
   stages: [{ stage_name: 'Advance (30%)', trigger_event: 'On PO Registration', percent: 30 }, { stage_name: 'Draft report (40%)', trigger_event: 'On Milestone', percent: 40, milestone_name: 'Draft report' },
     { stage_name: 'On delivery (30%)', trigger_event: 'On Delivery', percent: 30 }] });
 st = await stagesOf('GAF/WO/2026/77');
 await invoice(st[0], d(-43));
 await pay(st[0], st[0].amount, d(-30), 'cheque');
+await api('patch', `/purchase-orders/${encodeURIComponent('GAF/WO/2026/77')}`, { actual_initiation_date: d(-40) });
 const gfProject = (await one('SELECT project_id FROM purchase_orders WHERE po_number = $1', ['GAF/WO/2026/77'])).project_id;
 const milestone = await one('SELECT id FROM project_milestones WHERE project_id = $1 AND name = $2', [gfProject, 'Draft report']);
 if (milestone) await api('patch', `/project-milestones/${milestone.id}`, { reached_on: d(-5) });
 else await api('post', '/project-milestones', { project_id: gfProject, name: 'Draft report', target_date: d(-7), reached_on: d(-5) });
 
 // Vantage: 100% on delivery, work under way.
-await register(Q.va, { po_number: '7100045566', po_date: d(-35), payment_terms_days: 60, project_manager: 'Ritu Sharma', planned_delivery_date: d(10),
+// Vantage: a PO that came in this month, 100% on delivery.
+await register(Q.va, { po_number: '7100045566', po_date: d(-4), payment_terms_days: 60, project_manager: 'Ritu Sharma', project_manager_email: 'ritu.sharma@demo.example.com', planned_start_date: d(-2), planned_delivery_date: d(10),
   stages: [{ stage_name: 'On delivery (100%)', trigger_event: 'On Delivery', percent: 100 }] });
 
 // Nordlicht (EUR): 50/50, advance invoiced, paid yesterday.
-await register(Q.nm, { po_number: 'NM-2026-118', po_date: d(-20), payment_terms_days: 45, project_manager: 'Kabir Singh', planned_delivery_date: d(30),
+await register(Q.nm, { po_number: 'NM-2026-118', po_date: d(-20), payment_terms_days: 45, project_manager: 'Kabir Singh', project_manager_email: 'kabir.singh@demo.example.com', planned_delivery_date: d(30),
   stages: [{ stage_name: 'Advance (50%)', trigger_event: 'On PO Registration', percent: 50 }, { stage_name: 'On delivery (50%)', trigger_event: 'On Delivery', percent: 50 }] });
 st = await stagesOf('NM-2026-118');
 await invoice(st[0], d(-18));
