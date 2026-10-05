@@ -50,7 +50,7 @@ export async function splitStage(client, { stageId, percent, stageName, triggerE
   }
   const share = Math.round(percent * 100) / 10000;
   const rest = Math.round((1 - share) * 10000) / 10000;
-  const restName = String(s.stage_name).replace(/\s*\(100(\.0+)?%\)\s*$/, '');
+  const restName = String(s.stage_name).replace(/\s*\(\s*100(\.0+)?\s*%\s*\)\s*$/, '');
   await client.query('UPDATE payment_stages SET stage_no = stage_no + 1, stage_percent = $2, stage_name = $3 WHERE id = $1',
     [s.id, rest, `${restName} (${Math.round(rest * 10000) / 100}%)`]);
   const { rows: [created] } = await client.query(

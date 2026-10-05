@@ -91,7 +91,7 @@ const UNITS = {
   fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fourty: 40,
   fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
 };
-const SCALES = { thousand: 1e3, lakh: 1e5, lakhs: 1e5, lac: 1e5, lacs: 1e5, million: 1e6, crore: 1e7, crores: 1e7 };
+const SCALES = { thousand: 1e3, thousands: 1e3, lakh: 1e5, lakhs: 1e5, lac: 1e5, lacs: 1e5, million: 1e6, crore: 1e7, crores: 1e7 };
 const NOISE = new Set(['rupees', 'rupee', 'indian', 'inr', 'rs', 'only', 'and', 'amount', 'in', 'words', 'total', 'grand', 'the', 'of', 'sum']);
 
 /** "Two Lakh Ninety Five Thousand" → 295000; null for a word it does not know. */
@@ -100,7 +100,7 @@ function wholeWords(words) {
   let current = 0;
   let any = false;
   for (const w of words) {
-    if (Object.hasOwn(UNITS, w)) { current += UNITS[w]; any = true; } else if (w === 'hundred') { current = (current || 1) * 100; any = true; } else if (Object.hasOwn(SCALES, w)) { total += (current || 1) * SCALES[w]; current = 0; any = true; } else return null;
+    if (Object.hasOwn(UNITS, w)) { current += UNITS[w]; any = true; } else if (w === 'hundred' || w === 'hundreds') { current = (current || 1) * 100; any = true; } else if (Object.hasOwn(SCALES, w)) { total += (current || 1) * SCALES[w]; current = 0; any = true; } else return null;
   }
   return any ? total + current : null;
 }
@@ -112,17 +112,31 @@ function wholeWords(words) {
  * ignored, never held against the document.
  */
 export function wordsToAmount(text) {
-  const words = String(text || '').toLowerCase().replace(/[^a-z\s-]/g, ' ').replace(/-/g, ' ').split(/\s+/).filter((w) => w && !NOISE.has(w));
+  const raw = String(text || '').toLowerCase().replace(/[^a-z\s-]/g, ' ').replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+  const words = raw.filter((w) => !NOISE.has(w));
   if (!words.length) return null;
   const p = words.findIndex((w) => w === 'paise' || w === 'paisa');
   if (p < 0) return wholeWords(words);
-  // The paise are the unit words straight before "paise"; a scale word there means the line is garbled.
+  // The paise are the unit words straight before "paise" ("Fifty Paise"), or straight after it
+  // ("Paise Fifty"). Anything else there (a scale word, "… Thousand Paise") means the line is garbled.
   let start = p;
   while (start > 0 && Object.hasOwn(UNITS, words[start - 1])) start -= 1;
-  if (start === p) return null;
-  const paise = wholeWords(words.slice(start, p));
-  const rupees = start > 0 ? wholeWords(words.slice(0, start)) : 0;
-  if (paise === null || rupees === null || paise >= 100 || words.slice(p + 1).length) return null;
+  // "… Ninety Nine and Ninety Nine Paise": the "and" is where the rupees end.
+  const rp = raw.findIndex((w) => w === 'paise' || w === 'paisa');
+  const ra = raw.lastIndexOf('and', rp);
+  if (ra >= 0) {
+    const between = raw.slice(ra + 1, rp).filter((w) => !NOISE.has(w));
+    if (between.length && between.length < p - start + 1 && between.every((w) => Object.hasOwn(UNITS, w))) start = p - between.length;
+  }
+  const after = words.slice(p + 1);
+  let paiseWords;
+  let rupeeWords;
+  if (start < p && !after.length) { paiseWords = words.slice(start, p); rupeeWords = words.slice(0, start); }
+  else if (start === p && after.length && after.every((w) => Object.hasOwn(UNITS, w))) { paiseWords = after; rupeeWords = words.slice(0, p); }
+  else return null;
+  const paise = wholeWords(paiseWords);
+  const rupees = rupeeWords.length ? wholeWords(rupeeWords) : 0;
+  if (paise === null || rupees === null || paise >= 100) return null;
   return Math.round((rupees + paise / 100) * 100) / 100;
 }
 
