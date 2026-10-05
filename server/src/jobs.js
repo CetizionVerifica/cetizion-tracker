@@ -15,6 +15,7 @@ import { syncAll } from './lib/mailbox/sync.js';
 import { runBackfills } from './lib/mailbox/autoEnquiry.js';
 import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
 import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
+import { runReviewDigest } from './lib/mailbox/reviewDigest.js';
 import { runVisitReminders } from './lib/visits.js';
 import { runDailyBriefing, runWeeklyMis } from './lib/misSend.js';
 import { runWebhooks } from './lib/webhooks.js';
@@ -22,6 +23,7 @@ import { runAccountingSync } from './routes/accounting.js';
 import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
 import { jobRuns } from './lib/ops/metrics.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
+import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
@@ -111,6 +113,12 @@ export const JOBS = {
     cron: '*/10 * * * *',
     quiet: (r) => r.recorded > 0 || r.review > 0 || r.errors > 0,
     run: () => runInvoiceBackfills(),
+  },
+  'email.review_digest': {
+    description: 'Tell each admin about the POs and invoices read from email that have waited more than two days for review',
+    cron: '45 9 * * 1-5',
+    quiet: (r) => r.told > 0,
+    run: () => runReviewDigest(),
   },
   // The scheduled sales reports (docs/mis-reports-plan.md §3.7). Each
   // period is sent once: a run that finds it already sent does nothing.

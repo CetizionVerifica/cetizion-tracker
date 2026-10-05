@@ -73,3 +73,28 @@ CREATE INDEX IF NOT EXISTS email_triage_decided_idx ON email_triage (decided_at)
 INSERT INTO settings (key, value, notes) VALUES
   ('email_triage_enabled', 'true', 'Sort each email with one quick AI call before the PO, invoice and enquiry readers read it, so the thorough reading is spent only on business documents. Off: every reader reads as before.')
 ON CONFLICT (key) DO NOTHING;
+
+-- Undo what one email entered (§3.10): the decision says so, and the PO's
+-- keeps what registering changed on its quotation, to put it back.
+ALTER TABLE email_po_decisions ADD COLUMN IF NOT EXISTS undo_state jsonb;
+
+ALTER TABLE email_po_decisions DROP CONSTRAINT IF EXISTS email_po_decisions_outcome_check;
+ALTER TABLE email_po_decisions ADD CONSTRAINT email_po_decisions_outcome_check CHECK (outcome IN
+  ('registered','linked','review','not_po','registered_by_hand','dismissed','retry','undone'));
+
+ALTER TABLE email_invoice_decisions DROP CONSTRAINT IF EXISTS email_invoice_decisions_outcome_check;
+ALTER TABLE email_invoice_decisions ADD CONSTRAINT email_invoice_decisions_outcome_check CHECK (outcome IN
+  ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed','waiting','undone'));
+
+-- Each day's AI calls and spend, by what made them and on which model
+-- (083, docs/email-auto-entry-plan.md §3.10). Counts and money only.
+CREATE TABLE IF NOT EXISTS ai_usage_daily (
+  day                date NOT NULL,
+  purpose            text NOT NULL,
+  model              text NOT NULL,
+  calls              int NOT NULL DEFAULT 0,
+  prompt_tokens      bigint NOT NULL DEFAULT 0,
+  completion_tokens  bigint NOT NULL DEFAULT 0,
+  cost_usd           numeric(12,6) NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, purpose, model)
+);

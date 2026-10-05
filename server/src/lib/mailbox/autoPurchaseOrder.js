@@ -124,13 +124,14 @@ async function logDecision(db, account, cand, d) {
   await db.query(
     `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, conversation_id, thread_id, from_email, received_at,
                                      outcome, document_type, review_reason, mode, confidence, method, ai_calls, po_number, quotation_no,
-                                     suggested_quotations, created_quotation, stages_source, retry_since, review_note)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                                     suggested_quotations, created_quotation, stages_source, retry_since, review_note, undo_state)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      ON CONFLICT (account_id, provider_id) DO NOTHING`,
     [account.id, m.provider_id, m.internet_message_id || null, m.conversation_id || null, d.thread_id ?? cand.threadId ?? null,
       m.from?.email || null, m.sent_at || null, d.outcome, d.document_type || null, d.review_reason || null, d.mode || null,
       d.confidence ?? null, d.method || 'ai', d.ai_calls || 0, d.po_number || null, d.quotation_no || null,
-      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null, d.review_note || null]);
+      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null, d.review_note || null,
+      d.undo_state ? JSON.stringify(d.undo_state) : null]);
 }
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -530,6 +531,8 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   let quotation = match.quotation;
   let threadId = cand.threadId;
   let created = false;
+  // What registering changes on a quotation already on file, so Undo can put it back (docs/email-auto-entry-plan.md §3.10).
+  const undoState = quotation ? await stateBefore(db, quotation) : { created_quotation: true };
   // A past PO is not news to n8n: quiet before anything is written, the
   // enquiry and quotation made from it included (registerPurchaseOrder
   // sets the same again).
@@ -577,10 +580,19 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   await linkThread(db, threadId, data.po_number, quotation.quotation_no);
   await logDecision(db, account, cand, {
     ...decision, outcome: 'registered', po_number: data.po_number, quotation_no: quotation.quotation_no, thread_id: threadId,
-    created_quotation: created, stages_source: data.stages.length ? terms.source : 'none',
+    created_quotation: created, stages_source: data.stages.length ? terms.source : 'none', undo_state: undoState,
   });
   ctx.registered.push({ ...data, mode: decision.mode, how: match.how || 'created' });
   return 'registered';
+}
+
+/** The quotation and its enquiries as they were before the PO won them. */
+async function stateBefore(db, q) {
+  const { rows: [before] } = await db.query(
+    `SELECT status, stage_id, po_received, project_id, closed_at FROM quotations WHERE id = $1`, [q.id]);
+  const { rows: enquiries } = await db.query(
+    `SELECT enquiry_no, status, converted_at FROM enquiries WHERE quotation_no = $1 AND status <> 'Converted'`, [q.quotation_no]);
+  return { quotation: before, enquiries };
 }
 
 const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(pvt|private|ltd|limited|llp|inc)\b/g, ' ').replace(/\s+/g, ' ').trim();

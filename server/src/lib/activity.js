@@ -53,6 +53,9 @@ export const ACTIONS = {
   // A PO registered from a client's email, checked by a person against the
   // PO (docs/email-po-plan.md §3.8): its stages may be chased from then on.
   PURCHASE_ORDER_EMAIL_READ_CHECKED: 'purchase_order.email_read_checked',
+  // What one email entered, taken back out by an admin (docs/email-auto-entry-plan.md §3.10).
+  PURCHASE_ORDER_EMAIL_UNDONE: 'purchase_order.email_undone',
+  INVOICE_EMAIL_UNDONE: 'payment_stage.email_invoice_undone',
   // Who a personal mailbox belongs to, changed by an admin
   // (docs/per-user-mailboxes-plan.md §4.3). Records already made stay put.
   MAILBOX_OWNER_CHANGED: 'mailbox.owner_changed',

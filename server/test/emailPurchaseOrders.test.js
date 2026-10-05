@@ -200,16 +200,16 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
 
   test('2b. Alembic shape: "YOUR REF" is the number printed on our PDF; "Against delivery" takes the quotation\'s split; the vendor code and validity end are kept', async () => {
     const box = await mailbox();
-    await client('Acme Twelve Ltd', 'buyer@acme-twelve.co.in');
-    const q = await quotation('Acme Twelve Ltd');
-    await quotation('Acme Twelve Ltd'); // the same value: company and value alone could not tell them apart
+    await client('Acme Alembic Shape Ltd', 'buyer@acme-alembic-shape.co.in');
+    const q = await quotation('Acme Alembic Shape Ltd');
+    await quotation('Acme Alembic Shape Ltd'); // the same value: company and value alone could not tell them apart
     await db.query(`UPDATE quotations SET printed_no = 'QTN-04/2026', terms = '50% advance against PO, 50% on submission of the final report' WHERE id = $1`, [q.id]);
     const msg = poEmail({
-      from: { email: 'buyer@acme-twelve.co.in' }, subject: 'Order 3700101318',
-      attachments: [{ name: 'Order_3700101318.PDF', contentType: 'application/pdf', content: await poPdf({ number: '3700101318', buyer: 'Acme Twelve Ltd', ref: 'QTN-04/2026', terms: 'Against delivery' }) }],
+      from: { email: 'buyer@acme-alembic-shape.co.in' }, subject: 'Order 3700101318',
+      attachments: [{ name: 'Order_3700101318.PDF', contentType: 'application/pdf', content: await poPdf({ number: '3700101318', buyer: 'Acme Alembic Shape Ltd', ref: 'QTN-04/2026', terms: 'Against delivery' }) }],
     });
     ai(reading({
-      po_number: '3700101318', buyer: { company_name: 'Acme Twelve Ltd' }, our_quotation_ref: 'QTN-04/2026', payment_terms_text: 'Against delivery', credit_days: null,
+      po_number: '3700101318', buyer: { company_name: 'Acme Alembic Shape Ltd' }, our_quotation_ref: 'QTN-04/2026', payment_terms_text: 'Against delivery', credit_days: null,
       vendor: { company_name: 'Cetizion Verifica Pvt. Ltd.', vendor_code: '0011305984' }, validity_end: day(-200),
     }));
     await deliver(box, [msg]);
@@ -222,6 +222,54 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal(d.stages_source, 'quotation_terms');
     const { rows: [p] } = await db.query('SELECT planned_delivery_date::text AS d FROM projects WHERE project_id = $1', [po.project_id]);
     assert.equal(p.d, day(-200), 'delivery by the end of the order\'s validity');
+  });
+
+  test('2c. Undo (docs/email-auto-entry-plan.md §3.10): the PO, stages and project removed, the quotation as it was; a quotation the email made goes too; refused once something is recorded', async () => {
+    const box = await mailbox();
+    await client('Acme Undo Ltd', 'anil@acme-undo.co.in');
+    const q = await quotation('Acme Undo Ltd');
+    const state = async () => (await db.query('SELECT status, stage_id, po_received, project_id FROM quotations WHERE id = $1', [q.id])).rows[0];
+    const before = await state();
+    const pdfOf = async (number, buyer = 'Acme Undo Ltd') => [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number, buyer }) }];
+    const msg = poEmail({ from: { email: 'anil@acme-undo.co.in' }, attachments: await pdfOf('4500078001') });
+    ai(reading({ po_number: '4500078001', buyer: { company_name: 'Acme Undo Ltd' } }));
+    await deliver(box, [msg]);
+    const po = await poRow('4500078001');
+    assert.ok(po, 'registered');
+    assert.notDeepEqual(await state(), before, 'the quotation is won');
+
+    const { body: origin } = await agent.get('/api/mail/origin?entity=purchase_order&id=4500078001').expect(200);
+    assert.deepEqual(origin.data.undo, { possible: true, reason: null });
+    const { body: undone } = await agent.post('/api/purchase-orders/4500078001/undo-from-email').expect(200);
+    assert.equal(undone.data.quotation, 'restored');
+    assert.equal(await poRow('4500078001'), undefined);
+    assert.equal((await db.query('SELECT 1 FROM projects WHERE project_id = $1', [po.project_id])).rows.length, 0, 'its project is gone');
+    assert.equal((await db.query('SELECT 1 FROM payment_stages WHERE po_number = $1', ['4500078001'])).rows.length, 0);
+    assert.deepEqual(await state(), before, 'the quotation as it was');
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'undone');
+    await agent.post('/api/purchase-orders/4500078001/undo-from-email').expect(409);
+
+    // A PO with no quotation on file: the quotation and enquiry it made are removed too.
+    await client('Acme Undo New Ltd', 'anil@acme-undo-new.co.in');
+    ai(reading({ po_number: '4500078002', buyer: { company_name: 'Acme Undo New Ltd' } }));
+    await deliver(box, [poEmail({ from: { email: 'anil@acme-undo-new.co.in' }, attachments: await pdfOf('4500078002', 'Acme Undo New Ltd') })]);
+    const made = (await poRow('4500078002')).quotation_no;
+    const second = (await agent.post('/api/purchase-orders/4500078002/undo-from-email').expect(200)).body.data;
+    assert.equal(second.quotation, 'removed', JSON.stringify(second));
+    assert.equal((await db.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [made])).rows.length, 0);
+    assert.equal((await db.query('SELECT 1 FROM enquiries WHERE quotation_no = $1', [made])).rows.length, 0);
+
+    // Once an invoice is on a stage, it is a person's to unpick.
+    const q3 = await quotation('Acme Undo Ltd', 300000);
+    ai(reading({ po_number: '4500078003', buyer: { company_name: 'Acme Undo Ltd' }, our_quotation_ref: q3.quotation_no, basic: 300000, tax: 54000 }));
+    await deliver(box, [poEmail({ from: { email: 'anil@acme-undo.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500078003', buyer: 'Acme Undo Ltd', basic: 300000, tax: 54000 }) }] })]);
+    assert.ok(await poRow('4500078003'));
+    await db.query(`UPDATE payment_stages SET invoice_no = 'INV-UNDO-1', invoice_date = CURRENT_DATE WHERE po_number = '4500078003' AND stage_no = 1`);
+    const { body: blocked } = await agent.get('/api/mail/origin?entity=purchase_order&id=4500078003').expect(200);
+    assert.equal(blocked.data.undo.possible, false);
+    assert.match(blocked.data.undo.reason, /invoice/);
+    await agent.post('/api/purchase-orders/4500078003/undo-from-email').expect(409);
+    assert.ok(await poRow('4500078003'), 'still there');
   });
 
   test('3. two open quotations of that value go to review, both suggested', async () => {

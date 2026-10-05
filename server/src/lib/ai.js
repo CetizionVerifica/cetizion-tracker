@@ -45,6 +45,13 @@ export function readsPdf(model = aiConfig.model) {
   return /^(anthropic|openai|google)\//.test(String(model));
 }
 
+/**
+ * Told of every answered call (lib/aiUsage.js records each day's spend for
+ * the auto-entry panel). Unset in tests and one-off scripts.
+ */
+let usageSink = null;
+export const onUsage = (fn) => { usageSink = fn; };
+
 export const newUsage = () => ({ calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0, provider: null, model: null });
 
 /**
@@ -99,6 +106,8 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
         // to rules. A copy of a client's pipeline on somebody's training
         // set is not recoverable.
         provider: { data_collection: 'deny', zdr: true },
+        // The cost of the call comes back with it, for the day's spend.
+        usage: { include: true },
         ...(plugins ? { plugins } : {}),
         messages: [
           { role: 'system', content: system },
@@ -118,8 +127,9 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content || '{}';
   const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const u = data.usage || {};
+  if (usageSink) Promise.resolve(usageSink({ title, model: data.model || primary, prompt_tokens: u.prompt_tokens || 0, completion_tokens: u.completion_tokens || 0, cost: Number(u.cost || 0) })).catch(() => {});
   if (usage) {
-    const u = data.usage || {};
     usage.calls += 1;
     usage.prompt_tokens += u.prompt_tokens || 0;
     usage.completion_tokens += u.completion_tokens || 0;

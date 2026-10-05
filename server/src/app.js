@@ -61,6 +61,7 @@ import {
   vendorInvoiceRouter, claimRouter, travelRouter,
 } from './routes/workflow.js';
 import { kpiRouter } from './routes/kpis.js';
+import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
 
 const app = express();
 

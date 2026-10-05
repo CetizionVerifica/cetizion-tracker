@@ -15,7 +15,9 @@
  * email again.
  */
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
+import { requireAdmin } from '../auth/middleware.js';
+import { undoPo } from '../lib/mailbox/undoEntry.js';
 import { purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { ApiError } from '../middleware/error.js';
@@ -152,6 +154,19 @@ poReviewRouter.post('/:poNumber/email-read-checked', async (req, res) => {
   if (!(await autoPo.poFromEmail(po.po_number))) throw new ApiError(422, 'This purchase order was not registered from an email');
   await logActivity(undefined, { actor: actorFrom(req.user), action: ACTIONS.PURCHASE_ORDER_EMAIL_READ_CHECKED, entityType: 'purchase_order', entityId: po.po_number });
   res.json({ data: await autoPo.poFromEmail(po.po_number) });
+});
+
+/**
+ * Undo a PO registered automatically from email (docs/email-auto-entry-plan.md
+ * §3.10): its stages, services and project removed, its quotation as it was.
+ * Refused once anything has been recorded against it. Admins only: it
+ * deletes records.
+ */
+poReviewRouter.post('/:poNumber/undo-from-email', requireAdmin, async (req, res) => {
+  const poNumber = decodeURIComponent(req.params.poNumber);
+  const removed = await transaction((db) => undoPo(db, poNumber, req.user?.name || req.user?.username || null));
+  await logActivity(undefined, { actor: actorFrom(req.user), action: ACTIONS.PURCHASE_ORDER_EMAIL_UNDONE, entityType: 'purchase_order', entityId: poNumber, metadata: removed });
+  res.json({ data: removed });
 });
 
 /**

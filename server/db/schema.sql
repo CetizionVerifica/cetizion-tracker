@@ -3109,7 +3109,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                          ('registered','linked','review','not_po','registered_by_hand','dismissed',
                           -- live mail the AI could not read (an error, or the day's ceiling):
                           -- read again by pos.backfill, and sent to review after a week
-                          'retry')),
+                          'retry',
+                          -- registered, then taken back out with Undo (083)
+                          'undone')),
   document_type        text,
   review_reason        text CHECK (review_reason IN
                          ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
@@ -3140,6 +3142,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   review_note          text,
   -- No quotation was on file, so one was made from the PO (§3.3).
   created_quotation    boolean NOT NULL DEFAULT false,
+  -- The quotation and enquiries as they were before the PO won them, for
+  -- Undo (083, docs/email-auto-entry-plan.md §3.10). Statuses only.
+  undo_state           jsonb,
   -- quotation_terms: the PO named only a trigger, so the quotation's split was used (083).
   stages_source        text CHECK (stages_source IN ('po_terms','quotation_terms','template','none')),
   -- Who settled it from the review queue, and when: registered by hand or
@@ -3185,7 +3190,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   outcome                text NOT NULL CHECK (outcome IN
                            ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed',
                             -- its PO is not in the tracker yet: tried again until auto_invoice_wait_days
-                            'waiting')),
+                            'waiting',
+                            -- recorded, then taken back off the stage with Undo (083)
+                            'undone')),
   document_type          text,
   review_reason          text CHECK (review_reason IN
                            ('po_not_found','several_pos','amount_not_a_stage','po_without_stages','invoice_no_in_use',
@@ -3258,6 +3265,19 @@ CREATE TABLE IF NOT EXISTS email_triage (
 );
 CREATE INDEX IF NOT EXISTS email_triage_message_idx ON email_triage (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS email_triage_decided_idx ON email_triage (decided_at);
+
+-- Each day's AI calls and spend, by what made them and on which model
+-- (083, docs/email-auto-entry-plan.md §3.10). Counts and money only.
+CREATE TABLE IF NOT EXISTS ai_usage_daily (
+  day                date NOT NULL,
+  purpose            text NOT NULL,
+  model              text NOT NULL,
+  calls              int NOT NULL DEFAULT 0,
+  prompt_tokens      bigint NOT NULL DEFAULT 0,
+  completion_tokens  bigint NOT NULL DEFAULT 0,
+  cost_usd           numeric(12,6) NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, purpose, model)
+);
 
 -- ------------------------------------------- client document notes (081)
 -- What is particular about one client's POs or invoices, for the email

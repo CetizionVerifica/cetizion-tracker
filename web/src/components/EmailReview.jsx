@@ -18,7 +18,7 @@ import { date, money } from '../lib/format.js';
 
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
-const PO_REASONS = {
+export const PO_REASONS = {
   no_match: 'No quotation matches it',
   several_matches: 'More than one quotation could be it',
   not_to_us: 'Not addressed to us',
@@ -43,7 +43,7 @@ const PO_REASONS = {
   review_only: 'Read and checked; review-only for now',
 };
 
-const INVOICE_REASONS = {
+export const INVOICE_REASONS = {
   po_not_found: 'Its PO is not in the tracker',
   several_pos: 'More than one PO could be it',
   amount_not_a_stage: 'Amount is not one of the PO\'s stages',
