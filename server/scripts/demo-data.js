@@ -68,6 +68,7 @@ process.env.AUTH_MODE = 'shared';
 process.env.AUTH_USERNAME = 'demo-seeder';
 process.env.AUTH_PASSWORD = randomBytes(18).toString('base64url');
 process.env.EMAIL_MODE = 'log';
+process.env.OPENROUTER_API_KEY = ''; // no AI call while seeding
 process.env.SESSION_SECRET ||= randomBytes(32).toString('hex');
 const { markMigrationsApplied } = await import('../src/migrations.js');
 await markMigrationsApplied({ connectionString: target });
@@ -291,6 +292,42 @@ await api('post', '/expense-claims', { claim_id: 'EC-2026-001', travel_id: 'TL-2
 
 await api('post', '/engagements', { client_name: co.nw.name, service_name: 'Ecovadis Assessment (consulting)', valid_until: d(310), next_due_on: d(40), status: 'active', owner: 'Neha Kapoor', notes: 'Annual EcoVadis reassessment (demo).' }).catch((err) => console.warn('  (renewal not added:', err.message, ')'));
 console.log('✓ visits, tasks, travel, an expense claim and a renewal');
+
+// ---------------------------------------------------------------- a demo inbox
+// A shared test mailbox with a few client conversations about the deals above, so the Inbox
+// and each record's email show something. The readers are off while it syncs: no AI call,
+// no record made from it. Every address is on example.com.
+await db.query(`UPDATE settings SET value = 'false' WHERE key IN ('auto_enquiries_enabled', 'auto_po_enabled', 'auto_invoice_enabled')`);
+const box = await api('post', '/mailboxes/test', { email: 'sales@demo.example.com', shared: true, display_name: 'Sales (demo)' });
+await api('patch', `/mailboxes/${box.id}`, { visibility: 'share_everything', import_days: 60 });
+// The team inbox the Inbox page triages: new client mail lands there, assigned to the client's owner.
+await api('post', '/inbox/inboxes', { name: 'Sales', account_id: box.id, default_assignment: 'owner_of_company', members: SALES.map((s) => s.name), first_response_hours: 24 });
+const at = (n, hour = 10) => new Date(Date.parse(`${d(n)}T00:00:00+05:30`) + hour * 3600e3).toISOString();
+let seq = 0;
+const mail = (conv, { from, to, subject, body, when, out = false }) => {
+  seq += 1;
+  return {
+    provider_id: `demo-${seq}`, conversation_id: conv, internet_message_id: `<demo-${seq}@demo.example.com>`, folder: out ? 'sentitems' : 'inbox',
+    from: { email: from.email, name: from.name }, to: to.map((t) => ({ email: t.email, name: t.name })), cc: [],
+    subject, body_html: `<p>${body.split('\n').join('</p><p>')}</p>`, sent_at: when, has_attachments: false,
+  };
+};
+const us = { email: 'sales@demo.example.com', name: 'Neha Kapoor' };
+const them = (k) => ({ email: co[k].email, name: co[k].contact[0] });
+const msgs = [
+  mail('demo-sc', { from: them('sc'), to: [us], subject: `Re: ${Q.sc.quotation_no} EcoVadis proposal`, body: 'Dear Neha,\nThanks for the proposal. Our board meets next week; could you share two references from the ceramics sector?\nRegards,\nKavita', when: at(-9, 11) }),
+  mail('demo-sc', { from: us, to: [them('sc')], subject: `Re: ${Q.sc.quotation_no} EcoVadis proposal`, body: 'Dear Kavita,\nCertainly, I will send two references by Friday.\nBest regards,\nNeha', when: at(-9, 15), out: true }),
+  mail('demo-cw', { from: them('cw'), to: [us], subject: `${Q.cw.quotation_no}: CBAM scope for our EU exports`, body: 'Hello,\nWe would like the scope to cover all three plants. Please revise the quotation.\nAditya', when: at(-6, 10) }),
+  mail('demo-sl', { from: them('sl'), to: [us], subject: `${Q.sl.quotation_no} PSCI audits: approval received`, body: 'Hi Neha,\nManagement has approved the PSCI audits. Purchase will issue the PO this week.\nFarah', when: at(-5, 12) }),
+  mail('demo-bp', { from: us, to: [them('bp')], subject: 'Reminder: advance payment for PO 4500088123', body: 'Dear Rohan,\nA gentle reminder that the advance invoice for PO 4500088123 is past its due date. Could you share the payment status?\nRegards,\nArjun', when: at(-2, 10), out: true }),
+  mail('demo-eh', { from: them('eh'), to: [us], subject: 'Sustainability report for our resorts', body: 'Dear team,\nWe are planning our first sustainability report for FY 2026-27 and would like a proposal covering our four resorts.\nLakshmi Menon', when: at(-6, 9) }),
+  mail('demo-va', { from: them('va'), to: [us], subject: 'GHG report preparation: enquiry', body: 'Hello,\nFollowing the ISO audit, we would also like help with our GHG inventory. Please call me.\nSanjay', when: at(-1, 16) }),
+];
+const { pushTestMessages, syncAccount } = await import('../src/lib/mailbox/sync.js');
+pushTestMessages(box.id, msgs);
+await syncAccount(box.id);
+// The readers stay off in the demo: nothing in it makes AI calls or records by itself while it is shown.
+console.log(`✓ a demo inbox: ${msgs.length} emails in sales@demo.example.com`);
 
 const counts = await one(`SELECT (SELECT count(*) FROM companies)::int AS companies, (SELECT count(*) FROM enquiries)::int AS enquiries,
   (SELECT count(*) FROM quotations)::int AS quotations, (SELECT count(*) FROM purchase_orders)::int AS pos, (SELECT count(*) FROM payment_stages)::int AS stages,
