@@ -22,7 +22,7 @@ const ROUTES = [
   '/', '/worklist', '/data-quality', '/tasks', '/follow-ups', '/companies', '/deliverables',
   '/schedule', '/enquiries', '/quotations', '/pipeline', '/renewals',
   '/projects', '/purchase-orders', '/payment-stages',
-  '/collections', '/cashflow', '/reports', '/insights', '/profitability', '/accounting',
+  '/collections', '/cashflow', '/reports', '/reports/scheduled', '/insights', '/profitability', '/accounting',
   '/notifications', '/inbox', '/money/invoice-run', '/travel',
   '/vendor-invoices', '/payables', '/expense-claims', '/travel-dashboard',
   '/settings/company', '/settings/holidays', '/settings/rates', '/settings/assumptions',
