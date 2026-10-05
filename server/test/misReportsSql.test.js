@@ -216,4 +216,14 @@ describe('MIS report figures', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to r
     assert.equal(d.pending.quotations.unconverted, 1);
     await db.query(`DELETE FROM quotations WHERE quotation_no = 'Q-AED'`);
   });
+  test('a pending row with no owner account names its salesperson, not a blank', async () => {
+    await db.query(`INSERT INTO quotations (quotation_no, client_name, quotation_date, sent_at, status, quotation_value, currency, sales_person)
+                    VALUES ('QX-OWNER', 'Owner Test Ltd', '2026-09-30', '2026-09-30T10:00:00Z', 'Submitted', 1000, 'INR', 'Neha Kapoor')`);
+    try {
+      const d = await mis.dailyBriefing({ today: TODAY, db, settings });
+      assert.equal(d.pending.quotations.rows.find((r) => r.reference.startsWith('QX-OWNER')).owner, 'Neha Kapoor');
+    } finally {
+      await db.query(`DELETE FROM quotations WHERE quotation_no = 'QX-OWNER'`);
+    }
+  });
 });

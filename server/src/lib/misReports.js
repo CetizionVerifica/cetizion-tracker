@@ -149,7 +149,7 @@ export async function pendingInvoices(db, { today, overdueDays }) {
             ps.currency, ps.stage_amount, ps.amount_received, ps.due_now_amount,
             ps.milestone_reached_on, ps.delivery_date, ps.po_date, ps.on_hold, ps.hold_reason, ps.promise_to_pay_date,
             ps.reminder_sent_on, ps.reminder_level, ps.payment_received_date,
-            COALESCE(c.name, ps.client_name) AS client_name, u.name AS owner,
+            COALESCE(c.name, ps.client_name) AS client_name, COALESCE(u.name, NULLIF(btrim(pr.project_manager), '')) AS owner,
             r.rate
        FROM v_payment_stages ps
        JOIN projects pr ON pr.project_id = ps.project_id
@@ -228,7 +228,7 @@ export async function pendingPos(db, { today, overdueDays }) {
   const { rows } = await db.query(
     `WITH ${RATES}
      SELECT q.quotation_no, q.client_name, q.status, q.stage_id, q.stage_changed_at, q.accepted_at, q.closed_at, q.quotation_date,
-            COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.expected_close_date, q.next_step, u.name AS owner, r.rate,
+            COALESCE(q.total, q.quotation_value) AS amount, q.currency, q.expected_close_date, q.next_step, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, r.rate,
             EXISTS (SELECT 1 FROM purchase_orders po WHERE ${poQuotationNo('po')} = q.quotation_no AND ${poCountsAsSale('po')}) AS has_po
        FROM quotations q
        LEFT JOIN users u ON u.id = q.owner_user_id
@@ -277,7 +277,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
   const [{ rows: enquiries }, { rows: quotations }] = await Promise.all([
     db.query(
       `WITH ${RATES}
-       SELECT e.enquiry_no, e.client_name, e.status, e.service, e.estimated_value, e.currency, e.next_follow_up_at, u.name AS owner, r.rate,
+       SELECT e.enquiry_no, e.client_name, e.status, e.service, e.estimated_value, e.currency, e.next_follow_up_at, COALESCE(u.name, NULLIF(btrim(e.sales_person), '')) AS owner, r.rate,
               COALESCE(e.enquiry_date, (e.created_at AT TIME ZONE $2)::date) AS since
          FROM enquiries e LEFT JOIN users u ON u.id = e.owner_user_id
          ${rateOn('r', 'e.currency', 'e.enquiry_date')}
@@ -286,7 +286,7 @@ export async function pendingQuotations(db, { today, overdueDays }) {
     db.query(
       `WITH ${RATES}
        SELECT q.quotation_no, q.client_name, q.status, q.sent_at, q.quotation_date, q.next_step,
-              COALESCE(q.total, q.quotation_value) AS amount, q.currency, u.name AS owner, r.rate
+              COALESCE(q.total, q.quotation_value) AS amount, q.currency, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner, r.rate
          FROM quotations q LEFT JOIN users u ON u.id = q.owner_user_id
          ${rateOn('r', 'q.currency', 'q.quotation_date')}
         WHERE q.status = ANY($1::text[]) AND q.accepted_at IS NULL AND q.closed_at IS NULL AND q.stage_id IS DISTINCT FROM $2
@@ -775,7 +775,7 @@ export async function enquiryRows(db, { from, to }) {
   const tz = config.businessTimeZone;
   const { rows } = await db.query(
     `SELECT e.enquiry_no, to_char(${ENQUIRY_DAY('e', '$3')}, 'YYYY-MM-DD') AS date, e.enquiry_date, e.client_name AS client, e.country, e.sector, e.service,
-            COALESCE(ls.name, NULLIF(btrim(e.source), '')) AS source, e.status, e.first_responded_at, u.name AS owner,
+            COALESCE(ls.name, NULLIF(btrim(e.source), '')) AS source, e.status, e.first_responded_at, COALESCE(u.name, NULLIF(btrim(e.sales_person), '')) AS owner,
             conv.first_response_at AS conversation_first_response_at, conv.first_message_at AS conversation_first_inbound_at,
             EXISTS (SELECT 1 FROM email_enquiry_decisions d WHERE d.enquiry_no = e.enquiry_no AND d.outcome = 'created' AND d.kind = 'quotation_sent') AS from_our_email_q,
             EXISTS (SELECT 1 FROM email_po_decisions d WHERE d.outcome IN ('registered','registered_by_hand') AND d.created_quotation
@@ -821,7 +821,7 @@ async function quotationsSent(db, { from, to }) {
     `WITH ${RATES}
      SELECT q.quotation_no, q.client_name AS client, q.service_quoted AS service, q.sector, q.country, q.status,
             COALESCE(q.total, q.quotation_value) AS amount, q.currency, ROUND(COALESCE(q.total, q.quotation_value) * r.rate, 2)::float8 AS amount_inr,
-            to_char((q.sent_at AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS sent_on, u.name AS owner,
+            to_char((q.sent_at AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS sent_on, COALESCE(u.name, NULLIF(btrim(q.sales_person), '')) AS owner,
             e.enquiry_no, ROUND(EXTRACT(EPOCH FROM (q.sent_at - (${ENQUIRY_DAY('e', '$3')})::timestamp AT TIME ZONE $3)) / 86400)::int AS days_from_enquiry
        FROM quotations q
        LEFT JOIN users u ON u.id = q.owner_user_id

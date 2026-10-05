@@ -339,7 +339,7 @@ export function weeklyMisDoc(data, { company = 'Cetizion Verifica', generatedAt 
     tiles([
       [number(data.enquiries.total), 'Enquiries', `${number(data.enquiries.month_to_date)} ${mtd.toLowerCase()}`],
       [`${number(data.revenue.total.pos)} · ${short(data.revenue.total.po_value_inr)}`, 'POs received', 'incl. GST, by PO date'],
-      [converted?.pct == null ? '—' : `${converted.pct}%`, 'Enquiry → PO', `${number(converted?.count ?? 0)} of ${number(data.outcomes.total)} converted`],
+      [converted?.pct == null ? '—' : `${converted.pct}%`, 'Enquiry to PO', `${number(converted?.count ?? 0)} of ${number(data.outcomes.total)} converted`],
       [`${short(rec.outstanding_inr)} · ${short(rec.over_90.amount_inr)}`, 'Receivables · over 90 days', `${number(rec.over_90.count)} invoice${rec.over_90.count === 1 ? '' : 's'} over 90 days`],
     ]),
     headline.length ? { ul: headline.map((t) => ({ text: t })), style: 'body' } : null,
@@ -438,8 +438,8 @@ export function weeklyMisDoc(data, { company = 'Cetizion Verifica', generatedAt 
 
     ...sec(8, 'Conversion and speed', 'speed'),
     kv([
-      ['Enquiry → PO', sp.enquiry_to_po_pct == null ? '—' : `${sp.enquiry_to_po_pct}%`, 'this week\'s enquiries converted by the week\'s end'],
-      ['Quote → contract', sp.quote_to_contract_pct == null ? '—' : `${sp.quote_to_contract_pct}%`, `${number(sp.won)} won, ${number(sp.lost)} lost this week`],
+      ['Enquiry to PO', sp.enquiry_to_po_pct == null ? '—' : `${sp.enquiry_to_po_pct}%`, 'this week\'s enquiries converted by the week\'s end'],
+      ['Quote to contract', sp.quote_to_contract_pct == null ? '—' : `${sp.quote_to_contract_pct}%`, `${number(sp.won)} won, ${number(sp.lost)} lost this week`],
       ['Average PO ticket', short(sp.average_po_ticket_inr), `${short(sp.pipeline.average_ticket_inr)} average open quotation`],
       ['Open pipeline', `${short(sp.pipeline.value_inr)} · ${short(sp.pipeline.weighted_inr)} weighted`, `${number(sp.pipeline.count)} open quotations`],
       ['Speed (medians)', `${hours(sp.enquiry_tat_median_hours)} · ${sp.quote_to_po_days_median == null ? '—' : days(sp.quote_to_po_days_median)}`, `enquiry to our first reply · quotation sent to PO (${number(sp.quote_to_po_sample)} PO${sp.quote_to_po_sample === 1 ? '' : 's'})`],
