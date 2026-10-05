@@ -401,7 +401,7 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     await quotation('Q-1', people.asha, '2026-10-01T06:00:00Z');
     await enquiry('ENQ-1', people.asha, null);
     await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('quotation', 'Q-1', 'Later', '2026-10-20'), ('quotation', 'Q-1', 'Send revised quote', '2026-10-05')`);
-    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at, status) VALUES ('quotation', 'Q-1', 'Already done', '2026-09-30', 'done')`);
+    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at, status, completed_at) VALUES ('quotation', 'Q-1', 'Already done', '2026-09-30', 'done', '2026-09-30T06:00:00Z')`);
     const { rows: [t] } = await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('enquiry', 'ENQ-9', 'Shared call', '2026-10-02') RETURNING id`);
     await db.query(`INSERT INTO task_targets (task_id, entity, entity_id) VALUES ($1, 'enquiry', 'ENQ-1')`, [t.id]);
     const recs = await loadRecords(db);
