@@ -26,6 +26,7 @@ import { addWorkingDays, businessToday } from '../businessDate.ts';
 import { ingestOne, ingestRules, providerFor, readsAllFolders, saveTokens } from './sync.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { RULES_BAR, buildPrompt, companyNameFromEmail, mainText, numbersIn, parseVerdict, prefilter, rulesVerdict } from './enquiryDetect.js';
+import { notFor, triage } from './triage.js';
 import { domainOf, forReaders, PUBLIC_DOMAINS } from './rules.js';
 import * as autoQuotation from './autoQuotation.js';
 import { queueFailures } from './readerQueue.js';
@@ -223,6 +224,11 @@ async function linkedByNumber(cand) {
 async function classifyEmail(account, cand, input, ctx) {
   const chat = chatFn();
   if (chat && ctx.aiUsed < ctx.settings.dailyAiLimit) {
+    // Triage first (docs/email-auto-entry-plan.md §3.8): a newsletter, a
+    // notification or a payment advice costs no classifying call. Logged as
+    // "other", never "billing", which would mark a client's domain a vendor's.
+    const sorted = await triage(account, cand, ctx, cand.c.direction);
+    if (notFor('enquiry', sorted)) return { ...rulesVerdict(input), kind: 'other', confidence: sorted.confidence, method: 'ai', ai_calls: 0 };
     ctx.aiUsed += 1;
     let companyKnown = false; let openDeals = 0;
     if (cand.threadId) {

@@ -3242,6 +3242,23 @@ CREATE TABLE IF NOT EXISTS email_ai_calls (
 );
 CREATE INDEX IF NOT EXISTS email_ai_calls_made_idx ON email_ai_calls (made_at);
 
+-- What one cheap call said each email is, before a document reader runs
+-- (083, docs/email-auto-entry-plan.md §3.8). Shared by the readers and by
+-- the same email in another mailbox. The label only, never the text.
+CREATE TABLE IF NOT EXISTS email_triage (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  label                text NOT NULL CHECK (label IN ('enquiry','quotation_sent','client_po','po_change','our_invoice','payment_advice','other')),
+  confidence           numeric(4,3) NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  decided_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS email_triage_message_idx ON email_triage (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_triage_decided_idx ON email_triage (decided_at);
+
 -- ------------------------------------------- client document notes (081)
 -- What is particular about one client's POs or invoices, for the email
 -- readers (docs/email-po-invoice-prompt-plan.md §6), and the corrections
@@ -3293,7 +3310,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('po_portal_senders', '*@ansmtp.ariba.com,*@coupahost.com,*@jaggaer.com', 'Procurement-portal senders whose PO notifications are read even though they are automated. Comma-separated; * matches any text.'),
   ('auto_invoice_enabled', 'true', 'Record invoices we email to clients against the right payment stage, with the PDF. Off stops it at the next run; nothing already recorded is removed.'),
   ('auto_invoice_min_confidence', '0.85', 'How sure the AI must be (0 to 1) of an invoice read from email before it is recorded. Below it, the invoice goes to review.'),
-  ('auto_invoice_wait_days', '7', 'How long an invoice whose PO is not in the tracker yet is retried before it goes to review.')
+  ('auto_invoice_wait_days', '7', 'How long an invoice whose PO is not in the tracker yet is retried before it goes to review.'),
+  ('email_triage_enabled', 'true', 'Sort each email with one quick AI call before the PO, invoice and enquiry readers read it, so the thorough reading is spent only on business documents. Off: every reader reads as before.')
 ON CONFLICT (key) DO NOTHING;
 
 -- Every email handed to the PO, invoice or enquiry reader, kept until that

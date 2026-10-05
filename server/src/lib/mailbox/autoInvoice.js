@@ -40,6 +40,7 @@ import { advanceShare } from '../../import/ai.js';
 import { loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { heldForReview } from './autoPurchaseOrder.js';
 import { disagreeNote, fieldsDiffer, readWithAi } from './readAttachment.js';
+import { notFor, triage } from './triage.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
 import { ingestRules, providerFor, readsAllFolders, saveTokens } from './sync.js';
@@ -186,6 +187,14 @@ export async function decideInvoice(account, cand, ctx) {
     if (!cand.retry) await saveDecision({ query }, account, cand, { outcome: 'waiting', reading: null, ai_calls: 0 });
     ctx.waiting += 1;
     return 'waiting';
+  }
+
+  // Triage first (docs/email-auto-entry-plan.md §3.8): what it surely says is not our invoice costs no reading call.
+  const sorted = await triage(account, cand, ctx, 'outbound');
+  if (notFor('invoice', sorted)) {
+    await saveDecision({ query }, account, cand, { outcome: 'not_invoice', method: 'ai', ai_calls: 0, confidence: sorted.confidence });
+    ctx.notInvoice += 1;
+    return 'not_invoice';
   }
 
   // The client's document note, picked before the call by the recipient's domain, the thread's client, or its GSTIN in the PDF (§6).

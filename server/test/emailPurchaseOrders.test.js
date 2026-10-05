@@ -370,6 +370,60 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
   });
 
+  test('9f. triage (docs/email-auto-entry-plan.md §3.8): what it surely says is not a PO costs no reading call; unsure, or a PO, it is read; one call for both mailboxes', async (t) => {
+    const triage = await import('../src/lib/mailbox/triage.js');
+    const labels = [];
+    t.after(() => { triage.deps.chat = null; });
+    let answer;
+    triage.deps.chat = async (system, user, opts) => { labels.push({ user, opts }); return answer; };
+    const box = await mailbox();
+    const other = await mailbox();
+    await client('Acme Triage Ltd', 'anil@acme-triage.co.in');
+    const q = await quotation('Acme Triage Ltd');
+    const pdf = async (number) => [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number, buyer: 'Acme Triage Ltd' }) }];
+
+    // An RFQ that looks like a PO: triage says enquiry, surely. The PO reader makes no call, and hands it on.
+    answer = { label: 'enquiry', confidence: 0.95 };
+    const reads = ai(reading({ po_number: '4500091001', buyer: { company_name: 'Acme Triage Ltd' } }));
+    const rfq = poEmail({ from: { email: 'anil@acme-triage.co.in' }, subject: 'RFQ: purchase order for EcoVadis', attachments: await pdf('4500091001') });
+    await deliver(box, [rfq]);
+    assert.equal(reads.length, 0, 'no reading call');
+    const d = await decision(box.id, rfq.provider_id);
+    assert.deepEqual([d.outcome, d.ai_calls], ['not_po', 0]);
+    assert.equal(labels[0].opts.schema.name, 'email_triage');
+    assert.match(labels[0].user, /Subject: RFQ: purchase order for EcoVadis/);
+    const { rows: [tr] } = await db.query('SELECT label, direction FROM email_triage WHERE account_id = $1 AND provider_id = $2', [box.id, rfq.provider_id]);
+    assert.deepEqual([tr.label, tr.direction], ['enquiry', 'inbound']);
+
+    // Unsure: read as before.
+    answer = { label: 'other', confidence: 0.6 };
+    const unsure = poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091002') });
+    ai(reading({ po_number: '4500091002', buyer: { company_name: 'Acme Triage Ltd' } }));
+    await deliver(box, [unsure]);
+    assert.equal((await poRow('4500091002'))?.quotation_no, q.quotation_no);
+
+    // A PO: read, and the same email in a second mailbox asks triage nothing more.
+    answer = { label: 'client_po', confidence: 0.97 };
+    const before = labels.length;
+    const po = poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091003') });
+    await deliver(box, [po]);
+    await deliver(other, [{ ...po, provider_id: uid('m') }]);
+    assert.equal(labels.length, before + 1, 'one triage call for the email, whichever mailbox');
+
+    // Switched off: no triage call at all.
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_triage_enabled'`);
+    try {
+      const n = labels.length;
+      answer = { label: 'other', confidence: 0.99 };
+      ai(reading({ po_number: '4500091004', buyer: { company_name: 'Acme Triage Ltd' } }));
+      await deliver(box, [poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091004') })]);
+      assert.equal(labels.length, n);
+      assert.ok(await poRow('4500091004'), 'read and registered as before');
+    } finally {
+      await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_triage_enabled'`);
+    }
+  });
+
   test('9e. review only: a PO that would register waits for a person, saying against what; a client turned back on registers', async () => {
     const box = await mailbox();
     await client('Acme Rollout Ltd', 'anil@acme-rollout.co.in');

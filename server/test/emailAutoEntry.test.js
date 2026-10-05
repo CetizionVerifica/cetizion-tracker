@@ -205,3 +205,34 @@ describe('the request (§3.1, §3.5, §4)', () => {
     }
   });
 });
+
+describe('triage (§3.8)', async () => {
+  const { buildTriagePrompt, notFor, parseTriage, TRIAGE_BAR } = await import('../src/lib/mailbox/triage.js');
+
+  test('each reader skips only what triage surely says is not its own', () => {
+    const sure = (label) => ({ label, confidence: 0.95 });
+    assert.equal(notFor('po', sure('enquiry')), true);
+    assert.equal(notFor('po', sure('client_po')), false);
+    assert.equal(notFor('po', sure('po_change')), false, 'an amendment is the PO reader\'s');
+    assert.equal(notFor('invoice', sure('quotation_sent')), true);
+    assert.equal(notFor('invoice', sure('our_invoice')), false);
+    assert.equal(notFor('enquiry', sure('other')), true, 'a newsletter');
+    assert.equal(notFor('enquiry', sure('payment_advice')), true);
+    assert.equal(notFor('enquiry', sure('client_po')), false, 'an RFQ the PO reader turned down still gets read');
+    assert.equal(notFor('po', { label: 'other', confidence: TRIAGE_BAR - 0.01 }), false, 'unsure skips nothing');
+    assert.equal(notFor('po', null), false, 'no triage skips nothing');
+  });
+
+  test('a malformed answer skips nothing', () => {
+    assert.deepEqual(parseTriage({ label: 'client_po', confidence: 0.9 }), { label: 'client_po', confidence: 0.9 });
+    assert.deepEqual(parseTriage({ label: 'invoice', confidence: 0.99 }), { label: 'other', confidence: 0 });
+    assert.deepEqual(parseTriage('nonsense'), { label: 'other', confidence: 0 });
+    assert.equal(notFor('enquiry', parseTriage(null)), false);
+  });
+
+  test('it sees the subject, the new text and the attachments\' names, not the attachments', () => {
+    const { user } = buildTriagePrompt({ direction: 'outbound', subject: 'Invoice CVPL/2026-27/037', text: 'Please find attached.', from: { email: 'a@cetizionverifica.com' }, to: [{ email: 'ap@client.in' }], attachments: ['Alembic_037.pdf'] });
+    assert.match(user, /sent by us/);
+    assert.match(user, /Attachments: Alembic_037\.pdf/);
+  });
+});

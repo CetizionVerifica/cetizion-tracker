@@ -15,6 +15,8 @@
 --                                    fit: misread (§3.7).
 --   review reason readers_disagree   an image PDF, read twice by two models,
 --                                    the readings differing (§3.7).
+--   email_triage                     what one quick call said each email is,
+--                                    before the readers read it (§3.8).
 --   stages_source quotation_terms    the PO named only a trigger, so the
 --                                    quotation's split was used (§3.6).
 -- =====================================================================
@@ -52,3 +54,22 @@ ALTER TABLE email_invoice_decisions ADD CONSTRAINT email_invoice_decisions_revie
    'po_date_mismatch',
    'review_only',
    'bad_gstin','readers_disagree'));
+
+-- One quick AI call sorts each email before the readers read it (§3.8).
+CREATE TABLE IF NOT EXISTS email_triage (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  label                text NOT NULL CHECK (label IN ('enquiry','quotation_sent','client_po','po_change','our_invoice','payment_advice','other')),
+  confidence           numeric(4,3) NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  decided_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS email_triage_message_idx ON email_triage (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_triage_decided_idx ON email_triage (decided_at);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('email_triage_enabled', 'true', 'Sort each email with one quick AI call before the PO, invoice and enquiry readers read it, so the thorough reading is spent only on business documents. Off: every reader reads as before.')
+ON CONFLICT (key) DO NOTHING;

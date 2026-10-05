@@ -37,6 +37,7 @@ import { PO_KEY_FIELDS, PO_SCHEMA, buildPoPrompt, isPortalSender, parsePoVerdict
 import { checkPo, grossUp, rankPoPdfs, stagesFor } from './pdfPurchaseOrder.js';
 import { near } from './pdfQuotation.js';
 import { disagreeNote, fieldsDiffer, readWithAi } from './readAttachment.js';
+import { notFor, triage } from './triage.js';
 import { fitsPattern, loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, readsAllFolders, saveTokens } from './sync.js';
@@ -172,6 +173,15 @@ export async function decidePo(account, cand, ctx) {
     if (ctx.backfill && !cand.retrySince) { ctx.stopped = 'ai_limit'; return 'ai_limit'; }
     await keepForRetry(account, cand, 0);
     return 'retry';
+  }
+
+  // Triage first (docs/email-auto-entry-plan.md §3.8): what it surely says
+  // is not a PO costs no reading call, and goes on to the enquiry reader.
+  const sorted = await triage(account, cand, ctx, 'inbound');
+  if (notFor('po', sorted)) {
+    await logDecision({ query }, account, cand, { outcome: 'not_po', method: 'ai', ai_calls: 0, confidence: sorted.confidence });
+    ctx.notPo += 1;
+    return 'not_po';
   }
 
   ctx.profiles ??= await loadProfiles({ query }, 'po');
