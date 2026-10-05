@@ -8,8 +8,14 @@
  *
  * A scheduled run is idempotent per period: when a sent run already exists
  * for that kind and period, it does nothing. Send now and Resend are
- * explicit and always send. Every run is recorded, sent or not, and a
- * failure is raised to admins through the ops alerts.
+ * explicit and always send. Every run is recorded, sent or not — a
+ * scheduled run the guards stopped too, as `skipped` with the reason, so
+ * the run history shows every attempt and not only the manual sends — and
+ * a failure is raised to admins through the ops alerts.
+ *
+ * A guarded run holds an advisory lock for its kind and period while it
+ * builds and sends: the worker and the API's catch-up (misSchedule.js) may
+ * both reach the same day, and only one of them sends it.
  *
  * The email leaves from the connected mailbox in `mis_sender_account_id`
  * (sales@), with the PDF attached, through mail.js's sendViaMailbox and its
@@ -18,7 +24,7 @@
  * a run can be re-opened from the tracker.
  */
 import { config } from '../config.js';
-import { query } from '../db.js';
+import { pool, query } from '../db.js';
 import { businessToday } from './businessDate.ts';
 import { documentStorageReady, uploadDocument } from './documents.js';
 import { dailyBriefing as dailyEmail, weeklyMis as weeklyEmail } from './emailTemplates.js';
@@ -58,6 +64,20 @@ async function record(db, run) {
   return r;
 }
 
+/**
+ * Run `fn` holding the session advisory lock `key`, or return null at once
+ * when somebody else holds it. On its own connection, so the lock outlives
+ * the pool's statement-by-statement connections.
+ */
+async function withLock(key, fn) {
+  const client = await pool.connect();
+  try {
+    const { rows: [l] } = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', [key]);
+    if (!l.ok) return null;
+    try { return await fn(); } finally { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => {}); }
+  } finally { client.release(); }
+}
+
 /** The sender mailbox, if one is set and can send; else null (SMTP). */
 async function senderMailbox(db, settings) {
   if (!settings.senderAccountId) return null;
@@ -75,16 +95,28 @@ async function senderMailbox(db, settings) {
  */
 export async function runReport(kind, { today = businessToday(), startedBy = 'schedule', guarded = startedBy === 'schedule', db = { query }, ai = true } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown report kind: ${kind}`);
-  const settings = await misSettings(db);
+  if (!guarded) return send(kind, { today, startedBy, guarded, db, ai });
   const period = periodFor(kind, today);
-  if (guarded) {
+  const run = await withLock(`report_runs:${kind}:${period.from}`, async () => {
+    const settings = await misSettings(db);
     const enabled = kind === 'daily_briefing' ? settings.dailyEnabled : settings.weeklyEnabled;
-    if (!enabled) return { kind, period, status: 'skipped', skipped: `${kind} is switched off` };
+    // A guarded skip is recorded: without the row, a report switched off
+    // looked in the run history exactly like a schedule that never ran.
+    const skip = async (reason) => ({ ...(await record(db, { kind, period, status: 'skipped', error: reason, triggered_by: startedBy })), skipped: reason });
+    if (!enabled) return skip(`${REPORT_TITLE[kind]} is switched off (Reports → Scheduled reports)`);
     // A run that only logged (delivery was off) did not reach anybody and does not count as sent.
     const { rows: [sent] } = await db.query(`SELECT id FROM report_runs WHERE kind = $1 AND period_from = $2 AND status = 'sent' AND sent_via <> 'log' LIMIT 1`, [kind, period.from]);
-    if (sent) return { kind, period, status: 'skipped', skipped: `already sent for ${period.from} (run ${sent.id})` };
-  }
+    if (sent) return skip(`already sent for ${period.from} (run ${sent.id})`);
+    return send(kind, { today, startedBy, guarded, db, ai, settings });
+  });
+  // Another process is building this very report now; it records its own run.
+  return run || { kind, period, status: 'skipped', skipped: `another run for ${period.from} is in progress` };
+}
 
+/** Build, send and record one report: runReport's work once the guards have passed. */
+async function send(kind, { today, startedBy, guarded, db, ai, settings: given = null }) {
+  const settings = given || await misSettings(db);
+  const period = periodFor(kind, today);
   let built;
   try {
     built = await buildReport(kind, { today, db, settings, ai });

@@ -13,12 +13,19 @@
  */
 import { PgBoss } from 'pg-boss';
 import { config } from './config.js';
+import { aiConfig } from './lib/ai.js';
 import { JOBS, runJob } from './jobs.js';
 import { pool } from './db.js';
 import { runWebhooks } from './lib/webhooks.js';
-import { watchProcess } from './lib/ops/errors.js';
+import { release, watchProcess } from './lib/ops/errors.js';
 
 watchProcess('worker');
+
+// What this process will do with mail and the AI, on its first line. The
+// worker is a separate application with its own environment: a setting the
+// API has and the worker lacks (EMAIL_MODE falls back to log) shows here.
+const m = config.microsoft;
+console.log(`[worker] EMAIL_MODE=${config.mail.mode} · SMTP ${config.mail.host ? 'configured' : 'not configured'} · Microsoft Graph ${m.clientId && m.clientSecret && m.tokenKey ? 'configured' : 'not configured'} · AI ${aiConfig.enabled ? 'configured' : 'not configured'} · time zone ${config.businessTimeZone} · release ${release()}`);
 
 const boss = new PgBoss({ connectionString: config.databaseUrl, schema: 'pgboss' });
 boss.on('error', (err) => console.error('[worker] pg-boss', err));

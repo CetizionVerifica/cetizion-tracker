@@ -17,6 +17,7 @@ import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
 import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
 import { runVisitReminders } from './lib/visits.js';
 import { runDailyBriefing, runWeeklyMis } from './lib/misSend.js';
+import { REPORT_JOBS, checkMissedReports } from './lib/misSchedule.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
 import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
@@ -68,7 +69,8 @@ export const JOBS = {
     // watchdog: "it last ran fifteen minutes ago and found nothing" is the
     // answer the deep health check exists to give, and with quiet: () =>
     // false it recorded nothing and reported itself as never run.
-    run: () => runOpsWatch(),
+    // Also: a scheduled report switched on and not sent by 09:30 (misSchedule.js).
+    run: async () => ({ ...(await runOpsWatch()), reports_missed: (await checkMissedReports()).length }),
   },
   'accounting.sync': {
     description: 'Read invoices and payments from the books (Zoho Books), compare them with the tracker, apply payments if allowed',
@@ -114,14 +116,16 @@ export const JOBS = {
   },
   // The scheduled sales reports (docs/mis-reports-plan.md §3.7). Each
   // period is sent once: a run that finds it already sent does nothing.
+  // The briefing goes every day, weekends and holidays included, and the
+  // API runs either one itself when this worker has not (misSchedule.js).
   'reports.daily_briefing': {
     description: 'Email management the Daily Sales Briefing for the previous day, from the sales mailbox with the PDF attached',
-    cron: '56 8 * * *',
+    cron: REPORT_JOBS.daily_briefing.cron,
     run: (opts) => runDailyBriefing(opts),
   },
   'reports.weekly_mis': {
     description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the sales mailbox with the PDF attached',
-    cron: '54 8 * * 1',
+    cron: REPORT_JOBS.weekly_mis.cron,
     run: (opts) => runWeeklyMis(opts),
   },
   'deliverables.daily': {

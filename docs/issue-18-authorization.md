@@ -297,6 +297,7 @@ session is **401**, before any of these is considered.
 | `POST /api/mis-reports/:kind/send` | **admin** | Emails management a report now, from the sales mailbox; not a preview. |
 | `GET /api/mis-reports/runs` | **admin** | Every report sent to management, with its recipients. |
 | `GET /api/mis-reports/runs/:id/pdf` | **admin** | The PDF that went to management, over the whole book. |
+| `GET /api/mis-reports/schedule` | **admin** | When the reports run next, whether the worker is running, and the last scheduled attempts: operational state, like the Jobs page. |
 | **/api/notifications** | | |
 | `GET /api/notifications` | any | Scoped: record-owner. |
 | `POST /api/notifications/:id/read` | any | Scoped: record-owner. |

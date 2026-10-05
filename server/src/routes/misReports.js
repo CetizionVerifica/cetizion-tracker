@@ -7,6 +7,7 @@
  *   GET  /api/mis-reports/:kind/preview.pdf    the PDF, as it would be attached
  *   POST /api/mis-reports/:kind/send           { date? } send it now (or again) for the period `date` decides
  *   GET  /api/mis-reports/runs                 the run history
+ *   GET  /api/mis-reports/schedule             next runs, the worker's state, warnings
  *   GET  /api/mis-reports/runs/:id/pdf         the PDF a run sent, from document storage
  *
  * `kind` is daily_briefing or weekly_mis. `date` (YYYY-MM-DD) runs the
@@ -24,6 +25,7 @@ import { fetchDocument } from '../lib/documents.js';
 import { KINDS } from '../lib/misReports.js';
 import { misPdf, pdfPageCount } from '../lib/misPdf.js';
 import { buildReport, listRuns, runReport } from '../lib/misSend.js';
+import { scheduleStatus } from '../lib/misSchedule.js';
 
 export const misReportsRouter = Router();
 misReportsRouter.use(requireAdmin);
@@ -41,6 +43,10 @@ const dateOf = (raw) => {
 
 misReportsRouter.get('/runs', async (req, res) => {
   res.json({ data: await listRuns() });
+});
+
+misReportsRouter.get('/schedule', async (req, res) => {
+  res.json({ data: await scheduleStatus() });
 });
 
 misReportsRouter.get('/runs/:id/pdf', async (req, res) => {

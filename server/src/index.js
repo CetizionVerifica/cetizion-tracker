@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { logger } from './lib/ops/logger.js';
 import { watchProcess } from './lib/ops/errors.js';
 import { startAutoSync } from './lib/mailbox/autoSync.js';
+import { startReportSchedule } from './lib/misSchedule.js';
 
 watchProcess('api', logger);
 
@@ -19,9 +20,11 @@ const server = app.listen(config.port, () => {
 
 // New mail reaches the Inbox on its own, worker or no worker.
 const stopAutoSync = startAutoSync({ log: logger });
+// The scheduled reports go even when the worker did not send them.
+const stopReportSchedule = startReportSchedule({ log: logger });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => { stopAutoSync(); server.close(() => process.exit(0)); });
+  process.on(signal, () => { stopAutoSync(); stopReportSchedule(); server.close(() => process.exit(0)); });
 }
 
 export default app;

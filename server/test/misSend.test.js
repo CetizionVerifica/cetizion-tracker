@@ -82,11 +82,61 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     assert.match(refused.reason, /client@elsewhere\.com is not on EMAIL_ALLOWLIST/);
   });
 
-  test('the schedule does nothing while a report is off', async () => {
+  test('the schedule sends nothing while a report is off, and records that it looked', async () => {
     const r = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'schedule' });
     assert.equal(r.status, 'skipped');
     assert.match(r.skipped, /switched off/);
-    assert.equal((await runs()).length, 0, 'nothing recorded for a report that is off');
+    const all = await runs();
+    assert.equal(all.length, 1, 'the guarded skip is a row, so the run history shows the schedule ran');
+    assert.equal(all[0].status, 'skipped');
+    assert.equal(all[0].triggered_by, 'schedule');
+    assert.match(all[0].error, /Daily Sales Briefing is switched off/);
+    assert.equal(sent.length, 0);
+    await db.query('DELETE FROM report_runs');
+  });
+
+  test('the API\'s catch-up runs a report the worker did not, once, after its time', async () => {
+    const schedule = await import('../src/lib/misSchedule.js');
+    const calls = [];
+    const fake = async (kind, opts) => { calls.push({ kind, ...opts }); return misSend.runReport(kind, opts); };
+    const quiet = { warn: () => {} };
+    // 08:50 IST on Monday 5 October: not yet time.
+    assert.deepEqual(await schedule.catchUpReports({ now: new Date('2026-10-05T03:20:00Z'), run: fake, log: quiet }), []);
+    // 09:20 IST: 24 minutes past 08:56, and nothing from the worker. Both reports are due on a Monday.
+    const caught = await schedule.catchUpReports({ now: new Date('2026-10-05T03:50:00Z'), run: fake, log: quiet });
+    assert.deepEqual(caught.map((c) => [c.kind, c.period.from, c.status]), [['daily_briefing', '2026-10-04', 'skipped'], ['weekly_mis', '2026-09-28', 'skipped']]);
+    assert.ok(calls.every((c) => c.guarded && c.startedBy === 'schedule' && c.today === TODAY), 'with the schedule\'s guards');
+    // The skip it recorded is the schedule's run for the day: it does not try again every five minutes.
+    assert.deepEqual(await schedule.catchUpReports({ now: new Date('2026-10-05T04:00:00Z'), run: fake, log: quiet }), []);
+    assert.equal(calls.length, 2);
+    const { rows: jobs } = await db.query(`SELECT name, started_by FROM job_runs WHERE started_by = 'api catch-up' ORDER BY id`);
+    assert.deepEqual(jobs.map((j) => j.name), ['reports.daily_briefing', 'reports.weekly_mis']);
+    await db.query('DELETE FROM report_runs');
+  });
+
+  test('a report switched on and not sent by 09:30 is an alert that says nothing tried', async () => {
+    const schedule = await import('../src/lib/misSchedule.js');
+    await db.query(`UPDATE settings SET value = 'true' WHERE key = 'mis_daily_enabled'`);
+    try {
+      assert.deepEqual(await schedule.checkMissedReports({ now: new Date('2026-10-05T03:50:00Z') }), [], '09:20 is not yet missed');
+      const missed = await schedule.checkMissedReports({ now: new Date('2026-10-05T04:05:00Z') });
+      assert.deepEqual(missed.map((m) => m.kind), ['daily_briefing'], 'the weekly report is off');
+      const { rows: [alert] } = await db.query(`SELECT title, body FROM notifications WHERE kind = 'alert' AND title LIKE '%for 2026-10-04 was not sent%'`);
+      assert.match(alert.body, /neither the worker nor the API ran the job/);
+    } finally {
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'mis_daily_enabled'`);
+    }
+  });
+
+  test('the Scheduled reports page is told the next runs and what is wrong', async () => {
+    const schedule = await import('../src/lib/misSchedule.js');
+    const s = await schedule.scheduleStatus({ now: new Date('2026-10-05T03:50:00Z') });
+    const daily = s.reports.find((r) => r.kind === 'daily_briefing');
+    assert.equal(daily.next_run, '2026-10-06T03:26:00.000Z', '08:56 IST tomorrow');
+    assert.equal(s.reports.find((r) => r.kind === 'weekly_mis').next_run, '2026-10-12T03:24:00.000Z', 'next Monday 08:54 IST');
+    assert.equal(daily.enabled, false);
+    assert.match(daily.warnings.join(' '), /Switched off, so the schedule does not send it, though recipients are set/);
+    assert.equal(s.worker.ok, false, 'no worker has run a job in this database');
   });
 
   test('in log mode a scheduled run composes and logs the report, records it as not delivered, and tells admins', async () => {
@@ -253,5 +303,24 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     const { JOBS } = await import('../src/jobs.js');
     assert.equal(JOBS['reports.daily_briefing'].cron, '56 8 * * *');
     assert.equal(JOBS['reports.weekly_mis'].cron, '54 8 * * 1');
+  });
+
+  test('the briefing goes every day: a Sunday and a holiday are sent like any other day', async () => {
+    // Decision of 04 Oct 2026: weekends and holidays included, so a later
+    // "skip holidays" change (as followups.daily has) cannot reach it quietly.
+    const { config } = await import('../src/config.js');
+    const before = config.mail.mode;
+    config.mail.mode = 'live';
+    await db.query(`UPDATE settings SET value = 'true' WHERE key = 'mis_daily_enabled'`);
+    await db.query(`INSERT INTO holidays (holiday_on, name) VALUES ('2026-10-02', 'Gandhi Jayanti') ON CONFLICT DO NOTHING`);
+    try {
+      for (const today of ['2026-10-02', '2026-10-04']) { // a Friday holiday, and a Sunday
+        const r = await misSend.runDailyBriefing({ today });
+        assert.equal(r.status, 'sent', `${today}: ${JSON.stringify(r)}`);
+      }
+    } finally {
+      config.mail.mode = before;
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'mis_daily_enabled'`);
+    }
   });
 });

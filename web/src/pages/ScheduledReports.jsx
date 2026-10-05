@@ -31,7 +31,30 @@ const setting = (list, key) => (list ?? []).find((s) => s.key === key)?.value ??
 // The addresses in a To/Cc setting, as the server reads them: a setting cannot be blank, so "none" means nobody.
 const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
 
-function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }) {
+// "Tue 06 Oct, 08:56 IST": a run time in the business time zone, whatever the browser's.
+const runTime = (iso, timeZone = 'Asia/Kolkata') => (iso
+  ? `${new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso)).replace(',', '')} IST`
+  : '—');
+const runStatus = (r) => (r.status === 'sent' ? `sent${r.sent_via === 'log' ? ' (logged only)' : ''}` : r.status);
+
+/** What the schedule has done and will do for one report, and anything wrong with it. */
+function ScheduleLine({ status }) {
+  if (!status) return null;
+  const last = status.last_scheduled_run;
+  return (
+    <div className="flex flex-col gap-1.5 rounded-[8px] bg-secondary px-3 py-2 text-[12.5px]/[1.5] text-secondary-text">
+      <div>
+        Next run <strong>{status.enabled ? runTime(status.next_run, status.timezone) : 'none while it is off'}</strong>
+        {' · '}last scheduled attempt {last
+          ? <>{ago(last.created_at)} for {date(last.period_from)}: <strong>{runStatus(last)}</strong>{last.error ? ` (${last.error})` : ''}</>
+          : <em>none recorded</em>}
+      </div>
+      {status.warnings.map((w) => <div key={w} className="text-late">{w}</div>)}
+    </div>
+  );
+}
+
+function ReportCard({ kind, settingKey, title, when, what, settings, schedule, onChanged }) {
   const toast = useToast();
   const enabled = setting(settings, settingKey) === 'true';
   // "As of": the report is run as if this were today, so a past period can
@@ -71,6 +94,7 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
           {enabled ? 'Switch off' : 'Switch on'}
         </Button>
       </div>
+      <ScheduleLine status={schedule} />
       <div className="flex flex-wrap items-end gap-2">
         <Field label="As of" hint="Run it as if this were today">
           <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-8 text-[12.5px]" />
@@ -176,10 +200,11 @@ function Runs({ runs, onChanged }) {
   const period = (r) => (r.period_from === r.period_to ? date(r.period_from) : `${date(r.period_from)} – ${date(r.period_to)}`);
   return (
     <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-      <div className="px-5 pt-4 text-[14px] font-semibold text-foreground">Sent so far</div>
+      <div className="px-5 pt-4 text-[14px] font-semibold text-foreground">Run history</div>
+      <p className="px-5 text-[12.5px] text-secondary-text">Every run, sent or not: a scheduled run that was switched off or had already been sent is listed as skipped, with the reason.</p>
       <DataTable
         rows={runs}
-        empty="Nothing has been sent yet."
+        empty="Nothing has run yet."
         columns={[
           { key: 'kind', header: 'Report', render: (r) => TITLE[r.kind] },
           { key: 'period', header: 'Period', render: period },
@@ -216,7 +241,9 @@ export default function ScheduledReports() {
   const settings = useFetch(() => api.raw('/settings'), []);
   const mailboxes = useFetch(() => api.raw('/mailboxes'), []);
   const runs = useFetch(() => api.raw('/mis-reports/runs'), []);
-  const refetch = () => { settings.refetch(); runs.refetch(); };
+  const schedule = useFetch(() => api.raw('/mis-reports/schedule'), []);
+  const refetch = () => { settings.refetch(); runs.refetch(); schedule.refetch(); };
+  const sched = schedule.data?.data;
   const list = settings.data?.data;
   const emailsOn = setting(list, 'emails_enabled') !== 'false';
   return (
@@ -230,12 +257,15 @@ export default function ScheduledReports() {
         {!emailsOn && (
           <Alert tone="warning"><span>Automatic email is switched off under Settings → Emails &amp; jobs, so a report is composed and logged but not sent.</span></Alert>
         )}
+        {sched && !sched.worker.ok && (
+          <Alert tone="warning"><span>The worker has not run a scheduled job {sched.worker.last_seen ? `since ${ago(sched.worker.last_seen)}` : 'on this database yet'}. The tracker sends a report the worker missed itself, {sched.reports[0]?.catch_up_minutes ?? 20} minutes after its time, but follow-ups, reminders and the other jobs wait for the worker: start it from the current image with the API's environment.</span></Alert>
+        )}
         <Alert tone="info">
           <span>The figures come from the same definitions as the Reports page, in ₹ at the rate on each record's date. Each period is sent once by the schedule; Send now and Resend always send.</span>
         </Alert>
         {list && (
           <div className="grid gap-4 lg:grid-cols-2">
-            {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} onChanged={refetch} />)}
+            {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} schedule={sched?.reports.find((r) => r.kind === k.kind)} onChanged={refetch} />)}
           </div>
         )}
         {list && <SharedSettings key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}

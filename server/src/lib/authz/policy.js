@@ -218,6 +218,7 @@ export const routes = [
   { method: 'GET', path: '/api/mis-reports/:kind/preview.pdf', access: mustBeAdmin, why: 'The same report as a PDF, built over the whole book.' },
   { method: 'GET', path: '/api/mis-reports/runs', access: mustBeAdmin, why: 'Every report sent to management, with its recipients.' },
   { method: 'GET', path: '/api/mis-reports/runs/:id/pdf', access: mustBeAdmin, why: 'The PDF that went to management, over the whole book.' },
+  { method: 'GET', path: '/api/mis-reports/schedule', access: mustBeAdmin, why: 'When the reports run next, whether the worker is running, and the last scheduled attempts: operational state, like the Jobs page.' },
   { method: 'POST', path: '/api/mis-reports/:kind/send', access: mustBeAdmin, why: 'Emails management a report now, from the sales mailbox; not a preview.' },
   { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 
