@@ -24,7 +24,8 @@
     "fx:status": "node scripts/fx.js status",
     "authz:docs": "node scripts/authz-docs.js",
     "typecheck": "tsc --noEmit",
-    "ownership:backfill": "node scripts/ownership-backfill.js"
+    "ownership:backfill": "node scripts/ownership-backfill.js",
+    "demo:data": "node scripts/demo-data.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
