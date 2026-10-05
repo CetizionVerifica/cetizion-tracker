@@ -382,6 +382,8 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.ok(p.approved_at, 'saving approves it');
     assert.deepEqual(p.sender_domains, ['acme-pattern.co.in']);
     await agent.post('/api/document-profiles').send({ company_id: companyId, doc_type: 'invoice', po_number_pattern: '([' }).expect(422);
+    const { body: twice } = await agent.post('/api/document-profiles').send({ company_id: companyId, doc_type: 'po', hint: 'Again.' }).expect(422);
+    assert.equal(twice.error.fields.company_id, 'This client already has a note for these documents: edit that one instead');
 
     const msg = poEmail({ from: { email: 'anil@acme-pattern.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'AP-77', buyer: 'Acme Pattern Ltd' }) }] });
     const calls = ai(reading({ po_number: 'AP-77', buyer: { company_name: 'Acme Pattern Ltd' } }));

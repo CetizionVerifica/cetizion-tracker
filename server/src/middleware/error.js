@@ -16,6 +16,7 @@ const CONSTRAINT_FIELDS = {
   purchase_orders_replaces_key: ['replaces_po_number', 'That purchase order is already replaced by another revision: pick that revision instead'],
   purchase_orders_not_replacing_itself: ['replaces_po_number', 'A purchase order cannot replace itself'],
   purchase_orders_replaces_po_number_fkey: ['replaces_po_number', 'There is no purchase order with that number'],
+  company_document_profiles_company_id_doc_type_key: ['company_id', 'This client already has a note for these documents: edit that one instead'],
 };
 
 // Postgres constraint violations are user mistakes far more often than
