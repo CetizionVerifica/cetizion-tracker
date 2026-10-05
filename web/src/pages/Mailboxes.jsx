@@ -701,7 +701,7 @@ function AutoClients({ value, busy, onSave }) {
   return (
     <div className="flex flex-wrap items-end gap-2">
       <Field label="Automatic again for" hint="Client names as in the tracker, comma-separated">
-        <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Alembic Pharmaceuticals Ltd, Aragen Life Sciences Ltd" className="h-8 min-w-[320px] text-[13px]" />
+        <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Client One Ltd, Client Two Pvt Ltd" className="h-8 min-w-[320px] text-[13px]" />
       </Field>
       <Button size="sm" variant="secondary" className="h-8 px-4 text-[13px]" disabled={busy || text === value} onClick={() => onSave(text)}>Save</Button>
     </div>

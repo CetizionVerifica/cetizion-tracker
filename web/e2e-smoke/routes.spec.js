@@ -27,7 +27,7 @@ const ROUTES = [
   '/vendor-invoices', '/payables', '/expense-claims', '/travel-dashboard',
   '/settings/company', '/settings/holidays', '/settings/rates', '/settings/assumptions',
   '/settings/templates', '/settings/users', '/settings/sign-in', '/settings/tokens',
-  '/settings/mailboxes', '/settings/webhooks', '/settings/import', '/settings/emails',
+  '/settings/mailboxes', '/settings/document-notes', '/settings/webhooks', '/settings/import', '/settings/emails',
 ];
 
 // A personal account exists only in database sign-in mode; in shared mode

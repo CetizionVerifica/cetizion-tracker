@@ -69,7 +69,7 @@ export default function DocumentProfiles() {
           fields={[
             { name: 'company_id', label: 'Client', type: 'select', required: true, options: (lookups.companies || []).map((c) => ({ value: String(c.id), label: c.name })) },
             { name: 'doc_type', label: 'Documents', type: 'select', required: true, options: [{ value: 'po', label: 'Purchase orders' }, { value: 'invoice', label: 'Invoices' }] },
-            { name: 'sender_domains', label: 'Sent from', hint: 'The client\'s email domains, comma-separated, e.g. dasami.com' },
+            { name: 'sender_domains', label: 'Sent from', hint: 'The client\'s email domains, comma-separated, e.g. client.com, client.co.in' },
             { name: 'po_number_pattern', label: 'PO number pattern', hint: 'A regular expression, e.g. ^37\\d{8}$ for ten digits starting 37. Leave blank to check nothing.' },
             { name: 'label_aliases', label: 'Labels it prints', hint: 'e.g. "Work Order No." for the PO number, "Doc. Date" for its date' },
             { name: 'hint', label: 'Note for the readers', type: 'textarea', span: true, hint: 'At most 500 characters: what to read where, and what to ignore.' },
