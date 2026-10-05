@@ -3207,3 +3207,11 @@ CREATE INDEX IF NOT EXISTS email_reader_queue_due_idx ON email_reader_queue (acc
 -- The PO number as compared: "PO-123" and "po 123" are the same PO.
 CREATE INDEX IF NOT EXISTS purchase_orders_po_number_norm_idx
   ON purchase_orders (lower(regexp_replace(po_number, '[^a-zA-Z0-9]', '', 'g')));
+
+-- My Today (077, docs/my-today-plan.md): when an item is late, and when an
+-- invoice past due needs a person to chase it.
+INSERT INTO settings (key, value, notes) VALUES
+  ('my_today_grace_working_days', '2', 'My Today: working days an item may be late and still sit under Due today, with a "late" label.'),
+  ('my_today_chase_after_days', '7', 'My Today: calendar days past its due date before an unpaid invoice needs a chase.'),
+  ('my_today_rechase_days', '7', 'My Today: days until a chase logged without a next date comes back.')
+ON CONFLICT (key) DO NOTHING;

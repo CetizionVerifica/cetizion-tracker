@@ -350,6 +350,15 @@ export function parentClause(scope, params, { kind, alias }) {
       OR EXISTS (SELECT 1 FROM task_targets tt
                   WHERE tt.task_id = ${alias}.id AND ${entityCase('tt', n)}))`;
   }
+  // The same, but "a record they own" rather than "a record they may
+  // reach": shared master data does not count. My Today asks this of an
+  // unassigned task (docs/my-today-plan.md) — one on a company would
+  // otherwise be on every salesperson's list at once.
+  if (kind === 'task_owned') {
+    return `(${entityCase(alias, n, { sharedAs: 'false' })}
+      OR EXISTS (SELECT 1 FROM task_targets tt
+                  WHERE tt.task_id = ${alias}.id AND ${entityCase('tt', n, { sharedAs: 'false' })}))`;
+  }
   throw new Error(`Unknown ownership parent: ${kind}`);
 }
 

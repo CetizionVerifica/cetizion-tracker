@@ -19,7 +19,7 @@ import { test, expect } from '@playwright/test';
  */
 
 const ROUTES = [
-  '/', '/worklist', '/data-quality', '/tasks', '/follow-ups', '/companies', '/deliverables',
+  '/', '/my-today', '/worklist', '/data-quality', '/tasks', '/follow-ups', '/companies', '/deliverables',
   '/schedule', '/enquiries', '/quotations', '/pipeline', '/renewals',
   '/projects', '/purchase-orders', '/payment-stages',
   '/collections', '/cashflow', '/reports', '/insights', '/profitability', '/accounting',

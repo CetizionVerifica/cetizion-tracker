@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { query } from '../db.js';
-import { scopedSources, scopeOf } from '../auth/ownership.js';
+import { isUnrestricted, scopedSources, scopeOf } from '../auth/ownership.js';
+import { ApiError } from '../middleware/error.js';
 import { dataQuality } from '../lib/dataQuality.js';
 import { businessToday, workingDaysBetween } from '../lib/businessDate.ts';
 import { payables } from '../lib/payables.js';
+import { myToday } from '../lib/myToday.js';
 
 export const dashboardRouter = Router();
 
@@ -186,6 +188,53 @@ dashboardRouter.get('/worklist', async (req, res) => {
       late_deliveries: deliveries.rows,
       won_without_project: gaps.rows,
     },
+  });
+});
+
+/**
+ * My Today (docs/my-today-plan.md): one person's own work, due today or
+ * late, from tasks, enquiry follow-ups, invoices to raise and payments to
+ * chase. The rules are in lib/myToday.js.
+ *
+ *   GET /api/dashboard/my-today[?owner=<user id>][&summary=1][&all=1]
+ *
+ * Whose day it is:
+ *   a sales user   always their own; ?owner= is ignored
+ *   an admin       their own, or ?owner=<user id> for cover and one-to-ones
+ *   shared login   nobody's until ?owner= names one — there is no person
+ *                  behind it — so the answer says so and lists who to pick
+ *
+ * ?summary=1 is the sidebar badge: the counts only, from the same rules.
+ * ?all=1 lists everything late instead of folding the oldest into one row.
+ */
+dashboardRouter.get('/my-today', async (req, res) => {
+  scopeOf(req); // refuses a session that is not what it claims to be
+  const viewerUnrestricted = isUnrestricted(req.user);
+  const asked = Number(req.query.owner);
+  let personId = null;
+  if (!viewerUnrestricted) personId = req.user.id;
+  else if (req.query.owner !== undefined && req.query.owner !== '' && Number.isSafeInteger(asked) && asked > 0) personId = asked;
+  else if (req.user.mode === 'database') personId = req.user.id;
+
+  let person = null;
+  if (personId !== null) {
+    ({ rows: [person] } = await query('SELECT id, name, email, role FROM users WHERE id = $1', [personId]));
+    if (!person) throw new ApiError(404, 'No such person');
+  }
+  const summary = req.query.summary === '1' || req.query.summary === 'true';
+  const day = person ? await myToday({ query }, person, { unfold: req.query.all === '1' || req.query.all === 'true' }) : null;
+
+  if (summary) {
+    return res.json({ data: { today: day?.today ?? businessToday(), person: day?.person ?? null, counts: day?.counts ?? null } });
+  }
+  // The person picker is an admin's; a sales user's would be a staff directory.
+  const owners = viewerUnrestricted
+    ? (await query('SELECT id, name FROM users WHERE active ORDER BY name')).rows
+    : [];
+  res.json({
+    data: day
+      ? { ...day, owners }
+      : { today: businessToday(), person: null, needs_person: true, owners, counts: null, late: [], due_today: [], older: null },
   });
 });
 

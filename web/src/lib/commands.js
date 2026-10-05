@@ -205,6 +205,7 @@ export const STEPS = [
  */
 export const JUMPS = [
   { id: 'go-today', verb: 'Today', to: '/', icon: 'today', keywords: 'home dashboard overview start' },
+  { id: 'go-my-today', verb: 'My Today', to: '/my-today', icon: 'today', keywords: 'my today mine my list my work due late follow ups tasks chase' },
   { id: 'go-inbox', verb: 'Inbox', to: '/inbox', icon: 'inbox', keywords: 'email mail shared conversations' },
   { id: 'go-worklist', verb: 'Action list', to: '/worklist', icon: 'today', keywords: 'worklist queue waiting everything' },
   { id: 'go-data-quality', verb: 'Data quality', to: '/data-quality', icon: 'waiting', adminOnly: true, keywords: 'data quality missing blank gaps incomplete fix' },

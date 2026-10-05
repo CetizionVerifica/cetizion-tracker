@@ -2,6 +2,7 @@ import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState 
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import Today from './pages/Today.jsx';
+import MyToday, { MY_TODAY_CHANGED } from './pages/MyToday.jsx';
 import Worklist from './pages/Worklist.jsx';
 import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
@@ -96,6 +97,7 @@ import { CommandPalette, useCommandPalette } from './components/CommandPalette.j
 import {
   BarChart3,
   Lightbulb,
+  ListChecks,
   Building2,
   ClipboardList,
   FileText,
@@ -131,6 +133,9 @@ function ImportReviewPage() {
  * verbs rather than the screens.
  */
 const NAV_TOP = [
+  // One person's own list for the day (docs/my-today-plan.md); Today below
+  // stays the company-wide view.
+  { to: '/my-today', icon: ListChecks, label: 'My Today', badge: 'mine' },
   { to: '/', icon: Home, label: 'Today', end: true },
   { to: '/inbox', icon: InboxIcon, label: 'Inbox', badge: 'inbox' },
   // A landing screen, like Reports: the five questions to start a day on.
@@ -479,6 +484,15 @@ export default function App() {
   const { data: nData, refetch: refetchBell } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   useNotificationPopups(refetchBell);
   const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
+  // The same rules as the page, counts only. Null with the shared sign-in
+  // until a person is picked, so the badge simply does not show.
+  // The page says when it has changed something, so the count drops as
+  // the list does rather than on the next navigation.
+  const { data: mData, refetch: refetchMine } = useFetch(() => api.raw('/dashboard/my-today?summary=1'), [location.pathname]);
+  useEffect(() => {
+    window.addEventListener(MY_TODAY_CHANGED, refetchMine);
+    return () => window.removeEventListener(MY_TODAY_CHANGED, refetchMine);
+  }, [refetchMine]);
   // A pinned view is only worth its place if it says how much is behind it,
   // and the count is the same one the list shows when you click through.
   const { data: vData, refetch: refetchViews } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
@@ -499,8 +513,9 @@ export default function App() {
   const counts = {
     inbox: iData?.data?.open ?? null,
     notifications: nData?.data?.unread ?? null,
+    mine: mData?.data?.counts ? mData.data.counts.late + mData.data.counts.due_today : null,
   };
-  const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0 };
+  const alerts = { inbox: (iData?.data?.overdue ?? 0) > 0, mine: (mData?.data?.counts?.late ?? 0) > 0 };
 
   return (
     <SidebarContext.Provider value={sidebar}>
@@ -540,6 +555,7 @@ export default function App() {
       <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'lg:ml-60')}>
         <Routes>
           <Route path="/" element={<Today />} />
+          <Route path="/my-today" element={<MyToday />} />
           <Route path="/worklist" element={<Worklist />} />
           <Route path="/data-quality" element={<DataQuality />} />
           <Route path="/tasks" element={<Tasks />} />

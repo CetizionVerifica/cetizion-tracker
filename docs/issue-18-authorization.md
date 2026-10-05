@@ -182,6 +182,7 @@ session is **401**, before any of these is considered.
 | `GET /api/companies/duplicates` | any |  |
 | **/api/dashboard** | | |
 | `GET /api/dashboard/data-quality` | any |  |
+| `GET /api/dashboard/my-today` | any | One person's own list for the day (docs/my-today-plan.md). A sales user always gets their own; ?owner= is honoured for an admin only. |
 | `GET /api/dashboard/overview` | any |  |
 | `GET /api/dashboard/payables` | any | What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill. |
 | `GET /api/dashboard/travel` | any |  |

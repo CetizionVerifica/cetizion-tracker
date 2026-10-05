@@ -305,6 +305,15 @@ const GROUPS = [
     ],
   },
   {
+    title: 'My Today',
+    hint: 'each person\'s own list for the day',
+    items: [
+      { key: 'my_today_grace_working_days', label: 'Still under Due today when late by up to', unit: 'working days' },
+      { key: 'my_today_chase_after_days', label: 'Chase an unpaid invoice once overdue by more than', unit: 'days' },
+      { key: 'my_today_rechase_days', label: 'A chase with no next date comes back after', unit: 'days' },
+    ],
+  },
+  {
     title: 'What counts as a problem',
     hint: 'the thresholds behind the red and amber on every page',
     items: [

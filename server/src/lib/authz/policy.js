@@ -195,6 +195,7 @@ export const routes = [
   { method: 'GET', path: '/api/dashboard/worklist', access: signedIn },
   { method: 'GET', path: '/api/dashboard/travel', access: signedIn },
   { method: 'GET', path: '/api/dashboard/data-quality', access: signedIn },
+  { method: 'GET', path: '/api/dashboard/my-today', access: signedIn, restrictions: ['record-owner'], note: 'One person\'s own list for the day (docs/my-today-plan.md). A sales user always gets their own; ?owner= is honoured for an admin only.' },
   { method: 'GET', path: '/api/dashboard/payables', access: signedIn, note: 'What we owe travel vendors, aged (#76). Open to both roles, deliberately and for the same reason GET /api/collections is: the person arranging the travel is the person chasing the bill.' },
 
   // --------------------------------------------------------------- search

@@ -497,3 +497,28 @@ test('a PO registered from email carries a banner until somebody marks it checke
   await page.goto('/purchase-orders?from_email=1');
   await expect(page.locator('table')).toContainText(poNumber);
 });
+
+test('My Today lists a person\'s task, and ticking it done takes the row away', async ({ page }) => {
+  await signIn(page);
+  // A sales person with a project of theirs and an unassigned task on it,
+  // due today: theirs because the record is (docs/my-today-plan.md).
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const title = `E2E call back ${stamp}`;
+  const personId = await withDatabase(async (db) => {
+    const { rows: [u] } = await db.query(
+      `INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, 'not-a-real-hash', 'sales') RETURNING id`,
+      [`E2E Seller ${stamp}`, `seller-${stamp}@example.com`]);
+    await db.query(`INSERT INTO projects (project_id, client_name, owner_user_id) VALUES ($1, 'E2E My Today Client', $2)`, [`E2E-PRJ-${stamp}`, u.id]);
+    await db.query(`INSERT INTO tasks (entity, entity_id, title, due_at) VALUES ('project', $1, $2, $3)`, [`E2E-PRJ-${stamp}`, title, today]);
+    return u.id;
+  });
+
+  await expect(page.getByRole('link', { name: /My Today/ })).toBeVisible();
+  await page.goto(`/my-today?owner=${personId}`);
+  await expect(page.getByRole('heading', { name: /^My Today · \w+day, \d/ })).toBeVisible();
+  await expect(page.getByText('0 late · 1 due today')).toBeVisible();
+  const row = page.locator('div', { hasText: title }).filter({ has: page.getByRole('button', { name: 'Done' }) }).last();
+  await row.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByText(title)).toHaveCount(0);
+  await expect(page.getByText(/Nothing is waiting on E2E Seller/)).toBeVisible();
+});

@@ -2,7 +2,7 @@
 
 A plain-language account of what has been built, what is being built, and what
 is waiting on a decision. Updated with every pull request. Last update:
-3 October 2026.
+5 October 2026.
 
 ## Where things stand
 
@@ -304,6 +304,27 @@ review what was made, use Enquiries → Created from email and
 Quotations → Read from email. Without an AI key the rules decide and no PDF
 is read.
 
+### My Today: each person's own list for the day (in review)
+
+**What it does.** A new **My Today** entry at the top of the sidebar opens one
+salesperson's own work: tasks, enquiry follow-ups, invoices ready to raise,
+and unpaid invoices more than 7 days past due that nobody has chased. Two
+sections: **Late** (more than 2 working days) and **Due today**, where items
+1 or 2 days late carry a "late" label so nothing drops off the page. Every row
+has one button (Done, Log & reschedule, Raise, Log chase) and the list empties
+as you work down it. The sidebar shows how many are waiting, red when any is
+late.
+
+**Whose work.** A record is yours when it is assigned to you in the tracker,
+the same rule that decides what you can see. Admins see their own list, or
+pick a person for cover and one-to-ones. An automatic reminder email does not
+count as a chase; a person has to talk to the client.
+
+**Before telling the team.** Anything with no owner is on nobody's list, so
+check that open enquiries, projects and quotations are assigned. The 2-day
+grace, the 7 days before chasing and the week before a chase comes back are
+under Settings → My Today.
+
 ## Planned, in order
 
 Each batch is five issues. A batch is finished when all five are reviewed.
@@ -350,6 +371,11 @@ Each batch is five issues. A batch is finished when all five are reviewed.
   for mail sync, and Cloudinary keys for documents in the local environment.
 
 ## Update log
+
+- 2026-10-05: **My Today** (`docs/my-today-plan.md`): a sidebar entry that
+  lists one person's own tasks, follow-ups, invoices to raise and payments to
+  chase, split into Late and Due today, with one action per row and a count
+  in the sidebar.
 
 - 2026-10-03: The **Inbox now reads like Outlook** (`feat/inbox-reading`,
   step 2 of `docs/inbox-outlook-plan.md`). The title of the Inbox page is
