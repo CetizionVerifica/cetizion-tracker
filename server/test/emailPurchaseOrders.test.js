@@ -198,6 +198,32 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await poRow('4500020002'))?.quotation_no, q.quotation_no);
   });
 
+  test('2b. Alembic shape: "YOUR REF" is the number printed on our PDF; "Against delivery" takes the quotation\'s split; the vendor code and validity end are kept', async () => {
+    const box = await mailbox();
+    await client('Acme Twelve Ltd', 'buyer@acme-twelve.co.in');
+    const q = await quotation('Acme Twelve Ltd');
+    await quotation('Acme Twelve Ltd'); // the same value: company and value alone could not tell them apart
+    await db.query(`UPDATE quotations SET printed_no = 'QTN-04/2026', terms = '50% advance against PO, 50% on submission of the final report' WHERE id = $1`, [q.id]);
+    const msg = poEmail({
+      from: { email: 'buyer@acme-twelve.co.in' }, subject: 'Order 3700101318',
+      attachments: [{ name: 'Order_3700101318.PDF', contentType: 'application/pdf', content: await poPdf({ number: '3700101318', buyer: 'Acme Twelve Ltd', ref: 'QTN-04/2026', terms: 'Against delivery' }) }],
+    });
+    ai(reading({
+      po_number: '3700101318', buyer: { company_name: 'Acme Twelve Ltd' }, our_quotation_ref: 'QTN-04/2026', payment_terms_text: 'Against delivery', credit_days: null,
+      vendor: { company_name: 'Cetizion Verifica Pvt. Ltd.', vendor_code: '0011305984' }, validity_end: day(-200),
+    }));
+    await deliver(box, [msg]);
+    const po = await poRow('3700101318');
+    assert.equal(po?.quotation_no, q.quotation_no, 'found by the printed number');
+    assert.equal(po.client_vendor_code, '0011305984');
+    const { rows: stages } = await db.query('SELECT stage_percent::float8 AS p FROM payment_stages WHERE po_number = $1 ORDER BY stage_no', ['3700101318']);
+    assert.deepEqual(stages.map((s) => s.p), [0.5, 0.5], 'the quotation\'s 50/50, not one stage on delivery');
+    const d = await decision(box.id, msg.provider_id);
+    assert.equal(d.stages_source, 'quotation_terms');
+    const { rows: [p] } = await db.query('SELECT planned_delivery_date::text AS d FROM projects WHERE project_id = $1', [po.project_id]);
+    assert.equal(p.d, day(-200), 'delivery by the end of the order\'s validity');
+  });
+
   test('3. two open quotations of that value go to review, both suggested', async () => {
     const box = await mailbox();
     await client('Acme Three Ltd', 'anil@acme-three.co.in');
@@ -221,7 +247,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
       from: { email: 'buyer@brand-new-steel.com' },
       attachments: [{ name: 'PO.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'BNS/PO/2026/77', buyer: 'Brand New Steel Pvt Ltd', terms: '100% after completion' }) }],
     });
-    ai(reading({ po_number: 'BNS/PO/2026/77', buyer: { company_name: 'Brand New Steel Pvt Ltd', gstin: '27AABCB7777A1Z1' }, payment_terms_text: '100% after completion', po_date: day(5) }));
+    ai(reading({ po_number: 'BNS/PO/2026/77', buyer: { company_name: 'Brand New Steel Pvt Ltd', gstin: '27AABCB7777A1ZQ' }, payment_terms_text: '100% after completion', po_date: day(5) }));
     await deliver(box, [msg]);
     const po = await poRow('BNS/PO/2026/77');
     assert.ok(po, 'registered');
@@ -235,7 +261,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     const { rows: [e] } = await db.query('SELECT e.status, s.name AS source FROM enquiries e LEFT JOIN lead_sources s ON s.id = e.source_id WHERE e.quotation_no = $1', [q.quotation_no]);
     assert.deepEqual(e, { status: 'Converted', source: 'Other' });
     const { rows: [co] } = await db.query('SELECT gstin FROM companies WHERE id = $1', [q.company_id]);
-    assert.equal(co.gstin, '27AABCB7777A1Z1', 'the GSTIN read from the PO is kept for next time');
+    assert.equal(co.gstin, '27AABCB7777A1ZQ', 'the GSTIN read from the PO is kept for next time');
     const { rows: stages } = await db.query('SELECT trigger_event, stage_percent::float AS p FROM payment_stages WHERE po_number = $1', [po.po_number]);
     assert.deepEqual(stages.map((s) => [s.trigger_event, s.p]), [['On Delivery', 1]]);
     assert.equal((await decision(box.id, msg.provider_id)).created_quotation, true);
@@ -885,7 +911,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
 
     await client('Gst Buyer Ltd', 'ap@gst-buyer.co.in');
     const indian = poEmail({ from: { email: 'ap@gst-buyer.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077004', buyer: 'Gst Buyer Ltd' }) }] });
-    ai(reading({ po_number: '4500077004', buyer: { company_name: 'Gst Buyer Ltd', gstin: '27AAACG1234A1Z5' }, currency: null }));
+    ai(reading({ po_number: '4500077004', buyer: { company_name: 'Gst Buyer Ltd', gstin: '27AAACG1234A1ZE' }, currency: null }));
     await deliver(box, [indian]);
     assert.equal((await poRow('4500077004'))?.currency, 'INR');
   });

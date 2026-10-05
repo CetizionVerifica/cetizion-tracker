@@ -86,14 +86,14 @@ test('the enquiry detector leaves POs to the PO reader, only while it is on', ()
 test('parsePoVerdict: amounts as printed, dates and kinds checked, junk refused', () => {
   const v = parsePoVerdict(JSON.stringify({
     is_purchase_order: true, document_type: 'purchase_order', confidence: 0.93, po_number: ' 4500012345 ', po_date: '2026-09-22',
-    buyer: { company_name: 'Acme Steel Ltd', gstin: '27aaacx1234a1z5', contact_email: 'ANIL@acme-steel.co.in' },
+    buyer: { company_name: 'Acme Steel Ltd', gstin: '27aaacx1234a1zx', contact_email: 'ANIL@acme-steel.co.in' },
     vendor: { company_name: 'Cetizion Verifica Pvt Ltd' },
     currency: 'inr', lines: [{ description: 'EcoVadis', qty: 1, rate: '2,50,000.00', amount: '2,50,000.00' }],
     basic_value: '2,50,000.00', tax_value: '45,000', total_value: '₹ 2,95,000/-', gst_extra: 'yes',
     credit_days: 'thirty', delivery_date: 'end of Nov', amendment_no: null,
   }));
   assert.equal(v.po_number, '4500012345');
-  assert.equal(v.buyer.gstin, '27AAACX1234A1Z5');
+  assert.equal(v.buyer.gstin, '27AAACX1234A1ZX');
   assert.equal(v.buyer.contact_email, 'anil@acme-steel.co.in');
   assert.equal(v.currency, 'INR');
   assert.deepEqual([v.basic_value, v.tax_value, v.total_value], [250000, 45000, 295000]);

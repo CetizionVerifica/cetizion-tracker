@@ -38,6 +38,8 @@ const PO_REASONS = {
   no_currency: 'Currency could not be read',
   wrong_gstin: 'Addressed to a GSTIN we do not invoice from',
   po_number_pattern: 'PO number not of the client\'s usual shape',
+  bad_gstin: 'A GSTIN on it was misread',
+  readers_disagree: 'An image PDF; two readings differ',
   review_only: 'Read and checked; review-only for now',
 };
 
@@ -60,6 +62,8 @@ const INVOICE_REASONS = {
   client_unknown: 'Its client could not be confirmed',
   wrong_gstin: 'Raised from another GSTIN than its PO was addressed to',
   po_date_mismatch: 'The PO date it gives is not the PO\'s',
+  bad_gstin: 'A GSTIN on it was misread',
+  readers_disagree: 'An image PDF; two readings differ',
   review_only: 'Read and checked; review-only for now',
 };
 

@@ -97,6 +97,7 @@ export default function PurchaseOrders() {
     { name: 'actual_initiation_date', label: 'Actual initiation', type: 'date' },
     { name: 'actual_delivery_date', label: 'Actual delivery', type: 'date', hint: 'Setting this makes on-delivery stages invoiceable' },
     { name: 'project_manager_email', label: 'Manager email', type: 'email' },
+    { name: 'client_vendor_code', label: 'Our vendor code', hint: 'Our supplier code at this client, if its POs print one' },
     { name: 'document_id', label: 'PO document', type: 'document', owner: 'purchase-orders', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     ...poRevisionFields(lookups.purchase_orders),
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },

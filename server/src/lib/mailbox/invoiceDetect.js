@@ -16,8 +16,8 @@ import { BULK } from './rules.js';
 import { amountInText, near, parseAmount } from './pdfQuotation.js';
 import { STATUS } from '../statuses.js';
 import { MAX_DOCUMENT_TEXT, MAX_EMAIL_TEXT } from './readLimits.js';
-import { READING_RULES, TOTALS_RULES, parseTaxBreakup, taxFromBreakup, whoWeAre, wordsAgree } from './promptRules.js';
-import { gstinOf, ourParty } from './ourParties.js';
+import { READING_RULES, S, TOTALS_RULES, TOTALS_SCHEMA, answerSchema, parseTaxBreakup, ratePercent, taxAgreesWithRate, taxFromBreakup, whoWeAre, wordsAgree } from './promptRules.js';
+import { gstinOf, gstinValid, ourParty } from './ourParties.js';
 
 /** An invoice number as compared: case, spaces and dashes ignored. */
 export const normaliseInvoiceNo = (s) => String(s || '').toLowerCase().replace(/[\s-]/g, '');
@@ -101,7 +101,7 @@ export function buildInvoicePrompt({ pdfText = null, emailSubject, emailText, se
     ' "seller": {"company_name": string|null, "gstin": string|null}, "buyer": {"company_name": string|null, "gstin": string|null},',
     ' "po_reference": string|null, "po_date": "YYYY-MM-DD"|null, "project_reference": string|null, "quotation_reference": string|null, "currency": "INR"|...,',
     ' "taxable_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null,',
-    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
+    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "tax_rate_percent": number|null, "total_in_words": string|null,',
     ' "stage_hint": string|null, "due_date": "YYYY-MM-DD"|null}',
     'The SELLER issues the invoice; for our invoice that is Cetizion Verifica, with the GSTIN it is raised from (we have more than one), or one of our partners. The BUYER is the client it is addressed to: the "Bill to" or "Buyer" block, with that block\'s GSTIN.',
     'document_type: tax_invoice for a GST tax invoice; proforma for a proforma invoice or PI; credit_note or debit_note for those; other for anything else (a quotation, a statement, a reminder, a receipt).',
@@ -132,7 +132,7 @@ export function parseInvoiceVerdict(raw) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     return { document_type: 'other', confidence: 0, revised_or_cancelled: false, invoice_no: null, invoice_date: null, seller: {}, buyer: {},
       po_reference: null, po_date: null, project_reference: null, quotation_reference: null, currency: null, taxable_value: null, tax_value: null, total_value: null, stage_hint: null, due_date: null,
-      tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null };
+      tax_breakup: { igst: null, cgst: null, sgst: null }, tax_rate_percent: null, total_in_words: null };
   }
   const c = Number(v.confidence);
   return {
@@ -152,15 +152,33 @@ export function parseInvoiceVerdict(raw) {
     tax_value: parseAmount(v.tax_value),
     total_value: parseAmount(v.total_value),
     tax_breakup: parseTaxBreakup(v.tax_breakup, parseAmount),
+    tax_rate_percent: ratePercent(v.tax_rate_percent),
     total_in_words: clean(v.total_in_words, 300),
     stage_hint: clean(v.stage_hint, 120),
     due_date: isoDate(v.due_date),
   };
 }
 
+/** The answer's exact shape (docs/email-auto-entry-plan.md §3.5); parseInvoiceVerdict still checks it. */
+export const INVOICE_SCHEMA = answerSchema('invoice_reading', {
+  document_type: S.oneOf(DOCUMENT_TYPES),
+  confidence: { type: 'number' },
+  revised_or_cancelled: S.boolean,
+  invoice_no: S.text, invoice_date: S.text,
+  seller: S.object({ company_name: S.text, gstin: S.text }),
+  buyer: S.object({ company_name: S.text, gstin: S.text }),
+  po_reference: S.text, po_date: S.text, project_reference: S.text, quotation_reference: S.text, currency: S.text,
+  taxable_value: S.text, tax_value: S.text, total_value: S.text,
+  ...TOTALS_SCHEMA,
+  stage_hint: S.text, due_date: S.text,
+});
+
+/** What two readings of one invoice must agree on (§3.7). */
+export const INVOICE_KEY_FIELDS = ['invoice_no', 'invoice_date', 'po_reference', 'total_value'];
+
 /** Why an invoice read from email is not recorded. Matches email_invoice_decisions.review_reason, plus not_invoice. */
 export const INVOICE_REASONS = ['not_invoice', 'credit_note', 'low_confidence', 'revised', 'not_from_us', 'no_invoice_no',
-  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf', 'wrong_gstin', 'po_date_mismatch'];
+  'bad_date', 'bad_currency', 'totals_do_not_add_up', 'amounts_not_in_pdf', 'wrong_gstin', 'po_date_mismatch', 'bad_gstin', 'readers_disagree'];
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -185,6 +203,8 @@ export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 
   // The seller is us (or a partner), the buyer is not: a vendor's bill we forwarded reads the other way.
   const seller = ourParty(v.seller, parties);
   if (!seller || ourParty(v.buyer, parties)?.kind === 'us') return fail('not_from_us');
+  // A GSTIN whose check character does not fit was misread (§3.7).
+  if ([v.seller?.gstin, v.buyer?.gstin].some((g) => g && !gstinValid(g))) return fail('bad_gstin');
 
   if (!v.invoice_no || v.invoice_no.length < 2 || !/\d/.test(v.invoice_no)) return fail('no_invoice_no');
   const emailDay = istDay(emailDate);
@@ -200,6 +220,7 @@ export function checkInvoice(v, { emailDate, sourceText = null, minConfidence = 
   if (total === null && taxable !== null && tax !== null) total = round2(taxable + tax);
   if (!(total > 0)) return fail('totals_do_not_add_up');
   if (taxable !== null && tax !== null && !near(taxable + tax, total)) return fail('totals_do_not_add_up');
+  if (!taxAgreesWithRate(taxable, tax, v.tax_rate_percent)) return fail('totals_do_not_add_up');
   if (!wordsAgree(v.total_in_words, [total, taxable], near)) return fail('totals_do_not_add_up');
   const b = v.tax_breakup || {};
   if (sourceText !== null && ![total, taxable, v.tax_value, b.igst, b.cgst, b.sgst].filter((n) => n !== null && n !== undefined && n > 0).every((n) => amountInText(n, sourceText))) return fail('amounts_not_in_pdf');

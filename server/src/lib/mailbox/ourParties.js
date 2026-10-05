@@ -15,6 +15,25 @@ import { isUs } from './enquiryDetect.js';
 
 export const gstinOf = (v) => String(v || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
 
+const GSTIN_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+/**
+ * Is this a GSTIN that can exist (docs/email-auto-entry-plan.md §3.7)?
+ * Two digits of state code, the PAN, an entity number, Z, and a check
+ * character over the first fourteen. A misread digit almost always breaks
+ * the check, which is how a GSTIN read off an image is caught.
+ */
+export function gstinValid(v) {
+  const g = gstinOf(v);
+  if (!/^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/.test(g)) return false;
+  let sum = 0;
+  for (let i = 0; i < 14; i += 1) {
+    const p = GSTIN_CHARS.indexOf(g[i]) * (i % 2 ? 2 : 1);
+    sum += Math.floor(p / 36) + (p % 36);
+  }
+  return GSTIN_CHARS[(36 - (sum % 36)) % 36] === g[14];
+}
+
 /** Characters 3 to 12 of a GSTIN: the PAN of whoever holds it. */
 export const panOf = (v) => { const g = gstinOf(v); return /^\d{2}[A-Z]{5}\d{4}[A-Z]/.test(g) ? g.slice(2, 12) : null; };
 

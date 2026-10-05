@@ -13,14 +13,39 @@
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
-/** Read once at start-up; tests flip `enabled` to force the rules path. */
+const list = (v, dflt) => String(v ?? dflt).split(',').map((m) => m.trim()).filter(Boolean);
+
+/**
+ * Read once at start-up; tests flip `enabled` to force the rules path.
+ *
+ * model       reads documents, and everything else (docs/email-auto-entry-plan.md §4)
+ * fallbacks   tried in order when `model` does not route with zero
+ *             retention; the privacy setting is never relaxed instead
+ * triageModel sorts each email before a document reader runs (§3.8)
+ * checkModel  reads an image PDF a second time, independently (§3.7)
+ */
 export const aiConfig = {
   apiKey: process.env.OPENROUTER_API_KEY || '',
-  model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4.1-flash',
+  model: process.env.OPENROUTER_MODEL || 'anthropic/claude-fable-5.1',
+  fallbacks: list(process.env.OPENROUTER_FALLBACK_MODELS, 'anthropic/claude-opus-5.5,openai/gpt-6.1-sol,anthropic/claude-sonnet-5.5'),
+  triageModel: process.env.OPENROUTER_TRIAGE_MODEL || 'anthropic/claude-sonnet-5.5',
+  checkModel: process.env.OPENROUTER_CHECK_MODEL || 'anthropic/claude-sonnet-5.5',
   enabled: Boolean(process.env.OPENROUTER_API_KEY),
 };
 
-export const newUsage = () => ({ calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0, provider: null });
+/**
+ * Does the model read a PDF itself, page images and text together? Then a
+ * document goes as the file, with OpenRouter's native engine (§3.1). A
+ * text-only model gets the text layer, and a scan through OCR.
+ * OPENROUTER_READS_PDF=0 or 1 overrides the guess.
+ */
+export function readsPdf(model = aiConfig.model) {
+  const set = process.env.OPENROUTER_READS_PDF;
+  if (set === '0' || set === '1') return set === '1';
+  return /^(anthropic|openai|google)\//.test(String(model));
+}
+
+export const newUsage = () => ({ calls: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0, provider: null, model: null });
 
 /**
  * One chat call that must answer in JSON.
@@ -28,8 +53,14 @@ export const newUsage = () => ({ calls: 0, prompt_tokens: 0, completion_tokens: 
  * `user` is either the user message's text, or an array of content parts
  * (text and file parts), for a request that sends a document.
  * `plugins` passes OpenRouter plugins through, e.g. the PDF OCR engine.
+ * `model` asks one model, with no fallbacks: the second reader must be another model.
+ * `schema` is { name, schema }: the answer must fit that JSON Schema
+ * exactly (§3.5), so a missing key or a string in a number field cannot
+ * come back. The caller's parser still checks it.
  */
-export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000, title = 'Cetizion Tracker', usage = null, plugins } = {}) {
+export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000, title = 'Cetizion Tracker', usage = null, plugins, model = null, schema = null } = {}) {
+  const primary = model || aiConfig.model;
+  const models = model ? [model] : [...new Set([aiConfig.model, ...aiConfig.fallbacks])];
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
@@ -44,14 +75,17 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
         'X-Title': title,
       },
       body: JSON.stringify({
-        model: aiConfig.model,
+        model: primary,
+        ...(models.length > 1 ? { models } : {}),
         temperature: 0,
         max_tokens: maxTokens,
-        response_format: { type: 'json_object' },
+        response_format: schema
+          ? { type: 'json_schema', json_schema: { name: schema.name, strict: true, schema: schema.schema } }
+          : { type: 'json_object' },
         // The work is extraction, not reasoning: with thinking on, a
         // flash-class model spends its output budget deliberating and
         // truncates. Fable models cannot switch thinking off; keep it low.
-        reasoning: /fable/i.test(aiConfig.model) ? { effort: 'low' } : { enabled: false },
+        reasoning: /fable/i.test(primary) ? { effort: 'low' } : { enabled: false },
         // What goes out is a client's commercial detail — names, deal
         // values, invoice numbers, the text of an email. Which provider
         // serves the model decides whether that is kept, and the default is
@@ -91,6 +125,7 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
     usage.completion_tokens += u.completion_tokens || 0;
     usage.cost_usd += Number(u.cost || 0);
     usage.provider = data.provider || usage.provider;
+    usage.model = data.model || usage.model || null;
   }
   return JSON.parse(cleaned);
 }

@@ -10,8 +10,8 @@ import { parsePoVerdict } from '../src/lib/mailbox/poDetect.js';
  */
 
 const PDF_TEXT = `PURCHASE ORDER
-Acme Steel Ltd, GSTIN 27AAACX1234A1Z5
-To: Cetizion Verifica Pvt. Ltd., GSTIN 27AAJCC9999K1Z2
+Acme Steel Ltd, GSTIN 27AAACX1234A1ZX
+To: Cetizion Verifica Pvt. Ltd., GSTIN 27AAJCC9999K1ZK
 PO No: 4500012345   Date: 22.09.2026   Ref: your offer CTZ/QT/2026/045
 1  EcoVadis assessment   1   2,50,000.00   2,50,000.00
 Basic 2,50,000.00   IGST 18% 45,000.00   Total 2,95,000.00
@@ -19,13 +19,13 @@ Payment: 50% advance, balance on submission of report. 30 days credit.`;
 
 const read = (over = {}) => parsePoVerdict({
   is_purchase_order: true, document_type: 'purchase_order', confidence: 0.92, po_number: '4500012345', po_date: '2026-09-22', amendment_no: 0,
-  buyer: { company_name: 'Acme Steel Ltd', gstin: '27AAACX1234A1Z5' }, vendor: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: '27AAJCC9999K1Z2' },
+  buyer: { company_name: 'Acme Steel Ltd', gstin: '27AAACX1234A1ZX' }, vendor: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: '27AAJCC9999K1ZK' },
   our_quotation_ref: 'CTZ/QT/2026/045', currency: 'INR',
   lines: [{ description: 'EcoVadis assessment', qty: 1, rate: '2,50,000.00', amount: '2,50,000.00' }],
   basic_value: '2,50,000.00', tax_value: '45,000.00', total_value: '2,95,000.00', gst_extra: false,
   payment_terms_text: '50% advance, balance on submission of report', credit_days: 30, ...over,
 });
-const opts = { emailDate: '2026-09-23T05:00:00Z', sourceText: PDF_TEXT, ourNames: ['Cetizion Verifica Pvt. Ltd.'], ourGstin: '27AAJCC9999K1Z2' };
+const opts = { emailDate: '2026-09-23T05:00:00Z', sourceText: PDF_TEXT, ourNames: ['Cetizion Verifica Pvt. Ltd.'], ourGstin: '27AAJCC9999K1ZK' };
 
 test('a good PO passes, with its number as printed and compared normalised', () => {
   const r = checkPo(read(), opts);
@@ -52,13 +52,13 @@ test('amendments and cancellations always go to review, with what was read', () 
 });
 
 test('a vendor that is not us, or a buyer that is us, is not_to_us', () => {
-  assert.equal(checkPo(read({ vendor: { company_name: 'Bureau Veritas India', gstin: '27AABCB1111A1Z1' } }), opts).reason, 'not_to_us');
-  assert.equal(checkPo(read({ vendor: { company_name: 'Cetizion Verifica', gstin: '29ZZZZZ0000Z1Z0' } }), opts).reason, 'not_to_us', 'the GSTIN decides when both are known');
+  assert.equal(checkPo(read({ vendor: { company_name: 'Bureau Veritas India', gstin: '27AABCB1111A1ZQ' } }), opts).reason, 'not_to_us');
+  assert.equal(checkPo(read({ vendor: { company_name: 'Cetizion Verifica', gstin: '29ZZZZZ0000Z1ZM' } }), opts).reason, 'not_to_us', 'the GSTIN decides when both are known');
   // A PO we issued to a vendor reads the other way round.
   assert.equal(checkPo(read({ buyer: { company_name: 'Cetizion Verifica Pvt. Ltd.' }, vendor: { company_name: 'Print Shop' } }), opts).reason, 'not_to_us');
   // The vendor left blank by the model: the PDF naming us is enough.
   assert.equal(checkPo(read({ vendor: {} }), opts).ok, true);
-  assert.equal(checkPo(read({ vendor: {} }), { ...opts, sourceText: PDF_TEXT.replace(/Cetizion Verifica Pvt\. Ltd\., GSTIN 27AAJCC9999K1Z2/, 'Someone Else') }).reason, 'not_to_us');
+  assert.equal(checkPo(read({ vendor: {} }), { ...opts, sourceText: PDF_TEXT.replace(/Cetizion Verifica Pvt\. Ltd\., GSTIN 27AAJCC9999K1ZK/, 'Someone Else') }).reason, 'not_to_us');
 });
 
 test('a missing or promised PO number is no_po_number', () => {

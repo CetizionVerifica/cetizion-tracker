@@ -26,18 +26,18 @@ describe('who a party is to us', () => {
     assert.deepEqual(gstinList(DELHI, `${UP}, ${DELHI}, junk`), [DELHI, UP]);
     assert.deepEqual(gstinList(null, ''), []);
     assert.deepEqual(partners, [{ name: 'Innovative CSR Solutions India Pvt. Ltd.', gstin: PARTNER, aliases: ['Innovative CSR'] }]);
-    assert.deepEqual(partnersOf('[{"name":"A Ltd","gstin":"07aaacx1234a1z5","aliases":["A"]}]'), [{ name: 'A Ltd', gstin: '07AAACX1234A1Z5', aliases: ['A'] }]);
+    assert.deepEqual(partnersOf('[{"name":"A Ltd","gstin":"07aaacx1234a1zz","aliases":["A"]}]'), [{ name: 'A Ltd', gstin: '07AAACX1234A1ZZ', aliases: ['A'] }]);
     assert.deepEqual(partnersOf('none'), []);
   });
 
   test('us by any registration of our PAN, a partner by its full GSTIN or its name, anyone else not', () => {
     assert.deepEqual(ourParty({ company_name: 'Cetizion Verifica Pvt Ltd', gstin: UP }, parties), { kind: 'us', gstin: UP, name: 'Cetizion Verifica Pvt Ltd' });
-    assert.equal(ourParty({ gstin: '27AAKCC0860B1Z9' }, parties)?.kind, 'us', 'a third state of ours is still us');
+    assert.equal(ourParty({ gstin: '27AAKCC0860B1Z0' }, parties)?.kind, 'us', 'a third state of ours is still us');
     assert.deepEqual(ourParty({ company_name: 'Innovative CSR Solutions India Pvt. Ltd.', gstin: PARTNER }, parties), { kind: 'partner', gstin: PARTNER, name: 'Innovative CSR Solutions India Pvt. Ltd.' });
     assert.equal(ourParty({ company_name: 'INNOVATIVE CSR' }, parties)?.kind, 'partner', 'by another name, with no GSTIN printed');
-    assert.equal(ourParty({ company_name: 'Innovative CSR', gstin: '27AACCI8342L1Z9' }, parties), null, "another of the partner's registrations is not the partner");
-    assert.equal(ourParty({ company_name: 'Cetizion Verifica', gstin: '27AAACX1234A1Z5' }, parties), null, "a GSTIN that is not ours decides, whatever the name");
-    assert.equal(ourParty({ company_name: 'Cetizion Verifica', gstin: '27AAACX1234A1Z5' }, { ...parties, ourGstins: [] })?.kind, 'us', 'with no GSTIN of ours set, the name decides, as before');
+    assert.equal(ourParty({ company_name: 'Innovative CSR', gstin: '27AACCI8342L1Z8' }, parties), null, "another of the partner's registrations is not the partner");
+    assert.equal(ourParty({ company_name: 'Cetizion Verifica', gstin: '27AAACX1234A1ZX' }, parties), null, "a GSTIN that is not ours decides, whatever the name");
+    assert.equal(ourParty({ company_name: 'Cetizion Verifica', gstin: '27AAACX1234A1ZX' }, { ...parties, ourGstins: [] })?.kind, 'us', 'with no GSTIN of ours set, the name decides, as before');
     assert.equal(ourParty({ company_name: 'Hindalco Industries Ltd', gstin: '32AAACH1201R1ZW' }, parties), null);
   });
 
@@ -57,7 +57,7 @@ describe('who a party is to us', () => {
 
 const po = (over = {}) => parsePoVerdict({
   is_purchase_order: true, document_type: 'purchase_order', confidence: 0.92, po_number: '3700101318', po_date: '2026-05-20', amendment_no: 0,
-  buyer: { company_name: 'Alembic Pharmaceuticals Ltd', gstin: '24AABCA1234B1Z5' }, vendor: { company_name: 'Cetizion Verifica Pvt Ltd', gstin: UP },
+  buyer: { company_name: 'Alembic Pharmaceuticals Ltd', gstin: '24AABCA1234B1ZN' }, vendor: { company_name: 'Cetizion Verifica Pvt Ltd', gstin: UP },
   currency: 'INR', lines: [{ description: 'EcoVadis assessment', qty: 1, rate: '500,000.000', amount: '500,000.000' }],
   basic_value: '500,000.000', tax_value: '90,000.000', total_value: '590,000.000', payment_terms_text: 'Against delivery', credit_days: 30, ...over,
 });
@@ -81,14 +81,14 @@ describe('a PO addressed to our UP GSTIN, or to our partner', () => {
 
   test('before this change only the one GSTIN in company_gstin was us; a PO to anyone else is still not ours', () => {
     assert.equal(checkPo(po(), { ...poOpts, ourGstins: [DELHI], partners: [] }).ok, true, 'our PAN, so ours even with one GSTIN set');
-    assert.equal(checkPo(po({ vendor: { company_name: 'Other Consulting', gstin: '07AAACO1111A1Z1' } }), poOpts).reason, 'not_to_us');
-    assert.equal(checkPo(po({ buyer: { company_name: 'Cetizion Verifica', gstin: DELHI }, vendor: { company_name: 'A Vendor', gstin: '07AAACV2222A1Z1' } }), poOpts).reason, 'not_to_us', 'a PO we issued');
+    assert.equal(checkPo(po({ vendor: { company_name: 'Other Consulting', gstin: '07AAACO1111A1ZG' } }), poOpts).reason, 'not_to_us');
+    assert.equal(checkPo(po({ buyer: { company_name: 'Cetizion Verifica', gstin: DELHI }, vendor: { company_name: 'A Vendor', gstin: '07AAACV2222A1Z3' } }), poOpts).reason, 'not_to_us', 'a PO we issued');
   });
 });
 
 const invoice = (over = {}) => parseInvoiceVerdict({
   document_type: 'tax_invoice', confidence: 0.93, invoice_no: 'CVPL/2026-27/037', invoice_date: '2026-05-22',
-  seller: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: UP }, buyer: { company_name: 'Alembic Pharmaceuticals Ltd', gstin: '24AABCA1234B1Z5' },
+  seller: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: UP }, buyer: { company_name: 'Alembic Pharmaceuticals Ltd', gstin: '24AABCA1234B1ZN' },
   po_reference: '3700101318', currency: 'INR', taxable_value: '2,50,000.00', tax_value: '45,000.00', total_value: '2,95,000.00', stage_hint: '50% Advance Payment As Per P.O.',
   ...over,
 });
@@ -110,7 +110,7 @@ describe('our invoice, from either registration', () => {
   });
 
   test('a bill to us is still not ours', () => {
-    assert.equal(checkInvoice(invoice({ seller: { company_name: 'A Vendor', gstin: '07AAACV2222A1Z1' }, buyer: { company_name: 'Cetizion Verifica', gstin: DELHI } }), invOpts).reason, 'not_from_us');
+    assert.equal(checkInvoice(invoice({ seller: { company_name: 'A Vendor', gstin: '07AAACV2222A1Z3' }, buyer: { company_name: 'Cetizion Verifica', gstin: DELHI } }), invOpts).reason, 'not_from_us');
   });
 
   test('wrong_gstin: raised from another registration than the PO was addressed to; unknown on either side passes', () => {

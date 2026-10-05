@@ -38,12 +38,12 @@ test('the invoice is read first, then the largest', () => {
 
 const read = (over = {}) => parseInvoiceVerdict({
   document_type: 'tax_invoice', confidence: 0.93, invoice_no: 'CVPL/26-27/0042', invoice_date: '2026-09-30',
-  seller: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: '27AAJCC9999K1Z2' }, buyer: { company_name: 'Acme Steel Ltd', gstin: '27AAACX1234A1Z5' },
+  seller: { company_name: 'Cetizion Verifica Pvt. Ltd.', gstin: '27AAJCC9999K1ZK' }, buyer: { company_name: 'Acme Steel Ltd', gstin: '27AAACX1234A1ZX' },
   po_reference: '4500012345', currency: 'INR', taxable_value: '1,25,000.00', tax_value: '22,500.00', total_value: '1,47,500.00', stage_hint: '50% advance',
   ...over,
 });
 const TEXT = 'TAX INVOICE CVPL/26-27/0042 Cetizion Verifica Taxable 1,25,000.00 IGST 22,500.00 Total 1,47,500.00';
-const opts = { emailDate: '2026-10-01T05:00:00Z', sourceText: TEXT, ourNames: ['Cetizion Verifica Pvt. Ltd.'], ourGstin: '27AAJCC9999K1Z2' };
+const opts = { emailDate: '2026-10-01T05:00:00Z', sourceText: TEXT, ourNames: ['Cetizion Verifica Pvt. Ltd.'], ourGstin: '27AAJCC9999K1ZK' };
 
 test('a good tax invoice passes, with its number as printed', () => {
   const r = checkInvoice(read(), opts);
@@ -61,7 +61,7 @@ test('what is never recorded automatically', () => {
   assert.equal(checkInvoice(read({ revised_or_cancelled: true }), opts).reason, 'revised');
   assert.equal(checkInvoice(read({ confidence: 0.8 }), opts).reason, 'low_confidence');
   // A vendor's bill we forwarded: the seller is not us, or the buyer is.
-  assert.equal(checkInvoice(read({ seller: { company_name: 'Print Shop', gstin: '27AAAPP1111P1Z1' } }), opts).reason, 'not_from_us');
+  assert.equal(checkInvoice(read({ seller: { company_name: 'Print Shop', gstin: '27AAAPP1111P1ZR' } }), opts).reason, 'not_from_us');
   assert.equal(checkInvoice(read({ buyer: { company_name: 'Cetizion Verifica Pvt. Ltd.' }, seller: { company_name: 'Cetizion Verifica Pvt. Ltd.' } }), { ...opts, ourGstin: null }).reason, 'not_from_us');
 });
 

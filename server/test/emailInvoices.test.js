@@ -313,6 +313,55 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_from_us');
   });
 
+  test('25f. our invoice as an image PDF (docs/email-auto-entry-plan.md §3.1): the file itself is read, then read again by a second model; agreeing it is recorded, differing it goes to review', async (t) => {
+    const box = await mailbox();
+    const client = await poFor('Acme Image Ltd', '4500025625');
+    // As Alembic_037.pdf: a letterhead in text, the whole invoice an image. Its text layer has no number and no amount.
+    const letterhead = await pdfmake.createPdf({ content: ['Cetizion Verifica Pvt. Ltd.', 'C-25, Sector 8, Noida', 'Authorised signatory'] }).getBuffer();
+    const imageEmail = (no) => ({ ...invoiceEmail(box, client.email, { no, buyer: 'Acme Image Ltd' }), attachments: [{ name: 'Invoice.pdf', contentType: 'application/pdf', content: letterhead }] });
+    const { aiConfig } = await import('../src/lib/ai.js');
+    // A model that reads PDFs, whatever OPENROUTER_MODEL this machine sets.
+    const readsPdf = process.env.OPENROUTER_READS_PDF;
+    process.env.OPENROUTER_READS_PDF = '1';
+    t.after(() => { if (readsPdf === undefined) delete process.env.OPENROUTER_READS_PDF; else process.env.OPENROUTER_READS_PDF = readsPdf; });
+
+    const no = `CVPL/${fy(day(2))}/0925`;
+    const calls = [];
+    autoInvoice.deps.chat = async (system, user, opts = {}) => {
+      calls.push({ user, opts });
+      return reading({ invoice_no: no, invoice_date: day(2), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625', stage_hint: '50% advance' });
+    };
+    const msg = imageEmail(no);
+    const r = await deliver(box, [msg]);
+    assert.equal(r.invoices?.recorded, 1, JSON.stringify(r));
+    assert.equal(calls.length, 2, 'read twice: its amounts are not in its text');
+    assert.ok(Array.isArray(calls[0].user) && calls[0].user.some((p) => p.type === 'file'), 'the PDF itself goes, not only its text');
+    assert.equal(calls[0].opts.plugins?.[0]?.pdf?.engine, 'native');
+    assert.equal(calls[0].opts.schema?.name, 'invoice_reading', 'the answer has a fixed shape');
+    assert.equal(calls[0].opts.model, undefined, 'the reader');
+    assert.equal(calls[1].opts.model, aiConfig.checkModel, 'then the second model');
+    assert.equal((await stagesOf('4500025625'))[0].invoice_no, no);
+    assert.equal((await decision(box.id, msg.provider_id)).ai_calls, 2);
+
+    // The second model reads another total: nothing is recorded, and the reviewer is told what differs.
+    const no2 = `CVPL/${fy(day(1))}/0926`;
+    let k = 0;
+    autoInvoice.deps.chat = async () => reading({ invoice_no: no2, invoice_date: day(1), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625', ...(k++ ? { taxable: 152000, tax: 27360 } : {}) });
+    const msg2 = imageEmail(no2);
+    await deliver(box, [msg2]);
+    const d = await decision(box.id, msg2.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'readers_disagree']);
+    assert.match(d.review_note, /differ on the total/);
+    assert.equal((await stagesOf('4500025625'))[1].invoice_no, null);
+
+    // A text PDF is read once: its amounts are checked against its text instead.
+    const no3 = `CVPL/${fy(day(0))}/0927`;
+    const once = [];
+    autoInvoice.deps.chat = async (system, user, opts = {}) => { once.push(opts); return reading({ invoice_no: no3, invoice_date: day(0), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625' }); };
+    await deliver(box, [invoiceEmail(box, client.email, { no: no3, buyer: 'Acme Image Ltd', po: '4500025625' })]);
+    assert.equal(once.length, 1);
+  });
+
   test('25b. an invoice raised from another of our GSTINs than its PO was addressed to goes to review; from the right one it is recorded', async () => {
     const box = await mailbox();
     const client = await poFor('Acme Gstin Ltd', '4500025026');

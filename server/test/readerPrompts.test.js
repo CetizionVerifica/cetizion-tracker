@@ -13,7 +13,7 @@ import { READING_RULES, serviceRule, whoWeAre } from '../src/lib/mailbox/promptR
  */
 
 const services = ['Ecovadis Assessment (consulting)', 'ISO audits', 'CBAM verification'];
-const us = { ourNames: ['Cetizion Verifica Private Limited'], ourGstin: '27AAACC1234F1Z5' };
+const us = { ourNames: ['Cetizion Verifica Private Limited'], ourGstin: '27AAACC1234F1Z8' };
 
 const prompts = {
   enquiry: buildPrompt({ direction: 'inbound', subject: 'Quote', text: 'Please quote', from: { email: 'a@acme.in' } }, { services, ...us }).system,
@@ -27,7 +27,7 @@ test('every reader is told who we are, so our letterhead is never the client', (
     assert.match(system, /Cetizion Verifica Private Limited/, name);
     assert.match(system, /never the client's/, name);
   }
-  for (const name of ['enquiry', 'po', 'invoice']) assert.match(prompts[name], /GSTIN 27AAACC1234F1Z5/, name);
+  for (const name of ['enquiry', 'po', 'invoice']) assert.match(prompts[name], /GSTIN 27AAACC1234F1Z8/, name);
   assert.doesNotMatch(whoWeAre(), /GSTIN \d/);
 });
 
