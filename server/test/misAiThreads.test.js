@@ -212,5 +212,13 @@ describe('the briefing reads the right mail', { skip: !ADMIN_URL && 'set TEST_DA
     data = await misReports.dailyBriefing({ today: '2026-10-05', db });
     assert.equal(data.invoice_tables.list.rejected, true);
     assert.equal(data.invoice_tables.receivables.count, 0);
+
+    // A protected or damaged file is recorded as not used, so it is not fetched again on every run.
+    file = Buffer.from('PK not really a workbook');
+    await email('accounts@cetizionverifica.com', 'Sundry debtors (protected)', '2026-10-05T02:30:00Z', 'Sundry Debtors.xlsx');
+    const damaged = await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider });
+    assert.equal(damaged.stored.status, 'rejected');
+    assert.match(damaged.stored.reason, /could not be opened/);
+    assert.ok((await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider })).already, 'and not read again');
   });
 });

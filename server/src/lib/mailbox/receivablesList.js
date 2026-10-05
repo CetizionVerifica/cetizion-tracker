@@ -77,6 +77,18 @@ const PENDING = /pending\s*(for)?\s*invoic|to be invoiced|unbilled|not (yet )?in
 const RECEIVABLE = /receivable|debtors|outstanding/i;
 const TOTAL = /^\s*(grand\s+)?(sub\s*)?total\b/i;
 
+/**
+ * A balance as Tally prints it: "2,44,530.00 Dr" is owed to us, "15,000.00 Cr"
+ * is the client's credit (an advance), so negative. A plain figure is owed.
+ */
+export function balanceOf(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v ?? '').trim();
+  const credit = /\bcr\.?$/i.test(s);
+  const n = parseAmount(s.replace(/\s*\b(dr|cr)\.?$/i, ''));
+  return n === null ? null : credit ? -n : n;
+}
+
 const cell = (v) => (v === null || v === undefined ? '' : String(v).replace(/\s+/g, ' ').trim());
 const wholeDays = (v) => { const n = parseAmount(v); return n === null ? null : Math.round(n); };
 
@@ -104,7 +116,7 @@ export function linesFromRows(rows) {
   let pending = false;
   for (const r of rows.slice(h + 1)) {
     const name = cell(r[nameCol]);
-    const amount = parseAmount(r[amountCol]);
+    const amount = balanceOf(r[amountCol]);
     if (TOTAL.test(name)) {
       if (amount !== null) { if (/grand/i.test(name)) grand = amount; else totals.push(amount); }
       continue;
@@ -155,11 +167,11 @@ const isoDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) &
 /** The AI's answer in its fixed shape; anything else is no rows. */
 export function parseListVerdict(raw) {
   const lines = (Array.isArray(raw?.lines) ? raw.lines : []).map((l) => ({
-    client: clean(l?.client), invoice_no: clean(l?.invoice_no, 60), amount: parseAmount(l?.amount),
+    client: clean(l?.client), invoice_no: clean(l?.invoice_no, 60), amount: balanceOf(l?.amount),
     days: Number.isFinite(Number(l?.days)) && l?.days !== null && l?.days !== '' ? Math.round(Number(l.days)) : null,
     pending_for_invoicing: l?.pending_for_invoicing === true,
   })).filter((l) => l.client && l.amount !== null && l.amount !== 0);
-  return { lines, grand_total: parseAmount(raw?.grand_total), list_date: isoDate(raw?.list_date) };
+  return { lines, grand_total: balanceOf(raw?.grand_total), list_date: isoDate(raw?.list_date) };
 }
 
 const sum = (lines) => Math.round(lines.reduce((n, l) => n + l.amount, 0) * 100) / 100;
@@ -234,7 +246,8 @@ export async function refreshReceivableList(db = { query }, { now = new Date(), 
 
   let read;
   if (isSheet(file)) {
-    read = { method: 'xlsx', file: file.name, ...readSheet(file.content) };
+    // A protected or broken file is recorded as not used, so it is not fetched again every run.
+    try { read = { method: 'xlsx', file: file.name, ...readSheet(file.content) }; } catch { return { stored: await store(db, m, { file: file.name, reason: 'the spreadsheet could not be opened (protected or damaged)' }) }; }
   } else {
     const chat = chatFn();
     if (!ai || !chat) return { waiting: 'a PDF list is read by the AI, which this run may not use' };

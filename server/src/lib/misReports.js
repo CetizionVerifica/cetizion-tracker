@@ -600,7 +600,7 @@ export async function latestList(db, { today }) {
 }
 
 /** A client's name as the list and the tracker may both spell it: no punctuation, no "Pvt Ltd". */
-export const clientKey = (name) => String(name ?? '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ')
+export const clientKey = (name) => String(name ?? '').toLowerCase().replace(/^\s*m\s*\/\s*s\b\.?/, ' ').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ')
   .replace(/\b(private|pvt|limited|ltd|llp|inc|incorporated|co|company|corporation|corp|india|the)\b/g, ' ')
   .replace(/\s+/g, ' ').trim();
 
@@ -636,8 +636,10 @@ export function reconcile(rows, lines, { list, overdueDays, kind }) {
     if (left.length && open.length) {
       const onList = left.reduce((n, l) => n + l.amount, 0);
       const inTracker = open.reduce((n, t) => n + (t.amount_inr || 0), 0);
+      // A tracker amount with no exchange rate for its date is not ₹0: say so.
+      const unconverted = open.some((t) => t.amount_inr === null || t.amount_inr === undefined);
       for (const t of open) t.source = 'both';
-      Object.assign(open[0], { list_amount: onList, note: `list: ${lakhs(onList)}; tracker: ${lakhs(inTracker)}` });
+      Object.assign(open[0], { list_amount: onList, note: `list: ${lakhs(onList)}; tracker: ${unconverted ? 'not converted to ₹' : lakhs(inTracker)}` });
       continue;
     }
     listOnly.push(...left);
