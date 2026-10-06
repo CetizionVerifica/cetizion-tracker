@@ -13,6 +13,7 @@ import Webhooks from './Webhooks.jsx';
 import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
 import BulkImport from './BulkImport.jsx';
+import TravelImport from './TravelImport.jsx';
 import ReportCategories from './ReportCategories.jsx';
 import DocumentProfiles from './DocumentProfiles.jsx';
 
@@ -114,6 +115,7 @@ const GROUPS = [
     label: 'Data',
     items: [
       { to: 'import', label: 'Import', element: <BulkImport />, adminOnly: true },
+      { to: 'import-travel', label: 'Import travel', element: <TravelImport />, adminOnly: true, hr: true },
       { to: 'emails', label: 'Emails & jobs', element: <Emails />, adminOnly: true },
     ],
   },

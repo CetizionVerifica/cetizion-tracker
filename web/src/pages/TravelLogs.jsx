@@ -2,6 +2,8 @@ import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert } from '../components/ui.jsx';
 import { useLookups } from '../lib/hooks.js';
+import { useAuth } from '../lib/auth.jsx';
+import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
 import { money, date } from '../lib/format.js';
 
 const options = (rows, label) => rows.map((r) => ({ value: String(r.id), label: label(r) }));
@@ -38,6 +40,7 @@ export function tripFields(lookups) {
 export default function TravelLogs() {
   const navigate = useNavigate();
   const lookups = useLookups();
+  const { isAdmin, isHr } = useAuth();
 
   const columns = [
     { key: 'travel_id', header: 'Trip', className: 'mono strong' },
@@ -66,6 +69,8 @@ export default function TravelLogs() {
       onRowClick={(row) => navigate(`/travel/${encodeURIComponent(row.travel_id)}`)}
       fields={tripFields(lookups)}
       newLabel="Trip"
+      // Tickets and invoice PDFs by the hundred, filed by their names (#196 §5.4).
+      extraActions={isAdmin || isHr ? <TravelDocumentsUpload /> : null}
       formTitle="trip"
       formIntro="Log the trip facts once here. Its legs, vendor invoices, employee claims and project cost all read back from this record."
       searchPlaceholder="Search trip, employee, destination…"

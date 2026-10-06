@@ -143,10 +143,16 @@ Two modes, chosen by `AUTH_MODE`.
 roles; everybody who signs in is an admin. Good for a small deployment and the default in
 development.
 
-**`database`** — real accounts in a `users` table, each `admin` or `sales`, with
+**`database`** — real accounts in a `users` table, each `admin`, `sales` or `hr`, with
 per-person sessions you can see and revoke from **My account**. People can also sign in
 with **Microsoft** or **Google** when those are configured, and link either to an
 existing account.
+
+| Role | Reaches |
+| --- | --- |
+| `admin` | Everything |
+| `sales` | Their own enquiries, quotations, projects and POs, and the shared lists |
+| `hr` | The travel desk only: trips, agency invoices and credit notes, the travel dashboard and payables, the travel vendor and trip type lists, and the travel import ([docs/travel-import.md](docs/travel-import.md)). POs and projects only as far as linking a trip needs |
 
 What holds in both:
 

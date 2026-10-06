@@ -44,6 +44,7 @@ import TravelDashboard from './pages/TravelDashboard.jsx';
 import { useTheme } from 'next-themes';
 import SettingsArea from './pages/SettingsArea.jsx';
 import ImportReview from './pages/ImportReview.jsx';
+import TravelImportReview from './pages/TravelImportReview.jsx';
 import Inbox from './pages/Inbox.jsx';
 import NotFound from './pages/NotFound.jsx';
 import { useFetch } from './lib/hooks.js';
@@ -121,6 +122,10 @@ import {
 function ImportReviewPage() {
   const { id } = useParams();
   return <ImportReview key={id} />;
+}
+function TravelImportReviewPage() {
+  const { id } = useParams();
+  return <TravelImportReview key={id} />;
 }
 
 /**
@@ -268,6 +273,12 @@ function initials(name) {
 function AdminOnly({ children }) {
   const { isAdmin } = useAuth();
   return isAdmin ? children : <NotFound />;
+}
+
+/** The travel import is the travel desk's: an administrator or HR (#196 §3). */
+function TravelDeskOnly({ children }) {
+  const { isAdmin, isHr } = useAuth();
+  return isAdmin || isHr ? children : <NotFound />;
 }
 
 /**
@@ -615,6 +626,7 @@ export default function App() {
           <Route path="/import" element={<LegacyRedirect to="/settings/import" />} />
           {/* A batch in progress is its own screen, not a settings pane. */}
           <Route path="/import/:id" element={<AdminOnly><ImportReviewPage /></AdminOnly>} />
+          <Route path="/import-travel/:id" element={<TravelDeskOnly><TravelImportReviewPage /></TravelDeskOnly>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         )}

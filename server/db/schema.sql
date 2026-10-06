@@ -10,7 +10,9 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+DROP TABLE IF EXISTS travel_vendor_credit_notes, travel_vendor_invoice_lines, travel_segments, trip_types,
+  ai_usage_daily, email_triage, document_profile_corrections, company_document_profiles, receivable_list_lines, receivable_lists,
+  email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -3714,3 +3716,18 @@ ALTER TABLE attachments ADD CONSTRAINT attachments_entity_check CHECK (entity IN
   ('company','contact','enquiry','quotation','project','purchase_order','payment_stage','travel_log','travel_vendor_invoice'));
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS doc_type text
   CHECK (doc_type IN ('ticket','boarding_pass','vendor_invoice','credit_note','hotel_bill','visa','travel_approval','other'));
+
+-- The travel importer (086, #196 §5), as the migration applies it.
+
+ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'sales' CHECK (kind IN ('sales','travel'));
+ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS vendor_id int REFERENCES travel_vendors(id);
+ALTER TABLE import_batches ADD COLUMN IF NOT EXISTS source_file bytea;
+
+ALTER TABLE import_items DROP CONSTRAINT IF EXISTS import_items_step_check;
+ALTER TABLE import_items ADD CONSTRAINT import_items_step_check CHECK (step IN
+  ('quotation','project','purchase_order','service','stage','invoice','receipt',
+   'traveller','trip','segment','vendor_invoice','invoice_line','credit_note','vendor'));
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('travel_import_trip_gap_days', '7', 'In the travel import, rows for one traveller more than this many days apart are separate trips.')
+ON CONFLICT (key) DO NOTHING;

@@ -207,7 +207,7 @@ dashboardRouter.get('/payables', async (req, res) => {
 
 /** Travel & expense analysis, matching the workbook's third dashboard. */
 dashboardRouter.get('/travel', async (req, res) => {
-  const [snapshot, byVendor, byStatus, byClaimStatus, byMonth] = await Promise.all([
+  const [snapshot, byVendor, byStatus, byClaimStatus, byMonth, attention, byMode, byType] = await Promise.all([
     query(`
       SELECT COUNT(*)::int AS trips,
              COALESCE(SUM(vendor_cost), 0)         AS vendor_cost,
@@ -237,6 +237,21 @@ dashboardRouter.get('/travel', async (req, res) => {
       FROM v_travel_logs
       WHERE travel_start_date IS NOT NULL
       GROUP BY 1, 2 ORDER BY 2`),
+    // What the travel desk still has to do (#196 §6): files a trip lacks, and
+    // chargeable trips no payment stage has billed to the client yet.
+    query(`
+      SELECT COUNT(*) FILTER (WHERE cardinality(missing_documents) > 0)::int AS missing_documents,
+             COUNT(*) FILTER (WHERE chargeable AND billed_stage_id IS NULL AND NOT cancelled)::int AS unbilled_chargeable,
+             COALESCE(SUM(total_travel_cost) FILTER (WHERE chargeable AND billed_stage_id IS NULL AND NOT cancelled), 0) AS unbilled_value
+      FROM v_travel_logs`),
+    // The agency's bills net of credit notes, by what was booked.
+    query(`
+      SELECT COALESCE(s.mode, 'not given') AS label, COUNT(*)::int AS count, COALESCE(SUM(l.net_cost), 0) AS value
+      FROM v_travel_invoice_lines l LEFT JOIN travel_segments s ON s.id = l.segment_id
+      GROUP BY 1 ORDER BY value DESC, label`),
+    query(`
+      SELECT COALESCE(trip_type, 'Not set') AS label, COUNT(*)::int AS count, COALESCE(SUM(total_travel_cost), 0) AS value
+      FROM v_travel_logs GROUP BY 1 ORDER BY value DESC, label`),
   ]);
 
   res.json({
@@ -246,6 +261,9 @@ dashboardRouter.get('/travel', async (req, res) => {
       vendor_invoice_status: byStatus.rows,
       claim_status: byClaimStatus.rows,
       by_month: byMonth.rows,
+      attention: attention.rows[0],
+      by_mode: byMode.rows,
+      by_trip_type: byType.rows,
     },
   });
 });

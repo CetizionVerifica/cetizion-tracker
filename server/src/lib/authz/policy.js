@@ -256,6 +256,18 @@ export const routes = [
   { method: 'PATCH', path: '/api/import/items/:id', access: mustBeAdmin, why: 'The whole import router is administrator-only: a commit writes records in bulk, under somebody else\'s name, across every table the sheet touches.' },
   { method: 'POST', path: '/api/import/batches/:id/duplicates', access: mustBeAdmin, why: 'The whole import router is administrator-only: a commit writes records in bulk, under somebody else\'s name, across every table the sheet touches.' },
   { method: 'POST', path: '/api/import/batches/:id/commit', access: mustBeAdmin, why: 'A commit writes every row of the batch into the live tables.' },
+  { method: 'GET', path: '/api/import/travel/template.xlsx', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'GET', path: '/api/import/travel', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'GET', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'PATCH', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'DELETE', path: '/api/import/travel/:id', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'PATCH', path: '/api/import/travel/:id/items/:itemId', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/items/:itemId/split', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/duplicates', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/commit', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/:id/documents', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
+  { method: 'POST', path: '/api/import/travel/documents', access: mustBeAdmin, why: 'The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk.' },
 
   // ------------------------------------------------------------ documents
   { method: 'POST', path: '/api/documents', access: signedIn },
@@ -700,6 +712,11 @@ export const HR_ROUTES = [
   'POST /api/documents', 'GET /api/documents/:id',
   'GET /api/dashboard/travel', 'GET /api/dashboard/payables', 'GET /api/export/payables.csv',
   'GET /api/travel-logs/:travelId/full', 'GET /api/vendor-invoices/:id/full', 'POST /api/vendor-invoices/:id/pay',
+  // The travel importer (#196 §5).
+  'GET /api/import/travel/template.xlsx', 'POST /api/import/travel', 'GET /api/import/travel',
+  'GET /api/import/travel/:id', 'PATCH /api/import/travel/:id', 'DELETE /api/import/travel/:id',
+  'PATCH /api/import/travel/:id/items/:itemId', 'POST /api/import/travel/:id/items/:itemId/split', 'POST /api/import/travel/:id/duplicates',
+  'POST /api/import/travel/:id/commit', 'POST /api/import/travel/:id/documents', 'POST /api/import/travel/documents',
 ];
 
 const OPERATION_NEEDS = { list: 'read', read: 'read', create: 'write', update: 'write', delete: 'delete' };

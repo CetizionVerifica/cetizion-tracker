@@ -76,7 +76,7 @@ importRouter.post('/batches', upload.single('file'), async (req, res) => {
 });
 
 importRouter.get('/batches', async (req, res) => {
-  const { rows } = await query('SELECT id, filename, sheet_name, status, uploaded_by, row_count, summary, ai_model, error, created_at, committed_at FROM import_batches ORDER BY id DESC LIMIT 100');
+  const { rows } = await query(`SELECT id, filename, sheet_name, status, uploaded_by, row_count, summary, ai_model, error, created_at, committed_at FROM import_batches WHERE kind = 'sales' ORDER BY id DESC LIMIT 100`);
   res.json({ data: rows });
 });
 

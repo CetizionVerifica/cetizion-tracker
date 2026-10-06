@@ -21,6 +21,7 @@ import { invoiceReviewRouter } from './routes/invoiceReview.js';
 import { viewRouter } from './routes/views.js';
 import { exportRouter } from './routes/export.js';
 import { importRouter } from './routes/import.js';
+import { travelImportRouter } from './routes/travelImport.js';
 import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
 import { activityRouter } from './routes/activity.js';
@@ -146,6 +147,8 @@ app.use('/api/views', viewRouter);
 app.use('/api/lookups', lookupRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
+// Before the sales importer, whose router is administrator-only from its first line (#196).
+app.use('/api/import/travel', travelImportRouter);
 app.use('/api/import', importRouter);
 app.use('/api/documents', documentRouter);
 // Admin only, at its own router.

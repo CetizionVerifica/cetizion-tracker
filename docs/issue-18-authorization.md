@@ -238,6 +238,18 @@ session is **401**, before any of these is considered.
 | `POST /api/import/batches/:id/replan` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
 | `PATCH /api/import/items/:id` | **admin** | The whole import router is administrator-only: a commit writes records in bulk, under somebody else's name, across every table the sheet touches. |
 | `GET /api/import/template.csv` | **admin** | The whole import router is admin-only: a commit writes records in bulk under somebody else's name. |
+| `GET /api/import/travel` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `DELETE /api/import/travel/:id` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `GET /api/import/travel/:id` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `PATCH /api/import/travel/:id` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel/:id/commit` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel/:id/documents` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel/:id/duplicates` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `PATCH /api/import/travel/:id/items/:itemId` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel/:id/items/:itemId/split` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `POST /api/import/travel/documents` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
+| `GET /api/import/travel/template.xlsx` | **admin** | The travel importer (#196 §5) is for whoever keeps the travel desk: an administrator, or HR through HR_ROUTES. A commit writes trips, agency invoices and credit notes in bulk. |
 | **/api/inbox** | | |
 | `GET /api/inbox` | any | Scoped: mailbox-delegate. |
 | `GET /api/inbox/:id` | any | Scoped: mailbox-delegate. |
