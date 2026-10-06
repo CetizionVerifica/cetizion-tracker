@@ -1045,8 +1045,10 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     // The model takes the annexure's figures, which the PO itself never prints.
     const calls = ai(reading({ po_number: '4500313131', buyer: { company_name: 'Acme Annex Ltd' }, basic: 300000, tax: 54000 }));
     await deliver(box, [msg]);
-    assert.match(calls[0].user, /Order document text:\nPURCHASE ORDER/);
-    assert.match(calls[0].user, /Also attached to the same email, for reference \(Annexure A\.pdf\):\nANNEXURE A - SCHEDULE OF RATES/);
+    // A model that reads PDFs gets the text as one part beside the PDF itself.
+    const user = Array.isArray(calls[0].user) ? calls[0].user.filter((p) => p.type === 'text').map((p) => p.text).join('\n') : calls[0].user;
+    assert.match(user, /Order document text:\nPURCHASE ORDER/);
+    assert.match(user, /Also attached to the same email, for reference \(Annexure A\.pdf\):\nANNEXURE A - SCHEDULE OF RATES/);
     const d = await decision(box.id, msg.provider_id);
     assert.deepEqual([d.outcome, d.review_reason], ['review', 'amounts_not_in_pdf']);
     assert.equal(await poRow('4500313131'), undefined);
