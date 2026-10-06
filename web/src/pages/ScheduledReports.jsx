@@ -8,6 +8,7 @@ import { PageHeader } from '../App.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date } from '../lib/format.js';
+import { recipientLists } from '../lib/addresses.js';
 
 /**
  * Reports → Scheduled reports (docs/mis-reports-plan.md §5): the Daily Sales
@@ -28,8 +29,8 @@ const KINDS = [
 const TITLE = Object.fromEntries(KINDS.map((k) => [k.kind, k.title]));
 
 const setting = (list, key) => (list ?? []).find((s) => s.key === key)?.value ?? '';
-// The addresses in a To/Cc setting, as the server reads them: a setting cannot be blank, so "none" means nobody.
-const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
+// To and Cc as the server sends them: each address once, nobody copied who is already in To (#195).
+const recipientsIn = (list) => recipientLists(setting(list, 'mis_to'), setting(list, 'mis_cc'));
 
 function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }) {
   const toast = useToast();
@@ -96,7 +97,7 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
         <ConfirmDialog
           tone="normal"
           title={`Send the ${title} now?`}
-          message={`It goes to ${addresses(setting(settings, 'mis_to')).join(', ') || 'nobody — set the recipients first'}${addresses(setting(settings, 'mis_cc')).length ? `, copying ${addresses(setting(settings, 'mis_cc')).join(', ')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
+          message={`It goes to ${recipientsIn(settings).to.join(', ') || 'nobody — set the recipients first'}${recipientsIn(settings).cc.length ? `, copying ${recipientsIn(settings).cc.join(', ')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
           confirmLabel="Send"
           busy={busy === 'send'}
           onClose={() => setSending(false)}
@@ -109,8 +110,8 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
 
 function SharedSettings({ settings, mailboxes, onChanged }) {
   const toast = useToast();
-  const [to, setTo] = useState(addresses(setting(settings, 'mis_to')).join(', '));
-  const [cc, setCc] = useState(addresses(setting(settings, 'mis_cc')).join(', '));
+  const [to, setTo] = useState(recipientsIn(settings).to.join(', '));
+  const [cc, setCc] = useState(recipientsIn(settings).cc.join(', '));
   const [overdue, setOverdue] = useState(setting(settings, 'mis_overdue_days') || '7');
   // A non-numeric value ('none', blank) is the SMTP sender.
   const sender = /^\d+$/.test(setting(settings, 'mis_sender_account_id')) ? setting(settings, 'mis_sender_account_id') : 'smtp';
@@ -123,7 +124,11 @@ function SharedSettings({ settings, mailboxes, onChanged }) {
   async function saveAll() {
     setBusy(true);
     try {
-      await save('mis_to', to); await save('mis_cc', cc); await save('mis_overdue_days', String(Math.max(1, Number(overdue) || 7)));
+      // Saved cleaned (#195): each address once, and Cc without anybody already in To.
+      const clean = recipientLists(to, cc);
+      await save('mis_to', clean.to.join(', ')); await save('mis_cc', clean.cc.join(', '));
+      setTo(clean.to.join(', ')); setCc(clean.cc.join(', '));
+      await save('mis_overdue_days', String(Math.max(1, Number(overdue) || 7)));
       toast('Saved', 'success'); onChanged();
     } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
@@ -249,6 +254,8 @@ export default function ScheduledReports() {
   const runs = useFetch(() => api.raw('/mis-reports/runs'), []);
   const refetch = () => { settings.refetch(); runs.refetch(); };
   const list = settings.data?.data;
+  // What was last saved, so a card re-reads it after a save or a reload.
+  const saved = (list || []).map((s) => `${s.key}=${s.value}`).join('|');
   const emailsOn = setting(list, 'emails_enabled') !== 'false';
   return (
     <>
@@ -269,8 +276,11 @@ export default function ScheduledReports() {
             {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} onChanged={refetch} />)}
           </div>
         )}
-        {list && <SharedSettings key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
-        {list && <DebtorsList key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} onChanged={refetch} />}
+        {/* Each card is rebuilt from what was saved, under a key of its own. When the
+            two shared one, React drew the recipients card twice, and the copy on
+            screen stopped taking what was typed. */}
+        {list && <SharedSettings key={`recipients:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
+        {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
     </>

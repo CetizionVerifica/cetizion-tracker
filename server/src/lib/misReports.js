@@ -27,6 +27,7 @@ import { UNRESTRICTED } from '../auth/ownership.js';
 import { config } from '../config.js';
 import { query } from '../db.js';
 import { businessToday } from './businessDate.ts';
+import { addressesIn, recipientLists } from './mail.js';
 import { OPEN_ENQUIRY_STATUSES, OPEN_QUOTATION_STATUSES, keyOf, lastActivity, recordLink, dateOf } from './followUps.js';
 import { insightsContext, loadConverter, overdueFollowUps, receivablesSection } from './insights.js';
 import { pipelineCards, summarisePipeline } from './pipeline.js';
@@ -79,8 +80,10 @@ export const monthToDate = (date) => ({ from: `${date.slice(0, 7)}-01`, to: date
 
 export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_overdue_days', 'public_app_url'];
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
-// Only things that are addresses: a setting cannot be saved blank, so "none" clears a list.
-const addresses = (v) => String(v ?? '').split(/[,;]/).map((a) => a.trim()).filter((a) => a.includes('@'));
+// Only things that are addresses, each once whatever its case (#195): a
+// setting cannot be saved blank, so "none" clears a list.
+const addresses = (v) => addressesIn(v).filter((a) => a.includes('@'));
+const recipientsOf = (to, cc) => { const l = recipientLists(addresses(to), addresses(cc)); return { to: l.to, cc: l.cc }; };
 
 export async function misSettings(db = { query }) {
   const { rows } = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [SETTING_KEYS]);
@@ -89,8 +92,8 @@ export async function misSettings(db = { query }) {
   return {
     dailyEnabled: on(s.mis_daily_enabled),
     weeklyEnabled: on(s.mis_weekly_enabled),
-    to: addresses(s.mis_to),
-    cc: addresses(s.mis_cc),
+    // Nobody is copied who is already a recipient (#195).
+    ...recipientsOf(s.mis_to, s.mis_cc),
     senderAccountId: num(s.mis_sender_account_id, null),
     overdueDays: Math.max(1, Math.trunc(num(s.mis_overdue_days, 7))),
     appUrl: String(s.public_app_url || '').replace(/\/$/, ''),
