@@ -527,11 +527,14 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     const { noteCorrection, loadProfiles } = await import('../src/lib/mailbox/documentProfiles.js');
     const companyId = await client('Acme Corrected Ltd', 'anil@acme-corrected.co.in');
     assert.equal(await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' }), null);
-    await noteCorrection(db, { companyId, docType: 'po', reason: 'amendment', by: 'Priya' });
+    for (const reason of ['review_only', 'amendment', 'cancellation']) {
+      assert.equal(await noteCorrection(db, { companyId, docType: 'po', reason, by: 'Priya' }), null, `${reason} is not a reading fault`);
+    }
+    await noteCorrection(db, { companyId, docType: 'po', reason: 'value_mismatch', by: 'Priya' });
     const suggested = await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' });
     assert.ok(suggested, 'the third suggests one');
     const { rows: [p] } = await db.query('SELECT hint, approved_at FROM company_document_profiles WHERE id = $1', [suggested]);
-    assert.match(p.hint, /^Suggested: 3 of this client's POs needed a person in 90 days \(amendment, no_match\)/);
+    assert.match(p.hint, /^Suggested: 3 of this client's POs needed a person in 90 days \(no_match, value_mismatch\)/);
     assert.equal(p.approved_at, null);
     assert.ok(!(await loadProfiles(db, 'po')).some((x) => x.id === suggested), 'not used while only suggested');
     await agent.patch(`/api/document-profiles/${suggested}`).send({ hint: 'Orders come as SAP PDFs.' }).expect(200);

@@ -177,12 +177,13 @@ describe('the briefing reads the right mail', { skip: !ADMIN_URL && 'set TEST_DA
     let asked = 0;
     let file = workbook(344530);
     const provider = { attachments: async () => { asked += 1; return [{ name: 'Sundry Debtors.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: file }]; } };
-    const email = async (from, subject, at, attachment = null) => {
+    const email = async (from, subject, at, attachment = null, direction = 'inbound') => {
       const { rows: [t] } = await db.query(`INSERT INTO email_threads (account_id, conversation_id, subject) VALUES ($1, $2, $3) RETURNING id`, [ids.sales, `debtors-${at}`, subject]);
       const { rows: [m] } = await db.query(
-        `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, subject, sent_at, has_attachments) VALUES ($1, $2, $3, 'inbound', $4, $5, $6, $7) RETURNING id`,
-        [ids.sales, t.id, `debtors-${at}`, from, subject, at, Boolean(attachment)]);
+        `INSERT INTO email_messages (account_id, thread_id, provider_id, direction, from_email, subject, sent_at, has_attachments) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) RETURNING id`,
+        [ids.sales, t.id, `debtors-${at}`, from, subject, at, Boolean(attachment), direction]);
       if (attachment) await db.query(`INSERT INTO email_attachments (message_id, provider_id, name) VALUES ($1, 'a1', $2)`, [m.id, attachment]);
+      await db.query('UPDATE email_messages SET attachments_listed_at = now() WHERE id = $1', [m.id]);
       return m.id;
     };
     await email('accounts@cetizionverifica.com', 'Debtors as on 03-10-2026', '2026-10-04T05:00:00Z', 'Sundry Debtors.xlsx');
@@ -196,6 +197,11 @@ describe('the briefing reads the right mail', { skip: !ADMIN_URL && 'set TEST_DA
     const again = await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider });
     assert.ok(again.already, 'read once');
     assert.equal(asked, 1, 'the mailbox was asked once');
+    // Newer, but not a list: a reply with only a signature image, and our own mail to a client about an invoice.
+    await email('accounts@cetizionverifica.com', 'Re: Debtors as on 03-10-2026', '2026-10-04T09:00:00Z', 'image001.png');
+    await email('sales@cetizionverifica.com', 'Outstanding payment: invoice CVPL/2026-27/037', '2026-10-04T10:00:00Z', 'Invoice 037.pdf', 'outbound');
+    assert.equal((await refreshReceivableList(db, { now: new Date('2026-10-05T03:00:00Z'), provider })).already?.status, 'used', 'the list stands');
+    assert.equal(asked, 1);
 
     let data = await misReports.dailyBriefing({ today: '2026-10-05', db });
     assert.deepEqual([data.invoice_tables.list.list_only, data.invoice_tables.list.matched], [2, 0], 'nothing in this tracker: both lines are on the list only');

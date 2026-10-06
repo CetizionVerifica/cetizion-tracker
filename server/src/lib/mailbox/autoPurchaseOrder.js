@@ -618,10 +618,13 @@ export async function changedFrom(db, poNumber, po) {
   const { rows: [r] } = await db.query(
     `SELECT po.po_value::float8 AS po_value, po.currency,
             (SELECT array_agg(s.service_value::float8) FROM po_services s WHERE s.po_number = po.po_number) AS values,
-            EXISTS (SELECT 1 FROM email_po_decisions d WHERE d.po_number = po.po_number AND d.outcome = 'registered' AND d.created_quotation) AS lines_from_po
+            EXISTS (SELECT 1 FROM email_po_decisions d WHERE d.po_number = po.po_number AND d.outcome = 'registered' AND d.created_quotation) AS lines_from_po,
+            (SELECT json_agg(json_build_object('amount', ql.amount, 'gst_rate', ql.gst_rate)) FROM quotations q JOIN quotation_lines ql ON ql.quotation_id = q.id
+              WHERE q.quotation_no = po.quotation_no) AS q_lines
        FROM purchase_orders po WHERE po.po_number = $1`, [poNumber]);
   if (!r) return null;
-  const value = po.total_value ?? (po.basic_value !== null ? grossUp(po.basic_value) : null);
+  // Grossed up at the quotation's own GST rates, as registration did, not the default 18%.
+  const value = po.total_value ?? (po.basic_value !== null ? grossUp(po.basic_value, r.q_lines || []) : null);
   const valueDiffers = value !== null && !near(r.po_value, value) && !(po.basic_value !== null && near(r.po_value, po.basic_value));
   const had = (r.values || []).filter((v) => v !== null);
   const lines = po.linesOk && r.lines_from_po ? po.lines.map((l) => Number(l.amount)) : null;

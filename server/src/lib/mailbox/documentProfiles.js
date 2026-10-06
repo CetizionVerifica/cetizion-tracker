@@ -55,8 +55,13 @@ export function fitsPattern(p, poNumber) {
 
 const DOCS = { po: 'POs', invoice: 'invoices' };
 
+// Items that wait for a person whatever is printed on them: the rollout's
+// review-only switch, and a changed, cancelled or credited document. Settling
+// them says nothing about how the client's documents read.
+const NOT_A_CORRECTION = new Set(['review_only', 'amendment', 'cancellation', 'revised', 'credit_note']);
+
 export async function noteCorrection(db, { companyId, docType, reason = null, by = null }) {
-  if (!companyId) return null;
+  if (!companyId || NOT_A_CORRECTION.has(reason)) return null;
   await db.query('INSERT INTO document_profile_corrections (company_id, doc_type, review_reason, decided_by) VALUES ($1, $2, $3, $4)', [companyId, docType, reason, by]);
   const { rows: [r] } = await db.query(
     `SELECT count(*)::int AS n, string_agg(DISTINCT review_reason, ', ') AS reasons

@@ -6,7 +6,7 @@ import { parsePoVerdict } from '../src/lib/mailbox/poDetect.js';
 import { checkPo, stagesFromTerms } from '../src/lib/mailbox/pdfPurchaseOrder.js';
 import { checkInvoice, parseInvoiceVerdict, splitFor, wrongGstin } from '../src/lib/mailbox/invoiceDetect.js';
 import { fitsPattern, pickProfile } from '../src/lib/mailbox/documentProfiles.js';
-import { heldForReview } from '../src/lib/mailbox/autoPurchaseOrder.js';
+import { changedFrom, heldForReview } from '../src/lib/mailbox/autoPurchaseOrder.js';
 
 /**
  * The PO and invoice readers (docs/email-po-invoice-prompt-plan.md) at their
@@ -27,13 +27,14 @@ const poOpts = { emailDate: '2026-09-23T05:00:00Z', sourceText: TEXT, ...parties
 
 describe('revision wording', () => {
   test('revision 0 is the original, not an amendment', () => {
-    for (const marks of ['Rev 0', 'Rev. 00', 'Revision No. 0', 'Revision: 00', 'R0', 'Original', 'Revision history: none']) {
+    for (const marks of ['Rev 0', 'Rev. 00', 'Revision No. 0', 'Revision: 00', 'R0', 'Original', 'Revision history: none',
+      'Amendment No. 0', 'Amendment No.: 00', 'AMENDMENT NO - 0', 'Amendment No: 0 Amendment Date: 23.09.2026']) {
       assert.equal(checkPo(po({ revision_marks: marks }), poOpts).ok, true, marks);
     }
   });
 
   test('a later revision or amendment is', () => {
-    for (const marks of ['Rev 1', 'Rev. 01', 'Revision No. 2', 'Revision: 3', 'R2', 'Revised PO', 'Amendment No. 1', 'AMENDED', 'Supersedes PO 4500012300', 'In lieu of PO 4500012300']) {
+    for (const marks of ['Rev 1', 'Rev. 01', 'Revision No. 2', 'Revision: 3', 'R2', 'Revised PO', 'Amendment No. 1', 'Amendment No.: 01', 'Amendment 10', 'Amendment', 'AMENDED', 'Supersedes PO 4500012300', 'In lieu of PO 4500012300']) {
       assert.equal(checkPo(po({ revision_marks: marks }), poOpts).reason, 'amendment', marks);
     }
   });
@@ -114,5 +115,15 @@ describe('split, patterns, profiles and the rollout list, at their edges', () =>
     for (const t of ['50% advance & 50% on delivery', '50% advance and 50% on delivery', '50% advance\n50% on completion of the report']) {
       assert.deepEqual(stagesFromTerms(t).stages?.map((s) => s.percent), [50, 50], t);
     }
+  });
+});
+
+describe('a PO read again', () => {
+  const registered = (qLines) => ({ query: async () => ({ rows: [{ po_value: 105000, currency: 'INR', values: [105000], lines_from_po: false, q_lines: qLines }] }) });
+  test("with only its basic value is grossed up at the quotation's GST rate, as it was registered", async () => {
+    const po = { basic_value: 100000, total_value: null, lines: [], linesOk: false };
+    assert.equal(await changedFrom(registered([{ amount: 100000, gst_rate: 5 }]), 'PO-5', po), null, 'the same 5% PO again');
+    assert.match(await changedFrom(registered([{ amount: 100000, gst_rate: 5 }]), 'PO-5', { ...po, basic_value: 120000 }), /This email: INR 1,26,000/);
+    assert.equal(await changedFrom(registered(null), 'PO-5', { ...po, basic_value: 88983.05 }), null, 'no quotation lines: 18%');
   });
 });
