@@ -215,8 +215,6 @@ export default function TravelImportReview() {
   );
   const known = 'border-l-waiting bg-waiting/[0.06]';
   const rowClass = (it) => `border-b border-l-[3px] border-border px-4 py-3 ${it.existing_ref ? known : 'border-l-transparent'} ${live(it) ? '' : 'opacity-50'}`;
-  // A leg or line under a record already in the tracker is marked by its parent, not again.
-  const subRow = (it, parent) => `border-t border-border align-top ${it.existing_ref && !parent?.existing_ref ? 'bg-waiting/[0.06]' : ''} ${live(it) ? '' : 'opacity-50'}`;
 
   async function decideAll(step, action) {
     await call(`/import/travel/${batch.id}/duplicates`, 'POST', { step, action }).catch(() => {});
@@ -417,26 +415,32 @@ export default function TravelImportReview() {
                     </div>
                     <Actions it={inv} />
                   </div>
-                  <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[720px] table-fixed text-[12.5px]">
-                    <colgroup><col /><col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[104px]" /><col className="w-[150px]" /></colgroup>
-                    <thead><tr className="text-muted-foreground"><th className="text-left font-normal">Leg</th><th className="text-right font-normal">Fare</th><th className="text-right font-normal">Service</th><th className="text-right font-normal">GST</th><th className="text-right font-normal">Total</th><th /></tr></thead>
-                    <tbody>
-                      {lines.map((l) => {
-                        const leg = bySeq.get(l.payload.segment_seq);
-                        const trip = bySeq.get(l.payload.trip_seq);
-                        return (
-                          <tr key={l.id} className={subRow(l, inv)}>
-                            <td className="py-1.5 pr-3">{bySeq.get(trip?.payload.traveller_seq)?.payload.name || trip?.payload.employee_name} · {leg ? `${leg.payload.from_place ? `${leg.payload.from_place} → ` : ''}${leg.payload.to_place || ''} ${date(leg.payload.start_date)}` : ''}<Flags item={l} /></td>
-                            <td className="py-1.5 text-right num">{money(l.payload.base_fare)}</td>
-                            <td className="py-1.5 text-right num">{money(l.payload.service_charge)}</td>
-                            <td className="py-1.5 text-right num">{money(l.payload.gst_amount)}</td>
-                            <td className="py-1.5 text-right num">{money(l.payload.line_total)}</td>
-                            <td className="py-1.5 pl-2 text-right"><Actions it={l} /></td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table></div>
+                  {/* Lines as rows that wrap: the leg, its amounts (labelled, so no header is
+                      needed when they drop below it on a narrow screen), its buttons. */}
+                  <div className="mt-2 border-t border-border">
+                    {lines.map((l) => {
+                      const leg = bySeq.get(l.payload.segment_seq);
+                      const trip = bySeq.get(l.payload.trip_seq);
+                      return (
+                        <div key={l.id} className={`flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-border py-2 text-[12.5px] last:border-b-0 ${l.existing_ref && !inv.existing_ref ? 'bg-waiting/[0.06]' : ''} ${live(l) ? '' : 'opacity-50'}`}>
+                          <div className="min-w-0 flex-1 basis-[200px]">
+                            <div><span className="font-medium">{bySeq.get(trip?.payload.traveller_seq)?.payload.name || trip?.payload.employee_name}</span>
+                              {leg && <span className="text-secondary-text"> · {leg.payload.from_place ? `${leg.payload.from_place} → ` : ''}{leg.payload.to_place || ''} · {date(leg.payload.start_date)}</span>}</div>
+                            <Flags item={l} />
+                          </div>
+                          <dl className="grid grid-cols-4 gap-x-3 text-right">
+                            {[['Fare', l.payload.base_fare], ['Service', l.payload.service_charge], ['GST', l.payload.gst_amount], ['Total', l.payload.line_total]].map(([label, v]) => (
+                              <div key={label} className="min-w-[64px]">
+                                <dt className="text-[11px] text-muted-foreground">{label}</dt>
+                                <dd className={`num m-0 ${label === 'Total' ? 'font-semibold' : ''}`}>{money(v)}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                          <Actions it={l} follows={Boolean(inv.existing_ref)} />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
