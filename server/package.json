@@ -20,6 +20,8 @@
     "auth:check": "node scripts/auth-check.js",
     "fx:today": "node scripts/fx.js today",
     "readers:accuracy": "node scripts/reader-accuracy.js",
+    "eval:email-docs": "node scripts/reader-accuracy.js",
+    "ai:check-models": "node scripts/ai-check-models.js",
     "fx:backfill": "node scripts/fx.js backfill",
     "fx:status": "node scripts/fx.js status",
     "authz:docs": "node scripts/authz-docs.js",

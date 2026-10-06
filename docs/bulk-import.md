@@ -145,8 +145,10 @@ Every number and date that is written is computed in code, never by the model.
 
 Setting `OPENROUTER_API_KEY` sends spreadsheet content to OpenRouter, and
 OpenRouter forwards it to whichever model `OPENROUTER_MODEL` names — by
-default `deepseek/deepseek-v4.1-flash`, which is not run by us and not run in
-India. Retention and training are that provider's terms, not ours.
+default `anthropic/claude-fable-5.1` (docs/email-auto-entry-plan.md §4), which is
+not run by us and not run in India. Every call asks for zero data retention
+and refuses providers that train on prompts; beyond that, the provider's
+terms apply, not ours.
 
 What goes out, specifically:
 

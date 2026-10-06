@@ -11,6 +11,7 @@ import {
 } from '../components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SettingsPane } from './SettingsArea.jsx';
+import { AutoEntryPanel } from '../components/AutoEntryPanel.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date, number } from '../lib/format.js';
@@ -411,6 +412,8 @@ export default function Mailboxes() {
         )}
 
         <AutoEnquiries />
+
+        <AutoEntryPanel />
 
         {isAdmin && <div className="grid gap-4 @3xl:grid-cols-2">
           <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">

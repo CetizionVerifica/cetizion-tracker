@@ -313,6 +313,107 @@ describe('invoices from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to 
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_from_us');
   });
 
+  test('25f. our invoice as an image PDF (docs/email-auto-entry-plan.md §3.1): the file itself is read, then read again by a second model; agreeing it is recorded, differing it goes to review', async (t) => {
+    const box = await mailbox();
+    const client = await poFor('Acme Image Ltd', '4500025625');
+    // As Alembic_037.pdf: a letterhead in text, the whole invoice an image. Its text layer has no number and no amount.
+    const letterhead = await pdfmake.createPdf({ content: ['Cetizion Verifica Pvt. Ltd.', 'C-25, Sector 8, Noida', 'Authorised signatory'] }).getBuffer();
+    const imageEmail = (no) => ({ ...invoiceEmail(box, client.email, { no, buyer: 'Acme Image Ltd' }), attachments: [{ name: 'Invoice.pdf', contentType: 'application/pdf', content: letterhead }] });
+    const { aiConfig } = await import('../src/lib/ai.js');
+    // A model that reads PDFs, whatever OPENROUTER_MODEL this machine sets.
+    const readsPdf = process.env.OPENROUTER_READS_PDF;
+    process.env.OPENROUTER_READS_PDF = '1';
+    t.after(() => { if (readsPdf === undefined) delete process.env.OPENROUTER_READS_PDF; else process.env.OPENROUTER_READS_PDF = readsPdf; });
+
+    const no = `CVPL/${fy(day(2))}/0925`;
+    const calls = [];
+    autoInvoice.deps.chat = async (system, user, opts = {}) => {
+      calls.push({ user, opts });
+      return reading({ invoice_no: no, invoice_date: day(2), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625', stage_hint: '50% advance' });
+    };
+    const msg = imageEmail(no);
+    const r = await deliver(box, [msg]);
+    assert.equal(r.invoices?.recorded, 1, JSON.stringify(r));
+    assert.equal(calls.length, 2, 'read twice: its amounts are not in its text');
+    assert.ok(Array.isArray(calls[0].user) && calls[0].user.some((p) => p.type === 'file'), 'the PDF itself goes, not only its text');
+    assert.equal(calls[0].opts.plugins?.[0]?.pdf?.engine, 'native');
+    assert.equal(calls[0].opts.schema?.name, 'invoice_reading', 'the answer has a fixed shape');
+    assert.equal(calls[0].opts.model, undefined, 'the reader');
+    assert.equal(calls[1].opts.model, aiConfig.checkModel, 'then the second model');
+    assert.equal((await stagesOf('4500025625'))[0].invoice_no, no);
+    assert.equal((await decision(box.id, msg.provider_id)).ai_calls, 2);
+
+    // The second model reads another total: nothing is recorded, and the reviewer is told what differs.
+    const no2 = `CVPL/${fy(day(1))}/0926`;
+    let k = 0;
+    autoInvoice.deps.chat = async () => reading({ invoice_no: no2, invoice_date: day(1), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625', ...(k++ ? { taxable: 152000, tax: 27360 } : {}) });
+    const msg2 = imageEmail(no2);
+    await deliver(box, [msg2]);
+    const d = await decision(box.id, msg2.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'readers_disagree']);
+    assert.match(d.review_note, /differ on the total/);
+    assert.equal((await stagesOf('4500025625'))[1].invoice_no, null);
+
+    // A text PDF is read once: its amounts are checked against its text instead.
+    const no3 = `CVPL/${fy(day(0))}/0927`;
+    const once = [];
+    autoInvoice.deps.chat = async (system, user, opts = {}) => { once.push(opts); return reading({ invoice_no: no3, invoice_date: day(0), buyer: { company_name: 'Acme Image Ltd' }, po_reference: '4500025625' }); };
+    await deliver(box, [invoiceEmail(box, client.email, { no: no3, buyer: 'Acme Image Ltd', po: '4500025625' })]);
+    assert.equal(once.length, 1);
+  });
+
+  test('25g. Undo, the auto-entry panel, the review digest and the day\'s AI spend (docs/email-auto-entry-plan.md §3.10)', async () => {
+    const box = await mailbox();
+    const client = await poFor('Acme Panel Ltd', '4500025725');
+    const no = `CVPL/${fy(day(1))}/0957`;
+    ai(reading({ invoice_no: no, invoice_date: day(1), buyer: { company_name: 'Acme Panel Ltd' }, po_reference: '4500025725' }));
+    const msg = invoiceEmail(box, client.email, { no, buyer: 'Acme Panel Ltd', po: '4500025725' });
+    await deliver(box, [msg]);
+    const [s1] = await stagesOf('4500025725');
+    assert.equal(s1.invoice_no, no);
+
+    // Undo: the stage goes back to be invoiced, and the email is not read again.
+    const { body: origin } = await agent.get(`/api/mail/origin?entity=payment_stage&id=${s1.id}`).expect(200);
+    assert.deepEqual(origin.data.undo, { possible: true, reason: null });
+    await agent.post(`/api/payment-stages/${s1.id}/undo-from-email`).expect(200);
+    const [after] = await stagesOf('4500025725');
+    assert.deepEqual([after.invoice_no, after.invoice_date, after.document_id], [null, null, null]);
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'undone');
+    await agent.post(`/api/payment-stages/${s1.id}/undo-from-email`).expect(409);
+
+    // A payment on it: Undo is refused.
+    const paid = `CVPL/${fy(day(0))}/0958`;
+    ai(reading({ invoice_no: paid, invoice_date: day(0), buyer: { company_name: 'Acme Panel Ltd' }, po_reference: '4500025725' }));
+    await deliver(box, [invoiceEmail(box, client.email, { no: paid, buyer: 'Acme Panel Ltd', po: '4500025725' })]);
+    const stage = (await stagesOf('4500025725')).find((s) => s.invoice_no === paid);
+    await db.query('UPDATE payment_stages SET amount_received = 1000 WHERE id = $1', [stage.id]);
+    await agent.post(`/api/payment-stages/${stage.id}/undo-from-email`).expect(409);
+
+    // The panel.
+    const { body: panel } = await agent.get('/api/mailboxes/auto-entry?days=7').expect(200);
+    assert.equal(panel.data.days.length, 7);
+    assert.ok(panel.data.days[0].read >= 2, JSON.stringify(panel.data.days[0]));
+    assert.ok(panel.data.models.reader);
+    assert.equal(typeof panel.data.now.triage_enabled, 'boolean');
+
+    // The digest: an item in review for three days reaches each admin once a day.
+    await db.query(`INSERT INTO users (name, email, role, password_hash) VALUES ('Digest Admin', 'digest.admin@cetizionverifica.com', 'admin', 'not-a-real-hash') ON CONFLICT DO NOTHING`);
+    await db.query(`UPDATE email_invoice_decisions SET outcome = 'review', review_reason = 'po_not_found', decided_at = now() - interval '3 days' WHERE account_id = $1 AND provider_id = $2`, [box.id, msg.provider_id]);
+    const { runReviewDigest } = await import('../src/lib/mailbox/reviewDigest.js');
+    const r = await runReviewDigest({ today: '2099-01-01' });
+    assert.ok(r.invoices >= 1 && r.told >= 1, JSON.stringify(r));
+    assert.equal((await runReviewDigest({ today: '2099-01-01' })).told, 0, 'once a day');
+    const { rows: [n] } = await db.query(`SELECT title, link FROM notifications WHERE username = 'digest.admin@cetizionverifica.com' AND dedupe_key LIKE 'email-review-digest:2099-01-01:%'`);
+    assert.match(n.title, /waited more than 2 days for review/);
+
+    // The day's spend, by purpose and model.
+    const { recordAiUsage } = await import('../src/lib/aiUsage.js');
+    await recordAiUsage({ title: 'Cetizion Tracker email invoices', model: 'anthropic/claude-fable-5.1', prompt_tokens: 4000, completion_tokens: 900, cost: 0.085 });
+    await recordAiUsage({ title: 'Cetizion Tracker email invoices', model: 'anthropic/claude-fable-5.1', prompt_tokens: 1000, completion_tokens: 100, cost: 0.015 });
+    const { rows: [u] } = await db.query(`SELECT calls, prompt_tokens::int AS p, cost_usd::float8 AS cost FROM ai_usage_daily WHERE purpose = 'email invoices' AND model = 'anthropic/claude-fable-5.1'`);
+    assert.deepEqual([u.calls, u.p, Math.round(u.cost * 1000)], [2, 5000, 100]);
+  });
+
   test('25b. an invoice raised from another of our GSTINs than its PO was addressed to goes to review; from the right one it is recorded', async () => {
     const box = await mailbox();
     const client = await poFor('Acme Gstin Ltd', '4500025026');

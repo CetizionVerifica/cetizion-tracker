@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Clock } from 'lucide-react';
 import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
@@ -127,7 +127,7 @@ function poTone(status) {
  * which is what stops a column of ten identical buttons from hiding the
  * one that matters.
  */
-function StageRung({ stage, action, last }) {
+function StageRung({ stage, action, last, onChanged }) {
   // Amber is "you can bill this and have not"; red is "this is late".
   // The header chip uses the same two, so a rung never disagrees with it.
   const tone = stage.stage_status === 'Overdue' ? 'late'
@@ -169,6 +169,8 @@ function StageRung({ stage, action, last }) {
         )}>
           {explain(stage)}
         </p>
+        {/* An invoice read from our email: where from, and Undo for an admin (docs/email-auto-entry-plan.md §3.10). */}
+        {stage.invoice_no && <EmailOrigin entity="payment_stage" id={stage.id} className="m-0 mt-1 text-[12px] text-muted-foreground" onUndone={onChanged} />}
 
         {action && <div className="mt-3 flex gap-2">{action}</div>}
       </div>
@@ -207,6 +209,7 @@ export default function PurchaseOrderDetail() {
   const mayDeleteService = mayDeleteResource('po-services', isAdmin);
   const [dialog, setDialog] = useState(null);
 
+  const navigate = useNavigate();
   const { data, loading, error, refetch } = useFetch(
     () => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`),
     [poNumber]
@@ -425,7 +428,7 @@ export default function PurchaseOrderDetail() {
             </span>
           </Alert>
         )}
-        <EmailOrigin entity="purchase_order" id={po.po_number} />
+        <EmailOrigin entity="purchase_order" id={po.po_number} onUndone={() => navigate('/purchase-orders')} />
         {/* Out of the sales figures, but still billed: say so where the PO is read. */}
         {(po.cancelled || po.replaced_by_po_number) && (
           <Alert tone="warning">
@@ -457,7 +460,7 @@ export default function PurchaseOrderDetail() {
             </p>
           ) : (
             stages.map((stage, i) => (
-              <StageRung key={stage.id} stage={stage} action={actionsFor(stage)} last={i === stages.length - 1} />
+              <StageRung key={stage.id} stage={stage} action={actionsFor(stage)} last={i === stages.length - 1} onChanged={refetch} />
             ))
           )}
 

@@ -383,8 +383,11 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     const byDate = [...made].sort((x, y) => new Date(x.enquiry_date) - new Date(y.enquiry_date));
     assert.deepEqual(byDate.map((e) => e.client_name), ['Hist One', 'Hist Two', 'Hist Three']);
     const { rows: [first] } = await db.query(`SELECT enquiry_date::text AS d, enquiry_no FROM enquiries WHERE client_name = 'Hist One'`);
-    assert.equal(first.d, old.slice(0, 10), 'dated by the email, not by today');
-    assert.match(first.enquiry_no, new RegExp(`/${old.slice(0, 4)}/`), 'numbered in the email\'s year');
+    // The email's day in the business time zone (IST), as the reader dates it: between
+    // 00:00 and 05:30 IST the UTC date is the day before, and this failed at those hours.
+    const oldDay = new Date(Date.parse(old) + 330 * 60_000).toISOString().slice(0, 10);
+    assert.equal(first.d, oldDay, 'dated by the email, not by today');
+    assert.match(first.enquiry_no, new RegExp(`/${oldDay.slice(0, 4)}/`), 'numbered in the email\'s year');
 
     // A second run, and a run over the same ground, make nothing.
     await db.query('UPDATE mailbox_enquiry_backfills SET finished_at = NULL, folder = \'inbox\', next_link = NULL WHERE account_id = $1', [box.id]);

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { EmailThreadDialog } from './EmailThread.jsx';
+import { ConfirmDialog, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -9,24 +10,62 @@ import { date } from '../lib/format.js';
  * docs/email-po-plan.md): an enquiry, a quotation, a PO or a stage's invoice —
  * when, in which mailbox, and the thread to open when the reader may see it.
  * Nothing at all for a record that was typed in.
+ *
+ * For an admin, a PO or an invoice entered automatically also offers Undo
+ * while nothing has been recorded against it (docs/email-auto-entry-plan.md
+ * §3.10); `onUndone` is called once it is taken back out.
  */
-export function EmailOrigin({ entity, id, className }) {
-  const { data } = useFetch(
+export function EmailOrigin({ entity, id, className, onUndone }) {
+  const { data, refetch } = useFetch(
     () => (id ? api.raw(`/mail/origin?entity=${entity}&id=${encodeURIComponent(id)}`).catch(() => null) : Promise.resolve(null)),
     [entity, id]
   );
+  const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
   const o = data?.data;
   if (!o) return null;
   const what = entity === 'quotation' ? 'Read automatically from the PDF emailed'
     : entity === 'purchase_order' ? (o.by_hand ? 'Registered from the client\'s PO emailed' : 'Registered automatically from the client\'s PO emailed')
     : entity === 'payment_stage' ? (o.by_hand ? 'Invoice recorded from the email sent' : 'Invoice recorded automatically from the email sent')
     : o.kind === 'quotation_sent' ? 'Created automatically from the quotation emailed' : 'Created automatically from an email';
+
+  async function undo() {
+    setBusy(true);
+    try {
+      const path = entity === 'purchase_order'
+        ? `/purchase-orders/${encodeURIComponent(id)}/undo-from-email`
+        : `/payment-stages/${encodeURIComponent(id)}/undo-from-email`;
+      await api.action(path);
+      toast(entity === 'purchase_order' ? 'The PO, its stages and project were removed' : 'The invoice was taken off the stage', 'success');
+      setConfirm(false);
+      if (onUndone) onUndone(); else refetch();
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <p className={className || 'm-0 text-[12.5px] text-muted-foreground'}>
       {what} on {date(o.received_at)} · {o.mailbox}
       {o.thread_id && <> · <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={() => setOpen(true)}>open the email</button></>}
+      {o.undo?.possible && <> · <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={() => setConfirm(true)}>undo</button></>}
       {open && <EmailThreadDialog threadId={o.thread_id} onClose={() => setOpen(false)} />}
+      {confirm && (
+        <ConfirmDialog
+          title={entity === 'purchase_order' ? 'Undo this PO?' : 'Undo this invoice?'}
+          message={entity === 'purchase_order'
+            ? 'The PO, its payment stages and its project are removed, and its quotation goes back to how it was (a quotation made from this email is removed too). The email will not be read for a PO again. Webhooks that already fired are not called back.'
+            : 'The invoice number, date and the emailed PDF come off the stage, which goes back to be invoiced. The email will not be read for an invoice again.'}
+          confirmLabel="Undo"
+          busy={busy}
+          onConfirm={undo}
+          onClose={() => setConfirm(false)}
+        />
+      )}
     </p>
   );
 }

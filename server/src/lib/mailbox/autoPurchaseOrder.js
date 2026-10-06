@@ -33,10 +33,11 @@ import { ApiError } from '../../middleware/error.js';
 import { createEnquiryFromEmail } from './enquiryFromEmail.js';
 import { companyNameFromEmail, mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings, keepDropped, ownerFor, processCandidates, runContext } from './autoEnquiry.js';
-import { buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
-import { checkPo, grossUp, rankPoPdfs, stagesFromTerms } from './pdfPurchaseOrder.js';
+import { PO_KEY_FIELDS, PO_SCHEMA, buildPoPrompt, isPortalSender, parsePoVerdict, poPrefilter } from './poDetect.js';
+import { checkPo, grossUp, rankPoPdfs, stagesFor } from './pdfPurchaseOrder.js';
 import { near } from './pdfQuotation.js';
-import { readWithAi } from './readAttachment.js';
+import { disagreeNote, fieldsDiffer, readWithAi } from './readAttachment.js';
+import { notFor, triage } from './triage.js';
 import { fitsPattern, loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { queueFailures } from './readerQueue.js';
 import { ingestRules, matchParticipants, providerFor, readsAllFolders, saveTokens } from './sync.js';
@@ -123,13 +124,14 @@ async function logDecision(db, account, cand, d) {
   await db.query(
     `INSERT INTO email_po_decisions (account_id, provider_id, internet_message_id, conversation_id, thread_id, from_email, received_at,
                                      outcome, document_type, review_reason, mode, confidence, method, ai_calls, po_number, quotation_no,
-                                     suggested_quotations, created_quotation, stages_source, retry_since, review_note)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                                     suggested_quotations, created_quotation, stages_source, retry_since, review_note, undo_state)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      ON CONFLICT (account_id, provider_id) DO NOTHING`,
     [account.id, m.provider_id, m.internet_message_id || null, m.conversation_id || null, d.thread_id ?? cand.threadId ?? null,
       m.from?.email || null, m.sent_at || null, d.outcome, d.document_type || null, d.review_reason || null, d.mode || null,
       d.confidence ?? null, d.method || 'ai', d.ai_calls || 0, d.po_number || null, d.quotation_no || null,
-      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null, d.review_note || null]);
+      d.suggested?.length ? d.suggested : null, Boolean(d.created_quotation), d.stages_source || null, d.retry_since || null, d.review_note || null,
+      d.undo_state ? JSON.stringify(d.undo_state) : null]);
 }
 
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
@@ -174,6 +176,15 @@ export async function decidePo(account, cand, ctx) {
     return 'retry';
   }
 
+  // Triage first (docs/email-auto-entry-plan.md §3.8): what it surely says
+  // is not a PO costs no reading call, and goes on to the enquiry reader.
+  const sorted = await triage(account, cand, ctx, 'inbound');
+  if (notFor('po', sorted)) {
+    await logDecision({ query }, account, cand, { outcome: 'not_po', method: 'ai', ai_calls: 0, confidence: sorted.confidence });
+    ctx.notPo += 1;
+    return 'not_po';
+  }
+
   ctx.profiles ??= await loadProfiles({ query }, 'po');
   const { rows: [thread] } = cand.threadId ? await query('SELECT company_id FROM email_threads WHERE id = $1', [cand.threadId]) : { rows: [] };
   const read = await readPo(account, cand, ctx, chat, text, { senderEmail: m.from?.email, companyId: thread?.company_id ?? null });
@@ -193,6 +204,11 @@ export async function decidePo(account, cand, ctx) {
     await logDecision({ query }, account, cand, { ...decision, outcome: 'not_po' });
     ctx.notPo += 1;
     return 'not_po';
+  }
+  // An image PDF read twice, the readings differing on what would be registered (docs/email-auto-entry-plan.md §3.7).
+  if (read.disagreed?.length) {
+    const suggested = await suggestions({ query }, checked.po, read.allText, cand);
+    return review(account, cand, ctx, { ...decision, review_reason: 'readers_disagree', suggested, review_note: disagreeNote(read.disagreed) }, checked.po);
   }
   if (!checked.ok) {
     const suggested = await suggestions({ query }, checked.po, read.allText, cand);
@@ -278,6 +294,7 @@ export async function readPo(account, cand, ctx, chat, emailText, facts = {}) {
   return readWithAi(account, cand, ctx, chat, {
     // A PO's schedule of rates is often its own PDF: the annexures go too.
     rank: rankPoPdfs, parse: parsePoVerdict, fileName: 'purchase-order.pdf', annexures: true,
+    schema: PO_SCHEMA, ownNumber: (v) => v.po_number, disagree: (a, b) => fieldsDiffer(a, b, PO_KEY_FIELDS),
     prompt: ({ pdfText }) => {
       // The client's document note, picked before the call: no extra AI call (§6). Kept for the PO-number check.
       cand.profile = pickProfile(ctx.profiles, { ...facts, text: pdfText });
@@ -389,10 +406,11 @@ export async function matchQuotation(db, { po, allText, cand, company, settings 
     return { quotation: q, how };
   };
 
-  // 1. Our quotation number, printed on the PO or in the email.
+  // 1. Our quotation number, printed on the PO or in the email: the
+  // tracker's number, or the one printed on the PDF we sent (§3.4).
   const refs = [...new Set([po.our_quotation_ref, ...referencesIn(allText).quotations].filter(Boolean).map((r) => String(r).trim().toUpperCase()))];
   if (refs.length) {
-    const found = await quotationsWhere(db, 'upper(q.quotation_no) = ANY($1)', [refs]);
+    const found = await quotationsWhere(db, 'upper(q.quotation_no) = ANY($1) OR upper(q.printed_no) = ANY($1)', [refs]);
     if (found.length === 1) return consistent(found[0], 'number');
     if (found.length > 1) return { review: 'several_matches', suggested: found.map((q) => q.quotation_no) };
   }
@@ -513,6 +531,8 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   let quotation = match.quotation;
   let threadId = cand.threadId;
   let created = false;
+  // What registering changes on a quotation already on file, so Undo can put it back (docs/email-auto-entry-plan.md §3.10).
+  const undoState = quotation ? await stateBefore(db, quotation) : { created_quotation: true };
   // A past PO is not news to n8n: quiet before anything is written, the
   // enquiry and quotation made from it included (registerPurchaseOrder
   // sets the same again).
@@ -528,13 +548,18 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   const { rows: qLines } = await db.query('SELECT amount, gst_rate FROM quotation_lines WHERE quotation_id = $1', [quotation.id]);
   const grossed = !po.total_value;
   const poValue = grossed ? grossUp(po.basic_value, qLines) : po.total_value;
-  const terms = stagesFromTerms(po.payment_terms_text);
+  const { rows: [qTerms] } = await db.query('SELECT terms FROM quotations WHERE id = $1', [quotation.id]);
+  const terms = stagesFor(po.payment_terms_text, qTerms?.terms);
   const day = istDay(m.sent_at);
+  // Delivery by the date printed, else the end of the order's validity (Aragen: validity to 30.07.2027).
+  const deliveryBy = [po.delivery_date, po.validity_end].find((d) => d && d >= po.po_date);
   const remarks = [
     `Registered automatically from the purchase order emailed by ${m.from?.email || 'the client'} on ${day}.`,
     grossed ? `Value grossed up for GST; the PO states basic ${po.basic_value}.` : null,
     po.payment_terms_text && terms.source === 'template' ? `Payment stages are the default; the PO says: ${po.payment_terms_text}` : null,
     po.payment_terms_text && terms.source === 'po_terms' ? `Payment terms on the PO: ${po.payment_terms_text}` : null,
+    terms.source === 'quotation_terms' ? `Payment stages follow the quotation's split${po.payment_terms_text ? `; the PO says only: ${po.payment_terms_text}` : ''}.` : null,
+    po.client_vendor_code ? `Our vendor code at the client: ${po.client_vendor_code}.` : null,
     flags.includes('po_date_from_email') ? 'The PO date was not readable; the email date is used.' : null,
     po.partner_name ? `Addressed to our partner ${po.partner_name}${po.addressed_gstin ? ` (GSTIN ${po.addressed_gstin})` : ''}.` : null,
     // Whose reference is whose (docs/email-po-invoice-prompt-plan.md §3): the client's own number, and charges outside the value.
@@ -545,20 +570,29 @@ async function registerUnderLock(db, account, cand, ctx, { po, decision, documen
   const data = await registerPurchaseOrder(db, {
     quotation: quotation.quotation_no, po_number: po.po_number, po_date: po.po_date, po_value: poValue, currency: po.currency || quotation.currency || undefined,
     payment_terms_days: po.credit_days, document_id: documentId ?? undefined,
-    addressed_gstin: po.addressed_gstin ?? undefined, partner_name: po.partner_name ?? undefined,
+    addressed_gstin: po.addressed_gstin ?? undefined, partner_name: po.partner_name ?? undefined, client_vendor_code: po.client_vendor_code ?? undefined,
     project_manager: po.project_manager?.name ?? undefined, project_manager_email: po.project_manager?.email ?? undefined,
-    planned_delivery_date: po.delivery_date && po.delivery_date >= po.po_date ? po.delivery_date : undefined,
-    stages: terms.source === 'po_terms' ? terms.stages : undefined,
+    planned_delivery_date: deliveryBy ?? undefined,
+    stages: terms.source === 'template' ? undefined : terms.stages,
     remarks,
   }, { mode: decision.mode });
 
   await linkThread(db, threadId, data.po_number, quotation.quotation_no);
   await logDecision(db, account, cand, {
     ...decision, outcome: 'registered', po_number: data.po_number, quotation_no: quotation.quotation_no, thread_id: threadId,
-    created_quotation: created, stages_source: data.stages.length ? (terms.source === 'po_terms' ? 'po_terms' : 'template') : 'none',
+    created_quotation: created, stages_source: data.stages.length ? terms.source : 'none', undo_state: undoState,
   });
   ctx.registered.push({ ...data, mode: decision.mode, how: match.how || 'created' });
   return 'registered';
+}
+
+/** The quotation and its enquiries as they were before the PO won them. */
+async function stateBefore(db, q) {
+  const { rows: [before] } = await db.query(
+    `SELECT status, stage_id, po_received, project_id, closed_at FROM quotations WHERE id = $1`, [q.id]);
+  const { rows: enquiries } = await db.query(
+    `SELECT enquiry_no, status, converted_at FROM enquiries WHERE quotation_no = $1 AND status <> 'Converted'`, [q.quotation_no]);
+  return { quotation: before, enquiries };
 }
 
 const nameKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(pvt|private|ltd|limited|llp|inc)\b/g, ' ').replace(/\s+/g, ' ').trim();
@@ -703,6 +737,7 @@ async function notifyReview(ctx) {
     multiple_pos: 'it holds more than one PO', unreadable: 'its PDF could not be opened', no_value: 'no value could be read',
     amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up', bad_currency: 'its currency is not one the tracker uses',
     currency_mismatch: 'its currency differs from the quotation\'s', no_currency: 'its currency could not be read',
+    bad_gstin: 'a GSTIN on it does not check out, so it was misread', readers_disagree: 'its PDF is an image, and two readings of it differ',
   };
   for (const r of ctx.review) {
     let owner = null;

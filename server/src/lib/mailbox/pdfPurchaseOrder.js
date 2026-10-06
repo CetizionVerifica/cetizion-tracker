@@ -13,8 +13,8 @@ import { splitReference } from '../../import/parse.js';
 import { norm, paymentSplit } from '../../import/rules.js';
 import { STATUS } from '../statuses.js';
 import { amountInText, near } from './pdfQuotation.js';
-import { addressedInText, ourParty } from './ourParties.js';
-import { taxFromBreakup, wordsAgree } from './promptRules.js';
+import { addressedInText, gstinValid, ourParty } from './ourParties.js';
+import { taxAgreesWithRate, taxFromBreakup, wordsAgree } from './promptRules.js';
 
 // ----------------------------------------------------------- which PDF
 
@@ -42,7 +42,7 @@ export function rankPoPdfs(files) {
 
 /** Why a PO read from email is not registered. Matches email_po_decisions.review_reason, plus not_po. */
 export const PO_REASONS = ['not_po', 'low_confidence', 'amendment', 'cancellation', 'not_to_us', 'no_po_number',
-  'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency'];
+  'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency', 'bad_gstin'];
 
 // Revision wording printed on an order (§3 revision_marks): "Amendment 1", "Rev 2", "Revised PO", "supersedes …".
 // Revision 0 is the original: "Rev 0", "Revision No. 00", "R0" and "Amendment No.: 0" are not amendments,
@@ -88,6 +88,9 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // Addressed to us, by us neither: a PO we issued to a vendor reads the
   // other way round.
   if (ourParty(v.buyer, parties)?.kind === 'us') return fail('not_to_us');
+  // A GSTIN whose check character does not fit was misread (docs/email-auto-entry-plan.md §3.7):
+  // the buyer's would find, or make, the wrong company.
+  if ([v.buyer?.gstin, v.vendor?.gstin].some((g) => g && !gstinValid(g))) return fail('bad_gstin');
   const text = String(sourceText || '');
   const addressed = ourParty(v.vendor, parties)
     || (!v.vendor?.company_name && !v.vendor?.gstin ? addressedInText(text, parties) : null);
@@ -125,6 +128,7 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   else if (rows !== null && !near(tax, rows)) return fail('totals_do_not_add_up');
   if (total === null && basic !== null && tax !== null) total = round2(basic + tax);
   if (basic !== null && tax !== null && total !== null && !near(basic + tax, total)) return fail('totals_do_not_add_up');
+  if (!taxAgreesWithRate(basic, tax, v.tax_rate_percent)) return fail('totals_do_not_add_up');
   if (!(total > 0) && !(v.gst_extra && basic > 0)) return fail('no_value');
   // The amount in words says the total too; a line that cannot be read is let be.
   if (!wordsAgree(v.total_in_words, [total, basic], near)) return fail('totals_do_not_add_up');
@@ -160,7 +164,11 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   po.lines = po.linesOk ? lines.map((l) => ({ ...l, amount: lineAmount(l) })) : [];
   if (!po.linesOk && read.length) flags.push('lines_not_used');
 
-  Object.assign(po, { basic_value: basic, tax_value: tax, total_value: total > 0 ? total : null, credit_days: v.credit_days ?? 30 });
+  Object.assign(po, {
+    basic_value: basic, tax_value: tax, total_value: total > 0 ? total : null, credit_days: v.credit_days ?? 30,
+    // Our supplier code at this client, which its accounts ask to see on our invoices.
+    client_vendor_code: v.vendor?.vendor_code || null,
+  });
   if (v.credit_days === null || v.credit_days === undefined) flags.push('credit_days_default');
   return { ok: true, po, flags };
 }
@@ -226,16 +234,8 @@ export function stagesFromTerms(text) {
   const t = String(text || '').trim();
   if (!t) return { source: 'template' };
 
-  // Each percentage with the clause it sits in, tax ones left out.
-  // "&" joins two clauses as "and" does: "50% Advance Against PI & 50% Against work Completion" (Dasami).
-  const clauses = t.split(/[;\n|]|,(?!\d)|\.\s|(?:\band\b|&)(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
-  const parts = [];
-  for (const c of clauses) {
-    const ps = [...c.matchAll(PERCENT)].map((m) => Number(m[1]));
-    if (!ps.length || TAX.test(c)) continue;
-    if (ps.length > 1) return { source: 'template' };
-    parts.push({ percent: ps[0], clause: c });
-  }
+  const parts = termParts(t);
+  if (!parts) return { source: 'template' };
   const sum = parts.reduce((n, p) => n + p.percent, 0);
   const asStages = (list) => ({ source: 'po_terms', stages: list });
 
@@ -269,6 +269,42 @@ export function stagesFromTerms(text) {
     if (share.percent && ADVANCE.test(parts[0].clause)) return asStages(toStages(paymentSplit(share.percent)));
   }
   return { source: 'template' };
+}
+
+/**
+ * Each percentage in payment terms with the clause it sits in, tax ones
+ * left out; null when one clause holds several (unclear).
+ * "&" joins two clauses as "and" does: "50% Advance Against PI & 50% Against work Completion" (Dasami).
+ */
+function termParts(t) {
+  const clauses = String(t || '').split(/[;\n|]|,(?!\d)|\.\s|(?:\band\b|&)(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
+  const parts = [];
+  for (const c of clauses) {
+    const ps = [...c.matchAll(PERCENT)].map((m) => Number(m[1]));
+    if (!ps.length || TAX.test(c)) continue;
+    if (ps.length > 1) return null;
+    parts.push({ percent: ps[0], clause: c });
+  }
+  return parts;
+}
+
+/**
+ * The stages for a PO (docs/email-auto-entry-plan.md §3.6). The PO's own
+ * terms, when they give a split. When they only name a trigger ("Against
+ * delivery", "Invoice date, 45 days") or say nothing, and our quotation
+ * split the payment ("50% advance, 50% on the final report"), the
+ * quotation's split: the client accepted it, and our invoices follow it
+ * (Alembic billed 50% advance against a PO saying "Against delivery"). The
+ * PO's credit days apply either way. Returns stagesFromTerms' shape, with
+ * source 'quotation_terms' for the second case.
+ */
+export function stagesFor(poTerms, quotationTerms) {
+  const fromPo = stagesFromTerms(poTerms);
+  const poSplit = termParts(poTerms);
+  if (poSplit === null || poSplit.length) return fromPo;
+  const fromQuotation = stagesFromTerms(quotationTerms);
+  if (fromQuotation.source === 'po_terms' && fromQuotation.stages.length > 1) return { source: 'quotation_terms', stages: fromQuotation.stages };
+  return fromPo;
 }
 
 /** The importer's stages ({ stage_percent: 0.5 }) in registration's shape ({ percent: 50 }). */

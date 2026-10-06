@@ -114,7 +114,7 @@ Everything has a working default in development. To change one, copy
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | none | Google sign-in |
 | `MAIL_TOKEN_KEY` | none | encrypts stored mailbox tokens |
 | `OPENROUTER_API_KEY` | none | optional AI help in the bulk importer — **read [docs/bulk-import.md](docs/bulk-import.md) before setting it**, it sends sheet content to a third party |
-| `OPENROUTER_MODEL` | `deepseek/deepseek-v4.1-flash` | any model id OpenRouter serves |
+| `OPENROUTER_MODEL` | `anthropic/claude-fable-5.1` | any model id OpenRouter serves; also `OPENROUTER_FALLBACK_MODELS`, `OPENROUTER_CHECK_MODEL`, `OPENROUTER_TRIAGE_MODEL` ([docs/email-auto-entry-plan.md](docs/email-auto-entry-plan.md) §4) |
 | `EMAIL_MODE` | `log` | nothing is sent. `sandbox`: only `EMAIL_ALLOWLIST` addresses. `live`: over SMTP |
 | `SMTP_HOST` / `_PORT` / `_SECURE` / `_USER` / `_PASS` | none | needed for `EMAIL_MODE=live` |
 | `EMAIL_FROM` / `EMAIL_REPLY_TO` / `EMAIL_BCC` | none | the sender on every outgoing email |

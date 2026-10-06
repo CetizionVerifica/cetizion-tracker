@@ -16,7 +16,7 @@ import { parseAmount } from './pdfQuotation.js';
 import { BULK, BULK_SENDER, addr, domainOf } from './rules.js';
 import { splitReference } from '../../import/parse.js';
 import { MAX_DOCUMENT_TEXT as MAX_PDF_TEXT, MAX_EMAIL_TEXT, MAX_LINES } from './readLimits.js';
-import { READING_RULES, TOTALS_RULES, parseTaxBreakup, serviceRule, whoWeAre } from './promptRules.js';
+import { READING_RULES, S, TOTALS_RULES, TOTALS_SCHEMA, answerSchema, parseTaxBreakup, ratePercent, serviceRule, whoWeAre } from './promptRules.js';
 
 export const DOCUMENT_TYPES = ['purchase_order', 'work_order', 'loi', 'contract', 'amendment', 'cancellation', 'other'];
 
@@ -129,12 +129,12 @@ export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receive
     '{"is_purchase_order": boolean, "document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1,',
     ' "po_number": string|null, "po_date": "YYYY-MM-DD"|null, "amendment_no": integer,',
     ' "buyer": {"company_name": string|null, "gstin": string|null, "state": string|null, "contact_name": string|null, "contact_email": string|null},',
-    ' "vendor": {"company_name": string|null, "gstin": string|null},',
+    ' "vendor": {"company_name": string|null, "gstin": string|null, "vendor_code": string|null},',
     ' "our_quotation_ref": string|null, "client_reference": string|null, "revision_marks": string|null, "currency": "INR"|...,',
     ' "lines": [{"description": string, "qty": number, "rate": "amount as printed", "amount": "amount as printed", "service": string|null}],',
     ' "basic_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null, "gst_extra": boolean,',
-    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
-    ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null, "remarks": string|null,',
+    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "tax_rate_percent": number|null, "total_in_words": string|null,',
+    ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null, "validity_end": "YYYY-MM-DD"|null, "remarks": string|null,',
     ' "project_manager": {"name": string|null, "email": string|null}}',
     'The BUYER is the client who issues the order: its name, GSTIN and state from the buyer, "Bill to" or letterhead block. The VENDOR (supplier, contractor, service provider) is who it is addressed to: the vendor block as printed, its name and GSTIN. For a PO to us that is Cetizion Verifica, or one of our partners.',
     'is_purchase_order: true for an order placed with us (purchase_order, work_order, loi, contract), including one raised through a procurement portal (Ariba, Coupa, SAP); false otherwise.',
@@ -153,7 +153,8 @@ export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receive
     'payment_terms_text: the order\'s own payment terms copied word for word, every percentage and milestone in them ("30% advance against PO, 40% on submission of draft report, 30% on final report"), from its payment terms block, or the annexure where the order says its payment terms are. Never from general terms and conditions or goods boilerplate (COA, batch, marine policy, inspection, warranty). Leave out tax and penalty clauses.',
     'remarks: clauses about charges outside the order value ("travel and stay extra at actuals"), as printed; else null.',
     'credit_days: the days to pay after an invoice ("within 45 days of invoice", "45 days credit", "Net 45" give 45), if stated; never a delivery period.',
-    'delivery_date: the date the work must be completed or delivered by, only when printed as a date. project_manager: the client\'s person named as engineer-in-charge, coordinator or project manager for the work.',
+    'vendor.vendor_code: our supplier or vendor code at this client, as the order prints it against us ("Vendor Code", "Supplier Code", "Your code with us": 0011305984); never a GSTIN, a PAN or the PO number. Else null.',
+    'delivery_date: the date the work must be completed or delivered by, only when printed as a date. validity_end: the last day of the order\'s validity period, only when printed ("Validity 01.08.2026 to 30.07.2027" gives 2027-07-30). project_manager: the client\'s person named as engineer-in-charge, coordinator or project manager for the work.',
     ...READING_RULES,
     'confidence: how sure you are the document is an order to Cetizion Verifica and that you read its number, date and values correctly. A field it does not print is null and does not lower confidence; doubt about what a printed value says does.',
   ].join('\n');
@@ -171,13 +172,35 @@ const clean = (v, max = 300) => { const s = String(v ?? '').replace(/\s+/g, ' ')
 const isoDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? v : null);
 const wholeNumber = (v, max) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isInteger(n) && n >= 0 && n <= max ? n : null; };
 const email = (v) => { const s = clean(v, 160); return s && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s.toLowerCase() : null; };
-
 const NOT_A_PO = Object.freeze({
   is_purchase_order: false, document_type: 'other', confidence: 0, po_number: null, po_date: null, amendment_no: 0,
   buyer: {}, vendor: {}, our_quotation_ref: null, client_reference: null, revision_marks: null, remarks: null, currency: null, lines: [], basic_value: null, tax_value: null, total_value: null,
-  gst_extra: false, payment_terms_text: null, credit_days: null, delivery_date: null, project_manager: {},
-  tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null,
+  gst_extra: false, payment_terms_text: null, credit_days: null, delivery_date: null, validity_end: null, project_manager: {},
+  tax_breakup: { igst: null, cgst: null, sgst: null }, tax_rate_percent: null, total_in_words: null,
 });
+
+/**
+ * The answer's exact shape (docs/email-auto-entry-plan.md §3.5): the same
+ * keys the prompt lists, every one present, nothing extra. Amounts stay
+ * strings as printed; parsePoVerdict turns them into numbers.
+ */
+export const PO_SCHEMA = answerSchema('purchase_order_reading', {
+  is_purchase_order: S.boolean,
+  document_type: S.oneOf(DOCUMENT_TYPES),
+  confidence: { type: 'number' },
+  po_number: S.text, po_date: S.text, amendment_no: { type: 'integer' },
+  buyer: S.object({ company_name: S.text, gstin: S.text, state: S.text, contact_name: S.text, contact_email: S.text }),
+  vendor: S.object({ company_name: S.text, gstin: S.text, vendor_code: S.text }),
+  our_quotation_ref: S.text, client_reference: S.text, revision_marks: S.text, currency: S.text,
+  lines: S.list(S.object({ description: S.string, qty: S.number, rate: S.text, amount: S.text, service: S.text })),
+  basic_value: S.text, tax_value: S.text, total_value: S.text, gst_extra: S.boolean,
+  ...TOTALS_SCHEMA,
+  payment_terms_text: S.text, credit_days: S.integer, delivery_date: S.text, validity_end: S.text, remarks: S.text,
+  project_manager: S.object({ name: S.text, email: S.text }),
+});
+
+/** What two readings of one PO must agree on (§3.7). */
+export const PO_KEY_FIELDS = ['po_number', 'po_date', 'total_value', 'basic_value'];
 
 /**
  * The AI's answer in a fixed shape: amounts parsed from their printed form,
@@ -207,7 +230,7 @@ export function parsePoVerdict(raw) {
       company_name: clean(v.buyer?.company_name, 200), gstin: clean(v.buyer?.gstin, 20)?.toUpperCase() ?? null,
       state: clean(v.buyer?.state, 60), contact_name: clean(v.buyer?.contact_name, 120), contact_email: email(v.buyer?.contact_email),
     },
-    vendor: { company_name: clean(v.vendor?.company_name, 200), gstin: clean(v.vendor?.gstin, 20)?.toUpperCase() ?? null },
+    vendor: { company_name: clean(v.vendor?.company_name, 200), gstin: clean(v.vendor?.gstin, 20)?.toUpperCase() ?? null, vendor_code: clean(v.vendor?.vendor_code, 40) },
     our_quotation_ref: clean(v.our_quotation_ref, 60),
     client_reference: clean(v.client_reference, 80),
     revision_marks: clean(v.revision_marks, 120),
@@ -219,10 +242,12 @@ export function parsePoVerdict(raw) {
     total_value: parseAmount(v.total_value),
     gst_extra: v.gst_extra === true,
     tax_breakup: parseTaxBreakup(v.tax_breakup, parseAmount),
+    tax_rate_percent: ratePercent(v.tax_rate_percent),
     total_in_words: clean(v.total_in_words, 300),
     payment_terms_text: clean(v.payment_terms_text, 1000),
     credit_days: wholeNumber(v.credit_days, 365),
     delivery_date: isoDate(v.delivery_date),
+    validity_end: isoDate(v.validity_end),
     project_manager: { name: clean(v.project_manager?.name, 120), email: email(v.project_manager?.email) },
   };
 }

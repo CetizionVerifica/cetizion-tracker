@@ -26,6 +26,9 @@ import { MAX_EMAIL_TEXT } from '../lib/mailbox/readLimits.js';
 import { buildInvoicePrompt, parseInvoiceVerdict, rankInvoicePdfs } from '../lib/mailbox/invoiceDetect.js';
 import { readWithAi } from '../lib/mailbox/readAttachment.js';
 import { countAiCalls } from './poReview.js';
+import { requireAdmin } from '../auth/middleware.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { undoInvoice } from '../lib/mailbox/undoEntry.js';
 
 export const invoiceReviewRouter = Router();
 
@@ -129,6 +132,19 @@ invoiceReviewRouter.post('/invoice-review/:id/split', async (req, res) => {
     return id;
   });
   res.json({ data: { id: d.id, stage_id: stageId } });
+});
+
+/**
+ * Undo an invoice recorded automatically from email on stage :id
+ * (docs/email-auto-entry-plan.md §3.10): the stage back to be invoiced.
+ * Refused once a payment or a reminder is on it. Admins only.
+ */
+invoiceReviewRouter.post('/:id/undo-from-email', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) throw new ApiError(404, 'Payment stage not found');
+  const undone = await transaction((db) => undoInvoice(db, id, req.user?.name || req.user?.username || null));
+  await logActivity(undefined, { actor: actorFrom(req.user), action: ACTIONS.INVOICE_EMAIL_UNDONE, entityType: 'payment_stage', entityId: String(id), metadata: undone });
+  res.json({ data: undone });
 });
 
 invoiceReviewRouter.post('/invoice-review/:id/dismiss', async (req, res) => {

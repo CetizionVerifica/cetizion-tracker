@@ -35,11 +35,12 @@ import { near } from './pdfQuotation.js';
 import { mainText } from './enquiryDetect.js';
 import { aiCallsToday, enquirySettings } from './autoEnquiry.js';
 import { linkThread, resolveCompany } from './autoPurchaseOrder.js';
-import { buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, splitFor, wrongGstin } from './invoiceDetect.js';
+import { INVOICE_KEY_FIELDS, INVOICE_SCHEMA, buildInvoicePrompt, checkInvoice, invoicePrefilter, parseInvoiceVerdict, pickStage, rankInvoicePdfs, splitFor, wrongGstin } from './invoiceDetect.js';
 import { advanceShare } from '../../import/ai.js';
 import { loadProfiles, pickProfile, profileNote } from './documentProfiles.js';
 import { heldForReview } from './autoPurchaseOrder.js';
-import { readWithAi } from './readAttachment.js';
+import { disagreeNote, fieldsDiffer, readWithAi } from './readAttachment.js';
+import { notFor, triage } from './triage.js';
 import { queueFailures } from './readerQueue.js';
 import { forReaders } from './rules.js';
 import { ingestRules, providerFor, readsAllFolders, saveTokens } from './sync.js';
@@ -188,11 +189,20 @@ export async function decideInvoice(account, cand, ctx) {
     return 'waiting';
   }
 
+  // Triage first (docs/email-auto-entry-plan.md §3.8): what it surely says is not our invoice costs no reading call.
+  const sorted = await triage(account, cand, ctx, 'outbound');
+  if (notFor('invoice', sorted)) {
+    await saveDecision({ query }, account, cand, { outcome: 'not_invoice', method: 'ai', ai_calls: 0, confidence: sorted.confidence });
+    ctx.notInvoice += 1;
+    return 'not_invoice';
+  }
+
   // The client's document note, picked before the call by the recipient's domain, the thread's client, or its GSTIN in the PDF (§6).
   ctx.profiles ??= await loadProfiles({ query }, 'invoice');
   const { rows: [thread] } = cand.threadId ? await query('SELECT company_id FROM email_threads WHERE id = $1', [cand.threadId]) : { rows: [] };
   const read = await readWithAi(account, cand, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf', requirePdf: true,
+    schema: INVOICE_SCHEMA, ownNumber: (v) => v.invoice_no, disagree: (a, b) => fieldsDiffer(a, b, INVOICE_KEY_FIELDS),
     prompt: ({ pdfText }) => buildInvoicePrompt({
       pdfText, emailSubject: m.subject, emailText: text, sentAt: m.sent_at, to: c.external, ourNames: ctx.settings.ourNames, ourGstin: ctx.settings.ourGstin,
       ourGstins: ctx.settings.ourGstins, partners: ctx.settings.partners,
@@ -223,6 +233,10 @@ export async function decideInvoice(account, cand, ctx) {
     await saveDecision({ query }, account, cand, { ...base, outcome: 'not_invoice' });
     ctx.notInvoice += 1;
     return 'not_invoice';
+  }
+  // An image PDF read twice, the readings differing on what would be recorded (docs/email-auto-entry-plan.md §3.7).
+  if (read.disagreed?.length) {
+    return toReview({ query }, account, cand, ctx, { ...base, review_reason: 'readers_disagree', invoice_no: read.verdict.invoice_no, review_note: disagreeNote(read.disagreed) });
   }
   if (!checked.ok) return toReview({ query }, account, cand, ctx, { ...base, review_reason: checked.reason, invoice_no: read.verdict.invoice_no });
   return settle(account, cand, ctx, checked.invoice, base, read.pdf);
@@ -471,6 +485,7 @@ async function notifyOutcomes(ctx) {
     low_confidence: 'it could not be read with confidence', client_unknown: 'its client could not be confirmed for the PO it names', credit_note: 'it is a credit or debit note', revised: 'it revises or cancels an invoice', unreadable: 'its PDF could not be opened',
     no_invoice_no: 'it has no invoice number', amounts_not_in_pdf: 'its amounts could not be confirmed in the PDF', totals_do_not_add_up: 'its totals do not add up',
     bad_currency: 'its currency is not one the tracker uses', bad_date: 'its date is missing or after the email',
+    bad_gstin: 'a GSTIN on it does not check out, so it was misread', readers_disagree: 'its PDF is an image, and two readings of it differ',
   };
   for (const r of ctx.review) {
     await notify({

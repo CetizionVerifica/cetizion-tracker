@@ -72,7 +72,50 @@ export function serviceRule(services = [], { field = 'service', fallback = [] } 
 export const TOTALS_RULES = [
   'tax_breakup: {"igst": "amount as printed"|null, "cgst": …, "sgst": …}: each GST row as printed against its own label. A row that is printed blank, or not printed, is null, never "0".',
   'total_in_words: the amount-in-words line exactly as printed ("Rupees Two Lakh Ninety Five Thousand Only"), else null.',
+  'tax_rate_percent: the one GST rate the whole document is taxed at, as a number: 18 for "IGST @ 18%", and 18 for CGST 9% with SGST 9%. null when lines are taxed at different rates, or no rate is printed.',
 ];
+
+/**
+ * taxable × rate = tax, to the rupee: catches a misread digit where the
+ * amounts cannot be found in a text layer (an image PDF, §3.7). Only when
+ * one rate is printed for the whole document.
+ */
+export function taxAgreesWithRate(taxable, tax, rate) {
+  if (!(taxable > 0) || !(tax > 0) || !(rate > 0 && rate <= 40)) return true;
+  return Math.abs((taxable * rate) / 100 - tax) <= 1;
+}
+
+/** A GST rate as the model gave it ("18", 18, "18%"), as a number above 0 and at most 40, else null. */
+export const ratePercent = (v) => {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''));
+  return n > 0 && n <= 40 ? n : null;
+};
+
+// ---------------------------------------------------------------------
+// The answer's shape (docs/email-auto-entry-plan.md §3.5)
+// ---------------------------------------------------------------------
+
+/** JSON Schema pieces for a strict answer: every key present, nothing extra. */
+export const S = {
+  text: { type: ['string', 'null'] },
+  string: { type: 'string' },
+  number: { type: ['number', 'null'] },
+  integer: { type: ['integer', 'null'] },
+  boolean: { type: 'boolean' },
+  oneOf: (values) => ({ type: 'string', enum: values }),
+  object: (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false }),
+  list: (items) => ({ type: 'array', items }),
+};
+
+/** The schema a reader passes chatJSON: { name, schema }. */
+export const answerSchema = (name, properties) => ({ name, schema: S.object(properties) });
+
+/** The money a PO or an invoice prints, each amount as printed (§3.5). */
+export const TOTALS_SCHEMA = {
+  tax_breakup: S.object({ igst: S.text, cgst: S.text, sgst: S.text }),
+  tax_rate_percent: S.number,
+  total_in_words: S.text,
+};
 
 /** The GST rows in a fixed shape: each a number or null. */
 export function parseTaxBreakup(v, parse) {

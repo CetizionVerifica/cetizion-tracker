@@ -198,6 +198,80 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.equal((await poRow('4500020002'))?.quotation_no, q.quotation_no);
   });
 
+  test('2b. Alembic shape: "YOUR REF" is the number printed on our PDF; "Against delivery" takes the quotation\'s split; the vendor code and validity end are kept', async () => {
+    const box = await mailbox();
+    await client('Acme Alembic Shape Ltd', 'buyer@acme-alembic-shape.co.in');
+    const q = await quotation('Acme Alembic Shape Ltd');
+    await quotation('Acme Alembic Shape Ltd'); // the same value: company and value alone could not tell them apart
+    await db.query(`UPDATE quotations SET printed_no = 'QTN-04/2026', terms = '50% advance against PO, 50% on submission of the final report' WHERE id = $1`, [q.id]);
+    const msg = poEmail({
+      from: { email: 'buyer@acme-alembic-shape.co.in' }, subject: 'Order 3700101318',
+      attachments: [{ name: 'Order_3700101318.PDF', contentType: 'application/pdf', content: await poPdf({ number: '3700101318', buyer: 'Acme Alembic Shape Ltd', ref: 'QTN-04/2026', terms: 'Against delivery' }) }],
+    });
+    ai(reading({
+      po_number: '3700101318', buyer: { company_name: 'Acme Alembic Shape Ltd' }, our_quotation_ref: 'QTN-04/2026', payment_terms_text: 'Against delivery', credit_days: null,
+      vendor: { company_name: 'Cetizion Verifica Pvt. Ltd.', vendor_code: '0011305984' }, validity_end: day(-200),
+    }));
+    await deliver(box, [msg]);
+    const po = await poRow('3700101318');
+    assert.equal(po?.quotation_no, q.quotation_no, 'found by the printed number');
+    assert.equal(po.client_vendor_code, '0011305984');
+    const { rows: stages } = await db.query('SELECT stage_percent::float8 AS p FROM payment_stages WHERE po_number = $1 ORDER BY stage_no', ['3700101318']);
+    assert.deepEqual(stages.map((s) => s.p), [0.5, 0.5], 'the quotation\'s 50/50, not one stage on delivery');
+    const d = await decision(box.id, msg.provider_id);
+    assert.equal(d.stages_source, 'quotation_terms');
+    const { rows: [p] } = await db.query('SELECT planned_delivery_date::text AS d FROM projects WHERE project_id = $1', [po.project_id]);
+    assert.equal(p.d, day(-200), 'delivery by the end of the order\'s validity');
+  });
+
+  test('2c. Undo (docs/email-auto-entry-plan.md §3.10): the PO, stages and project removed, the quotation as it was; a quotation the email made goes too; refused once something is recorded', async () => {
+    const box = await mailbox();
+    await client('Acme Undo Ltd', 'anil@acme-undo.co.in');
+    const q = await quotation('Acme Undo Ltd');
+    const state = async () => (await db.query('SELECT status, stage_id, po_received, project_id FROM quotations WHERE id = $1', [q.id])).rows[0];
+    const before = await state();
+    const pdfOf = async (number, buyer = 'Acme Undo Ltd') => [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number, buyer }) }];
+    const msg = poEmail({ from: { email: 'anil@acme-undo.co.in' }, attachments: await pdfOf('4500078001') });
+    ai(reading({ po_number: '4500078001', buyer: { company_name: 'Acme Undo Ltd' } }));
+    await deliver(box, [msg]);
+    const po = await poRow('4500078001');
+    assert.ok(po, 'registered');
+    assert.notDeepEqual(await state(), before, 'the quotation is won');
+
+    const { body: origin } = await agent.get('/api/mail/origin?entity=purchase_order&id=4500078001').expect(200);
+    assert.deepEqual(origin.data.undo, { possible: true, reason: null });
+    const { body: undone } = await agent.post('/api/purchase-orders/4500078001/undo-from-email').expect(200);
+    assert.equal(undone.data.quotation, 'restored');
+    assert.equal(await poRow('4500078001'), undefined);
+    assert.equal((await db.query('SELECT 1 FROM projects WHERE project_id = $1', [po.project_id])).rows.length, 0, 'its project is gone');
+    assert.equal((await db.query('SELECT 1 FROM payment_stages WHERE po_number = $1', ['4500078001'])).rows.length, 0);
+    assert.deepEqual(await state(), before, 'the quotation as it was');
+    assert.equal((await decision(box.id, msg.provider_id)).outcome, 'undone');
+    await agent.post('/api/purchase-orders/4500078001/undo-from-email').expect(409);
+
+    // A PO with no quotation on file: the quotation and enquiry it made are removed too.
+    await client('Acme Undo New Ltd', 'anil@acme-undo-new.co.in');
+    ai(reading({ po_number: '4500078002', buyer: { company_name: 'Acme Undo New Ltd' } }));
+    await deliver(box, [poEmail({ from: { email: 'anil@acme-undo-new.co.in' }, attachments: await pdfOf('4500078002', 'Acme Undo New Ltd') })]);
+    const made = (await poRow('4500078002')).quotation_no;
+    const second = (await agent.post('/api/purchase-orders/4500078002/undo-from-email').expect(200)).body.data;
+    assert.equal(second.quotation, 'removed', JSON.stringify(second));
+    assert.equal((await db.query('SELECT 1 FROM quotations WHERE quotation_no = $1', [made])).rows.length, 0);
+    assert.equal((await db.query('SELECT 1 FROM enquiries WHERE quotation_no = $1', [made])).rows.length, 0);
+
+    // Once an invoice is on a stage, it is a person's to unpick.
+    const q3 = await quotation('Acme Undo Ltd', 300000);
+    ai(reading({ po_number: '4500078003', buyer: { company_name: 'Acme Undo Ltd' }, our_quotation_ref: q3.quotation_no, basic: 300000, tax: 54000 }));
+    await deliver(box, [poEmail({ from: { email: 'anil@acme-undo.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500078003', buyer: 'Acme Undo Ltd', basic: 300000, tax: 54000 }) }] })]);
+    assert.ok(await poRow('4500078003'));
+    await db.query(`UPDATE payment_stages SET invoice_no = 'INV-UNDO-1', invoice_date = CURRENT_DATE WHERE po_number = '4500078003' AND stage_no = 1`);
+    const { body: blocked } = await agent.get('/api/mail/origin?entity=purchase_order&id=4500078003').expect(200);
+    assert.equal(blocked.data.undo.possible, false);
+    assert.match(blocked.data.undo.reason, /invoice/);
+    await agent.post('/api/purchase-orders/4500078003/undo-from-email').expect(409);
+    assert.ok(await poRow('4500078003'), 'still there');
+  });
+
   test('3. two open quotations of that value go to review, both suggested', async () => {
     const box = await mailbox();
     await client('Acme Three Ltd', 'anil@acme-three.co.in');
@@ -221,7 +295,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
       from: { email: 'buyer@brand-new-steel.com' },
       attachments: [{ name: 'PO.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'BNS/PO/2026/77', buyer: 'Brand New Steel Pvt Ltd', terms: '100% after completion' }) }],
     });
-    ai(reading({ po_number: 'BNS/PO/2026/77', buyer: { company_name: 'Brand New Steel Pvt Ltd', gstin: '27AABCB7777A1Z1' }, payment_terms_text: '100% after completion', po_date: day(5) }));
+    ai(reading({ po_number: 'BNS/PO/2026/77', buyer: { company_name: 'Brand New Steel Pvt Ltd', gstin: '27AABCB7777A1ZQ' }, payment_terms_text: '100% after completion', po_date: day(5) }));
     await deliver(box, [msg]);
     const po = await poRow('BNS/PO/2026/77');
     assert.ok(po, 'registered');
@@ -235,7 +309,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     const { rows: [e] } = await db.query('SELECT e.status, s.name AS source FROM enquiries e LEFT JOIN lead_sources s ON s.id = e.source_id WHERE e.quotation_no = $1', [q.quotation_no]);
     assert.deepEqual(e, { status: 'Converted', source: 'Other' });
     const { rows: [co] } = await db.query('SELECT gstin FROM companies WHERE id = $1', [q.company_id]);
-    assert.equal(co.gstin, '27AABCB7777A1Z1', 'the GSTIN read from the PO is kept for next time');
+    assert.equal(co.gstin, '27AABCB7777A1ZQ', 'the GSTIN read from the PO is kept for next time');
     const { rows: stages } = await db.query('SELECT trigger_event, stage_percent::float AS p FROM payment_stages WHERE po_number = $1', [po.po_number]);
     assert.deepEqual(stages.map((s) => [s.trigger_event, s.p]), [['On Delivery', 1]]);
     assert.equal((await decision(box.id, msg.provider_id)).created_quotation, true);
@@ -342,6 +416,60 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     ai(reading({ po_number: '4500090009', buyer: { company_name: 'Acme Nine Ltd' }, vendor: { company_name: 'Bureau Veritas India' } }));
     await deliver(box, [msg]);
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
+  });
+
+  test('9f. triage (docs/email-auto-entry-plan.md §3.8): what it surely says is not a PO costs no reading call; unsure, or a PO, it is read; one call for both mailboxes', async (t) => {
+    const triage = await import('../src/lib/mailbox/triage.js');
+    const labels = [];
+    t.after(() => { triage.deps.chat = null; });
+    let answer;
+    triage.deps.chat = async (system, user, opts) => { labels.push({ user, opts }); return answer; };
+    const box = await mailbox();
+    const other = await mailbox();
+    await client('Acme Triage Ltd', 'anil@acme-triage.co.in');
+    const q = await quotation('Acme Triage Ltd');
+    const pdf = async (number) => [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number, buyer: 'Acme Triage Ltd' }) }];
+
+    // An RFQ that looks like a PO: triage says enquiry, surely. The PO reader makes no call, and hands it on.
+    answer = { label: 'enquiry', confidence: 0.95 };
+    const reads = ai(reading({ po_number: '4500091001', buyer: { company_name: 'Acme Triage Ltd' } }));
+    const rfq = poEmail({ from: { email: 'anil@acme-triage.co.in' }, subject: 'RFQ: purchase order for EcoVadis', attachments: await pdf('4500091001') });
+    await deliver(box, [rfq]);
+    assert.equal(reads.length, 0, 'no reading call');
+    const d = await decision(box.id, rfq.provider_id);
+    assert.deepEqual([d.outcome, d.ai_calls], ['not_po', 0]);
+    assert.equal(labels[0].opts.schema.name, 'email_triage');
+    assert.match(labels[0].user, /Subject: RFQ: purchase order for EcoVadis/);
+    const { rows: [tr] } = await db.query('SELECT label, direction FROM email_triage WHERE account_id = $1 AND provider_id = $2', [box.id, rfq.provider_id]);
+    assert.deepEqual([tr.label, tr.direction], ['enquiry', 'inbound']);
+
+    // Unsure: read as before.
+    answer = { label: 'other', confidence: 0.6 };
+    const unsure = poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091002') });
+    ai(reading({ po_number: '4500091002', buyer: { company_name: 'Acme Triage Ltd' } }));
+    await deliver(box, [unsure]);
+    assert.equal((await poRow('4500091002'))?.quotation_no, q.quotation_no);
+
+    // A PO: read, and the same email in a second mailbox asks triage nothing more.
+    answer = { label: 'client_po', confidence: 0.97 };
+    const before = labels.length;
+    const po = poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091003') });
+    await deliver(box, [po]);
+    await deliver(other, [{ ...po, provider_id: uid('m') }]);
+    assert.equal(labels.length, before + 1, 'one triage call for the email, whichever mailbox');
+
+    // Switched off: no triage call at all.
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_triage_enabled'`);
+    try {
+      const n = labels.length;
+      answer = { label: 'other', confidence: 0.99 };
+      ai(reading({ po_number: '4500091004', buyer: { company_name: 'Acme Triage Ltd' } }));
+      await deliver(box, [poEmail({ from: { email: 'anil@acme-triage.co.in' }, attachments: await pdf('4500091004') })]);
+      assert.equal(labels.length, n);
+      assert.ok(await poRow('4500091004'), 'read and registered as before');
+    } finally {
+      await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_triage_enabled'`);
+    }
   });
 
   test('9e. review only: a PO that would register waits for a person, saying against what; a client turned back on registers', async () => {
@@ -888,7 +1016,7 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
 
     await client('Gst Buyer Ltd', 'ap@gst-buyer.co.in');
     const indian = poEmail({ from: { email: 'ap@gst-buyer.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500077004', buyer: 'Gst Buyer Ltd' }) }] });
-    ai(reading({ po_number: '4500077004', buyer: { company_name: 'Gst Buyer Ltd', gstin: '27AAACG1234A1Z5' }, currency: null }));
+    ai(reading({ po_number: '4500077004', buyer: { company_name: 'Gst Buyer Ltd', gstin: '27AAACG1234A1ZE' }, currency: null }));
     await deliver(box, [indian]);
     assert.equal((await poRow('4500077004'))?.currency, 'INR');
   });
@@ -920,8 +1048,10 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     // The model takes the annexure's figures, which the PO itself never prints.
     const calls = ai(reading({ po_number: '4500313131', buyer: { company_name: 'Acme Annex Ltd' }, basic: 300000, tax: 54000 }));
     await deliver(box, [msg]);
-    assert.match(calls[0].user, /Order document text:\nPURCHASE ORDER/);
-    assert.match(calls[0].user, /Also attached to the same email, for reference \(Annexure A\.pdf\):\nANNEXURE A - SCHEDULE OF RATES/);
+    // A model that reads PDFs gets the text as one part beside the PDF itself.
+    const user = Array.isArray(calls[0].user) ? calls[0].user.filter((p) => p.type === 'text').map((p) => p.text).join('\n') : calls[0].user;
+    assert.match(user, /Order document text:\nPURCHASE ORDER/);
+    assert.match(user, /Also attached to the same email, for reference \(Annexure A\.pdf\):\nANNEXURE A - SCHEDULE OF RATES/);
     const d = await decision(box.id, msg.provider_id);
     assert.deepEqual([d.outcome, d.review_reason], ['review', 'amounts_not_in_pdf']);
     assert.equal(await poRow('4500313131'), undefined);

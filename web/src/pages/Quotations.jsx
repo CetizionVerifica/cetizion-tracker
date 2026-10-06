@@ -31,6 +31,7 @@ export function quotationFields(lookups) {
     { name: 'po_received', label: 'PO received', type: 'boolean', default: 'false' },
     { name: 'project_id', label: 'Project ID', type: 'combo', options: lookups.projects.map((p) => p.project_id), hint: 'Leave blank until the project is registered' },
     { name: 'place_of_supply_state', label: 'Place of supply (state)' },
+    { name: 'printed_no', label: 'Printed number', hint: 'The number on the PDF sent, if not the one above. A PO that quotes it finds this quotation' },
     { name: 'document_id', label: 'Signed / client copy', type: 'document', owner: 'quotations', maxBytes: lookups.limits?.document_max_bytes, span: 2 },
     { name: 'terms', label: 'Terms', type: 'textarea', span: 'all', hint: 'Printed on the PDF. Blank: the default terms from Settings' },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },

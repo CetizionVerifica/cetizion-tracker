@@ -318,6 +318,56 @@ mailboxRouter.post('/:id/disconnect', async (req, res) => {
 // setting, written through PATCH /api/settings/:key like any other.
 
 /** Per mailbox: how far the read of past mail has got, and what was decided. */
+/**
+ * The mail auto-entry panel (docs/email-auto-entry-plan.md §3.10): per day,
+ * the emails the readers decided, what they entered, what went to review,
+ * what triage kept from the readers, and the AI calls and spend; the review
+ * reasons over the period; and what is waiting or failing now. Counts only.
+ */
+mailboxRouter.get('/auto-entry', requireAdmin, async (req, res) => {
+  const { aiConfig, readsPdf } = await import('../lib/ai.js');
+  const days =Math.min(60, Math.max(1, Number(req.query.days) || 14));
+  const { rows: perDay } = await query(
+    `WITH span AS (SELECT generate_series((now() AT TIME ZONE 'Asia/Kolkata')::date - ($1::int - 1), (now() AT TIME ZONE 'Asia/Kolkata')::date, interval '1 day')::date AS day),
+          dec AS (
+            SELECT (decided_at AT TIME ZONE 'Asia/Kolkata')::date AS day, account_id, provider_id,
+                   outcome IN ('registered','linked') AS entered, review_reason IS NOT NULL AS review, ai_calls FROM email_po_decisions
+             UNION ALL
+            SELECT (decided_at AT TIME ZONE 'Asia/Kolkata')::date, account_id, provider_id,
+                   outcome IN ('recorded','linked'), review_reason IS NOT NULL, ai_calls FROM email_invoice_decisions
+             UNION ALL
+            SELECT (decided_at AT TIME ZONE 'Asia/Kolkata')::date, account_id, provider_id,
+                   outcome IN ('created','linked') OR quotation_extraction IN ('created','revised'), false, ai_calls FROM email_enquiry_decisions),
+          d AS (SELECT day, count(DISTINCT (account_id, provider_id))::int AS read, count(*) FILTER (WHERE entered)::int AS entered,
+                       count(*) FILTER (WHERE review)::int AS review FROM dec GROUP BY day),
+          t AS (SELECT (decided_at AT TIME ZONE 'Asia/Kolkata')::date AS day, count(*)::int AS triaged,
+                       count(*) FILTER (WHERE label IN ('other','payment_advice'))::int AS set_aside FROM email_triage GROUP BY 1),
+          s AS (SELECT day, sum(calls)::int AS ai_calls, round(sum(cost_usd), 4)::float8 AS cost_usd FROM ai_usage_daily GROUP BY day)
+     SELECT span.day::text AS day, COALESCE(d.read, 0) AS read, COALESCE(d.entered, 0) AS entered, COALESCE(d.review, 0) AS review,
+            COALESCE(t.triaged, 0) AS triaged, COALESCE(t.set_aside, 0) AS set_aside, COALESCE(s.ai_calls, 0) AS ai_calls, COALESCE(s.cost_usd, 0) AS cost_usd
+       FROM span LEFT JOIN d USING (day) LEFT JOIN t USING (day) LEFT JOIN s USING (day) ORDER BY span.day DESC`, [days]);
+  const { rows: reasons } = await query(
+    `SELECT reader, review_reason AS reason, count(*)::int AS n FROM (
+       SELECT 'po' AS reader, review_reason, decided_at FROM email_po_decisions
+        UNION ALL SELECT 'invoice', review_reason, decided_at FROM email_invoice_decisions) r
+      WHERE review_reason IS NOT NULL AND decided_at >= now() - make_interval(days => $1::int)
+      GROUP BY 1, 2 ORDER BY n DESC, reason`, [days]);
+  const { rows: [now] } = await query(
+    `SELECT (SELECT count(*) FROM email_po_decisions WHERE outcome = 'review')::int + (SELECT count(*) FROM email_invoice_decisions WHERE outcome = 'review')::int AS to_review,
+            (SELECT count(*) FROM email_po_decisions WHERE outcome = 'review' AND decided_at < now() - interval '2 days')::int
+              + (SELECT count(*) FROM email_invoice_decisions WHERE outcome = 'review' AND decided_at < now() - interval '2 days')::int AS older_than_two_days,
+            (SELECT count(*) FROM email_invoice_decisions WHERE outcome = 'waiting')::int AS waiting,
+            (SELECT count(*) FROM email_reader_queue WHERE failed_at IS NULL AND attempts > 0)::int AS retrying,
+            (SELECT count(*) FROM email_reader_queue WHERE failed_at IS NOT NULL)::int AS failed,
+            COALESCE((SELECT value FROM settings WHERE key = 'email_triage_enabled'), 'true') <> 'false' AS triage_enabled`);
+  res.json({
+    data: {
+      days: perDay, reasons, now,
+      models: { reader: aiConfig.model, fallbacks: aiConfig.fallbacks, check: aiConfig.checkModel, triage: aiConfig.triageModel, reads_pdf: readsPdf() },
+    },
+  });
+});
+
 mailboxRouter.get('/auto-enquiries', requireAdmin, async (req, res) => {
   const { enquirySettings, aiCallsToday } = await import('../lib/mailbox/autoEnquiry.js');
   const { poSettings } = await import('../lib/mailbox/autoPurchaseOrder.js');
@@ -469,7 +519,14 @@ mailThreadRouter.get('/origin', async (req, res) => {
         `SELECT t.id FROM email_threads t JOIN connected_accounts a ON a.id = t.account_id WHERE t.id = $1 AND ${readableThread(req, tp)}`, tp);
       threadId = t?.id ?? null;
     }
-    return res.json({ data: { received_at: d.received_at, mode: d.mode, mailbox: d.mailbox, thread_id: threadId, by_hand: d.outcome.endsWith('_by_hand') } });
+    // Undo (docs/email-auto-entry-plan.md §3.10): an admin is told whether it is still possible, and why not.
+    let undo;
+    if (req.user?.role === 'admin' && !d.outcome.endsWith('_by_hand')) {
+      const { poUndoable, invoiceUndoable } = await import('../lib/mailbox/undoEntry.js');
+      const u = entity === 'purchase_order' ? await poUndoable({ query }, String(id)) : await invoiceUndoable({ query }, Number(id));
+      undo = { possible: Boolean(u.decision), reason: u.reason || null };
+    }
+    return res.json({ data: { received_at: d.received_at, mode: d.mode, mailbox: d.mailbox, thread_id: threadId, by_hand: d.outcome.endsWith('_by_hand'), undo } });
   }
   const params = [String(id)];
   const mine = ownerClause(scopeOf(req), params);

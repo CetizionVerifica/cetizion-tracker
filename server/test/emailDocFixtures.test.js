@@ -32,7 +32,8 @@ describe('the sample documents, through the checks', () => {
         return;
       }
       const v = parseInvoiceVerdict(f.answer);
-      const r = checkInvoice(v, { emailDate: f.email.sent_at, sourceText: f.text, ...parties });
+      // An image PDF has nothing to check its amounts against: the reader reads it twice instead (docs/email-auto-entry-plan.md §3.7).
+      const r = checkInvoice(v, { emailDate: f.email.sent_at, sourceText: f.image ? null : f.text, ...parties });
       assert.equal(r.ok, f.expect.ok, r.reason);
       for (const [k, want] of Object.entries(f.expect.fields)) assert.deepEqual(r.invoice[k], want, k);
       if (f.expect.split) {
@@ -43,6 +44,6 @@ describe('the sample documents, through the checks', () => {
   }
 
   test('every sample is here', () => {
-    assert.deepEqual(loadFixtures().map((f) => f.file).sort(), ['alembic-po.json', 'aragen-po.json', 'dasami-work-order.json', 'hindalco-po.json', 'invoice-cvpl-2026-27-037.json']);
+    assert.deepEqual(loadFixtures().map((f) => f.file).sort(), ['alembic-po.json', 'aragen-po.json', 'dasami-work-order.json', 'hindalco-po.json', 'invoice-cvpl-2026-27-037.json', 'invoice-cvpl-2026-27-074.json']);
   });
 });

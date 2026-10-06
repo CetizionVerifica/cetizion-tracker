@@ -124,8 +124,11 @@ export async function create(db, { account, cand, prepared, client, owner }) {
   const printedNo = x.quotation_no_printed;
 
   if (printedNo) {
-    const { rows: [existing] } = await db.query('SELECT * FROM quotations WHERE quotation_no = $1 FOR UPDATE', [printedNo]);
-    if (existing && existing.company_id === companyId) {
+    // By either number: one that clashed before was kept as its printed number (docs/email-auto-entry-plan.md §3.4).
+    const { rows: [existing] } = await db.query(
+      `SELECT * FROM quotations WHERE (quotation_no = $1 OR upper(printed_no) = upper($1)) AND company_id = $2
+        ORDER BY (quotation_no = $1) DESC, id LIMIT 1 FOR UPDATE`, [printedNo, companyId]);
+    if (existing) {
       // The same quotation again: a resend creates nothing; a higher
       // revision goes through the revision path, keeping the old version.
       if (x.revision <= existing.revision) return { repeated: true, quotation_no: existing.quotation_no, printed: {} };
@@ -143,11 +146,12 @@ export async function create(db, { account, cand, prepared, client, owner }) {
   const { rows: [q] } = await db.query(
     `INSERT INTO quotations (quotation_no, client_name, contact_person, country, quotation_date, valid_until, revision, currency, terms, place_of_supply_state,
                              status, sent_at, service_quoted, owner_user_id, sales_person, remarks, document_id,
-                             subtotal, tax_total, total, quotation_value)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Submitted',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,
+                             subtotal, tax_total, total, quotation_value, printed_no)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Submitted',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
     [no, client, x.client.contact_name, x.client.country, x.quotation_date, x.valid_until, x.revision, x.currency, x.terms, x.client.state,
       m.sent_at, services, owner?.id ?? null, owner?.name ?? null, remarks, prepared.documentId,
-      noLines ? x.subtotal : null, noLines ? x.tax_total : null, noLines ? x.total : null, x.total]);
+      noLines ? x.subtotal : null, noLines ? x.tax_total : null, noLines ? x.total : null, x.total,
+      printedNo && no !== printedNo ? printedNo : null]);
   if (!noLines) await insertLines(db, q.id, x.lines);
   return { quotation_no: q.quotation_no, total: x.total, printed: prepared.printed };
 }

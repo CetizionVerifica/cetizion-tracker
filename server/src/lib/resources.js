@@ -245,7 +245,7 @@ export const resources = {
     // The year in the generated number comes from the quotation's own date.
     autoIdDateField: 'quotation_date',
     defaultSort: 'quotation_date DESC NULLS LAST, id DESC',
-    search: ['quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
+    search: ['quotation_no', 'printed_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country', 'sales_person'],
     filters: ['status', 'sales_person', 'project_id', 'client_name', 'sector', 'country', 'payment_status', 'company_id', 'stage_id', 'lost_reason_id', 'quotation_value', 'contact_email', 'contact_person', 'stage_type'],
     normalizedFilters: ['sales_person', 'client_name', 'sector'],
     dateFilter: 'quotation_date',
@@ -256,7 +256,7 @@ export const resources = {
       'quotation_no', 'client_name', 'contact_person', 'service_quoted', 'sector', 'country',
       'sales_person', 'sales_person_email', 'quotation_date', 'quotation_value',
       'currency', 'status', 'po_received', 'project_id', 'remarks', 'document_id',
-      'valid_until', 'terms', 'place_of_supply_state',
+      'valid_until', 'terms', 'place_of_supply_state', 'printed_no',
       'stage_id', 'probability', 'expected_close_date', 'next_step', 'lost_reason_id', 'lost_notes', 'competitor',
     ],
     schema: z.object({
@@ -279,6 +279,9 @@ export const resources = {
       valid_until: date(),
       terms: str(4000),
       place_of_supply_state: str(80),
+      // The number printed on the PDF we sent, when it is not quotation_no:
+      // a client's PO quotes it back (docs/email-auto-entry-plan.md §3.4).
+      printed_no: str(60),
       stage_id: int({ min: 1 }),
       probability: int({ min: 0, max: 100 }),
       expected_close_date: date(),
@@ -411,6 +414,7 @@ export const resources = {
       'project_manager_email', 'remarks', 'document_id',
       // Revised or cancelled — out of the sales figures (linkPurchaseOrder checks the link).
       'replaces_po_number', 'cancelled',
+      'client_vendor_code',
     ],
     schema: z.object({
       po_number: requiredStr(60),
@@ -426,6 +430,8 @@ export const resources = {
       document_id: int({ min: 1 }),
       quotation_no: str(60),
       replaces_po_number: str(60),
+      // Our supplier code at the client, which its accounts ask for on invoices.
+      client_vendor_code: str(40),
       // NOT NULL in the table: blank means "not cancelled". An edit that does
       // not send it leaves it alone (crud writes only the fields sent).
       cancelled: bool().transform((v) => v ?? false),

@@ -281,6 +281,7 @@ session is **401**, before any of these is considered.
 | `POST /api/mailboxes/:id/sync` | any | Scoped: mailbox-owner. |
 | `POST /api/mailboxes/:id/test-messages` | **admin** | Writes sample messages into a real connected mailbox. |
 | `GET /api/mailboxes/auto-enquiries` | **admin** | Counts what every mailbox's mail was judged to be, the whole team's included. |
+| `GET /api/mailboxes/auto-entry` | **admin** | What the email readers entered, sent to review and spent each day, across every mailbox. |
 | `GET /api/mailboxes/blocklist` | any |  |
 | `POST /api/mailboxes/blocklist` | **admin** | The blocklist decides whose mail the application will never sync, for everybody. |
 | `DELETE /api/mailboxes/blocklist/:id` | **admin** | The blocklist decides whose mail the application will never sync, for everybody; removing an entry starts that mail flowing again. |
@@ -306,6 +307,7 @@ session is **401**, before any of these is considered.
 | **/api/payment-stages** | | |
 | `POST /api/payment-stages/:id/invoice` | any |  |
 | `POST /api/payment-stages/:id/payment` | any |  |
+| `POST /api/payment-stages/:id/undo-from-email` | **admin** | Takes an invoice recorded from email back off its stage. |
 | `GET /api/payment-stages/invoice-review` | any | A salesperson sees the items on POs they may open; one matched to no PO is an admin's. |
 | `POST /api/payment-stages/invoice-review/:id/dismiss` | any | Scoped: parent-owner. |
 | `POST /api/payment-stages/invoice-review/:id/record` | any | Reads the invoice again for the invoice dialog; saves nothing but an unattached upload. |
@@ -347,6 +349,7 @@ session is **401**, before any of these is considered.
 | `POST /api/purchase-orders/:poNumber/email-read-checked` | any | Scoped: parent-owner. |
 | `GET /api/purchase-orders/:poNumber/full` | any |  |
 | `POST /api/purchase-orders/:poNumber/stages` | any |  |
+| `POST /api/purchase-orders/:poNumber/undo-from-email` | **admin** | Deletes a PO registered from email with its stages and project, and puts its quotation back. |
 | `GET /api/purchase-orders/review` | any | A salesperson sees the items whose suggested quotation is theirs; an admin sees all. |
 | `POST /api/purchase-orders/review/:id/dismiss` | any | Scoped: record-owner. |
 | `POST /api/purchase-orders/review/:id/register` | any | Reads the PO again for the Register PO dialog; saves nothing but an unattached upload. |

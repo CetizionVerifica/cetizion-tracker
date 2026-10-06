@@ -435,6 +435,10 @@ CREATE TABLE quotations (
   revision               int NOT NULL DEFAULT 0,
   terms                  text,
   place_of_supply_state  text,
+  -- The number printed on the PDF we sent, when the tracker numbered the
+  -- quotation otherwise (entered by hand, or the printed number clashed):
+  -- a client's PO quotes it back as "YOUR REF" (083).
+  printed_no             text,
   subtotal               numeric(16,2),
   tax_total              numeric(16,2),
   total                  numeric(16,2),
@@ -475,6 +479,7 @@ CREATE INDEX quotations_stage_id_idx ON quotations (stage_id);
 CREATE INDEX quotations_owner_user_id_idx ON quotations (owner_user_id);
 CREATE INDEX quotations_originating_user_id_idx ON quotations (originating_user_id);
 CREATE INDEX ON quotations (status);
+CREATE INDEX quotations_printed_no_idx ON quotations (upper(printed_no)) WHERE printed_no IS NOT NULL;
 
 -- ---------------------------------------------------------------------
 -- Quotation lines and revisions (#23)
@@ -628,6 +633,9 @@ CREATE TABLE purchase_orders (
   -- which partner (079). The invoice must be raised from that GSTIN.
   addressed_gstin        text,
   partner_name           text,
+  -- Our supplier code at the client, which its accounts ask to see on our
+  -- invoices (083).
+  client_vendor_code     text,
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT purchase_orders_not_replacing_itself CHECK (replaces_po_number <> po_number)
@@ -3101,7 +3109,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                          ('registered','linked','review','not_po','registered_by_hand','dismissed',
                           -- live mail the AI could not read (an error, or the day's ceiling):
                           -- read again by pos.backfill, and sent to review after a week
-                          'retry')),
+                          'retry',
+                          -- registered, then taken back out with Undo (083)
+                          'undone')),
   document_type        text,
   review_reason        text CHECK (review_reason IN
                          ('no_match','several_matches','not_to_us','low_confidence','no_po_number',
@@ -3115,7 +3125,10 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                           -- a PO number not of the client's shape (081)
                           'po_number_pattern',
                           -- read and checked, held while the readers are review-only (082)
-                          'review_only')),
+                          'review_only',
+                          -- a GSTIN whose check character does not fit; an image PDF
+                          -- whose two readings differ (083)
+                          'bad_gstin','readers_disagree')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3129,7 +3142,11 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   review_note          text,
   -- No quotation was on file, so one was made from the PO (§3.3).
   created_quotation    boolean NOT NULL DEFAULT false,
-  stages_source        text CHECK (stages_source IN ('po_terms','template','none')),
+  -- The quotation and enquiries as they were before the PO won them, for
+  -- Undo (083, docs/email-auto-entry-plan.md §3.10). Statuses only.
+  undo_state           jsonb,
+  -- quotation_terms: the PO named only a trigger, so the quotation's split was used (083).
+  stages_source        text CHECK (stages_source IN ('po_terms','quotation_terms','template','none')),
   -- Who settled it from the review queue, and when: registered by hand or
   -- dismissed. decided_at stays the moment it was read, which the daily AI
   -- ceiling counts by.
@@ -3173,7 +3190,9 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   outcome                text NOT NULL CHECK (outcome IN
                            ('recorded','linked','review','not_invoice','recorded_by_hand','dismissed',
                             -- its PO is not in the tracker yet: tried again until auto_invoice_wait_days
-                            'waiting')),
+                            'waiting',
+                            -- recorded, then taken back off the stage with Undo (083)
+                            'undone')),
   document_type          text,
   review_reason          text CHECK (review_reason IN
                            ('po_not_found','several_pos','amount_not_a_stage','po_without_stages','invoice_no_in_use',
@@ -3187,7 +3206,10 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                             -- the PO date it prints is not the matched PO's (080)
                             'po_date_mismatch',
                             -- read and checked, held while the readers are review-only (082)
-                            'review_only')),
+                            'review_only',
+                            -- a GSTIN whose check character does not fit; an image PDF
+                            -- whose two readings differ (083)
+                            'bad_gstin','readers_disagree')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3226,6 +3248,36 @@ CREATE TABLE IF NOT EXISTS email_ai_calls (
   made_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS email_ai_calls_made_idx ON email_ai_calls (made_at);
+
+-- What one cheap call said each email is, before a document reader runs
+-- (083, docs/email-auto-entry-plan.md §3.8). Shared by the readers and by
+-- the same email in another mailbox. The label only, never the text.
+CREATE TABLE IF NOT EXISTS email_triage (
+  id                   serial PRIMARY KEY,
+  account_id           int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  provider_id          text NOT NULL,
+  internet_message_id  text,
+  direction            text NOT NULL CHECK (direction IN ('inbound','outbound')),
+  label                text NOT NULL CHECK (label IN ('enquiry','quotation_sent','client_po','po_change','our_invoice','payment_advice','other')),
+  confidence           numeric(4,3) NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+  decided_at           timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS email_triage_message_idx ON email_triage (lower(internet_message_id)) WHERE internet_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_triage_decided_idx ON email_triage (decided_at);
+
+-- Each day's AI calls and spend, by what made them and on which model
+-- (083, docs/email-auto-entry-plan.md §3.10). Counts and money only.
+CREATE TABLE IF NOT EXISTS ai_usage_daily (
+  day                date NOT NULL,
+  purpose            text NOT NULL,
+  model              text NOT NULL,
+  calls              int NOT NULL DEFAULT 0,
+  prompt_tokens      bigint NOT NULL DEFAULT 0,
+  completion_tokens  bigint NOT NULL DEFAULT 0,
+  cost_usd           numeric(12,6) NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, purpose, model)
+);
 
 -- ------------------------------------------- client document notes (081)
 -- What is particular about one client's POs or invoices, for the email
@@ -3278,7 +3330,8 @@ INSERT INTO settings (key, value, notes) VALUES
   ('po_portal_senders', '*@ansmtp.ariba.com,*@coupahost.com,*@jaggaer.com', 'Procurement-portal senders whose PO notifications are read even though they are automated. Comma-separated; * matches any text.'),
   ('auto_invoice_enabled', 'true', 'Record invoices we email to clients against the right payment stage, with the PDF. Off stops it at the next run; nothing already recorded is removed.'),
   ('auto_invoice_min_confidence', '0.85', 'How sure the AI must be (0 to 1) of an invoice read from email before it is recorded. Below it, the invoice goes to review.'),
-  ('auto_invoice_wait_days', '7', 'How long an invoice whose PO is not in the tracker yet is retried before it goes to review.')
+  ('auto_invoice_wait_days', '7', 'How long an invoice whose PO is not in the tracker yet is retried before it goes to review.'),
+  ('email_triage_enabled', 'true', 'Sort each email with one quick AI call before the PO, invoice and enquiry readers read it, so the thorough reading is spent only on business documents. Off: every reader reads as before.')
 ON CONFLICT (key) DO NOTHING;
 
 -- Every email handed to the PO, invoice or enquiry reader, kept until that

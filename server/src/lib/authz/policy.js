@@ -345,6 +345,7 @@ export const routes = [
   { method: 'POST', path: '/api/mailboxes/:id/sync', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/refresh-bodies', access: signedIn, restrictions: ['mailbox-owner'] },
   { method: 'POST', path: '/api/mailboxes/:id/disconnect', access: signedIn, restrictions: ['mailbox-owner'] },
+  { method: 'GET', path: '/api/mailboxes/auto-entry', access: mustBeAdmin, why: 'What the email readers entered, sent to review and spent each day, across every mailbox.' },
   { method: 'GET', path: '/api/mailboxes/auto-enquiries', access: mustBeAdmin, why: 'Counts what every mailbox\'s mail was judged to be, the whole team\'s included.' },
   { method: 'POST', path: '/api/mailboxes/:id/auto-enquiries/rerun', access: mustBeAdmin, why: 'Has a mailbox\'s mail judged again for enquiries, or read again for POs or invoices, which spends the AI budget everybody shares.' },
   { method: 'GET', path: '/api/mailboxes/blocklist', access: signedIn },
@@ -459,6 +460,7 @@ export const routes = [
   { method: 'POST', path: '/api/purchase-orders/review/:id/register', access: signedIn, restrictions: ['record-owner'], note: 'Reads the PO again for the Register PO dialog; saves nothing but an unattached upload.' },
   { method: 'POST', path: '/api/purchase-orders/review/:id/dismiss', access: signedIn, restrictions: ['record-owner'] },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/email-read-checked', access: signedIn, restrictions: ['parent-owner'] },
+  { method: 'POST', path: '/api/purchase-orders/:poNumber/undo-from-email', access: mustBeAdmin, why: 'Deletes a PO registered from email with its stages and project, and puts its quotation back.' },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
   { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },
@@ -467,6 +469,7 @@ export const routes = [
   { method: 'POST', path: '/api/payment-stages/invoice-review/:id/record', access: signedIn, restrictions: ['parent-owner'], note: 'Reads the invoice again for the invoice dialog; saves nothing but an unattached upload.' },
   { method: 'POST', path: '/api/payment-stages/invoice-review/:id/split', access: signedIn, restrictions: ['parent-owner'], note: 'Splits the PO\'s one open 100% stage as the item suggests; records nothing.' },
   { method: 'POST', path: '/api/payment-stages/invoice-review/:id/dismiss', access: signedIn, restrictions: ['parent-owner'] },
+  { method: 'POST', path: '/api/payment-stages/:id/undo-from-email', access: mustBeAdmin, why: 'Takes an invoice recorded from email back off its stage.' },
   { method: 'POST', path: '/api/payment-stages/:id/payment', access: signedIn },
 
   // --------------------------------------------------------- quotations

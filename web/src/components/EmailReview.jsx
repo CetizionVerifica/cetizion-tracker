@@ -18,7 +18,7 @@ import { date, money } from '../lib/format.js';
 
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
-const PO_REASONS = {
+export const PO_REASONS = {
   no_match: 'No quotation matches it',
   several_matches: 'More than one quotation could be it',
   not_to_us: 'Not addressed to us',
@@ -38,10 +38,12 @@ const PO_REASONS = {
   no_currency: 'Currency could not be read',
   wrong_gstin: 'Addressed to a GSTIN we do not invoice from',
   po_number_pattern: 'PO number not of the client\'s usual shape',
+  bad_gstin: 'A GSTIN on it was misread',
+  readers_disagree: 'An image PDF; two readings differ',
   review_only: 'Read and checked; review-only for now',
 };
 
-const INVOICE_REASONS = {
+export const INVOICE_REASONS = {
   po_not_found: 'Its PO is not in the tracker',
   several_pos: 'More than one PO could be it',
   amount_not_a_stage: 'Amount is not one of the PO\'s stages',
@@ -60,6 +62,8 @@ const INVOICE_REASONS = {
   client_unknown: 'Its client could not be confirmed',
   wrong_gstin: 'Raised from another GSTIN than its PO was addressed to',
   po_date_mismatch: 'The PO date it gives is not the PO\'s',
+  bad_gstin: 'A GSTIN on it was misread',
+  readers_disagree: 'An image PDF; two readings differ',
   review_only: 'Read and checked; review-only for now',
 };
 

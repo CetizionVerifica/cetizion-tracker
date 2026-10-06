@@ -267,12 +267,14 @@ export async function registerPurchaseOrder(client, b, { scope = { unrestricted:
   const poValue = b.po_value ?? q.total ?? q.quotation_value ?? 0;
   const terms = b.payment_terms_days ?? 30;
   const { rows: [po] } = await client.query(
-    `INSERT INTO purchase_orders (po_number, project_id, quotation_no, po_date, po_value, currency, payment_terms_days, document_id, remarks, addressed_gstin, partner_name)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    `INSERT INTO purchase_orders (po_number, project_id, quotation_no, po_date, po_value, currency, payment_terms_days, document_id, remarks, addressed_gstin, partner_name, client_vendor_code)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [b.po_number, projectId, q.quotation_no, b.po_date ?? null, poValue, currency, terms, b.document_id ?? null,
      b.remarks ?? `Registered from quotation ${q.quotation_no}`,
      // Who the client addressed it to: one of our GSTINs, or a partner's (docs/email-po-invoice-prompt-plan.md §1).
-     b.addressed_gstin || null, b.partner_name || null]
+     b.addressed_gstin || null, b.partner_name || null,
+     // Our supplier code at the client, for our invoices (docs/email-auto-entry-plan.md §2.2).
+     b.client_vendor_code || null]
   );
 
   // ---- service lines: the quotation's lines, else its subject at the PO value
