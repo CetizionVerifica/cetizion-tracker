@@ -73,7 +73,7 @@ Two things stand out:
 | `contacts` | Darshit Shah, `darshit.shah@alembic.co.in` | Parsharamulu (no email) | Buyer named on the PO, else the email sender. |
 | `purchase_orders.po_number` | 3700101318 | 9010018889 | As printed. |
 | `purchase_orders.po_date` | 2026-05-20 | 2026-08-03 | Day-first; `03.08.2026` is 3 August. |
-| `purchase_orders.po_value` | 500000.00 | 250000.00 | **Taxable value, before GST**, as the register dialog stores it today. GST and gross total are kept for the checks only. |
+| `purchase_orders.po_value` | 500000.00 basic, as printed | 250000.00 basic, as printed | **Stored as the total including GST**: a PO that prints only its basic value is grossed up at the quotation lines' own GST rates when it is registered (`lib/purchaseOrders.js`, `grossUp` in `lib/mailbox/autoPurchaseOrder.js`). The client portal works the taxable value and GST back out of it (`po_gst_split`, #198). *Corrected 6 Oct 2026: this row said "taxable value, before GST".* |
 | `purchase_orders.currency` | INR | INR | Printed, or INR when both GSTINs are Indian. |
 | `purchase_orders.payment_terms_days` | null (default) | 45 | "Invoice Date, 45 days". |
 | `purchase_orders.quotation_no` | the quotation printed "QTN-04/2026" | none printed | See §3.4 on printed numbers. |

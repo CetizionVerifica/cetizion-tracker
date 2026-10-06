@@ -8,7 +8,9 @@ import request from 'supertest';
 
 /**
  * The client portal (#47) must never show one company another's data, and
- * its session must never open the staff API. Runs against a throwaway
+ * its session must never open the staff API. Since #198 it also shows the
+ * same figures we hold: POs with their schedule and what is still to bill,
+ * invoices with taxable value, GST and total, and a staff preview of it. Runs against a throwaway
  * database, so it needs TEST_DATABASE_URL (CI sets it); skipped otherwise.
  */
 
@@ -35,6 +37,32 @@ async function seedFixtures(client) {
     INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status, sent_at)
       VALUES ('QT-A', 'Alpha Industries', '2026-07-01', 100000, 'Submitted', now()), ('QT-B', 'Beta Metals', '2026-07-01', 200000, 'Submitted', now());
     INSERT INTO deliverables (company_id, client_name, title, reference, valid_until) VALUES (1001, '', 'Alpha certificate', 'CERT-A', '2027-01-01'), (1002, '', 'Beta certificate', 'CERT-B', '2027-01-01');
+  `);
+  // #198: Alpha's figures. A PO from a quotation at two GST rates (18% and
+  // 5%, so 15.4% in all), half invoiced and paid with TDS deducted; a
+  // cancelled PO; a PO and the revision that replaced it; an export PO; and
+  // Alpha's first invoice matched to the accounts import.
+  await client.query(`
+    INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, status) VALUES ('QT-AL', 'Alpha Industries', '2026-07-05', 0, 'Won - PO Received');
+    INSERT INTO quotation_lines (quotation_id, description, qty, rate, gst_rate)
+      SELECT id, 'Stage 1 audit', 1, 400000, 18 FROM quotations WHERE quotation_no = 'QT-AL'
+      UNION ALL SELECT id, 'Training', 1, 100000, 5 FROM quotations WHERE quotation_no = 'QT-AL';
+    INSERT INTO documents (id, storage_key, file_name, content_type, size_bytes) VALUES (3003, 'k/inv', 'alpha-inv-2.pdf', 'application/pdf', 10);
+    INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, quotation_no) VALUES ('PO-A2', 'PRJ-A', '2026-08-10', 577000, 'QT-AL');
+    INSERT INTO po_services (po_number, service, service_value) VALUES ('PO-A2', 'Stage 1 audit', 400000), ('PO-A2', 'Training', 100000);
+    INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, invoice_no, invoice_date, document_id)
+      VALUES ('PO-A2', 1, 'Advance', 'On PO Registration', 0.5, 'INV-A-2', '2026-08-11', 3003);
+    INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, hold_reason)
+      VALUES ('PO-A2', 2, 'On delivery', 'On Delivery', 0.5, 'internal: waiting on the auditor');
+    INSERT INTO payments (stage_id, amount, tds_amount, received_on) SELECT id, 280000, 8500, '2026-08-20' FROM payment_stages WHERE invoice_no = 'INV-A-2';
+    INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, cancelled) VALUES ('PO-AX', 'PRJ-A', '2026-08-12', 50000, true);
+    INSERT INTO purchase_orders (po_number, project_id, po_date, po_value) VALUES ('PO-AOLD', 'PRJ-A', '2026-08-13', 60000);
+    INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, replaces_po_number) VALUES ('PO-ANEW', 'PRJ-A', '2026-08-14', 70000, 'PO-AOLD');
+    INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, currency) VALUES ('PO-AUSD', 'PRJ-A', '2026-08-15', 5000, 'USD');
+    INSERT INTO books_entries (id, source, kind, books_id, number, entry_date, taxable_amount, tax_amount, total_amount)
+      VALUES (4001, 'file', 'invoice', 'B-1', 'INV-A-1', '2026-08-02', 84745.76, 15254.24, 100000);
+    INSERT INTO reconciliation_items (kind, match_key, stage_id, books_entry_id, status)
+      SELECT 'invoice', 'invoice:INV-A-1', id, 4001, 'matched' FROM payment_stages WHERE invoice_no = 'INV-A-1';
   `);
 }
 
@@ -146,5 +174,76 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     for (const a of ['login', 'view', 'message']) assert.ok(actions.includes(a), a);
     const notes = await request(app).get('/api/notes?entity=company&entity_id=1002').set('Cookie', staff);
     assert.match(JSON.stringify(notes.body), /Invoice query/);
+  });
+
+  // ---------------------------------------------------------------- #198: the same figures
+  const stageId = async (invoiceNo) => (await pool.query('SELECT id FROM payment_stages WHERE invoice_no = $1', [invoiceNo])).rows[0].id;
+
+  test('a project shows each live PO: its GST, services, schedule, and what is billed and still to bill', async () => {
+    const { cookie } = await portalLogin(2001);
+    const { body } = await request(app).get('/api/portal/projects').set('Cookie', cookie).expect(200);
+    const orders = body.data.find((p) => p.project_id === 'PRJ-A').orders;
+    const by = Object.fromEntries(orders.map((o) => [o.po_number, o]));
+    assert.deepEqual(Object.keys(by).sort(), ['PO-A', 'PO-A2', 'PO-ANEW', 'PO-AUSD'], 'a cancelled PO and a replaced one are not shown');
+    assert.equal(by['PO-ANEW'].revised_from, 'PO-AOLD');
+    const a2 = by['PO-A2'];
+    assert.deepEqual([Number(a2.value), Number(a2.taxable), Number(a2.gst)], [577000, 500000, 77000], 'GST at the quotation lines\' own rates');
+    assert.deepEqual(a2.services, ['Stage 1 audit', 'Training']);
+    assert.deepEqual([a2.billed, a2.received, a2.outstanding, a2.to_bill], [288500, 288500, 0, 288500]);
+    assert.equal(a2.billed + a2.to_bill, Number(a2.value), 'billed and still to bill make the PO value');
+    assert.deepEqual(a2.schedule.map((st) => [st.stage_name, st.state]), [['Advance', 'Paid'], ['On delivery', 'Not yet invoiced']]);
+    assert.deepEqual([Number(by['PO-AUSD'].gst), Number(by['PO-AUSD'].taxable)], [0, 5000], 'an export PO carries no GST');
+    const text = JSON.stringify(body);
+    for (const internal of ['hold_reason', 'waiting on the auditor', 'gst_source', 'estimated']) assert.ok(!text.includes(internal), internal);
+  });
+
+  test('an invoice shows taxable, GST and total, paid and TDS; the books\' own split when matched', async () => {
+    const { cookie } = await portalLogin(2001);
+    const { body } = await request(app).get('/api/portal/invoices').set('Cookie', cookie).expect(200);
+    const by = Object.fromEntries(body.data.map((i) => [i.invoice_no, i]));
+    const one = by['INV-A-1'];
+    assert.deepEqual([Number(one.taxable), Number(one.gst), Number(one.amount)], [84745.76, 15254.24, 100000], 'the accounts import is the legal record');
+    const two = by['INV-A-2'];
+    assert.deepEqual([Number(two.taxable), Number(two.gst), Number(two.amount)], [250000, 38500, 288500]);
+    assert.deepEqual([Number(two.paid), Number(two.tds), Number(two.outstanding), two.status], [280000, 8500, 0, 'Paid']);
+    assert.equal(two.project_id, 'PRJ-A');
+    assert.equal(two.has_pdf, true);
+    for (const i of body.data) {
+      assert.equal(Math.round((Number(i.taxable) + Number(i.gst)) * 100), Math.round(Number(i.amount) * 100), `${i.invoice_no}: taxable + GST is the total`);
+      assert.ok(!('gst_source' in i));
+    }
+    const pdf = await request(app).get('/api/portal/invoices/statement.pdf').set('Cookie', cookie).expect(200);
+    assert.equal(pdf.headers['content-type'], 'application/pdf');
+  });
+
+  test('an invoice opens from Invoices and a PO from Projects, without Documents; another company\'s are not found', async () => {
+    const { cookie } = await portalLogin(2001);
+    await request(app).patch('/api/portal-admin/companies/1001').set('Cookie', staff).send({ portal_sections: ['projects', 'invoices'] }).expect(200);
+    try {
+      // Stored files need Cloudinary, which tests do not have: "found" is anything but 404.
+      assert.notEqual((await request(app).get(`/api/portal/files/invoice/${await stageId('INV-A-2')}`).set('Cookie', cookie)).status, 404);
+      assert.equal((await request(app).get(`/api/portal/files/invoice/${await stageId('INV-B-1')}`).set('Cookie', cookie)).status, 404);
+      assert.notEqual((await request(app).get('/api/portal/files/po/PO-A').set('Cookie', cookie)).status, 404);
+      for (const other of ['PO-B', 'PO-AX']) assert.equal((await request(app).get(`/api/portal/files/po/${other}`).set('Cookie', cookie)).status, 404, other);
+      assert.equal((await request(app).get('/api/portal/files/document/3001').set('Cookie', cookie)).status, 403, 'Documents is off');
+    } finally {
+      await request(app).patch('/api/portal-admin/companies/1001').set('Cookie', staff).send({ portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] }).expect(200);
+    }
+  });
+
+  test('preview as client is what the client sees, and says where each GST split came from', async () => {
+    const { cookie } = await portalLogin(2001);
+    for (const sectionName of ['projects', 'invoices', 'documents', 'certificates']) {
+      const client = (await request(app).get(`/api/portal/${sectionName}`).set('Cookie', cookie).expect(200)).body.data;
+      const preview = await request(app).get(`/api/portal-admin/companies/1001/preview/${sectionName}`).set('Cookie', staff).expect(200);
+      assert.equal(preview.body.meta.enabled, true);
+      const strip = (v) => JSON.parse(JSON.stringify(v, (k, x) => (k === 'gst_source' ? undefined : x)));
+      assert.deepEqual(strip(preview.body.data), client, sectionName);
+    }
+    const { body } = await request(app).get('/api/portal-admin/companies/1001/preview/invoices').set('Cookie', staff).expect(200);
+    const source = Object.fromEntries(body.data.map((i) => [i.invoice_no, i.gst_source]));
+    assert.deepEqual([source['INV-A-1'], source['INV-A-2']], ['books', 'quotation']);
+    await request(app).get('/api/portal-admin/companies/1001/preview/payroll').set('Cookie', staff).expect(404);
+    await request(app).get('/api/portal-admin/companies/1001/preview/invoices').set('Cookie', cookie).expect(401);
   });
 });
