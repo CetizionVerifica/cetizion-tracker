@@ -66,9 +66,8 @@ export function PortalSettings({ companyId }) {
  */
 function AddEmail({ contact, onSave }) {
   return (
-    <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); onSave(String(new FormData(e.currentTarget).get('email')).trim()); }}>
-      <span className="muted small">no email, cannot sign in</span>
-      <input className="input" style={{ width: 220 }} type="email" name="email" required maxLength={160} placeholder="name@client.com" aria-label={`Email for ${contact.name}`} />
+    <form className="flex items-center gap-1.5" title="No email: cannot sign in until one is added" onSubmit={(e) => { e.preventDefault(); onSave(String(new FormData(e.currentTarget).get('email')).trim()); }}>
+      <input className="input" style={{ width: '100%', minWidth: 110, maxWidth: 170 }} type="email" name="email" required maxLength={160} placeholder="Add an email" aria-label={`Email for ${contact.name}`} />
       <button type="submit" className="btn btn--sm">Save</button>
     </form>
   );
