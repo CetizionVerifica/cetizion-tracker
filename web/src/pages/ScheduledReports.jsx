@@ -254,6 +254,8 @@ export default function ScheduledReports() {
   const runs = useFetch(() => api.raw('/mis-reports/runs'), []);
   const refetch = () => { settings.refetch(); runs.refetch(); };
   const list = settings.data?.data;
+  // What was last saved, so a card re-reads it after a save or a reload.
+  const saved = (list || []).map((s) => `${s.key}=${s.value}`).join('|');
   const emailsOn = setting(list, 'emails_enabled') !== 'false';
   return (
     <>
@@ -274,8 +276,11 @@ export default function ScheduledReports() {
             {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} onChanged={refetch} />)}
           </div>
         )}
-        {list && <SharedSettings key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
-        {list && <DebtorsList key={list.map((s) => `${s.key}=${s.value}`).join('|')} settings={list} onChanged={refetch} />}
+        {/* Each card is rebuilt from what was saved, under a key of its own. When the
+            two shared one, React drew the recipients card twice, and the copy on
+            screen stopped taking what was typed. */}
+        {list && <SharedSettings key={`recipients:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
+        {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
     </>
