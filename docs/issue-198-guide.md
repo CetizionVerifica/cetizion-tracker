@@ -107,7 +107,7 @@ A reply by number on the pull request is enough.
 
 | Test | Covers |
 |---|---|
-| `server/test/portal.test.js` | A project's live POs (cancelled and replaced hidden, the revision says so), GST at mixed quotation rates, billed + still to bill = PO value, no internal stage fields; invoices with the books' split when matched and the quotation's otherwise, paid and TDS, taxable + GST = total; invoice PDFs from Invoices and PO files from Projects without Documents, another company's not found; the preview equals the client's view plus the GST source, and is not reachable with a portal session |
+| `server/test/portal.test.js` | A project's live POs (cancelled and replaced hidden, the revision says so), GST at mixed quotation rates, the default rate marked estimated when there is no quotation, the paisa left on GST, billed + still to bill = PO value, no internal stage fields; invoices with the books' split when matched and the quotation's otherwise, paid and TDS, taxable + GST = total; invoice PDFs from Invoices and PO files from Projects without Documents, another company's not found; the preview equals the client's view plus the GST source, and is not reachable with a portal session |
 | `web/e2e/flows.spec.js` | The portal in a browser: the staff preview, then the client's link, Projects & orders and Invoices with their GST |
 
 Screens were also checked at desktop and phone width: nothing scrolls

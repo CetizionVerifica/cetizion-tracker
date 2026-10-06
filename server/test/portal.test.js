@@ -231,6 +231,16 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     }
   });
 
+  test('GST with no quotation: the default rate, marked estimated, the paisa left on GST', async () => {
+    await pool.query("INSERT INTO purchase_orders (po_number, project_id, po_date, po_value) VALUES ('PO-BEST', 'PRJ-B', '2026-08-20', 118000.01)");
+    const { rows: [est] } = await pool.query("SELECT * FROM po_gst_split('PO-BEST', 118000.01)");
+    assert.deepEqual([Number(est.taxable), Number(est.gst), Number(est.gst_rate), est.source], [100000.01, 18000, 18, 'estimated']);
+    // 100 at 18%: taxable 84.745… rounds to 84.75, and GST takes the rest, so the two still make 100.
+    const { rows: [small] } = await pool.query("SELECT * FROM po_gst_split('PO-BEST', 100)");
+    assert.deepEqual([Number(small.taxable), Number(small.gst)], [84.75, 15.25]);
+    assert.equal(Math.round((Number(small.taxable) + Number(small.gst)) * 100), 10000);
+  });
+
   test('preview as client is what the client sees, and says where each GST split came from', async () => {
     const { cookie } = await portalLogin(2001);
     for (const sectionName of ['projects', 'invoices', 'documents', 'certificates']) {
