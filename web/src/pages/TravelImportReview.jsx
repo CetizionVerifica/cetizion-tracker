@@ -40,11 +40,12 @@ const writtenText = (w = {}) => WRITTEN.map(([k, label]) => `${number(w[k] ?? 0)
 const STEP_TAB = { traveller: 'travellers', trip: 'trips', segment: 'trips', vendor_invoice: 'invoices', invoice_line: 'invoices', credit_note: 'credits' };
 const opts = (list) => list.map((v) => ({ value: v, label: v.replace(/_/g, ' ') }));
 
-function Flags({ item }) {
-  if (!item.flags.length && !item.assumptions.length) return null;
+function Flags({ item, omit = [] }) {
+  const flags = item.flags.filter((f) => !omit.includes(f.code));
+  if (!flags.length && !item.assumptions.length) return null;
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
-      {item.flags.map((f) => (
+      {flags.map((f) => (
         <span key={`${f.code}-${f.message}`} title={f.code}>
           <Chip tone={TONES[f.level] || 'plain'}>{f.level === 'duplicate' ? `In the tracker: ${f.message.replace(/^already in the tracker( as| on)? ?/, '')}` : f.message}</Chip>
         </span>
@@ -200,19 +201,21 @@ export default function TravelImportReview() {
       <input type="checkbox" checked={it.included} disabled={busy} onChange={(e) => patchItem(it, { included: e.target.checked }).catch(() => {})} /> Import
     </label>
   ));
-  const Actions = ({ it, children }) => (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      {it.existing_ref && !done && (
+  const Actions = ({ it, children, follows = false }) => (
+    <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+      {it.existing_ref && !done && !follows && (
         <Select className="h-7 w-[170px] text-[12px]" value={it.action} disabled={busy} options={[{ value: 'skip', label: 'Keep the original' }, { value: 'update', label: 'Update from the sheet' }]}
           onChange={(e) => patchItem(it, { action: e.target.value }).catch(() => {})} />
       )}
       {children}
-      {!done && <Button variant="ghost" size="sm" onClick={() => setEditing(it)}>Edit</Button>}
+      {!done && <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditing(it)}>Edit</Button>}
       <Include it={it} />
     </div>
   );
-  const rowClass = (it) => `border-b border-border px-4 py-3 ${it.existing_ref ? 'bg-waiting/10' : ''} ${live(it) ? '' : 'opacity-50'}`;
-  const subRow = (it) => `border-t border-border align-top ${it.existing_ref ? 'bg-waiting/10' : ''} ${live(it) ? '' : 'opacity-50'}`;
+  const known = 'border-l-waiting bg-waiting/[0.06]';
+  const rowClass = (it) => `border-b border-l-[3px] border-border px-4 py-3 ${it.existing_ref ? known : 'border-l-transparent'} ${live(it) ? '' : 'opacity-50'}`;
+  // A leg or line under a record already in the tracker is marked by its parent, not again.
+  const subRow = (it, parent) => `border-t border-border align-top ${it.existing_ref && !parent?.existing_ref ? 'bg-waiting/[0.06]' : ''} ${live(it) ? '' : 'opacity-50'}`;
 
   async function decideAll(step, action) {
     await call(`/import/travel/${batch.id}/duplicates`, 'POST', { step, action }).catch(() => {});
@@ -368,31 +371,29 @@ export default function TravelImportReview() {
                     </div>
                     <Actions it={trip} />
                   </div>
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-[12.5px]">
-                      <tbody>
-                        {legs.map((leg) => (
-                          <tr key={leg.id} className={subRow(leg)}>
-                            <td className="py-1.5 pr-3 capitalize">{leg.payload.mode}</td>
-                            <td className="py-1.5 pr-3 whitespace-nowrap">{leg.payload.mode === 'hotel' ? leg.payload.to_place : `${leg.payload.from_place || '?'} → ${leg.payload.to_place || '?'}`}</td>
-                            <td className="py-1.5 pr-3 whitespace-nowrap">{date(leg.payload.start_date)}{leg.payload.end_date ? ` – ${date(leg.payload.end_date)}` : ''}</td>
-                            <td className="py-1.5 pr-3">{leg.payload.provider}{leg.payload.status !== 'booked' && <span className="text-waiting"> · {leg.payload.status.replace(/_/g, ' ')}</span>}
-                              <Flags item={leg} /></td>
-                            <td className="w-[380px] py-1.5 text-right">
-                              {/* A leg already in the tracker stays on its trip there: no split, no move. */}
-                              <Actions it={leg}>
-                                {!done && !leg.existing_ref && legs.length > 1 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => call(`/import/travel/${batch.id}/items/${leg.id}/split`, 'POST', {}).catch(() => {})}>Own trip</Button>}
-                                {!done && !leg.existing_ref && others.length > 0 && (
-                                  <Select className="h-7 w-[150px] text-[12px]" value="" placeholder="Move to…" disabled={busy}
-                                    options={others.map((o) => ({ value: String(o.seq), label: `${o.payload.destination || '?'} · ${date(o.payload.travel_start_date)}` }))}
-                                    onChange={(e) => e.target.value && patchItem(leg, { payload: { trip_seq: Number(e.target.value) } }).catch(() => {})} />
-                                )}
-                              </Actions>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="mt-2 border-t border-border">
+                    {legs.map((leg) => (
+                      <div key={leg.id} className={`flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border py-2 text-[12.5px] last:border-b-0 ${leg.existing_ref && !trip.existing_ref ? 'bg-waiting/[0.06]' : ''} ${live(leg) ? '' : 'opacity-50'}`}>
+                        <div className="min-w-0 flex-1 basis-[240px]">
+                          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                            <span className="w-11 shrink-0 capitalize text-muted-foreground">{leg.payload.mode}</span>
+                            <span className="font-medium">{leg.payload.mode === 'hotel' ? leg.payload.to_place : `${leg.payload.from_place || '?'} → ${leg.payload.to_place || '?'}`}</span>
+                            <span className="whitespace-nowrap text-muted-foreground">{date(leg.payload.start_date)}{leg.payload.end_date ? ` – ${date(leg.payload.end_date)}` : ''}</span>
+                            <span className="text-secondary-text">{leg.payload.provider}{leg.payload.status !== 'booked' && <span className="text-waiting"> · {leg.payload.status.replace(/_/g, ' ')}</span>}</span>
+                          </div>
+                          <Flags item={leg} omit={trip.existing_ref ? ['leg_exists'] : []} />
+                        </div>
+                        {/* A leg already in the tracker stays on its trip there: no split, no move. */}
+                        <Actions it={leg} follows={Boolean(trip.existing_ref)}>
+                          {!done && !leg.existing_ref && legs.length > 1 && <Button variant="ghost" size="sm" className="h-7 px-2" disabled={busy} onClick={() => call(`/import/travel/${batch.id}/items/${leg.id}/split`, 'POST', {}).catch(() => {})}>Own trip</Button>}
+                          {!done && !leg.existing_ref && others.length > 0 && (
+                            <Select className="h-7 w-[150px] text-[12px]" value="" placeholder="Move to…" disabled={busy}
+                              options={others.map((o) => ({ value: String(o.seq), label: `${o.payload.destination || '?'} · ${date(o.payload.travel_start_date)}` }))}
+                              onChange={(e) => e.target.value && patchItem(leg, { payload: { trip_seq: Number(e.target.value) } }).catch(() => {})} />
+                          )}
+                        </Actions>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -423,7 +424,7 @@ export default function TravelImportReview() {
                         const leg = bySeq.get(l.payload.segment_seq);
                         const trip = bySeq.get(l.payload.trip_seq);
                         return (
-                          <tr key={l.id} className={subRow(l)}>
+                          <tr key={l.id} className={subRow(l, inv)}>
                             <td className="py-1.5 pr-3">{bySeq.get(trip?.payload.traveller_seq)?.payload.name || trip?.payload.employee_name} · {leg ? `${leg.payload.from_place ? `${leg.payload.from_place} → ` : ''}${leg.payload.to_place || ''} ${date(leg.payload.start_date)}` : ''}<Flags item={l} /></td>
                             <td className="py-1.5 text-right num">{money(l.payload.base_fare)}</td>
                             <td className="py-1.5 text-right num">{money(l.payload.service_charge)}</td>
