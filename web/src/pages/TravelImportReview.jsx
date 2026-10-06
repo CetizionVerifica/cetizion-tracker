@@ -46,8 +46,9 @@ function Flags({ item, omit = [] }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
       {flags.map((f) => (
-        <span key={`${f.code}-${f.message}`} title={f.code}>
-          <Chip tone={TONES[f.level] || 'plain'}>{f.level === 'duplicate' ? `In the tracker: ${f.message.replace(/^already in the tracker( as| on)? ?/, '')}` : f.message}</Chip>
+        <span key={`${f.code}-${f.message}`} title={f.code} className="max-w-full">
+          {/* A long message wraps rather than running off a narrow screen. */}
+          <Chip tone={TONES[f.level] || 'plain'} className="h-auto min-h-[22px] max-w-full shrink whitespace-normal text-left leading-snug">{f.level === 'duplicate' ? `In the tracker: ${f.message.replace(/^already in the tracker( as| on)? ?/, '')}` : f.message}</Chip>
         </span>
       ))}
       {item.assumptions.map((a) => <span key={a} className="text-[11.5px] text-muted-foreground">Assumed: {a}</span>)}
