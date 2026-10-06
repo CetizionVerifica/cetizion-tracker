@@ -287,7 +287,8 @@ export default function TravelImportReview() {
         }
       />
       <div className="page stack">
-        <div className="auto-grid--stats">
+        {/* Two to a row on a phone, rather than six screens of tiles before the review. */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6">
           <Stat label="Rows read" value={number(batch.row_count)} />
           <Stat label={done ? 'Trips written' : 'New trips'} value={number(n.trip ?? 0)} meta={`${number(n.segment ?? 0)} legs ${done ? 'written' : 'to add'}`} tone="brand" />
           <Stat label="Agency invoices" value={number(n.vendor_invoice ?? 0)} meta={`${number(n.invoice_line ?? 0)} lines`} />
