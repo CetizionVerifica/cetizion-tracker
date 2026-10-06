@@ -44,6 +44,17 @@ describe("Finance's list, as Tally really prints it", () => {
     assert.equal(r.grand_total, 350);
   });
 
+  test('a spreadsheet with paise and a SUM-formula total is used: its amounts are its own cells', () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ['Party', 'Balance'], ['A Ltd', 1234.5], ['B Ltd', 0.1], ['C Ltd', 0.2], ['Grand Total', 0.1 + 0.2 + 1234.5],
+    ]), 'Debtors');
+    const read = { method: 'xlsx', ...readSheet(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })) };
+    assert.deepEqual(read.lines.map((l) => l.amount), [1234.5, 0.1, 0.2]);
+    assert.equal(checkList(read), null);
+    assert.match(checkList({ ...read, method: 'ai', text: 'A Ltd 999' }), /amounts are not in the file/, "the AI's reading of a PDF is still checked against its text");
+  });
+
   test('a sheet with no table, an empty file and a CSV: nothing read, never a crash', () => {
     assert.deepEqual(readSheet(Buffer.from('')).lines, []);
     assert.deepEqual(readSheet(Buffer.from('just some text, nothing tabular')).lines, []);

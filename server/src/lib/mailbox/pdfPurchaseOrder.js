@@ -45,8 +45,9 @@ export const PO_REASONS = ['not_po', 'low_confidence', 'amendment', 'cancellatio
   'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency'];
 
 // Revision wording printed on an order (§3 revision_marks): "Amendment 1", "Rev 2", "Revised PO", "supersedes …".
-// Revision 0 is the original: "Rev 0", "Revision No. 00" and "R0" are not amendments.
-const REVISED = /\bamend|\brevised\b|supersed|in (lieu|place) of|\brev(ision)?\b\.?\s*(no\.?\s*)?[:-]?\s*0*[1-9]|\bR0*[1-9]\d*\b/i;
+// Revision 0 is the original: "Rev 0", "Revision No. 00", "R0" and "Amendment No.: 0" are not amendments,
+// nor is the "Amendment Date" label printed beside it.
+const REVISED = /\bamend(?!ment\s*(?:(?:no\.?|number|#)?\s*[:.-]?\s*0+(?!\d)|date\b))|\brevised\b|supersed|in (lieu|place) of|\brev(ision)?\b\.?\s*(no\.?\s*)?[:-]?\s*0*[1-9]|\bR0*[1-9]\d*\b/i;
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const days = (a, b) => (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5;
 const round2 = (n) => Math.round(n * 100) / 100;

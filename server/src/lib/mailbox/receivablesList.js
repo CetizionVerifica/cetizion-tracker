@@ -46,7 +46,9 @@ export async function listSettings(db = { query }) {
 /**
  * The newest email in a shared mailbox, in the last 14 days, from Finance
  * (the senders set, else anyone at our own domains), whose subject or an
- * attachment's name has one of the phrases.
+ * attachment's name has one of the phrases. Only mail received with a
+ * spreadsheet or PDF attached counts: a reply ("noted") or our own mail to
+ * a client about an outstanding invoice is not Finance's list.
  */
 export async function findListEmail(db = { query }, { now = new Date(), settings = null } = {}) {
   const s = settings || await listSettings(db);
@@ -57,6 +59,9 @@ export async function findListEmail(db = { query }, { now = new Date(), settings
        FROM email_messages m JOIN connected_accounts a ON a.id = m.account_id
       WHERE a.is_shared AND a.visibility = 'share_everything' AND a.status <> 'disconnected'
         AND m.removed_at IS NULL AND m.sent_at >= $1 AND m.sent_at <= $2
+        AND m.direction = 'inbound' AND m.has_attachments
+        AND (m.attachments_listed_at IS NULL OR EXISTS (SELECT 1 FROM email_attachments x WHERE x.message_id = m.id AND NOT x.is_inline
+              AND (x.name ~* '\\.(xlsx|xlsm|xls|csv|pdf)$' OR x.content_type ~* 'spreadsheet|ms-excel|text/csv|pdf')))
         AND (lower(m.from_email) = ANY($3) OR (cardinality($3) = 0 AND split_part(lower(m.from_email), '@', 2) = ANY($4)))
         AND (m.subject ILIKE ANY($5) OR EXISTS (SELECT 1 FROM email_attachments x WHERE x.message_id = m.id AND x.name ILIKE ANY($5)))
       ORDER BY m.sent_at DESC, m.id DESC LIMIT 1`,
@@ -181,10 +186,11 @@ const sum = (lines) => Math.round(lines.reduce((n, l) => n + l.amount, 0) * 100)
  * elsewhere: every amount is in the file, and the rows add up to the
  * grand total.
  */
-export function checkList({ lines, grand_total: grand, text }) {
+export function checkList({ lines, grand_total: grand, text, method = null }) {
   if (!lines.length) return 'no rows of clients and amounts could be read';
   if (grand === null || grand === undefined) return 'the list has no grand total to check the rows against';
-  const missing = [...lines.map((l) => l.amount), grand].filter((a) => !amountInText(Math.abs(a), text));
+  // A spreadsheet's amounts are its own cells, so only the AI's reading of a PDF needs checking against the file.
+  const missing = method === 'xlsx' ? [] : [...lines.map((l) => l.amount), grand].filter((a) => !amountInText(Math.abs(a), text));
   if (missing.length) return `${missing.length} amount${missing.length === 1 ? ' is' : 's are'} not in the file`;
   if (!near(sum(lines), grand)) return `the rows add up to ${sum(lines)}, not the grand total ${grand}`;
   return null;
