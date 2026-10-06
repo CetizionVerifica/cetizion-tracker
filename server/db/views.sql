@@ -13,7 +13,7 @@
 BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
-  v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices,
+  v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices, v_travel_invoice_lines, v_travel_segments,
   v_employee_expense_claims, v_company_document_profiles CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
@@ -133,21 +133,75 @@ CROSS JOIN LATERAL (
 ) d(days_overdue, invoiced_amount, due_now_amount, to_bill_amount, received_on_invoiced);
 
 -- ---------------------------------------------------------------------
+-- Travel vendor invoice lines (#196)
+--   One travel agency invoice covers several legs, trips and people, one
+--   line each. What was paid on the invoice, and what its credit notes gave
+--   back, are shared over its lines by their amounts — a credit note naming
+--   a leg goes to that leg's line — so a trip's cost and payments add up to
+--   the invoices', and nothing is counted twice.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_travel_invoice_lines AS
+WITH lines AS (
+  SELECT l.*, vi.vendor_id, vi.vendor_invoice_id AS vendor_invoice_ref, vi.vendor_invoice_no, vi.invoice_date,
+         vi.amount_paid AS invoice_paid,
+         SUM(COALESCE(l.line_total, 0)) OVER w AS lines_total,
+         COUNT(*) OVER w                       AS line_count
+    FROM travel_vendor_invoice_lines l
+    JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+  WINDOW w AS (PARTITION BY l.vendor_invoice_id)
+),
+-- A line's share of its invoice: by amount, or evenly while no line has
+-- one; and the credit notes that fall to it.
+credited AS (
+  SELECT lines.*,
+         CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END AS share,
+         round(COALESCE(cn.on_line, 0) + COALESCE(cn.shared, 0)
+               * CASE WHEN lines_total > 0 THEN COALESCE(line_total, 0) / lines_total ELSE 1.0 / line_count END, 2) AS credited
+    FROM lines
+    CROSS JOIN LATERAL (
+      SELECT SUM(c.refund_amount) FILTER (WHERE c.segment_id IS NOT NULL AND c.segment_id = lines.segment_id),
+             SUM(c.refund_amount) FILTER (WHERE c.segment_id IS NULL
+               OR NOT EXISTS (SELECT 1 FROM travel_vendor_invoice_lines y
+                               WHERE y.vendor_invoice_id = c.against_invoice_id AND y.segment_id = c.segment_id))
+        FROM travel_vendor_credit_notes c WHERE c.against_invoice_id = lines.vendor_invoice_id
+    ) cn(on_line, shared)
+),
+-- What was paid on the invoice goes to its lines by what each costs after
+-- credit notes, so a refunded leg is not shown as paid for.
+netted AS (
+  SELECT credited.*,
+         SUM(GREATEST(COALESCE(line_total, 0) - credited, 0)) OVER (PARTITION BY vendor_invoice_id) AS nets_total
+    FROM credited
+)
+SELECT
+  id, vendor_invoice_id, travel_id, segment_id, base_fare, service_charge, gst_amount, gst_rate, line_total, remarks,
+  vendor_id, vendor_invoice_ref, vendor_invoice_no, invoice_date, share,
+  round(invoice_paid * CASE WHEN nets_total > 0 THEN GREATEST(COALESCE(line_total, 0) - credited, 0) / nets_total ELSE share END, 2) AS paid,
+  credited,
+  line_total - credited                                   AS net_cost
+FROM netted;
+
+-- ---------------------------------------------------------------------
 -- Travel vendor invoices
 --   Vendor bills within the settings window; finance pays by month-end.
+--   An invoice's trip, client and traveller come from its lines (#196):
+--   one value when every line agrees, the travellers listed when several.
+--   What is owed is the invoice less its credit notes.
 -- ---------------------------------------------------------------------
 
 CREATE VIEW v_travel_vendor_invoices AS
 SELECT
   vi.id,
   vi.vendor_invoice_id,
-  vi.travel_id,
-  tl.po_number,
-  po.project_id,
-  pr.client_name,
-  tl.employee_name,
-  tl.travel_end_date,
-  tl.arranged_by                                          AS travel_vendor,
+  COALESCE(vi.travel_id, tr.only_trip)                    AS travel_id,
+  tr.po_number,
+  tr.project_id,
+  tr.client_name,
+  tr.employee_name,
+  tr.travel_end_date,
+  COALESCE(tv.name, tr.arranged_by)                       AS travel_vendor,
+  vi.vendor_id,
   vi.vendor_invoice_no,
   vi.invoice_date,
   vi.invoice_amount,
@@ -155,32 +209,40 @@ SELECT
   vi.amount_paid,
   vi.payment_date,
   vi.remarks,
+  vi.document_id,
+  doc.file_name                                           AS document_name,
+  vi.vendor_gstin_on_invoice,
+  vi.place_of_supply,
+  COALESCE(tr.trip_count, 0)::int                         AS trip_count,
+  COALESCE(tr.line_count, 0)::int                         AS line_count,
+  COALESCE(cn.credited, 0)                                AS credited,
+  vi.invoice_amount - COALESCE(cn.credited, 0)            AS net_payable,
   CASE
     WHEN vi.vendor_invoice_no IS NULL OR vi.invoice_date IS NULL
-      OR tl.travel_end_date IS NULL                       THEN NULL
-    WHEN vi.invoice_date - tl.travel_end_date
+      OR tr.travel_end_date IS NULL                       THEN NULL
+    WHEN vi.invoice_date - tr.travel_end_date
            <= setting_num('vendor_invoice_window_days', 15) THEN 'On time'
-    ELSE 'Late (' || (vi.invoice_date - tl.travel_end_date) || 'd)'
+    ELSE 'Late (' || (vi.invoice_date - tr.travel_end_date) || 'd)'
   END                                                     AS raised_in_time,
   b.pay_by,
   (vi.vendor_invoice_no IS NOT NULL
      AND vi.invoice_amount IS NOT NULL
-     AND vi.amount_paid < vi.invoice_amount)              AS finance_to_pay,
+     AND vi.amount_paid < vi.invoice_amount - COALESCE(cn.credited, 0)) AS finance_to_pay,
   s.payment_status,
   d.days_overdue,
   CASE s.payment_status
     WHEN 'Awaited' THEN 'Awaiting vendor invoice'
-      || CASE WHEN tl.travel_end_date IS NOT NULL
-                AND CURRENT_DATE > tl.travel_end_date
+      || CASE WHEN tr.travel_end_date IS NOT NULL
+                AND CURRENT_DATE > tr.travel_end_date
                      + setting_num('vendor_invoice_window_days', 15)::int
               THEN ' - OVERDUE from vendor' ELSE '' END
-    WHEN 'Overdue' THEN 'FINANCE: pay ' || COALESCE(tl.arranged_by, 'vendor')
+    WHEN 'Overdue' THEN 'FINANCE: pay ' || COALESCE(tv.name, tr.arranged_by, 'vendor')
       || ' NOW - overdue by ' || d.days_overdue || ' day(s)'
     WHEN 'To Pay' THEN 'FINANCE: vendor invoice received - pay '
-      || COALESCE(tl.arranged_by, 'vendor')
+      || COALESCE(tv.name, tr.arranged_by, 'vendor')
       || ' by month-end (' || to_char(b.pay_by, 'DD-Mon') || ')'
     WHEN 'Partially Paid' THEN 'FINANCE: pay balance to '
-      || COALESCE(tl.arranged_by, 'vendor')
+      || COALESCE(tv.name, tr.arranged_by, 'vendor')
     WHEN 'Enter amount' THEN 'HR: enter the invoice amount'
     WHEN 'Enter date' THEN 'HR: enter the invoice date - it sets the pay-by date'
   END                                                     AS finance_action,
@@ -193,9 +255,30 @@ SELECT
     ELSE 'neutral'
   END                                                     AS status_tone
 FROM travel_vendor_invoices vi
-JOIN travel_logs          tl ON tl.travel_id  = vi.travel_id
-LEFT JOIN purchase_orders po ON po.po_number  = tl.po_number
-LEFT JOIN projects        pr ON pr.project_id = po.project_id
+LEFT JOIN travel_vendors tv ON tv.id = vi.vendor_id
+LEFT JOIN documents doc ON doc.id = vi.document_id
+LEFT JOIN LATERAL (
+  SELECT CASE WHEN COUNT(DISTINCT l.travel_id) = 1 THEN MIN(l.travel_id) END       AS only_trip,
+         COUNT(DISTINCT l.travel_id)                                               AS trip_count,
+         COUNT(*)                                                                  AS line_count,
+         CASE WHEN COUNT(DISTINCT t.po_number) = 1
+               AND COUNT(*) FILTER (WHERE t.po_number IS NULL) = 0 THEN MIN(t.po_number) END AS po_number,
+         CASE WHEN COUNT(DISTINCT COALESCE(po.project_id, t.project_id)) = 1
+               AND COUNT(*) FILTER (WHERE COALESCE(po.project_id, t.project_id) IS NULL) = 0
+              THEN MIN(COALESCE(po.project_id, t.project_id)) END                  AS project_id,
+         string_agg(DISTINCT COALESCE(pr.client_name, t.client_label), ', ')       AS client_name,
+         string_agg(DISTINCT t.employee_name, ', ')                                AS employee_name,
+         MAX(t.travel_end_date)                                                    AS travel_end_date,
+         MIN(t.arranged_by)                                                        AS arranged_by
+    FROM travel_vendor_invoice_lines l
+    JOIN travel_logs t            ON t.travel_id   = l.travel_id
+    LEFT JOIN purchase_orders po  ON po.po_number  = t.po_number
+    LEFT JOIN projects pr         ON pr.project_id = COALESCE(po.project_id, t.project_id)
+   WHERE l.vendor_invoice_id = vi.id
+) tr ON true
+CROSS JOIN LATERAL (
+  SELECT SUM(refund_amount) FROM travel_vendor_credit_notes c WHERE c.against_invoice_id = vi.id
+) cn(credited)
 -- Vendor bills are settled at the month-end following the invoice date.
 CROSS JOIN LATERAL (
   SELECT (date_trunc('month', vi.invoice_date)
@@ -205,7 +288,7 @@ CROSS JOIN LATERAL (
   SELECT CASE
     WHEN vi.vendor_invoice_no IS NULL        THEN 'Awaited'
     WHEN vi.invoice_amount IS NULL           THEN 'Enter amount'
-    WHEN vi.amount_paid >= vi.invoice_amount THEN 'Paid'
+    WHEN vi.amount_paid >= vi.invoice_amount - COALESCE(cn.credited, 0) THEN 'Paid'
     -- No invoice date means no pay-by date, so the bill can never fall
     -- due and would otherwise sit here unnoticed. Chase the date.
     WHEN vi.invoice_date IS NULL             THEN 'Enter date'
@@ -255,8 +338,9 @@ SELECT
   v.invoice_amount,
   v.amount_paid,
   -- NULL, not zero, when the amount was never entered: a gap to fill,
-  -- not a bill that costs nothing.
-  v.invoice_amount - v.amount_paid                        AS outstanding,
+  -- not a bill that costs nothing. Less what credit notes gave back (#196).
+  v.net_payable - v.amount_paid                           AS outstanding,
+  v.credited,
   v.pay_by,
   v.payment_status,
   v.days_overdue,
@@ -336,16 +420,30 @@ SELECT
   tl.id,
   tl.travel_id,
   tl.po_number,
-  po.project_id,
-  pr.client_name,
+  -- The PO's project, or the trip's own when it has no PO (#196).
+  COALESCE(po.project_id, tl.project_id)                   AS project_id,
+  -- The project's client, else the label an internal trip carries.
+  COALESCE(pr.client_name, tl.client_label)                AS client_name,
+  pr.service_request_no,
   tl.service_delivered,
   tl.employee_name,
   tl.employee_email,
+  tl.staff_id,
   tl.purpose,
+  tl.origin,
   tl.destination,
   tl.travel_start_date,
   tl.travel_end_date,
-  tl.arranged_by,
+  tl.booking_date,
+  tl.cancelled,
+  tl.vendor_id,
+  COALESCE(tv.name, tl.arranged_by)                        AS arranged_by,
+  tl.trip_type_id,
+  tt.name                                                  AS trip_type,
+  tt.chargeable,
+  tl.billed_stage_id,
+  bs.invoice_no                                            AS billed_invoice_no,
+  tl.client_label,
   tl.hr_owner,
   tl.hr_owner_email,
   tl.remarks,
@@ -358,6 +456,15 @@ SELECT
   c.employee_reimbursed,
   c.claim_count,
   v.vendor_cost + c.employee_claims                        AS total_travel_cost,
+  g.leg_count,
+  g.modes,
+  f.document_count,
+  -- What a trip still needs on file: a ticket for a chargeable trip, and
+  -- the agency's invoice for every trip that went ahead.
+  CASE WHEN tl.cancelled THEN '{}'::text[] ELSE array_remove(ARRAY[
+    CASE WHEN tt.chargeable AND NOT f.has_ticket THEN 'ticket' END,
+    CASE WHEN NOT f.has_vendor_invoice THEN 'vendor invoice' END
+  ], NULL) END                                             AS missing_documents,
   CASE
     WHEN v.vendor_invoice_count = 0 THEN
       CASE
@@ -379,19 +486,58 @@ SELECT
   END                                                      AS reimbursement_status
 FROM travel_logs tl
 LEFT JOIN purchase_orders po ON po.po_number  = tl.po_number
-LEFT JOIN projects        pr ON pr.project_id = po.project_id
+LEFT JOIN projects        pr ON pr.project_id = COALESCE(po.project_id, tl.project_id)
+LEFT JOIN travel_vendors  tv ON tv.id         = tl.vendor_id
+LEFT JOIN trip_types      tt ON tt.id         = tl.trip_type_id
+LEFT JOIN payment_stages  bs ON bs.id         = tl.billed_stage_id
+-- The agency's cost of the trip: its share of every invoice line, less
+-- credit notes, and what was paid on it (v_travel_invoice_lines, #196).
 CROSS JOIN LATERAL (
-  SELECT COALESCE(SUM(invoice_amount), 0),
-         COALESCE(SUM(amount_paid), 0),
-         COUNT(*)
-  FROM travel_vendor_invoices vi WHERE vi.travel_id = tl.travel_id
+  SELECT COALESCE(SUM(net_cost), 0),
+         COALESCE(SUM(paid), 0),
+         COUNT(DISTINCT vendor_invoice_id)::int
+  FROM v_travel_invoice_lines l WHERE l.travel_id = tl.travel_id
 ) v(vendor_cost, vendor_paid, vendor_invoice_count)
 CROSS JOIN LATERAL (
   SELECT COALESCE(SUM(amount_claimed), 0),
          COALESCE(SUM(amount_reimbursed), 0),
          COUNT(*)
   FROM employee_expense_claims ec WHERE ec.travel_id = tl.travel_id
-) c(employee_claims, employee_reimbursed, claim_count);
+) c(employee_claims, employee_reimbursed, claim_count)
+CROSS JOIN LATERAL (
+  SELECT COUNT(*)::int, array_remove(array_agg(DISTINCT mode), NULL)
+  FROM travel_segments s WHERE s.travel_id = tl.travel_id
+) g(leg_count, modes)
+CROSS JOIN LATERAL (
+  SELECT
+    ((SELECT COUNT(*) FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id)
+      + (SELECT COUNT(DISTINCT vi.document_id) FROM travel_vendor_invoice_lines l
+           JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+          WHERE l.travel_id = tl.travel_id AND vi.document_id IS NOT NULL))::int,
+    EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id
+              AND a.doc_type IN ('ticket','boarding_pass')),
+    EXISTS (SELECT 1 FROM travel_vendor_invoice_lines l
+              JOIN travel_vendor_invoices vi ON vi.id = l.vendor_invoice_id
+             WHERE l.travel_id = tl.travel_id
+               AND (vi.document_id IS NOT NULL
+                 OR EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_vendor_invoice' AND a.entity_id = vi.id::text)))
+      OR EXISTS (SELECT 1 FROM attachments a WHERE a.entity = 'travel_log' AND a.entity_id = tl.travel_id AND a.doc_type = 'vendor_invoice')
+) f(document_count, has_ticket, has_vendor_invoice);
+
+-- ---------------------------------------------------------------------
+-- Travel legs (#196) — flights, trains, buses, cabs and hotel stays
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_travel_segments AS
+SELECT
+  s.*,
+  -- Hotel nights, computed: check-out less check-in.
+  CASE WHEN s.mode = 'hotel' THEN s.end_date - s.start_date END AS nights,
+  tl.employee_name,
+  tl.po_number,
+  tl.cancelled AS trip_cancelled
+FROM travel_segments s
+JOIN travel_logs tl ON tl.travel_id = s.travel_id;
 
 -- ---------------------------------------------------------------------
 -- Purchase orders — totals its service lines, stages and trips
@@ -489,6 +635,8 @@ CREATE VIEW v_projects AS
 SELECT
   p.id,
   p.project_id,
+  -- CV108: how a trip with no PO finds this project (#196).
+  p.service_request_no,
   p.client_name,
   p.company_id,
   p.created_at,
@@ -512,7 +660,8 @@ SELECT
   po.balance_due_now,
   po.balance_to_bill,
   po.currency,
-  po.total_travel_cost,
+  -- Through its POs, and trips on the project with no PO (#196).
+  po.total_travel_cost + dt.direct_travel_cost             AS total_travel_cost,
   po.actual_initiation_date,
   po.actual_delivery_date,
   CASE WHEN po.actual_delivery_date IS NOT NULL AND p.planned_delivery_date IS NOT NULL
@@ -573,6 +722,10 @@ CROSS JOIN LATERAL (
 ) po(po_count, total_contract_value, total_invoiced, total_received,
      balance_due_now, balance_to_bill, total_travel_cost, currency, fully_paid_pos,
      actual_initiation_date, actual_delivery_date)
+CROSS JOIN LATERAL (
+  SELECT COALESCE(SUM(total_travel_cost), 0) FROM v_travel_logs t
+   WHERE t.po_number IS NULL AND t.project_id = p.project_id
+) dt(direct_travel_cost)
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE status = 'Done'),
          COUNT(*) FILTER (WHERE status <> 'N/A'),
@@ -787,15 +940,20 @@ po AS (
     ) r ON true
    GROUP BY v.project_id
 ),
+-- A trip counts against its PO's project, or its own project when it has
+-- no PO (#196).
 trips AS (
-  SELECT t.travel_id, p.project_id FROM travel_logs t JOIN purchase_orders p ON p.po_number = t.po_number
+  SELECT t.travel_id, COALESCE(p.project_id, t.project_id) AS project_id
+    FROM travel_logs t LEFT JOIN purchase_orders p ON p.po_number = t.po_number
+   WHERE COALESCE(p.project_id, t.project_id) IS NOT NULL
 ),
+-- Each trip's share of the agency's invoices, net of credit notes.
 vendors AS (
   SELECT tr.project_id,
-         SUM(vi.amount_paid) AS paid,
-         SUM(GREATEST(COALESCE(vi.invoice_amount, vi.amount_paid) - vi.amount_paid, 0)) AS committed,
-         COUNT(*) FILTER (WHERE vi.invoice_amount IS NULL) AS gaps
-    FROM travel_vendor_invoices vi JOIN trips tr ON tr.travel_id = vi.travel_id
+         SUM(l.paid) AS paid,
+         SUM(GREATEST(COALESCE(l.net_cost, l.paid) - l.paid, 0)) AS committed,
+         COUNT(*) FILTER (WHERE l.line_total IS NULL) AS gaps
+    FROM v_travel_invoice_lines l JOIN trips tr ON tr.travel_id = l.travel_id
    GROUP BY tr.project_id
 ),
 claims AS (

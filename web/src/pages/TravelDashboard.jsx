@@ -44,7 +44,22 @@ export default function TravelDashboard() {
               />
             </div>
 
+            <div className="auto-grid--stats">
+              <Stat label="Trips missing documents" value={number(d.attention.missing_documents)} meta="A ticket or the vendor's invoice not on file"
+                tone={d.attention.missing_documents ? 'warn' : 'ok'} to="/travel" />
+              <Stat label="Chargeable, not yet billed" value={number(d.attention.unbilled_chargeable)} meta={`${money(d.attention.unbilled_value)} to bill to clients`}
+                tone={d.attention.unbilled_chargeable ? 'warn' : 'ok'} to="/travel" />
+            </div>
+
             <div className="auto-grid grid--2">
+              <Card title="Spend by mode" hint="The agency's bills, net of credit notes, by what was booked">
+                <BarList items={d.by_mode.map((m) => ({ ...m, label: m.label.charAt(0).toUpperCase() + m.label.slice(1) }))} valueFormat={(v, item) => `${money(v)} · ${item.count} line(s)`} />
+              </Card>
+
+              <Card title="Spend by trip type" hint="Total trip cost, chargeable and not">
+                <BarList items={d.by_trip_type} valueFormat={(v, item) => `${money(v)} · ${item.count} trip(s)`} />
+              </Card>
+
               <Card title="Spend by travel vendor" hint="Total trip cost booked through each vendor">
                 <BarList items={d.by_vendor} valueFormat={(v, item) => `${money(v)} · ${item.count} trip(s)`} />
               </Card>

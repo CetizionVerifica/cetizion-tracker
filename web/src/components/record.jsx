@@ -141,11 +141,11 @@ const CHIP_TONES = {
  * the tone supplies the colour, so the badge is still a Badge and still
  * says late, waiting, settled or nothing.
  */
-export function Chip({ tone = 'plain', icon: Icon, children }) {
+export function Chip({ tone = 'plain', icon: Icon, className, children }) {
   return (
     <Badge
       variant="outline"
-      className={cn('h-[22px] gap-1.5 rounded-[6px] px-2.5 text-[11.5px] font-semibold', CHIP_TONES[tone] || CHIP_TONES.plain)}
+      className={cn('h-[22px] gap-1.5 rounded-[6px] px-2.5 text-[11.5px] font-semibold', CHIP_TONES[tone] || CHIP_TONES.plain, className)}
     >
       {Icon && <Icon strokeWidth={2.4} aria-hidden="true" />}
       {children}

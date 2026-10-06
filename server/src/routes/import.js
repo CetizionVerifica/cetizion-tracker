@@ -76,7 +76,7 @@ importRouter.post('/batches', upload.single('file'), async (req, res) => {
 });
 
 importRouter.get('/batches', async (req, res) => {
-  const { rows } = await query('SELECT id, filename, sheet_name, status, uploaded_by, row_count, summary, ai_model, error, created_at, committed_at FROM import_batches ORDER BY id DESC LIMIT 100');
+  const { rows } = await query(`SELECT id, filename, sheet_name, status, uploaded_by, row_count, summary, ai_model, error, created_at, committed_at FROM import_batches WHERE kind = 'sales' ORDER BY id DESC LIMIT 100`);
   res.json({ data: rows });
 });
 
@@ -86,7 +86,7 @@ importRouter.get('/batches/:id', async (req, res) => {
 
 importRouter.post('/batches/:id/replan', async (req, res) => {
   const id = Number(req.params.id);
-  const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
+  const { rows } = await query("SELECT * FROM import_batches WHERE id = $1 AND kind = 'sales'", [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const buffer = recallFile(id);
@@ -108,7 +108,10 @@ importRouter.post('/batches/:id/replan', async (req, res) => {
 });
 
 importRouter.delete('/batches/:id', async (req, res) => {
-  const { rowCount } = await query(`DELETE FROM import_batches WHERE id = $1 AND status <> 'committed'`, [Number(req.params.id)]);
+  // A travel batch is the travel importer's (#196): not found here.
+  const { rows } = await query("SELECT 1 FROM import_batches WHERE id = $1 AND kind = 'sales'", [Number(req.params.id)]);
+  if (!rows.length) throw new ApiError(404, 'Import batch not found');
+  const { rowCount } = await query(`DELETE FROM import_batches WHERE id = $1 AND kind = 'sales' AND status <> 'committed'`, [Number(req.params.id)]);
   if (!rowCount) throw new ApiError(409, 'Committed batches are kept as a record and cannot be deleted');
   fileCache.delete(Number(req.params.id));
   res.status(204).end();
@@ -116,7 +119,7 @@ importRouter.delete('/batches/:id', async (req, res) => {
 
 importRouter.patch('/items/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const { rows } = await query('SELECT i.*, b.status AS batch_status FROM import_items i JOIN import_batches b ON b.id = i.batch_id WHERE i.id = $1', [id]);
+  const { rows } = await query("SELECT i.*, b.status AS batch_status FROM import_items i JOIN import_batches b ON b.id = i.batch_id WHERE i.id = $1 AND b.kind = 'sales'", [id]);
   if (!rows.length) throw new ApiError(404, 'Item not found');
   if (rows[0].batch_status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const body = req.body || {};
@@ -216,7 +219,7 @@ async function descendantSeqs(batchId, seq) {
 /** Keep or replace every duplicate at once, in one step or the whole batch. */
 importRouter.post('/batches/:id/duplicates', async (req, res) => {
   const id = Number(req.params.id);
-  const { rows } = await query('SELECT status FROM import_batches WHERE id = $1', [id]);
+  const { rows } = await query("SELECT status FROM import_batches WHERE id = $1 AND kind = 'sales'", [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   if (rows[0].status === 'committed') throw new ApiError(409, 'This batch is already committed');
   const action = req.body?.action;

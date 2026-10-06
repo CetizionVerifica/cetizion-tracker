@@ -73,6 +73,7 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
   let salesA;
   let salesB;
   let admin;
+  let hr;
 
   before(async () => {
     assertIsolatedTestDatabase(ADMIN_URL);
@@ -141,10 +142,12 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
     const a = await createUser({ name: 'Ada Admin', email: 'ada@example.com', password: PASSWORD, role: 'admin' }, db);
     const s1 = await createUser({ name: 'Sam Sales', email: 'sam@example.com', password: PASSWORD, role: 'sales' }, db);
     const s2 = await createUser({ name: 'Bea Sales', email: 'bea@example.com', password: PASSWORD, role: 'sales' }, db);
+    const h = await createUser({ name: 'Hema HR', email: 'hema@example.com', password: PASSWORD, role: 'hr' }, db);
 
     admin = { label: 'administrator', user: a, cookie: await signIn(a.email) };
     salesA = { label: 'sales user A', user: s1, cookie: await signIn(s1.email) };
     salesB = { label: 'sales user B', user: s2, cookie: await signIn(s2.email) };
+    hr = { label: 'HR user', user: h, cookie: await signIn(h.email) };
     anonymous = { label: 'anonymous', user: null, cookie: null };
   });
 
@@ -225,6 +228,29 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
    */
   const OBJECT_SCOPED = ['record-owner', 'mailbox-owner', 'self-only'];
   const objectScoped = (entry) => (entry.restrictions || []).some((r) => OBJECT_SCOPED.includes(r));
+
+  // The HR role (#196 §3): the travel desk, and nothing else.
+  test('an HR user is refused every route the policy does not mark for HR', async () => {
+    const key = (r) => `${r.method} ${r.path}`;
+    const allowed = new Set(policy.hrRoutes().map(key));
+    const wrong = [];
+    for (const entry of gated().filter((r) => !allowed.has(key(r)))) {
+      const res = await as(hr)(entry.method, concrete(entry.path));
+      if (res.status !== 403) wrong.push(`${key(entry)} answered ${res.status} to an HR user; expected 403.`);
+    }
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  test('an HR user reaches every route marked for HR', async () => {
+    const wrong = [];
+    for (const entry of policy.hrRoutes().filter((r) => r.access !== 'public' && !objectScoped(r))) {
+      const res = await as(hr)(entry.method, concrete(entry.path));
+      if (res.status === 401 || res.status === 403) {
+        wrong.push(`${entry.method} ${entry.path} answered ${res.status} to an HR user; the policy marks it for HR. Body: ${JSON.stringify(res.body)}`);
+      }
+    }
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
 
   test('a sales user reaches the routes open to any signed-in user', async () => {
     const wrong = [];

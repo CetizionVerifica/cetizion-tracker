@@ -113,6 +113,10 @@ export function compareResources(resourceAccess, registry = resources) {
       write: def.adminOnlyWrites ? 'admin' : 'any',
       delete: def.adminOnlyWrites || def.adminOnlyDeletes ? 'admin' : 'any',
     };
+    // The HR role (#196): writing an admin-curated list takes hrWrites on the resource.
+    if (def.adminOnlyWrites && Boolean(policy.hr?.write) !== Boolean(def.hrWrites)) {
+      drift.push(`${name}: the policy says HR ${policy.hr?.write ? 'may' : 'may not'} write it, but lib/resources.js ${def.hrWrites ? 'sets' : 'does not set'} hrWrites.`);
+    }
     for (const operation of ['read', 'write', 'delete']) {
       if (policy[operation] !== enforced[operation]) {
         drift.push(

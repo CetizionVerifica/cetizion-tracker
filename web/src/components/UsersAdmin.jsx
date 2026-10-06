@@ -22,9 +22,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
  * making sense — and they get a dashed mark and an invitation rather than
  * being dressed up as accounts nobody can use.
  *
- * **Two roles, not four.** C11 proposes Admin, Sales, Finance and
- * Delivery, and says so itself: "the code has two roles". It stays at two
- * here. `users.role` carries `CHECK (role = ANY (ARRAY['admin','sales']))`
+ * **Three roles, not four.** C11 proposes Admin, Sales, Finance and
+ * Delivery, and says so itself: "the code has two roles". HR joined them
+ * for the travel desk (#196, 084), with its own gate on the server
+ * (lib/authz/policy.js, HR_ROUTES). `users.role` carries
+ * `CHECK (role IN ('admin','sales','hr'))`
  * and `requireRole` exists but is mounted nowhere except as
  * `requireAdmin`, so a Finance option would be a control implying a
  * permission model that neither the database nor the routes have. The
@@ -38,6 +40,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'sales', label: 'Sales' },
+  // The travel desk (#196): trips, vendor invoices, the travel import.
+  { value: 'hr', label: 'HR (travel)' },
 ];
 
 const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAdmin } from '../auth/middleware.js';
+import { requireAdmin, requireRole } from '../auth/middleware.js';
 import {
   OWNER_COLUMN, isUnrestricted, ownerForNewRecord, parentClause, recordReachableSql,
   resourceClause, scopeOf,
@@ -448,7 +448,10 @@ export function crudRouter(name, def) {
   // lists behind the forms, where one edit re-labels every record that used
   // the old value. Reading is left open, because the same lists fill the
   // dropdowns everybody works in. Resources without the flag are unchanged.
-  const mayWrite = def.adminOnlyWrites ? [requireAdmin] : [];
+  // hrWrites opens an admin-curated list to the HR role too: the travel
+  // agencies and trip types are the travel desk's to keep (#196).
+  const adminGate = def.hrWrites ? requireRole('admin', 'hr') : requireAdmin;
+  const mayWrite = def.adminOnlyWrites ? [adminGate] : [];
 
   // And a resource may declare the narrower thing: anybody may add to it and
   // correct it, but only an admin may destroy a row.
@@ -468,7 +471,7 @@ export function crudRouter(name, def) {
   // financial data and the permissive one everywhere else. adminOnlyWrites
   // implies this — a resource only an admin may write is one only an admin
   // may delete.
-  const mayDelete = def.adminOnlyWrites || def.adminOnlyDeletes ? [requireAdmin] : [];
+  const mayDelete = def.adminOnlyWrites ? [adminGate] : def.adminOnlyDeletes ? [requireAdmin] : [];
 
   // A save with follow-on work runs in one transaction: whatever an
   // onSave(client, { before, after, input }) hook writes, a document attached under

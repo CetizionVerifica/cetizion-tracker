@@ -17,6 +17,8 @@ export const EVENT_TYPES = [
   'enquiry.created', 'quotation.sent', 'quotation.stage_changed', 'quotation.won', 'quotation.lost',
   'po.received', 'project.delivered', 'invoice.issued', 'invoice.overdue', 'payment.received',
   'visit.scheduled', 'renewal.opened', 'task.overdue', 'follow_up.escalated',
+  // From the travel importer (#196 §7).
+  'trip.created', 'vendor_invoice.created',
 ];
 
 // Minutes to wait after each failed attempt: about 22 hours in all.

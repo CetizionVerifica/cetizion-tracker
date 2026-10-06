@@ -45,7 +45,7 @@ const blankToNull = (v) => (typeof v === 'string' && v.trim() === '' ? null : v)
 
 const name = z.string().trim().min(1, 'Enter a name').max(160);
 const email = z.string().trim().toLowerCase().email('Enter a valid email address').max(160);
-const role = z.enum(ROLES, { message: `Role must be ${ROLES.join(' or ')}` });
+const role = z.enum(ROLES, { message: `Role must be ${ROLES.slice(0, -1).join(', ')} or ${ROLES.at(-1)}` });
 const password = z.string().superRefine((value, ctx) => {
   const problem = passwordProblem(value);
   // The helper's own words, so the policy is stated in exactly one place.

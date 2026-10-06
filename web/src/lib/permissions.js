@@ -41,7 +41,12 @@ export const ADMIN_ONLY_WRITE = new Set([
   'holidays',
 ]);
 
-export const mayWriteResource = (resource, isAdmin) => isAdmin || !ADMIN_ONLY_WRITE.has(resource);
+/** hrWrites: admin-curated lists the travel desk keeps too (#196). */
+export const HR_WRITES = new Set(['travel-vendors', 'trip-types']);
+ADMIN_ONLY_WRITE.add('trip-types');
 
-export const mayDeleteResource = (resource, isAdmin) =>
-  isAdmin || !(ADMIN_ONLY_WRITE.has(resource) || ADMIN_ONLY_DELETE.has(resource));
+export const mayWriteResource = (resource, isAdmin, isHr = false) =>
+  isAdmin || (isHr && HR_WRITES.has(resource)) || !ADMIN_ONLY_WRITE.has(resource);
+
+export const mayDeleteResource = (resource, isAdmin, isHr = false) =>
+  isAdmin || (isHr && HR_WRITES.has(resource)) || !(ADMIN_ONLY_WRITE.has(resource) || ADMIN_ONLY_DELETE.has(resource));
