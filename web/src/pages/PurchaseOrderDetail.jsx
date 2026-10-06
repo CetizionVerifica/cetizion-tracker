@@ -351,6 +351,9 @@ export default function PurchaseOrderDetail() {
           <Chip tone={poTone(po.payment_status)} icon={/overdue|to invoice/i.test(po.payment_status) ? Clock : undefined}>
             {po.payment_status}
           </Chip>,
+          // Addressed to a partner company: the invoice is raised from the partner's GSTIN.
+          po.partner_name && <Chip key="partner">Through {po.partner_name}</Chip>,
+          po.addressed_gstin && <span key="gstin" className="mono text-[12.5px] text-secondary-text">To GSTIN {po.addressed_gstin}</span>,
         ]}
         menu={
           <>

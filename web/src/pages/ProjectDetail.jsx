@@ -175,6 +175,7 @@ export default function ProjectDetail() {
              for that says the wrong thing twice. Late money is red in the
              figures below, where it belongs. */
           <Chip key="stage" tone={p.actual_delivery_date ? 'settled' : 'plain'}>{p.project_stage}</Chip>,
+          ...[...new Set(pos.map((po) => po.partner_name).filter(Boolean))].map((name) => <Chip key={`partner-${name}`}>Through {name}</Chip>),
         ]}
         /* No button in the header: the one move this page offers is in the
            band below, next to the sentence explaining what it will do. Two

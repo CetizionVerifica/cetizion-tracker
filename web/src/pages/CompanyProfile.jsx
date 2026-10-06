@@ -39,6 +39,20 @@ const FIELDS = [
     hint: 'Sets the home state — the place of supply then decides CGST+SGST or IGST.',
   },
   {
+    key: 'company_gstins',
+    label: 'All our GSTINs',
+    mono: true,
+    span: true,
+    hint: 'Every state we are registered in, comma-separated. The email readers take a PO addressed to, or an invoice raised from, any of them; an invoice raised from another GSTIN than its PO was addressed to goes to review.',
+  },
+  {
+    key: 'partner_companies',
+    label: 'Partner companies',
+    multiline: true,
+    span: true,
+    hint: 'Companies clients also order through, one per line: name | GSTIN | other names. A PO addressed to one is registered as ours and marked "Through" it. Write "none" for no partners.',
+  },
+  {
     key: 'company_address',
     label: 'Registered address',
     multiline: true,

@@ -309,6 +309,7 @@ session is **401**, before any of these is considered.
 | `GET /api/payment-stages/invoice-review` | any | A salesperson sees the items on POs they may open; one matched to no PO is an admin's. |
 | `POST /api/payment-stages/invoice-review/:id/dismiss` | any | Scoped: parent-owner. |
 | `POST /api/payment-stages/invoice-review/:id/record` | any | Reads the invoice again for the invoice dialog; saves nothing but an unattached upload. |
+| `POST /api/payment-stages/invoice-review/:id/split` | any | Splits the PO's one open 100% stage as the item suggests; records nothing. |
 | **/api/pipeline** | | |
 | `GET /api/pipeline` | any |  |
 | `POST /api/pipeline/:key/move` | any |  |
@@ -470,6 +471,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `attachments` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `companies` | any | any | **admin** | Shared master data. Every record that ever named this client points at it, and the link trigger creates one on its own. |
 | `contacts` | any | any | **admin** | Shared master data, created and referenced the same way. |
+| `document-profiles` | any | **admin** | **admin** | A client's document note goes into every AI reading of that client's POs or invoices, and its PO-number pattern sends a PO that does not fit to review: one edit changes what the readers register. |
 | `engagements` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
 | `enquiries` | any | any | any | A salesperson's own working record. An enquiry is the first record of a lead, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them. |
 | `exchange-rates` | any | **admin** | **admin** | One rate re-values every historical deal in every report. |

@@ -19,11 +19,13 @@
     "bootstrap": "node scripts/db.js bootstrap",
     "auth:check": "node scripts/auth-check.js",
     "fx:today": "node scripts/fx.js today",
+    "readers:accuracy": "node scripts/reader-accuracy.js",
     "fx:backfill": "node scripts/fx.js backfill",
     "fx:status": "node scripts/fx.js status",
     "authz:docs": "node scripts/authz-docs.js",
     "typecheck": "tsc --noEmit",
-    "ownership:backfill": "node scripts/ownership-backfill.js"
+    "ownership:backfill": "node scripts/ownership-backfill.js",
+    "demo:data": "node scripts/demo-data.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

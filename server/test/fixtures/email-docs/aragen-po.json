@@ -1,0 +1,27 @@
+{
+  "name": "Aragen PO 9010018889",
+  "kind": "po",
+  "pins": "Our Delhi GSTIN; one line (printed on two rows); credit days 45; the garbled words line ignored.",
+  "email": { "from": "procurement@aragen-example.in", "subject": "PO 9010018889", "sent_at": "2026-08-04T05:00:00Z" },
+  "text": "ARAGEN LIFE SCIENCES LIMITED\nPURCHASE ORDER No. 9010018889   Date 03.08.2026\nVendor: Cetizion Verifica Pvt Ltd   GSTIN 07AAKCC0860B1Z2\n10  EcoVadis Assessment            1 AU  2,50,000.00  2,50,000.00\n    SAC 998311                      1 AU  2,50,000.00  2,50,000.00\nBasic 2,50,000.00\nIGST 18% 45,000.00\nTotal 2,95,000.00\nRupees Two Lakh Ninety Five Thousand Paise\nPayment Terms: Invoice Date, 45 days\nGENERAL TERMS AND CONDITIONS OF PURCHASE (pages 2 to 10)\n1. Payment shall be made within 60 days of acceptance of goods. 2. Warranty ...",
+  "answer": {
+    "is_purchase_order": true, "document_type": "purchase_order", "confidence": 0.9,
+    "po_number": "9010018889", "po_date": "2026-08-03", "amendment_no": 0, "revision_marks": null,
+    "buyer": { "company_name": "Aragen Life Sciences Limited", "gstin": null, "state": "Telangana", "contact_name": null, "contact_email": null },
+    "vendor": { "company_name": "Cetizion Verifica Pvt Ltd", "gstin": "07AAKCC0860B1Z2" },
+    "our_quotation_ref": null, "client_reference": null, "currency": "INR",
+    "lines": [
+      { "description": "EcoVadis Assessment", "qty": 1, "rate": "2,50,000.00", "amount": "2,50,000.00", "service": null },
+      { "description": "SAC 998311", "qty": 1, "rate": "2,50,000.00", "amount": "2,50,000.00", "service": null }
+    ],
+    "basic_value": "2,50,000.00", "tax_value": "45,000.00", "total_value": "2,95,000.00", "gst_extra": false,
+    "tax_breakup": { "igst": "45,000.00", "cgst": null, "sgst": null }, "total_in_words": "Rupees Two Lakh Ninety Five Thousand Paise",
+    "payment_terms_text": "Invoice Date, 45 days", "credit_days": 45, "delivery_date": null, "remarks": null,
+    "project_manager": { "name": null, "email": null }
+  },
+  "expect": {
+    "ok": true,
+    "fields": { "po_number": "9010018889", "addressed_gstin": "07AAKCC0860B1Z2", "credit_days": 45, "total_value": 295000, "lines": 1 },
+    "stages": null
+  }
+}

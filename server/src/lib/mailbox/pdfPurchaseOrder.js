@@ -12,8 +12,9 @@ import { advanceShare } from '../../import/ai.js';
 import { splitReference } from '../../import/parse.js';
 import { norm, paymentSplit } from '../../import/rules.js';
 import { STATUS } from '../statuses.js';
-import { isUs } from './enquiryDetect.js';
 import { amountInText, near } from './pdfQuotation.js';
+import { addressedInText, ourParty } from './ourParties.js';
+import { taxFromBreakup, wordsAgree } from './promptRules.js';
 
 // ----------------------------------------------------------- which PDF
 
@@ -43,17 +44,13 @@ export function rankPoPdfs(files) {
 export const PO_REASONS = ['not_po', 'low_confidence', 'amendment', 'cancellation', 'not_to_us', 'no_po_number',
   'no_value', 'amounts_not_in_pdf', 'totals_do_not_add_up', 'bad_currency'];
 
-const gstinOf = (v) => String(v || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+// Revision wording printed on an order (§3 revision_marks): "Amendment 1", "Rev 2", "Revised PO", "supersedes …".
+// Revision 0 is the original: "Rev 0", "Revision No. 00", "R0" and "Amendment No.: 0" are not amendments,
+// nor is the "Amendment Date" label printed beside it.
+const REVISED = /\bamend(?!ment\s*(?:(?:no\.?|number|#)?\s*[:.-]?\s*0+(?!\d)|date\b))|\brevised\b|supersed|in (lieu|place) of|\brev(ision)?\b\.?\s*(no\.?\s*)?[:-]?\s*0*[1-9]|\bR0*[1-9]\d*\b/i;
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 const days = (a, b) => (Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5;
 const round2 = (n) => Math.round(n * 100) / 100;
-
-/** Is a party us: by GSTIN when both are known, else by name. */
-function partyIsUs(party, us) {
-  const g = gstinOf(party?.gstin);
-  if (g && us.gstin) return g === us.gstin;
-  return isUs(party?.company_name, us);
-}
 
 /**
  * The AI's reading of a PO (parsePoVerdict's shape), checked (§3.2). The
@@ -69,10 +66,15 @@ function partyIsUs(party, us) {
  *                  order; null for a scan read by OCR (nothing to check
  *                  amounts against, so they are taken as read)
  *   minConfidence  auto_po_min_confidence
- *   ourNames, ourGstin, internalDomains   who "us" is
+ *   ourNames, ourGstin(s), internalDomains   who "us" is
+ *   partners       the companies clients also order through (ourParties.js)
+ *
+ * A PO addressed to a partner is ours: po.partner_name says which, and
+ * po.addressed_gstin is the GSTIN it was addressed to (ours or the
+ * partner's), for the invoice to be raised from.
  */
-export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, internalDomains = [] } = {}) {
-  const us = { ourNames, internalDomains, gstin: gstinOf(ourGstin) || null };
+export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85, ourNames = [], ourGstin = null, ourGstins = null, partners = [], internalDomains = [] } = {}) {
+  const parties = { ourGstins: ourGstins ?? (ourGstin ? [ourGstin] : []), partners, ourNames, internalDomains };
   const po = { ...v };
   const fail = (reason) => ({ ok: false, reason, po });
 
@@ -81,16 +83,17 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // A changed or cancelled order may already have been invoiced: a person
   // decides (§3.6).
   if (v.document_type === 'cancellation') return fail('cancellation');
-  if (v.document_type === 'amendment' || v.amendment_no > 0) return fail('amendment');
+  if (v.document_type === 'amendment' || v.amendment_no > 0 || REVISED.test(v.revision_marks || '')) return fail('amendment');
 
   // Addressed to us, by us neither: a PO we issued to a vendor reads the
   // other way round.
-  if (partyIsUs(v.buyer, us)) return fail('not_to_us');
+  if (ourParty(v.buyer, parties)?.kind === 'us') return fail('not_to_us');
   const text = String(sourceText || '');
-  const upper = text.toUpperCase();
-  const vendorIsUs = partyIsUs(v.vendor, us)
-    || (!v.vendor?.company_name && !v.vendor?.gstin && ((us.gstin && upper.replace(/\s/g, '').includes(us.gstin)) || /cetizion/i.test(text) || ourNames.some((n) => n && upper.includes(String(n).toUpperCase()))));
-  if (!vendorIsUs) return fail('not_to_us');
+  const addressed = ourParty(v.vendor, parties)
+    || (!v.vendor?.company_name && !v.vendor?.gstin ? addressedInText(text, parties) : null);
+  if (!addressed) return fail('not_to_us');
+  po.addressed_gstin = addressed.gstin || null;
+  po.partner_name = addressed.kind === 'partner' ? addressed.name : null;
 
   // The number as printed, refused when it is a promise rather than a number.
   const { number } = splitReference(v.po_number);
@@ -115,32 +118,65 @@ export function checkPo(v, { emailDate, sourceText = null, minConfidence = 0.85,
   // Values. The total includes tax; with "GST extra" only the basic value
   // is printed, and registration grosses it up (grossUp).
   let { basic_value: basic, tax_value: tax, total_value: total } = v;
+  // The GST rows, added here (docs/email-po-invoice-prompt-plan.md §2): the
+  // tax when only CGST and SGST are printed; a check when one figure is too.
+  const rows = taxFromBreakup(v.tax_breakup);
+  if (tax === null) tax = rows;
+  else if (rows !== null && !near(tax, rows)) return fail('totals_do_not_add_up');
   if (total === null && basic !== null && tax !== null) total = round2(basic + tax);
   if (basic !== null && tax !== null && total !== null && !near(basic + tax, total)) return fail('totals_do_not_add_up');
   if (!(total > 0) && !(v.gst_extra && basic > 0)) return fail('no_value');
+  // The amount in words says the total too; a line that cannot be read is let be.
+  if (!wordsAgree(v.total_in_words, [total, basic], near)) return fail('totals_do_not_add_up');
 
   // Every amount used must be printed: a value the document does not show
-  // is a value the model made up.
+  // is a value the model made up. The tax counts as printed when its rows are.
   if (sourceText !== null) {
-    const used = [total, basic, tax].filter((n) => n !== null && n > 0);
+    const b = v.tax_breakup || {};
+    const used = [total, basic, v.tax_value, b.igst, b.cgst, b.sgst].filter((n) => n !== null && n !== undefined && n > 0);
     if (!used.every((n) => amountInText(n, text))) return fail('amounts_not_in_pdf');
   }
 
   // Its own lines, only when every one is whole and they add up to the
   // basic value (or, with no basic value, to the total). Otherwise the
   // quotation's lines are used, as for a PO typed in by hand.
-  const lines = v.lines || [];
+  const read = v.lines || [];
   const lineAmount = (l) => l.amount ?? (l.rate !== null && l.qty !== null ? round2(l.rate * l.qty) : null);
-  const whole = lines.length > 0 && lines.every((l) => l.description && lineAmount(l) !== null && lineAmount(l) >= 0
+  const whole = read.length > 0 && read.every((l) => l.description && lineAmount(l) !== null && lineAmount(l) >= 0
     && (sourceText === null || amountInText(lineAmount(l), text)));
-  const lineSum = whole ? round2(lines.reduce((n, l) => n + lineAmount(l), 0)) : null;
-  po.linesOk = whole && near(lineSum, basic ?? total);
+  const sum = (ls) => round2(ls.reduce((n, l) => n + lineAmount(l), 0));
+  let lines = read;
+  po.linesOk = whole && near(sum(read), basic ?? total);
+  // One line printed on two rows (Aragen: a description row and a code row,
+  // the same ₹2,50,000 on each) reads as two and adds up to twice the value.
+  if (whole && !po.linesOk) {
+    const merged = twoRowLines(read, lineAmount);
+    if (merged.length < read.length && near(sum(merged), basic ?? total)) {
+      lines = merged;
+      po.linesOk = true;
+      flags.push('two_row_lines_merged');
+    }
+  }
   po.lines = po.linesOk ? lines.map((l) => ({ ...l, amount: lineAmount(l) })) : [];
-  if (!po.linesOk && lines.length) flags.push('lines_not_used');
+  if (!po.linesOk && read.length) flags.push('lines_not_used');
 
   Object.assign(po, { basic_value: basic, tax_value: tax, total_value: total > 0 ? total : null, credit_days: v.credit_days ?? 30 });
   if (v.credit_days === null || v.credit_days === undefined) flags.push('credit_days_default');
   return { ok: true, po, flags };
+}
+
+/** Rows next to each other with the same quantity and amount, as one line: the description row and its code row. */
+export function twoRowLines(lines, lineAmount) {
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const a = lines[i];
+    const b = lines[i + 1];
+    if (b && a.qty === b.qty && lineAmount(a) !== null && lineAmount(a) === lineAmount(b)) {
+      out.push({ ...a, description: `${a.description} ${b.description}`.trim(), service: a.service || b.service });
+      i += 1;
+    } else out.push(a);
+  }
+  return out;
 }
 
 // ----------------------------------------------------------- money
@@ -191,7 +227,8 @@ export function stagesFromTerms(text) {
   if (!t) return { source: 'template' };
 
   // Each percentage with the clause it sits in, tax ones left out.
-  const clauses = t.split(/[;\n|]|,(?!\d)|\.\s|\band\b(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
+  // "&" joins two clauses as "and" does: "50% Advance Against PI & 50% Against work Completion" (Dasami).
+  const clauses = t.split(/[;\n|]|,(?!\d)|\.\s|(?:\band\b|&)(?=\s*\d{1,3}\s*%)/i).map((c) => c.trim()).filter(Boolean);
   const parts = [];
   for (const c of clauses) {
     const ps = [...c.matchAll(PERCENT)].map((m) => Number(m[1]));

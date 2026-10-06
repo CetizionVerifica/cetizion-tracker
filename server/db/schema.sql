@@ -624,6 +624,10 @@ CREATE TABLE purchase_orders (
   replaces_po_number     text REFERENCES purchase_orders(po_number)
                            ON UPDATE CASCADE ON DELETE SET NULL,
   cancelled              boolean NOT NULL DEFAULT false,
+  -- Who the client addressed it to: one of our GSTINs, or a partner's, and
+  -- which partner (079). The invoice must be raised from that GSTIN.
+  addressed_gstin        text,
+  partner_name           text,
   created_at             timestamptz NOT NULL DEFAULT now(),
   updated_at             timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT purchase_orders_not_replacing_itself CHECK (replaces_po_number <> po_number)
@@ -1992,7 +1996,11 @@ DROP TRIGGER IF EXISTS email_message_touch ON email_messages;
 CREATE TRIGGER email_message_touch AFTER INSERT ON email_messages FOR EACH ROW EXECUTE FUNCTION email_message_touch();
 
 INSERT INTO settings (key, value, notes) VALUES
-  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.')
+  ('internal_email_domains', 'cetizionverifica.com', 'Our own email domains, comma separated. Mail only between these addresses is never synced.'),
+  ('email_readers_review_only', 'false', 'The PO and invoice readers send everything they would register to review instead, saying what they would have done (the rollout of the new prompts). Off: they register as before.'),
+  ('email_readers_auto_clients', 'none', 'While the readers are review-only: the clients whose POs and invoices are registered automatically again, comma separated.'),
+  ('company_gstins', '07AAKCC0860B1Z2,09AAKCC0860B1ZY', 'Every GSTIN we are registered under (Delhi, UP), comma separated. The email readers take a PO addressed to, or an invoice raised from, any of them.'),
+  ('partner_companies', 'Innovative CSR Solutions India Pvt. Ltd. | 07AACCI8342L1ZA', 'Companies clients also order through, one per line: name | GSTIN | other names, comma separated. A PO addressed to one is registered as ours, marked as through it.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------
@@ -3025,6 +3033,47 @@ INSERT INTO settings (key, value, notes) VALUES
   ('mis_overdue_days', '7', 'Days after which a pending invoice, PO or quotation is marked Overdue in the reports.')
 ON CONFLICT (key) DO NOTHING;
 
+-- ------------------------------------------- Finance's debtors list (078)
+-- Finance's Sundry Debtors list, read from a shared mailbox once and
+-- reconciled with the tracker's receivables in the Daily Sales Briefing
+-- (docs/mis-briefing-fix-plan.md §3a).
+CREATE TABLE IF NOT EXISTS receivable_lists (
+  id           serial PRIMARY KEY,
+  account_id   int NOT NULL REFERENCES connected_accounts(id) ON DELETE CASCADE,
+  message_id   int REFERENCES email_messages(id) ON DELETE SET NULL,
+  provider_id  text NOT NULL,
+  received_at  timestamptz NOT NULL,
+  -- The date the list is as of: the one printed on it, else the email's.
+  list_date    date NOT NULL,
+  file_name    text,
+  -- How it was read: in code from a spreadsheet, or by the AI from a PDF. Null when nothing could be read.
+  method       text CHECK (method IN ('xlsx','ai')),
+  status       text NOT NULL CHECK (status IN ('used','rejected')),
+  -- Why a list was not used: the rows did not add up to the grand total, an amount not in the file, nothing attached.
+  reason       text,
+  grand_total  numeric(16,2),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, provider_id)
+);
+CREATE INDEX IF NOT EXISTS receivable_lists_recent_idx ON receivable_lists (received_at DESC) WHERE status = 'used';
+
+CREATE TABLE IF NOT EXISTS receivable_list_lines (
+  id                    serial PRIMARY KEY,
+  list_id               int NOT NULL REFERENCES receivable_lists(id) ON DELETE CASCADE,
+  line_no               int NOT NULL,
+  client                text NOT NULL,
+  invoice_no            text,
+  amount                numeric(16,2) NOT NULL,
+  days                  int,
+  pending_for_invoicing boolean NOT NULL DEFAULT false,
+  UNIQUE (list_id, line_no)
+);
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('receivables_list_phrases', 'sundry debtors,debtors,outstanding,receivable', 'Words in the subject or attachment name of Finance''s Sundry Debtors list, comma separated. The newest such email from Finance in the last 14 days is read for the Daily Sales Briefing.'),
+  ('receivables_list_senders', 'none', 'Who sends Finance''s Sundry Debtors list: addresses, comma separated. "none": anyone at our own email domains.')
+ON CONFLICT (key) DO NOTHING;
+
 INSERT INTO settings (key, value, notes) VALUES
   ('auto_enquiries_enabled', 'true', 'Create enquiries automatically from new client email in connected mailboxes, and read back past mail once per mailbox. Off stops both at the next run; nothing already created is removed.'),
   ('auto_enquiry_min_confidence', '0.7', 'How sure the AI must be (0 to 1) that an email is a new enquiry before one is created. Rules alone always need 0.85.'),
@@ -3060,7 +3109,13 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
                           -- the PO's own figures failed a check (pdfPurchaseOrder.js checkPo)
                           'no_value','amounts_not_in_pdf','totals_do_not_add_up','bad_currency',
                           -- its client or currency could not be confirmed (071)
-                          'currency_mismatch','no_currency')),
+                          'currency_mismatch','no_currency',
+                          -- addressed to a GSTIN we do not invoice from (079)
+                          'wrong_gstin',
+                          -- a PO number not of the client's shape (081)
+                          'po_number_pattern',
+                          -- read and checked, held while the readers are review-only (082)
+                          'review_only')),
   mode                 text CHECK (mode IN ('live','history')),
   confidence           numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method               text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3069,6 +3124,9 @@ CREATE TABLE IF NOT EXISTS email_po_decisions (
   quotation_no         text REFERENCES quotations(quotation_no) ON UPDATE CASCADE ON DELETE SET NULL,
   -- The quotations a reviewer is offered (§3.7).
   suggested_quotations text[],
+  -- One line of figures beside the reason, never the email's text (080):
+  -- a PO number read again with other values, old and new side by side.
+  review_note          text,
   -- No quotation was on file, so one was made from the PO (§3.3).
   created_quotation    boolean NOT NULL DEFAULT false,
   stages_source        text CHECK (stages_source IN ('po_terms','template','none')),
@@ -3123,7 +3181,13 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
                             -- the invoice's own figures failed a check (invoiceDetect.js checkInvoice)
                             'no_invoice_no','amounts_not_in_pdf','totals_do_not_add_up','bad_currency','bad_date',
                             -- it names a PO, but its client could not be confirmed (071)
-                            'client_unknown')),
+                            'client_unknown',
+                            -- raised from another GSTIN than its PO was addressed to (079)
+                            'wrong_gstin',
+                            -- the PO date it prints is not the matched PO's (080)
+                            'po_date_mismatch',
+                            -- read and checked, held while the readers are review-only (082)
+                            'review_only')),
   mode                   text CHECK (mode IN ('live','history')),
   confidence             numeric(4,3) CHECK (confidence BETWEEN 0 AND 1),
   method                 text NOT NULL CHECK (method IN ('ai','rules')),
@@ -3138,6 +3202,11 @@ CREATE TABLE IF NOT EXISTS email_invoice_decisions (
   -- amounts, references; never its text), so a retry needs no second AI
   -- call. Cleared once it is decided.
   reading                jsonb,
+  -- One line of figures beside the reason, never the email's text (080).
+  review_note            text,
+  -- An invoice for part of a PO with one 100% stage: the split a reviewer
+  -- may accept with one click (080, docs/email-po-invoice-prompt-plan.md §5).
+  split_suggestion       jsonb,
   decided_by             text,
   settled_at             timestamptz,
   decided_at             timestamptz NOT NULL DEFAULT now(),
@@ -3157,6 +3226,34 @@ CREATE TABLE IF NOT EXISTS email_ai_calls (
   made_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS email_ai_calls_made_idx ON email_ai_calls (made_at);
+
+-- ------------------------------------------- client document notes (081)
+-- What is particular about one client's POs or invoices, for the email
+-- readers (docs/email-po-invoice-prompt-plan.md §6), and the corrections
+-- reviewers made that suggest one.
+CREATE TABLE IF NOT EXISTS company_document_profiles (
+  id                 serial PRIMARY KEY,
+  company_id         int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  doc_type           text NOT NULL CHECK (doc_type IN ('po','invoice')),
+  sender_domains     text[] NOT NULL DEFAULT '{}',
+  po_number_pattern  text,
+  label_aliases      text,
+  hint               text CHECK (char_length(hint) <= 500),
+  approved_by        text,
+  approved_at        timestamptz,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (company_id, doc_type)
+);
+
+CREATE TABLE IF NOT EXISTS document_profile_corrections (
+  id             serial PRIMARY KEY,
+  company_id     int NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  doc_type       text NOT NULL CHECK (doc_type IN ('po','invoice')),
+  review_reason  text,
+  decided_by     text,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS document_profile_corrections_idx ON document_profile_corrections (company_id, doc_type, created_at);
 
 CREATE TABLE IF NOT EXISTS mailbox_invoice_backfills (
   account_id  int PRIMARY KEY REFERENCES connected_accounts(id) ON DELETE CASCADE,

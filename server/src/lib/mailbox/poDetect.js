@@ -16,7 +16,7 @@ import { parseAmount } from './pdfQuotation.js';
 import { BULK, BULK_SENDER, addr, domainOf } from './rules.js';
 import { splitReference } from '../../import/parse.js';
 import { MAX_DOCUMENT_TEXT as MAX_PDF_TEXT, MAX_EMAIL_TEXT, MAX_LINES } from './readLimits.js';
-import { READING_RULES, serviceRule, whoWeAre } from './promptRules.js';
+import { READING_RULES, TOTALS_RULES, parseTaxBreakup, serviceRule, whoWeAre } from './promptRules.js';
 
 export const DOCUMENT_TYPES = ['purchase_order', 'work_order', 'loi', 'contract', 'amendment', 'cancellation', 'other'];
 
@@ -119,31 +119,39 @@ export function poPrefilter(message, facts = {}) {
  * from it; and each line's service spelt as the catalogue spells it, so the
  * service's payment terms and onboarding templates apply.
  */
-export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from, services = [], ourNames = [], ourGstin = null }) {
+export function buildPoPrompt({ pdfText = null, emailSubject, emailText, receivedAt, from, services = [], ourNames = [], ourGstin = null, ourGstins = null, partners = [], clientNotes = null }) {
   const system = [
     'You read one document a client sent to Cetizion Verifica, an Indian sustainability, ESG and certification consultancy, and say whether it is a purchase order to us, and what it says.',
-    whoWeAre({ ourNames, ourGstin }),
+    whoWeAre({ ourNames, ourGstin, ourGstins, partners }),
+    // What an admin wrote about this client's documents (documentProfiles.js).
+    ...(clientNotes ? [clientNotes] : []),
     'Answer with one JSON object and nothing else:',
     '{"is_purchase_order": boolean, "document_type": ' + DOCUMENT_TYPES.map((t) => `"${t}"`).join(' | ') + ', "confidence": 0 to 1,',
     ' "po_number": string|null, "po_date": "YYYY-MM-DD"|null, "amendment_no": integer,',
     ' "buyer": {"company_name": string|null, "gstin": string|null, "state": string|null, "contact_name": string|null, "contact_email": string|null},',
     ' "vendor": {"company_name": string|null, "gstin": string|null},',
-    ' "our_quotation_ref": string|null, "currency": "INR"|...,',
+    ' "our_quotation_ref": string|null, "client_reference": string|null, "revision_marks": string|null, "currency": "INR"|...,',
     ' "lines": [{"description": string, "qty": number, "rate": "amount as printed", "amount": "amount as printed", "service": string|null}],',
     ' "basic_value": "amount as printed"|null, "tax_value": "amount as printed"|null, "total_value": "amount as printed"|null, "gst_extra": boolean,',
-    ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null,',
+    ' "tax_breakup": {"igst": "amount as printed"|null, "cgst": "amount as printed"|null, "sgst": "amount as printed"|null}, "total_in_words": string|null,',
+    ' "payment_terms_text": string|null, "credit_days": integer|null, "delivery_date": "YYYY-MM-DD"|null, "remarks": string|null,',
     ' "project_manager": {"name": string|null, "email": string|null}}',
-    'The BUYER is the client who issues the order: its name, GSTIN and state from the buyer, "Bill to" or letterhead block. The VENDOR (supplier, contractor, service provider) is who it is addressed to; for a PO to us that is Cetizion Verifica.',
+    'The BUYER is the client who issues the order: its name, GSTIN and state from the buyer, "Bill to" or letterhead block. The VENDOR (supplier, contractor, service provider) is who it is addressed to: the vendor block as printed, its name and GSTIN. For a PO to us that is Cetizion Verifica, or one of our partners.',
     'is_purchase_order: true for an order placed with us (purchase_order, work_order, loi, contract), including one raised through a procurement portal (Ariba, Coupa, SAP); false otherwise.',
     'document_type: purchase_order, work_order, loi (letter of intent or award) or contract for a new order; amendment for a revised or amended order ("Amendment 1", "Rev 2"); cancellation for a cancelled order; other for anything else (a quotation, an invoice, a remittance, a reminder, an email that only promises an order).',
     'po_number: the order\'s own number as printed, without its label ("PO No.: 4500012345" gives "4500012345"). Never our quotation number, a purchase requisition, an RFQ, a vendor code or a GSTIN. When the email itself is the order, the number it gives for it.',
     'po_date: the order\'s date as printed, not the email\'s. amendment_no: 0 unless the document says it is an amendment or revision; then its number.',
-    'our_quotation_ref: our quotation or offer number the order cites ("Ref: your offer no. …", "Quotation No."), as printed; ours look like CTZ/QT/2026/014. Else null.',
-    'buyer.contact_name and contact_email: the client\'s person who raised, signed or is named as contact for the order. buyer.state: the Indian state of the buyer\'s billing address.',
-    'lines: one entry per priced line of the order, in order. Never a GST, tax, subtotal, round-off or grand-total row. qty: a number, 1 when not printed. rate: the unit rate before tax; amount: the line\'s value before tax; both as printed.',
+    'revision_marks: any amendment, revision or supersession wording printed on the order ("Amendment No. 1", "Rev 2", "Revised PO", "supersedes PO …", a revision suffix on the number), as printed; else null.',
+    'Whose reference is whose: "Your Ref", "Your quotation", "Your offer" mean ours; "Our Ref", "Our Contact", "Buyer", "Budget" and a bare "Reference" are the client\'s own.',
+    'our_quotation_ref: our quotation or offer number, only where the order or the email cites it as ours ("YOUR REF: QTN-04/2026", "Ref: your offer no. …"), as printed; ours look like CTZ/QT/2026/014 or QTN-04/2026. Else null.',
+    'client_reference: the client\'s own reference the order prints (its quotation, requisition, budget or "Our Ref" number, such as "Quotation No & Date DL26SWR60-1317" on a work order), as printed; else null. Never put the client\'s number in our_quotation_ref.',
+    'buyer.contact_name and contact_email: the client\'s person who raised, signed or is named as contact for the order; "Our Contact" on the client\'s order is the client\'s own person. buyer.state: the Indian state of the buyer\'s billing address.',
+    'lines: one entry per priced line of the order, in order. Never a GST, tax, subtotal, round-off or grand-total row. A line printed on two rows (a description row and a code or HSN row with the same quantity and amount) is one line. The lines add up to the basic value. qty: a number, 1 when not printed. rate: the unit rate before tax; amount: the line\'s value before tax; both as printed.',
     serviceRule(services, { field: 'Each line\'s service' }),
     'basic_value: the order value before tax (Sub-total, Basic value, Taxable value). tax_value: the total GST printed as one figure; null when only CGST and SGST are printed separately. total_value: the grand total including tax. gst_extra: true when the order says GST or taxes are extra or as applicable, with no tax amount printed.',
-    'payment_terms_text: the payment terms copied word for word, every percentage and milestone in them ("30% advance against PO, 40% on submission of draft report, 30% on final report"), from the terms annexure if that is where they are. Leave out tax and penalty clauses.',
+    ...TOTALS_RULES,
+    'payment_terms_text: the order\'s own payment terms copied word for word, every percentage and milestone in them ("30% advance against PO, 40% on submission of draft report, 30% on final report"), from its payment terms block, or the annexure where the order says its payment terms are. Never from general terms and conditions or goods boilerplate (COA, batch, marine policy, inspection, warranty). Leave out tax and penalty clauses.',
+    'remarks: clauses about charges outside the order value ("travel and stay extra at actuals"), as printed; else null.',
     'credit_days: the days to pay after an invoice ("within 45 days of invoice", "45 days credit", "Net 45" give 45), if stated; never a delivery period.',
     'delivery_date: the date the work must be completed or delivered by, only when printed as a date. project_manager: the client\'s person named as engineer-in-charge, coordinator or project manager for the work.',
     ...READING_RULES,
@@ -166,8 +174,9 @@ const email = (v) => { const s = clean(v, 160); return s && /^[^\s@]+@[^\s@]+\.[
 
 const NOT_A_PO = Object.freeze({
   is_purchase_order: false, document_type: 'other', confidence: 0, po_number: null, po_date: null, amendment_no: 0,
-  buyer: {}, vendor: {}, our_quotation_ref: null, currency: null, lines: [], basic_value: null, tax_value: null, total_value: null,
+  buyer: {}, vendor: {}, our_quotation_ref: null, client_reference: null, revision_marks: null, remarks: null, currency: null, lines: [], basic_value: null, tax_value: null, total_value: null,
   gst_extra: false, payment_terms_text: null, credit_days: null, delivery_date: null, project_manager: {},
+  tax_breakup: { igst: null, cgst: null, sgst: null }, total_in_words: null,
 });
 
 /**
@@ -200,12 +209,17 @@ export function parsePoVerdict(raw) {
     },
     vendor: { company_name: clean(v.vendor?.company_name, 200), gstin: clean(v.vendor?.gstin, 20)?.toUpperCase() ?? null },
     our_quotation_ref: clean(v.our_quotation_ref, 60),
+    client_reference: clean(v.client_reference, 80),
+    revision_marks: clean(v.revision_marks, 120),
+    remarks: clean(v.remarks, 500),
     currency: clean(v.currency, 3)?.toUpperCase() ?? null,
     lines,
     basic_value: parseAmount(v.basic_value),
     tax_value: parseAmount(v.tax_value),
     total_value: parseAmount(v.total_value),
     gst_extra: v.gst_extra === true,
+    tax_breakup: parseTaxBreakup(v.tax_breakup, parseAmount),
+    total_in_words: clean(v.total_in_words, 300),
     payment_terms_text: clean(v.payment_terms_text, 1000),
     credit_days: wholeNumber(v.credit_days, 365),
     delivery_date: isoDate(v.delivery_date),

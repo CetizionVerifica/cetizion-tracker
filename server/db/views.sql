@@ -14,7 +14,7 @@ BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices,
-  v_employee_expense_claims CASCADE;
+  v_employee_expense_claims, v_company_document_profiles CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
 -- breaks a view the way a broken cell reference would.
@@ -419,6 +419,8 @@ SELECT
   -- Revised or cancelled: out of the sales figures, still billed as usual.
   po.replaces_po_number,
   po.cancelled,
+  po.addressed_gstin,
+  po.partner_name,
   (SELECT r.po_number FROM purchase_orders r
     WHERE r.replaces_po_number = po.po_number)        AS replaced_by_po_number,
   sv.service_count,
@@ -870,5 +872,11 @@ SELECT
   ct.phone AS contact_phone
 FROM enquiries e
 LEFT JOIN contacts ct ON ct.id = e.contact_id;
+
+-- Client document notes with the client's name, for Settings (081).
+CREATE VIEW v_company_document_profiles AS
+SELECT p.*, c.name AS company_name, (p.approved_at IS NOT NULL) AS approved
+FROM company_document_profiles p
+JOIN companies c ON c.id = p.company_id;
 
 COMMIT;

@@ -36,6 +36,9 @@ const PO_REASONS = {
   bad_currency: 'Currency the tracker does not use',
   currency_mismatch: 'Currency differs from the quotation\'s',
   no_currency: 'Currency could not be read',
+  wrong_gstin: 'Addressed to a GSTIN we do not invoice from',
+  po_number_pattern: 'PO number not of the client\'s usual shape',
+  review_only: 'Read and checked; review-only for now',
 };
 
 const INVOICE_REASONS = {
@@ -55,6 +58,9 @@ const INVOICE_REASONS = {
   bad_currency: 'Currency the tracker does not use',
   bad_date: 'Date missing, or after it was sent',
   client_unknown: 'Its client could not be confirmed',
+  wrong_gstin: 'Raised from another GSTIN than its PO was addressed to',
+  po_date_mismatch: 'The PO date it gives is not the PO\'s',
+  review_only: 'Read and checked; review-only for now',
 };
 
 /** How many items wait in a queue, for a tab's count. Null while unknown. */
@@ -97,7 +103,7 @@ export function PoReviewList() {
     { key: 'from_email', header: 'From', className: 'small', render: (r) => r.from_email || <span className="muted">—</span> },
     {
       key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{PO_REASONS[r.review_reason] || r.review_reason}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
+      render: (r) => <>{PO_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
     },
     {
       key: 'suggested', header: 'Suggested quotation',
@@ -214,6 +220,17 @@ export function InvoiceReviewList() {
     finally { setBusy(null); }
   }
 
+  // The split the item suggests (an invoice for part of a PO with one 100% stage): the stage is split, then the invoice dialog opens on the new share.
+  async function split(row) {
+    setBusy(row.id);
+    try {
+      await api.action(`/payment-stages/invoice-review/${row.id}/split`);
+      refetch();
+      setChoosing({ ...row, split_suggestion: null, stages: null });
+    } catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+
   const columns = [
     { key: 'sent_at', header: 'Sent', render: (r) => <>{date(r.sent_at)}<div className="small muted">{r.mailbox}</div></> },
     { key: 'to_emails', header: 'To', className: 'small', render: (r) => (r.to_emails || []).join(', ') || <span className="muted">—</span> },
@@ -221,14 +238,15 @@ export function InvoiceReviewList() {
     { key: 'po_number', header: 'PO', className: 'mono small', render: (r) => r.po_number || <span className="muted">—</span> },
     {
       key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{INVOICE_REASONS[r.review_reason] || r.review_reason}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
+      render: (r) => <>{INVOICE_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
     },
     {
       key: 'act', header: '', align: 'right',
       render: (r) => (
         <div className="table__actions">
           <OpenEmail threadId={r.thread_id} />
-          <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
+          {r.split_suggestion && <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => split(r)}>Split {r.split_suggestion.percent}% and record</Button>}
+          <Button size="sm" variant={r.split_suggestion ? 'secondary' : undefined} className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
           <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</Button>
         </div>
       ),

@@ -256,6 +256,51 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     assert.ok((await poRow('PO-55123')).document_id, 'the PDF it had not got');
   });
 
+  test('5b. Dasami\'s work order: five services; read again with another value it is an amendment for review, old and new side by side; unchanged it is linked', async () => {
+    const box = await mailbox();
+    await client('Dasami Lab Pvt Ltd', 'purchase@dasami-lab.co.in');
+    const order = (lines) => {
+      const basic = lines.reduce((n, [, , a]) => n + a, 0);
+      const gst = Math.round(basic * 0.09 * 100) / 100;
+      const total = basic + 2 * gst;
+      return {
+        pdf: () => pdfmake.createPdf({ content: ['WORK ORDER', 'Dasami Lab Pvt Ltd', 'To: Cetizion Verifica Pvt. Ltd.', 'Work Order No: DL26SW060-1132', 'Quotation No & Date DL26SWR60-1317',
+          ...lines.map(([d, qty, a]) => `${d} ${qty} ${money(a)}`), `Taxable ${money(basic)}`, `CGST 9% ${money(gst)}`, `SGST 9% ${money(gst)}`, 'IGST', `Grand Total Indian Rupee${money(total)}`] }).getBuffer(),
+        reading: reading({
+          po_number: 'DL26SW060-1132', document_type: 'work_order', buyer: { company_name: 'Dasami Lab Pvt Ltd' }, our_quotation_ref: null, client_reference: 'DL26SWR60-1317',
+          lines: lines.map(([d, qty, a]) => ({ description: d, qty, rate: money(a / qty), amount: money(a) })),
+          basic_value: money(basic), tax_value: null, total_value: `Indian Rupee${money(total)}`, tax_breakup: { igst: null, cgst: money(gst), sgst: money(gst) },
+          payment_terms_text: '50% Advance Against PI & 50% Against work Completion',
+        }),
+      };
+    };
+    const first = [['Carbon footprint', 1, 400000], ['LCA', 2, 216000], ['EPD', 1, 600000], ['Water footprint', 1, 500000], ['Training', 1, 372000]];
+    const send = async (lines) => {
+      const o = order(lines);
+      const msg = poEmail({ from: { email: 'purchase@dasami-lab.co.in' }, attachments: [{ name: 'PO_Dasami.pdf', contentType: 'application/pdf', content: await o.pdf() }] });
+      ai(o.reading);
+      await deliver(box, [msg]);
+      return decision(box.id, msg.provider_id);
+    };
+
+    assert.equal((await send(first)).outcome, 'registered');
+    const po = await poRow('DL26SW060-1132');
+    assert.equal(Number(po.po_value), 2463840, 'CGST and SGST added to the taxable value');
+    assert.match(po.remarks, /The client's reference: DL26SWR60-1317\./);
+    const { rows: services } = await db.query('SELECT service, service_value::float8 AS v FROM po_services WHERE po_number = $1 ORDER BY id', [po.po_number]);
+    assert.equal(services.length, 5, 'one PO, one project, every line a service');
+    assert.equal(services[1].service, 'LCA');
+    assert.equal(Math.round(services[1].v), Math.round(216000 * 1.18), 'LCA at qty 2, with its GST');
+
+    const amended = await send(first.map((l) => (l[0] === 'Training' ? ['Training', 1, 500000] : l)));
+    assert.deepEqual([amended.outcome, amended.review_reason, amended.po_number], ['review', 'amendment', 'DL26SW060-1132']);
+    assert.equal(amended.review_note, 'Registered: INR 24,63,840, 5 lines. This email: INR 26,14,880, 5 lines.');
+    assert.equal(Number((await poRow('DL26SW060-1132')).po_value), 2463840, 'the registered PO is untouched');
+
+    const again = await send(first);
+    assert.equal(again.outcome, 'linked', 'the same values: the same PO again');
+  });
+
   test('6. the same email in two mailboxes gives one registration and one AI call', async () => {
     const personal = await mailbox();
     const shared = await mailbox({ shared: true });
@@ -297,6 +342,93 @@ describe('purchase orders from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_
     ai(reading({ po_number: '4500090009', buyer: { company_name: 'Acme Nine Ltd' }, vendor: { company_name: 'Bureau Veritas India' } }));
     await deliver(box, [msg]);
     assert.equal((await decision(box.id, msg.provider_id)).review_reason, 'not_to_us');
+  });
+
+  test('9e. review only: a PO that would register waits for a person, saying against what; a client turned back on registers', async () => {
+    const box = await mailbox();
+    await client('Acme Rollout Ltd', 'anil@acme-rollout.co.in');
+    const q = await quotation('Acme Rollout Ltd');
+    await db.query(`UPDATE settings SET value = 'true' WHERE key = 'email_readers_review_only'`);
+    try {
+      const held = poEmail({ from: { email: 'anil@acme-rollout.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500099001', buyer: 'Acme Rollout Ltd' }) }] });
+      ai(reading({ po_number: '4500099001', buyer: { company_name: 'Acme Rollout Ltd' } }));
+      await deliver(box, [held]);
+      const d = await decision(box.id, held.provider_id);
+      assert.deepEqual([d.outcome, d.review_reason, d.suggested_quotations], ['review', 'review_only', [q.quotation_no]]);
+      assert.equal(d.review_note, `Read and checked: it would be registered against ${q.quotation_no}. The PO reader is review-only while its new prompts are checked.`);
+      assert.equal(await poRow('4500099001'), undefined);
+
+      await db.query(`UPDATE settings SET value = 'Acme Rollout Ltd' WHERE key = 'email_readers_auto_clients'`);
+      const q2 = await quotation('Acme Rollout Ltd', 300000);
+      const back = poEmail({ from: { email: 'anil@acme-rollout.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500099002', buyer: 'Acme Rollout Ltd', basic: 300000, tax: 54000 }) }] });
+      ai(reading({ po_number: '4500099002', buyer: { company_name: 'Acme Rollout Ltd' }, our_quotation_ref: q2.quotation_no, basic: 300000, tax: 54000 }));
+      await deliver(box, [back]);
+      assert.equal((await poRow('4500099002'))?.quotation_no, q2.quotation_no, 'a client turned back on is registered');
+    } finally {
+      await db.query(`UPDATE settings SET value = 'false' WHERE key = 'email_readers_review_only'`);
+      await db.query(`UPDATE settings SET value = 'none' WHERE key = 'email_readers_auto_clients'`);
+    }
+  });
+
+  test('9c. a client\'s document note goes into the prompt, and a PO number not of its shape goes to review', async () => {
+    const box = await mailbox();
+    const companyId = await client('Acme Pattern Ltd', 'anil@acme-pattern.co.in');
+    await quotation('Acme Pattern Ltd');
+    // Saved in Settings by an admin: that approves it.
+    const { body: saved } = await agent.post('/api/document-profiles').send({
+      company_id: companyId, doc_type: 'po', sender_domains: 'acme-pattern.co.in', po_number_pattern: '^45\\d{8}$', hint: 'SAP orders; "Your Ref" is our quotation.',
+    }).expect(201);
+    const { rows: [p] } = await db.query('SELECT approved_at, sender_domains FROM company_document_profiles WHERE id = $1', [saved.data.id]);
+    assert.ok(p.approved_at, 'saving approves it');
+    assert.deepEqual(p.sender_domains, ['acme-pattern.co.in']);
+    await agent.post('/api/document-profiles').send({ company_id: companyId, doc_type: 'invoice', po_number_pattern: '([' }).expect(422);
+    const { body: twice } = await agent.post('/api/document-profiles').send({ company_id: companyId, doc_type: 'po', hint: 'Again.' }).expect(422);
+    assert.equal(twice.error.fields.company_id, 'This client already has a note for these documents: edit that one instead');
+
+    const msg = poEmail({ from: { email: 'anil@acme-pattern.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: 'AP-77', buyer: 'Acme Pattern Ltd' }) }] });
+    const calls = ai(reading({ po_number: 'AP-77', buyer: { company_name: 'Acme Pattern Ltd' } }));
+    await deliver(box, [msg]);
+    assert.match(calls[0].system, /Notes on documents from Acme Pattern Ltd: SAP orders; "Your Ref" is our quotation\./);
+    const d = await decision(box.id, msg.provider_id);
+    assert.deepEqual([d.outcome, d.review_reason], ['review', 'po_number_pattern']);
+    assert.equal(d.review_note, "Acme Pattern Ltd's PO numbers match ^45\\d{8}$; this one reads AP-77.");
+    assert.equal(await poRow('AP-77'), undefined, 'nothing registered');
+  });
+
+  test('9d. three of a client\'s items settled by hand suggest a note, which is not used until an admin saves it', async () => {
+    const { noteCorrection, loadProfiles } = await import('../src/lib/mailbox/documentProfiles.js');
+    const companyId = await client('Acme Corrected Ltd', 'anil@acme-corrected.co.in');
+    assert.equal(await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' }), null);
+    for (const reason of ['review_only', 'amendment', 'cancellation']) {
+      assert.equal(await noteCorrection(db, { companyId, docType: 'po', reason, by: 'Priya' }), null, `${reason} is not a reading fault`);
+    }
+    await noteCorrection(db, { companyId, docType: 'po', reason: 'value_mismatch', by: 'Priya' });
+    const suggested = await noteCorrection(db, { companyId, docType: 'po', reason: 'no_match', by: 'Priya' });
+    assert.ok(suggested, 'the third suggests one');
+    const { rows: [p] } = await db.query('SELECT hint, approved_at FROM company_document_profiles WHERE id = $1', [suggested]);
+    assert.match(p.hint, /^Suggested: 3 of this client's POs needed a person in 90 days \(no_match, value_mismatch\)/);
+    assert.equal(p.approved_at, null);
+    assert.ok(!(await loadProfiles(db, 'po')).some((x) => x.id === suggested), 'not used while only suggested');
+    await agent.patch(`/api/document-profiles/${suggested}`).send({ hint: 'Orders come as SAP PDFs.' }).expect(200);
+    assert.ok((await loadProfiles(db, 'po')).some((x) => x.id === suggested), 'used once an admin saved it');
+    const { body: list } = await agent.get('/api/document-profiles').expect(200);
+    assert.ok(list.data.some((r) => r.id === suggested && r.company_name === 'Acme Corrected Ltd' && r.approved === true));
+  });
+
+  test('9b. a PO addressed to our partner company is registered as ours, through the partner, with the GSTIN it was addressed to', async () => {
+    const box = await mailbox();
+    await client('Acme Partner Ltd', 'anil@acme-partner.co.in');
+    const q = await quotation('Acme Partner Ltd');
+    const vendor = 'Innovative CSR Solutions India Pvt. Ltd.';
+    const msg = poEmail({ from: { email: 'anil@acme-partner.co.in' }, attachments: [{ name: 'po.pdf', contentType: 'application/pdf', content: await poPdf({ number: '4500090010', buyer: 'Acme Partner Ltd', vendor }) }] });
+    ai(reading({ po_number: '4500090010', buyer: { company_name: 'Acme Partner Ltd' }, vendor: { company_name: vendor, gstin: '07AACCI8342L1ZA' } }));
+    await deliver(box, [msg]);
+    const row = await poRow('4500090010');
+    assert.equal(row?.quotation_no, q.quotation_no, JSON.stringify(await decision(box.id, msg.provider_id)));
+    assert.deepEqual([row.partner_name, row.addressed_gstin], [vendor, '07AACCI8342L1ZA']);
+    assert.match(row.remarks, /Addressed to our partner Innovative CSR Solutions India Pvt\. Ltd\. \(GSTIN 07AACCI8342L1ZA\)/);
+    const { rows: [view] } = await db.query('SELECT partner_name FROM v_purchase_orders WHERE po_number = $1', ['4500090010']);
+    assert.equal(view.partner_name, vendor, 'the PO and project pages read it from the view');
   });
 
   test('11a. a PO 5% under its quotation goes to review with both values; 1.5% under registers', async () => {

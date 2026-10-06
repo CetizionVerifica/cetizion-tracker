@@ -488,7 +488,8 @@ test('a PO registered from email carries a banner until somebody marks it checke
   });
 
   await page.goto(`/purchase-orders/${poNumber}`);
-  await expect(page.getByText('Registered automatically from the client\'s PO emailed on')).toBeVisible();
+  // The banner, and the email-origin note under it once that has loaded, both say it: the first.
+  await expect(page.getByText('Registered automatically from the client\'s PO emailed on').first()).toBeVisible();
   await page.getByRole('button', { name: 'Mark checked' }).click();
   await expect(page.getByRole('button', { name: 'Mark checked' })).toHaveCount(0);
   await expect(page.getByText('Registered automatically from the client\'s PO emailed').first()).toBeVisible();

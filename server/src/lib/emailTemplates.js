@@ -4,8 +4,10 @@
  * library: there is no build step, and finance can read the text version
  * in the email log exactly as the client received it.
  */
+import { windowNote } from './misWindow.js';
+import { dayParagraph, glanceRows } from './misBriefing.js';
 
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc =(s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const inr = (n, currency = 'INR') => {
   const v = Number(n || 0);
   const sym = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SGD: 'S$' }[currency] || `${currency} `;
@@ -334,39 +336,48 @@ const FX_NOTE = 'Converted at the exchange rate on each record\'s date (ECB). Ea
 const link = (appUrl, path, text) => (appUrl ? `<a href="${esc(appUrl)}${esc(path)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
 
 /**
- * The Daily Sales Briefing email: the headline figures, the highlights, the
- * overdue items and the top actions, with the PDF attached. `data` is
- * misReports.js dailyBriefing(); links go to tracker pages (a sign-in).
+ * The Daily Sales Briefing email: the reference's sections in short
+ * (docs/mis-briefing-fix-plan.md §3) — at a glance, the highlights with
+ * their source emails and the reminders, and the top 5 — with the PDF,
+ * which has every pending row, attached. `data` is misReports.js
+ * dailyBriefing(); tracker links need a sign-in, Outlook's open the message.
  */
 export function dailyBriefing({ data, appUrl = '' }) {
   const g = data.at_a_glance;
   const day = date(data.period.from);
-  const overdue = [...data.pending.invoices.rows, ...data.pending.pos.rows, ...data.pending.quotations.rows].filter((r) => r.overdue).sort((a, b) => b.score - a.score).slice(0, 10);
   const subject = `Daily Sales Briefing – ${day}: ${g.new_enquiries} new enquir${g.new_enquiries === 1 ? 'y' : 'ies'}, ${g.pos_received} PO${g.pos_received === 1 ? '' : 's'}, ${g.overdue} overdue`;
-  const figures = [
-    ['New enquiries', g.new_enquiries], ['Quotations sent', g.quotations_sent],
-    ['POs received', `${g.pos_received} · ${lakh(g.pos_received_inr)}`], ['Invoices raised', `${g.invoices_raised} · ${lakh(g.invoices_raised_inr)}`],
-    ['Payments received', `${g.payments_received} · ${lakh(g.payments_received_inr)}`],
-    ['Pending invoices / POs / quotations', `${g.pending_invoices} / ${g.pending_pos} / ${g.pending_quotations}`],
-    [`Overdue (more than ${data.overdue_days} days)`, g.overdue],
-  ];
-  const actionLine = (a) => `${a.client}: ${a.wording || `${a.next_action} — ${a.reference}`} (${a.days} d${a.amount_inr != null ? `, ${lakh(a.amount_inr)}` : ''}${a.owner ? `, ${a.owner}` : ''})`;
+  const glance = glanceRows(data, { money: lakh, max: 3 });
+  const highlights = data.highlights || [];
+  const reminders = data.reminders || [];
+  const url = (path) => (!path ? '' : /^https?:/i.test(path) ? path : appUrl ? `${appUrl}${path}` : '');
+  const a = (href, text) => (href ? `<a href="${esc(href)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
+  const source = (h) => (/^https?:/i.test(h.web_link || '') ? 'open in Outlook' : h.web_link ? 'open in the Inbox' : 'open the record');
+  const sourceUrl = (h) => url(h.web_link) || url(h.link);
+  const noReminders = 'No visit or meeting in the next three days, and no PO waiting to be registered.';
+  const actionLine = (x) => `${x.client}: ${x.wording || `${x.next_action} — ${x.reference}`} (${x.days} d${x.amount_inr != null ? `, ${lakh(x.amount_inr)}` : ''}; owner: ${x.owner || 'not set'})`;
+  const h3 = (text) => `<h3 style="font-size:14px;margin:16px 0 4px">${esc(text)}</h3>`;
+  const muted = (text) => `<p style="color:#64748b">${esc(text)}</p>`;
   const text = `Good morning,
 
 Here is the sales briefing for ${day}.
 
-${figures.map(([k, v]) => `${k}: ${v}`).join('\n')}
+${dayParagraph(data)}
 
-HIGHLIGHTS
-${data.highlights.length ? data.highlights.map((h) => `- ${h.client}: ${h.summary}${h.action ? ` → ${h.action}` : ''}`).join('\n') : '- Nothing was created or changed from email yesterday.'}
+1. AT A GLANCE
+${glance.map((r) => `${r.metric}: ${r.count}${r.detail ? ` (${r.detail})` : ''}`).join('\n')}
 
-TOP ACTIONS FOR TODAY
-${data.top_actions.length ? data.top_actions.map((a, i) => `${i + 1}. ${actionLine(a)}`).join('\n') : '- Nothing is pending.'}
+2. KEY HIGHLIGHTS
+${highlights.length
+    ? highlights.map((h, i) => `${i + 1}. ${h.client}: ${h.summary}${h.action ? `\n   Action / owner: ${h.action}${h.owner ? ` (${h.owner})` : ''}` : ''}${sourceUrl(h) ? `\n   Source email: ${sourceUrl(h)}` : ''}`).join('\n')
+    : `- Nothing to highlight from the mail of ${day}.`}${data.mail_window ? `\n(${windowNote(data.mail_window)})` : ''}
 
-OVERDUE (${overdue.length}${overdue.length === 10 ? '+' : ''})
-${overdue.length ? overdue.map((r) => `- ${r.client} · ${r.reference} · ${r.days} days${r.amount_inr != null ? ` · ${lakh(r.amount_inr)}` : ''}`).join('\n') : '- Nothing overdue.'}
+Reminders carried forward:
+${reminders.length ? reminders.map((r) => `- ${r.text}`).join('\n') : `- ${noReminders}`}
 
-The full briefing is attached as a PDF. ${FX_NOTE}
+3. ACTION ITEMS FOR TODAY (TOP 5)
+${data.top_actions.length ? data.top_actions.map((x, i) => `${i + 1}. ${actionLine(x)}`).join('\n') : '- Nothing is pending.'}
+
+The full briefing, with every pending item, is attached as a PDF. ${FX_NOTE}
 
 Regards,
 Cetizion Tracker
@@ -374,20 +385,21 @@ Cetizion Tracker
   const html = layout(`Daily Sales Briefing, ${day}`, `
 <p>Good morning,</p>
 <p>Here is the sales briefing for <strong>${esc(day)}</strong>.</p>
-${table([], figures.map(([k, v]) => [k, String(v)]))}
-<h3 style="font-size:14px;margin:16px 0 4px">Highlights</h3>
-${data.highlights.length
-    ? `<ul>${data.highlights.map((h) => `<li><strong>${esc(h.client)}:</strong> ${esc(h.summary)}${h.action ? ` → ${esc(h.action)}` : ''}${h.link ? ` · ${link(appUrl, h.link, 'open')}` : ''}</li>`).join('')}</ul>`
-    : '<p style="color:#64748b">Nothing was created or changed from email yesterday.</p>'}
-<h3 style="font-size:14px;margin:16px 0 4px">Top actions for today</h3>
+<p>${esc(dayParagraph(data))}</p>
+${h3('1. At a glance')}
+${table(['Metric', 'Count', 'Detail'], glance.map((r) => [r.metric, r.count, r.detail || '—']))}
+${h3('2. Key highlights')}
+${highlights.length
+    ? `<ol>${highlights.map((h) => `<li><strong>${esc(h.client)}:</strong> ${esc(h.summary)}${h.action ? `<br>Action / owner: ${esc(h.action)}${h.owner ? ` (${esc(h.owner)})` : ''}` : ''}${sourceUrl(h) ? `<br>Source email: ${a(sourceUrl(h), source(h))}` : ''}</li>`).join('')}</ol>`
+    : muted(`Nothing to highlight from the mail of ${day}.`)}
+${data.mail_window ? `<p style="color:#64748b;font-size:12px;margin:4px 0 0">${esc(windowNote(data.mail_window))}</p>` : ''}
+<p style="margin:12px 0 4px"><strong>Reminders carried forward</strong></p>
+${reminders.length ? `<ul>${reminders.map((r) => `<li>${a(url(r.link), r.text)}</li>`).join('')}</ul>` : muted(noReminders)}
+${h3('3. Action items for today (top 5)')}
 ${data.top_actions.length
-    ? `<ol>${data.top_actions.map((a) => `<li>${esc(actionLine(a))} · ${link(appUrl, a.link, 'open')}</li>`).join('')}</ol>`
-    : '<p style="color:#64748b">Nothing is pending.</p>'}
-<h3 style="font-size:14px;margin:16px 0 4px">Overdue (${overdue.length}${overdue.length === 10 ? '+' : ''})</h3>
-${overdue.length
-    ? table(['Client', 'Reference', 'Days', 'Amount'], overdue.map((r) => [r.client, r.reference, String(r.days), r.amount_inr == null ? (r.amount == null ? '—' : 'no rate') : lakh(r.amount_inr)]))
-    : '<p style="color:#64748b">Nothing overdue.</p>'}
-<p>The full briefing is attached as a PDF.</p>
+    ? `<ol>${data.top_actions.map((x) => `<li>${esc(actionLine(x))} · ${a(url(x.email_link || x.link), 'open')}</li>`).join('')}</ol>`
+    : muted('Nothing is pending.')}
+<p>The full briefing, with every pending item, is attached as a PDF.</p>
 <p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
 <p>Regards,<br>Cetizion Tracker</p>`);
   return { subject, text, html };

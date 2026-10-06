@@ -96,6 +96,11 @@ export { LEGACY_ENQUIRY_STATUS, STATUS };
 // delete against the base table.
 // ---------------------------------------------------------------------
 
+/** An admin saving a client document note approves it (docs/email-po-invoice-prompt-plan.md §6). */
+async function approveProfile(client, { after }) {
+  await client.query(`UPDATE company_document_profiles SET approved_at = now(), approved_by = COALESCE(approved_by, 'an admin, in Settings') WHERE id = $1`, [after.id]);
+}
+
 /**
  * A quotation had no onSave. It needs one now only to put the contact's
  * email and phone where they live — on the contact the trigger linked.
@@ -1072,6 +1077,35 @@ export const resources = {
       if (sameRate && sameDay) return;
       await client.query(`UPDATE exchange_rates SET source = 'manual' WHERE id = $1`, [after.id]);
     },
+  },
+
+  'document-profiles': {
+    // What is particular about one client's POs or invoices, for the email
+    // readers (docs/email-po-invoice-prompt-plan.md §6): a note for the
+    // model, the labels it prints, its PO numbers' shape. Saved by an admin,
+    // which approves it; a suggested one waits until then.
+    adminOnlyWrites: true,
+    table: 'company_document_profiles',
+    view: 'v_company_document_profiles',
+    label: 'Client document note',
+    defaultSort: 'company_name, doc_type',
+    search: ['company_name', 'hint', 'label_aliases'],
+    filters: ['doc_type', 'approved'],
+    columns: ['company_id', 'doc_type', 'sender_domains', 'po_number_pattern', 'label_aliases', 'hint'],
+    schema: z.object({
+      company_id: requiredInt({ min: 1 }),
+      doc_type: enumOf(['po', 'invoice']),
+      // "dasami.com, dasamilab.in": the domains the client sends from.
+      sender_domains: z.preprocess(
+        // Left out of a change, left as it is; blank is none.
+        (v) => (v === undefined ? undefined : (Array.isArray(v) ? v : String(v ?? '').split(/[,\s]+/)).map((d) => String(d).trim().toLowerCase().replace(/^@/, '')).filter(Boolean)),
+        z.array(z.string().max(120).regex(/^[a-z0-9.-]+\.[a-z]{2,}$/, 'A domain, like dasami.com')).max(20).optional(),
+      ),
+      po_number_pattern: z.preprocess(blankToNull, z.string().trim().max(120).refine((p) => { try { new RegExp(p); return true; } catch { return false; } }, 'Not a pattern the tracker can read').nullable().optional()),
+      label_aliases: str(300),
+      hint: str(500),
+    }),
+    onSave: approveProfile,
   },
 
   holidays: {

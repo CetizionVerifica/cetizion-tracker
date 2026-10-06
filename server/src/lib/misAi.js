@@ -23,8 +23,8 @@
 import { query } from '../db.js';
 import { aiConfig, chatJSON } from './ai.js';
 import { aiCallsToday, enquirySettings } from './mailbox/autoEnquiry.js';
-import { snippet } from './mailbox/rules.js';
-import { linkFor } from './misReports.js';
+import { BULK, BULK_SENDER, isBlocked, snippet } from './mailbox/rules.js';
+import { linkFor, threadLink } from './misReports.js';
 import { r2 } from './reportMath.ts';
 import { config } from '../config.js';
 
@@ -91,19 +91,74 @@ export function numbersAllowed(text, allowed) {
 // Daily highlights
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Which mail may become a highlight (docs/mis-briefing-fix-plan.md §2)
+// ---------------------------------------------------------------------
+
+/** What the readers decided a message was, and whether that is sales business. */
+export const SALES_KINDS = ['new_enquiry', 'quotation_sent', 'purchase_order', 'billing', 'reply_or_followup'];
+export const NOT_SALES_KINDS = { marketing: 'marketing mail', vendor_or_sales_pitch: 'a vendor\'s pitch', job_application: 'a job application', spam: 'spam' };
+/** Our own scheduled reports land in the sales mailbox's Sent Items; they are never news. */
+export const OWN_REPORT_SUBJECT = /^\s*((re|fw|fwd)\s*:\s*)*(daily sales briefing|weekly sales mis)\b/i;
+
 /**
- * Yesterday's threads in shared mailboxes that store everything, with the
- * new part of each message, the sender's company and the linked record.
+ * Why one message is not sales business, or null when it may be. A message
+ * the readers decided is sales business (SALES_KINDS) is always kept.
+ */
+export function messageVerdict(m) {
+  if (SALES_KINDS.includes(m.kind)) return null;
+  if (m.own_report || OWN_REPORT_SUBJECT.test(m.subject || '')) return 'our own report';
+  if (NOT_SALES_KINDS[m.kind]) return NOT_SALES_KINDS[m.kind];
+  const from = String(m.from_email || '');
+  if (from && (isBlocked(from) || BULK_SENDER.test(from))) return 'an automatic or bulk sender';
+  if (BULK.test(m.body || '')) return 'bulk mail';
+  if (m.filtered_as === 'internal only') return 'internal only';
+  return null;
+}
+
+/**
+ * Whether a thread may become a highlight. Kept: a thread on a record (the
+ * Coreal reminder in the reference is internal but about a client), or one
+ * with any message the readers called sales business. Dropped: a thread
+ * whose every message from the window has a reason above; the reason given
+ * is the commonest. Our own report is dropped even on a record.
+ */
+export function threadVerdict(t) {
+  const reasons = (t.messages || []).map(messageVerdict);
+  if (reasons.length && reasons.every((r) => r === 'our own report')) return 'our own report';
+  if (t.entity) return null;
+  if ((t.messages || []).some((m) => SALES_KINDS.includes(m.kind))) return null;
+  if (!reasons.length || reasons.some((r) => r === null)) return null;
+  const count = reasons.reduce((n, r) => n.set(r, (n.get(r) || 0) + 1), new Map());
+  return [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
+}
+
+/**
+ * Yesterday's threads in every shared mailbox that stores everything, with
+ * the new part of each message, the sender's company and the linked record,
+ * and what was left out and why (§2, decision 3):
+ *   - mail that is not sales business is dropped before the AI sees it;
+ *   - one email that reached two shared mailboxes (sales@ cc'd on info@)
+ *     is one thread, not two;
+ *   - a shared mailbox shared as subject or metadata gives the AI no text:
+ *     it is named, not silently skipped.
  * Ranked: a linked record first, then an external sender, then the most
  * recent; at most MAX_THREADS threads and MAX_CHARS characters in all.
  */
-export async function candidateThreads(db, { from, to }) {
+export async function selectThreads(db, { from, to }) {
   const tz = config.businessTimeZone;
+  const { rows: boxes } = await db.query(
+    `SELECT email, visibility FROM connected_accounts WHERE is_shared AND status <> 'disconnected' ORDER BY email`);
   const { rows } = await db.query(
-    `SELECT t.id AS thread_id, t.subject, t.entity, t.entity_id, co.name AS company, t.last_message_at,
+    `SELECT t.id AS thread_id, t.account_id, t.subject, t.entity, t.entity_id, co.name AS company, t.last_message_at, a.email AS mailbox,
             EXISTS (SELECT 1 FROM email_messages x WHERE x.thread_id = t.id AND x.direction = 'inbound'
                       AND (x.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2) AS external_yesterday,
-            (SELECT json_agg(json_build_object('direction', m.direction, 'from', COALESCE(m.from_name, m.from_email), 'at', m.sent_at, 'body', m.body_html, 'web_link', m.web_link) ORDER BY m.sent_at)
+            (SELECT json_agg(json_build_object('direction', m.direction, 'from', COALESCE(m.from_name, m.from_email), 'from_email', m.from_email,
+                      'at', m.sent_at, 'body', m.body_html, 'web_link', m.web_link, 'folder_id', m.folder_id, 'subject', m.subject, 'filtered_as', m.filtered_as,
+                      'internet_message_id', m.internet_message_id,
+                      'kind', (SELECT d.kind FROM email_enquiry_decisions d WHERE d.account_id = m.account_id AND d.provider_id = m.provider_id),
+                      'own_report', EXISTS (SELECT 1 FROM email_log l WHERE l.template IN ('mis_daily','mis_weekly') AND l.subject = m.subject))
+                    ORDER BY m.sent_at)
                FROM (SELECT * FROM email_messages m WHERE m.thread_id = t.id AND (m.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2 ORDER BY m.sent_at DESC LIMIT 5) m) AS messages,
             CASE t.entity WHEN 'enquiry' THEN (SELECT e.status FROM enquiries e WHERE e.enquiry_no = t.entity_id)
                           WHEN 'quotation' THEN (SELECT q.status FROM quotations q WHERE q.quotation_no = t.entity_id)
@@ -113,27 +168,61 @@ export async function candidateThreads(db, { from, to }) {
        LEFT JOIN companies co ON co.id = t.company_id
       WHERE a.is_shared AND a.visibility = 'share_everything' AND a.status <> 'disconnected'
         AND EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND (m.sent_at AT TIME ZONE $3)::date BETWEEN $1 AND $2)
-      ORDER BY (t.entity IS NOT NULL) DESC, external_yesterday DESC, t.last_message_at DESC
-      LIMIT $4`, [from, to, tz, MAX_THREADS]);
-  const out = [];
+      ORDER BY (t.entity IS NOT NULL) DESC, external_yesterday DESC, t.last_message_at DESC, t.id
+      LIMIT $4`, [from, to, tz, MAX_THREADS * 5]);
+
+  const threads = [];
+  const excluded = new Map();
+  const leave = (why) => excluded.set(why, (excluded.get(why) || 0) + 1);
+  const seenMessages = new Set();
   let chars = 0;
+  let cut = 0;
   for (const r of rows) {
-    const messages = (r.messages || []).map((m) => ({ direction: m.direction, from: m.from, at: m.at, web_link: m.web_link, text: snippet(m.body || '', MESSAGE_CHARS) }));
+    const raw = r.messages || [];
+    const why = threadVerdict({ entity: r.entity, messages: raw });
+    if (why) { leave(why); continue; }
+    // The same email in two shared mailboxes: keep the first copy (the best ranked).
+    const ids = raw.map((m) => m.internet_message_id).filter(Boolean);
+    if (ids.length && ids.every((id) => seenMessages.has(id))) { leave('the same email in another shared mailbox'); continue; }
+    if (threads.length >= MAX_THREADS) { cut += 1; continue; }
+    const messages = raw.map((m) => ({ direction: m.direction, from: m.from, at: m.at, web_link: m.web_link, text: snippet(m.body || '', MESSAGE_CHARS) }));
     const text = messages.map((m) => `${m.direction === 'inbound' ? 'From' : 'To'} ${m.from}: ${m.text}`).join('\n');
-    if (chars + text.length > MAX_CHARS) break;
+    if (chars + text.length > MAX_CHARS) { cut += 1; continue; }
     chars += text.length;
-    out.push({
+    ids.forEach((id) => seenMessages.add(id));
+    threads.push({
       thread_id: r.thread_id, subject: r.subject, company: r.company, entity: r.entity, entity_id: r.entity_id, record_status: r.record_status,
-      messages, text, web_link: messages.find((m) => m.web_link)?.web_link || null,
+      mailbox: r.mailbox, messages, text, web_link: messages.find((m) => m.web_link)?.web_link || null,
+      // Where the thread opens in the Inbox: its mailbox and the folder of its latest message.
+      account_id: r.account_id, folder_id: raw.at(-1)?.folder_id ?? null,
+      // What threadVerdict needs to look again at a highlight the model picks (checkHighlights).
+      verdictInput: { entity: r.entity, messages: raw.map(({ kind, subject, own_report: ownReport, from_email: fromEmail, filtered_as: filteredAs }) => ({ kind, subject, own_report: ownReport, from_email: fromEmail, filtered_as: filteredAs })) },
     });
   }
-  return out;
+  return {
+    threads,
+    window: {
+      mailboxes: boxes.filter((b) => b.visibility === 'share_everything').map((b) => b.email),
+      not_read: boxes.filter((b) => b.visibility !== 'share_everything').map((b) => ({ email: b.email, shared_as: b.visibility })),
+      threads: rows.length, kept: threads.length, cut,
+      excluded: [...excluded.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+    },
+  };
 }
+
+/** The threads alone, as before §2. */
+export async function candidateThreads(db, period) {
+  return (await selectThreads(db, period)).threads;
+}
+
+export { windowNote } from './misWindow.js';
 
 export function highlightsPrompt(threads, actions, { day }) {
   const system = `You write the "Highlights of yesterday" for a sales team's morning briefing, from yesterday's client email threads, and word five actions the team has already chosen.
-Answer in JSON only: {"highlights":[{"thread_id":123,"client":"...","summary":"one or two lines","action":"what to do next, or null","owner":"who, or null"}],"actions_wording":[{"row_key":"...","text":"one line"}]}.
-Rules: use only the thread_ids given; at most ${MAX_HIGHLIGHTS} highlights, the most important first; never invent a number, amount or date — use only figures that appear in the thread; keep each summary to two short sentences; plain English, no marketing tone. actions_wording may reword only the rows given, keeping their meaning.`;
+Answer in JSON only: {"highlights":[{"thread_id":123,"client":"...","summary":"one or two lines","action":"what to do next, or null","owner":"who, or null"}],"skip":[456],"actions_wording":[{"row_key":"...","text":"one line"}]}.
+Rules: use only the thread_ids given; at most ${MAX_HIGHLIGHTS} highlights, the most important first; never invent a number, amount or date — use only figures that appear in the thread; keep each summary to two short sentences; plain English, no marketing tone.
+Only client or sales business is a highlight: an enquiry, a quotation, an order, an invoice or payment, a client's question, a visit or audit. Leave out newsletters and marketing, a vendor selling to us, job applications, internal chatter that is not about a client, automatic notifications and our own reports, and put their thread_ids in "skip".
+actions_wording may reword only the rows given, keeping their meaning.`;
   const user = JSON.stringify({
     day,
     threads: threads.map((t) => ({ thread_id: t.thread_id, subject: t.subject, client: t.company, record: t.entity ? `${t.entity} ${t.entity_id} (${t.record_status || 'open'})` : null, text: t.text })),
@@ -145,10 +234,13 @@ Rules: use only the thread_ids given; at most ${MAX_HIGHLIGHTS} highlights, the 
 /** What the model said about the highlights, checked (§3.4). */
 export function checkHighlights(raw, threads, actions) {
   const byId = new Map(threads.map((t) => [t.thread_id, t]));
+  // The model's own "not sales business", and the code's (§2): a highlight on either is dropped.
+  const skipped = new Set((Array.isArray(raw?.skip) ? raw.skip : []).map(Number));
   const highlights = [];
   for (const h of Array.isArray(raw?.highlights) ? raw.highlights : []) {
     const t = byId.get(Number(h?.thread_id));
     if (!t || highlights.length >= MAX_HIGHLIGHTS) continue;
+    if (h.skip === true || skipped.has(t.thread_id) || (t.verdictInput && threadVerdict(t.verdictInput))) continue;
     const allowed = figuresIn([t.subject, t.text, t.entity_id, t.record_status, t.company]);
     const summary = String(h.summary || '').trim();
     if (!summary || !numbersAllowed(summary, allowed)) continue;
@@ -156,7 +248,7 @@ export function checkHighlights(raw, threads, actions) {
     if (action && !numbersAllowed(action, allowed)) continue;
     highlights.push({
       thread_id: t.thread_id, client: String(h.client || t.company || 'a client').trim(), summary, action, owner: h.owner ? String(h.owner).trim() : null,
-      link: t.entity ? linkFor(t.entity, t.entity_id) : `/inbox?thread=${t.thread_id}`, web_link: t.web_link, source: 'ai',
+      link: t.entity ? linkFor(t.entity, t.entity_id) : threadLink(t), web_link: t.web_link || threadLink(t), source: 'ai',
     });
   }
   const byKey = new Map(actions.map((a) => [a.key, a]));
@@ -236,7 +328,8 @@ export async function wordReport(data, { db = { query } } = {}) {
   const chat = chatFn();
   try {
     if (data.kind === 'daily_briefing') {
-      const threads = await candidateThreads(db, data.period);
+      const { threads, window } = await selectThreads(db, data.period);
+      data.mail_window = window;
       if (!threads.length && !data.top_actions.length) return { used: false, why: 'nothing to word' };
       const { system, user } = highlightsPrompt(threads, data.top_actions, { day: data.period.from });
       await countCall(db, 'mis_daily');
@@ -244,7 +337,7 @@ export async function wordReport(data, { db = { query } } = {}) {
       const { highlights, wording } = checkHighlights(raw, threads, data.top_actions);
       if (highlights.length) data.highlights = highlights;
       data.top_actions = data.top_actions.map((a) => (wording.has(a.key) ? { ...a, wording: wording.get(a.key) } : a));
-      return { used: true, highlights: highlights.length, worded: wording.size, threads: threads.length };
+      return { used: true, highlights: highlights.length, worded: wording.size, threads: threads.length, left_out: window.excluded };
     }
     const { system, user } = commentaryPrompt(data);
     await countCall(db, 'mis_weekly');

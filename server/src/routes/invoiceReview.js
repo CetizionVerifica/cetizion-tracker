@@ -13,8 +13,10 @@
  * An item matched to no PO is an admin's.
  */
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
 import { purchaseOrderClause, scopeOf } from '../auth/ownership.js';
+import { splitStage } from '../lib/invoices.js';
+import { noteCorrection } from '../lib/mailbox/documentProfiles.js';
 import { ApiError } from '../middleware/error.js';
 import * as autoInvoice from '../lib/mailbox/autoInvoice.js';
 import { aiCallsToday } from '../lib/mailbox/autoEnquiry.js';
@@ -49,7 +51,7 @@ invoiceReviewRouter.get('/invoice-review', async (req, res) => {
   const params = [];
   const mine = scoped(req, params);
   const { rows } = await query(
-    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
+    `SELECT d.id, d.sent_at, d.to_emails, d.review_reason, d.review_note, d.split_suggestion, d.document_type, d.confidence, d.thread_id, d.mode, d.invoice_no, d.po_number,
             a.email AS mailbox,
             COALESCE((SELECT json_agg(json_build_object('id', s.id, 'stage_no', s.stage_no, 'stage_name', s.stage_name, 'stage_amount', s.stage_amount,
                                                         'invoice_no', s.invoice_no, 'currency', s.currency) ORDER BY s.stage_no)
@@ -87,7 +89,7 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
   const before = ctx.aiUsed;
   const read = await readWithAi(account, { m, c: { direction: 'outbound', external: [] } }, ctx, chat, {
     rank: rankInvoicePdfs, parse: parseInvoiceVerdict, fileName: 'invoice.pdf',
-    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })), ourNames: settings.ourNames, ourGstin: settings.ourGstin }),
+    prompt: ({ pdfText }) => buildInvoicePrompt({ pdfText, emailSubject: m.subject, emailText: mainText(m.body_html || '', MAX_EMAIL_TEXT), sentAt: m.sent_at, to: (d.to_emails || []).map((email) => ({ email })), ourNames: settings.ourNames, ourGstin: settings.ourGstin, ourGstins: settings.ourGstins, partners: settings.partners }),
   });
   await countAiCalls(ctx.aiUsed - before, 'invoice_review_read');
   if (read.error || read.unreadable) return res.json({ data: { ...base, prefill: { invoice_no: d.invoice_no }, note: 'The invoice could not be read again: enter it from the email.' } });
@@ -109,6 +111,24 @@ invoiceReviewRouter.post('/invoice-review/:id/record', async (req, res) => {
       },
     },
   });
+});
+
+/**
+ * Accept the split the item suggests (docs/email-po-invoice-prompt-plan.md
+ * §5): the PO's one 100% stage becomes this invoice's share and the rest.
+ * The item then names the new stage, and the invoice dialog (record) opens
+ * on it; nothing is recorded until a person saves it there.
+ */
+invoiceReviewRouter.post('/invoice-review/:id/split', async (req, res) => {
+  const d = await item(req, req.params.id);
+  const split = d.split_suggestion;
+  if (!split?.stage_id) throw new ApiError(409, 'This item has no split to accept');
+  const stageId = await transaction(async (client) => {
+    const id = await splitStage(client, { stageId: split.stage_id, percent: split.percent, stageName: split.stage_name, triggerEvent: split.trigger_event, scope: scopeOf(req) });
+    await client.query('UPDATE email_invoice_decisions SET stage_id = $2, split_suggestion = NULL WHERE id = $1', [d.id, id]);
+    return id;
+  });
+  res.json({ data: { id: d.id, stage_id: stageId } });
 });
 
 invoiceReviewRouter.post('/invoice-review/:id/dismiss', async (req, res) => {
@@ -133,4 +153,8 @@ export async function settleInvoiceReview(client, req, reviewId, { stageId, invo
       WHERE d.id = $1 AND d.outcome = 'review' ${mine}`,
     [...params, stageId, invoiceNo, po?.po_number ?? null, req.user?.name || req.user?.username || null]);
   if (!rowCount) throw new ApiError(409, 'That review item is already settled');
+  // A person did what the reader could not: counted against the client, towards a suggested document note (§6).
+  const { rows: [r] } = await client.query(
+    `SELECT pr.company_id, d.review_reason FROM email_invoice_decisions d JOIN purchase_orders p ON p.po_number = d.po_number JOIN projects pr ON pr.project_id = p.project_id WHERE d.id = $1`, [reviewId]);
+  if (r) await noteCorrection(client, { companyId: r.company_id, docType: 'invoice', reason: r.review_reason, by: req.user?.name || req.user?.username || null });
 }

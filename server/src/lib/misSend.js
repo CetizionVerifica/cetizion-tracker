@@ -24,7 +24,8 @@ import { documentStorageReady, uploadDocument } from './documents.js';
 import { dailyBriefing as dailyEmail, weeklyMis as weeklyEmail } from './emailTemplates.js';
 import { sendViaMailbox } from './mail.js';
 import { providerFor } from './mailbox/sync.js';
-import { KINDS, dailyBriefing, misSettings, periodFor, weeklyMis } from './misReports.js';
+import { KINDS, attachRelated, dailyBriefing, misSettings, periodFor, weeklyMis } from './misReports.js';
+import { refreshReceivableList } from './mailbox/receivablesList.js';
 import { REPORT_TITLE, misFileName, misPdf, pdfPageCount } from './misPdf.js';
 import { wordReport } from './misAi.js';
 import { raiseAlert } from './ops/alerts.js';
@@ -42,11 +43,17 @@ const TEMPLATE = { daily_briefing: 'mis_daily', weekly_mis: 'mis_weekly' };
 export async function buildReport(kind, { today = businessToday(), db = { query }, settings = null, ai = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown report kind: ${kind}`);
   const s = settings || await misSettings(db);
+  // Finance's debtors list, read once when it arrives (docs/mis-briefing-fix-plan.md §3a). It never holds the briefing up.
+  const receivablesList = kind === 'daily_briefing'
+    ? await refreshReceivableList(db, { ai }).catch((err) => { console.error('[mis] receivables list:', err.message); return { error: err.message }; })
+    : null;
   const data = kind === 'daily_briefing' ? await dailyBriefing({ today, db, settings: s }) : await weeklyMis({ today, db, settings: s });
   const worded = ai ? await wordReport(data, { db }) : { used: false, why: 'not asked' };
+  // Earlier emails on each highlight's thread or record, once the highlights are final (§3).
+  if (kind === 'daily_briefing') await attachRelated(db, data.highlights, data.period);
   const email = kind === 'daily_briefing' ? dailyEmail({ data, appUrl: s.appUrl }) : weeklyEmail({ data, appUrl: s.appUrl });
   const { rows: [{ company }] } = await db.query(`SELECT (SELECT value FROM settings WHERE key = 'company_name') AS company`);
-  return { kind, data, email, settings: s, company: company?.trim() || 'Cetizion Verifica', fileName: misFileName(data), ai: worded };
+  return { kind, data, email, settings: s, company: company?.trim() || 'Cetizion Verifica', fileName: misFileName(data), ai: worded, receivables_list: receivablesList };
 }
 
 async function record(db, run) {

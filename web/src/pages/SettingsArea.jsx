@@ -14,6 +14,7 @@ import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
 import BulkImport from './BulkImport.jsx';
 import ReportCategories from './ReportCategories.jsx';
+import DocumentProfiles from './DocumentProfiles.jsx';
 
 /**
  * One Settings area, with a rail grouped by what a setting is about.
@@ -105,6 +106,7 @@ const GROUPS = [
       // only that (docs/per-user-mailboxes-plan.md §5). The admin's view of
       // every mailbox is the same pane, titled for what it shows.
       { to: 'mailboxes', label: 'Mailboxes', salesLabel: 'My mailbox', element: <Mailboxes /> },
+      { to: 'document-notes', label: 'Client document notes', element: <DocumentProfiles />, adminOnly: true },
       { to: 'webhooks', label: 'Webhooks', element: <Webhooks />, adminOnly: true },
     ],
   },
