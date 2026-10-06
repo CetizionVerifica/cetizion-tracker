@@ -437,4 +437,40 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     const { rows } = await pool.query("SELECT username, title FROM notifications WHERE kind = 'portal_action' AND title LIKE '%Beta%' ORDER BY id");
     assert.deepEqual(rows.map((r) => r.username), ['olu@cetizion.example', null]);
   });
+
+  // ---------------------------------------------------------------- #198 phase 3: bringing them in
+  test('recording an invoice emails the client\'s portal contacts once, and only when the portal and its Invoices are on', async () => {
+    await pool.query("UPDATE settings SET value = 'https://tracker.example' WHERE key = 'public_app_url'");
+    const announced = async (stage) => (await pool.query(
+      "SELECT to_email, subject, body_text FROM email_log WHERE template = 'portal_new_invoice' AND entity_id = $1 ORDER BY to_email", [String(stage)])).rows;
+    const record = (stage, invoiceNo) => request(app).post(`/api/payment-stages/${stage}/invoice`).set('Cookie', staff)
+      .send({ invoice_no: invoiceNo, invoice_date: '2026-09-10' }).expect(200);
+
+    // Alpha: the portal is on with Invoices, and two contacts are allowed in.
+    const { rows: [a] } = await pool.query("SELECT id FROM payment_stages WHERE po_number = 'PO-A2' AND stage_no = 2");
+    await pool.query("UPDATE contacts SET opt_out_reminders = true WHERE id = 2003");
+    await record(a.id, 'INV-A-3');
+    const mails = await announced(a.id);
+    assert.deepEqual(mails.map((m) => m.to_email), ['asha@alpha.example'], 'a contact who opted out of automatic email is left out');
+    assert.equal(mails[0].subject, 'Invoice INV-A-3 for PO PO-A2 is in your client portal');
+    assert.match(mails[0].body_text, /https:\/\/tracker\.example\/portal/);
+    assert.match(mails[0].body_text, /including GST/);
+    await record(a.id, 'INV-A-3');
+    assert.equal((await announced(a.id)).length, 1, 'once, however often it is recorded');
+
+    // Beta: switched off in Settings, then the Invoices section off.
+    const stageB = async (no) => (await pool.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent) VALUES ('PO-B', $1, 'Extra', 'Manual', 0.01) RETURNING id`, [no])).rows[0].id;
+    const b2 = await stageB(2); const b3 = await stageB(3); const b4 = await stageB(4);
+    await pool.query("UPDATE settings SET value = 'false' WHERE key = 'portal_notify_new_invoice'");
+    await record(b2, 'INV-B-2');
+    assert.equal((await announced(b2)).length, 0, 'switched off');
+    await pool.query("UPDATE settings SET value = 'true' WHERE key = 'portal_notify_new_invoice'");
+    await request(app).patch('/api/portal-admin/companies/1002').set('Cookie', staff).send({ portal_sections: ['projects', 'documents'] }).expect(200);
+    await record(b3, 'INV-B-3');
+    assert.equal((await announced(b3)).length, 0, 'Invoices off');
+    await request(app).patch('/api/portal-admin/companies/1002').set('Cookie', staff).send({ portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] }).expect(200);
+    await record(b4, 'INV-B-4');
+    assert.deepEqual((await announced(b4)).map((m) => m.to_email), ['bina@beta.example']);
+  });
 });
