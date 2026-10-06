@@ -85,40 +85,68 @@ numbers (`HT-2627-1877.pdf`, `TRV-2026-014-ticket.pdf`).
 
 ---
 
-## 4. Choices made, and open questions
+## 4. Questions for Shyam
 
-Made here, for the lead to confirm:
+Each one is built the way described, and is a small change if the answer is
+different. A reply by number on the pull request is enough.
 
-1. **"Return ticket is cancelled (8,719 deducted)"** marks the leg **partly
-   refunded**, not cancelled: the outbound leg was flown. The plan says
-   "cancelled"; a cancellation note on the leg still marks it cancelled.
-2. **A credit note marks a leg partly refunded**, a cancellation note
-   cancelled — the same rule the database trigger applies to notes typed in by
-   hand.
-3. **A return leg with the client column blank joins the trip** of the
-   outbound leg, if it chains and falls within the gap. The plan's "same client
-   / service request / PO" is read as "nothing saying another one".
-4. **Client-name linking** compares the project's client and its company's
-   name. The schema has no company aliases, so "Megafine" does not find
-   "Megafine Pharma Ltd".
-5. **The service request no. cannot be set from the import review**: HR does
-   not write projects (§9.7). An admin types it on the project, and the next
-   upload matches by itself.
-6. **The workbook is kept on the batch** (`import_batches.source_file`) until
-   the commit, so a column correction can re-plan it later. It is removed on
-   commit, and with the draft when the draft is deleted.
-7. **No AI** in the travel import: rules only, nothing leaves the building.
-8. **Mode inferred from the tab's columns** is said once, on the tab, not on
-   every row.
-9. `travel_logs.arranged_by` is kept for one release, as the plan says, and
-   can be dropped after.
-10. `ISSUE-PLAN.md` has not been kept since September and is left as it is.
+1. **"Return ticket is cancelled (8,719 deducted)."** The plan says such a
+   row marks the leg **cancelled**. Built: the leg is marked **partly
+   refunded**, because the leg on that row was flown and only the return was
+   not; the charge is still read from the remark. Keep it, or mark it
+   cancelled as the plan says?
+2. **The service request no. from the import review.** §4.2b says a project
+   without one "can be given it from the import review", but §3 and §9.7 give
+   HR read-only access to projects. Built: an admin types it on the project
+   form, and the next upload matches by itself. Should HR be allowed to set
+   this one field from the review?
+3. **"Linked by client name: company name or alias."** The tracker has no
+   company aliases, so the importer matches the project's client and its
+   company's name exactly (ignoring case and spaces): "Megafine" does not find
+   "Megafine Pharma Ltd". Do you want an alias list, or is an exact name
+   enough?
+4. **When an agency invoice falls due.** Vendor bills are paid by the
+   month-end after the invoice date (the rule already on `main`, in
+   `v_travel_vendor_invoices`). The vendor's new **payment terms** are stored
+   and copied onto each invoice, but they do not move that date. Should the
+   due date be the invoice date plus the vendor's terms instead?
+5. **A return leg with the client column blank** joins the outbound trip when
+   it chains (B → A after A → B) within the gap. The plan says rows of the
+   "same client / service request / PO" group; built as "nothing saying a
+   different one", or every return flight becomes a trip of its own. Agreed?
+6. **"Flagged only"** in the review shows items with an amber or red flag. The
+   sales importer's also counts blue (information) flags; here almost every
+   row has one ("Happy Tours's, by its number"), which would make the filter
+   show everything. Agreed?
+7. **One pull request.** §8 plans a PR per phase. This is all six phases in
+   one PR (one commit for phases 1–3, one for 4–6, then fixes from testing).
+   Fine to review as one, or would you like it split?
+8. **Your sample workbook.** The importer was built from §1's description of
+   `Travel excel sheet.xlsx` and tested on a made-up workbook of the same
+   shape (`server/test/fixtures/travelWorkbook.js`); the real file was never
+   used. Could you run it through Settings → Import travel on a local or
+   staging copy (the review writes nothing until Commit) and note anything
+   read wrongly?
+9. **Who holds #195 and #196.** Both are assigned to you on GitHub; Sami's
+   side built them. Please reassign, or say if you had started either.
+10. **Webhooks.** Should HR see Settings → Webhooks to tick `trip.created` /
+    `vendor_invoice.created`? Built: no, an admin does.
+11. **`ISSUE-PLAN.md`** (§8 phase 6) has not been kept since September and is
+    left as it is. Should it be brought up to date?
 
-Open:
+Decided here, no reply needed unless you disagree:
 
-- Should HR see **Settings → Webhooks**? Not now; an admin ticks the events.
-- Reading invoice PDFs automatically (like the email PO reader) is out of
-  scope (§5.4), as planned.
+- **A credit note marks its leg partly refunded, a cancellation note
+  cancelled**, the rule the database trigger applies to notes typed in by
+  hand.
+- **The workbook is kept on the batch** (`import_batches.source_file`) until
+  the commit, so a column correction can plan it again later; it goes with
+  the commit, or with the draft when the draft is deleted.
+- **No AI** in the travel import: rules only, nothing leaves the building.
+- **Mode read from a tab's columns** is said once, on the tab, not on every
+  row.
+- `travel_logs.arranged_by` is kept for one release, as the plan says.
+- **Reading invoice PDFs automatically** is out of scope (§5.4), as planned.
 
 ---
 
