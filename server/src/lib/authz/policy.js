@@ -109,6 +109,7 @@ export const RESTRICTIONS = {
   'protected-fields': 'Some columns may not be written here; they move only through their own authorised route.',
   'api-token-scope': 'Limited to what the presented API token\'s role and person allow, and to reads unless the token may write.',
   'settings-override': 'Admin-only unless a named setting opens it to everybody.',
+  'hr-travel-only': 'For the HR role, limited to the rows on trips and travel vendor invoices.',
 };
 
 const mustBeAdmin = 'admin';
@@ -463,6 +464,7 @@ export const routes = [
   { method: 'POST', path: '/api/purchase-orders/:poNumber/undo-from-email', access: mustBeAdmin, why: 'Deletes a PO registered from email with its stages and project, and puts its quotation back.' },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
   { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
+  { method: 'GET', path: '/api/vendor-invoices/:id/full', access: signedIn, note: 'A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is.' },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },
   // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
   { method: 'GET', path: '/api/payment-stages/invoice-review', access: signedIn, restrictions: ['parent-owner'], note: 'A salesperson sees the items on POs they may open; one matched to no PO is an admin\'s.' },
@@ -578,6 +580,9 @@ export const routes = [
  *   the earlier `visibleTo` hook, which matched the free-text sales_person,
  *   with a predicate on owner_user_id.)
  */
+/** HR may read, write and delete it (#196 §3). */
+const HR_ALL = Object.freeze({ read: true, write: true, delete: true });
+
 export const resourceAccess = {
   // --- a salesperson's own working records -------------------------------
   enquiries: {
@@ -593,16 +598,20 @@ export const resourceAccess = {
     restrictions: ['record-owner'],
     why: 'A salesperson\'s own working record. A project is the work won from one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
   onboarding: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  'travel-logs': { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
+  'travel-logs': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk\'s own record too (#196).' },
   engagements: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   tasks: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   notes: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  attachments: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
+  attachments: { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, restrictions: ['hr-travel-only'], why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). HR reaches only the files on trips and vendor invoices (#196).' },
   'quotation-lines': { read: 'any', write: 'any', delete: 'any', why: 'The lines of a quotation, edited with it.' },
+  // --- the travel desk (#196) -------------------------------------------
+  'travel-segments': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A trip\'s legs, kept with it: open as travel-logs is.' },
+  'vendor-invoice-lines': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'The lines of a travel vendor invoice, edited with it: open as vendor-invoices is.' },
+  'vendor-credit-notes': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A travel vendor\'s credit and cancellation notes, entered with its invoices.' },
 
   // --- travel finance (#85) ---------------------------------------------
   'vendor-invoices': {
-    read: 'any', write: 'any', delete: 'any',
+    read: 'any', write: 'any', delete: 'any', hr: HR_ALL,
     why: 'Sales enter vendor invoices as ordinary work.',
     protectedFields: ['amount_paid', 'payment_date'],
     protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85).',
@@ -635,8 +644,9 @@ export const resourceAccess = {
   'pipeline-stages': { read: 'any', write: 'admin', delete: 'admin', why: 'A stage\'s status mapping and probability rewrite quotation statuses and the whole forecast.' },
   services: { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
   'sector-aliases': { read: 'any', write: 'admin', delete: 'admin', why: 'Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report.' },
-  'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
+  'travel-vendors': { read: 'any', write: 'admin', delete: 'admin', hr: HR_ALL, why: 'A Settings catalogue: one edit re-labels every record that used the old value. HR owns the agency list (#196), so an administrator and HR change it (hrWrites).' },
   'expense-categories': { read: 'any', write: 'admin', delete: 'admin', why: 'A Settings catalogue: one edit re-labels every record that used the old value.' },
+  'trip-types': { read: 'any', write: 'admin', delete: 'admin', hr: HR_ALL, why: 'A Settings catalogue (#196): a type\'s chargeable flag decides which trips may be billed to a client. Kept by an administrator and the travel desk (hrWrites).' },
   'exchange-rates': { read: 'any', write: 'admin', delete: 'admin', why: 'One rate re-values every historical deal in every report.' },
   'document-profiles': { read: 'any', write: 'admin', delete: 'admin', why: 'A client\'s document note goes into every AI reading of that client\'s POs or invoices, and its PO-number pattern sends a PO that does not fit to review: one edit changes what the readers register.' },
   holidays: { read: 'any', write: 'admin', delete: 'admin', why: 'The working calendar. A holiday decides which days count towards a reply clock, a follow-up deadline and every "working days" figure, so one edit moves what the whole company is judged late by. Correcting the dates that move each year is an administrator\'s job (adminOnlyWrites).' },
@@ -665,3 +675,49 @@ export const crudRoutes = () =>
 
 /** Every declared route: the explicit ones and the generated CRUD ones. */
 export const policyRoutes = () => [...routes, ...crudRoutes()];
+
+// ---------------------------------------------------------------------
+// The HR role (#196 §3)
+// ---------------------------------------------------------------------
+
+/**
+ * The explicit routes the HR role may use, on top of the CRUD resources
+ * whose entry above carries `hr`. Everything else answers 403 to HR
+ * (hrGate in auth/middleware.js), whatever its `access` says: HR is the
+ * travel desk, not a sales user with fewer rows.
+ *
+ * Its own account, notifications and saved views; the dropdowns (lookups
+ * answers HR with the travel lists only); uploading and opening documents;
+ * the travel dashboard and payables; a trip in full; paying a vendor
+ * invoice, which stays open to every signed-in role as before.
+ */
+export const HR_ROUTES = [
+  'GET /api/auth/account', 'PATCH /api/auth/account', 'POST /api/auth/account/password',
+  'DELETE /api/auth/account/identities/:provider', 'DELETE /api/auth/account/sessions/:id', 'POST /api/auth/account/sessions/revoke-all',
+  'GET /api/notifications', 'GET /api/notifications/summary', 'POST /api/notifications/read-all', 'POST /api/notifications/:id/read',
+  'GET /api/views', 'POST /api/views', 'PATCH /api/views/:id', 'DELETE /api/views/:id', 'POST /api/views/order',
+  'GET /api/lookups', 'GET /api/lookups/next-id/:kind', 'GET /api/settings',
+  'POST /api/documents', 'GET /api/documents/:id',
+  'GET /api/dashboard/travel', 'GET /api/dashboard/payables', 'GET /api/export/payables.csv',
+  'GET /api/travel-logs/:travelId/full', 'GET /api/vendor-invoices/:id/full', 'POST /api/vendor-invoices/:id/pay',
+];
+
+const OPERATION_NEEDS = { list: 'read', read: 'read', create: 'write', update: 'write', delete: 'delete' };
+
+/** Every declared route HR may use: HR_ROUTES and the CRUD routes of the resources marked `hr`. */
+export function hrRoutes() {
+  const explicit = new Set(HR_ROUTES);
+  return policyRoutes().filter((r) => (r.resource
+    ? Boolean(resourceAccess[r.resource]?.hr?.[OPERATION_NEEDS[r.operation]])
+    : explicit.has(`${r.method} ${r.path}`)));
+}
+
+const pattern = (path) => new RegExp(`^${path.split('/').map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/')}/?$`);
+let compiledHr = null;
+
+/** May the HR role make this request? method: GET, POST…; path: as requested, without the query string. */
+export function hrMayUse(method, path) {
+  compiledHr ??= hrRoutes().map((r) => ({ method: r.method, re: pattern(r.path) }));
+  const m = method === 'HEAD' ? 'GET' : method;
+  return compiledHr.some((r) => r.method === m && r.re.test(path));
+}

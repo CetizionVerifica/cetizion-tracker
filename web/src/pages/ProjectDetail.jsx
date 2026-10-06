@@ -438,6 +438,7 @@ export default function ProjectDetail() {
             { name: 'sales_person', label: 'Sales person' },
             { name: 'planned_start_date', label: 'Planned start', type: 'date' },
             { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
+            { name: 'service_request_no', label: 'Service request no.', hint: 'e.g. CV108: how a trip with no PO finds this project' },
             { name: 'percent_complete', label: '% complete', type: 'percent' },
             { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
           ]}

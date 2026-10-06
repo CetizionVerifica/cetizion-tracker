@@ -11,7 +11,7 @@ import { crudRouter } from './lib/crud.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { authRouter } from './auth/routes.js';
 import { authConfig } from './auth/config.js';
-import { requireAuth } from './auth/middleware.js';
+import { hrGate, requireAuth } from './auth/middleware.js';
 import { mountWebApp } from './web.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { lookupRouter, settingsRouter } from './routes/lookups.js';
@@ -137,6 +137,8 @@ app.use('/api/mcp', mcpRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);
+// The HR role reaches only the travel desk (#196 §3).
+app.use('/api', hrGate);
 
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/search', searchRouter);

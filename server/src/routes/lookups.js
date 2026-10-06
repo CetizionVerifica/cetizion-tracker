@@ -25,7 +25,33 @@ function sectorOptions(used) {
  * Everything the forms need to offer a dropdown instead of a free-text
  * box — one request, cached by the client for the session.
  */
+/**
+ * The travel desk's dropdowns (#196 §3): the travel lists, and of the sales
+ * side only what linking a trip needs. A PO's number, value, currency,
+ * project and client; a project's id, client and service request number;
+ * the staff list. No quotations, pipeline, sales people or payment terms.
+ */
+async function hrLookups() {
+  const [vendors, tripTypes, projects, pos, trips, staff, settings] = await Promise.all([
+    query('SELECT id, name FROM travel_vendors WHERE active ORDER BY name'),
+    query(`SELECT id, name, chargeable FROM trip_types WHERE active ORDER BY sort_order, name`),
+    query(`SELECT p.project_id, p.client_name, p.service_request_no FROM projects p ORDER BY p.project_id DESC`),
+    query(`SELECT po.po_number, po.project_id, pr.client_name, po.po_value, po.currency
+             FROM purchase_orders po LEFT JOIN projects pr ON pr.project_id = po.project_id ORDER BY po.po_number DESC`),
+    query('SELECT travel_id, employee_name, destination FROM travel_logs ORDER BY travel_id DESC'),
+    query('SELECT id, name, email FROM staff WHERE active ORDER BY name'),
+    query('SELECT key, value, notes FROM settings ORDER BY key'),
+  ]);
+  return {
+    travel_vendors: vendors.rows.map((r) => r.name), travel_vendor_list: vendors.rows, trip_types: tripTypes.rows,
+    projects: projects.rows, purchase_orders: pos.rows, trips: trips.rows, staff: staff.rows,
+    settings: Object.fromEntries(settings.rows.map((r) => [r.key, r.value])),
+    enums: STATUS, limits: { document_max_bytes: config.documentMaxBytes },
+  };
+}
+
 lookupRouter.get('/', async (req, res) => {
+  if (req.user?.role === 'hr') return res.json({ data: await hrLookups() });
   // Dropdowns are a read of the sales tables wearing a different hat. A
   // project id, a quotation number and a client name are exactly the
   // identifiers Phase 2C restricts, so the lists built from scoped tables
@@ -64,7 +90,7 @@ lookupRouter.get('/', async (req, res) => {
          currenciesInUse, stages, lostReasons, leadSources, ptt, pttLines, obt] =
     await Promise.all([
       query('SELECT id, name, code, default_rate, currency, gst_rate, unit, sac_code, renewal_interval_months FROM services WHERE active ORDER BY sort_order, name'),
-      query('SELECT name FROM travel_vendors WHERE active ORDER BY name'),
+      query('SELECT id, name FROM travel_vendors WHERE active ORDER BY name'),
       query('SELECT name FROM expense_categories WHERE active ORDER BY name'),
       query(`SELECT p.project_id, p.client_name FROM projects p ${pjWhere}
               ORDER BY p.project_id DESC`, pj.params),
@@ -122,6 +148,9 @@ lookupRouter.get('/', async (req, res) => {
       services: services.rows.map((r) => r.name),
       catalogue: services.rows,
       travel_vendors: vendors.rows.map((r) => r.name),
+      // The travel desk's lists (#196): vendors by id, and the trip types.
+      travel_vendor_list: vendors.rows,
+      trip_types: (await query('SELECT id, name, chargeable FROM trip_types WHERE active ORDER BY sort_order, name')).rows,
       expense_categories: categories.rows.map((r) => r.name),
       projects: projects.rows,
       purchase_orders: pos.rows,

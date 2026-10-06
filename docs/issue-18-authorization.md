@@ -3,9 +3,18 @@
 The access rules the API enforces, and why each one is where it is (#18
 Phase 1C, extended by #89).
 
-Two roles exist: **admin** and **sales**. Everything below is enforced on
-the server. The front end hides what a sales user may not do, but hiding is
-a courtesy — the gate is the route.
+Three roles exist: **admin**, **sales** and **hr**. Everything below is
+enforced on the server. The front end hides what a sales user may not do, but
+hiding is a courtesy — the gate is the route.
+
+**hr** is the travel desk (#196): trips, their legs, the travel agency's
+invoices and credit notes, the travel lists and the travel import. On the
+sales side it sees only what linking a trip needs (a PO's number, value and
+client; a project; the staff list). It reaches only the routes listed in
+`HR_ROUTES` in `server/src/lib/authz/policy.js` and the CRUD resources whose
+entry there carries `hr`; `hrGate` in `auth/middleware.js` answers 403 to
+anything else, whatever the route's own access says, so a route added later
+is closed to HR until somebody decides otherwise.
 
 In `AUTH_MODE=shared` there is one account and it is treated as an admin, so
 that the real accounts can be prepared before the cutover. In
@@ -397,6 +406,7 @@ session is **401**, before any of these is considered.
 | `PATCH /api/users/:id` | **admin** | Changing a role or switching an account off. |
 | `POST /api/users/:id/password` | **admin** | Setting somebody's password. |
 | **/api/vendor-invoices** | | |
+| `GET /api/vendor-invoices/:id/full` | any | A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is. |
 | `POST /api/vendor-invoices/:id/pay` | any | Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id. |
 | **/api/views** | | |
 | `GET /api/views` | any | Scoped: record-owner. |
@@ -471,7 +481,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 <!-- generated:resources -->
 | Resource | GET | POST / PATCH | DELETE | Why |
 | --- | :--: | :--: | :--: | --- |
-| `attachments` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
+| `attachments` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). HR reaches only the files on trips and vendor invoices (#196). |
 | `companies` | any | any | **admin** | Shared master data. Every record that ever named this client points at it, and the link trigger creates one on its own. |
 | `contacts` | any | any | **admin** | Shared master data, created and referenced the same way. |
 | `document-profiles` | any | **admin** | **admin** | A client's document note goes into every AI reading of that client's POs or invoices, and its PO-number pattern sends a PO that does not fit to review: one edit changes what the readers register. |
@@ -502,8 +512,12 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `sector-aliases` | any | **admin** | **admin** | Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
-| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
-| `travel-vendors` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
+| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk's own record too (#196). |
+| `travel-segments` | any | any | any | A trip's legs, kept with it: open as travel-logs is. |
+| `travel-vendors` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. HR owns the agency list (#196), so an administrator and HR change it (hrWrites). |
+| `trip-types` | any | **admin** | **admin** | A Settings catalogue (#196): a type's chargeable flag decides which trips may be billed to a client. Kept by an administrator and the travel desk (hrWrites). |
+| `vendor-credit-notes` | any | any | any | A travel vendor's credit and cancellation notes, entered with its invoices. |
+| `vendor-invoice-lines` | any | any | any | The lines of a travel vendor invoice, edited with it: open as vendor-invoices is. |
 | `vendor-invoices` | any | any | any | Sales enter vendor invoices as ordinary work. Protected fields: `amount_paid`, `payment_date`. |
 <!-- /generated:resources -->
 

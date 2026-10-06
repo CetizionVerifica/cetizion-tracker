@@ -42,6 +42,8 @@ export function useList(resource, params = {}, deps = []) {
   return { ...result, rows: result.data?.data ?? [], total: result.data?.total ?? 0 };
 }
 
+const LOOKUP_DEFAULTS = { services: [], catalogue: [], travel_vendors: [], travel_vendor_list: [], trip_types: [], staff: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], pipeline_stages: [], lost_reasons: [], lead_sources: [], payment_terms_templates: [], onboarding_templates: [], enums: {}, limits: {} };
+
 /** Lookups change rarely; fetch them once per session and share. */
 let lookupCache = null;
 export function useLookups() {
@@ -56,7 +58,9 @@ export function useLookups() {
       })
       .catch(() => {});
   }, []);
-  return data || { services: [], catalogue: [], travel_vendors: [], expense_categories: [], projects: [], purchase_orders: [], trips: [], sales_people: [], clients: [], companies: [], sectors: [], settings: {}, quotations: [], won_quotations: [], pipeline_stages: [], lost_reasons: [], lead_sources: [], payment_terms_templates: [], onboarding_templates: [], enums: {}, limits: {} };
+  // Every list present even when the server sends fewer: the travel desk's
+  // lookups (#196) carry the travel lists only.
+  return { ...LOOKUP_DEFAULTS, ...(data || {}) };
 }
 
 export function invalidateLookups() {

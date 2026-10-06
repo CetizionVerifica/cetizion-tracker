@@ -5,6 +5,12 @@ import { linkPurchaseOrder } from './purchaseOrders.js';
 import { REPORT_LIST_KEYS, reportListClauses, saveSectorAlias, saveServiceReportLine } from './reportDefinitions.js';
 import { LEGACY_ENQUIRY_STATUS, STATUS } from './statuses.js';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
+import { ApiError } from '../middleware/error.js';
+
+/** The records the HR role files documents against (#196). */
+const HR_ATTACHMENT_ENTITIES = ['travel_log', 'travel_vendor_invoice'];
+/** What a travel file is (#196 §4.6). */
+export const TRAVEL_DOC_TYPES = ['ticket', 'boarding_pass', 'vendor_invoice', 'credit_note', 'hotel_bill', 'visa', 'travel_approval', 'other'];
 
 // ---------------------------------------------------------------------
 // Field helpers
@@ -316,9 +322,12 @@ export const resources = {
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
       'planned_delivery_date', 'percent_complete', 'remarks', 'estimated_cost',
+      // CV108: how a trip with no PO finds its project (#196 §4.2b).
+      'service_request_no',
     ],
     schema: z.object({
       project_id: str(40),
+      service_request_no: str(40),
       client_name: requiredStr(160),
       primary_service: str(300),
       project_manager: str(120),
@@ -540,12 +549,15 @@ export const resources = {
     label: 'Trip',
     naturalKey: 'travel_id',
     defaultSort: 'travel_start_date DESC NULLS LAST, id DESC',
-    search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name'],
-    filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name'],
+    search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name', 'origin'],
+    filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name',
+      'trip_type_id', 'vendor_id', 'staff_id', 'cancelled', 'chargeable'],
     columns: [
       'travel_id', 'po_number', 'service_delivered', 'employee_name',
       'employee_email', 'purpose', 'destination', 'travel_start_date',
       'travel_end_date', 'arranged_by', 'hr_owner', 'hr_owner_email', 'remarks',
+      // The travel desk's fields (#196 §4.2).
+      'vendor_id', 'project_id', 'staff_id', 'trip_type_id', 'origin', 'booking_date', 'cancelled', 'billed_stage_id', 'client_label',
     ],
     schema: z.object({
       travel_id: requiredStr(40),
@@ -561,6 +573,18 @@ export const resources = {
       hr_owner: str(120),
       hr_owner_email: str(160),
       remarks: str(1000),
+      vendor_id: int({ min: 1 }),
+      // A project when there is no PO; with a PO it must be the PO's (a trigger says so).
+      project_id: str(40),
+      staff_id: int({ min: 1 }),
+      // Left out, the trip is Chargeable with a PO or project and Non-chargeable without.
+      trip_type_id: int({ min: 1 }),
+      origin: str(160),
+      booking_date: date(),
+      cancelled: bool(),
+      // The payment stage whose invoice billed this trip to the client; chargeable trips only.
+      billed_stage_id: int({ min: 1 }),
+      client_label: str(160),
     }),
   },
 
@@ -578,14 +602,23 @@ export const resources = {
     naturalKey: 'vendor_invoice_id',
     defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
     search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
-    filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id'],
+    filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id', 'vendor_id'],
+    // The invoice PDF (#196 §4.4).
+    hasDocument: true,
     columns: [
       'vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'invoice_date',
       'invoice_amount', 'payment_terms_days', 'amount_paid', 'payment_date', 'remarks',
+      'vendor_id', 'document_id', 'vendor_gstin_on_invoice', 'place_of_supply',
     ],
     schema: z.object({
       vendor_invoice_id: requiredStr(60),
-      travel_id: requiredStr(40),
+      // One trip, the old way: the invoice gets one line for it. An invoice
+      // covering several trips leaves this blank and has lines (#196).
+      travel_id: str(40),
+      vendor_id: int({ min: 1 }),
+      document_id: int({ min: 1 }),
+      vendor_gstin_on_invoice: str(20),
+      place_of_supply: str(80),
       vendor_invoice_no: str(60),
       invoice_date: date(),
       invoice_amount: num({ min: 0 }),
@@ -824,6 +857,13 @@ export const resources = {
     // carry their owner's reach, and an unreachable parent means unknown
     // ownership, which is admin-only.
     ownerScopedBy: 'entity',
+    // The HR role reaches the files on trips and travel vendor invoices only (#196).
+    hrClause: (col) => `${col}entity IN ('travel_log','travel_vendor_invoice')`,
+    authorize: (req, input) => {
+      if (req.user?.role === 'hr' && input?.entity !== undefined && !HR_ATTACHMENT_ENTITIES.includes(input.entity)) {
+        throw new ApiError(403, 'HR attaches files to trips and travel vendor invoices only');
+      }
+    },
     table: 'attachments',
     view: null,
     label: 'Attachment',
@@ -831,14 +871,16 @@ export const resources = {
     defaultSort: 'created_at DESC',
     search: ['label'],
     filters: ['entity', 'entity_id'],
-    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by'],
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by', 'doc_type'],
     stampActor: 'uploaded_by',
     schema: z.object({
-      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage']),
+      entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage', 'travel_log', 'travel_vendor_invoice']),
       entity_id: requiredStr(120),
       document_id: requiredInt({ min: 1 }),
       label: str(200),
       uploaded_by: str(120),
+      // What the file is, so a trip's files can be checked by kind (#196 §4.6).
+      doc_type: enumOf(TRAVEL_DOC_TYPES).nullable().optional(),
     }),
   },
 
@@ -1017,16 +1059,112 @@ export const resources = {
   },
 
   'travel-vendors': {
-    // A Settings list: admins curate it, everybody reads it.
+    // A Settings list: admins and the travel desk curate it (#196), everybody reads it.
     adminOnlyWrites: true,
+    hrWrites: true,
     table: 'travel_vendors',
     view: null,
     label: 'Travel vendor',
     defaultSort: 'name',
-    search: ['name'],
+    search: ['name', 'gstin', 'contact_name'],
     filters: ['active'],
-    columns: ['name', 'active'],
-    schema: z.object({ name: requiredStr(160), active: bool() }),
+    columns: ['name', 'active', 'gstin', 'pan', 'contact_name', 'email', 'phone', 'address', 'payment_terms_days', 'invoice_prefixes'],
+    schema: z.object({
+      name: requiredStr(160), active: bool(),
+      gstin: str(20), pan: str(12), contact_name: str(120), email: str(160), phone: str(40), address: str(400),
+      payment_terms_days: int({ min: 0, max: 365 }).default(30),
+      // "HT/2627/, HTT/26-27/": how the importer recognises this vendor's invoices.
+      invoice_prefixes: z.preprocess(
+        (v) => (v === undefined ? undefined : (Array.isArray(v) ? v : String(v ?? '').split(/[,\s]+/)).map((p) => String(p).trim()).filter(Boolean)),
+        z.array(z.string().max(40)).max(20).optional(),
+      ),
+    }),
+  },
+
+  'trip-types': {
+    // A Settings list (#196 §4.2a): admins and the travel desk keep it, everybody reads it.
+    // A type in use cannot be deleted (the trips point at it); make it inactive instead.
+    adminOnlyWrites: true,
+    hrWrites: true,
+    table: 'trip_types',
+    view: null,
+    label: 'Trip type',
+    defaultSort: 'sort_order, name',
+    search: ['name'],
+    filters: ['active', 'chargeable'],
+    columns: ['name', 'chargeable', 'active', 'sort_order'],
+    schema: z.object({ name: requiredStr(80), chargeable: bool(), active: bool().default(true), sort_order: int().default(0) }),
+  },
+
+  'travel-segments': {
+    // A trip's legs (#196 §4.3): flights, trains, buses, cabs and hotel stays.
+    table: 'travel_segments',
+    view: 'v_travel_segments',
+    label: 'Leg',
+    defaultSort: 'travel_id, seq, start_date NULLS LAST, id',
+    search: ['travel_id', 'from_place', 'to_place', 'provider', 'pnr_or_ref'],
+    filters: ['travel_id', 'mode', 'status'],
+    columns: ['travel_id', 'seq', 'mode', 'from_place', 'to_place', 'start_date', 'end_date', 'start_time', 'end_time',
+      'provider', 'service_no', 'travel_class', 'pnr_or_ref', 'rooms', 'guests', 'status', 'remarks'],
+    schema: z.object({
+      travel_id: requiredStr(40),
+      seq: int({ min: 1 }).default(1),
+      mode: enumOf(['flight', 'train', 'bus', 'cab', 'hotel', 'other']),
+      from_place: str(120), to_place: str(120),
+      start_date: date(), end_date: date(),
+      start_time: z.preprocess(blankToNull, z.string().regex(/^\d{1,2}:\d{2}(:\d{2})?$/, 'A time, like 14:30').nullable().optional()),
+      end_time: z.preprocess(blankToNull, z.string().regex(/^\d{1,2}:\d{2}(:\d{2})?$/, 'A time, like 14:30').nullable().optional()),
+      provider: str(120), service_no: str(40), travel_class: str(60), pnr_or_ref: str(60),
+      rooms: int({ min: 1 }), guests: int({ min: 1 }),
+      status: enumOf(['booked', 'cancelled', 'partly_refunded']).default('booked'),
+      remarks: str(500),
+    }),
+  },
+
+  'vendor-invoice-lines': {
+    // One line per leg billed (#196 §4.4): one travel agency invoice covers
+    // several trips and people. The invoice's total follows its lines.
+    table: 'travel_vendor_invoice_lines',
+    view: 'v_travel_invoice_lines',
+    label: 'Vendor invoice line',
+    defaultSort: 'vendor_invoice_id, id',
+    search: ['travel_id', 'remarks'],
+    filters: ['vendor_invoice_id', 'travel_id', 'segment_id'],
+    columns: ['vendor_invoice_id', 'travel_id', 'segment_id', 'base_fare', 'service_charge', 'gst_amount', 'gst_rate', 'line_total', 'remarks'],
+    schema: z.object({
+      vendor_invoice_id: requiredInt({ min: 1 }),
+      travel_id: requiredStr(40),
+      segment_id: int({ min: 1 }),
+      base_fare: num({ min: 0 }), service_charge: num({ min: 0 }), gst_amount: num({ min: 0 }), gst_rate: num({ min: 0, max: 40 }),
+      line_total: num({ min: 0 }),
+      remarks: str(500),
+    }),
+  },
+
+  'vendor-credit-notes': {
+    // Credit and cancellation notes against a vendor invoice (#196 §4.5).
+    // One on a leg marks the leg cancelled or partly refunded.
+    table: 'travel_vendor_credit_notes',
+    view: null,
+    label: 'Credit note',
+    hasDocument: true,
+    defaultSort: 'credit_note_date DESC NULLS LAST, id DESC',
+    search: ['credit_note_no', 'remarks'],
+    filters: ['vendor_id', 'against_invoice_id', 'kind', 'segment_id'],
+    columns: ['vendor_id', 'credit_note_no', 'credit_note_date', 'against_invoice_id', 'segment_id', 'kind',
+      'refund_amount', 'cancellation_charges', 'remarks', 'document_id'],
+    schema: z.object({
+      vendor_id: requiredInt({ min: 1 }),
+      credit_note_no: requiredStr(60),
+      credit_note_date: date(),
+      against_invoice_id: int({ min: 1 }),
+      segment_id: int({ min: 1 }),
+      kind: enumOf(['credit_note', 'cancellation_note']).default('credit_note'),
+      refund_amount: num({ min: 0 }).default(0),
+      cancellation_charges: num({ min: 0 }),
+      remarks: str(500),
+      document_id: int({ min: 1 }),
+    }),
   },
 
   'expense-categories': {

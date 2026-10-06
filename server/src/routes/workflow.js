@@ -883,12 +883,49 @@ travelRouter.get('/:travelId/full', async (req, res) => {
   const trip = await query('SELECT * FROM v_travel_logs WHERE travel_id = $1', [id]);
   if (!trip.rows.length) throw new ApiError(404, 'Trip not found');
 
-  const [invoices, claims] = await Promise.all([
-    query('SELECT * FROM v_travel_vendor_invoices WHERE travel_id = $1 ORDER BY id', [id]),
+  // An invoice is this trip's when one of its lines is (#196): one agency
+  // bill covers several trips and people.
+  const mine = 'SELECT vendor_invoice_id FROM travel_vendor_invoice_lines WHERE travel_id = $1';
+  const [invoices, claims, legs, lines, credits, files] = await Promise.all([
+    query(`SELECT * FROM v_travel_vendor_invoices WHERE id IN (${mine}) OR travel_id = $1 ORDER BY id`, [id]),
     query('SELECT * FROM v_employee_expense_claims WHERE travel_id = $1 ORDER BY id', [id]),
+    query('SELECT * FROM v_travel_segments WHERE travel_id = $1 ORDER BY seq, start_date NULLS LAST, id', [id]),
+    query('SELECT * FROM v_travel_invoice_lines WHERE travel_id = $1 ORDER BY vendor_invoice_id, id', [id]),
+    query(`SELECT c.*, d.file_name AS document_name FROM travel_vendor_credit_notes c LEFT JOIN documents d ON d.id = c.document_id
+            WHERE c.against_invoice_id IN (${mine}) ORDER BY c.credit_note_date NULLS LAST, c.id`, [id]),
+    query(`SELECT a.*, d.file_name, d.content_type, d.size_bytes FROM attachments a JOIN documents d ON d.id = a.document_id
+            WHERE a.entity = 'travel_log' AND a.entity_id = $1 ORDER BY a.created_at DESC`, [id]),
   ]);
 
   res.json({
-    data: { trip: trip.rows[0], vendor_invoices: invoices.rows, expense_claims: claims.rows },
+    data: {
+      trip: trip.rows[0], vendor_invoices: invoices.rows, expense_claims: claims.rows,
+      legs: legs.rows, invoice_lines: lines.rows, credit_notes: credits.rows, documents: files.rows,
+    },
   });
+});
+
+// ---------------------------------------------------------------------
+// Vendor invoice detail (#196) — the header, its lines and their trips,
+// its credit notes and its files
+// ---------------------------------------------------------------------
+
+vendorInvoiceRouter.get('/:id/full', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) throw new ApiError(404, 'Vendor invoice not found');
+  const { rows: [invoice] } = await query('SELECT * FROM v_travel_vendor_invoices WHERE id = $1', [id]);
+  if (!invoice) throw new ApiError(404, 'Vendor invoice not found');
+  const [lines, credits, files] = await Promise.all([
+    query(`SELECT l.*, t.employee_name, t.destination, t.travel_start_date, t.travel_end_date,
+                  s.mode, s.from_place, s.to_place, s.start_date AS leg_date, s.status AS leg_status
+             FROM v_travel_invoice_lines l
+             JOIN travel_logs t ON t.travel_id = l.travel_id
+             LEFT JOIN travel_segments s ON s.id = l.segment_id
+            WHERE l.vendor_invoice_id = $1 ORDER BY l.id`, [id]),
+    query(`SELECT c.*, d.file_name AS document_name FROM travel_vendor_credit_notes c LEFT JOIN documents d ON d.id = c.document_id
+            WHERE c.against_invoice_id = $1 ORDER BY c.credit_note_date NULLS LAST, c.id`, [id]),
+    query(`SELECT a.*, d.file_name, d.content_type, d.size_bytes FROM attachments a JOIN documents d ON d.id = a.document_id
+            WHERE a.entity = 'travel_vendor_invoice' AND a.entity_id = $1 ORDER BY a.created_at DESC`, [String(id)]),
+  ]);
+  res.json({ data: { invoice, lines: lines.rows, credit_notes: credits.rows, documents: files.rows } });
 });

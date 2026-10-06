@@ -85,7 +85,7 @@ const GROUPS = [
     label: 'Lists',
     items: [
       ...Object.entries(CATALOGUES).map(([key, c]) => ({
-        to: key, label: c.title, element: <Catalogue key={key} {...c} />,
+        to: key, label: c.title, element: <Catalogue key={key} {...c} />, hr: c.hr,
       })),
       { to: 'templates', label: 'Templates', element: <Templates />, adminOnly: true },
       { to: 'reports', label: 'Report categories', element: <ReportCategories />, adminOnly: true },
@@ -120,12 +120,13 @@ const GROUPS = [
 ];
 
 export default function SettingsArea() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isHr } = useAuth();
   const groups = GROUPS
     .map((group) => ({
       ...group,
       items: group.items
-        .filter((item) => isAdmin || !item.adminOnly)
+        // The travel desk (#196) sees the travel lists and the travel import only.
+        .filter((item) => (isHr ? item.hr : isAdmin || !item.adminOnly))
         .map((item) => (!isAdmin && item.salesLabel ? { ...item, label: item.salesLabel } : item)),
     }))
     .filter((group) => group.items.length > 0);
@@ -140,7 +141,7 @@ export default function SettingsArea() {
    * the first group is a fact about the menu, not a decision about where
    * somebody should start.
    */
-  const DEFAULT_PANE = 'rates';
+  const DEFAULT_PANE = isHr ? 'travel-vendors' : 'rates';
   const first = groups.some((group) => group.items.some((item) => item.to === DEFAULT_PANE))
     ? DEFAULT_PANE
     : groups[0]?.items[0]?.to ?? DEFAULT_PANE;

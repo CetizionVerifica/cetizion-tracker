@@ -37,6 +37,7 @@ import TravelLogs from './pages/TravelLogs.jsx';
 import TripDetail from './pages/TripDetail.jsx';
 import InvoiceRun from './pages/InvoiceRun.jsx';
 import VendorInvoices from './pages/VendorInvoices.jsx';
+import VendorInvoiceDetail from './pages/VendorInvoiceDetail.jsx';
 import Payables from './pages/Payables.jsx';
 import ExpenseClaims from './pages/ExpenseClaims.jsx';
 import TravelDashboard from './pages/TravelDashboard.jsx';
@@ -107,6 +108,7 @@ import {
   PanelLeft,
   Plane,
   PinOff,
+  Receipt,
   Search,
   Monitor,
   Moon,
@@ -167,6 +169,24 @@ function viewHref(view) {
   ).toString();
   return query ? `${base}?${query}` : base;
 }
+
+/**
+ * The travel desk's sidebar (#196 §3): HR sees its own records and the
+ * travel dashboard, nothing on the sales side.
+ */
+const NAV_HR_TOP = [
+  { to: '/travel-dashboard', icon: Home, label: 'Travel dashboard', end: true },
+];
+const NAV_HR_RECORDS = [
+  { to: '/travel', icon: Plane, label: 'Trips' },
+  { to: '/vendor-invoices', icon: Receipt, label: 'Vendor invoices' },
+  { to: '/payables', icon: IndianRupee, label: 'Payables' },
+];
+
+/** The screens the HR role may open; anything else goes to its dashboard. */
+const HR_PATHS = [/^\/travel(\/|$)/, /^\/travel-dashboard$/, /^\/vendor-invoices(\/|$)/, /^\/vendor-credit-notes(\/|$)/,
+  /^\/payables$/, /^\/settings(\/|$)/, /^\/account(\/|$)/, /^\/notifications$/, /^\/import-travel(\/|$)/];
+export const hrMayOpen = (path) => HR_PATHS.some((re) => re.test(path));
 
 const NAV_RECORDS = [
   { to: '/quotations', icon: FileText, label: 'Deals' },
@@ -280,6 +300,9 @@ function ThemeChoice() {
 }
 
 function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, onUnpin, mode }) {
+  const { isHr } = useAuth();
+  const navTop = isHr ? NAV_HR_TOP : NAV_TOP;
+  const navRecords = isHr ? NAV_HR_RECORDS : NAV_RECORDS;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
@@ -304,7 +327,7 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
 
       <ScrollArea className="min-h-0 flex-1">
         <nav className="space-y-0.5 px-2 pb-2">
-          {NAV_TOP.map((item) => (
+          {navTop.map((item) => (
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
 
@@ -353,7 +376,7 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
           ))}
 
           <SideHeading>Records</SideHeading>
-          {NAV_RECORDS.map((item) => (
+          {navRecords.map((item) => (
             <SideLink key={item.label} item={item} counts={counts} alerts={alerts} />
           ))}
         </nav>
@@ -470,7 +493,7 @@ export default function App() {
       if (!window.matchMedia(WIDE).matches) setHidden(true);
     } catch { /* private mode */ }
   }, [location.pathname]);
-  const { displayName, signOut, isAdmin, mode } = useAuth();
+  const { displayName, signOut, isAdmin, isHr, mode } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const isWide = useIsWide();
 
@@ -478,7 +501,8 @@ export default function App() {
   // on someone, visible without opening anything.
   const { data: nData, refetch: refetchBell } = useFetch(() => api.raw('/notifications/summary'), [location.pathname]);
   useNotificationPopups(refetchBell);
-  const { data: iData } = useFetch(() => api.raw('/inbox/summary'), [location.pathname]);
+  // HR has no inbox (#196): the travel desk reads no client mail.
+  const { data: iData } = useFetch(() => (isHr ? Promise.resolve(null) : api.raw('/inbox/summary')), [location.pathname, isHr]);
   // A pinned view is only worth its place if it says how much is behind it,
   // and the count is the same one the list shows when you click through.
   const { data: vData, refetch: refetchViews } = useFetch(() => api.raw('/views?counts=1'), [location.pathname]);
@@ -538,6 +562,8 @@ export default function App() {
       </aside>
 
       <main className={cn('min-w-0 flex-1 transition-[margin] duration-150', hidden ? 'ml-0' : 'lg:ml-60')}>
+        {/* The travel desk opens its own screens only (#196); the server refuses the rest anyway. */}
+        {isHr && !hrMayOpen(location.pathname) ? <Navigate to="/travel-dashboard" replace /> : (
         <Routes>
           <Route path="/" element={<Today />} />
           <Route path="/worklist" element={<Worklist />} />
@@ -574,6 +600,7 @@ export default function App() {
           <Route path="/travel" element={<TravelLogs />} />
           <Route path="/travel/:travelId" element={<TripDetail />} />
           <Route path="/vendor-invoices" element={<VendorInvoices />} />
+          <Route path="/vendor-invoices/:id" element={<VendorInvoiceDetail />} />
           <Route path="/payables" element={<Payables />} />
           <Route path="/expense-claims" element={<ExpenseClaims />} />
           <Route path="/travel-dashboard" element={<TravelDashboard />} />
@@ -590,6 +617,7 @@ export default function App() {
           <Route path="/import/:id" element={<AdminOnly><ImportReviewPage /></AdminOnly>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        )}
       </main>
     </div>
     </SidebarContext.Provider>

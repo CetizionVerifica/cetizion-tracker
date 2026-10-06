@@ -21,7 +21,7 @@ import { hashPassword } from './passwords.js';
  * that it was. Callers that do not audit pass nothing and are unaffected.
  */
 
-export const ROLES = ['admin', 'sales'];
+export const ROLES = ['admin', 'sales', 'hr'];
 
 // The profile columns (C20) are here so findUserById answers the account
 // page in one read. withoutSecrets still strips the hash, which is the only

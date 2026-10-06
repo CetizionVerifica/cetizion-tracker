@@ -56,6 +56,7 @@ export default function Projects() {
     },
     { name: 'planned_start_date', label: 'Planned start', type: 'date' },
     { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
+    { name: 'service_request_no', label: 'Service request no.', hint: 'e.g. CV108: how a trip with no PO finds this project' },
     { name: 'percent_complete', label: '% complete', type: 'percent', hint: '0–100' },
     { name: 'estimated_cost', label: 'Planned cost', type: 'money', hint: 'Delivery cost expected, for planned against actual' },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },

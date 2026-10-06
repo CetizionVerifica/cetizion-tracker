@@ -211,7 +211,8 @@ export function RecordPaymentDialog({ stage, onClose, onDone }) {
 /* -------------------------------------------------- pay a travel vendor */
 
 export function PayVendorDialog({ invoice, onClose, onDone }) {
-  const outstanding = Math.max(Number(invoice.invoice_amount || 0) - Number(invoice.amount_paid || 0), 0);
+  // Owed is the bill less its credit notes (#196).
+  const outstanding = Math.max(Number(invoice.net_payable ?? invoice.invoice_amount ?? 0) - Number(invoice.amount_paid || 0), 0);
   const [amount, setAmount] = useState(String(outstanding));
   const [paidOn, setPaidOn] = useState(today());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Vendor payment recorded' });
