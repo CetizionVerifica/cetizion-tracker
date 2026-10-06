@@ -308,9 +308,10 @@ export default function TravelImportReview() {
                             <td className="py-1.5 pr-3">{leg.payload.provider}{leg.payload.status !== 'booked' && <span className="text-waiting"> · {leg.payload.status.replace(/_/g, ' ')}</span>}
                               <Flags item={leg} /></td>
                             <td className="w-[380px] py-1.5 text-right">
+                              {/* A leg already in the tracker stays on its trip there: no split, no move. */}
                               <Actions it={leg}>
-                                {!done && legs.length > 1 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => call(`/import/travel/${batch.id}/items/${leg.id}/split`, 'POST', {}).catch(() => {})}>Own trip</Button>}
-                                {!done && others.length > 0 && (
+                                {!done && !leg.existing_ref && legs.length > 1 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => call(`/import/travel/${batch.id}/items/${leg.id}/split`, 'POST', {}).catch(() => {})}>Own trip</Button>}
+                                {!done && !leg.existing_ref && others.length > 0 && (
                                   <Select className="h-7 w-[150px] text-[12px]" value="" placeholder="Move to…" disabled={busy}
                                     options={others.map((o) => ({ value: String(o.seq), label: `${o.payload.destination || '?'} · ${date(o.payload.travel_start_date)}` }))}
                                     onChange={(e) => e.target.value && patchItem(leg, { payload: { trip_seq: Number(e.target.value) } }).catch(() => {})} />
