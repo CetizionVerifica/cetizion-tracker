@@ -171,6 +171,36 @@ describe('sending the scheduled reports', { skip: !ADMIN_URL && 'set TEST_DATABA
     }
   });
 
+  test('#195: each recipient once, whatever its case, and nobody copied who is already in To; the run history says the same', async () => {
+    const { config } = await import('../src/config.js');
+    const { recipientLists, sendMail } = await import('../src/lib/mail.js');
+    const before = { mode: config.mail.mode, bcc: config.mail.bcc };
+    await db.query(`UPDATE settings SET value = $1 WHERE key = 'mis_to'`, ['md@cetizionverifica.com, MD@cetizionverifica.com; head@cetizionverifica.com, md@cetizionverifica.com']);
+    await db.query(`UPDATE settings SET value = $1 WHERE key = 'mis_cc'`, ['Head@cetizionverifica.com; ops@cetizionverifica.com, OPS@cetizionverifica.com']);
+    config.mail.mode = 'live';
+    try {
+      const settings = await (await import('../src/lib/misReports.js')).misSettings();
+      assert.deepEqual([settings.to, settings.cc], [['md@cetizionverifica.com', 'head@cetizionverifica.com'], ['ops@cetizionverifica.com']]);
+      sent.length = 0;
+      const r = await misSend.runReport('daily_briefing', { today: TODAY, startedBy: 'shyam' });
+      assert.equal(r.status, 'sent', JSON.stringify(r));
+      assert.deepEqual([sent[0].to, sent[0].cc], [['md@cetizionverifica.com', 'head@cetizionverifica.com'], ['ops@cetizionverifica.com']]);
+      assert.deepEqual(r.recipients, ['md@cetizionverifica.com', 'head@cetizionverifica.com', 'ops@cetizionverifica.com'], 'report_runs.recipients: three people, three entries');
+      const { rows: [log] } = await db.query('SELECT to_email, cc FROM email_log WHERE id = $1', [r.email_log_id]);
+      assert.deepEqual([log.to_email, log.cc], ['md@cetizionverifica.com, head@cetizionverifica.com', 'ops@cetizionverifica.com']);
+
+      // Every other sender too: a Bcc already in To or Cc is not added again.
+      assert.deepEqual(recipientLists('a@x.in, A@X.in', 'b@x.in, a@x.in', 'B@x.in, audit@x.in'), { to: ['a@x.in'], cc: ['b@x.in'], bcc: ['audit@x.in'] });
+      config.mail.mode = 'log';
+      const row = await sendMail({ to: 'md@cetizionverifica.com, MD@cetizionverifica.com', cc: 'md@cetizionverifica.com, ops@cetizionverifica.com', subject: 'Dedupe', text: 'x', template: 'test' });
+      assert.deepEqual([row.to_email, row.cc], ['md@cetizionverifica.com', 'ops@cetizionverifica.com']);
+    } finally {
+      Object.assign(config.mail, before);
+      await db.query(`UPDATE settings SET value = $1 WHERE key = 'mis_to'`, ['md@cetizionverifica.com, head@cetizionverifica.com']);
+      await db.query(`UPDATE settings SET value = 'none' WHERE key = 'mis_cc'`);
+    }
+  });
+
   test('no recipients is a failed run that says so', async () => {
     await db.query(`UPDATE settings SET value = 'none' WHERE key = 'mis_to'`);
     const r = await misSend.runReport('weekly_mis', { today: TODAY, startedBy: 'shyam' });
