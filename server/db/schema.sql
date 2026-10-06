@@ -12,7 +12,7 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
 
 DROP TABLE IF EXISTS travel_vendor_credit_notes, travel_vendor_invoice_lines, travel_segments, trip_types,
   ai_usage_daily, email_triage, document_profile_corrections, company_document_profiles, receivable_list_lines, receivable_lists,
-  email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
+  portal_client_action_stages, portal_client_actions, email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
   purchase_orders, projects, enquiries, lead_sources, quotations, pipeline_stages, lost_reasons, contacts, companies, expense_categories,
   travel_vendors, services, onboarding_template_lines, onboarding_templates,
@@ -3731,3 +3731,46 @@ ALTER TABLE import_items ADD CONSTRAINT import_items_step_check CHECK (step IN
 INSERT INTO settings (key, value, notes) VALUES
   ('travel_import_trip_gap_days', '7', 'In the travel import, rows for one traveller more than this many days apart are separate trips.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- The client answers in the portal (087, #198 phase 2), as the migration
+-- applies it: confirmations, queries and payment advice, and two-way files.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS portal_client_actions (
+  id           serial PRIMARY KEY,
+  company_id   int  NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  contact_id   int  REFERENCES contacts(id) ON DELETE SET NULL,
+  kind         text NOT NULL CHECK (kind IN ('confirmed','query','payment_advice')),
+  po_number    text REFERENCES purchase_orders(po_number) ON UPDATE CASCADE ON DELETE SET NULL,
+  note         text,
+  amount       numeric(16,2) CHECK (amount > 0),
+  tds_amount   numeric(16,2) NOT NULL DEFAULT 0 CHECK (tds_amount >= 0),
+  paid_on      date,
+  reference    text,
+  document_id  int UNIQUE REFERENCES documents(id),
+  thread_id    int REFERENCES email_threads(id) ON DELETE SET NULL,
+  status       text NOT NULL DEFAULT 'open' CHECK (status IN ('open','matched','resolved','rejected')),
+  -- Shown to the client when an action is resolved or rejected.
+  resolution   text,
+  resolved_by  text,
+  resolved_at  timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT portal_client_actions_query_says_something CHECK (kind <> 'query' OR note IS NOT NULL),
+  CONSTRAINT portal_client_actions_advice_complete CHECK (kind <> 'payment_advice' OR (amount IS NOT NULL AND paid_on IS NOT NULL)),
+  CONSTRAINT portal_client_actions_rejection_says_why CHECK (status <> 'rejected' OR resolution IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS portal_client_actions_company_idx ON portal_client_actions (company_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS portal_client_actions_open_idx ON portal_client_actions (kind, created_at) WHERE status = 'open';
+
+CREATE TABLE IF NOT EXISTS portal_client_action_stages (
+  action_id int NOT NULL REFERENCES portal_client_actions(id) ON DELETE CASCADE,
+  stage_id  int NOT NULL REFERENCES payment_stages(id) ON DELETE CASCADE,
+  PRIMARY KEY (action_id, stage_id)
+);
+CREATE INDEX IF NOT EXISTS portal_client_action_stages_stage_idx ON portal_client_action_stages (stage_id);
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS portal_action_id int REFERENCES portal_client_actions(id) ON DELETE SET NULL;
+
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS shared_with_client boolean NOT NULL DEFAULT false;
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS uploaded_by_contact_id int REFERENCES contacts(id) ON DELETE SET NULL;
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS seen_by_staff_at timestamptz;

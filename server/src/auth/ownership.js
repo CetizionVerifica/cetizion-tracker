@@ -246,6 +246,16 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
     -- A travel agency's invoice or credit note PDF: open as vendor invoices are (#196).
     OR EXISTS (SELECT 1 FROM travel_vendor_invoices dtv WHERE dtv.document_id = ${alias}.id)
     OR EXISTS (SELECT 1 FROM travel_vendor_credit_notes dtc WHERE dtc.document_id = ${alias}.id)
+    -- A client's remittance advice from the portal (#198): as the PO or invoices it is about.
+    OR EXISTS (SELECT 1 FROM portal_client_actions dca
+                JOIN purchase_orders apo ON apo.po_number = dca.po_number
+                  OR apo.po_number IN (SELECT ast.po_number FROM portal_client_action_stages acs
+                                         JOIN payment_stages ast ON ast.id = acs.stage_id WHERE acs.action_id = dca.id)
+               WHERE dca.document_id = ${alias}.id
+                 AND (EXISTS (SELECT 1 FROM quotations pq4
+                               WHERE pq4.quotation_no = apo.quotation_no AND pq4.${OWNER_COLUMN} = $${n})
+                   OR EXISTS (SELECT 1 FROM projects pp4
+                               WHERE pp4.project_id = apo.project_id AND pp4.${OWNER_COLUMN} = $${n})))
     OR EXISTS (SELECT 1 FROM deliverables ddl
                WHERE ddl.document_id = ${alias}.id
                  AND (EXISTS (SELECT 1 FROM projects dp

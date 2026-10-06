@@ -51,6 +51,7 @@ import { profitabilityRouter } from './routes/profitability.js';
 import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
+import { portalActionsRouter } from './routes/portalActions.js';
 import { accountingRouter } from './routes/accounting.js';
 import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
 import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
@@ -183,6 +184,8 @@ app.use('/api/inbox', inboxRouter);
 app.use('/api/profitability', profitabilityRouter);
 app.use('/api/visits', visitsRouter);
 app.use('/api/webhooks', webhooksRouter);
+// What clients said in the portal (#198): staff who can open the PO, so ahead of the admin-only router.
+app.use('/api/portal-admin/actions', portalActionsRouter);
 app.use('/api/portal-admin', portalAdminRouter);
 app.use('/api/accounting', accountingRouter);
 app.use('/api/api-tokens', apiTokenRouter);

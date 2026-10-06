@@ -12,6 +12,8 @@ import { FollowUpBanner, FOLLOW_UP_KINDS, useLogParam } from './FollowUpBanner.j
  */
 const KINDS = [{ value: 'note', label: 'Notes' }, { value: 'task', label: 'Tasks' }, { value: 'file', label: 'Files' }, { value: 'email', label: 'Emails' }, { value: 'touch', label: 'Calls & meetings' }, { value: 'event', label: 'Milestones' }];
 const ICON = { note: '✎', task: '☐', file: '⎘', email: '✉', event: '●', touch: '☏' };
+// The records a client portal reaches (#198): a file on one of these can be shared with the client.
+const SHAREABLE = new Set(['company', 'project', 'purchase_order', 'payment_stage']);
 
 export function Timeline({ entity, id, title = 'Activity' }) {
   const toast = useToast();
@@ -35,6 +37,14 @@ export function Timeline({ entity, id, title = 'Activity' }) {
   async function toggleTask(t) {
     try { await api.update('tasks', t.id, { status: t.status === 'done' ? 'todo' : 'done' }); refetch(); }
     catch (err) { toast(err.message, 'danger'); }
+  }
+  // Opt-in per file (#198): nothing attached before is shown to the client.
+  async function share(f) {
+    try {
+      await api.update('attachments', f.id, { shared_with_client: !f.shared_with_client });
+      toast(f.shared_with_client ? 'No longer shared with the client' : 'Shared: the client sees it in the portal', 'success');
+      refetch();
+    } catch (err) { toast(err.message, 'danger'); }
   }
   async function remove() {
     setBusy(true);
@@ -73,6 +83,8 @@ export function Timeline({ entity, id, title = 'Activity' }) {
                   {it.kind === 'task' && it.record.priority === 'high' && <Badge tone="danger">high</Badge>}
                   {it.kind === 'task' && it.record.status !== 'done' && it.record.due_at && it.record.due_at < today() && <Badge tone="danger">overdue</Badge>}
                   {it.kind === 'email' && it.thread_id && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setThread(it.thread_id)}>Open</button>}
+                  {it.kind === 'file' && it.record.from_client && <Badge tone="info">From client</Badge>}
+                  {it.kind === 'file' && !it.record.from_client && it.record.shared_with_client && <Badge>Shared with client</Badge>}
                   {it.kind === 'file' && <a className="btn btn--sm btn--ghost" href={api.documentUrl(it.document_id)} target="_blank" rel="noopener noreferrer">Open</a>}
                   <span className="small muted timeline__when">{new Date(it.at).toLocaleString()}{it.by ? ` · ${it.by}` : ''}</span>
                 </div>
@@ -84,6 +96,9 @@ export function Timeline({ entity, id, title = 'Activity' }) {
                   <div className="timeline__actions">
                     {it.kind === 'note' && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setNote(it.record)}>Edit</button>}
                     {it.kind === 'task' && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setTask(it.record)}>Edit</button>}
+                    {it.kind === 'file' && !it.record.from_client && SHAREABLE.has(entity) && (
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => share(it.record)}>{it.record.shared_with_client ? 'Stop sharing' : 'Share with client'}</button>
+                    )}
                     <button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving({ kind: it.kind, id: it.id })}>✕</button>
                   </div>
                 )}

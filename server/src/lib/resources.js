@@ -871,7 +871,8 @@ export const resources = {
     defaultSort: 'created_at DESC',
     search: ['label'],
     filters: ['entity', 'entity_id'],
-    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by', 'doc_type'],
+    // shared_with_client (#198): the tick that shows a staff file in the client's portal.
+    columns: ['entity', 'entity_id', 'document_id', 'label', 'uploaded_by', 'doc_type', 'shared_with_client'],
     stampActor: 'uploaded_by',
     schema: z.object({
       entity: enumOf(['company', 'contact', 'enquiry', 'quotation', 'project', 'purchase_order', 'payment_stage', 'travel_log', 'travel_vendor_invoice']),
@@ -881,6 +882,7 @@ export const resources = {
       uploaded_by: str(120),
       // What the file is, so a trip's files can be checked by kind (#196 §4.6).
       doc_type: enumOf(TRAVEL_DOC_TYPES).nullable().optional(),
+      shared_with_client: bool(),
     }),
   },
 

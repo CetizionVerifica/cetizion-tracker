@@ -15,6 +15,10 @@
  *   GET  /api/portal/files/invoice/:id    an invoice's PDF, from the Invoices section (#198)
  *   GET  /api/portal/files/po/:no         a live PO's file, from Projects & orders (#198)
  *   POST /api/portal/messages       { subject, body }
+ *   GET  /api/portal/actions        the client's confirmations, queries and payment advice (#198)
+ *   POST /api/portal/actions        { kind, stage_ids, po_number?, note?, amount?, tds_amount?, paid_on?, reference? } [+ file]
+ *   POST /api/portal/documents      multipart { entity, entity_id, label, file }: an upload onto a project or PO
+ *   DELETE /api/portal/documents/:id   the client's own upload, until our team has seen it
  *
  * Staff side (signed in):
  *   GET  /api/portal-admin/companies/:id            switches, contacts, sessions, audit
@@ -25,6 +29,7 @@
  */
 import crypto from 'node:crypto';
 import { Router } from 'express';
+import multer from 'multer';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { requireAdmin } from '../auth/middleware.js';
@@ -35,11 +40,12 @@ import { ApiError } from '../middleware/error.js';
 import { sendMail } from '../lib/mail.js';
 import { notify } from '../lib/notify.js';
 import { businessToday } from '../lib/businessDate.ts';
-import { fetchDocument, isInlineType } from '../lib/documents.js';
+import { config } from '../config.js';
+import { fetchDocument, isInlineType, purgeAfterCommit, uploadDocument } from '../lib/documents.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import {
-  companyOwnsDocument, invoiceDocument, poDocument, portalCertificates, portalDocuments, portalInvoices, portalProjects,
-  SECTION_DATA, SECTIONS, statementPdf,
+  companyOwnsDocument, invoiceDocument, ownedInvoices, ownsUploadTarget, poDocument, portalActions, portalAudience, portalCertificates,
+  portalDocuments, portalInvoices, portalProjects, SECTION_DATA, SECTIONS, statementPdf,
 } from '../lib/portal.js';
 import { fullQuotation } from './quotations.js';
 
@@ -141,7 +147,7 @@ async function requirePortal(req, res, next) {
 }
 const section = (name) => (req, res, next) => (req.portal.sections.includes(name) ? next() : next(new ApiError(403, 'This section is not available')));
 
-portalRouter.use(['/logout', '/me', '/projects', '/documents', '/invoices', '/certificates', '/messages', '/files'], requirePortal);
+portalRouter.use(['/logout', '/me', '/projects', '/documents', '/invoices', '/certificates', '/messages', '/files', '/actions'], requirePortal);
 
 portalRouter.post('/logout', async (req, res) => {
   await query('UPDATE portal_sessions SET revoked_at = now() WHERE id = $1', [req.portal.sid]);
@@ -161,7 +167,7 @@ portalRouter.get('/projects', section('projects'), async (req, res) => {
 });
 portalRouter.get('/documents', section('documents'), async (req, res) => {
   await audit(req, 'view', 'documents');
-  res.json({ data: await portalDocuments(req.portal.company_id) });
+  res.json({ data: await portalDocuments(req.portal.company_id, { contactId: req.portal.contact_id }) });
 });
 portalRouter.get('/invoices/statement.pdf', section('invoices'), async (req, res) => {
   const invoices = await portalInvoices(req.portal.company_id);
@@ -242,7 +248,17 @@ const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 portalRouter.post('/messages', section('contact'), rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false }), async (req, res) => {
   const parsed = messageSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: Object.fromEntries(parsed.error.issues.map((i) => [i.path.join('.'), i.message])) });
-  const v = parsed.data; const p = req.portal;
+  const threadId = await postPortalMessage(req.portal, parsed.data);
+  await audit(req, 'message', parsed.data.subject.slice(0, 120));
+  res.status(201).json({ data: { thread_id: threadId, message: 'Thank you. Our team will reply by email.' } });
+});
+
+/**
+ * A client's message into the shared inbox, as a conversation on their
+ * company (#30); with no shared inbox connected, a notification and a note
+ * instead. Used by Contact us and by a query on an invoice or PO (#198).
+ */
+async function postPortalMessage(p, v) {
   const { rows: [c] } = await query('SELECT email FROM contacts WHERE id = $1', [p.contact_id]);
   const { rows: [inbox] } = await query(`SELECT i.id, i.account_id FROM inboxes i JOIN connected_accounts a ON a.id = i.account_id WHERE i.active AND a.status = 'active' ORDER BY i.id LIMIT 1`);
   let threadId = null;
@@ -271,8 +287,137 @@ portalRouter.post('/messages', section('contact'), rateLimit({ windowMs: 60 * 60
     await notify({ kind: 'inbox', title: `Portal message from ${p.contact_name} (${p.company_name})`, body: `${v.subject}: ${v.body.slice(0, 200)}`, link: `/companies/${p.company_id}`, dedupeKey: `portal:${p.sid}:${Date.now()}` });
     await query(`INSERT INTO notes (entity, entity_id, body, author) VALUES ('company', $1, $2, $3)`, [String(p.company_id), `Portal message: ${v.subject}\n\n${v.body}`, `client: ${p.contact_name}`]);
   }
-  await audit(req, 'message', v.subject.slice(0, 120));
-  res.status(201).json({ data: { thread_id: threadId, message: 'Thank you. Our team will reply by email.' } });
+  return threadId;
+}
+
+// ------------------------------------------------------------ the client answers (#198 phase 2)
+//
+// Confirm an invoice, raise a query on an invoice or a PO, or tell us a
+// payment was made. Each is a claim (§4): it writes no payment and changes no
+// stage; finance matches a payment advice to a receipt they record. Every
+// invoice and PO named is checked against the session's company first.
+
+const clientWrites = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+const REMITTANCE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+const UPLOAD_TYPES = new Set([...REMITTANCE_TYPES,
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+const fileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.documentMaxBytes, files: 1 } });
+/** One optional file, with a too-large file said in words rather than as a server error. */
+const oneFile = (field) => (req, res, next) => fileUpload.single(field)(req, res, (err) => {
+  if (err?.code === 'LIMIT_FILE_SIZE') return next(new ApiError(422, `That file is larger than ${Math.round(config.documentMaxBytes / 1024 / 1024)} MB`));
+  return next(err);
+});
+const fileName = (name) => String(name || 'file').replace(/[\\/:*?"<>|\r\n]+/g, '_').slice(0, 200);
+const blankToUndefined = (v) => (v === '' || v === null ? undefined : v);
+const fieldsOf = (error) => Object.fromEntries(error.issues.map((i) => [i.path.join('.'), i.message]));
+
+const actionSchema = z.object({
+  kind: z.enum(['confirmed', 'query', 'payment_advice']),
+  stage_ids: z.preprocess((v) => (Array.isArray(v) ? v : String(v ?? '').split(',').filter(Boolean)).map(Number),
+    z.array(z.number().int().positive()).max(50)),
+  po_number: z.preprocess(blankToUndefined, z.string().trim().min(1).max(60).optional()),
+  note: z.preprocess(blankToUndefined, z.string().trim().min(1).max(2000).optional()),
+  amount: z.preprocess(blankToUndefined, z.coerce.number().positive('An amount above zero').max(1e12).optional()),
+  tds_amount: z.preprocess(blankToUndefined, z.coerce.number().min(0).max(1e12).optional()),
+  paid_on: z.preprocess(blankToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional()),
+  reference: z.preprocess(blankToUndefined, z.string().trim().max(120).optional()),
+});
+
+portalRouter.get('/actions', section('invoices'), async (req, res) => {
+  res.json({ data: await portalActions(req.portal.company_id) });
+});
+
+portalRouter.post('/actions', section('invoices'), clientWrites, oneFile('file'), async (req, res) => {
+  const parsed = actionSchema.safeParse(req.body || {});
+  if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: fieldsOf(parsed.error) });
+  const v = parsed.data; const p = req.portal;
+  // What each kind needs, said in the client's terms.
+  const missing = {};
+  if (v.kind !== 'query' && !v.stage_ids.length) missing.stage_ids = 'Choose the invoice, or invoices, this is about';
+  if (v.kind === 'query' && !v.stage_ids.length && !v.po_number) missing.stage_ids = 'Choose the invoice or PO this is about';
+  if (v.kind === 'query' && !v.note) missing.note = 'Tell us what is wrong';
+  if (v.kind === 'payment_advice' && !v.amount) missing.amount = 'How much was paid?';
+  if (v.kind === 'payment_advice' && !v.paid_on) missing.paid_on = 'When was it paid?';
+  if (req.file && v.kind !== 'payment_advice') missing.file = 'A file goes with a payment advice only';
+  if (req.file && !REMITTANCE_TYPES.has(req.file.mimetype)) missing.file = 'A PDF or an image, please';
+  if (Object.keys(missing).length) throw new ApiError(422, 'Please check the highlighted fields', { fields: missing });
+  const invoices = await ownedInvoices(p.company_id, v.stage_ids, v.po_number);
+  if (!invoices) throw new ApiError(404, 'Not found');
+  const pos = [...new Set([v.po_number, ...invoices.map((i) => i.po_number)].filter(Boolean))];
+  const poNumber = v.po_number || (pos.length === 1 ? pos[0] : null);
+  const about = invoices.length ? `invoice ${invoices.map((i) => i.invoice_no).join(', ')}` : `PO ${poNumber}`;
+
+  // A query opens a conversation in the shared inbox, so the reply is an email thread.
+  const threadId = v.kind === 'query'
+    ? await postPortalMessage(p, { subject: `Query on ${about}`.slice(0, 200), body: v.note })
+    : null;
+  const doc = req.file ? await uploadDocument({ buffer: req.file.buffer, fileName: fileName(req.file.originalname), contentType: req.file.mimetype, owner: 'attachments' }) : null;
+  const action = await transaction(async (db) => {
+    const { rows: [a] } = await db.query(
+      // A confirmation is a record with nothing to act on, so it is settled as it is made.
+      `INSERT INTO portal_client_actions (company_id, contact_id, kind, po_number, note, amount, tds_amount, paid_on, reference, document_id, thread_id, status, resolved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, CASE WHEN $3 = 'confirmed' THEN 'resolved' ELSE 'open' END, CASE WHEN $3 = 'confirmed' THEN now() END)
+       RETURNING id, kind, status, created_at`,
+      [p.company_id, p.contact_id, v.kind, poNumber, v.note ?? null, v.kind === 'payment_advice' ? v.amount : null,
+        v.kind === 'payment_advice' ? v.tds_amount ?? 0 : 0, v.kind === 'payment_advice' ? v.paid_on : null,
+        v.kind === 'payment_advice' ? v.reference ?? null : null, doc?.id ?? null, threadId]);
+    for (const i of invoices) await db.query('INSERT INTO portal_client_action_stages (action_id, stage_id) VALUES ($1, $2)', [a.id, i.id]);
+    return a;
+  });
+  // A confirmation is a record, nothing to do; a query or a payment advice is work for somebody.
+  if (v.kind !== 'confirmed') {
+    const title = v.kind === 'query' ? `Query from ${p.contact_name} (${p.company_name}) on ${about}` : `${p.company_name} reports a payment on ${about}`;
+    const body = v.kind === 'query' ? v.note.slice(0, 200) : `${v.amount}${v.tds_amount ? ` + TDS ${v.tds_amount}` : ''} on ${v.paid_on}${v.reference ? `, ref ${v.reference}` : ''}`;
+    for (const username of await portalAudience(v.kind, pos)) {
+      await notify({ username, kind: 'portal_action', title, body, link: '/collections?tab=portal', dedupeKey: `portal-action:${action.id}:${username || 'all'}` });
+    }
+  }
+  await audit(req, v.kind, about.slice(0, 120));
+  const said = { confirmed: 'Thank you for confirming.', query: 'Thank you. Our team will look into it and reply by email.', payment_advice: 'Thank you. Our finance team will check the payment and update the invoice.' };
+  res.status(201).json({ data: { ...action, message: said[v.kind] } });
+});
+
+// ------------------------------------------------------------ the client's files (#198, G10)
+
+const uploadSchema = z.object({
+  entity: z.enum(['project', 'purchase_order']),
+  entity_id: z.string().trim().min(1).max(60),
+  label: z.string().trim().min(1, 'Say what the file is').max(120),
+});
+
+portalRouter.post('/documents', section('documents'), clientWrites, oneFile('file'), async (req, res) => {
+  if (!req.file) throw new ApiError(422, 'Please check the highlighted fields', { fields: { file: 'Choose a file' } });
+  if (!UPLOAD_TYPES.has(req.file.mimetype)) throw new ApiError(422, 'Please check the highlighted fields', { fields: { file: 'PDF, image, Word or Excel files only' } });
+  const parsed = uploadSchema.safeParse(req.body || {});
+  if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: fieldsOf(parsed.error) });
+  const v = parsed.data; const p = req.portal;
+  if (!(await ownsUploadTarget(p.company_id, v.entity, v.entity_id))) throw new ApiError(404, 'Not found');
+  const doc = await uploadDocument({ buffer: req.file.buffer, fileName: fileName(req.file.originalname), contentType: req.file.mimetype, owner: 'attachments' });
+  // Shared by nature: the client can always see their own upload.
+  const { rows: [a] } = await query(
+    `INSERT INTO attachments (entity, entity_id, document_id, label, uploaded_by, shared_with_client, uploaded_by_contact_id)
+     VALUES ($1,$2,$3,$4,$5,true,$6) RETURNING id, created_at`,
+    [v.entity, v.entity_id, doc.id, v.label, `client: ${p.contact_name}`, p.contact_id]);
+  const pos = v.entity === 'purchase_order' ? [v.entity_id] : [];
+  const link = v.entity === 'project' ? `/projects/${encodeURIComponent(v.entity_id)}` : `/purchase-orders/${encodeURIComponent(v.entity_id)}`;
+  for (const username of await portalAudience('upload', pos, v.entity === 'project' ? [v.entity_id] : [])) {
+    await notify({ username, kind: 'portal_upload', title: `${p.company_name} uploaded "${v.label}"`, body: `On ${v.entity === 'project' ? 'project' : 'PO'} ${v.entity_id}, by ${p.contact_name}`, link, dedupeKey: `portal-upload:${a.id}:${username || 'all'}` });
+  }
+  await audit(req, 'upload', `${v.entity}:${v.entity_id}`);
+  res.status(201).json({ data: { id: a.id, message: 'Uploaded. Our team will see it on the record.' } });
+});
+
+// A client may take back their own upload until our team has seen it (§3).
+portalRouter.delete('/documents/:id', section('documents'), async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows: [a] } = Number.isInteger(id) ? await query(
+    `DELETE FROM attachments WHERE id = $1 AND uploaded_by_contact_id = $2 AND seen_by_staff_at IS NULL RETURNING document_id`,
+    [id, req.portal.contact_id]) : { rows: [] };
+  if (!a) throw new ApiError(404, 'Not found, or our team has already seen it');
+  purgeAfterCommit(a.document_id);
+  await audit(req, 'delete_upload', String(id));
+  res.status(204).end();
 });
 
 // ------------------------------------------------------------ staff side

@@ -25,6 +25,7 @@ export const GROUPS = {
   follow_up_escalations: { label: 'Follow-ups escalated to management', kinds: ['follow_up_escalated'] },
   // docs/email-po-plan.md: what the email readers could not settle alone, and the invoices they recorded.
   from_email: { label: 'POs and invoices read from email', kinds: ['po_review', 'invoice_recorded', 'invoice_review'] },
+  client_portal: { label: 'Client portal: queries, payments reported, files uploaded', kinds: ['portal_action', 'portal_upload'] },
 };
 export const CHANNELS = ['in_app', 'email', 'both', 'off'];
 

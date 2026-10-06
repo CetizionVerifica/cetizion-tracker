@@ -533,4 +533,24 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.getByRole('button', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('GST', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
+
+  // #198 phase 2: the client tells us they paid. It is a claim: the invoice says so, the figures do not change.
+  await page.getByRole('button', { name: "Tell us you've paid" }).first().click();
+  await page.getByLabel('Reference').fill(`UTR-${stamp}`);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText(/finance team will check/)).toBeVisible();
+  await expect(page.getByText('Being checked')).toBeVisible();
+
+  // Finance sees it in Collections and matches it by recording the receipt it reports.
+  await page.goto('/collections');
+  await expect(page.getByText('From the client portal')).toBeVisible();
+  await expect(page.getByText(`UTR-${stamp}`)).toBeVisible();
+  await page.getByRole('button', { name: 'Match', exact: true }).click();
+  await page.getByRole('button', { name: 'Save payment' }).click();
+  await expect(page.getByText('No payments reported')).toBeVisible();
+
+  // The client sees it recorded.
+  await page.goto('/portal');
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
 });

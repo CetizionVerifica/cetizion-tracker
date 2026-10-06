@@ -10,7 +10,9 @@ import request from 'supertest';
  * The client portal (#47) must never show one company another's data, and
  * its session must never open the staff API. Since #198 it also shows the
  * same figures we hold: POs with their schedule and what is still to bill,
- * invoices with taxable value, GST and total, and a staff preview of it. Runs against a throwaway
+ * invoices with taxable value, GST and total, and a staff preview of it.
+ * Phase 2 lets the client answer (confirm, query, report a payment) and
+ * share files both ways, each checked against the session's company. Runs against a throwaway
  * database, so it needs TEST_DATABASE_URL (CI sets it); skipped otherwise.
  */
 
@@ -255,5 +257,184 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     assert.deepEqual([source['INV-A-1'], source['INV-A-2']], ['books', 'quotation']);
     await request(app).get('/api/portal-admin/companies/1001/preview/payroll').set('Cookie', staff).expect(404);
     await request(app).get('/api/portal-admin/companies/1001/preview/invoices').set('Cookie', cookie).expect(401);
+  });
+
+  // ---------------------------------------------------------------- #198 phase 2: the client answers
+  const pdf = { filename: 'remittance.pdf', contentType: 'application/pdf' };
+  const actionsOf = async (kind) => (await pool.query('SELECT * FROM portal_client_actions WHERE kind = $1 ORDER BY id', [kind])).rows;
+
+  test('the client confirms, queries and reports a payment: each is a claim, and writes no payment', async () => {
+    const { cookie } = await portalLogin(2001);
+    const inv = await stageId('INV-A-1');
+    const post = (body) => request(app).post('/api/portal/actions').set('Cookie', cookie).send(body);
+    assert.equal((await post({ kind: 'confirmed', stage_ids: [inv] })).status, 201);
+    const noNote = await post({ kind: 'query', stage_ids: [inv] });
+    assert.equal(noNote.status, 422);
+    assert.ok(noNote.body.error.fields.note);
+    const noDate = await post({ kind: 'payment_advice', stage_ids: [inv], amount: 100000 });
+    assert.equal(noDate.status, 422);
+    assert.ok(noDate.body.error.fields.paid_on);
+    assert.equal((await post({ kind: 'query', stage_ids: [inv], note: 'The GST rate looks wrong.' })).status, 201);
+    assert.equal((await post({ kind: 'query', po_number: 'PO-A2', note: 'Can the second stage be split?' })).status, 201, 'a query may be about a PO alone');
+    const advice = await post({ kind: 'payment_advice', stage_ids: [inv], amount: 98000, tds_amount: 2000, paid_on: '2026-09-01', reference: 'UTR-TEST-1' });
+    assert.equal(advice.status, 201);
+    assert.match(advice.body.data.message, /finance team/);
+
+    const paid = await pool.query('SELECT count(*)::int AS n FROM payments WHERE stage_id = $1', [inv]);
+    assert.equal(paid.rows[0].n, 0, 'nothing is written to the payments');
+    const { body } = await request(app).get('/api/portal/invoices').set('Cookie', cookie).expect(200);
+    const one = body.data.find((i) => i.invoice_no === 'INV-A-1');
+    assert.equal(one.status, 'Payment reported');
+    assert.equal(one.last_action.kind, 'payment_advice');
+    const mine = (await request(app).get('/api/portal/actions').set('Cookie', cookie).expect(200)).body.data;
+    assert.deepEqual(mine.map((a) => a.kind).sort(), ['confirmed', 'payment_advice', 'query', 'query']);
+    assert.deepEqual(mine.find((a) => a.kind === 'payment_advice').invoices.map((i) => i.invoice_no), ['INV-A-1']);
+    assert.equal((await actionsOf('confirmed'))[0].status, 'resolved', 'a confirmation is nothing to act on');
+    // With no shared inbox set up, a query is a note on the company (as a portal message is).
+    const notes = await request(app).get('/api/notes?entity=company&entity_id=1001').set('Cookie', staff);
+    assert.match(JSON.stringify(notes.body), /Query on invoice INV-A-1/);
+    const told = await pool.query("SELECT kind FROM notifications WHERE kind = 'portal_action'");
+    assert.equal(told.rowCount, 3, 'two queries and the advice reach the team; a confirmation does not');
+  });
+
+  test("a client cannot answer on another company's invoice or PO, or see its answers", async () => {
+    const { cookie } = await portalLogin(2002);
+    const post = (body) => request(app).post('/api/portal/actions').set('Cookie', cookie).send(body);
+    const alpha = await stageId('INV-A-1'); const beta = await stageId('INV-B-1');
+    assert.equal((await post({ kind: 'confirmed', stage_ids: [alpha] })).status, 404);
+    assert.equal((await post({ kind: 'confirmed', stage_ids: [beta, alpha] })).status, 404, 'one of them not theirs is enough');
+    assert.equal((await post({ kind: 'query', po_number: 'PO-A', note: 'x' })).status, 404);
+    // Ownership is checked before the file is stored.
+    const withFile = await request(app).post('/api/portal/actions').set('Cookie', cookie)
+      .field('kind', 'payment_advice').field('stage_ids', String(alpha)).field('amount', '10').field('paid_on', '2026-09-01')
+      .attach('file', Buffer.from('%PDF-1.4'), pdf);
+    assert.equal(withFile.status, 404);
+    const text = await request(app).post('/api/portal/actions').set('Cookie', cookie)
+      .field('kind', 'payment_advice').field('stage_ids', String(beta)).field('amount', '10').field('paid_on', '2026-09-01')
+      .attach('file', Buffer.from('hello'), { filename: 'a.txt', contentType: 'text/plain' });
+    assert.equal(text.status, 422);
+    const confirm = await request(app).post('/api/portal/actions').set('Cookie', cookie)
+      .field('kind', 'confirmed').field('stage_ids', String(beta)).attach('file', Buffer.from('%PDF-1.4'), pdf);
+    assert.equal(confirm.status, 422, 'a file goes with a payment advice only');
+    const theirs = JSON.stringify((await request(app).get('/api/portal/actions').set('Cookie', cookie).expect(200)).body);
+    for (const other of ['INV-A-1', 'PO-A2', 'GST rate']) assert.ok(!theirs.includes(other), other);
+    // With Invoices switched off, the client cannot answer at all.
+    await request(app).patch('/api/portal-admin/companies/1002').set('Cookie', staff).send({ portal_sections: ['projects'] }).expect(200);
+    try {
+      assert.equal((await post({ kind: 'confirmed', stage_ids: [beta] })).status, 403);
+    } finally {
+      await request(app).patch('/api/portal-admin/companies/1002').set('Cookie', staff).send({ portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] }).expect(200);
+    }
+  });
+
+  test('staff match a payment advice by recording the receipt, and resolve or reject a query', async () => {
+    const [advice] = await actionsOf('payment_advice');
+    const [q1, q2] = await actionsOf('query');
+    const list = (qs) => request(app).get(`/api/portal-admin/actions${qs}`).set('Cookie', staff).expect(200).then((r) => r.body.data);
+    const open = await list('');
+    assert.deepEqual(open.map((a) => a.kind).sort(), ['payment_advice', 'query', 'query'], 'open by default; a confirmation is not work');
+    assert.equal(open.find((a) => a.id === advice.id).company_name, 'Alpha Industries');
+    assert.deepEqual((await list('?kind=query&po_number=PO-A2')).map((a) => a.id), [q2.id]);
+    assert.equal((await list('?status=all')).length, 4);
+
+    const pay = (stage, body) => request(app).post(`/api/payment-stages/${stage}/payment`).set('Cookie', staff).send(body);
+    const receipt = { amount_received: 98000, tds_amount: 2000, payment_received_date: '2026-09-01', mode: 'add', portal_action_id: advice.id };
+    assert.equal((await pay(await stageId('INV-B-1'), receipt)).status, 422, 'an advice is matched only on an invoice it is about');
+    await pay(await stageId('INV-A-1'), receipt).expect(200);
+    const [matched] = await actionsOf('payment_advice');
+    assert.equal(matched.status, 'matched');
+    const row = await pool.query('SELECT amount, tds_amount FROM payments WHERE portal_action_id = $1', [advice.id]);
+    assert.deepEqual([Number(row.rows[0].amount), Number(row.rows[0].tds_amount)], [98000, 2000]);
+
+    const resolve = (id, body) => request(app).post(`/api/portal-admin/actions/${id}/resolve`).set('Cookie', staff).send(body);
+    const why = await resolve(q1.id, { status: 'rejected' });
+    assert.equal(why.status, 422, 'a rejection says why');
+    assert.ok(why.body.error.fields.resolution);
+    await resolve(q1.id, { status: 'rejected', resolution: 'The rate is right: 18% on audits.' }).expect(200);
+    await resolve(q2.id, { status: 'resolved' }).expect(200);
+    assert.equal((await resolve(q2.id, { status: 'resolved' })).status, 404, 'settled once');
+    assert.equal((await resolve(advice.id, { status: 'resolved' })).status, 404, 'a matched advice is settled');
+
+    // One advice for two invoices is matched when both have their receipt.
+    const { rows: [two] } = await pool.query("INSERT INTO portal_client_actions (company_id, kind, amount, paid_on) VALUES (1001, 'payment_advice', 20, '2026-09-03') RETURNING id");
+    const a2 = await stageId('INV-A-2');
+    await pool.query('INSERT INTO portal_client_action_stages (action_id, stage_id) VALUES ($1, $2), ($1, $3)', [two.id, await stageId('INV-A-1'), a2]);
+    const small = { amount_received: 10, payment_received_date: '2026-09-03', mode: 'add', portal_action_id: two.id };
+    await pay(await stageId('INV-A-1'), small).expect(200);
+    assert.equal((await pool.query('SELECT status FROM portal_client_actions WHERE id = $1', [two.id])).rows[0].status, 'open', 'one of two');
+    await pay(a2, small).expect(200);
+    assert.equal((await pool.query('SELECT status FROM portal_client_actions WHERE id = $1', [two.id])).rows[0].status, 'matched');
+
+    const { cookie } = await portalLogin(2001);
+    const invoices = (await request(app).get('/api/portal/invoices').set('Cookie', cookie).expect(200)).body.data;
+    assert.equal(invoices.find((i) => i.invoice_no === 'INV-A-1').status, 'Paid');
+    const mine = (await request(app).get('/api/portal/actions').set('Cookie', cookie).expect(200)).body.data;
+    assert.equal(mine.find((a) => a.id === q1.id).resolution, 'The rate is right: 18% on audits.');
+    assert.equal(mine.find((a) => a.id === advice.id).status, 'matched');
+    assert.equal((await request(app).get('/api/portal-admin/actions').set('Cookie', cookie)).status, 401);
+  });
+
+  test('files go both ways: what staff share, and what the client uploads, on their own records only', async () => {
+    await pool.query(`
+      INSERT INTO contacts (id, company_id, name, email, portal_access) VALUES (2003, 1001, 'Arun Alpha', 'arun@alpha.example', true);
+      INSERT INTO documents (id, storage_key, file_name, content_type, size_bytes) VALUES
+        (3010, 'k/c', 'costing.pdf', 'application/pdf', 10), (3011, 'k/r', 'audit-report.pdf', 'application/pdf', 10),
+        (3012, 'k/u1', 'site-photo.jpg', 'image/jpeg', 10), (3013, 'k/u2', 'arun-sheet.pdf', 'application/pdf', 10),
+        (3014, 'k/bs', 'beta-report.pdf', 'application/pdf', 10), (3015, 'k/rem', 'remit.pdf', 'application/pdf', 10);
+      INSERT INTO attachments (id, entity, entity_id, document_id, label, shared_with_client) VALUES
+        (5010, 'purchase_order', 'PO-A', 3010, 'Internal costing', false), (5011, 'project', 'PRJ-A', 3011, 'Audit report', false),
+        (5014, 'purchase_order', 'PO-B', 3014, 'Beta report', true);
+      INSERT INTO attachments (id, entity, entity_id, document_id, label, shared_with_client, uploaded_by_contact_id) VALUES
+        (5012, 'purchase_order', 'PO-A', 3012, 'Site photo', true, 2001), (5013, 'project', 'PRJ-A', 3013, 'Arun sheet', true, 2003);
+      INSERT INTO portal_client_actions (company_id, contact_id, kind, amount, paid_on, document_id) VALUES (1001, 2001, 'payment_advice', 10, '2026-09-02', 3015);
+    `);
+    await request(app).patch('/api/attachments/5011').set('Cookie', staff).send({ shared_with_client: true }).expect(200);
+    const { cookie } = await portalLogin(2001);
+    const docs = (await request(app).get('/api/portal/documents').set('Cookie', cookie).expect(200)).body.data;
+    assert.deepEqual(docs.shared.map((x) => x.label), ['Audit report'], 'shared on purpose only, and only their own');
+    assert.deepEqual(docs.uploads.map((x) => [x.label, x.mine, x.by_name]).sort(), [['Arun sheet', false, 'Arun Alpha'], ['Site photo', true, 'Asha Alpha']]);
+    const targets = docs.targets.map((t) => t.entity_id);
+    for (const t of ['PRJ-A', 'PO-A', 'PO-A2']) assert.ok(targets.includes(t), t);
+    for (const t of ['PO-AX', 'PO-AOLD', 'PO-B', 'PRJ-B']) assert.ok(!targets.includes(t), t);
+
+    const file = (id) => request(app).get(`/api/portal/files/document/${id}`).set('Cookie', cookie).then((r) => r.status);
+    for (const id of [3011, 3012, 3015]) assert.notEqual(await file(id), 404, String(id));
+    for (const id of [3010, 3014]) assert.equal(await file(id), 404, String(id));
+    const beta = await portalLogin(2002);
+    assert.equal((await request(app).get('/api/portal/files/document/3015').set('Cookie', beta.cookie)).status, 404, "another company's remittance");
+
+    const upload = (fields, attach = ['file', Buffer.from('%PDF-1.4'), pdf]) => {
+      let r = request(app).post('/api/portal/documents').set('Cookie', cookie);
+      for (const [k, v] of Object.entries(fields)) r = r.field(k, v);
+      return attach ? r.attach(...attach) : r;
+    };
+    assert.equal((await upload({ entity: 'purchase_order', entity_id: 'PO-A', label: 'x' }, null)).status, 422, 'no file');
+    assert.equal((await upload({ entity: 'purchase_order', entity_id: 'PO-A', label: 'x' }, ['file', Buffer.from('MZ'), { filename: 'a.exe', contentType: 'application/x-msdownload' }])).status, 422);
+    assert.equal((await upload({ entity: 'purchase_order', entity_id: 'PO-A', label: '' })).status, 422, 'says what the file is');
+    assert.equal((await upload({ entity: 'company', entity_id: '1001', label: 'x' })).status, 422, 'a project or a PO only');
+    for (const other of ['PO-B', 'PO-AX']) assert.equal((await upload({ entity: 'purchase_order', entity_id: other, label: 'x' })).status, 404, other);
+    assert.equal((await upload({ entity: 'project', entity_id: 'PRJ-B', label: 'x' })).status, 404, "another company's project");
+
+    const del = (id) => request(app).delete(`/api/portal/documents/${id}`).set('Cookie', cookie).then((r) => r.status);
+    assert.equal(await del(5013), 404, "a colleague's upload");
+    assert.equal(await del(5011), 404, 'a staff file');
+    // Once staff open the record, the client's upload is seen and stays.
+    const timeline = await request(app).get('/api/timeline?entity=project&id=PRJ-A').set('Cookie', staff).expect(200);
+    const item = timeline.body.data.find((i) => i.kind === 'file' && i.id === 5013);
+    assert.equal(item.record.from_client, true);
+    assert.equal((await request(app).delete('/api/portal/documents/5013').set('Cookie', (await portalLogin(2003)).cookie)).status, 404, 'seen by staff');
+    assert.equal(await del(5012), 204, 'their own, unseen');
+    assert.equal((await pool.query('SELECT 1 FROM attachments WHERE id = 5012')).rowCount, 0);
+  });
+
+  test('a query reaches the PO\'s owner and nobody twice; a payment report reaches everyone', async () => {
+    const { rows: [owner] } = await pool.query("INSERT INTO users (name, email, password_hash, role, active) VALUES ('Olu Owner', 'olu@cetizion.example', 'x', 'sales', true) RETURNING id");
+    await pool.query("UPDATE projects SET owner_user_id = $1 WHERE project_id = 'PRJ-B'", [owner.id]);
+    const { cookie } = await portalLogin(2002);
+    const beta = await stageId('INV-B-1');
+    await request(app).post('/api/portal/actions').set('Cookie', cookie).send({ kind: 'query', stage_ids: [beta], note: 'Which address is this billed to?' }).expect(201);
+    await request(app).post('/api/portal/actions').set('Cookie', cookie).send({ kind: 'payment_advice', stage_ids: [beta], amount: 5, paid_on: '2026-09-04' }).expect(201);
+    const { rows } = await pool.query("SELECT username, title FROM notifications WHERE kind = 'portal_action' AND title LIKE '%Beta%' ORDER BY id");
+    assert.deepEqual(rows.map((r) => r.username), ['olu@cetizion.example', null]);
   });
 });
