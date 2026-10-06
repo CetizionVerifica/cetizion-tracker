@@ -87,9 +87,10 @@ A reply by number on the pull request is enough.
 6. **PR #197.** §7 lists "PR #197 merged" in phase 1. This branch does not
    depend on it and merges cleanly beside it; it is shivam-balyan's PR to
    merge.
-7. **Phases 2 and 3** follow as their own PRs, as §7 plans. Phase 2 has the
-   one migration (the next free number, 087, now that #199's 084–086 are on
-   `main`). Go ahead with phase 2 once this one is reviewed?
+7. **Phases 2 and 3** follow as their own PRs and are under way: phase 2
+   (the client answers, two-way files) with the one migration, 087, now that
+   #199's 084–086 are on `main`; then phase 3 (the emails). Anything you
+   would like done differently there, say so here.
 
 ## 5. Files
 
