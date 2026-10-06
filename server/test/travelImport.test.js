@@ -179,7 +179,7 @@ const NAME = `travel_import_${process.pid}`;
 const PASSWORD = 'a-good-long-test-password';
 
 describe('uploading, reviewing and committing (#196 §5.1)', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
-  let db; let app; let hr; let sales;
+  let db; let app; let hr; let sales; let admin;
   const workbook = travelWorkbook();
   const upload = (agent, buffer = workbook, fields = {}) => {
     let r = agent.post('/api/import/travel').attach('file', buffer, 'travel.xlsx');
@@ -211,8 +211,10 @@ describe('uploading, reviewing and committing (#196 §5.1)', { skip: !ADMIN_URL 
     };
     await createUser({ name: 'Hema', email: 'hema@example.com', password: PASSWORD, role: 'hr' }, db);
     await createUser({ name: 'Sam', email: 'sam@example.com', password: PASSWORD, role: 'sales' }, db);
+    await createUser({ name: 'Ada', email: 'ada@example.com', password: PASSWORD, role: 'admin' }, db);
     hr = await signIn('hema@example.com');
     sales = await signIn('sam@example.com');
+    admin = await signIn('ada@example.com');
     await db.query(`INSERT INTO travel_vendors (name, invoice_prefixes, payment_terms_days) VALUES ('Happy Tours', '{HT/2627/}', 15), ('Other Tours', '{OT/}', 30)`);
     await db.query(`INSERT INTO staff (name) VALUES ('Kiran Patil')`);
     await db.query(`INSERT INTO projects (project_id, client_name, service_request_no) VALUES ('PRJ-TI-1', 'Example Pharma', NULL), ('PRJ-TI-2', 'Example Chemicals', 'CV 201')`);
@@ -303,5 +305,25 @@ describe('uploading, reviewing and committing (#196 §5.1)', { skip: !ADMIN_URL 
     await hr.delete(`/api/import/travel/${next.id}`).expect(204);
     await hr.post(`/api/import/travel/${batch.id}/commit`).expect(200);
     await hr.delete(`/api/import/travel/${batch.id}`).expect(409);
+  });
+
+  test('each importer keeps to its own batches, and MCP only reads the travel tables', async () => {
+    // A workbook already committed, uploaded again: every trip and leg is in the tracker.
+    const { body: { data: draft } } = await upload(hr).expect(201);
+    // The sales importer does not see, commit or delete a travel batch.
+    await admin.get(`/api/import/batches/${draft.id}`).expect(404);
+    await admin.post(`/api/import/batches/${draft.id}/commit`).expect(404);
+    await admin.delete(`/api/import/batches/${draft.id}`).expect(404);
+    const { body: { data: listed } } = await admin.get('/api/import/batches').expect(200);
+    assert.ok(!listed.some((b) => b.id === draft.id));
+    // Update all from the sheet, on the trips: their legs go with them.
+    const { body: { data: decided } } = await hr.post(`/api/import/travel/${draft.id}/duplicates`).send({ step: 'trip', action: 'update' }).expect(200);
+    const known = decided.items.filter((it) => ['trip', 'segment'].includes(it.step) && it.existing_ref);
+    assert.ok(known.length > 0 && known.every((it) => it.action === 'update'));
+    assert.ok(decided.items.filter((it) => it.step === 'vendor_invoice' && it.existing_ref).every((it) => it.action === 'skip'), 'other steps are left as they were');
+    await hr.delete(`/api/import/travel/${draft.id}`).expect(204);
+    // MCP imports records in bulk, but not these: the travel import writes them (§7).
+    const { importable } = await import('../src/lib/mcp/records.js');
+    for (const entity of ['travel-segments', 'vendor-invoice-lines', 'vendor-credit-notes', 'trip-types']) assert.ok(!importable().includes(entity), entity);
   });
 });

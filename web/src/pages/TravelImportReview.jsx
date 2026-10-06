@@ -5,6 +5,8 @@ import { Alert, ConfirmDialog, ErrorState, Field, Input, Modal, Select, Stat, Ta
 import { Chip } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
+import { Checkbox } from '../components/ui/checkbox.tsx';
+import { Label } from '../components/ui/label.tsx';
 import { api } from '../lib/api.js';
 import { date, money, number } from '../lib/format.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
@@ -14,7 +16,9 @@ import { useFetch, useLookups } from '../lib/hooks.js';
  * were read as, the travellers, the trips with their legs, the agency's
  * invoices with their lines, and the credit notes, each with its flags.
  * Red blocks the commit, amber asks for a look, blue says what was decided,
- * and a record already in the tracker is kept unless "update" is chosen.
+ * and a record already in the tracker (a yellow row) is kept unless "update"
+ * is chosen. The filters and colours are the sales importer's (§5.1), and the
+ * last step is the Summary, where the commit is.
  */
 
 const FIELD_LABELS = {
@@ -32,6 +36,8 @@ const STATUSES = ['booked', 'cancelled', 'partly_refunded'];
 const WRITTEN = [['trip', 'trips'], ['segment', 'legs'], ['vendor_invoice', 'agency invoices'], ['invoice_line', 'invoice lines'],
   ['credit_note', 'credit notes'], ['traveller', 'new staff']];
 const writtenText = (w = {}) => WRITTEN.map(([k, label]) => `${number(w[k] ?? 0)} ${label}`).join(', ');
+/** The review tab each kind of item is shown on. */
+const STEP_TAB = { traveller: 'travellers', trip: 'trips', segment: 'trips', vendor_invoice: 'invoices', invoice_line: 'invoices', credit_note: 'credits' };
 const opts = (list) => list.map((v) => ({ value: v, label: v.replace(/_/g, ' ') }));
 
 function Flags({ item }) {
@@ -137,6 +143,8 @@ export default function TravelImportReview() {
   const { data, error, refetch } = useFetch(() => api.raw(`/import/travel/${id}`), [id]);
   const [batch, setBatch] = useState(null);
   const [tab, setTab] = useState('trips');
+  // The sales importer's filters: show all, new, duplicates or errors; flagged only.
+  const [filter, setFilter] = useState({ show: '', flagged: false });
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -152,6 +160,14 @@ export default function TravelImportReview() {
   const linesOf = (inv) => steps('invoice_line').filter((l) => l.payload.invoice_seq === inv.seq);
   const typeName = (tid) => lookups.trip_types.find((t) => t.id === tid)?.name;
   const live = (it) => it.included && it.parent_included;
+  const worth = (it) => it.flags.some((f) => f.level === 'red' || f.level === 'amber');
+  const matches = (it) => !(
+    (filter.flagged && !worth(it))
+    || (filter.show === 'create' && it.existing_ref)
+    || (filter.show === 'dup' && !it.existing_ref)
+    || (filter.show === 'errors' && !it.flags.some((f) => f.level === 'red')));
+  // A trip or an invoice shows when it, or a leg or line of it, matches.
+  const shown = (head, under) => matches(head) || under.some(matches);
 
   async function call(path, method, body) {
     setBusy(true);
@@ -195,7 +211,52 @@ export default function TravelImportReview() {
       <Include it={it} />
     </div>
   );
-  const rowClass = (it) => `border-b border-border px-4 py-3 ${live(it) ? '' : 'opacity-50'}`;
+  const rowClass = (it) => `border-b border-border px-4 py-3 ${it.existing_ref ? 'bg-waiting/10' : ''} ${live(it) ? '' : 'opacity-50'}`;
+  const subRow = (it) => `border-t border-border align-top ${it.existing_ref ? 'bg-waiting/10' : ''} ${live(it) ? '' : 'opacity-50'}`;
+
+  async function decideAll(step, action) {
+    await call(`/import/travel/${batch.id}/duplicates`, 'POST', { step, action }).catch(() => {});
+  }
+  const STEP_OF = { travellers: 'traveller', trips: 'trip', invoices: 'vendor_invoice', credits: 'credit_note' };
+  // Called, not rendered as a component, so its controls are not remounted on every change.
+  const filterBar = ({ step, total, showing }) => {
+    const dups = steps(step).filter((it) => it.existing_ref).length;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <Select className="h-8 w-[170px]" value={filter.show} placeholder="Show: all"
+          options={[{ value: 'create', label: 'New only' }, { value: 'dup', label: 'Duplicates only' }, { value: 'errors', label: 'Errors only' }]}
+          onChange={(e) => setFilter({ ...filter, show: e.target.value })} />
+        <div className="flex items-center gap-2" title="Items with an amber or red flag">
+          <Checkbox id={`flagged-${step}`} checked={filter.flagged} onCheckedChange={(on) => setFilter({ ...filter, flagged: on === true })} />
+          <Label htmlFor={`flagged-${step}`} className="text-[13px] font-normal text-secondary-text">Flagged only</Label>
+        </div>
+        {dups > 0 && !done && step !== 'traveller' && (
+          <>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => decideAll(step, 'skip')} title="Every record of this step already in the tracker keeps the tracker's version">Keep all originals</Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => decideAll(step, 'update')} title="Every record of this step already in the tracker takes the sheet's values">Update all from sheet</Button>
+          </>
+        )}
+        <span className="num ml-auto text-[12px] text-muted-foreground">{showing} of {total}{dups ? ` · ${dups} in the tracker` : ''}</span>
+      </div>
+    );
+  };
+  const none = <p className="px-4 py-5 text-[13px] text-muted-foreground">Nothing here matches the filter.</p>;
+
+  // The Summary step: per kind of record, what the commit does with it.
+  const SUMMARY_ROWS = [['traveller', 'Travellers (new staff rows)'], ['trip', 'Trips'], ['segment', 'Legs'], ['vendor_invoice', 'Agency invoices'],
+    ['invoice_line', 'Invoice lines'], ['credit_note', 'Credit and cancellation notes']];
+  const tally = (step) => {
+    const all = steps(step);
+    const writes = (it) => live(it) && (step !== 'traveller' || !it.payload.staff_id);
+    return {
+      create: all.filter((it) => writes(it) && it.action === 'create').length,
+      update: all.filter((it) => live(it) && it.action === 'update').length,
+      keep: all.filter((it) => live(it) && it.action === 'skip').length,
+      out: all.filter((it) => !live(it)).length,
+    };
+  };
+  const reds = batch.items.filter((it) => live(it) && it.flags.some((f) => f.level === 'red'));
+  const ambers = batch.items.filter((it) => live(it) && it.flags.some((f) => f.level === 'amber')).length;
 
   const s = batch.summary || {};
   // Before the commit, what it will add; after, what it wrote.
@@ -206,7 +267,9 @@ export default function TravelImportReview() {
     { key: 'trips', label: 'Trips & legs', count: steps('trip').length, warning: s.blocking || undefined, warningTitle: 'Items with a red flag' },
     { key: 'invoices', label: 'Vendor invoices', count: steps('vendor_invoice').length },
     { key: 'credits', label: 'Credit notes', count: steps('credit_note').length },
+    { key: 'summary', label: 'Summary' },
   ];
+  const openTab = (key) => { setTab(key); if (key === 'summary' || key === 'columns') setFilter({ show: '', flagged: false }); };
 
   return (
     <>
@@ -233,7 +296,13 @@ export default function TravelImportReview() {
         {done && batch.summary?.written && (
           <Alert tone="success">Written: {writtenText(batch.summary.written)}. Upload the tickets and invoice PDFs named by their numbers to file them.</Alert>
         )}
-        <Tabs tabs={tabsList} active={tab} onChange={setTab} />
+        <Tabs tabs={tabsList} active={tab} onChange={openTab} />
+        {STEP_OF[tab] && (
+          filterBar({ step: STEP_OF[tab], total: steps(STEP_OF[tab]).length,
+            showing: STEP_OF[tab] === 'trip' ? steps('trip').filter((t) => shown(t, legsOf(t))).length
+              : STEP_OF[tab] === 'vendor_invoice' ? steps('vendor_invoice').filter((i) => shown(i, linesOf(i))).length
+                : steps(STEP_OF[tab]).filter(matches).length })
+        )}
 
         {tab === 'columns' && (batch.mapping?.tabs || []).map((t) => (
           <div key={t.name} className="rounded-[10px] border border-border bg-card">
@@ -260,7 +329,8 @@ export default function TravelImportReview() {
 
         {tab === 'travellers' && (
           <div className="rounded-[10px] border border-border bg-card">
-            {steps('traveller').map((it) => (
+            {!steps('traveller').some(matches) && none}
+            {steps('traveller').filter(matches).map((it) => (
               <div key={it.id} className={rowClass(it)}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -277,7 +347,8 @@ export default function TravelImportReview() {
 
         {tab === 'trips' && (
           <div className="rounded-[10px] border border-border bg-card">
-            {steps('trip').map((trip) => {
+            {!steps('trip').some((t) => shown(t, legsOf(t))) && none}
+            {steps('trip').filter((t) => shown(t, legsOf(t))).map((trip) => {
               const p = trip.payload;
               const legs = legsOf(trip);
               const others = steps('trip').filter((t) => t.seq !== trip.seq && t.payload.traveller_seq === p.traveller_seq);
@@ -301,7 +372,7 @@ export default function TravelImportReview() {
                     <table className="w-full text-[12.5px]">
                       <tbody>
                         {legs.map((leg) => (
-                          <tr key={leg.id} className={`border-t border-border align-top ${live(leg) ? '' : 'opacity-50'}`}>
+                          <tr key={leg.id} className={subRow(leg)}>
                             <td className="py-1.5 pr-3 capitalize">{leg.payload.mode}</td>
                             <td className="py-1.5 pr-3 whitespace-nowrap">{leg.payload.mode === 'hotel' ? leg.payload.to_place : `${leg.payload.from_place || '?'} → ${leg.payload.to_place || '?'}`}</td>
                             <td className="py-1.5 pr-3 whitespace-nowrap">{date(leg.payload.start_date)}{leg.payload.end_date ? ` – ${date(leg.payload.end_date)}` : ''}</td>
@@ -331,7 +402,8 @@ export default function TravelImportReview() {
 
         {tab === 'invoices' && (
           <div className="rounded-[10px] border border-border bg-card">
-            {steps('vendor_invoice').map((inv) => {
+            {!steps('vendor_invoice').some((i) => shown(i, linesOf(i))) && none}
+            {steps('vendor_invoice').filter((i) => shown(i, linesOf(i))).map((inv) => {
               const lines = linesOf(inv);
               const total = lines.reduce((n, l) => n + Number(l.payload.line_total || 0), 0);
               return (
@@ -351,7 +423,7 @@ export default function TravelImportReview() {
                         const leg = bySeq.get(l.payload.segment_seq);
                         const trip = bySeq.get(l.payload.trip_seq);
                         return (
-                          <tr key={l.id} className={`border-t border-border align-top ${live(l) ? '' : 'opacity-50'}`}>
+                          <tr key={l.id} className={subRow(l)}>
                             <td className="py-1.5 pr-3">{bySeq.get(trip?.payload.traveller_seq)?.payload.name || trip?.payload.employee_name} · {leg ? `${leg.payload.from_place ? `${leg.payload.from_place} → ` : ''}${leg.payload.to_place || ''} ${date(leg.payload.start_date)}` : ''}<Flags item={l} /></td>
                             <td className="py-1.5 text-right num">{money(l.payload.base_fare)}</td>
                             <td className="py-1.5 text-right num">{money(l.payload.service_charge)}</td>
@@ -371,8 +443,9 @@ export default function TravelImportReview() {
 
         {tab === 'credits' && (
           <div className="rounded-[10px] border border-border bg-card">
-            {steps('credit_note').length === 0 && <p className="px-4 py-5 text-[13px] text-muted-foreground">No credit or cancellation notes in this workbook.</p>}
-            {steps('credit_note').map((n) => (
+            {steps('credit_note').length === 0 ? <p className="px-4 py-5 text-[13px] text-muted-foreground">No credit or cancellation notes in this workbook.</p>
+              : !steps('credit_note').some(matches) && none}
+            {steps('credit_note').filter(matches).map((n) => (
               <div key={n.id} className={rowClass(n)}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -387,6 +460,49 @@ export default function TravelImportReview() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === 'summary' && (
+          <div className="stack">
+            <div className="overflow-x-auto rounded-[10px] border border-border bg-card">
+              <table className="w-full min-w-[560px] text-[13px]">
+                <thead>
+                  <tr className="text-[12px] text-muted-foreground">
+                    <th className="px-4 py-2.5 text-left font-normal">Record</th>
+                    <th className="px-3 py-2.5 text-right font-normal">{done ? 'Written new' : 'New'}</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Updated from the sheet</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Kept as in the tracker</th>
+                    <th className="px-4 py-2.5 text-right font-normal">Left out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {SUMMARY_ROWS.map(([step, label]) => {
+                    const t = tally(step);
+                    return (
+                      <tr key={step} className="border-t border-border">
+                        <td className="px-4 py-2">{label}</td>
+                        <td className="num px-3 py-2 text-right font-medium">{number(t.create)}</td>
+                        <td className="num px-3 py-2 text-right">{number(t.update)}</td>
+                        <td className="num px-3 py-2 text-right">{number(t.keep)}</td>
+                        <td className="num px-4 py-2 text-right text-muted-foreground">{number(t.out)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {!done && (reds.length > 0 ? (
+              <Alert tone="danger">
+                {number(reds.length)} item{reds.length === 1 ? '' : 's'} still {reds.length === 1 ? 'has' : 'have'} a red flag, so nothing can be committed yet.{' '}
+                <button type="button" className="underline" onClick={() => { setTab(STEP_TAB[reds[0].step] || 'trips'); setFilter({ show: 'errors', flagged: false }); }}>Show them</button>
+              </Alert>
+            ) : (
+              <Alert tone="info">
+                Ready to commit{ambers ? `: ${number(ambers)} item${ambers === 1 ? '' : 's'} with an amber flag are worth a look first` : ''}. It is one transaction: everything ticked is written, or nothing is.
+              </Alert>
+            ))}
+            {!done && <div><Button disabled={busy || reds.length > 0} onClick={commit}>Commit</Button></div>}
           </div>
         )}
       </div>

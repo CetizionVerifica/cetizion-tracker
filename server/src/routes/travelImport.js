@@ -356,10 +356,12 @@ travelImportRouter.post('/:id/duplicates', async (req, res) => {
   if (!['skip', 'update'].includes(action)) throw new ApiError(422, 'action must be skip (keep the original) or update (from the sheet)');
   const step = req.body?.step || null;
   if (step && !['trip', 'segment', 'vendor_invoice', 'invoice_line', 'credit_note'].includes(step)) throw new ApiError(422, 'Unknown step');
+  // A trip's choice carries to its legs, an invoice's to its lines, as one at a time does.
+  const stepsOf = { trip: ['trip', 'segment'], vendor_invoice: ['vendor_invoice', 'invoice_line'] };
   await query(
     `UPDATE import_items SET action = $1, updated_at = now()
-      WHERE batch_id = $2 AND existing_ref IS NOT NULL AND action <> 'create' ${step ? 'AND step = $3' : ''}`,
-    step ? [action, batch.id, step] : [action, batch.id]);
+      WHERE batch_id = $2 AND existing_ref IS NOT NULL AND action <> 'create' ${step ? 'AND step = ANY($3::text[])' : ''}`,
+    step ? [action, batch.id, stepsOf[step] || [step]] : [action, batch.id]);
   res.json({ data: await loadTravelBatch(batch.id) });
 });
 

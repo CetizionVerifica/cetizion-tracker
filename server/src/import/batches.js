@@ -176,7 +176,8 @@ export function recallFile(id) {
 }
 
 export async function loadBatch(id) {
-  const { rows } = await query('SELECT * FROM import_batches WHERE id = $1', [id]);
+  // Sales batches only: a travel batch is the travel importer's (#196).
+  const { rows } = await query("SELECT * FROM import_batches WHERE id = $1 AND kind = 'sales'", [id]);
   if (!rows.length) throw new ApiError(404, 'Import batch not found');
   const items = (await query('SELECT * FROM import_items WHERE batch_id = $1 ORDER BY seq', [id])).rows.map((it) => {
     const { __parent_seq, __source_label, ...payload } = it.payload;

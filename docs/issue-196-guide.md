@@ -25,11 +25,12 @@ this guide. The import itself has its own guide: [travel-import.md](travel-impor
 | §4.5 credit notes | Credit notes and cancellation notes against an invoice and a leg; recording one marks the leg | Vendor invoices → Credit notes |
 | §4.6 documents | Trips and agency invoices hold files, each with a kind (ticket, boarding pass, hotel bill…); the invoice and credit note PDFs sit on the record | Trip page → Documents |
 | §4.7 views | Trip cost from invoice lines net of credits; legs, documents, what is missing; project via the PO or directly; profitability counts trips linked to a project directly | Trips list, project profitability |
-| §5 the importer | Every tab, columns by name, trips grouped from legs, PO/service request/client linking, invoices with lines, credit notes, red/amber/blue flags, re-upload recognition, corrections remembered per vendor | Settings → Import travel |
+| §5 the importer | Every tab, columns by name, trips grouped from legs, PO/service request/client linking, invoices with lines, credit notes, red/amber/blue flags with the sales importer's filters and yellow duplicate rows, a Summary step, re-upload recognition, corrections remembered per vendor | Settings → Import travel |
 | §5.4 bulk documents | Many files at once, each filed by the number in its name | *Upload documents* on the import review and on Trips |
 | §6 dashboard | Trips missing documents; chargeable trips not yet billed; spend by mode and by trip type | Travel dashboard |
 | §6 template | A workbook with every column the importer reads | Settings → Import travel → *Download the template* |
 | §7 webhooks | `trip.created` and `vendor_invoice.created` when an import commits | Settings → Webhooks |
+| §7 MCP | The new travel tables read-only: `search_records` and `aggregate` read them, `import_records` refuses them | MCP |
 
 Migrations: `084_hr_role.sql`, `085_travel_records.sql`, `086_travel_import.sql`.
 

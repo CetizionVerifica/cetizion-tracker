@@ -25,9 +25,14 @@ It lives under **Settings → Import travel**. Admins and the HR role only
    fine), each with its own header row. A tab that is not a travel list, such
    as notes or a pivot, is passed over.
 3. **Review**, tab by tab in the page: Tabs & columns → Travellers → Trips &
-   legs → Vendor invoices → Credit notes.
-4. **Commit.** It is one transaction: either everything ticked is written, or
-   nothing is.
+   legs → Vendor invoices → Credit notes → Summary. The filters are the sales
+   importer's: **Show** new only, duplicates only or errors only, and
+   **Flagged only** (an amber or red flag). A trip or an invoice shows when it
+   or one of its legs or lines matches.
+4. **Commit**, from the Summary (or the button at the top). The Summary counts
+   what the commit does with each kind of record: new, updated from the sheet,
+   kept as in the tracker, left out. It is one transaction: either everything
+   ticked is written, or nothing is.
 
 Afterwards, **Upload documents** on the review (or on the Trips list) takes
 the tickets, boarding passes and invoice PDFs, many at once, and files each by
@@ -40,7 +45,7 @@ its name (below).
 | A **red** flag | The row cannot be written as it is: no date or traveller, no amount, an amount that is not a number, an invoice number another vendor already has, a hotel stay without a check-out after its check-in, a trip type that is not on the list | **Edit** it, or untick it. Commit stays off until no ticked row has one |
 | An **amber** flag | Worth a look: a total that is not fare + service charge + GST (beyond ₹1), GST or the total left blank, a PO that is not in the tracker, a trip linked by client name only, a chargeable trip with no PO or project, a date typed as text, a journey before its booking, the same leg twice | Check it; **Edit** if needed |
 | A **blue** flag | What was decided: rows grouped into a trip, a traveller matched by first name, the vendor recognised from the number, a project found by service request no., the mode inferred, cancellation charges read from a remark | Read it, no action needed |
-| **In the tracker** | A trip, leg, invoice or note already recorded, from an earlier upload | **Keep the original** (the default) or **Update from the sheet** |
+| A **yellow row**, "In the tracker" | A trip, leg, invoice or note already recorded, from an earlier upload | **Keep the original** (the default) or **Update from the sheet**, one at a time or with **Keep all originals** / **Update all from sheet**; a trip's choice carries to its legs, an invoice's to its lines |
 | **Assumed: …** | A value the sheet did not give: the invoice date taken from the booking date, the trip type from the PO link, a blank total worked out | Edit it if you know better; the note goes into the record's remarks |
 
 ### What becomes what
@@ -161,6 +166,12 @@ importer's model is not called.
 importer (whose router is administrator-only). Every route is declared in
 `server/src/lib/authz/policy.js` as admin and listed in `HR_ROUTES`, so the
 role matrix test proves sales users are refused and HR users reach it.
+
+Each importer keeps to its own batches: the sales importer's routes and its
+MCP tools answer 404 for a travel batch, and the sales list shows sales
+batches only. Over MCP the travel desk's legs, invoice lines, credit notes and
+trip types are read-only (`search_records`, `aggregate`); `import_records`
+refuses them (§7).
 
 ### Tests
 
