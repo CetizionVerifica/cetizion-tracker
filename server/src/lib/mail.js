@@ -32,8 +32,28 @@ export function mailConfigured() {
   return Boolean(config.mail.host && config.mail.from);
 }
 
-/** The addresses in a To or Cc string, or list. */
-export const addressesIn = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map((a) => String(a).trim()).filter(Boolean);
+/** Addresses de-duplicated without regard to case, first spelling kept (#195). */
+export function uniqueAddresses(list) {
+  const seen = new Map();
+  for (const a of list) if (a && !seen.has(a.toLowerCase())) seen.set(a.toLowerCase(), a);
+  return [...seen.values()];
+}
+
+/** The addresses in a To or Cc string, or list: each once, whatever its case. */
+export const addressesIn = (v) => uniqueAddresses((Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map((a) => String(a).trim()).filter(Boolean));
+
+/**
+ * To, Cc and Bcc as they go out (#195): each address once, and nobody
+ * copied who is already a recipient, so nobody gets the email twice.
+ * Compared without regard to case.
+ */
+export function recipientLists(to, cc = [], bcc = []) {
+  const recipients = addressesIn(to);
+  const taken = new Set(recipients.map((a) => a.toLowerCase()));
+  const copies = addressesIn(cc).filter((a) => !taken.has(a.toLowerCase()));
+  for (const a of copies) taken.add(a.toLowerCase());
+  return { to: recipients, cc: copies, bcc: addressesIn(bcc).filter((a) => !taken.has(a.toLowerCase())) };
+}
 const onAllowlist = (address, allowlist) => allowlist.some((a) => a.toLowerCase() === address.toLowerCase() || (a.startsWith('@') && address.toLowerCase().endsWith(a.toLowerCase())));
 
 /** Where a given address (or comma-separated addresses) would go under the current mode and switches. */
@@ -71,7 +91,12 @@ async function emailsEnabled(db) {
  * Compose, log and (when allowed) send one email. Returns the email_log row.
  * Never throws for a delivery failure: the row records it, the caller goes on.
  */
-export async function sendMail({ to, cc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [], secrets = [] }, db = { query }) {
+export async function sendMail({ to: rawTo, cc: rawCc = null, subject, text, html, template, entity = null, entityId = null, sentBy = 'system', optedOut = false, attachments = [], secrets = [] }, db = { query }) {
+  // Each address once, and nobody copied who is already a recipient (#195).
+  const lists = recipientLists(rawTo, rawCc ?? [], config.mail.bcc || []);
+  const to = lists.to.join(', ');
+  const cc = lists.cc.join(', ') || null;
+  const bcc = lists.bcc.join(', ') || undefined;
   const enabled = await emailsEnabled(db);
   const decision = decideDelivery({ to, enabled, optedOut });
   // The client gets the real message; the log keeps a copy with any secret
@@ -90,7 +115,7 @@ export async function sendMail({ to, cc = null, subject, text, html, template, e
   try {
     const info = await smtp().sendMail({
       from: config.mail.from, to, cc: cc || undefined, replyTo: config.mail.replyTo || undefined,
-      bcc: config.mail.bcc || undefined, subject, text, html, attachments,
+      bcc, subject, text, html, attachments,
     });
     const { rows: [sent] } = await db.query(
       `UPDATE email_log SET status = 'sent', provider_message_id = $2, sent_at = now() WHERE id = $1 RETURNING *`,
@@ -119,8 +144,8 @@ export async function sendMail({ to, cc = null, subject, text, html, template, e
  * Returns { row, via: 'graph' | 'smtp' | 'log' | null, error }.
  */
 export async function sendViaMailbox({ send, from = null, to, cc = [], subject, text, html, template, entity = null, entityId = null, sentBy = 'system', attachments = [] }, db = { query }) {
-  const recipients = addressesIn(to);
-  const copies = addressesIn(cc);
+  // Each address once, and nobody copied who is already a recipient (#195).
+  const { to: recipients, cc: copies, bcc: blind } = recipientLists(to, cc, config.mail.bcc || []);
   const enabled = await emailsEnabled(db);
   const decision = recipients.length
     ? decideDelivery({ to: [...recipients, ...copies].join(', '), enabled, configured: Boolean(send) || mailConfigured() })
@@ -149,7 +174,7 @@ export async function sendViaMailbox({ send, from = null, to, cc = [], subject, 
   try {
     const info = await smtp().sendMail({
       from: config.mail.from, to: recipients.join(', '), cc: copies.join(', ') || undefined, replyTo: config.mail.replyTo || undefined,
-      bcc: config.mail.bcc || undefined, subject, text, html,
+      bcc: blind.join(', ') || undefined, subject, text, html,
       attachments: attachments.map((a) => ({ filename: a.name, content: a.content, contentType: a.contentType })),
     });
     const note = graphError ? `smtp after graph failed: ${graphError}` : null;
