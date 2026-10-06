@@ -223,7 +223,8 @@ dashboardRouter.get('/travel', async (req, res) => {
       FROM v_travel_logs GROUP BY 1 ORDER BY value DESC, label`),
     query(`
       SELECT payment_status AS label, COUNT(*)::int AS count,
-             COALESCE(SUM(invoice_amount), 0) AS value
+             -- Net of credit notes, as the payables and the totals above are (#196).
+             COALESCE(SUM(net_payable), 0) AS value
       FROM v_travel_vendor_invoices GROUP BY 1 ORDER BY 1`),
     query(`
       SELECT status AS label, COUNT(*)::int AS count,
@@ -246,7 +247,7 @@ dashboardRouter.get('/travel', async (req, res) => {
       FROM v_travel_logs`),
     // The agency's bills net of credit notes, by what was booked.
     query(`
-      SELECT COALESCE(s.mode, 'not given') AS label, COUNT(*)::int AS count, COALESCE(SUM(l.net_cost), 0) AS value
+      SELECT COALESCE(s.mode, 'no leg named') AS label, COUNT(*)::int AS count, COALESCE(SUM(l.net_cost), 0) AS value
       FROM v_travel_invoice_lines l LEFT JOIN travel_segments s ON s.id = l.segment_id
       GROUP BY 1 ORDER BY value DESC, label`),
     query(`

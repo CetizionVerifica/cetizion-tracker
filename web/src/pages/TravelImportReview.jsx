@@ -28,6 +28,10 @@ const FIELD_OPTIONS = [{ value: 'ignore', label: 'Not read' }, ...Object.entries
 const TONES = { red: 'late', amber: 'waiting', blue: 'info', duplicate: 'plain' };
 const MODES = ['flight', 'train', 'bus', 'cab', 'hotel', 'other'];
 const STATUSES = ['booked', 'cancelled', 'partly_refunded'];
+/** What a commit wrote, in the words the page uses. */
+const WRITTEN = [['trip', 'trips'], ['segment', 'legs'], ['vendor_invoice', 'agency invoices'], ['invoice_line', 'invoice lines'],
+  ['credit_note', 'credit notes'], ['traveller', 'new staff']];
+const writtenText = (w = {}) => WRITTEN.map(([k, label]) => `${number(w[k] ?? 0)} ${label}`).join(', ');
 const opts = (list) => list.map((v) => ({ value: v, label: v.replace(/_/g, ' ') }));
 
 function Flags({ item }) {
@@ -168,8 +172,7 @@ export default function TravelImportReview() {
   async function commit() {
     try {
       const next = await call(`/import/travel/${batch.id}/commit`, 'POST', {});
-      const w = next.written || {};
-      toast(`Committed: ${number(w.trip)} trips, ${number(w.segment)} legs, ${number(w.vendor_invoice)} invoices, ${number(w.credit_note)} credit notes`, 'success');
+      toast(`Committed: ${writtenText(next.written)}`, 'success');
     } catch { /* toasted */ }
   }
   async function remove() {
@@ -182,9 +185,9 @@ export default function TravelImportReview() {
     </label>
   ));
   const Actions = ({ it, children }) => (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {it.existing_ref && !done && (
-        <Select value={it.action} disabled={busy} options={[{ value: 'skip', label: 'Keep the original' }, { value: 'update', label: 'Update from the sheet' }]}
+        <Select className="h-7 w-[170px] text-[12px]" value={it.action} disabled={busy} options={[{ value: 'skip', label: 'Keep the original' }, { value: 'update', label: 'Update from the sheet' }]}
           onChange={(e) => patchItem(it, { action: e.target.value }).catch(() => {})} />
       )}
       {children}
@@ -195,6 +198,8 @@ export default function TravelImportReview() {
   const rowClass = (it) => `border-b border-border px-4 py-3 ${live(it) ? '' : 'opacity-50'}`;
 
   const s = batch.summary || {};
+  // Before the commit, what it will add; after, what it wrote.
+  const n = (done ? s.written : s.will_create) || {};
   const tabsList = [
     { key: 'columns', label: 'Tabs & columns', count: (batch.mapping?.tabs || []).length },
     { key: 'travellers', label: 'Travellers', count: steps('traveller').length },
@@ -219,14 +224,14 @@ export default function TravelImportReview() {
       <div className="page stack">
         <div className="auto-grid--stats">
           <Stat label="Rows read" value={number(batch.row_count)} />
-          <Stat label="Trips" value={number(s.will_create?.trip ?? 0)} meta={`${number(s.will_create?.segment ?? 0)} legs to add`} tone="brand" />
-          <Stat label="Agency invoices" value={number(s.will_create?.vendor_invoice ?? 0)} meta={`${number(s.will_create?.invoice_line ?? 0)} lines`} />
-          <Stat label="Credit notes" value={number(s.will_create?.credit_note ?? 0)} />
+          <Stat label={done ? 'Trips written' : 'New trips'} value={number(n.trip ?? 0)} meta={`${number(n.segment ?? 0)} legs ${done ? 'written' : 'to add'}`} tone="brand" />
+          <Stat label="Agency invoices" value={number(n.vendor_invoice ?? 0)} meta={`${number(n.invoice_line ?? 0)} lines`} />
+          <Stat label="Credit notes" value={number(n.credit_note ?? 0)} />
           <Stat label="Already in the tracker" value={number(s.duplicates ?? 0)} />
           <Stat label="To fix" value={number(s.blocking ?? 0)} tone={s.blocking ? 'warn' : 'ok'} />
         </div>
         {done && batch.summary?.written && (
-          <Alert tone="success">Written: {Object.entries(batch.summary.written).map(([k, v]) => `${number(v)} ${k.replace(/_/g, ' ')}`).join(', ')}. Upload the tickets and invoice PDFs named by their numbers to file them.</Alert>
+          <Alert tone="success">Written: {writtenText(batch.summary.written)}. Upload the tickets and invoice PDFs named by their numbers to file them.</Alert>
         )}
         <Tabs tabs={tabsList} active={tab} onChange={setTab} />
 
@@ -298,15 +303,15 @@ export default function TravelImportReview() {
                         {legs.map((leg) => (
                           <tr key={leg.id} className={`border-t border-border align-top ${live(leg) ? '' : 'opacity-50'}`}>
                             <td className="py-1.5 pr-3 capitalize">{leg.payload.mode}</td>
-                            <td className="py-1.5 pr-3">{leg.payload.mode === 'hotel' ? leg.payload.to_place : `${leg.payload.from_place || '?'} → ${leg.payload.to_place || '?'}`}</td>
+                            <td className="py-1.5 pr-3 whitespace-nowrap">{leg.payload.mode === 'hotel' ? leg.payload.to_place : `${leg.payload.from_place || '?'} → ${leg.payload.to_place || '?'}`}</td>
                             <td className="py-1.5 pr-3 whitespace-nowrap">{date(leg.payload.start_date)}{leg.payload.end_date ? ` – ${date(leg.payload.end_date)}` : ''}</td>
                             <td className="py-1.5 pr-3">{leg.payload.provider}{leg.payload.status !== 'booked' && <span className="text-waiting"> · {leg.payload.status.replace(/_/g, ' ')}</span>}
                               <Flags item={leg} /></td>
-                            <td className="py-1.5 text-right">
+                            <td className="w-[380px] py-1.5 text-right">
                               <Actions it={leg}>
                                 {!done && legs.length > 1 && <Button variant="ghost" size="sm" disabled={busy} onClick={() => call(`/import/travel/${batch.id}/items/${leg.id}/split`, 'POST', {}).catch(() => {})}>Own trip</Button>}
                                 {!done && others.length > 0 && (
-                                  <Select value="" placeholder="Move to…" disabled={busy}
+                                  <Select className="h-7 w-[150px] text-[12px]" value="" placeholder="Move to…" disabled={busy}
                                     options={others.map((o) => ({ value: String(o.seq), label: `${o.payload.destination || '?'} · ${date(o.payload.travel_start_date)}` }))}
                                     onChange={(e) => e.target.value && patchItem(leg, { payload: { trip_seq: Number(e.target.value) } }).catch(() => {})} />
                                 )}
@@ -337,7 +342,8 @@ export default function TravelImportReview() {
                     </div>
                     <Actions it={inv} />
                   </div>
-                  <table className="mt-2 w-full text-[12.5px]">
+                  <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[720px] table-fixed text-[12.5px]">
+                    <colgroup><col /><col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[96px]" /><col className="w-[104px]" /><col className="w-[150px]" /></colgroup>
                     <thead><tr className="text-muted-foreground"><th className="text-left font-normal">Leg</th><th className="text-right font-normal">Fare</th><th className="text-right font-normal">Service</th><th className="text-right font-normal">GST</th><th className="text-right font-normal">Total</th><th /></tr></thead>
                     <tbody>
                       {lines.map((l) => {
@@ -355,7 +361,7 @@ export default function TravelImportReview() {
                         );
                       })}
                     </tbody>
-                  </table>
+                  </table></div>
                 </div>
               );
             })}
