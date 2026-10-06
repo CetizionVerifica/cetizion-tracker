@@ -16,6 +16,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { withSupportedSchemaDialect } from '../lib/mcpSchema.js';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { requireAdmin } from '../auth/middleware.js';
 import { query } from '../db.js';
@@ -365,6 +366,14 @@ mcpRouter.post('/', async (req, res) => {
   }
   const server = buildServer(token);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  // The SDK writes the tool schemas as draft-07 and says in its own types
+  // that they are 2020-12; a client whose validator is 2020-12 only refuses
+  // the tool before calling it. Corrected on the way out, where every reply
+  // passes whatever asked for it — see lib/mcpSchema.js. send() is the
+  // transport interface rather than anything private, so a release that
+  // starts emitting 2020-12 makes this a no-op instead of a conflict.
+  const send = transport.send.bind(transport);
+  transport.send = (message, options) => send(withSupportedSchemaDialect(message), options);
   res.on('close', () => { transport.close(); server.close(); });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
