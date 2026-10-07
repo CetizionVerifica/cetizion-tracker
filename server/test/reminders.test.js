@@ -138,3 +138,40 @@ test('a stage chased by hand keeps its date: the run reads it and never rewrites
   await runPaymentReminders({ db, today, send: sender('suppressed', 'EMAIL_MODE=log') });
   assert.deepEqual(db.writes.stamps, []);
 });
+
+// #198 phase 3: a reminder to somebody who can sign in to the client portal
+// ends with its address, unless Settings says not to.
+const portalStage = (extra = {}) => stage({ portal_enabled: true, portal_access: true, portal_sections: ['projects', 'invoices'], ...extra });
+
+test('a reminder carries the portal only for a contact who can sign in to its invoices', () => {
+  assert.equal(planReminders([portalStage()], { today }).reminders[0].portal, true);
+  for (const off of [{ portal_enabled: false }, { portal_access: false }, { portal_sections: ['projects'] }]) {
+    assert.equal(planReminders([portalStage(off)], { today }).reminders[0].portal, false, JSON.stringify(off));
+  }
+  const withLink = paymentReminder({ company: 'Hetero', contactName: 'Ravi', stages: [stage()], portalUrl: 'https://tracker.example/portal' });
+  assert.match(withLink.text, /client portal you can download your invoices.*https:\/\/tracker\.example\/portal/);
+  assert.match(withLink.html, /href="https:\/\/tracker\.example\/portal"/);
+  const without = paymentReminder({ company: 'Hetero', contactName: 'Ravi', stages: [stage()] });
+  assert.doesNotMatch(without.text, /portal/);
+});
+
+test('the run adds the public portal address, and leaves it out when switched off', async () => {
+  const run = async (linkSetting) => {
+    const mails = [];
+    const settings = { public_app_url: 'https://tracker.example/', portal_link_in_reminders: linkSetting };
+    const db = {
+      async query(sql, params = []) {
+        if (/FROM settings/.test(sql)) {
+          const key = params[0] ?? sql.match(/key = '(\w+)'/)?.[1];
+          return { rows: settings[key] === undefined ? [] : [{ value: settings[key] }] };
+        }
+        if (/FROM v_payment_stages/.test(sql)) return { rows: [portalStage()] };
+        return { rows: [] };
+      },
+    };
+    await runPaymentReminders({ db, today, send: async (m) => { mails.push(m); return { id: 1, status: 'logged' }; } });
+    return mails[0].text;
+  };
+  assert.match(await run('true'), /https:\/\/tracker\.example\/portal\n/);
+  assert.doesNotMatch(await run('false'), /portal/);
+});

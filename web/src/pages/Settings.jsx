@@ -311,6 +311,14 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Client portal',
+    hint: 'emails to clients who have the portal switched on',
+    items: [
+      { key: 'portal_notify_new_invoice', label: 'Email portal contacts when an invoice is recorded', type: 'bool' },
+      { key: 'portal_link_in_reminders', label: 'Add the portal address to payment reminders', type: 'bool' },
+    ],
+  },
+  {
     title: 'Follow-ups',
     hint: 'an email to the owner, then to management if nothing is logged; separate from the bell',
     items: [

@@ -3774,3 +3774,11 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS portal_action_id int REFERENCES po
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS shared_with_client boolean NOT NULL DEFAULT false;
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS uploaded_by_contact_id int REFERENCES contacts(id) ON DELETE SET NULL;
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS seen_by_staff_at timestamptz;
+
+-- ---------------------------------------------------------------------
+-- The emails that bring clients into the portal (088, #198 phase 3).
+-- ---------------------------------------------------------------------
+INSERT INTO settings (key, value, notes) VALUES
+  ('portal_notify_new_invoice', 'true', 'Email a client''s portal contacts when an invoice is recorded for them, with the portal''s address. Only for clients with the portal and its Invoices section on.'),
+  ('portal_link_in_reminders', 'true', 'End payment reminders with the client portal''s address, when the client can sign in to it.')
+ON CONFLICT (key) DO NOTHING;

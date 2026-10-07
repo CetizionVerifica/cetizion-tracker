@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query, transaction } from '../db.js';
 import { purgeAfterCommit } from '../lib/documents.js';
 import { recordInvoice } from '../lib/invoices.js';
+import { emailNewInvoice } from '../lib/portalNotices.js';
 import { settleInvoiceReview } from './invoiceReview.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
@@ -497,6 +498,10 @@ stageRouter.post('/:id/invoice', async (req, res) => {
 
   // The replaced file leaves Cloudinary only once the new one is committed.
   if (replaced) await purgeAfterCommit(replaced);
+  // The client's portal contacts hear the invoice is in the portal (#198
+  // phase 3), once; the invoice is recorded whatever happens to the email.
+  await emailNewInvoice(id, { base: req.get('origin') || `${req.protocol}://${req.get('host')}`, sentBy: req.user?.username || 'system' })
+    .catch((err) => console.error('[portal] new-invoice email', err));
 
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [id]);
   res.json({ data: full[0] });

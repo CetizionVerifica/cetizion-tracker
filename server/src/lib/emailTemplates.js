@@ -38,8 +38,9 @@ function table(headers, rows) {
 /**
  * A payment reminder to one client for its overdue stages.
  * stages: [{ po_number, stage_name, invoice_no, invoice_date, invoice_due_date, currency, stage_amount, amount_received, days_overdue }]
+ * portalUrl: the client portal's address, when the recipient can sign in to it (#198 phase 3).
  */
-export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3 }) {
+export function paymentReminder({ company, contactName, stages, financeEmail, level = 1, finalLevel = 3, portalUrl = null }) {
   const total = stages.reduce((n, s) => n + (Number(s.stage_amount) - Number(s.amount_received || 0)), 0);
   const currency = stages[0]?.currency || 'INR';
   const prefix = level >= finalLevel ? 'Final reminder' : level === 2 ? 'Second reminder' : 'Payment reminder';
@@ -54,7 +55,7 @@ ${lines.join('\n')}
 Total outstanding: ${inr(total, currency)}
 
 If payment has already been made, please share the transaction reference so we can update our records. For any query, reply to this email${financeEmail ? ` or write to ${financeEmail}` : ''}.
-
+${portalUrl ? `\n${PORTAL_NOTE.text(portalUrl)}\n` : ''}
 Thank you,
 Cetizion Verifica`;
   const html = layout(prefix, `
@@ -63,6 +64,45 @@ Cetizion Verifica`;
 ${table(['Invoice', 'PO / stage', 'Outstanding', 'Due date', 'Overdue'], stages.map((s) => [s.invoice_no, `${s.po_number} · ${s.stage_name}`, inr(Number(s.stage_amount) - Number(s.amount_received || 0), s.currency), date(s.invoice_due_date), `${s.days_overdue} days`]))}
 <p><strong>Total outstanding: ${esc(inr(total, currency))}</strong></p>
 <p>If payment has already been made, please share the transaction reference so we can update our records.${financeEmail ? ` For any query, reply to this email or write to ${esc(financeEmail)}.` : ''}</p>
+${portalUrl ? PORTAL_NOTE.html(portalUrl) : ''}
+<p>Thank you,<br>Cetizion Verifica</p>`);
+  return { subject, text, html };
+}
+
+/** How to reach the client portal, as a reminder and a new-invoice email both say it. */
+const PORTAL_NOTE = {
+  text: (url) => `In the Cetizion Verifica client portal you can download your invoices, raise a query, or tell us you have paid: ${url}
+Enter this email address there and we will send you a link that signs you in.`,
+  html: (url) => `<p>In the <a href="${esc(url)}">Cetizion Verifica client portal</a> you can download your invoices, raise a query, or tell us you have paid. Enter this email address there and we will send you a link that signs you in.</p>`,
+};
+
+/**
+ * A new invoice is in the client portal (#198 phase 3, G6), to one portal
+ * contact. invoice: { invoice_no, invoice_date, invoice_due_date, po_number,
+ * stage_name, stage_amount, currency, taxable, gst, document_id }.
+ */
+export function portalNewInvoice({ contactName, company, invoice: s, url }) {
+  const subject = `Invoice ${s.invoice_no} for PO ${s.po_number} is in your client portal`;
+  const amount = Number(s.gst) > 0
+    ? `${inr(s.stage_amount, s.currency)} including GST ${inr(s.gst, s.currency)} (taxable ${inr(s.taxable, s.currency)})`
+    : inr(s.stage_amount, s.currency);
+  const what = `Invoice ${s.invoice_no} dated ${date(s.invoice_date)}, for ${s.stage_name} on PO ${s.po_number}, is now in the client portal${s.document_id ? ' with its PDF' : ''}.`;
+  const text = `Dear ${contactName || company},
+
+${what}
+
+Amount: ${amount}${s.invoice_due_date ? `\nDue: ${date(s.invoice_due_date)}` : ''}
+
+${PORTAL_NOTE.text(url)}
+
+Thank you,
+Cetizion Verifica`;
+  const html = layout(`Invoice ${s.invoice_no} is in your client portal`, `
+<p>Dear ${esc(contactName || company)},</p>
+<p>${esc(what)}</p>
+${table([], [['Amount', amount], ...(s.invoice_due_date ? [['Due', date(s.invoice_due_date)]] : [])])}
+${PORTAL_NOTE.html(url)}
+<p style="margin:16px 0"><a href="${esc(url)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none">Open the client portal</a></p>
 <p>Thank you,<br>Cetizion Verifica</p>`);
   return { subject, text, html };
 }

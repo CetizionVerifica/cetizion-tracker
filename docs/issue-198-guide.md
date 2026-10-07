@@ -1,4 +1,4 @@
-# Issue #198: the client portal shows the same figures, and the client answers
+# Issue #198: the client portal shows the same figures, the client answers, and is told
 
 Issue #198 plans three phases for the client portal (#47), each its own pull
 request (the issue's §7). This is **phase 1, "Show the same numbers"**: the client sees
@@ -9,7 +9,8 @@ is no schema migration; one SQL function is added to `views.sql`.
 
 **Phase 2, "Let the client answer"**, is in §7: the client confirms an
 invoice, raises a query or tells us they paid, and files go both ways.
-Phase 3 (emails that bring clients in) follows as its own PR.
+**Phase 3, "Bring them in"**, is in §8: the new-invoice email, the portal
+link in payment reminders, and contact emails where the portal needs them.
 
 ---
 
@@ -221,3 +222,87 @@ A reply by number on the pull request is enough.
 | `web/e2e/flows.spec.js` | In a browser: the client reports a payment, staff match it in Collections, and the client sees it recorded |
 
 Screens were checked at desktop and phone width: nothing scrolls sideways.
+
+---
+
+## 8. Phase 3: bringing clients in
+
+Plan G6, and the contact emails from `docs/client-data-gaps.md` where they
+block the portal. Migration `088_portal_emails.sql` adds two settings rows
+and nothing else.
+
+### 8.1 At a glance
+
+| Plan | What it does now | Where you see it |
+|---|---|---|
+| New-invoice email (decision 4) | When an invoice is recorded, each portal contact of the client gets "Invoice X for PO Y is in your client portal": the amount with its GST split, the due date, and the portal's address. Recorded by staff or by the email reader (live mail only; past mail never). **Once per invoice**: recording it again, or correcting it, sends nothing | Settings → Assumptions → **Client portal** → *Email portal contacts when an invoice is recorded* (on). The email is in the email log, on the invoice |
+| Portal link in reminders | A payment reminder ends with a paragraph and a link to the portal, when its recipient can sign in to it | Settings → Assumptions → Client portal → *Add the portal address to payment reminders* (on) |
+| Contact emails | A contact with no email cannot sign in. The company's **Who can sign in** list now has an *Add an email* box on that row, instead of only saying so | Company → Who can sign in |
+
+Who gets these emails: only for a company with the portal **and** its
+Invoices section switched on, and only contacts allowed into the portal,
+with an email, who have not opted out of automatic email (the same flag the
+reminders already respect). Email delivery follows the usual switches
+(`EMAIL_MODE`, the kill switch, the allowlist).
+
+### 8.2 The address in the emails
+
+The emails link to the portal's sign-in page (`…/portal`), where the
+client types their email and receives a one-time link. They never carry a
+sign-in link: those last 20 minutes and should not sit in an inbox. The
+address comes from **Address clients open links on** (Settings → Assumptions → Running the tracker). A staff recording falls
+back to the address the app was opened on; the email reader has no such
+address, so with the setting blank its invoices are not announced (and a
+reminder carries no link).
+
+### 8.3 How to check it
+
+1. *Address clients open links on* set in Settings; a company with the portal on and a
+   contact allowed in, with an email.
+2. Record an invoice on one of its POs. Settings → Emails & jobs shows
+   "Invoice … is in your client portal" to that contact (with
+   `EMAIL_MODE=log` it is logged, not sent). Record it again: nothing new.
+3. Switch the company's Invoices section off and record another: nothing
+   is sent.
+4. On the company page, a contact with no email shows *Add an email*; save
+   one and *Send link* appears.
+
+### 8.4 Questions for Shyam
+
+1. **Two emails for one invoice.** When we email an invoice to a client and
+   the email reader records it, the client also gets "Invoice X is in your
+   portal". Keep both, or skip the portal email for invoices the reader
+   records from our own sent mail?
+2. **Who gets the new-invoice email.** Every contact allowed into the
+   portal, not only the billing contact. Agreed?
+3. **The sign-in page, not a sign-in link**, for the reasons in §8.2.
+   Agreed?
+4. **Opting out.** A contact who opted out of automatic email gets neither
+   the new-invoice email nor (as before) reminders. Agreed?
+5. **Address clients open links on.** Is it set in production? Without it, invoices
+   the email reader records are not announced, and reminders carry no link.
+6. **Invoices already recorded** before this ships are not announced; only
+   new ones. Agreed, or should there be a one-off "your invoices are in the
+   portal" email when a company's portal is first switched on?
+7. **Contact emails** are now typed where the portal needs them. The
+   enquiry and quotation forms (`client-data-gaps.md` #1) are a separate
+   fix. Enough for this issue?
+
+### 8.5 Files
+
+| File | Change |
+|---|---|
+| `server/db/migrations/088_portal_emails.sql`, `schema.sql` | Settings rows `portal_notify_new_invoice` and `portal_link_in_reminders`, both on |
+| `server/src/lib/portalNotices.js` | `emailNewInvoice`: who, once, with which address; `portalAddress` |
+| `server/src/lib/emailTemplates.js` | The new-invoice email; the portal paragraph in a payment reminder |
+| `server/src/lib/reminders.js` | A reminder knows whether its recipient can sign in to the portal, and carries the link |
+| `server/src/routes/workflow.js`, `lib/mailbox/autoInvoice.js` | Announce an invoice once it is recorded, by staff or by the reader (live mail only) |
+| `web/src/pages/Settings.jsx` | Settings → Assumptions → Client portal |
+| `web/src/components/PortalSettings.jsx` | *Add an email* on a contact with none |
+
+### 8.6 Tests
+
+| Test | Covers |
+|---|---|
+| `server/test/portal.test.js` | Recording an invoice emails the portal contacts, with the address and the GST; once however often it is recorded; not to a contact who opted out; nothing when switched off in Settings, or when the client's Invoices section is off |
+| `server/test/reminders.test.js` | A reminder carries the portal only for a contact who can sign in to its invoices; the run adds the public address, and leaves it out when switched off |
