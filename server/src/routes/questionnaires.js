@@ -215,9 +215,12 @@ questionnaireResponseRouter.post('/', async (req, res) => {
     const to = v.to || e.contact_email || null;
     if (v.send_email && !to) throw new ApiError(422, 'Please check the highlighted fields', { fields: { to: 'The contact has no email: type the address to send it to' } });
 
-    // One open questionnaire per enquiry: an earlier one not yet submitted is withdrawn, and its links stop.
+    // One open questionnaire per enquiry, and every earlier link stops. One never
+    // submitted is withdrawn; one submitted and reopened for changes goes back to
+    // submitted, its answers kept.
     const { rows: earlier } = await db.query(
-      `UPDATE questionnaire_responses SET status = 'withdrawn' WHERE enquiry_id = $1 AND status = ANY($2) RETURNING id`, [e.id, OPEN_STATUSES]);
+      `UPDATE questionnaire_responses SET status = CASE WHEN status = 'reopened' THEN 'submitted' ELSE 'withdrawn' END
+        WHERE enquiry_id = $1 AND status = ANY($2) RETURNING id`, [e.id, OPEN_STATUSES]);
     if (earlier.length) await db.query('UPDATE questionnaire_links SET revoked_at = now() WHERE response_id = ANY($1) AND revoked_at IS NULL', [earlier.map((x) => x.id)]);
 
     const { rows: [company] } = await db.query('SELECT name, gstin, address FROM companies WHERE id = $1', [e.company_id]);
@@ -294,9 +297,13 @@ questionnaireResponseRouter.patch('/:id', async (req, res) => {
 
 questionnaireResponseRouter.post('/:id/files', oneFile('file'), async (req, res) => {
   const id = intParam(req.params.id);
-  const r = await reachableResponse(req, id);
-  if (!OPEN_STATUSES.includes(r.status)) throw new ApiError(409, 'Reopen it to add files');
-  res.status(201).json({ data: await storeResponseFile({ query }, r, { questionKey: String(req.body?.question_key || ''), file: req.file, uploadedBy: who(req) }) });
+  // Locked, as the client's upload is, so a file cannot slip in while somebody submits.
+  const out = await transaction(async (db) => {
+    const r = await reachableResponse(req, id, db, { forUpdate: true });
+    if (!OPEN_STATUSES.includes(r.status)) throw new ApiError(409, 'Reopen it to add files');
+    return storeResponseFile(db, r, { questionKey: String(req.body?.question_key || ''), file: req.file, uploadedBy: who(req) });
+  });
+  res.status(201).json({ data: out });
 });
 
 questionnaireResponseRouter.post('/:id/submit', async (req, res) => {

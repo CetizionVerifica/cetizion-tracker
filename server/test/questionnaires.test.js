@@ -254,6 +254,16 @@ describe('service questionnaires', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is n
     assert.deepEqual([done.body.data.status, done.body.data.filled_by, done.body.data.submitted_by_name], ['submitted', 'staff', 'Sam Sales']);
   });
 
+  test('sending another keeps a reopened questionnaire\'s answers: it goes back to submitted, not withdrawn', async () => {
+    const a = await as(sam).post('/api/questionnaire-responses', { enquiry_no: 'ENQ-A', questionnaire_id: formId, send_email: false }).expect(201);
+    await as(sam).post(`/api/questionnaire-responses/${a.body.data.id}/submit`, { answers: ANSWERS }).expect(200);
+    await as(sam).post(`/api/questionnaire-responses/${a.body.data.id}/reopen`).expect(200);
+    await as(sam).post('/api/questionnaire-responses', { enquiry_no: 'ENQ-A', questionnaire_id: formId, send_email: false }).expect(201);
+    const { rows: [r] } = await pool.query('SELECT status, answers FROM questionnaire_responses WHERE id = $1', [a.body.data.id]);
+    assert.deepEqual([r.status, r.answers], ['submitted', ANSWERS]);
+    assert.equal((await pub.get(tokenOf(a.body.data.url))).status, 404, 'its links stop');
+  });
+
   test('reminders: after the days in Settings, at most twice, never after the link expires, and off at 0', async () => {
     const { runQuestionnaireReminders } = await import('../src/lib/questionnaires.js');
     await pool.query(`UPDATE questionnaire_responses SET status = 'withdrawn' WHERE status <> 'submitted'`);

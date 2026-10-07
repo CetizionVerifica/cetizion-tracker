@@ -48,7 +48,9 @@ column phase 2 will fill.
    again. Every link of a response reaches the same answers until it expires
    or is revoked.
 5. **Sending another questionnaire withdraws the one not yet submitted**
-   (its links stop), so an enquiry has one open questionnaire at a time.
+   (its links stop), so an enquiry has one open questionnaire at a time. One
+   submitted and reopened for changes goes back to submitted, its answers
+   kept (Shyam's review).
 6. **Money is stored as a number**, in the currency the question names,
    rather than a number and a currency.
 
@@ -58,9 +60,10 @@ column phase 2 will fill.
    service, add a few questions over two steps (try a yes/no question and a
    text question shown only when it is "Yes", and a table of sites).
    **Preview as the client**, then **Publish version 1**.
-2. Settings: *Address clients open links on* must be set (it is in
-   production). With `EMAIL_MODE=log` nothing is sent; the email is in
-   Settings › Emails & jobs.
+2. Settings: set *Address clients open links on*. It is not set in
+   production yet; until an admin sets it, links are built on the first
+   `CORS_ORIGIN` address. With `EMAIL_MODE=log` nothing is sent; the email
+   is in Settings › Emails & jobs.
 3. Enquiries: on an enquiry, click **Send** in the Questionnaire column,
    then **Make a link only**, and open the link in a private window or on a
    phone. Fill it in, stop, open the link again, carry on, submit.
