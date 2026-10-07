@@ -306,6 +306,16 @@ describe('the personal daily MIS: facts and checks', { skip: !ADMIN_URL && 'set 
     await as(sam)('get', `/api/mis-reports/personal/${sam.user.id}/preview`).expect(403);
   });
 
+  test('an act on a user names the person, not their id', async () => {
+    await as(admin)('patch', `/api/users/${hari.user.id}`).send({ name: 'Hari Prasad' }).expect(200);
+    const f = await misPersonal.personalFacts({ userId: admin.user.id, today: reportDay });
+    const edit = f.acts.find((a) => a.entity === 'user' && a.entity_id === String(hari.user.id));
+    assert.ok(edit, JSON.stringify(f.acts.map((a) => a.kind)));
+    assert.equal(edit.record_name, 'Hari Prasad');
+    assert.equal(misAi.personalInput(f).acts.find((a) => a.id === edit.id).record, 'user Hari Prasad');
+    assert.equal(f.acts.find((a) => a.entity === 'company').record_name, null);
+  });
+
   test('the ceiling setting is validated', async () => {
     await as(admin)('patch', '/api/settings/personal_mis_ai_limit').send({ value: 'lots' }).expect(422);
     await as(admin)('patch', '/api/settings/personal_mis_ai_limit').send({ value: '40' }).expect(200);

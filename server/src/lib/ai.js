@@ -68,11 +68,46 @@ export const newUsage = () => ({ calls: 0, prompt_tokens: 0, completion_tokens: 
 export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_000, title = 'Cetizion Tracker', usage = null, plugins, model = null, schema = null } = {}) {
   const primary = model || aiConfig.model;
   const models = model ? [model] : [...new Set([aiConfig.model, ...aiConfig.fallbacks])];
+  // The work is extraction, not reasoning: with thinking on, a flash-class
+  // model spends its output budget deliberating and truncates. Some models
+  // cannot switch thinking off (Fable, and others found by the retry below);
+  // for those, keep it low. One of them anywhere in the list decides, since
+  // the setting goes to whichever model answers.
+  const reasoning = models.some((m) => MUST_REASON.test(m)) ? { effort: 'low' } : { enabled: false };
+  const ask = (r) => post({ primary, models, maxTokens, timeoutMs, title, plugins, schema, system, user, reasoning: r });
+  let res = await ask(reasoning);
+  // A model not named above refused to stop thinking: ask again once, thinking low.
+  if (res.status === 400 && !reasoning.effort && /reasoning is mandatory/i.test(await res.clone().text().catch(() => ''))) {
+    res = await ask({ effort: 'low' });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content || '{}';
+  const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const u = data.usage || {};
+  if (usageSink) Promise.resolve(usageSink({ title, model: data.model || primary, prompt_tokens: u.prompt_tokens || 0, completion_tokens: u.completion_tokens || 0, cost: Number(u.cost || 0) })).catch(() => {});
+  if (usage) {
+    usage.calls += 1;
+    usage.prompt_tokens += u.prompt_tokens || 0;
+    usage.completion_tokens += u.completion_tokens || 0;
+    usage.cost_usd += Number(u.cost || 0);
+    usage.provider = data.provider || usage.provider;
+    usage.model = data.model || usage.model || null;
+  }
+  return JSON.parse(cleaned);
+}
+
+/** Models that refuse a request with thinking switched off. */
+const MUST_REASON = /fable/i;
+
+async function post({ primary, models, maxTokens, timeoutMs, title, plugins, schema, system, user, reasoning }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
   try {
-    res = await fetch(ENDPOINT, {
+    return await fetch(ENDPOINT, {
       method: 'POST',
       signal: controller.signal,
       headers: {
@@ -89,10 +124,7 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
         response_format: schema
           ? { type: 'json_schema', json_schema: { name: schema.name, strict: true, schema: schema.schema } }
           : { type: 'json_object' },
-        // The work is extraction, not reasoning: with thinking on, a
-        // flash-class model spends its output budget deliberating and
-        // truncates. Fable models cannot switch thinking off; keep it low.
-        reasoning: /fable/i.test(primary) ? { effort: 'low' } : { enabled: false },
+        reasoning,
         // What goes out is a client's commercial detail — names, deal
         // values, invoice numbers, the text of an email. Which provider
         // serves the model decides whether that is kept, and the default is
@@ -120,22 +152,4 @@ export async function chatJSON(system, user, { maxTokens = 4000, timeoutMs = 60_
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
-  const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  const u = data.usage || {};
-  if (usageSink) Promise.resolve(usageSink({ title, model: data.model || primary, prompt_tokens: u.prompt_tokens || 0, completion_tokens: u.completion_tokens || 0, cost: Number(u.cost || 0) })).catch(() => {});
-  if (usage) {
-    usage.calls += 1;
-    usage.prompt_tokens += u.prompt_tokens || 0;
-    usage.completion_tokens += u.completion_tokens || 0;
-    usage.cost_usd += Number(u.cost || 0);
-    usage.provider = data.provider || usage.provider;
-    usage.model = data.model || usage.model || null;
-  }
-  return JSON.parse(cleaned);
 }

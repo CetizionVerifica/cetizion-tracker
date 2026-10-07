@@ -191,6 +191,43 @@ describe('the request (§3.1, §3.5, §4)', () => {
     assert.deepEqual(body.provider, { data_collection: 'deny', zdr: true });
   });
 
+  test('thinking is off, except where a model cannot switch it off', async () => {
+    assert.deepEqual((await sent({ model: 'deepseek/deepseek-v4.1-flash' })).body.reasoning, { enabled: false });
+    assert.deepEqual((await sent({ model: 'anthropic/claude-fable-5.1' })).body.reasoning, { effort: 'low' });
+  });
+
+  test('a model that refuses to stop thinking is asked again, thinking low', async () => {
+    const real = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.reasoning.enabled === false) {
+        const text = '{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}';
+        return new Response(text, { status: 400 });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 });
+    };
+    try {
+      assert.deepEqual(await chatJSON('system', 'user', { model: 'openai/gpt-6.1-sol' }), { ok: true });
+      assert.deepEqual(bodies.map((b) => b.reasoning), [{ enabled: false }, { effort: 'low' }]);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  test('any other 400 is not retried', async () => {
+    const real = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls += 1; return new Response('{"error":{"message":"bad schema"}}', { status: 400 }); };
+    try {
+      await assert.rejects(chatJSON('system', 'user', { model: 'openai/gpt-6.1-sol' }), /OpenRouter 400: .*bad schema/);
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
   test('which models are sent the PDF itself', () => {
     const was = process.env.OPENROUTER_READS_PDF;
     delete process.env.OPENROUTER_READS_PDF;

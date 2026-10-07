@@ -104,7 +104,13 @@ async function actsOf(db, { user, who, day, tz }) {
     ...visits.rows.map((r) => ({ id: `act:visits:${r.id}`, at: r.at, kind: 'visit.planned', entity: r.po_number ? 'purchase_order' : null, entity_id: r.po_number, detail: { title: r.title, type: r.type, company: r.company, starts_on: businessToday(new Date(r.starts_at)), status: r.status } })),
     ...owners.rows.map((r) => ({ id: `act:ownership_history:${r.id}`, at: r.at, kind: 'record.reassigned', entity: singular[r.entity_type] || r.entity_type, entity_id: String(r.entity_id), detail: { from: r.previous_owner_name, to: r.new_owner_name, reason: r.reason } })),
   ];
+  // An act on a user (an admin's edit or password reset) names the person, not "user 6".
+  const userIds = [...new Set(acts.filter((a) => a.entity === 'user' && /^\d+$/.test(String(a.entity_id))).map((a) => Number(a.entity_id)))];
+  const names = new Map(userIds.length
+    ? (await db.query('SELECT id, name FROM users WHERE id = ANY($1::int[])', [userIds])).rows.map((u) => [String(u.id), u.name])
+    : []);
   return acts
+    .map((a) => ({ ...a, record_name: a.entity === 'user' ? names.get(String(a.entity_id)) || null : null }))
     .map((a) => ({ ...a, at: new Date(a.at).toISOString(), time: timeOf(a.at), link: recordHref(a.entity, a.entity_id) }))
     .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 }
