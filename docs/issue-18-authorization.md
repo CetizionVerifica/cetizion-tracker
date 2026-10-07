@@ -359,6 +359,7 @@ session is **401**, before any of these is considered.
 | **/api/portal-admin** | | |
 | `GET /api/portal-admin/actions` | any | What clients said in the portal (#198): queries and payment advice to act on. Scoped like the PO: an admin sees every client's, anyone else those on a PO they can open. |
 | `POST /api/portal-admin/actions/:id/resolve` | any | Resolve a client's query, or reject a query or a payment advice with a reason the client sees (#198). Only on a PO the caller can open. |
+| `GET /api/portal-admin/actions/by-stage` | any | The client's latest word on each invoice (#198), for the badges on Collections and Payment stages. Scoped like the PO. |
 | `GET /api/portal-admin/companies/:id` | **admin** | Who outside the company may see this client's records (#47). |
 | `PATCH /api/portal-admin/companies/:id` | **admin** | Switching the portal on and choosing its sections. |
 | `GET /api/portal-admin/companies/:id/preview/:section` | **admin** | Preview as client (#198): everything the client's portal shows of this company, invoices and GST included. |

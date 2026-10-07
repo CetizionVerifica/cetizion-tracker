@@ -10,11 +10,12 @@ import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '..
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { clientWord } from '../components/ClientSaid.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money, date, localDate, percent, number } from '../lib/format.js';
+import { money, date, percent, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
 
@@ -127,15 +128,6 @@ function poTone(status) {
  * which is what stops a column of ten identical buttons from hiding the
  * one that matters.
  */
-/** What the client last said about a stage in the portal (#198 §4), in staff words. */
-function clientWord(a) {
-  const on = localDate(a.created_at);
-  if (a.kind === 'confirmed') return { tone: 'success', text: `Client confirmed ${on}` };
-  if (a.kind === 'query') return a.status === 'open' ? { tone: 'warning', text: 'Client query open', note: a.note } : { tone: 'neutral', text: `Client query ${a.status} ${localDate(a.resolved_at)}` };
-  if (a.status === 'open') return { tone: 'info', text: `Client reports paying ${money(a.amount)} on ${date(a.paid_on)}: to check in Collections` };
-  return { tone: a.status === 'matched' ? 'success' : 'neutral', text: `Client's payment advice ${a.status}` };
-}
-
 function StageRung({ stage, action, last, onChanged, client }) {
   // Amber is "you can bill this and have not"; red is "this is late".
   // The header chip uses the same two, so a rung never disagrees with it.

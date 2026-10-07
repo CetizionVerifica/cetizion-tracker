@@ -297,7 +297,7 @@ async function postPortalMessage(p, v) {
 // stage; finance matches a payment advice to a receipt they record. Every
 // invoice and PO named is checked against the session's company first.
 
-const clientWrites = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+const clientWrites = rateLimit({ windowMs: 60 * 60 * 1000, limit: 50, standardHeaders: true, legacyHeaders: false });
 const REMITTANCE_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
 const UPLOAD_TYPES = new Set([...REMITTANCE_TYPES,
   'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

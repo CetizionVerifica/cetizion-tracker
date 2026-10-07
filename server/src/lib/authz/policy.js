@@ -439,6 +439,7 @@ export const routes = [
   { method: 'PATCH', path: '/api/portal-admin/contacts/:id', access: mustBeAdmin, why: 'Granting or withdrawing a client contact\'s portal access.' },
   { method: 'POST', path: '/api/portal-admin/contacts/:id/invite', access: mustBeAdmin, why: 'Emailing a sign-in link to somebody outside the company.' },
   { method: 'GET', path: '/api/portal-admin/actions', access: signedIn, restrictions: ['record-owner'], note: 'What clients said in the portal (#198): queries and payment advice to act on. Scoped like the PO: an admin sees every client\'s, anyone else those on a PO they can open.' },
+  { method: 'GET', path: '/api/portal-admin/actions/by-stage', access: signedIn, restrictions: ['record-owner'], note: 'The client\'s latest word on each invoice (#198), for the badges on Collections and Payment stages. Scoped like the PO.' },
   { method: 'POST', path: '/api/portal-admin/actions/:id/resolve', access: signedIn, restrictions: ['record-owner'], note: 'Resolve a client\'s query, or reject a query or a payment advice with a reason the client sees (#198). Only on a PO the caller can open.' },
   { method: 'GET', path: '/api/portal-admin/companies/:id/preview/:section', access: mustBeAdmin, why: 'Preview as client (#198): everything the client\'s portal shows of this company, invoices and GST included.' },
 

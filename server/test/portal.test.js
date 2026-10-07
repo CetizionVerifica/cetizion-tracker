@@ -372,6 +372,14 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     assert.equal(mine.find((a) => a.id === q1.id).resolution, 'The rate is right: 18% on audits.');
     assert.equal(mine.find((a) => a.id === advice.id).status, 'matched');
     assert.equal((await request(app).get('/api/portal-admin/actions').set('Cookie', cookie)).status, 401);
+
+    // The badges on Collections and Payment stages: the latest word on each invoice, once.
+    const byStage = (await request(app).get('/api/portal-admin/actions/by-stage').set('Cookie', staff).expect(200)).body.data;
+    assert.equal(new Set(byStage.map((r) => r.stage_id)).size, byStage.length, 'one row per invoice');
+    const a1 = await stageId('INV-A-1');
+    const onA1 = byStage.find((r) => r.stage_id === a1);
+    assert.deepEqual([onA1.id, onA1.kind, onA1.status], [two.id, 'payment_advice', 'matched'], 'the latest action on it');
+    assert.equal((await request(app).get('/api/portal-admin/actions/by-stage').set('Cookie', cookie)).status, 401);
   });
 
   test('files go both ways: what staff share, and what the client uploads, on their own records only', async () => {
@@ -472,5 +480,22 @@ describe('client portal isolation', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is 
     await request(app).patch('/api/portal-admin/companies/1002').set('Cookie', staff).send({ portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] }).expect(200);
     await record(b4, 'INV-B-4');
     assert.deepEqual((await announced(b4)).map((m) => m.to_email), ['bina@beta.example']);
+
+    // An invoice we emailed to the client ourselves, which the email reader
+    // found in our sent mail: they have it already, so no portal email, even
+    // when a person records it again later.
+    const b5 = await stageB(5);
+    const { rows: [box] } = await pool.query("INSERT INTO connected_accounts (username, provider, email) VALUES ('admin', 'test', 'accounts@cetizion.example') RETURNING id");
+    await pool.query(`INSERT INTO email_invoice_decisions (account_id, provider_id, outcome, method, stage_id, invoice_no)
+                      VALUES ($1, 'sent-1', 'recorded', 'rules', $2, 'INV-B-5')`, [box.id, b5]);
+    await record(b5, 'INV-B-5');
+    assert.equal((await announced(b5)).length, 0, 'we emailed it ourselves');
+
+    // The billing contact hears of it, not every contact allowed in.
+    await pool.query('UPDATE contacts SET opt_out_reminders = false, is_billing = (id = 2003) WHERE company_id = 1001');
+    const { rows: [a9] } = await pool.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent) VALUES ('PO-A2', 9, 'Extra', 'Manual', 0.01) RETURNING id`);
+    await record(a9.id, 'INV-A-9');
+    assert.deepEqual((await announced(a9.id)).map((m) => m.to_email), ['arun@alpha.example'], 'the billing contact only');
   });
 });
