@@ -49,7 +49,7 @@ function Facts({ facts }) {
       </div>
       {facts.redacted && <p className="text-[12px] text-muted-foreground">The text of {facts.person.name}'s mail is theirs: the AI reads it for their report, and it is not shown here.</p>}
       <Heading>What they did in the tracker</Heading>
-      <Lines items={facts.acts} render={(a) => <><span className="mono">{a.time}</span> {label(a.kind)}{a.entity ? <> · <Ref to={a.link}>{label(a.entity)} {a.entity_id}</Ref></> : null}</>} />
+      <Lines items={facts.acts} render={(a) => <><span className="mono">{a.time}</span> {label(a.kind)}{a.entity ? <> · <Ref to={a.link}>{a.record_name || `${label(a.entity)} ${a.entity_id}`}</Ref></> : null}</>} />
       <Heading>Emails they sent</Heading>
       <Lines items={facts.sent} render={(m) => <><span className="mono">{m.time}</span> to {m.to.join(', ') || 'a client'}{m.company ? ` (${m.company})` : ''}{m.subject ? `: ${m.subject}` : ''}{m.from_tracker ? ' · from the tracker' : ''}</>} />
       <Heading>Threads</Heading>

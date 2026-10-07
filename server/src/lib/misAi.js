@@ -384,7 +384,7 @@ export function personalInput(facts) {
   return {
     person: facts.person.name, day: facts.day, today: facts.today,
     counts: facts.counts,
-    acts: facts.acts.map(({ id, time, kind, entity, entity_id: entityId, detail }) => ({ id, time, kind, record: entity ? `${entity} ${entityId ?? ''}`.trim() : null, detail })),
+    acts: facts.acts.map(({ id, time, kind, entity, entity_id: entityId, record_name: name, detail }) => ({ id, time, kind, record: entity ? (name ? `${entity} ${name}` : `${entity} ${entityId ?? ''}`.trim()) : null, detail })),
     sent: facts.sent.map(({ id, time, to, company, subject, text, record, from_tracker: fromTracker }) => ({ id, time, to, company, subject, text, record: record ? `${record.entity} ${record.id}` : null, from_tracker: fromTracker })),
     threads: facts.threads.map(({ thread_id: threadId, subject, company, record, messages, waiting_on: waitingOn }) => ({
       thread_id: threadId, subject, company, record: record ? `${record.entity} ${record.id}` : null, next_reply_from: waitingOn,
