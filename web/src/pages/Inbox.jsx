@@ -1,7 +1,8 @@
-import { forwardRef, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { PageHeader, SidebarContext } from '../App.jsx';
-import { PanelLeft, Paperclip, Reply } from 'lucide-react';
+import { PageHeader } from '../App.jsx';
+import { ControlBar } from '../components/shell/Shell.jsx';
+import { Paperclip, Reply } from 'lucide-react';
 import { Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
@@ -187,7 +188,6 @@ export default function Inbox() {
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'all';
   const { isAdmin } = useAuth();
-  const sidebar = useContext(SidebarContext);
   /**
    * Where the list is looking (docs/inbox-outlook-plan.md §3.7): the team's
    * triage queue, as this page has always been, or one folder of one
@@ -344,22 +344,6 @@ export default function Inbox() {
           selected && 'hidden lg:flex'
         )}>
           <div className="flex items-center gap-2 px-5 pt-6 pb-3">
-            {/* This screen draws its own header instead of using PageHeader,
-                and PageHeader is where the burger lives. Without this the
-                inbox is a dead end on a phone: you can reach it and then
-                not leave it. It is not `lg:hidden` either — PageHeader's
-                burger shows at every width, so hiding this one made the
-                inbox the one screen where a desktop cannot reclaim the
-                240px the sidebar takes. */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={sidebar.toggle}
-              aria-label={sidebar.hidden ? 'Show sidebar' : 'Hide sidebar'}
-              className="size-control shrink-0"
-            >
-              <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-            </Button>
             {/* The title is the switcher: which mailbox and folder the list
                 shows, and the way to the others (plan §3.7). */}
             <h1 className="min-w-0">
@@ -410,6 +394,9 @@ export default function Inbox() {
                 </button>
               )}
             </div>
+            {/* This screen draws its own header, so it carries the shell's
+                pause and bell itself (every other page gets them from PageHeader). */}
+            <ControlBar className="shrink-0 max-[719px]:hidden" />
           </div>
 
           <div className="px-5 pb-3">

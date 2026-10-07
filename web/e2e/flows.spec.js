@@ -344,9 +344,12 @@ test('the settings menu opens, with every item on it', async ({ page }) => {
  */
 test('choosing light mode takes the dark class off the document', async ({ page }) => {
   await signIn(page);
+  // Light is the default now (Mocha Glass), so go dark first.
+  await page.getByRole('button', { name: 'Settings and sign out' }).click();
+  await page.getByRole('menuitemradio', { name: 'Dark' }).click();
   await expect(page.locator('html')).toHaveClass(/dark/);
 
-  await page.getByRole('button', { name: 'Settings and sign out' }).click();
+  // The theme is a segment that stays open, so the same menu picks Light.
   await page.getByRole('menuitemradio', { name: 'Light' }).click();
 
   await expect(page.locator('html')).not.toHaveClass(/dark/);

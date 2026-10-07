@@ -40,7 +40,7 @@ export function ListPage({
   banner,
 }) {
   const toast = useToast();
-  const [urlParams] = useSearchParams();
+  const [urlParams, setUrlParams] = useSearchParams();
 
   /**
    * A filter named in the address bar is applied, whatever list this is.
@@ -95,6 +95,16 @@ export function ListPage({
   // order the resource happened to default to.
   const [sort, setSort] = useState('');
   const [editing, setEditing] = useState(null); // record | 'new' | null
+  // The shell's New menu and dock open this list's own "+ New" form with
+  // ?new=<resource>; the parameter is dropped once the form is open, so a
+  // reload or Back does not open it again.
+  const askedNew = urlParams.get('new') === resource;
+  useEffect(() => {
+    if (!askedNew || !fields) return;
+    setEditing('new');
+    setUrlParams((prev) => { const next = new URLSearchParams(prev); next.delete('new'); return next; }, { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askedNew]);
   const [deleting, setDeleting] = useState(null);
   const [busy, setBusy] = useState(false);
 

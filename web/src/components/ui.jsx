@@ -570,6 +570,7 @@ export const useToast = () => useCallback((message, tone = 'default') => {
   if (tone === 'danger') return sonnerToast.error(message);
   if (tone === 'success') return sonnerToast.success(message);
   if (tone === 'warning') return sonnerToast.warning(message);
+  if (tone === 'info') return sonnerToast.info(message);
   return sonnerToast(message);
 }, []);
 
@@ -577,7 +578,8 @@ export function ToastProvider({ children }) {
   return (
     <>
       {children}
-      <Toaster position="bottom-right" closeButton toastOptions={{ className: 'toast' }} />
+      {/* Bottom centre, above the dock (above the tab bar on a phone): styles/mocha/shell.css. */}
+      <Toaster position="bottom-center" offset={{ bottom: 100 }} mobileOffset={{ bottom: 96 }} closeButton toastOptions={{ className: 'toast' }} />
     </>
   );
 }
@@ -599,8 +601,9 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfi
       size="sm"
       footer={
         <>
-          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy}>
+          {/* On a phone the two stack, full width and 44px tall (the dialog is a bottom sheet there). */}
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy} className="max-sm:h-11 max-sm:w-full">Cancel</Button>
+          <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy} aria-busy={busy || undefined} className="max-sm:h-11 max-sm:w-full">
             {busy ? 'Working…' : confirmLabel}
           </Button>
         </>
