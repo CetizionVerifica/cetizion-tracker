@@ -30,7 +30,7 @@
     "demo:data": "node scripts/demo-data.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "cloudinary": "^2.11.0",
     "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
