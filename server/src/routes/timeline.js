@@ -134,7 +134,7 @@ timelineRouter.get('/', async (req, res) => {
     wants('task') ? query(`SELECT t.*, (SELECT json_agg(json_build_object('entity', x.entity, 'entity_id', x.entity_id) ORDER BY x.entity, x.entity_id)
         FROM task_targets x WHERE x.task_id = t.id AND NOT (x.entity = t.entity AND x.entity_id = t.entity_id)) AS targets
       FROM tasks t WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $2 AND tt.entity_id = $1)`, [id, entity]) : { rows: [] },
-    wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
+    wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, a.shared_with_client, a.uploaded_by_contact_id IS NOT NULL AS from_client, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
     wants('email') ? query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE ${emailWhere}`, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
     wants('event') ? recordEvents(entity, id) : [],
     // Threads follow the mailbox rule as well as the record's (074): a
@@ -143,6 +143,11 @@ timelineRouter.get('/', async (req, res) => {
     wants('email') ? threadsFor(req, entity, id) : { rows: [] },
     wants('touch') ? query(`SELECT cm.*, ct.name AS contact_name FROM communications cm LEFT JOIN contacts ct ON ct.id = cm.contact_id WHERE (cm.entity = $2 AND cm.entity_id = $1) OR ($2 = 'company' AND cm.company_id::text = $1)`, [id, entity]) : { rows: [] },
   ]);
+  // A client's upload (#198) has been seen once staff open the record it is on;
+  // from then on the client cannot delete it.
+  if (files.rows.some((f) => f.from_client)) {
+    await query('UPDATE attachments SET seen_by_staff_at = now() WHERE entity = $2 AND entity_id = $1 AND uploaded_by_contact_id IS NOT NULL AND seen_by_staff_at IS NULL', [id, entity]);
+  }
   const items = [
     ...notes.rows.map((n) => ({ kind: 'note', at: n.created_at, id: n.id, title: n.pinned ? 'Pinned note' : 'Note', detail: n.body, by: n.author, pinned: n.pinned, record: n })),
     ...tasks.rows.map((t) => ({ kind: 'task', at: t.completed_at || t.created_at, id: t.id, title: `${t.status === 'done' ? 'Done: ' : ''}${t.title}`, detail: [t.type.replace('_', ' '), t.due_at ? `due ${t.due_at}` : null, t.assignee ? `for ${t.assignee}` : null].filter(Boolean).join(' · '), by: t.created_by, record: t })),

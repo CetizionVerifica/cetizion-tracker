@@ -180,6 +180,10 @@ export const routes = [
   { method: 'GET', path: '/api/portal/files/po/:no', access: 'public', mechanism: 'portal-session', openBecause: 'A live purchase order\'s file, from Projects & orders; checked against the session\'s company before it is served (#198).', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own messages.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'POST', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client writes to us.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/actions', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own confirmations, queries and payment advice, and where each stands (#198).', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'POST', path: '/api/portal/actions', access: 'public', mechanism: 'portal-session', openBecause: 'The client confirms an invoice, raises a query, or tells us they paid (#198). A claim only: it writes no payment; every invoice and PO named is checked against the session\'s company first.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'POST', path: '/api/portal/documents', access: 'public', mechanism: 'portal-session', openBecause: 'The client uploads a file onto one of their own projects or POs (#198), checked against the session\'s company; PDF, image, Word or Excel only, within the document size limit.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'DELETE', path: '/api/portal/documents/:id', access: 'public', mechanism: 'portal-session', openBecause: 'The client takes back their own upload, until our team has seen it (#198).', restrictions: ['record-owner', 'portal-section'] },
 
   // ------------------------------------------------------------- MCP
   { method: 'POST', path: '/api/mcp', access: 'public', mechanism: 'api-token', openBecause: 'MCP clients authenticate with an API token instead of a session (#50). No token, no answer.', restrictions: ['api-token-scope'] },
@@ -434,6 +438,8 @@ export const routes = [
   { method: 'PATCH', path: '/api/portal-admin/companies/:id', access: mustBeAdmin, why: 'Switching the portal on and choosing its sections.' },
   { method: 'PATCH', path: '/api/portal-admin/contacts/:id', access: mustBeAdmin, why: 'Granting or withdrawing a client contact\'s portal access.' },
   { method: 'POST', path: '/api/portal-admin/contacts/:id/invite', access: mustBeAdmin, why: 'Emailing a sign-in link to somebody outside the company.' },
+  { method: 'GET', path: '/api/portal-admin/actions', access: signedIn, restrictions: ['record-owner'], note: 'What clients said in the portal (#198): queries and payment advice to act on. Scoped like the PO: an admin sees every client\'s, anyone else those on a PO they can open.' },
+  { method: 'POST', path: '/api/portal-admin/actions/:id/resolve', access: signedIn, restrictions: ['record-owner'], note: 'Resolve a client\'s query, or reject a query or a payment advice with a reason the client sees (#198). Only on a PO the caller can open.' },
   { method: 'GET', path: '/api/portal-admin/companies/:id/preview/:section', access: mustBeAdmin, why: 'Preview as client (#198): everything the client\'s portal shows of this company, invoices and GST included.' },
 
   // ----------------------------------------------------------- accounting

@@ -45,6 +45,14 @@ export function date(value) {
   return `${d} ${months[Number(m) - 1]} ${y}`;
 }
 
+/** A timestamp's day where the reader is, as date() writes it: 23:30 UTC is already tomorrow in India. */
+export function localDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return date(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString());
+}
+
 /** "14 Sep 2026 – 21 Sep 2026", "From 1 Jan 2026", "Up to 21 Sep 2026", or "All time". */
 export function periodLabel({ from, to } = {}) {
   if (from && to) return `${date(from)} – ${date(to)}`;

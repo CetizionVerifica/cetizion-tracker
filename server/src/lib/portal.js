@@ -8,6 +8,12 @@
  * functions with `{ staff: true }`, so it cannot drift from what the client
  * sees; staff get one thing more, the source of each GST split, so finance
  * can see where the GST was only estimated.
+ *
+ * Phase 2 (#198 §4) lets the client answer: confirm an invoice, raise a
+ * query, tell us they paid. Each is recorded as a claim in
+ * portal_client_actions and never writes over our facts; finance matches a
+ * payment advice to a receipt with the tools they already use. Files go both
+ * ways: a staff file ticked "shared with client", and the client's uploads.
  */
 import pdfmake from './pdf.js';
 import { query } from '../db.js';
@@ -33,7 +39,22 @@ const LIVE_PO = `NOT po.cancelled AND NOT EXISTS (
  * concern of a client holding the invoice.
  */
 const INVOICE_STATE = `CASE WHEN s.stage_amount > 0 AND s.amount_received >= s.stage_amount THEN 'Paid'
+  WHEN EXISTS (SELECT 1 FROM portal_client_actions ra JOIN portal_client_action_stages rx ON rx.action_id = ra.id
+                WHERE rx.stage_id = s.id AND ra.kind = 'payment_advice' AND ra.status = 'open') THEN 'Payment reported'
   WHEN s.invoice_due_date < CURRENT_DATE THEN 'Overdue' WHEN s.amount_received > 0 THEN 'Part paid' ELSE 'Due' END`;
+// "Payment reported": the client told us they paid (§4) and finance has not
+// matched it yet. Shown to the client in place of "Overdue"; our own
+// collections figures do not change until finance records the payment.
+
+/** An attachment that hangs on one of the company's records: the company, a project, a PO or an invoice. */
+const attachmentOf = (a, company) => `(
+     (${a}.entity = 'company' AND ${a}.entity_id = (${company})::int::text)
+  OR (${a}.entity = 'project' AND EXISTS (SELECT 1 FROM projects ap WHERE ap.project_id = ${a}.entity_id AND ap.company_id = (${company})::int))
+  OR (${a}.entity = 'purchase_order' AND EXISTS (SELECT 1 FROM purchase_orders apo JOIN projects app ON app.project_id = apo.project_id
+                                                 WHERE apo.po_number = ${a}.entity_id AND app.company_id = (${company})::int))
+  OR (${a}.entity = 'payment_stage' AND EXISTS (SELECT 1 FROM payment_stages aps JOIN purchase_orders apo2 ON apo2.po_number = aps.po_number
+                                                JOIN projects app2 ON app2.project_id = apo2.project_id
+                                               WHERE aps.id::text = ${a}.entity_id AND aps.invoice_no IS NOT NULL AND app2.company_id = (${company})::int)))`;
 
 const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
 
@@ -110,7 +131,10 @@ export async function portalInvoices(companyId, { staff = false } = {}) {
             s.amount_received AS received, COALESCE(pay.paid, 0) AS paid, COALESCE(pay.tds, 0) AS tds,
             GREATEST(s.stage_amount - s.amount_received, 0) AS outstanding,
             ${INVOICE_STATE} AS status,
-            s.document_id, s.document_id IS NOT NULL AS has_pdf
+            s.document_id, s.document_id IS NOT NULL AS has_pdf,
+            (SELECT json_build_object('kind', a.kind, 'status', a.status, 'at', a.created_at)
+               FROM portal_client_actions a JOIN portal_client_action_stages x ON x.action_id = a.id
+              WHERE x.stage_id = s.id ORDER BY a.created_at DESC LIMIT 1) AS last_action
        FROM v_payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
       CROSS JOIN LATERAL po_gst_split(s.po_number, s.stage_amount, s.id) g
        LEFT JOIN LATERAL (SELECT SUM(amount) AS paid, SUM(tds_amount) AS tds FROM payments WHERE stage_id = s.id) pay ON true
@@ -128,8 +152,8 @@ export function invoiceTotals(invoices) {
   return out;
 }
 
-export async function portalDocuments(companyId, { staff = false } = {}) {
-  const [quotations, pos, invoices, deliverables] = await Promise.all([
+export async function portalDocuments(companyId, { staff = false, contactId = null } = {}) {
+  const [quotations, pos, invoices, deliverables, files, targets] = await Promise.all([
     query(`SELECT quotation_no, revision, quotation_date, service_quoted, COALESCE(total, quotation_value) AS amount, currency, status, document_id
              FROM quotations WHERE company_id = $1 AND (sent_at IS NOT NULL OR status IN ('Won - PO Received','Under Negotiation')) ORDER BY quotation_date DESC NULLS LAST`, [companyId]),
     // Live POs only (G4): a cancelled or superseded PO's value is not the client's figure any more.
@@ -139,8 +163,99 @@ export async function portalDocuments(companyId, { staff = false } = {}) {
     portalInvoices(companyId, { staff }),
     query(`SELECT id, type, reference, title, issued_on, valid_until, status, document_id FROM deliverables
             WHERE company_id = $1 AND status IN ('issued','expired','superseded') ORDER BY issued_on DESC NULLS LAST`, [companyId]),
+    // Two-way files (G10): staff files ticked "shared with client", and the client's own uploads.
+    query(`SELECT a.id, a.entity, a.entity_id, a.label, a.created_at, a.document_id, d.file_name,
+                  a.uploaded_by_contact_id IS NOT NULL AS from_client, a.seen_by_staff_at IS NOT NULL AS seen,
+                  COALESCE(a.uploaded_by_contact_id = $2, false) AS mine,
+                  (SELECT ct.name FROM contacts ct WHERE ct.id = a.uploaded_by_contact_id) AS by_name
+             FROM attachments a JOIN documents d ON d.id = a.document_id
+            WHERE (a.shared_with_client OR a.uploaded_by_contact_id IS NOT NULL) AND ${attachmentOf('a', '$1')}
+            ORDER BY a.created_at DESC`, [companyId, contactId]),
+    // Where a client may file an upload: one of their projects, or one of their live POs.
+    query(`SELECT 'project' AS entity, p.project_id AS entity_id, COALESCE(p.primary_service, p.project_id) AS label, p.project_id AS sort_key
+             FROM projects p WHERE p.company_id = $1
+           UNION ALL
+           SELECT 'purchase_order', po.po_number, 'PO ' || po.po_number, po.project_id || ' ' || po.po_number
+             FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE p.company_id = $1 AND ${LIVE_PO}
+            ORDER BY sort_key DESC`, [companyId]),
   ]);
-  return { quotations: quotations.rows, purchase_orders: pos.rows, invoices: invoices.filter((i) => i.document_id), deliverables: deliverables.rows };
+  return {
+    quotations: quotations.rows, purchase_orders: pos.rows, invoices: invoices.filter((i) => i.document_id), deliverables: deliverables.rows,
+    shared: files.rows.filter((x) => !x.from_client).map(({ mine, seen, from_client, by_name, ...x }) => x),
+    uploads: files.rows.filter((x) => x.from_client).map(({ from_client, ...x }) => x),
+    targets: targets.rows.map(({ sort_key, ...t }) => t),
+  };
+}
+
+/** The client's own answers (§4), newest first: what each was about and where it stands. */
+export async function portalActions(companyId) {
+  const { rows } = await query(
+    `SELECT a.id, a.kind, a.po_number, a.note, a.amount, a.tds_amount, a.paid_on, a.reference, a.status, a.resolution,
+            a.created_at, a.resolved_at, a.document_id IS NOT NULL AS has_file,
+            COALESCE(json_agg(json_build_object('id', s.id, 'invoice_no', s.invoice_no, 'po_number', s.po_number)
+                     ORDER BY s.invoice_no) FILTER (WHERE s.id IS NOT NULL), '[]') AS invoices
+       FROM portal_client_actions a
+       LEFT JOIN portal_client_action_stages x ON x.action_id = a.id
+       LEFT JOIN payment_stages s ON s.id = x.stage_id
+      WHERE a.company_id = $1
+      GROUP BY a.id ORDER BY a.created_at DESC LIMIT 200`, [companyId]);
+  return rows;
+}
+
+/**
+ * Which of these invoices (stage ids) and which PO belong to the company.
+ * Returns null when any of them does not: "not yours" and "not there" are
+ * the same 404.
+ */
+export async function ownedInvoices(companyId, stageIds, poNumber) {
+  const ids = [...new Set(stageIds)];
+  const { rows } = ids.length ? await query(
+    `SELECT s.id, s.po_number, s.invoice_no FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number
+       JOIN projects p ON p.project_id = po.project_id
+      WHERE s.id = ANY($2::int[]) AND p.company_id = $1 AND s.invoice_no IS NOT NULL`, [companyId, ids]) : { rows: [] };
+  if (rows.length !== ids.length) return null;
+  if (poNumber) {
+    const { rowCount } = await query(
+      `SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $2 AND p.company_id = $1`,
+      [companyId, poNumber]);
+    if (!rowCount) return null;
+  }
+  return rows;
+}
+
+/** Whether a project or PO the client names for an upload is theirs. */
+export async function ownsUploadTarget(companyId, entity, entityId) {
+  const sql = entity === 'project'
+    ? 'SELECT 1 FROM projects p WHERE p.project_id = $2 AND p.company_id = $1'
+    : `SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $2 AND p.company_id = $1 AND ${LIVE_PO}`;
+  const { rowCount } = await query(sql, [companyId, entityId]);
+  return rowCount > 0;
+}
+
+/**
+ * Who to tell about something a client did on a PO: the owner of its project.
+ * A notification is addressed by the name the session carries, which in
+ * database mode is the account's email.
+ */
+export async function poOwners(poNumbers, projectIds = []) {
+  const { rows } = await query(
+    `SELECT DISTINCT u.email AS username FROM projects p JOIN users u ON u.id = p.owner_user_id
+      WHERE (p.project_id = ANY($2::text[]) OR p.project_id IN (SELECT po.project_id FROM purchase_orders po WHERE po.po_number = ANY($1::text[])))
+        AND u.active AND u.email IS NOT NULL`,
+    [[...new Set(poNumbers.filter(Boolean))], [...new Set(projectIds.filter(Boolean))]]);
+  return rows.map((r) => r.username);
+}
+
+/**
+ * Who hears of what a client did. A payment report is finance's work, and
+ * there is no finance role, so everyone; anything else the owner of the PO
+ * or project, or everyone when it has none. Never both: null already
+ * reaches the owner, who would otherwise see it twice.
+ */
+export async function portalAudience(kind, poNumbers, projectIds = []) {
+  if (kind === 'payment_advice') return [null];
+  const owners = await poOwners(poNumbers, projectIds);
+  return owners.length ? owners : [null];
 }
 
 export async function portalCertificates(companyId) {
@@ -167,7 +282,10 @@ export async function companyOwnsDocument(companyId, documentId) {
      UNION ALL SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.document_id = $2 AND p.company_id = $1
      UNION ALL SELECT 1 FROM payment_stages s JOIN purchase_orders po ON po.po_number = s.po_number JOIN projects p ON p.project_id = po.project_id
                 WHERE s.document_id = $2 AND s.invoice_no IS NOT NULL AND p.company_id = $1
-     UNION ALL SELECT 1 FROM deliverables d WHERE d.document_id = $2 AND d.company_id = $1 AND d.status <> 'draft'`, [companyId, documentId]);
+     UNION ALL SELECT 1 FROM deliverables d WHERE d.document_id = $2 AND d.company_id = $1 AND d.status <> 'draft'
+     UNION ALL SELECT 1 FROM attachments a WHERE a.document_id = $2 AND (a.shared_with_client OR a.uploaded_by_contact_id IS NOT NULL)
+                AND ${attachmentOf('a', '$1')}
+     UNION ALL SELECT 1 FROM portal_client_actions pa WHERE pa.document_id = $2 AND pa.company_id = $1`, [companyId, documentId]);
   return rowCount > 0;
 }
 

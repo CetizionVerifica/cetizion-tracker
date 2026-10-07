@@ -742,6 +742,19 @@
   .portal__head + .portal__item, .portal__item + .portal__item { margin-top: 8px; }
   .portal__strong { font-weight: 700; }
   .portal__item--total { background: var(--secondary); }
+  /* #198 phase 2: the client answers, and files both ways. */
+  .portal__section { margin: 18px 0 8px; font-size: 14px; font-weight: 600; }
+  .portal__answer { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding: 12px; border-radius: 8px; background: var(--secondary); }
+  .portal__answer label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+  .portal__answer textarea, .portal__answer select, .portal__answer input:not([type=checkbox]):not([type=file]) { width: 100%; }
+  .portal__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 12px; }
+  .portal__picks { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; }
+  .portal__picks label { flex-direction: row; align-items: center; gap: 8px; }
+  .portal__answers { margin-top: 6px; }
+  .portal__said { margin-top: 4px; font-size: 12.5px; color: var(--info); }
+  .portal__ok { color: var(--settled); }
+  .portal__answer + .portal__item, .accept__actions + .portal__item { margin-top: 8px; }
+  .portal__answer input[type=file] { font-size: 12.5px; }
 
   /* The portal writes `badge` directly rather than going through the kit. */
   .badge {

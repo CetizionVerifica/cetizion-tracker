@@ -510,6 +510,8 @@ const receiptSchema = z.object({
   payment_mode: z.preprocess(blank, z.enum(['bank_transfer', 'cheque', 'upi', 'cash', 'other']).optional()),
   reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
   notes: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
+  // The client's payment advice from the portal this receipt matches (#198 §4).
+  portal_action_id: z.preprocess(blank, z.coerce.number().int().positive().optional()),
 });
 
 stageRouter.post('/:id/payment', async (req, res) => {
@@ -531,13 +533,33 @@ stageRouter.post('/:id/payment', async (req, res) => {
     params
   );
   if (!stage) throw new ApiError(404, 'Payment stage not found');
+  // A payment advice is matched only by a receipt on an invoice it is about.
+  if (body.portal_action_id) {
+    const { rowCount } = await query(
+      `SELECT 1 FROM portal_client_actions a JOIN portal_client_action_stages x ON x.action_id = a.id
+        WHERE a.id = $1 AND x.stage_id = $2 AND a.kind = 'payment_advice' AND a.status IN ('open','matched')`,
+      [body.portal_action_id, stage.id]);
+    if (!rowCount) throw new ApiError(422, 'Please check the highlighted fields', { fields: { portal_action_id: 'That payment advice is not about this invoice, or is already settled' } });
+  }
   const delta = body.mode === 'set' ? Number(body.amount_received) - Number(stage.amount_received) : Number(body.amount_received);
   if (delta > 0 || Number(body.tds_amount || 0) > 0) {
-    await query(
-      `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by)
-       VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8)`,
-      [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null]
-    );
+    // The receipt and the advice it settles, in one transaction (#198).
+    await transaction(async (client) => {
+      await client.query(
+        `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by, portal_action_id)
+         VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8,$9)`,
+        [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null, body.portal_action_id ?? null]
+      );
+      // Matched once every invoice the advice covers has its receipt.
+      if (body.portal_action_id) {
+        await client.query(
+          `UPDATE portal_client_actions a SET status = 'matched', resolved_by = $2, resolved_at = now()
+            WHERE a.id = $1 AND a.status = 'open'
+              AND NOT EXISTS (SELECT 1 FROM portal_client_action_stages x WHERE x.action_id = a.id
+                                 AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.portal_action_id = a.id AND p.stage_id = x.stage_id))`,
+          [body.portal_action_id, req.user?.username || null]);
+      }
+    });
   } else if (body.mode === 'set' && delta !== 0) {
     // Bringing the total down is a negative row in the ledger, not a figure
     // written over the top of it: the stage total is computed from the rows,

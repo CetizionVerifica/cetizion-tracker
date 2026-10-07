@@ -76,6 +76,20 @@ runs on every push.
   database name.
 - **Tokens** (acceptance links, portal links, API tokens) are stored only as
   hashes; mailbox tokens are encrypted.
+- **What a client can write in the portal** (#198). Besides a message, a
+  signed-in client contact can confirm an invoice, raise a query on an
+  invoice or PO, report a payment (amount, TDS, date, reference and an
+  optional PDF or image), and upload a file (PDF, image, Word or Excel,
+  within the document size cap) onto one of their own projects or live POs.
+  Every invoice, PO and project named is checked against the session's
+  company first, with the same 404 for "not yours" and "not there". Each is
+  stored as a claim: a payment report never writes a payment or changes a
+  stage; only a staff member recording the receipt does. The text is shown
+  escaped, no AI reads it or the files, and a client's file is always served
+  as a download, never inline. Staff files reach the client only when ticked
+  "Share with client", one by one; nothing attached before is shown. A client
+  can delete their own upload only until staff have opened the record it is
+  on. Writes are rate-limited and every one is in the portal audit.
 - **Personal mailboxes** ([per-user-mailboxes-plan.md](per-user-mailboxes-plan.md))
   belong to a user account, not a typed name. Only the owner reads a
   personal mailbox's mail, through every door (the mailbox list, threads on

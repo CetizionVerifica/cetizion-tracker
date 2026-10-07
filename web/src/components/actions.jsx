@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
-import { money, today } from '../lib/format.js';
+import { date, money, today } from '../lib/format.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
 function useAction({ onDone, successMessage }) {
@@ -145,13 +145,19 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
 
 /* -------------------------------------------------- record a receipt */
 
-export function RecordPaymentDialog({ stage, onClose, onDone }) {
+/**
+ * `advice` is a client's payment advice from the portal (#198 §4): the
+ * dialog opens filled from it, and saving links the receipt to it.
+ */
+export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
   const outstanding = Math.max(Number(stage.stage_amount || 0) - Number(stage.amount_received || 0), 0);
-  const [amount, setAmount] = useState(String(outstanding));
-  const [tds, setTds] = useState('');
+  // One invoice: what the client said they paid. Several: this invoice's outstanding, to adjust.
+  const single = advice && advice.invoices.length === 1;
+  const [amount, setAmount] = useState(String(single ? Number(advice.amount) : outstanding));
+  const [tds, setTds] = useState(single && Number(advice.tds_amount) > 0 ? String(Number(advice.tds_amount)) : '');
   const [mode, setMode] = useState('bank_transfer');
-  const [reference, setReference] = useState('');
-  const [paidOn, setPaidOn] = useState(today());
+  const [reference, setReference] = useState(advice?.reference || '');
+  const [paidOn, setPaidOn] = useState(advice?.paid_on?.slice(0, 10) || today());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Payment recorded' });
 
   const submit = async (e) => {
@@ -165,6 +171,7 @@ export function RecordPaymentDialog({ stage, onClose, onDone }) {
         reference,
         payment_received_date: paidOn,
         mode: 'add',
+        portal_action_id: advice?.id,
       })
     );
     if (ok) onClose();
@@ -180,6 +187,12 @@ export function RecordPaymentDialog({ stage, onClose, onDone }) {
       error={error}
       submitLabel="Save payment"
     >
+      {advice && (
+        <Alert tone="info">
+          {advice.company_name} reported {money(advice.amount, stage.currency)}{Number(advice.tds_amount) > 0 ? ` + TDS ${money(advice.tds_amount, stage.currency)}` : ''} paid on {date(advice.paid_on)}
+          {advice.invoices.length > 1 ? `, across ${advice.invoices.map((i) => i.invoice_no).join(', ')}` : ''}. Check it against the bank before saving.
+        </Alert>
+      )}
       <Alert>
         Stage value {money(stage.stage_amount, stage.currency)} · already received{' '}
         {money(stage.amount_received, stage.currency)} · outstanding{' '}

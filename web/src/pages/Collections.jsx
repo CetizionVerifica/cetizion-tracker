@@ -4,6 +4,7 @@ import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
 import { RecordPaymentDialog } from '../components/actions.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
+import { PortalAnswers } from '../components/PortalAnswers.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch } from '../lib/hooks.js';
@@ -12,7 +13,8 @@ import { date, money, today } from '../lib/format.js';
 /**
  * Collections (#27): who owes what and for how long, what was done about
  * it, and the next step. Ageing buckets per client, the chasing log,
- * promises to pay, disputes on hold.
+ * promises to pay, disputes on hold. Since #198, what clients said in the
+ * portal: payments they report, and their queries.
  */
 export default function Collections() {
   const toast = useToast();
@@ -79,6 +81,7 @@ export default function Collections() {
             )}
           </div>
         )}
+        <PortalAnswers onPaid={refetch} />
         <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">
           {loading && !d ? <div className="skeleton" style={{ height: 120, margin: 18 }} />
             /* Same reason as Payables: an empty list after a failed load

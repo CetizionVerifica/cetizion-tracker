@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Clock } from 'lucide-react';
 import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
-import { Alert, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
+import { Alert, Badge, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
 import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
@@ -14,7 +14,7 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money, date, percent, number } from '../lib/format.js';
+import { money, date, localDate, percent, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
 
@@ -127,7 +127,16 @@ function poTone(status) {
  * which is what stops a column of ten identical buttons from hiding the
  * one that matters.
  */
-function StageRung({ stage, action, last, onChanged }) {
+/** What the client last said about a stage in the portal (#198 §4), in staff words. */
+function clientWord(a) {
+  const on = localDate(a.created_at);
+  if (a.kind === 'confirmed') return { tone: 'success', text: `Client confirmed ${on}` };
+  if (a.kind === 'query') return a.status === 'open' ? { tone: 'warning', text: 'Client query open', note: a.note } : { tone: 'neutral', text: `Client query ${a.status} ${localDate(a.resolved_at)}` };
+  if (a.status === 'open') return { tone: 'info', text: `Client reports paying ${money(a.amount)} on ${date(a.paid_on)}: to check in Collections` };
+  return { tone: a.status === 'matched' ? 'success' : 'neutral', text: `Client's payment advice ${a.status}` };
+}
+
+function StageRung({ stage, action, last, onChanged, client }) {
   // Amber is "you can bill this and have not"; red is "this is late".
   // The header chip uses the same two, so a rung never disagrees with it.
   const tone = stage.stage_status === 'Overdue' ? 'late'
@@ -171,6 +180,11 @@ function StageRung({ stage, action, last, onChanged }) {
         </p>
         {/* An invoice read from our email: where from, and Undo for an admin (docs/email-auto-entry-plan.md §3.10). */}
         {stage.invoice_no && <EmailOrigin entity="payment_stage" id={stage.id} className="m-0 mt-1 text-[12px] text-muted-foreground" onUndone={onChanged} />}
+        {client && (
+          <p className="m-0 mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+            <Badge tone={client.tone}>{client.text}</Badge>{client.note && <span className="max-w-[56ch] truncate" title={client.note}>“{client.note}”</span>}
+          </p>
+        )}
 
         {action && <div className="mt-3 flex gap-2">{action}</div>}
       </div>
@@ -214,6 +228,8 @@ export default function PurchaseOrderDetail() {
     () => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`),
     [poNumber]
   );
+  // The client's confirmations, queries and payment advice on this PO (#198), newest first.
+  const portal = useFetch(() => api.raw(`/portal-admin/actions?status=all&po_number=${encodeURIComponent(poNumber)}`), [poNumber]);
 
   if (error) {
     return (
@@ -243,6 +259,8 @@ export default function PurchaseOrderDetail() {
     } catch (err) { toast(err.message, 'danger'); }
   };
 
+  const clientSaid = new Map();
+  for (const a of portal.data?.data ?? []) for (const i of a.invoices) if (!clientSaid.has(i.id)) clientSaid.set(i.id, clientWord(a));
   const stagesOff = po.stage_count > 0 && Math.abs(Number(po.stages_percent_total) - 1) > 0.0001;
   const serviceTotal = services.reduce((sum, s) => sum + Number(s.service_value || 0), 0);
   const amount = (v) => money(v, po.currency);
@@ -460,7 +478,7 @@ export default function PurchaseOrderDetail() {
             </p>
           ) : (
             stages.map((stage, i) => (
-              <StageRung key={stage.id} stage={stage} action={actionsFor(stage)} last={i === stages.length - 1} onChanged={refetch} />
+              <StageRung key={stage.id} stage={stage} action={actionsFor(stage)} last={i === stages.length - 1} onChanged={refetch} client={clientSaid.get(stage.id)} />
             ))
           )}
 
