@@ -365,7 +365,7 @@ CREATE TABLE projects (
   id                    serial PRIMARY KEY,
   project_id            text NOT NULL UNIQUE,
   client_name           text NOT NULL,
-  company_id            int REFERENCES companies(id) ON DELETE SET NULL,
+  company_id            int REFERENCES companies(id) ON DELETE RESTRICT,  -- merge, don't delete: the link trigger would recreate it (089)
   primary_service       text,
   project_manager       text,
   project_manager_email text,
@@ -403,7 +403,7 @@ CREATE TABLE quotations (
   id                 serial PRIMARY KEY,
   quotation_no       text NOT NULL UNIQUE,
   client_name        text NOT NULL,
-  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  company_id         int REFERENCES companies(id) ON DELETE RESTRICT,  -- merge, don't delete: the link trigger would recreate it (089)
   contact_person     text,
   contact_id         int REFERENCES contacts(id) ON DELETE SET NULL,
   service_quoted     text,
@@ -545,7 +545,7 @@ CREATE TABLE enquiries (
   enquiry_no         text NOT NULL UNIQUE,
   enquiry_date       date,
   client_name        text NOT NULL,
-  company_id         int REFERENCES companies(id) ON DELETE SET NULL,
+  company_id         int REFERENCES companies(id) ON DELETE RESTRICT,  -- merge, don't delete: the link trigger would recreate it (089)
   source             text,
   sector             text,
   country            text,
