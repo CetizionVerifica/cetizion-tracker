@@ -1,0 +1,35 @@
+/* Mocha Glass — generated from tokens.json */
+:root, [data-theme="light"] {
+  --canvas: #EEE3D5; --b1: rgba(205,160,112,.70); --b2: rgba(232,201,163,.85); --b3: rgba(190,134,92,.50); --b4: rgba(250,238,222,.95);
+  --glass: rgba(255,251,246,.52); --glass-strong: rgba(255,251,246,.74); --glass-edge: rgba(255,255,255,.72); --glass-hi: rgba(255,255,255,.85);
+  --sheen: rgba(255,255,255,.45); --glint: rgba(255,255,255,.6); --ripple-core: rgba(255,255,255,.26); --shade: rgba(80,45,20,.42);
+  --hero-glass: rgba(52,34,23,.86); --hero-glow: rgba(200,135,80,.50); --hero-edge: rgba(255,235,215,.16); --hero-hi: rgba(255,240,225,.22);
+  --on-hero: #FFF5E9; --on-hero-2: #DCC6AE; --text: #2A1C14; --text2: #68513F; --muted: #7A6352; --line: rgba(42,28,20,.10);
+  --pill: #3E2A1E; --on-pill: #FBF1E4; --on-pill-idle: #68513F; --btn: #3E2A1E; --on-btn: #FBF1E4;
+  --caramel: #BF8150; --caramel-text: #94592A; --on-caramel: #2B1E16; --latte: #E3C5A4; --sage: #7F9A79;
+  --late: #B0412A; --on-late: #FFFFFF; --late-soft: rgba(176,65,42,.12); --wait: #8E5812; --wait-soft: rgba(191,129,80,.16);
+  --ok: #4A7546; --ok-soft: rgba(74,117,70,.12); --info: #4A6788; --info-soft: rgba(74,103,136,.12);
+  --track: rgba(120,85,55,.10); --scroll-thumb: rgba(120,85,55,.34); --figure: #3E2A1E; --glow: rgba(110,60,25,.45); --wave: rgba(191,129,80,.9);
+  --shadow-panel: inset 0 1px 0 rgba(255,255,255,.85), 0 30px 60px -38px rgba(80,45,20,.42);
+  --shadow-pop: 0 12px 24px -14px rgba(80,45,20,.42); --shadow-glow: 0 12px 22px -10px rgba(110,60,25,.45);
+}
+.dark, [data-theme="dark"] {
+  --canvas: #0C0806; --b1: rgba(150,64,22,.55); --b2: rgba(70,40,24,.80); --b3: rgba(190,90,35,.35); --b4: rgba(60,34,20,.70);
+  --glass: rgba(32,22,16,.46); --glass-strong: rgba(40,28,20,.70); --glass-edge: rgba(255,222,190,.11); --glass-hi: rgba(255,230,205,.10);
+  --sheen: rgba(255,225,195,.06); --glint: rgba(255,205,165,.22); --ripple-core: rgba(255,190,140,.08); --shade: rgba(0,0,0,.85);
+  --hero-glass: rgba(18,12,8,.60); --hero-glow: rgba(230,110,45,.45);
+  --on-hero-2: #D9C1A8; --text: #FAEFE3; --text2: #CDB8A2; --muted: #A8927C; --line: rgba(255,230,205,.09);
+  --pill: rgba(235,150,85,.92); --on-pill: #22140C; --on-pill-idle: #CDB8A2; --btn: #EBCBA8; --on-btn: #22140C;
+  --caramel: #EE9455; --caramel-text: #F2A867; --latte: #EBCBA8; --sage: #9CB896;
+  --late: #F2876A; --on-late: #2B1208; --late-soft: rgba(242,135,106,.15); --wait: #EDB45C; --wait-soft: rgba(238,148,85,.15);
+  --ok: #9CC596; --ok-soft: rgba(156,197,150,.13); --info: #9DB7D6; --info-soft: rgba(157,183,214,.13);
+  --track: rgba(255,225,195,.08); --scroll-thumb: rgba(255,225,195,.22); --figure: #FFF5E9; --glow: rgba(238,120,50,.55); --wave: rgba(238,148,85,.95);
+  --shadow-panel: inset 0 1px 0 rgba(255,230,205,.10), 0 30px 60px -38px rgba(0,0,0,.85);
+  --shadow-pop: 0 12px 24px -14px rgba(0,0,0,.85); --shadow-glow: 0 12px 22px -10px rgba(238,120,50,.55);
+}
+:root {
+  --font-display: "Fraunces", Georgia, serif; --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 10px; --radius-control: 14px; --radius-icon: 16px; --radius-panel: 26px; --radius-hero: 28px; --radius-rail: 30px; --radius-pill: 999px;
+  --control-sm: 36px; --control-md: 44px; --control-lg: 48px; --rail-width: 84px;
+}

@@ -6,10 +6,14 @@
   try {
     var stored = localStorage.getItem('cetizion.theme');
     var system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    var mode = stored === 'light' || stored === 'dark' ? stored : stored === 'system' ? system : 'dark';
+    // Light is the default (Mocha Glass). The client's acceptance page and
+    // the portal are pinned dark (main.jsx), so they paint dark from the start.
+    var pinned = /^\/(accept|portal)(\/|$)/.test(window.location.pathname);
+    var mode = pinned ? 'dark' : stored === 'light' || stored === 'dark' ? stored : stored === 'system' ? system : 'light';
     document.documentElement.classList.toggle('dark', mode === 'dark');
+    document.documentElement.setAttribute('data-theme', mode);
     document.documentElement.style.colorScheme = mode;
   } catch (e) {
-    document.documentElement.classList.add('dark');
+    document.documentElement.setAttribute('data-theme', 'light');
   }
 })();

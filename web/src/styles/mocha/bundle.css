@@ -1,0 +1,560 @@
+
+/* Mocha Glass — component styles. Every colour is a token from tokens.json (tokens.css);
+   copied exactly from the approved canvas "Mocha mix · Glass 2". Class prefix: mg-. */
+
+:root {
+  --mg-spring: linear(0, 0.012, 0.048 2.3%, 0.2 5%, 0.718 13.4%, 0.92 17.6%, 1.006 21%, 1.045 24.2%, 1.056 27.4%, 1.047 31%, 1.012 39.5%, 0.996 46.5%, 0.993 52%, 1 70%, 1);
+  --mg-brew: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.067, 1.099 24.3%, 1.108 26%, 1.104, 1.087 31.4%, 1.008 39.6%, 0.985 45.8%, 0.98 50%, 0.996 63.4%, 1.001 72.4%, 1);
+  --mg-out: cubic-bezier(.22, 1, .36, 1);
+  --mg-hatch: repeating-linear-gradient(135deg, var(--caramel) 0 2px, transparent 2px 6px);
+}
+.mg, .mg * { box-sizing: border-box; }
+
+/* Scrollbars in the theme's colours, everywhere: the page (set data-theme on <html>) and every panel inside .mg. */
+html { background: var(--canvas); scrollbar-color: var(--scroll-thumb) var(--canvas); }
+.mg, .mg * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+html::-webkit-scrollbar, .mg ::-webkit-scrollbar, .mg::-webkit-scrollbar { width: 10px; height: 10px; }
+html::-webkit-scrollbar-track, .mg ::-webkit-scrollbar-track, .mg::-webkit-scrollbar-track { background: transparent; }
+html::-webkit-scrollbar-thumb, .mg ::-webkit-scrollbar-thumb, .mg::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: transparent; }
+.mg { font-family: var(--font-sans); font-size: 13.5px; line-height: 1.5; color: var(--text); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+.mg :focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
+
+/* ── Scene: canvas, drifting blobs, grain ── */
+.mg-scene { position: relative; isolation: isolate; background: var(--canvas); overflow: hidden; }
+.mg-scene > .mg-blobs { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.mg-blob { position: absolute; border-radius: 50%; filter: blur(85px); animation: mg-drift 22s ease-in-out infinite alternate; }
+.mg-blob:nth-child(1) { background: var(--b1); width: 46%; height: 60%; left: -8%; top: -14%; }
+.mg-blob:nth-child(2) { background: var(--b2); width: 42%; height: 56%; right: -6%; top: -10%; animation-duration: 26s; animation-direction: alternate-reverse; }
+.mg-blob:nth-child(3) { background: var(--b3); width: 38%; height: 50%; left: 34%; bottom: -18%; animation-duration: 30s; }
+.mg-blob:nth-child(4) { background: var(--b4); width: 34%; height: 44%; left: -6%; bottom: -12%; animation-duration: 34s; animation-direction: alternate-reverse; }
+.mg-grain { position: absolute; inset: 0; opacity: .05; mix-blend-mode: overlay; }
+:is(.dark, [data-theme="dark"]) .mg-grain { opacity: .08; }
+@keyframes mg-drift { from { translate: 0 0; scale: 1; } to { translate: 70px -50px; scale: 1.12; } }
+
+/* ── Glass ── */
+.mg-glass { position: relative; border-radius: 26px; background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass); border: 1px solid var(--glass-edge); backdrop-filter: blur(28px) saturate(165%); -webkit-backdrop-filter: blur(28px) saturate(165%); box-shadow: inset 0 1px 0 var(--glass-hi), 0 30px 60px -38px var(--shade); }
+.mg-glass--strong { background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong); }
+.mg-panel { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.mg-panel__head { display: flex; align-items: center; gap: 10px; }
+.mg-panel__title { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.3; }
+.mg-panel__hint { font-size: 12.5px; color: var(--muted); }
+.mg-panel__head > :last-child:not(:first-child) { margin-left: auto; }
+/* No cursor ripple (removed by Sami, 8 Oct). Any leftover ripple markup stays hidden. */
+.mg-ripple-layer, .mg-ripple { display: none !important; }
+
+/* Hero: tinted glass, ember glow, cursor spotlight */
+.mg-hero { position: relative; overflow: hidden; border-radius: 28px; padding: 28px 30px; color: var(--on-hero); background: radial-gradient(420px 260px at 100% 0%, var(--hero-glow), transparent 70%), var(--hero-glass); border: 1px solid var(--hero-edge); backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%); box-shadow: inset 0 1px 0 var(--hero-hi), 0 34px 70px -36px var(--glow); }
+.mg-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(320px circle at var(--mx, 70%) var(--my, 30%), rgba(255,240,225,.10), transparent 60%); }
+.mg-hero__label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--on-hero-2); }
+.mg-hero__figure { font-size: 62px; line-height: 1; font-weight: 700; letter-spacing: -.045em; margin: 6px 0 4px; }
+.mg-hero__sub { font-size: 13.5px; color: var(--on-hero-2); }
+
+/* ── Type helpers ── */
+.mg-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text2); }
+.mg-label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); }
+.mg-display { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 32px; line-height: 1.12; letter-spacing: -.015em; text-wrap: balance; }
+.mg-greeting { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 44px; line-height: 1.08; letter-spacing: -.02em; }
+.mg-greeting em { position: relative; display: inline-block; font-style: italic; color: var(--caramel-text); }
+.mg-greeting em svg { position: absolute; left: 0; bottom: -6px; width: 100%; height: 8px; overflow: visible; }
+.mg-greeting em path { fill: none; stroke: var(--caramel); stroke-width: 1.6; stroke-linecap: round; }
+.mg-muted { color: var(--muted); }
+/* No one-word last lines in running text. */
+.mg p, .mg-header__sub, .mg-field__hint, .mg-banner__body, .mg-empty__text, .mg-panel__hint, .mg-dialog__sub { text-wrap: pretty; }
+.mg-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mg-money--expected { color: var(--caramel-text); }
+
+/* ── Buttons ── */
+.mg-btn { --h: 44px; position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--h); padding: 0 18px; border-radius: 999px; border: 1px solid var(--glass-edge); background: var(--glass-strong); color: var(--text); font: inherit; font-size: 13px; font-weight: 700; line-height: 1; white-space: nowrap; cursor: pointer; text-decoration: none; transition: background 200ms, box-shadow 200ms, color 200ms; }
+.mg-btn:hover { box-shadow: 0 10px 20px -14px var(--shade); }
+.mg-btn svg { width: 16px; height: 16px; flex: none; }
+.mg-btn--primary { background: var(--btn); color: var(--on-btn); border-color: transparent; box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 12px 22px -10px var(--glow); }
+.mg-btn--primary:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 16px 28px -10px var(--glow); }
+.mg-btn--ghost { background: transparent; border-color: transparent; }
+.mg-btn--ghost:hover { background: var(--track); box-shadow: none; }
+.mg-btn--danger { background: var(--late); color: var(--on-late); border-color: transparent; }
+.mg-btn--sm { --h: 36px; padding: 0 14px; font-size: 12.5px; }
+.mg-btn--lg { --h: 48px; padding: 0 22px; font-size: 14px; }
+.mg-btn--icon { width: var(--h); padding: 0; }
+.mg-btn:disabled, .mg-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.mg-btn.is-loading { color: transparent; pointer-events: none; }
+.mg-btn.is-loading::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--on-btn); border-right-color: transparent; animation: mg-spin .8s linear infinite; }
+.mg-btn:not(.mg-btn--primary).is-loading::after { border-color: var(--text); border-right-color: transparent; }
+@keyframes mg-spin { to { rotate: 360deg; } }
+
+/* ── Badges, chips, counts, avatars ── */
+.mg-badge { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: var(--track); color: var(--text2); }
+.mg-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.mg-badge--plain::before { display: none; }
+.mg-badge--late { background: var(--late-soft); color: var(--late); }
+.mg-badge--wait { background: var(--wait-soft); color: var(--wait); }
+.mg-badge--ok { background: var(--ok-soft); color: var(--ok); }
+.mg-badge--info { background: var(--info-soft); color: var(--info); }
+.mg-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: background 200ms, color 200ms, border-color 200ms; }
+.mg-chip:hover { background: var(--track); }
+.mg-chip[aria-pressed="true"] { background: var(--pill); color: var(--on-pill); border-color: transparent; }
+.mg-chip__x { opacity: .7; }
+.mg-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--caramel); color: var(--on-caramel); font-size: 10px; font-weight: 800; }
+.mg-avatar { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--latte); color: var(--on-caramel); font-size: 11px; font-weight: 800; flex: none; }
+
+/* ── Fields ── */
+.mg-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mg-field__label { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.mg-field__label .req { color: var(--late); margin-left: 2px; }
+.mg-field__hint { font-size: 12px; color: var(--muted); }
+.mg-field__error { font-size: 12px; font-weight: 600; color: var(--late); }
+.mg-input, .mg-select, .mg-textarea { width: 100%; height: 44px; padding: 0 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-strong); color: var(--text); font: inherit; font-size: 13.5px; transition: border-color 200ms, box-shadow 200ms; }
+.mg-textarea { height: auto; min-height: 96px; padding: 12px 14px; resize: vertical; line-height: 1.5; }
+.mg-input::placeholder, .mg-textarea::placeholder { color: var(--muted); }
+.mg-input:hover, .mg-select:hover, .mg-textarea:hover { border-color: var(--glass-edge); }
+.mg-input:focus, .mg-select:focus, .mg-textarea:focus { outline: none; border-color: var(--caramel); box-shadow: 0 0 0 4px var(--wait-soft); }
+.mg-input:disabled, .mg-select:disabled, .mg-textarea:disabled { opacity: .5; cursor: not-allowed; }
+.mg-field.is-error .mg-input, .mg-field.is-error .mg-select, .mg-field.is-error .mg-textarea { border-color: var(--late); box-shadow: 0 0 0 4px var(--late-soft); }
+.mg-select { appearance: none; -webkit-appearance: none; padding-right: 38px; cursor: pointer; }
+.mg-select-wrap { position: relative; }
+.mg-select-wrap::after { content: ""; position: absolute; right: 16px; top: 50%; width: 7px; height: 7px; margin-top: -5px; border-right: 1.8px solid var(--text2); border-bottom: 1.8px solid var(--text2); rotate: 45deg; pointer-events: none; }
+.mg-input--money { text-align: right; font-variant-numeric: tabular-nums; }
+.mg-affix { position: relative; }
+.mg-affix > span { position: absolute; left: 14px; top: 50%; translate: 0 -50%; color: var(--muted); font-weight: 600; pointer-events: none; }
+.mg-affix > .mg-input { padding-left: 30px; }
+
+/* Checkbox, radio, switch */
+.mg-check, .mg-switch { display: inline-flex; align-items: center; gap: 10px; font-size: 13.5px; cursor: pointer; }
+.mg-check input { appearance: none; -webkit-appearance: none; width: 20px; height: 20px; margin: 0; border-radius: 6px; border: 1.5px solid var(--text2); background: var(--glass-strong); display: grid; place-items: center; cursor: pointer; transition: background 200ms, border-color 200ms; }
+.mg-check input[type="radio"] { border-radius: 50%; }
+.mg-check input:checked { background: var(--btn); border-color: var(--btn); }
+.mg-check input[type="checkbox"]:checked::after { content: ""; width: 5px; height: 10px; margin-top: -2px; border-right: 2px solid var(--on-btn); border-bottom: 2px solid var(--on-btn); rotate: 45deg; }
+.mg-check input[type="radio"]:checked::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--on-btn); }
+.mg-check input:disabled, .mg-switch input:disabled { opacity: .45; cursor: not-allowed; }
+.mg-switch input { appearance: none; -webkit-appearance: none; position: relative; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: var(--track); border: 1px solid var(--line); cursor: pointer; transition: background 240ms; }
+.mg-switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--glass-strong); box-shadow: 0 2px 6px -2px var(--shade); transition: translate 520ms var(--mg-spring); }
+.mg-switch input:checked { background: var(--btn); border-color: transparent; }
+.mg-switch input:checked::after { translate: 16px 0; background: var(--on-btn); }
+
+/* ── Segmented control and tabs ── */
+.mg-seg { position: relative; display: inline-flex; padding: 3px; border-radius: 999px; background: var(--track); }
+.mg-seg__thumb { position: absolute; top: 3px; left: 3px; height: 36px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--glass-edge); box-shadow: 0 6px 14px -8px var(--shade); transition: transform 640ms var(--mg-spring), width 640ms var(--mg-spring); }
+.mg-seg button { position: relative; min-width: 78px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: color 260ms; }
+.mg-seg button[aria-selected="true"], .mg-seg button[aria-checked="true"] { color: var(--text); }
+.mg-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.mg-tabs button { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 0; background: transparent; color: var(--text2); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.mg-tabs button[aria-selected="true"] { color: var(--text); }
+.mg-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2.5px; border-radius: 2px; background: var(--caramel); }
+.mg-tabs .mg-count { background: var(--track); color: var(--text2); }
+.mg-tabs button[aria-selected="true"] .mg-count { background: var(--caramel); color: var(--on-caramel); }
+
+/* ── Icon rail ── */
+.mg-rail { position: relative; width: 84px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 0 16px; border-radius: 30px; }
+.mg-rail__logo { margin-bottom: 14px; }
+.mg-rail__nav { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.mg-rail__btn { position: relative; z-index: 1; width: 48px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 16px; background: transparent; color: var(--on-pill-idle); cursor: pointer; transition: color 260ms; }
+.mg-rail__btn:hover { color: var(--text); }
+.mg-rail__btn[aria-current="page"] { color: var(--on-pill); }
+.mg-rail__btn svg { width: 20px; height: 20px; }
+.mg-rail__btn .mg-count { position: absolute; top: 5px; right: 4px; min-width: 16px; height: 16px; font-size: 9.5px; padding: 0 4px; }
+.mg-drop { position: absolute; left: 0; top: 0; width: 48px; height: 48px; background: var(--pill); border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; box-shadow: inset 0 1px 0 rgba(255,255,255,.28), inset 0 -6px 12px rgba(0,0,0,.12), 0 12px 22px -10px var(--glow); transition: transform 700ms var(--mg-brew); }
+.mg-tip { position: absolute; left: 72px; top: 10px; z-index: 10; height: 28px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; border-radius: 10px; background: var(--glass-strong); border: 1px solid var(--glass-edge); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%); box-shadow: 0 12px 24px -14px var(--shade); color: var(--text); font-size: 12px; font-weight: 700; pointer-events: none; opacity: 0; transition: transform 280ms var(--mg-out), opacity 200ms; }
+.mg-tip.is-on { opacity: 1; }
+.mg-tip .mg-count { height: 16px; min-width: 16px; }
+.mg-rail__foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.mg-rail__theme { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 16px; border: 1px solid var(--glass-edge); background: var(--glass-strong); color: var(--text); cursor: pointer; }
+.mg-rail .mg-avatar { width: 40px; height: 40px; box-shadow: 0 0 0 3px var(--glass-strong); }
+
+/* ── Page header and control bar ── */
+.mg-header { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+.mg-header__text { flex: 1 1 380px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.mg-header__sub { font-size: 14px; color: var(--text2); margin-top: 6px; }
+.mg-header__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mg-controlbar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-edge); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); box-shadow: inset 0 1px 0 var(--glass-hi), 0 20px 40px -28px var(--shade); }
+.mg-iconbtn { position: relative; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; border: 0; background: transparent; color: var(--text); cursor: pointer; }
+.mg-iconbtn:hover { background: var(--track); }
+.mg-iconbtn svg { width: 18px; height: 18px; }
+.mg-iconbtn .mg-count { position: absolute; top: 4px; right: 2px; }
+
+/* ── Quick-add dock ── */
+.mg-dock { display: inline-flex; align-items: center; gap: 6px; padding: 7px; border-radius: 999px; background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong); border: 1px solid var(--glass-edge); backdrop-filter: blur(28px) saturate(165%); -webkit-backdrop-filter: blur(28px) saturate(165%); box-shadow: inset 0 1px 0 var(--glass-hi), 0 26px 50px -24px var(--shade); }
+.mg-dock__add { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; border: 0; background: var(--btn); color: var(--on-btn); cursor: pointer; box-shadow: 0 12px 22px -10px var(--glow); }
+.mg-dock__sep { width: 1px; height: 26px; background: var(--line); margin: 0 4px; }
+.mg-dock { flex-wrap: nowrap; white-space: nowrap; }
+/* Narrow screens: the dock keeps its icons and drops the words (each button keeps its aria-label). */
+@media (max-width: 900px) { .mg-dock .mg-dock__label { display: none; } .mg-dock .mg-btn--sm { width: 40px; padding: 0; } }
+.mg-kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--line); background: var(--track); color: var(--text2); font-size: 10.5px; font-weight: 700; font-family: var(--font-sans); }
+
+/* ── Command palette ── */
+.mg-palette { width: min(640px, 100%); border-radius: 28px; overflow: hidden; display: flex; flex-direction: column; }
+.mg-palette__search { display: flex; align-items: center; gap: 12px; padding: 0 20px; height: 60px; border-bottom: 1px solid var(--line); }
+.mg-palette__search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 16px; outline: none; }
+.mg-palette__list { padding: 8px; max-height: 420px; overflow: auto; }
+.mg-palette__group { padding: 10px 12px 6px; }
+.mg-palette__item { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 14px; color: var(--text); cursor: pointer; }
+.mg-palette__item svg { width: 18px; height: 18px; color: var(--text2); flex: none; }
+.mg-palette__item[aria-selected="true"] { background: var(--track); }
+.mg-palette__item .mg-kbd, .mg-palette__item .mg-muted { margin-left: auto; }
+.mg-palette__foot { display: flex; gap: 14px; padding: 10px 20px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+
+/* ── Stat tiles and strips ── */
+.mg-tile { padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mg-tile__figure { font-size: 32px; line-height: 1.1; font-weight: 700; letter-spacing: -.03em; }
+.mg-tile__foot { font-size: 12.5px; color: var(--text2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mg-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.mg-strip > * { padding: 16px 20px; border-left: 1px solid var(--line); }
+.mg-strip > :first-child { border-left: 0; }
+.mg-strip .mg-tile__figure { font-size: 24px; }
+
+/* ── Progress and hatching (hatch = expected / not yet ready money) ── */
+.mg-progress { position: relative; display: flex; height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.mg-progress__done { background: var(--figure); border-radius: 999px; transform-origin: left; }
+.mg-progress__expected { background: var(--mg-hatch); transform-origin: left; }
+.mg-hero .mg-progress { background: rgba(255,240,225,.12); }
+.mg-hero .mg-progress__done { background: var(--on-hero); }
+.mg-shimmer { position: absolute; inset: 0 auto 0 0; width: 30%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: mg-shimmer 3.2s ease-in-out 1.6s infinite; }
+@keyframes mg-shimmer { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+.mg-hatch { background: var(--mg-hatch); }
+
+/* ── Data table (desktop) ── */
+.mg-tablewrap { overflow-x: auto; border-radius: 26px; }
+.mg-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+.mg-table th { position: sticky; top: 0; z-index: 1; height: 42px; padding: 0 14px; text-align: left; white-space: nowrap; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); background: var(--glass-strong); border-bottom: 1px solid var(--line); }
+.mg-table th[aria-sort] { cursor: pointer; }
+.mg-table th[aria-sort="ascending"]::after { content: " ↑"; } .mg-table th[aria-sort="descending"]::after { content: " ↓"; }
+.mg-table td { height: 52px; padding: 0 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.mg-table tr:last-child td { border-bottom: 0; }
+.mg-table tbody tr { transition: background 160ms; }
+.mg-table tbody tr:hover { background: var(--track); }
+.mg-table tbody tr[aria-selected="true"] { background: var(--wait-soft); }
+.mg-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mg-table .strong { font-weight: 700; }
+.mg-table .sub { display: block; font-size: 12px; color: var(--muted); }
+.mg-table .actions { text-align: right; white-space: nowrap; }
+.mg-table tfoot td { font-weight: 700; border-top: 1px solid var(--line); border-bottom: 0; }
+
+/* ── Row list (phone: rows, not tables) ── */
+.mg-rows { display: flex; flex-direction: column; }
+.mg-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+.mg-row:last-child { border-bottom: 0; }
+.mg-row__title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mg-row__amount { font-weight: 700; text-align: right; }
+.mg-row__meta { font-size: 12.5px; color: var(--muted); min-width: 0; }
+.mg-row__state { text-align: right; }
+
+/* ── Filter bar ── */
+.mg-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mg-search { position: relative; display: block; flex: 1 1 240px; min-width: 0; }
+.mg-search svg { position: absolute; left: 14px; top: 50%; translate: 0 -50%; width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
+.mg-search .mg-input { padding-left: 40px; border-radius: 999px; }
+
+/* ── Empty, loading, error ── */
+.mg-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 40px 24px; }
+.mg-empty__mark { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--track); color: var(--text2); margin-bottom: 6px; }
+.mg-empty__title { margin: 0; font-size: 15px; font-weight: 700; }
+.mg-empty__text { margin: 0; max-width: 42ch; font-size: 13px; color: var(--text2); }
+.mg-skel { position: relative; overflow: hidden; border-radius: 8px; background: var(--track); }
+.mg-skel::after { content: ""; position: absolute; inset: 0; translate: -100% 0; background: linear-gradient(90deg, transparent, var(--sheen), transparent); animation: mg-skel 1.4s ease-in-out infinite; }
+@keyframes mg-skel { to { translate: 100% 0; } }
+
+/* ── Banners and toasts ── */
+.mg-banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 18px; font-size: 13.5px; background: var(--info-soft); color: var(--text); }
+.mg-banner svg { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--info); }
+.mg-banner--late { background: var(--late-soft); } .mg-banner--late svg { color: var(--late); }
+.mg-banner--wait { background: var(--wait-soft); } .mg-banner--wait svg { color: var(--wait); }
+.mg-banner--ok { background: var(--ok-soft); } .mg-banner--ok svg { color: var(--ok); }
+.mg-banner__body { flex: 1; min-width: 0; }
+.mg-banner__body strong { display: block; }
+.mg-toast { display: inline-flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 10px 8px 16px; border-radius: 999px; font-size: 13.5px; font-weight: 600; max-width: 100%; }
+.mg-toast__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+.mg-toast--late .mg-toast__dot { background: var(--late); }
+.mg-toast--info .mg-toast__dot { background: var(--info); }
+
+/* ── Dialogs, sheets, steps ── */
+.mg-scrim { position: absolute; inset: 0; background: rgba(20,12,8,.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.mg-dialog { position: relative; width: min(560px, 100%); border-radius: 28px; display: flex; flex-direction: column; max-height: 100%; }
+.mg-dialog__head { display: flex; align-items: flex-start; gap: 12px; padding: 22px 24px 8px; }
+.mg-dialog__title { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; }
+.mg-dialog__sub { font-size: 13px; color: var(--text2); }
+.mg-dialog__head .mg-iconbtn { margin-left: auto; margin-top: -8px; margin-right: -10px; }
+.mg-dialog__body { padding: 12px 24px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.mg-dialog__foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 14px 24px 22px; }
+.mg-dialog__foot .mg-left { margin-right: auto; }
+.mg-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.mg-sheet { width: 100%; border-radius: 28px 28px 0 0; padding-bottom: 12px; }
+.mg-sheet__grab { width: 40px; height: 5px; border-radius: 999px; background: var(--line); margin: 10px auto 2px; }
+.mg-steps { display: flex; gap: 6px; align-items: center; }
+.mg-steps span { height: 6px; flex: 1; border-radius: 999px; background: var(--track); }
+.mg-steps span.is-done { background: var(--figure); }
+.mg-steps span.is-on { background: var(--caramel); }
+
+/* ── Record header ── */
+.mg-record { padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; }
+.mg-crumbs { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.mg-crumbs a { color: var(--text2); text-decoration: none; font-weight: 600; }
+.mg-record__top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.mg-record__title { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.15; letter-spacing: -.015em; }
+.mg-record__actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.mg-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 20px; margin: 0; }
+.mg-facts dt { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); }
+.mg-facts dd { margin: 2px 0 0; font-weight: 700; }
+
+/* ── Timeline ── */
+.mg-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.mg-timeline li { position: relative; display: grid; grid-template-columns: 22px 1fr auto; gap: 12px; padding-bottom: 18px; }
+.mg-timeline li::before { content: ""; position: absolute; left: 10px; top: 18px; bottom: 0; width: 1.5px; background: var(--line); }
+.mg-timeline li:last-child::before { display: none; }
+.mg-timeline__dot { width: 12px; height: 12px; margin: 4px 0 0 5px; border-radius: 50%; background: var(--sage); box-shadow: 0 0 0 4px var(--glass-strong); }
+.mg-timeline__dot--late { background: var(--late); } .mg-timeline__dot--ok { background: var(--ok); } .mg-timeline__dot--wait { background: var(--caramel); } .mg-timeline__dot--info { background: var(--info); }
+.mg-timeline__what { font-weight: 600; }
+.mg-timeline__meta { font-size: 12.5px; color: var(--muted); }
+.mg-timeline__when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* ── Charts ── */
+.mg-chart { width: 100%; height: auto; overflow: visible; }
+.mg-chart text { fill: var(--muted); font-family: var(--font-sans); font-size: 11px; }
+.mg-chart .grid { stroke: var(--line); stroke-width: 1; }
+.mg-chart .bar { fill: var(--figure); }
+.mg-chart .bar-soft { fill: var(--latte); }
+.mg-chart .line { fill: none; stroke: var(--figure); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mg-chart .line-exp { fill: none; stroke: var(--caramel); stroke-width: 2; stroke-dasharray: 5 5; }
+.mg-chart .area { fill: var(--track); }
+.mg-chart .end { fill: var(--figure); stroke: var(--glass-strong); stroke-width: 3; }
+.mg-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text2); }
+.mg-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* ── Motion off: reduced motion, or the pause button (html.mg-paused) ── */
+.mg-paused .mg-blob, .mg-paused .mg-shimmer, .mg-paused .mg-skel::after { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .mg-blob, .mg-shimmer, .mg-skel::after { animation: none; }
+  .mg-drop, .mg-seg__thumb, .mg-switch input::after, .mg-tip { transition-duration: 1ms; }
+}
+
+/* ── Pop-ups open with their own motion (mount = open). Closing is a quick 160ms fade + scale .97 in code. ── */
+@keyframes mg-pop-in { from { opacity: 0; transform: translate(var(--pop-x, 0px), var(--pop-y, 8px)) scale(.9); filter: blur(8px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes mg-item-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes mg-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mg-dialog-in { from { opacity: 0; transform: translateY(18px) scale(.95); filter: blur(10px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes mg-drop-in { from { opacity: 0; transform: translateY(-16px) scale(.96); filter: blur(8px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes mg-sheet-in { from { transform: translateY(calc(100% + 120px)); } to { transform: none; } }
+@keyframes mg-toast-in { from { opacity: 0; transform: translateY(22px) scale(.88); } 60% { opacity: 1; } to { opacity: 1; transform: none; } }
+/* Menus and panels unfold from the control that opened them: set --pop-origin (and --pop-x / --pop-y toward it). */
+.mg-pop { transform-origin: var(--pop-origin, top left); animation: mg-pop-in 480ms var(--mg-spring) both; }
+.mg-pop > * { animation: mg-item-in 360ms var(--mg-out) both; animation-delay: 150ms; }
+.mg-pop > :nth-child(2) { animation-delay: 170ms; } .mg-pop > :nth-child(3) { animation-delay: 190ms; } .mg-pop > :nth-child(4) { animation-delay: 210ms; }
+.mg-pop > :nth-child(5) { animation-delay: 230ms; } .mg-pop > :nth-child(6) { animation-delay: 250ms; } .mg-pop > :nth-child(7) { animation-delay: 270ms; }
+.mg-pop > :nth-child(8) { animation-delay: 290ms; } .mg-pop > :nth-child(n+9) { animation-delay: 310ms; }
+.mg-scrim { animation: mg-fade-in 260ms ease-out both; }
+.mg-dialog { animation: mg-dialog-in 560ms var(--mg-spring) both; }
+.mg-palette { transform-origin: top center; animation: mg-drop-in 500ms var(--mg-spring) both; }
+.mg-palette__list > * { animation: mg-item-in 320ms var(--mg-out) both; animation-delay: 120ms; }
+.mg-palette__list > :nth-child(2) { animation-delay: 140ms; } .mg-palette__list > :nth-child(3) { animation-delay: 160ms; } .mg-palette__list > :nth-child(4) { animation-delay: 180ms; }
+.mg-palette__list > :nth-child(5) { animation-delay: 200ms; } .mg-palette__list > :nth-child(n+6) { animation-delay: 220ms; }
+.mg-sheet { animation: mg-sheet-in 640ms var(--mg-brew) both; }
+.mg-toast, .mg-notice { animation: mg-toast-in 620ms var(--mg-brew) both; }
+
+/* ── Theme shockwave (View Transitions; MochaGlass.switchTheme sets the classes and --mg-vt-x/y/r on <html>) ──
+   To dark: the new (dark) page spreads out of the button inside a circle, a glowing ring riding its edge, at an even pace (gentle start and end).
+   To light: the old (dark) page is pulled back into the button; the ring rushes inward. */
+/* During the wave every colour switches at once, so the wave edge is the only boundary (no half-faded buttons). */
+html.mg-vt-spread *, html.mg-vt-absorb * { transition: none !important; }
+html.mg-vt-spread::view-transition-old(root), html.mg-vt-spread::view-transition-new(root),
+html.mg-vt-absorb::view-transition-old(root), html.mg-vt-absorb::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+html.mg-vt-spread::view-transition-new(root) { z-index: 2; animation: mg-vt-spread 1400ms cubic-bezier(.5,.05,.42,1) both; }
+html.mg-vt-absorb::view-transition-old(root) { z-index: 2; animation: mg-vt-absorb 1300ms cubic-bezier(.5,.05,.42,1) both; }
+html.mg-vt-absorb::view-transition-new(root) { z-index: 1; }
+/* The circle is placed in percentages of the page snapshot, not pixels: some browsers (the Claude app's, on 2x screens)
+   read pixel lengths on the snapshot at device scale, which halves and shifts a pixel circle. Percentages always land. */
+@keyframes mg-vt-spread { from { clip-path: circle(var(--mg-vt-r0p) at var(--mg-vt-xp) var(--mg-vt-yp)); } to { clip-path: circle(var(--mg-vt-rp) at var(--mg-vt-xp) var(--mg-vt-yp)); } }
+@keyframes mg-vt-absorb { from { clip-path: circle(var(--mg-vt-rp) at var(--mg-vt-xp) var(--mg-vt-yp)); } to { clip-path: circle(var(--mg-vt-r0p) at var(--mg-vt-xp) var(--mg-vt-yp)); } }
+/* The ring: the button's own transition group, grown into a glowing circle; the button stays drawn at its centre. */
+html.mg-vt-spread::view-transition-group(mg-wave), html.mg-vt-absorb::view-transition-group(mg-wave) { z-index: 3; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--wave); box-shadow: 0 0 30px 8px var(--glow), inset 0 0 26px 4px var(--glow); }
+html.mg-vt-spread::view-transition-group(mg-wave) { animation: mg-ring-out 1400ms cubic-bezier(.5,.05,.42,1) both; }
+html.mg-vt-absorb::view-transition-group(mg-wave) { animation: mg-ring-in 1300ms cubic-bezier(.5,.05,.42,1) both; }
+html.mg-vt-spread::view-transition-image-pair(mg-wave), html.mg-vt-absorb::view-transition-image-pair(mg-wave) { position: absolute; left: 50%; top: 50%; width: var(--mg-vt-w); height: var(--mg-vt-h); transform: translate(-50%, -50%); }
+html.mg-vt-spread::view-transition-old(mg-wave), html.mg-vt-absorb::view-transition-old(mg-wave) { animation: none; opacity: 0; }
+html.mg-vt-spread::view-transition-new(mg-wave), html.mg-vt-absorb::view-transition-new(mg-wave) { animation: none; opacity: 1; width: 100%; height: 100%; }
+@keyframes mg-ring-out {
+  from { width: 44px; height: 44px; transform: translate(calc(var(--mg-vt-x) - 22px), calc(var(--mg-vt-y) - 22px)); }
+  90% { opacity: 1; }
+  to { width: calc(var(--mg-vt-r) * 2); height: calc(var(--mg-vt-r) * 2); transform: translate(calc(var(--mg-vt-x) - var(--mg-vt-r)), calc(var(--mg-vt-y) - var(--mg-vt-r))); opacity: 0; } }
+@keyframes mg-ring-in {
+  from { width: calc(var(--mg-vt-r) * 2); height: calc(var(--mg-vt-r) * 2); transform: translate(calc(var(--mg-vt-x) - var(--mg-vt-r)), calc(var(--mg-vt-y) - var(--mg-vt-r))); opacity: .2; }
+  15% { opacity: 1; }
+  92% { opacity: 1; }
+  to { width: 44px; height: 44px; transform: translate(calc(var(--mg-vt-x) - 22px), calc(var(--mg-vt-y) - 22px)); opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-pop, .mg-pop > *, .mg-scrim, .mg-dialog, .mg-palette, .mg-palette__list > *, .mg-sheet, .mg-toast, .mg-notice { animation: none; }
+}
+
+/* ── The shell on narrow screens (under 720px): the rail and dock give way to a bottom tab bar,
+   tables to rows, and pop-ups to sheets. Mark the page ground .mg-shell and its parts as below. ── */
+.mg-shell__tabbar, .mg-shell__narrow { display: none; }
+@media (max-width: 719px) {
+  .mg-shell { padding: 16px 16px 108px !important; gap: 14px !important; min-height: 100vh !important; }
+  .mg-shell__rail, .mg-shell__dock, .mg-shell__wide { display: none !important; }
+  .mg-shell__narrow { display: block; }
+  .mg-shell__tabbar { display: grid; }
+  .mg-shell .mg-display { font-size: 28px; }
+  /* Chip rows become one line you swipe sideways; the search keeps the full width above them. */
+  .mg-shell .mg-chiprow { flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: none; flex-basis: 100% !important; }
+  .mg-shell .mg-chiprow::-webkit-scrollbar { display: none; }
+  .mg-shell .mg-chiprow > * { flex: none; }
+  .mg-shell .mg-filterbar .mg-search { flex-basis: 100%; }
+}
+
+/* ── Selects open a picker in the Mocha Glass style, never the system's white list and blue highlight.
+   Chrome 135+ (and the Claude app) style the open list fully; other browsers get matching option colours. ── */
+.mg select option { background-color: var(--canvas); color: var(--text); }
+@supports (appearance: base-select) {
+  .mg select:not([multiple]), .mg select:not([multiple])::picker(select) { appearance: base-select; }
+  .mg select:not([multiple]) { display: inline-flex; align-items: center; }
+  .mg select:not([multiple])::picker-icon { display: none; }
+  .mg select:not([multiple])::picker(select) {
+    margin-block: 6px; padding: 6px; min-width: anchor-size(width); max-height: min(360px, 60vh);
+    border: 1px solid var(--glass-edge); border-radius: 16px; color: var(--text);
+    background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong);
+    backdrop-filter: blur(28px) saturate(165%); -webkit-backdrop-filter: blur(28px) saturate(165%);
+    box-shadow: inset 0 1px 0 var(--glass-hi), 0 22px 44px -20px var(--shade);
+    transform-origin: top center; transition: opacity 200ms, transform 320ms var(--mg-spring), overlay 320ms allow-discrete, display 320ms allow-discrete;
+  }
+  .mg select:not([multiple]):not(:open)::picker(select) { opacity: 0; transform: translateY(-6px) scale(.97); }
+  @starting-style { .mg select:not([multiple]):open::picker(select) { opacity: 0; transform: translateY(-6px) scale(.97); } }
+  .mg select option { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .mg select option::checkmark { display: none; }
+  .mg select option:hover, .mg select option:focus-visible { background: var(--track); outline: none; }
+  .mg select option:checked { background: var(--pill); color: var(--on-pill); font-weight: 700; }
+  .mg select option:disabled { color: var(--muted); cursor: default; }
+}
+@media (prefers-reduced-motion: reduce) { .mg select::picker(select) { transition: none; } }
+
+/* ── Date and time fields: the Mocha Glass calendar (components/pickers.js opens it; the browser's own picker is off) ── */
+.mg input[type="date"], .mg input[type="month"], .mg input[type="datetime-local"] { --mg-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237A6352' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='3'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E"); }
+.mg input[type="time"] { --mg-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237A6352' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
+:is(.dark, [data-theme="dark"]) input[type="date"], :is(.dark, [data-theme="dark"]) input[type="month"], :is(.dark, [data-theme="dark"]) input[type="datetime-local"] { --mg-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23A8927C' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='3'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E"); }
+:is(.dark, [data-theme="dark"]) input[type="time"] { --mg-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23A8927C' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E"); }
+.mg input[type="date"], .mg input[type="month"], .mg input[type="datetime-local"], .mg input[type="time"] { background-image: var(--mg-ico); background-repeat: no-repeat; background-position: right 13px center; background-size: 16px 16px; padding-right: 40px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.mg input::-webkit-calendar-picker-indicator { display: none; }
+.mg input::-webkit-datetime-edit-text { color: var(--muted); padding: 0 1px; }
+.mg input::-webkit-datetime-edit-day-field, .mg input::-webkit-datetime-edit-month-field, .mg input::-webkit-datetime-edit-year-field, .mg input::-webkit-datetime-edit-hour-field, .mg input::-webkit-datetime-edit-minute-field, .mg input::-webkit-datetime-edit-ampm-field { background-color: transparent; color: var(--text); }
+
+.mg-cal { position: fixed; inset: auto; margin: 0; width: 312px; max-width: calc(100vw - 16px); padding: 12px; overflow: visible; border: 1px solid var(--glass-edge); border-radius: 22px; color: var(--text); background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong); backdrop-filter: blur(28px) saturate(165%); -webkit-backdrop-filter: blur(28px) saturate(165%); box-shadow: inset 0 1px 0 var(--glass-hi), 0 22px 44px -20px var(--shade); font-family: var(--font-sans); font-size: 13.5px; line-height: 1.4; font-variant-numeric: tabular-nums; transform-origin: var(--pop-origin, top left); }
+.mg-cal:popover-open { animation: mg-pop-in 480ms var(--mg-spring) both; }
+.mg-cal--wide { width: 460px; }
+.mg-cal--time { width: 168px; }
+.mg-cal__body { display: flex; gap: 10px; }
+.mg-cal__main { flex: 1 1 auto; min-width: 0; }
+.mg-cal__head { display: flex; align-items: center; gap: 2px; margin-bottom: 2px; }
+.mg-cal__title { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 700; text-align: left; cursor: pointer; transition: background 160ms; }
+.mg-cal__title:disabled { cursor: default; }
+.mg-cal__title svg { color: var(--muted); transition: rotate 420ms var(--mg-spring); }
+.mg-cal__title[aria-expanded="true"] svg { rotate: 180deg; }
+.mg-cal__nav { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--text2); cursor: pointer; transition: background 160ms; }
+.mg-cal__title:not(:disabled):hover, .mg-cal__nav:hover { background: var(--track); }
+.mg-cal__dow { display: grid; grid-template-columns: repeat(7, 1fr); }
+.mg-cal__dow span { height: 28px; display: grid; place-items: center; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.mg-cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.mg-cal__grid--months { grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 6px 0 2px; }
+.mg-cal__grid.is-slide-l { animation: mg-cal-l 280ms var(--mg-out); }
+.mg-cal__grid.is-slide-r { animation: mg-cal-r 280ms var(--mg-out); }
+.mg-cal__day { position: relative; height: 38px; min-width: 0; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background 160ms, color 160ms; }
+.mg-cal__grid--months .mg-cal__day { height: 50px; }
+.mg-cal__day:hover { background: var(--track); }
+.mg-cal__day.is-out { color: var(--muted); opacity: .55; }
+.mg-cal__day.is-today { color: var(--caramel-text); font-weight: 700; box-shadow: inset 0 0 0 1.5px var(--caramel); }
+.mg-cal__day[aria-selected="true"] { background: var(--pill); color: var(--on-pill); font-weight: 700; box-shadow: 0 8px 16px -10px var(--shade); animation: mg-cal-pick 560ms var(--mg-spring); }
+.mg-cal__day:disabled { color: var(--muted); opacity: .4; background: transparent; box-shadow: none; text-decoration: line-through; cursor: not-allowed; }
+.mg-cal__times { flex: none; width: 128px; max-height: 312px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 4px 0 10px; border-left: 1px solid var(--line); }
+.mg-cal--time .mg-cal__times { width: 100%; max-height: 288px; padding: 0 4px 0 0; border-left: 0; }
+.mg-cal__time { flex: none; height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; transition: background 160ms; }
+.mg-cal__time:hover { background: var(--track); }
+.mg-cal__time[aria-selected="true"] { background: var(--pill); color: var(--on-pill); font-weight: 700; }
+.mg-cal__foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.mg-cal__foot button { height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--caramel-text); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: background 160ms; }
+.mg-cal__foot button:hover { background: var(--track); }
+.mg-cal__foot .mg-cal__done { margin-left: auto; padding: 0 16px; background: var(--btn); color: var(--on-btn); }
+.mg-cal__foot .mg-cal__done:hover { background: var(--btn); box-shadow: 0 8px 16px -10px var(--shade); }
+.mg-cal button:focus-visible { outline: 2px solid var(--caramel); outline-offset: 1px; }
+@keyframes mg-cal-pick { from { transform: scale(.8); } to { transform: none; } }
+@keyframes mg-cal-l { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes mg-cal-r { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+
+/* ── File fields: a drop zone over a hidden file input. pickers.js adds .is-drag and .has-file. ── */
+.mg-file { position: relative; width: 100%; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 14px; border: 1.5px dashed var(--line); border-radius: 14px; background: var(--track); color: var(--text2); font-size: 13px; cursor: pointer; transition: border-color 200ms, box-shadow 200ms, background 200ms; }
+.mg-file > input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.mg-file:hover { border-color: var(--caramel); }
+.mg-file:focus-within { border-color: var(--caramel); box-shadow: 0 0 0 4px var(--wait-soft); }
+.mg-drop__text { flex: 1 1 auto; min-width: 0; }
+.mg-drop__file { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 700; color: var(--text); overflow: hidden; }
+.mg-drop__file small { font-size: 12px; font-weight: 600; color: var(--muted); }
+.mg-drop__bar { position: absolute; left: 14px; right: 14px; bottom: 7px; height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.mg-drop__bar > i { display: block; height: 100%; border-radius: inherit; background: repeating-linear-gradient(135deg, var(--caramel) 0 6px, transparent 6px 10px), var(--wait-soft); }
+.mg-file.is-error, .mg-field.is-error .mg-file { border-color: var(--late); border-style: solid; background: var(--late-soft); }
+.is-drag { border-color: var(--caramel) !important; border-style: solid !important; background: var(--wait-soft) !important; box-shadow: 0 0 0 4px var(--wait-soft) !important; animation: mg-drop-jelly 620ms var(--mg-spring); }
+.has-file { border-style: solid !important; border-color: var(--glass-edge) !important; background: var(--glass-strong) !important; }
+.has-file > :not(input):not(svg):not(.mg-btn):not(.mg-drop__bar) { display: none !important; }
+.has-file::before { content: attr(data-file); order: 1; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: var(--text); }
+.has-file > svg { order: 0; color: var(--sage); }
+.has-file > .mg-btn { order: 2; }
+@keyframes mg-drop-jelly { 0% { transform: scale(1); } 30% { transform: scale(1.015, .985); } 100% { transform: none; } }
+.mg input[type="file"]::file-selector-button { height: 36px; margin-right: 12px; padding: 0 14px; border: 1px solid var(--glass-edge); border-radius: 999px; background: var(--glass-strong); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.mg input[type="file"] { color: var(--muted); font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) { .mg-cal:popover-open, .mg-cal__grid, .mg-cal__day, .is-drag { animation: none !important; } .mg-cal__title svg { transition: none; } }
+.mg-paused .mg-cal:popover-open, .mg-paused .mg-cal__grid, .mg-paused .mg-cal__day, .mg-paused .is-drag { animation: none !important; }
+
+/* ── Toast: the warning tone (saved, but something needs a look) ── */
+.mg-toast--wait .mg-toast__dot { background: var(--wait); }
+
+/* ── Combobox: a text field with suggestions (type or pick). Native <input list> + <datalist>; pickers.js swaps the
+   browser's list for this glass one. "Use 'X'" adds what you typed when it isn't in the list. ── */
+.mg input[list], .mg input[data-mg-list] { padding-right: 38px; background-image: var(--mg-chev); background-repeat: no-repeat; background-position: right 15px center; background-size: 12px 12px; --mg-chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2368513F' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); }
+:is(.dark, [data-theme="dark"]) input[list], :is(.dark, [data-theme="dark"]) input[data-mg-list] { --mg-chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23CDB8A2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); }
+.mg input::-webkit-calendar-picker-indicator { display: none !important; }
+.mg-list { position: fixed; inset: auto; margin: 0; padding: 6px; max-height: min(320px, 50vh); overflow-y: auto; border: 1px solid var(--glass-edge); border-radius: 16px; color: var(--text); background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong); backdrop-filter: blur(28px) saturate(165%); -webkit-backdrop-filter: blur(28px) saturate(165%); box-shadow: inset 0 1px 0 var(--glass-hi), 0 22px 44px -20px var(--shade); font-family: var(--font-sans); font-size: 13.5px; transform-origin: var(--pop-origin, top left); }
+.mg-list:popover-open { animation: mg-pop-in 360ms var(--mg-spring) both; }
+.mg-list__opt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 6px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.mg-list__opt small { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); }
+.mg-list__opt mark { background: none; color: var(--caramel-text); font-weight: 800; }
+.mg-list__opt:hover, .mg-list__opt.is-active { background: var(--track); }
+.mg-list__opt[aria-selected="true"] { background: var(--pill); color: var(--on-pill); }
+.mg-list__opt[aria-selected="true"] small, .mg-list__opt[aria-selected="true"] mark { color: inherit; }
+.mg-list__new { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.mg-list__new .mg-list__opt { color: var(--caramel-text); }
+.mg-list__empty { padding: 10px 12px; color: var(--muted); font-size: 13px; }
+.mg-list__new:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.mg-list__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Menu: the items inside a pop-up menu (More actions, row ⋯, account menu) ── */
+.mg-menu { display: flex; flex-direction: column; gap: 2px; min-width: 220px; padding: 6px; border-radius: 18px; }
+.mg-menu__item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; transition: background 160ms; }
+.mg-menu__item svg { width: 16px; height: 16px; flex: none; color: var(--text2); }
+.mg-menu__item:hover { background: var(--track); }
+.mg-menu__item small { margin-left: auto; font-size: 12px; color: var(--muted); }
+.mg-menu__item--danger, .mg-menu__item--danger svg { color: var(--late); }
+.mg-menu__item:disabled { opacity: .45; cursor: not-allowed; background: transparent; }
+.mg-menu__sep { height: 1px; margin: 4px 8px; background: var(--line); }
+.mg-menu__label { padding: 8px 12px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* ── Flow ladder: one record's steps (quotation → PO → invoiced → collected; project checklist headline).
+   Discs: done (coffee, tick), current (caramel ring), blocked (late ring, !), next (quiet). Stacks on a phone. ── */
+.mg-ladder { display: flex; align-items: flex-start; gap: 0; margin: 0; padding: 0; list-style: none; }
+.mg-ladder__step { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 6px; text-align: center; }
+.mg-ladder__step::before { content: ""; position: absolute; top: 16px; left: calc(-50% + 22px); right: calc(50% + 22px); height: 2px; border-radius: 2px; background: var(--line); }
+.mg-ladder__step:first-child::before { display: none; }
+.mg-ladder__step.is-done::before, .mg-ladder__step.is-current::before, .mg-ladder__step.is-blocked::before { background: var(--figure); }
+.mg-ladder__disc { position: relative; z-index: 1; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid var(--line); background: var(--glass-strong); color: var(--muted); font-size: 13px; font-weight: 800; }
+.mg-ladder__disc svg { width: 16px; height: 16px; }
+.mg-ladder__step.is-done .mg-ladder__disc { border-color: var(--btn); background: var(--btn); color: var(--on-btn); }
+.mg-ladder__step.is-current .mg-ladder__disc { border: 2px solid var(--caramel); color: var(--caramel-text); box-shadow: 0 0 0 5px var(--wait-soft); }
+.mg-ladder__step.is-blocked .mg-ladder__disc { border: 2px solid var(--late); color: var(--late); box-shadow: 0 0 0 5px var(--late-soft); }
+.mg-ladder__text { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.mg-ladder__label { font-size: 12.5px; font-weight: 700; color: var(--text); line-height: 1.3; }
+.mg-ladder__note { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.mg-ladder__step.is-blocked .mg-ladder__note { color: var(--late); }
+@media (max-width: 719px) {
+  .mg-ladder { flex-direction: column; gap: 14px; }
+  .mg-ladder__step { flex-direction: row; align-items: center; text-align: left; gap: 12px; padding: 0; }
+  .mg-ladder__step::before { top: -14px; bottom: auto; left: 16px; right: auto; width: 2px; height: 14px; }
+  .mg-ladder__text { align-items: flex-start; }
+}
+
+/* ── Focus and hover, shown on purpose (for the States card): .is-focus draws the keyboard ring. ── */
+.mg .is-focus { outline: 2px solid var(--caramel); outline-offset: 2px; }
+.mg .mg-input.is-focus { outline: none; border-color: var(--caramel); box-shadow: 0 0 0 4px var(--wait-soft); }

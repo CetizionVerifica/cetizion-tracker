@@ -302,7 +302,7 @@ function ThemeChoice() {
   useEffect(() => setReady(true), []);
   if (!ready) return null;
   return (
-    <DropdownMenuRadioGroup value={theme || 'dark'} onValueChange={setTheme}>
+    <DropdownMenuRadioGroup value={theme || 'light'} onValueChange={setTheme}>
       <DropdownMenuRadioItem value="light"><Sun className="size-4" aria-hidden="true" />Light</DropdownMenuRadioItem>
       <DropdownMenuRadioItem value="dark"><Moon className="size-4" aria-hidden="true" />Dark</DropdownMenuRadioItem>
       <DropdownMenuRadioItem value="system"><Monitor className="size-4" aria-hidden="true" />Match the system</DropdownMenuRadioItem>
@@ -540,7 +540,7 @@ export default function App() {
   return (
     <SidebarContext.Provider value={sidebar}>
     <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} mode={mode} />
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen bg-transparent text-foreground">
       {/* Below lg the sidebar is a Sheet over the page, not a column
           beside it: 240px of a 390px screen left the content a hundred and
           fifty, which wrapped every sentence one word per line. Above lg it
@@ -657,7 +657,7 @@ export function PageHeader({ title, subtitle, actions }) {
   // Beside it they are `shrink-0`, so three buttons left the title a
   // column two words wide and pushed the page past the viewport.
   return (
-    <header className="sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-background/95 px-4 py-4 backdrop-blur sm:flex-row sm:items-start sm:px-6">
+    <header className="sticky top-0 z-20 flex flex-col gap-3 border-b border-border bg-glass px-4 py-4 backdrop-blur-[28px] backdrop-saturate-[1.65] sm:flex-row sm:items-start sm:px-6">
       <Button
         variant="ghost"
         size="icon"

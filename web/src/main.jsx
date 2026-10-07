@@ -1,5 +1,11 @@
 import React from 'react';
 import './styles/globals.css';
+// Mocha Glass: the motion (jelly, press, count-ups, pause, theme shockwave) and the
+// pickers (glass calendar for date/month/time fields, glass combobox for input[list],
+// file drop zones). Both act on everything inside .mg, which is the <body>.
+import { installMotion } from './styles/mocha/motion.js';
+import './styles/mocha/pickers.js';
+import SceneBackdrop from './components/SceneBackdrop.jsx';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { ThemeProvider } from 'next-themes';
@@ -13,6 +19,11 @@ import { startErrorReporting } from './lib/errorReporting.js';
 import { EnvironmentBanner } from './components/EnvironmentBanner.jsx';
 
 startErrorReporting();
+
+// .mg on <body> rather than #root, so Radix portals (dialogs, menus) and the
+// pickers' own pop-ups, all appended to <body>, are inside it too.
+document.body.classList.add('mg');
+installMotion();
 
 // A client's acceptance link (#53) opens outside the signed-in app.
 const acceptToken = window.location.pathname.match(/^\/accept\/([A-Za-z0-9_-]+)$/)?.[1];
@@ -32,9 +43,12 @@ createRoot(bannerRoot).render(<EnvironmentBanner />);
  * portal are branded surfaces a client sees once, from a link, and C18
  * draws them dark — so they are pinned dark rather than following a
  * setting belonging to whoever last used this browser.
+ *
+ * Light is the default (Sami, 8 Oct, Mocha Glass). The theme is written as
+ * both the .dark class (Tailwind, shadcn) and data-theme (Mocha Glass).
  */
 const Theme = ({ children, forced }) => (
-  <ThemeProvider attribute="class" defaultTheme="dark" enableSystem storageKey="cetizion.theme" forcedTheme={forced}>
+  <ThemeProvider attribute={['class', 'data-theme']} defaultTheme="light" enableSystem storageKey="cetizion.theme" forcedTheme={forced}>
     {children}
   </ThemeProvider>
 );
@@ -44,6 +58,7 @@ createRoot(document.getElementById('root')).render(
   portalPath ? <Theme forced="dark"><Portal loginToken={portalPath[1]} /></Theme> :
   <React.StrictMode>
     <Theme>
+      <SceneBackdrop />
       <BrowserRouter>
         <ToastProvider>
           <AuthProvider>

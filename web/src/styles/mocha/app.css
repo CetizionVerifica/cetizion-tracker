@@ -1,0 +1,45 @@
+/* Glue between the Mocha Glass design system (tokens.css, bundle.css) and the app's
+   shadcn components. Only what the system's own classes cannot say from inside a
+   React component: the fixed scene, sheet slide keyframes, and the sonner toasts. */
+
+/* The scene sits behind the whole app, fixed, under every page. */
+.mg-backdrop { position: fixed !important; inset: 0; z-index: -1; pointer-events: none; }
+
+/* Side sheets slide in on the Brew spring (bottom sheets use the system's mg-sheet-in). */
+@keyframes mg-sheet-r-in { from { transform: translateX(calc(100% + 40px)); } to { transform: none; } }
+@keyframes mg-sheet-l-in { from { transform: translateX(calc(-100% - 40px)); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sheet-content"], [data-slot="dialog-content"] { animation-duration: 1ms !important; }
+}
+.mg-paused [data-slot="sheet-content"], .mg-paused [data-slot="dialog-content"],
+.mg-paused .mg-pop, .mg-paused .mg-pop > *, .mg-paused .mg-scrim { animation-duration: 1ms !important; animation-delay: 0ms !important; }
+
+/* Toasts: a strong-glass pill, bottom of the screen, a dot of colour for the outcome.
+   Sonner injects its own unlayered styles at runtime, so these carry its attributes too. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  border-radius: 999px;
+  min-height: 48px;
+  padding: 8px 14px 8px 16px;
+  gap: 10px;
+  background: linear-gradient(180deg, var(--sheen) 0%, transparent 42%), var(--glass-strong);
+  border: 1px solid var(--glass-edge);
+  color: var(--text);
+  backdrop-filter: blur(28px) saturate(165%);
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 30px 60px -30px var(--shade);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] { color: var(--text2); font-weight: 500; }
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] { color: var(--ok); }
+[data-sonner-toaster] [data-sonner-toast][data-type="error"] [data-icon] { color: var(--late); }
+[data-sonner-toaster] [data-sonner-toast][data-type="warning"] [data-icon] { color: var(--wait); }
+[data-sonner-toaster] [data-sonner-toast][data-type="info"] [data-icon],
+[data-sonner-toaster] [data-sonner-toast][data-type="default"] [data-icon] { color: var(--info); }
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+  background: var(--glass-strong); border-color: var(--glass-edge); color: var(--text2);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  border-radius: 999px; background: var(--btn); color: var(--on-btn); font-weight: 700; height: 32px; padding: 0 14px;
+}
