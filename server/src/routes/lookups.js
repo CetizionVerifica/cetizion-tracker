@@ -4,6 +4,8 @@ import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { CATEGORY_SETTINGS, assertCategoriesUnused, parseCategoryList } from '../lib/reportDefinitions.js';
+import { smtpMaySendAs } from '../lib/mail.js';
+import { ApiError } from '../middleware/error.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
 import { isSequence, nextId, yearFor } from '../lib/sequences.js';
@@ -190,6 +192,43 @@ settingsRouter.get('/', async (req, res) => {
   res.json({ data: rows });
 });
 
+const unprocessable = (message) => new ApiError(422, message, { fields: { value: message } });
+const isNone = (v) => v.toLowerCase() === 'none';
+
+/**
+ * Who the scheduled reports go from (mis-report-sender-plan.md §A3): saved
+ * only when the reports could use it, so a wrong value is refused with the
+ * reason instead of being found at 08:56.
+ */
+const SENDER_SETTINGS = {
+  async mis_sender_account_id(v) {
+    if (isNone(v)) return 'none';
+    if (!/^\d+$/.test(v)) throw unprocessable('Choose a connected mailbox, or none for the SMTP sender');
+    const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [Number(v)]);
+    if (!a || a.status === 'disconnected') throw unprocessable('That mailbox is not connected');
+    // A mailbox that needs reconnecting may be chosen (it is still the right
+    // one); the card says so and the reports fall back until it is fixed.
+    if (!a.is_shared && !a.may_send_reports) throw unprocessable(`${a.email} is a personal mailbox. Its owner allows reports to be sent from it on the Mailboxes page.`);
+    return String(a.id);
+  },
+  async mis_sender_address(v) {
+    if (isNone(v)) return 'none';
+    const address = v.trim();
+    if (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(address)) throw unprocessable('Enter an email address, or none');
+    const { rows: [s] } = await query(`SELECT value FROM settings WHERE key = 'mis_sender_account_id'`);
+    if (!/^\d+$/.test(String(s?.value || '').trim()) && !smtpMaySendAs(address)) {
+      throw unprocessable(`The SMTP sender cannot send as ${address}. Add it to EMAIL_FROM_ALLOWED on the server, or send through a mailbox that has Send As on it.`);
+    }
+    return address;
+  },
+  async mis_sender_name(v) {
+    if (isNone(v)) return 'none';
+    const name = v.trim();
+    if (name.length > 80 || /[<>"\r\n]/.test(name)) throw unprocessable('A name of up to 80 characters, without < > or quotes');
+    return name;
+  },
+};
+
 // Changing a setting changes what the whole tracker computes — an FX rate
 // re-values every historical deal in every report — so it is an admin act.
 // Reading them stays open: the lists and rates drive forms sales users need.
@@ -211,6 +250,7 @@ settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
   // The Reports section's category lists are JSON (lib/reportDefinitions.js):
   // saved cleaned, or refused with the reason, never stored half-readable.
   let stored = value.trim();
+  if (Object.hasOwn(SENDER_SETTINGS, req.params.key)) stored = await SENDER_SETTINGS[req.params.key](stored);
   if (Object.hasOwn(CATEGORY_SETTINGS, req.params.key)) {
     const names = parseCategoryList(value);
     await assertCategoriesUnused({ query }, req.params.key, names);

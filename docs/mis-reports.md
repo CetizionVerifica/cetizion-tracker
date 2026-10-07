@@ -10,7 +10,7 @@ and the team have entered. The plan is in
 | **Daily Sales Briefing** | every day at 08:56 IST | the previous day |
 | **Weekly Sales MIS Report** | every Monday at 08:54 IST | the previous Monday to Sunday |
 
-Both go to the same recipients, **from the shared sales mailbox** with the
+Both go to the same recipients, **from the chosen sender** (see below) with the
 **PDF attached**. The weekly PDF is two A4 pages. The daily PDF follows the
 reference briefing ([mis-briefing-fix-plan.md](mis-briefing-fix-plan.md) §3):
 at a glance (Metric / Count / Detail), key highlights with their source
@@ -98,17 +98,40 @@ The report goes either way.
 
 - each report's **on/off switch**, a **preview** of the figures and the
   email as of any date, the **PDF**, and **Send now**;
-- the recipients (To, Cc), the **sender mailbox** (a connected shared
-  mailbox; otherwise the server's SMTP sender), and the Overdue threshold;
-- the **run history**: every report generated, how it went (sales mailbox,
-  SMTP, or logged only), to whom, the PDF, and **Resend**.
+- the recipients (To, Cc) and the Overdue threshold;
+- the **Sender**: the mailbox the reports go through (a connected shared
+  mailbox, a personal mailbox whose owner allowed it, or the server's SMTP
+  sender), an optional **Send as** address and **display name**, a line
+  saying what the next report will go from, and **Send a test to me**;
+- the **run history**: every report generated, how it went (which From,
+  through which mailbox or SMTP, or logged only), to whom, the PDF, and
+  **Resend**.
+
+### The sender
+
+- **A shared mailbox** can always send. **A personal mailbox** can only when
+  its owner turns on *Allow scheduled reports to be sent from this mailbox*
+  on the Mailboxes page; sending from it puts the report in their Sent Items.
+- **Send as** (e.g. `mis@`) shows another address in From. Through a
+  mailbox, Exchange must grant that mailbox (or the person who connected it)
+  **Send As** or **Send on Behalf** on the address; the Microsoft 365 admin
+  does this in the Exchange admin centre. Without it Graph refuses, and the
+  report goes by SMTP with an alert that says so. By SMTP, the address must be
+  `EMAIL_FROM` or one listed in `EMAIL_FROM_ALLOWED`; otherwise the SMTP
+  sender uses `EMAIL_FROM`.
+- **Send a test to me** sends a short email with a small PDF to the admin
+  pressing it, by exactly the reports' path, and says what happened. It
+  mails nobody else and records no run.
 
 The schedule sends each period once; Send now and Resend always send. The
 two jobs also appear under Settings → Emails & jobs with **Run now**. Every
 email goes through the usual switches (`emails_enabled`, `EMAIL_MODE`, the
 sandbox allowlist, checked per recipient) and is in the email log. If the
-sales mailbox cannot send, the report goes by SMTP and admins are told; if
-nothing can send, the run is recorded as failed and an alert is raised.
+chosen mailbox cannot send — Graph refuses, or the mailbox needs
+reconnecting, is disconnected, or its owner withdrew the permission — the
+report goes by SMTP, the run says why, and admins are told (at most once a
+day). If nothing can send, the run is recorded as failed and an alert is
+raised.
 
 ## Cut-over
 

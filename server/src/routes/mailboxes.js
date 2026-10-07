@@ -7,7 +7,7 @@
  *   GET    /api/mailboxes/oauth/microsoft        the sign-in comes back here
  *   POST   /api/mailboxes/test                   { email, shared } a test mailbox (not in production)
  *   POST   /api/mailboxes/:id/test-messages      { messages } feed a test mailbox
- *   PATCH  /api/mailboxes/:id                    { visibility, import_days, exclude_internal, auto_create_contacts, read_scope; is_shared (admin) }
+ *   PATCH  /api/mailboxes/:id                    { visibility, import_days, exclude_internal, auto_create_contacts, read_scope; is_shared (admin); may_send_reports (owner) }
  *   PATCH  /api/mailboxes/:id/owner              { user_id } (admin) who a personal mailbox belongs to
  *   POST   /api/mailboxes/:id/sync
  *   POST   /api/mailboxes/:id/disconnect         { remove_bodies }
@@ -95,7 +95,7 @@ mailboxRouter.get('/', async (req, res) => {
   const mine = readable(req, params);
   const { rows } = await query(
     `SELECT a.id, a.username, a.provider, a.email, a.display_name, a.is_shared, a.status, a.visibility, a.import_days, a.exclude_internal,
-            a.auto_create_contacts, a.read_scope, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
+            a.auto_create_contacts, a.read_scope, a.may_send_reports, a.last_synced_at, a.last_error, a.token_expires_at, a.created_at,
             -- Who it belongs to (074): a personal mailbox's owner, as a users row; null for shared, or unassigned.
             a.user_id, (SELECT json_build_object('id', u.id, 'name', u.name, 'active', u.active) FROM users u WHERE u.id = a.user_id) AS owner,
             a.connected_by, (SELECT u.name FROM users u WHERE u.id = a.connected_by) AS connected_by_name,
@@ -199,12 +199,20 @@ const settingsSchema = z.object({
   // Which folders the readers read (074): every folder, or Inbox and Sent Items.
   read_scope: z.enum(['all', 'inbox_sent']).optional(),
   is_shared: z.boolean().optional(),
+  // The owner allows the scheduled reports to be sent from their personal mailbox (090).
+  may_send_reports: z.boolean().optional(),
 });
 
 mailboxRouter.patch('/:id', async (req, res) => {
-  await administrable(req, req.params.id);
+  const account = await administrable(req, req.params.id);
   const parsed = settingsSchema.safeParse(req.body || {});
   if (!parsed.success) throw fields(parsed);
+  // Sending reports from somebody's own mailbox puts mail in their name in
+  // their Sent Items: their decision, not an admin's (mis-report-sender-plan.md §A3).
+  if (parsed.data.may_send_reports !== undefined) {
+    if (account.is_shared) throw new ApiError(422, 'A shared mailbox can always send the reports; the switch is for personal mailboxes');
+    if (account.user_id === null || account.user_id !== (req.user?.id ?? null)) throw new ApiError(403, 'Only the owner of this mailbox can allow reports to be sent from it');
+  }
   // Making a mailbox the team's, or taking it back, is an admin's decision.
   if (parsed.data.is_shared !== undefined && !isAdmin(req)) throw new ApiError(403, 'Only an admin can make a mailbox shared');
   const set = Object.entries(parsed.data).filter(([, v]) => v !== undefined);
@@ -218,7 +226,7 @@ mailboxRouter.patch('/:id', async (req, res) => {
     const { rows: [inbox] } = await query('SELECT name FROM inboxes WHERE account_id = $1', [Number(req.params.id)]);
     if (inbox) throw new ApiError(409, `This mailbox feeds the Inbox "${inbox.name}". Remove that Inbox first, then make the mailbox personal.`);
   }
-  const { rows: [a] } = await query(`UPDATE connected_accounts SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id, visibility, import_days, exclude_internal, auto_create_contacts, read_scope, is_shared, user_id`, [Number(req.params.id), ...set.map(([, v]) => v)]);
+  const { rows: [a] } = await query(`UPDATE connected_accounts SET ${set.map(([k], i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1 RETURNING id, visibility, import_days, exclude_internal, auto_create_contacts, read_scope, is_shared, user_id, may_send_reports`, [Number(req.params.id), ...set.map(([, v]) => v)]);
   if (!a) throw new ApiError(404, 'Mailbox not found');
   // A stricter level applies to what is already stored, too.
   if (parsed.data.visibility === 'metadata') await query('UPDATE email_messages SET subject = NULL, snippet = NULL, body_html = NULL WHERE account_id = $1', [a.id]);

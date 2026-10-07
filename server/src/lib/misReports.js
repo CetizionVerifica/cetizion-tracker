@@ -78,8 +78,9 @@ export const monthToDate = (date) => ({ from: `${date.slice(0, 7)}-01`, to: date
 // Settings
 // ---------------------------------------------------------------------
 
-export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_overdue_days', 'public_app_url'];
+export const SETTING_KEYS = ['mis_daily_enabled', 'mis_weekly_enabled', 'mis_to', 'mis_cc', 'mis_sender_account_id', 'mis_sender_address', 'mis_sender_name', 'mis_overdue_days', 'public_app_url'];
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
+const text = (v) => { const t = String(v ?? '').trim(); return t && t.toLowerCase() !== 'none' ? t : null; };
 // Only things that are addresses, each once whatever its case (#195): a
 // setting cannot be saved blank, so "none" clears a list.
 const addresses = (v) => addressesIn(v).filter((a) => a.includes('@'));
@@ -95,6 +96,9 @@ export async function misSettings(db = { query }) {
     // Nobody is copied who is already a recipient (#195).
     ...recipientsOf(s.mis_to, s.mis_cc),
     senderAccountId: num(s.mis_sender_account_id, null),
+    // Send As and the display name (mis-report-sender-plan.md §A2); "none" or blank is unset.
+    senderAddress: text(s.mis_sender_address),
+    senderName: text(s.mis_sender_name),
     overdueDays: Math.max(1, Math.trunc(num(s.mis_overdue_days, 7))),
     appUrl: String(s.public_app_url || '').replace(/\/$/, ''),
   };

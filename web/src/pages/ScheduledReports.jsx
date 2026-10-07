@@ -13,13 +13,13 @@ import { recipientLists } from '../lib/addresses.js';
 /**
  * Reports → Scheduled reports (docs/mis-reports-plan.md §5): the Daily Sales
  * Briefing and the Weekly Sales MIS the tracker builds from its own records
- * and emails from the sales mailbox with the PDF attached.
+ * and emails from the chosen sender with the PDF attached.
  *
  * Two cards, one per report: the on/off switch, a preview of the figures
  * and the email as of any date, the PDF, and Send now. Below them the
- * settings both share (recipients, the sender mailbox, the Overdue
- * threshold) and the run history with each PDF and Resend. Admin only; the
- * routes are behind requireAdmin on the server.
+ * settings both share (recipients, the Overdue threshold), the Sender
+ * (mis-report-sender-plan.md §A2), and the run history with each PDF and
+ * Resend. Admin only; the routes are behind requireAdmin on the server.
  */
 
 const KINDS = [
@@ -29,6 +29,14 @@ const KINDS = [
 const TITLE = Object.fromEntries(KINDS.map((k) => [k.kind, k.title]));
 
 const setting = (list, key) => (list ?? []).find((s) => s.key === key)?.value ?? '';
+// A text setting saved as "none" (a setting cannot be blank) reads as empty.
+const optional = (list, key) => { const v = setting(list, key).trim(); return v.toLowerCase() === 'none' ? '' : v; };
+/** How a run or a send went, in a few words: "from mis@x via sales@x", "by SMTP from tracker@x". */
+const howSent = (r) => {
+  if (r.sent_via === 'graph') return `from ${r.sent_from || 'the mailbox'}${r.sent_through_email && r.sent_through_email !== r.sent_from ? ` via ${r.sent_through_email}` : ''}`;
+  if (r.sent_via === 'smtp') return `by SMTP${r.sent_from ? ` from ${r.sent_from}` : ''}`;
+  return r.sent_via || '';
+};
 // To and Cc as the server sends them: each address once, nobody copied who is already in To (#195).
 const recipientsIn = (list) => recipientLists(setting(list, 'mis_to'), setting(list, 'mis_cc'));
 
@@ -54,7 +62,7 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
   const send = () => act('send', () => api.action(`/mis-reports/${kind}/send`, asOf ? { date: asOf } : {}), (r) => {
     const run = r.data;
     if (run.status !== 'sent') return `Not sent: ${run.error}`;
-    return run.sent_via === 'log' ? `Logged only (${run.suppressed || 'delivery is off'}); nothing left the server` : `Sent to ${run.recipients.join(', ')} via ${run.sent_via === 'graph' ? 'the sales mailbox' : 'SMTP'}`;
+    return run.sent_via === 'log' ? `Logged only (${run.suppressed || 'delivery is off'}); nothing left the server` : `Sent to ${run.recipients.join(', ')} ${howSent(run)}${run.error ? ` (${run.error})` : ''}`;
   });
 
   return (
@@ -108,15 +116,12 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
   );
 }
 
-function SharedSettings({ settings, mailboxes, onChanged }) {
+function SharedSettings({ settings, onChanged }) {
   const toast = useToast();
   const [to, setTo] = useState(recipientsIn(settings).to.join(', '));
   const [cc, setCc] = useState(recipientsIn(settings).cc.join(', '));
   const [overdue, setOverdue] = useState(setting(settings, 'mis_overdue_days') || '7');
-  // A non-numeric value ('none', blank) is the SMTP sender.
-  const sender = /^\d+$/.test(setting(settings, 'mis_sender_account_id')) ? setting(settings, 'mis_sender_account_id') : 'smtp';
   const [busy, setBusy] = useState(false);
-  const shared = (mailboxes ?? []).filter((m) => m.is_shared && m.status === 'active');
 
   // A setting cannot be saved blank, so an emptied list is saved as "none",
   // which the reports read as no addresses.
@@ -133,32 +138,118 @@ function SharedSettings({ settings, mailboxes, onChanged }) {
     } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
   }
-  async function chooseSender(v) {
-    try { await api.update('settings', 'mis_sender_account_id', { value: v === 'smtp' ? 'none' : v }); toast('Saved', 'success'); onChanged(); }
-    catch (err) { toast(err.message, 'danger'); }
-  }
 
   return (
     <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[14px] font-semibold text-foreground">Recipients and sender</div>
-      <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go to the same people, from the shared sales mailbox so they land in its Sent Items. If that mailbox cannot send, the report goes by the server's SMTP sender instead and admins are told.</p>
+      <div className="text-[14px] font-semibold text-foreground">Recipients</div>
+      <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go to the same people.</p>
       <div className="grid gap-3 @3xl:grid-cols-2">
         <Field label="To" hint="Comma-separated"><Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="md@company.com, sales-head@company.com" /></Field>
         <Field label="Cc" hint="Comma-separated, or blank"><Input value={cc} onChange={(e) => setCc(e.target.value)} /></Field>
         <Field label="Mark Overdue after" hint="Days a pending item has waited">
           <Input type="number" min="1" max="90" value={overdue} onChange={(e) => setOverdue(e.target.value)} />
         </Field>
-        <Field label="Send from" hint="A shared mailbox that is connected and active">
-          <Select value={sender} onValueChange={chooseSender}>
+      </div>
+      <div><Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy} onClick={saveAll}>{busy ? 'Saving…' : 'Save'}</Button></div>
+    </div>
+  );
+}
+
+const STATE = { active: '', needs_reconnect: ' — needs reconnecting', disconnected: ' — disconnected', missing: ' — no longer connected' };
+
+/**
+ * Who both reports go from (mis-report-sender-plan.md §A2): the mailbox
+ * they go through, an optional Send As address and display name, a line
+ * saying what the next report will go from, and a test to the admin's own
+ * address. The fallback is fixed: SMTP, and admins are told.
+ */
+function SenderCard({ settings, mailboxes, onChanged }) {
+  const toast = useToast();
+  const described = useFetch(() => api.raw('/mis-reports/sender'), []);
+  const info = described.data?.data;
+  // A non-numeric value ('none', blank) is the SMTP sender.
+  const saved = setting(settings, 'mis_sender_account_id');
+  const sender = /^\d+$/.test(saved) ? saved : 'smtp';
+  const [sendAs, setSendAs] = useState(optional(settings, 'mis_sender_address'));
+  const [name, setName] = useState(optional(settings, 'mis_sender_name'));
+  const [busy, setBusy] = useState(null);
+  const [test, setTest] = useState(null);
+  // Shared mailboxes, and personal ones whose owner allowed it (§A3). One
+  // that needs reconnecting stays listed, marked, so the saved choice never
+  // shows blank.
+  const live = (mailboxes ?? []).filter((m) => m.status !== 'disconnected');
+  const shared = live.filter((m) => m.is_shared);
+  const personal = live.filter((m) => !m.is_shared && m.may_send_reports);
+  const listed = new Set([...shared, ...personal].map((m) => String(m.id)));
+  const orphan = sender !== 'smtp' && !listed.has(sender) ? (info?.through ?? { id: Number(sender), email: `Mailbox ${sender}`, status: 'missing' }) : null;
+  const label = (m) => `${m.email || `Mailbox ${m.id}`}${STATE[m.status] ?? ` — ${m.status}`}`;
+
+  async function choose(v) {
+    setBusy('choose');
+    try { await api.update('settings', 'mis_sender_account_id', { value: v === 'smtp' ? 'none' : v }); toast('Saved', 'success'); onChanged(); described.refetch(); }
+    catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+  async function save() {
+    setBusy('save');
+    try {
+      await api.update('settings', 'mis_sender_address', { value: sendAs.trim() || 'none' });
+      await api.update('settings', 'mis_sender_name', { value: name.trim() || 'none' });
+      toast('Saved', 'success'); onChanged(); described.refetch();
+    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+  async function sendTest() {
+    setBusy('test'); setTest(null);
+    try { setTest((await api.action('/mis-reports/sender/test', {})).data); }
+    catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+
+  const from = info ? `${info.name ? `${info.name} <${info.from}>` : info.from}` : null;
+  return (
+    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+      <div className="text-[14px] font-semibold text-foreground">Sender</div>
+      <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go from here. Through a mailbox, they land in its Sent Items. If the mailbox cannot send, the report goes by the server's SMTP sender instead and admins are told.</p>
+      <div className="grid gap-3 @3xl:grid-cols-3">
+        <Field label="Send through" hint="A shared mailbox, or a personal one whose owner allowed it">
+          <Select value={sender} onValueChange={choose} disabled={busy === 'choose'}>
             <SelectTrigger className="w-full text-[13px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="smtp" className="text-[13px]">The server's SMTP sender</SelectItem>
-              {shared.map((m) => <SelectItem key={m.id} value={String(m.id)} className="text-[13px]">{m.email}</SelectItem>)}
+              {orphan && <SelectItem value={String(orphan.id)} className="text-[13px]">{label(orphan)}</SelectItem>}
+              {shared.map((m) => <SelectItem key={m.id} value={String(m.id)} className="text-[13px]">{label(m)} · shared</SelectItem>)}
+              {personal.map((m) => <SelectItem key={m.id} value={String(m.id)} className="text-[13px]">{label(m)} · {m.owner?.name || 'personal'}</SelectItem>)}
             </SelectContent>
           </Select>
         </Field>
+        <Field label="Send as" hint="Optional. Needs Send As on it in Microsoft 365">
+          <Input value={sendAs} onChange={(e) => setSendAs(e.target.value)} placeholder="mis@company.com" />
+        </Field>
+        <Field label="Display name" hint="Optional. The name beside the address">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cetizion MIS" />
+        </Field>
       </div>
-      <div><Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy} onClick={saveAll}>{busy ? 'Saving…' : 'Save'}</Button></div>
+      {info && (
+        info.problem
+          ? <Alert tone="danger"><span><strong>{info.problem}.</strong> Until it is fixed, the reports go {info.smtp_configured ? <>by SMTP from <strong>{info.smtp_from}</strong></> : <>nowhere: no SMTP sender is set up on the server</>}.{info.through?.status === 'needs_reconnect' && <> <Link to="/settings/mailboxes">Reconnect it</Link>.</>}</span></Alert>
+          : <p className="text-[12.5px] text-secondary-text">
+              The next report goes {info.via === 'mailbox'
+                ? <>from <strong>{from}</strong>{info.through?.email && info.from !== info.through.email ? <> through {info.through.email}</> : null}</>
+                : info.from ? <>by SMTP from <strong>{from}</strong>{info.send_as && info.send_as !== info.from ? <> (the SMTP sender cannot send as {info.send_as})</> : null}</> : <>nowhere: no SMTP sender is set up on the server</>}.
+            </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'save'} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</Button>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'test'} onClick={sendTest}>{busy === 'test' ? 'Sending…' : 'Send a test to me'}</Button>
+        {test && (
+          <span className={`text-[12.5px] ${test.status === 'sent' ? 'text-settled' : test.status === 'failed' ? 'text-late' : 'text-secondary-text'}`}>
+            {test.status === 'sent'
+              ? `Sent to ${test.to} ${test.via === 'graph' ? `from ${test.from}` : `by SMTP from ${test.from}`}.${test.error ? ` The mailbox could not send: ${test.error}` : ''}`
+              : test.status === 'failed' ? `Not sent: ${test.error}` : `Logged only (${test.suppressed || 'delivery is off'}); nothing left the server.`}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -219,7 +310,7 @@ function Runs({ runs, onChanged }) {
         columns={[
           { key: 'kind', header: 'Report', render: (r) => TITLE[r.kind] },
           { key: 'period', header: 'Period', render: period },
-          { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{`sent · ${r.sent_via === 'graph' ? 'sales mailbox' : r.sent_via}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>) },
+          { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{`sent · ${howSent(r)}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>) },
           { key: 'recipients', header: 'To', className: 'wrap', render: (r) => (r.recipients || []).join(', ') || '—' },
           { key: 'created_at', header: 'When', render: (r) => `${ago(r.created_at)} · ${r.triggered_by}` },
           { key: 'error', header: 'Note', className: 'wrap small', render: (r) => r.error || (r.ai_used ? 'AI commentary' : '') },
@@ -261,7 +352,7 @@ export default function ScheduledReports() {
     <>
       <PageHeader
         title="Scheduled reports"
-        subtitle="The Daily Sales Briefing and the Weekly Sales MIS, built from the tracker's records and emailed from the sales mailbox with the PDF attached."
+        subtitle="The Daily Sales Briefing and the Weekly Sales MIS, built from the tracker's records and emailed from the chosen sender with the PDF attached."
         actions={<Link className="btn" to="/reports">Back to Reports</Link>}
       />
       <div className="page stack @container">
@@ -279,7 +370,8 @@ export default function ScheduledReports() {
         {/* Each card is rebuilt from what was saved, under a key of its own. When the
             two shared one, React drew the recipients card twice, and the copy on
             screen stopped taking what was typed. */}
-        {list && <SharedSettings key={`recipients:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
+        {list && <SharedSettings key={`recipients:${saved}`} settings={list} onChanged={refetch} />}
+        {list && <SenderCard key={`sender:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
         {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
