@@ -3848,7 +3848,10 @@ CREATE TABLE IF NOT EXISTS questionnaire_responses (
   submitted_at       timestamptz,
   submitted_by_name  text,
   submitted_by_email text,
-  owner_user_id      int  REFERENCES users(id) ON DELETE SET NULL,
+  -- Who sent it. Its reach follows its enquiry's owner; this is only for a
+  -- response with no enquiry. Not named owner_user_id: that marks the three
+  -- sales tables that carry their own owner (018).
+  requested_by_user_id int REFERENCES users(id) ON DELETE SET NULL,
   created_by         text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now(),

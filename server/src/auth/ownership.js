@@ -269,7 +269,7 @@ export function documentClause(scope, params, { alias = 'd' } = {}) {
     -- A file a client uploaded into a questionnaire (#208): the enquiry's owner's.
     OR EXISTS (SELECT 1 FROM questionnaire_response_files dqf JOIN questionnaire_responses dqr ON dqr.id = dqf.response_id
                WHERE dqf.document_id = ${alias}.id
-                 AND COALESCE((SELECT dqe.${OWNER_COLUMN} FROM enquiries dqe WHERE dqe.id = dqr.enquiry_id), dqr.owner_user_id) = $${n})
+                 AND COALESCE((SELECT dqe.${OWNER_COLUMN} FROM enquiries dqe WHERE dqe.id = dqr.enquiry_id), dqr.requested_by_user_id) = $${n})
   )`;
 }
 

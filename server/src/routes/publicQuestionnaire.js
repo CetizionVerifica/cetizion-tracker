@@ -51,7 +51,7 @@ publicQuestionnaireRouter.get('/:token', async (req, res) => {
          FROM questionnaire_versions v JOIN questionnaires q ON q.id = v.questionnaire_id JOIN services s ON s.id = q.service_id
          LEFT JOIN enquiries e ON e.id = $2 LEFT JOIN companies co ON co.id = COALESCE($3, e.company_id)
          LEFT JOIN users u ON u.id = COALESCE(e.owner_user_id, $4)
-        WHERE v.id = $1`, [r.version_id, r.enquiry_id, r.company_id, r.owner_user_id]),
+        WHERE v.id = $1`, [r.version_id, r.enquiry_id, r.company_id, r.requested_by_user_id]),
     query(`SELECT f.document_id, f.question_key, d.file_name FROM questionnaire_response_files f JOIN documents d ON d.id = f.document_id
             WHERE f.response_id = $1 ORDER BY f.id`, [r.id]),
     query(`SELECT value AS name FROM settings WHERE key = 'company_name'`),

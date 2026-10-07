@@ -163,7 +163,7 @@ describe('service questionnaires', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is n
     const opened = await pub.get(t).expect(200);
     assert.equal(opened.body.data.client_name, 'Example Industries');
     assert.equal(opened.body.data.requested_by, 'Sam Sales');
-    for (const internal of ['owner_user_id', 'enquiry_id', 'company_id', 'created_by', 'link_id']) assert.ok(!(internal in opened.body.data), internal);
+    for (const internal of ['requested_by_user_id', 'enquiry_id', 'company_id', 'created_by', 'link_id']) assert.ok(!(internal in opened.body.data), internal);
 
     const wrong = await pub.put(t, { step: 0, answers: { employee_count: 'many' } });
     assert.equal(wrong.status, 422);

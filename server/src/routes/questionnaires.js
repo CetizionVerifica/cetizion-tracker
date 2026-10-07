@@ -224,9 +224,9 @@ questionnaireResponseRouter.post('/', async (req, res) => {
     const { rows: [contact] } = await db.query('SELECT name, email, phone FROM contacts WHERE id = $1', [e.contact_id]);
     const answers = prefillAnswers(ver.definition, { company: company || {}, contact: contact || {} });
     const { rows: [r] } = await db.query(
-      `INSERT INTO questionnaire_responses (version_id, enquiry_id, company_id, contact_id, answers, owner_user_id, created_by)
+      `INSERT INTO questionnaire_responses (version_id, enquiry_id, company_id, contact_id, answers, requested_by_user_id, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [ver.id, e.id, e.company_id, e.contact_id, JSON.stringify(answers), e.owner_user_id, who(req)]);
+      [ver.id, e.id, e.company_id, e.contact_id, JSON.stringify(answers), req.user?.id ?? e.owner_user_id ?? null, who(req)]);
     if (v.send_email) {
       const { link, log } = await emailLink(db, { responseId: r.id, to, message: v.message || '', sentBy: who(req) });
       return { id: r.id, url: link.url, email: { status: log.status, to } };

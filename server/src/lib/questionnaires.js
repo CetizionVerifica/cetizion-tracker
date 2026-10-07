@@ -48,13 +48,13 @@ export async function publicBase(db = { query }) {
 
 /**
  * The SQL that keeps a response to the people who may reach it: '' for an
- * admin; otherwise the owner of its enquiry (or, with no enquiry, of the
- * response itself).
+ * admin; otherwise the owner of its enquiry (or, with no enquiry, the
+ * person who sent it).
  */
 export function responseClause(scope, params, alias = 'r') {
   if (scope.unrestricted) return '';
   params.push(scope.ownerId ?? 0);
-  return `COALESCE((SELECT qe.owner_user_id FROM enquiries qe WHERE qe.id = ${alias}.enquiry_id), ${alias}.owner_user_id) = $${params.length}`;
+  return `COALESCE((SELECT qe.owner_user_id FROM enquiries qe WHERE qe.id = ${alias}.enquiry_id), ${alias}.requested_by_user_id) = $${params.length}`;
 }
 
 /** A new link to a response. Returns { url, expires_at }; the token itself is never stored. */
@@ -81,7 +81,7 @@ export async function inviteContext(db, responseId) {
        LEFT JOIN enquiries e ON e.id = r.enquiry_id
        LEFT JOIN companies co ON co.id = COALESCE(r.company_id, e.company_id)
        LEFT JOIN contacts ct ON ct.id = COALESCE(r.contact_id, e.contact_id)
-       LEFT JOIN users u ON u.id = COALESCE(e.owner_user_id, r.owner_user_id)
+       LEFT JOIN users u ON u.id = COALESCE(e.owner_user_id, r.requested_by_user_id)
       WHERE r.id = $1`, [responseId]);
   return r;
 }
@@ -208,7 +208,7 @@ export async function submitResponse(id, { answers, name = null, email = null, f
             COALESCE(u.email, e.sales_person_email) AS owner_email, COALESCE(u.name, e.sales_person) AS owner_name
        FROM questionnaire_responses r JOIN questionnaire_versions v ON v.id = r.version_id JOIN questionnaires q ON q.id = v.questionnaire_id
        LEFT JOIN enquiries e ON e.id = r.enquiry_id LEFT JOIN companies co ON co.id = COALESCE(r.company_id, e.company_id)
-       LEFT JOIN users u ON u.id = COALESCE(e.owner_user_id, r.owner_user_id) WHERE r.id = $1`, [id]);
+       LEFT JOIN users u ON u.id = COALESCE(e.owner_user_id, r.requested_by_user_id) WHERE r.id = $1`, [id]);
   if (!o) return;
   const path = o.enquiry_no ? `/enquiries?q=${encodeURIComponent(o.enquiry_no)}&questionnaire=${id}` : '/enquiries';
   await notify({
