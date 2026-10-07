@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
 import {
-  Building2, CheckCircle2, ChevronRight, Clock, CreditCard, FileText,
-  FolderKanban, Home, Inbox, Plane, Receipt, Search, X,
+  ArrowLeft, Building2, CheckCircle2, ChevronRight, CircleAlert, Clock, CreditCard, FileText,
+  FolderKanban, Home, Inbox, Plane, Receipt, Search,
 } from 'lucide-react';
+import { cn } from 'cn';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
-import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Label } from '@/components/ui/label.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
@@ -17,17 +16,17 @@ import { bodyFor, commandsFor, initialValues, missingFields } from '../lib/comma
 import { useToast } from './ui.jsx';
 
 /**
- * ⌘K — verbs above records.
+ * Ctrl K — verbs above records.
  *
- * The sidebar used to list thirty screens, which is a poor way to find
- * anything and a worse way to find out how to *do* anything. This is the
- * replacement: type what you want to happen, and the thing you want is
- * either a step you can complete here or a record you can open.
+ * Type what you want to happen, and the thing you want is either a step you
+ * can complete here or a record you can open. A step runs in the palette:
+ * the page underneath never changes, so recording a payment while reading a
+ * project does not cost you the project.
  *
- * A step runs in the palette. The page underneath never changes, so
- * recording a payment while reading a project does not cost you the
- * project — which is the whole reason this exists rather than being a
- * tidier set of links.
+ * Drawn as the Wave 1 canvas draws it (Mocha Glass): a strong-glass sheet
+ * dropping from the top, groups in small caps, 44px rows, and a step as
+ * "1 of 2, pick the record" then "2 of 2, the form". On a phone it fills
+ * the width from the top, so the keyboard never covers the results.
  */
 
 const ICONS = {
@@ -38,10 +37,10 @@ const ICONS = {
 
 const Icon = ({ name, className }) => {
   const Glyph = ICONS[name] || FileText;
-  return <Glyph className={className} strokeWidth={1.75} aria-hidden="true" />;
+  return <Glyph className={className} strokeWidth={1.8} aria-hidden="true" />;
 };
 
-/** The three sections a search result can fall into, in reading order. */
+/** The sections a search result can fall into, in reading order. */
 const GROUP_ORDER = ['deal', 'enquiry', 'company', 'contact', 'project', 'order', 'stage', 'trip'];
 
 const PLURAL = {
@@ -49,17 +48,15 @@ const PLURAL = {
   project: 'Projects', order: 'Purchase orders', stage: 'Payment stages', trip: 'Trips',
 };
 
-const ROW = 'group flex h-11 cursor-pointer items-center gap-3 rounded-[6px] border border-transparent px-3 text-[14px] ' +
-  'data-[selected=true]:border-primary/30 data-[selected=true]:bg-primary/12';
+const ROW = 'mg-palette__item group';
 
 /**
  * Match on the words somebody typed, not on a fuzzy subsequence.
  *
  * cmdk scores by subsequence, which is generous enough that "hind" — a
  * client's name — scores a hit on "Log a c**h**ase on an overdue **in**voice
- * an**d**…". A verb offered against a query that is plainly a record is
- * noise in the one place the design puts first, so the bar here is a real
- * substring, or every typed word starting a word in the entry.
+ * an**d**…". The bar here is a real substring, or every typed word starting
+ * a word in the entry.
  */
 function matches(value, search) {
   const haystack = value.toLowerCase();
@@ -72,22 +69,19 @@ function matches(value, search) {
 }
 
 /**
- * The group heading, styled through cmdk's own hook.
- *
- * Every utility carries the variant prefix itself. Building this by
- * interpolating a plain class list into one `[&_…]:` prefix looks the same
- * and is not: only the first token gets the prefix and the rest land on
- * the group, which is how `uppercase` ended up on every row in it.
+ * The group heading, styled through cmdk's own hook. Every utility carries
+ * the variant prefix itself (a single interpolated prefix only reaches the
+ * first token).
  */
 const GROUP = [
   '[&_[cmdk-group-heading]]:px-3',
-  '[&_[cmdk-group-heading]]:pt-4',
+  '[&_[cmdk-group-heading]]:pt-2.5',
   '[&_[cmdk-group-heading]]:pb-1.5',
-  '[&_[cmdk-group-heading]]:text-[10.5px]',
-  '[&_[cmdk-group-heading]]:font-semibold',
+  '[&_[cmdk-group-heading]]:text-[11px]',
+  '[&_[cmdk-group-heading]]:font-bold',
   '[&_[cmdk-group-heading]]:uppercase',
   '[&_[cmdk-group-heading]]:tracking-[0.1em]',
-  '[&_[cmdk-group-heading]]:text-muted-foreground',
+  '[&_[cmdk-group-heading]]:text-secondary-text',
 ].join(' ');
 
 /** A short word for what a record is waiting on, where the row carries one. */
@@ -95,13 +89,31 @@ function StateChip({ state }) {
   if (!state) return null;
   const late = /overdue|lost|rejected/i.test(state);
   const waiting = /to invoice|pending|submitted|negotiation|hold/i.test(state);
-  const tone = late ? 'border-late/30 bg-late/10 text-late'
-    : waiting ? 'border-waiting/30 bg-waiting/10 text-waiting'
-    : 'border-border bg-secondary text-secondary-text';
+  return <span className={cn('mg-badge ml-auto shrink-0', late && 'mg-badge--late', waiting && 'mg-badge--wait')}>{state}</span>;
+}
+
+/** Back, what this is, and where you are in the step. */
+function StepHead({ onBack, title, sub, where }) {
   return (
-    <span className={`inline-flex h-[22px] shrink-0 items-center rounded-[6px] border px-2.5 text-[11.5px] font-semibold ${tone}`}>
-      {state}
-    </span>
+    <div className="flex items-center gap-2.5 border-b border-line px-4 pt-3.5 pb-2.5">
+      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm shrink-0" onClick={onBack}>
+        <ArrowLeft size={16} strokeWidth={1.8} aria-hidden="true" />Back
+      </button>
+      <div className="min-w-0">
+        <strong className="block truncate">{title}</strong>
+        {sub && <div className="truncate text-[12.5px] text-muted-foreground">{sub}</div>}
+      </div>
+      {where && <span className="ml-auto shrink-0 text-[12.5px] text-muted-foreground">{where}</span>}
+    </div>
+  );
+}
+
+/** A line inside the list that is not something to choose: searching, failed, loading. */
+function Note({ tone, children, role = 'status' }) {
+  return (
+    <div role={role} className={cn('flex items-center gap-2.5 px-3 py-3 text-[13px]', tone === 'late' ? 'text-late' : 'text-muted-foreground')}>
+      {children}
+    </div>
   );
 }
 
@@ -113,94 +125,101 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
   const set = (name) => (value) => setValues({ ...values, [name]: value });
 
   return (
-    <form
-      className="flex flex-col gap-4 p-5"
-      onSubmit={(event) => { event.preventDefault(); onRun(); }}
-    >
-      <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-        <Button type="button" variant="ghost" size="sm" onClick={onBack} className="h-6 gap-1 px-1.5 text-[12.5px]">
-          <X className="size-3.5" strokeWidth={2} aria-hidden="true" />Back
-        </Button>
-        {record && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="truncate">
-              <span className="font-mono text-foreground">{record.title}</span>
-              {record.subtitle && <span className="text-secondary-text"> · {record.subtitle}</span>}
-            </span>
-          </>
+    <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); onRun(); }}>
+      <StepHead
+        onBack={onBack}
+        title={record ? <span className="mg-num">{record.title}</span> : step.verb}
+        sub={record ? record.subtitle : step.hint}
+        where={step.picks ? 'Step 2 of 2' : null}
+      />
+
+      <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-5 py-4">
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          {step.fields.map((field, index) => (
+            <div key={field.name} className={cn('flex min-w-0 flex-col gap-1.5', field.type === 'textarea' && 'sm:col-span-2')}>
+              <Label htmlFor={`step-${field.name}`}>
+                {field.label}{field.required && <span className="ml-0.5 text-late">*</span>}
+              </Label>
+
+              {field.type === 'select' ? (
+                <Select value={values[field.name] ?? ''} onValueChange={set(field.name)}>
+                  <SelectTrigger id={`step-${field.name}`} ref={index === 0 ? firstField : undefined} className="w-full">
+                    <SelectValue placeholder={`Choose ${field.label.toLowerCase()}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {field.options.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : field.type === 'textarea' ? (
+                <Textarea
+                  id={`step-${field.name}`}
+                  ref={index === 0 ? firstField : undefined}
+                  className="min-h-[88px]"
+                  maxLength={field.maxLength}
+                  value={values[field.name] ?? ''}
+                  onChange={(e) => set(field.name)(e.target.value)}
+                />
+              ) : (
+                <Input
+                  id={`step-${field.name}`}
+                  ref={index === 0 ? firstField : undefined}
+                  type={field.type}
+                  min={field.min}
+                  step={field.step}
+                  maxLength={field.maxLength}
+                  placeholder={field.placeholder}
+                  value={values[field.name] ?? ''}
+                  onChange={(e) => set(field.name)(e.target.value)}
+                />
+              )}
+
+              {field.hint && <span className="text-[12px] text-muted-foreground">{field.hint}</span>}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div className="mg-banner mg-banner--late" role="alert">
+            <CircleAlert strokeWidth={1.8} aria-hidden="true" />
+            <div className="mg-banner__body">{error}</div>
+          </div>
         )}
       </div>
 
-      {step.fields.map((field, index) => (
-        <div key={field.name} className="flex flex-col gap-1.5">
-          <Label htmlFor={`step-${field.name}`} className="text-[12px] font-semibold text-secondary-text">
-            {field.label}{field.required && <span className="ml-0.5 text-late">*</span>}
-          </Label>
-
-          {field.type === 'select' ? (
-            <Select value={values[field.name] ?? ''} onValueChange={set(field.name)}>
-              <SelectTrigger id={`step-${field.name}`} ref={index === 0 ? firstField : undefined} className="h-control w-full bg-muted text-[13px]">
-                <SelectValue placeholder={`Choose ${field.label.toLowerCase()}`} />
-              </SelectTrigger>
-              <SelectContent>
-                {field.options.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : field.type === 'textarea' ? (
-            <Textarea
-              id={`step-${field.name}`}
-              ref={index === 0 ? firstField : undefined}
-              className="min-h-[72px] bg-muted text-[13px]"
-              maxLength={field.maxLength}
-              value={values[field.name] ?? ''}
-              onChange={(e) => set(field.name)(e.target.value)}
-            />
-          ) : (
-            <Input
-              id={`step-${field.name}`}
-              ref={index === 0 ? firstField : undefined}
-              className="h-control bg-muted text-[13px]"
-              type={field.type}
-              min={field.min}
-              step={field.step}
-              maxLength={field.maxLength}
-              value={values[field.name] ?? ''}
-              onChange={(e) => set(field.name)(e.target.value)}
-            />
-          )}
-
-          {field.hint && <span className="text-[11.5px] text-muted-foreground">{field.hint}</span>}
-        </div>
-      ))}
-
-      {error && (
-        <Alert variant="destructive" className="border-late/30 bg-late/10 text-late">
-          <AlertDescription className="text-[12.5px] text-late">{error}</AlertDescription>
-        </Alert>
-      )}
-
-      <div className="flex items-center gap-3">
-        <Button type="submit" disabled={busy} className="h-control gap-2 text-[13px] font-semibold">
+      <div className="mg-palette__foot items-center !py-3">
+        <span className="hidden min-w-0 truncate sm:inline">{step.hint}</span>
+        <button type="submit" disabled={busy} className="mg-btn mg-btn--primary ml-auto shrink-0">
           {busy ? 'Working…' : step.verb}
-          <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-        </Button>
-        <span className="text-[12.5px] text-secondary-text">{step.hint}</span>
+          <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
       </div>
     </form>
   );
 }
 
-export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
+const PALETTE = [
+  'mg-palette top-20 translate-y-0 flex flex-col gap-0 overflow-hidden rounded-[28px] p-0',
+  'w-[640px] max-w-[calc(100%-2rem)] sm:max-w-[640px] max-h-[min(620px,calc(100dvh-7rem))]',
+  'data-[state=open]:animate-[mg-drop-in_500ms_var(--mg-spring)_both] [&>.mg-sheet__grab]:hidden',
+  // A phone: full width from the top, so the keyboard sits under the results, not over them.
+  'max-[719px]:top-2 max-[719px]:bottom-auto max-[719px]:left-2 max-[719px]:right-2 max-[719px]:w-auto max-[719px]:max-w-none',
+  'max-[719px]:max-h-[calc(100dvh-1rem)] max-[719px]:rounded-[24px] max-[719px]:border-b max-[719px]:pb-0',
+  'max-[719px]:data-[state=open]:animate-[mg-drop-in_500ms_var(--mg-spring)_both]',
+].join(' ');
+
+export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [q, setQ] = useState('');
   const [found, setFound] = useState([]);
+  const [searching, setSearching] = useState('idle'); // idle | loading | error
+  const [searchTick, setSearchTick] = useState(0);
   const [step, setStep] = useState(null);
   const [record, setRecord] = useState(null);
   const [choices, setChoices] = useState([]);
+  const [listing, setListing] = useState('idle'); // idle | loading | error
   const [values, setValues] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -208,34 +227,39 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
   const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, mode }), [isAdmin, mode]);
 
   const reset = useCallback(() => {
-    setQ(''); setFound([]); setStep(null); setRecord(null);
-    setChoices([]); setValues({}); setError(''); setBusy(false);
+    setQ(''); setFound([]); setSearching('idle'); setStep(null); setRecord(null);
+    setChoices([]); setListing('idle'); setValues({}); setError(''); setBusy(false);
   }, []);
 
   useEffect(() => { if (!open) reset(); }, [open, reset]);
 
   // Search runs a beat behind the typing, so a fast typist makes one
-  // request rather than one per keystroke.
+  // request rather than one per keystroke. The travel desk's search is
+  // refused by the server, so it is not asked.
   useEffect(() => {
-    if (step || q.trim().length < 2) { setFound([]); return undefined; }
+    if (step || isHr || q.trim().length < 2) { setFound([]); setSearching('idle'); return undefined; }
     let live = true;
+    setSearching('loading');
     const timer = setTimeout(() => {
       api.raw(`/search?q=${encodeURIComponent(q.trim())}`)
-        .then((res) => { if (live) setFound(res.data || []); })
-        .catch(() => { if (live) setFound([]); });
+        .then((res) => { if (live) { setFound(res.data || []); setSearching('idle'); } })
+        .catch(() => { if (live) { setFound([]); setSearching('error'); } });
     }, 160);
     return () => { live = false; clearTimeout(timer); };
-  }, [q, step]);
+  }, [q, step, isHr, searchTick]);
 
   const close = () => onOpenChange(false);
 
   /** A step with no record to pick goes straight to its form. */
-  const beginStep = async (chosen) => {
+  const beginStep = useCallback(async (chosen) => {
     setStep(chosen);
+    setRecord(null);
     setValues(initialValues(chosen));
     setError('');
     setQ('');
     if (!chosen.picks) return;
+    setChoices([]);
+    setListing('loading');
     try {
       const res = await api.list(chosen.picks.resource, { ...chosen.picks.params, limit: 40 });
       setChoices((res.data || []).map((row) => ({
@@ -244,11 +268,24 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
         subtitle: [row.client_name, row.po_number, row.employee_name, row.service_quoted]
           .filter(Boolean).slice(0, 2).join(' · '),
       })));
+      setListing('idle');
     } catch {
       setChoices([]);
-      setError('Could not load the list to pick from. Close and try again.');
+      setListing('error');
     }
-  };
+  }, []);
+
+  // Opened from the dock, the New sheet or the More sheet's search: start
+  // on that step, or with that text already typed.
+  useEffect(() => {
+    if (!open || !start) return;
+    if (start.step) {
+      const chosen = steps.find((s) => s.id === start.step);
+      if (chosen) beginStep(chosen);
+    } else if (start.q) {
+      setQ(start.q);
+    }
+  }, [open, start, steps, beginStep]);
 
   const run = async () => {
     const missing = missingFields(step, values);
@@ -275,13 +312,12 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
   }, [found]);
 
   const picking = step?.picks && !record;
+  const backToSteps = () => { setStep(null); setRecord(null); setChoices([]); setListing('idle'); setError(''); setQ(''); };
+  const term = q.trim();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        showCloseButton={false}
-        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[14px] border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
-      >
+      <DialogContent showCloseButton={false} className={PALETTE}>
         <DialogTitle className="sr-only">Search or do anything</DialogTitle>
         <DialogDescription className="sr-only">
           Type what you want to happen, or the name of a record to open.
@@ -291,45 +327,76 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
           <StepForm
             step={step} record={record} values={values} setValues={setValues}
             error={error} busy={busy} onRun={run}
-            onBack={() => { setStep(null); setRecord(null); setChoices([]); setError(''); }}
+            onBack={() => (step.picks ? (setRecord(null), setError('')) : backToSteps())}
           />
         ) : (
-          <Command shouldFilter={!picking} filter={matches} loop className="flex flex-col overflow-hidden">
-            <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-              <Search className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+          <Command filter={matches} loop className="flex min-h-0 flex-1 flex-col">
+            {picking && <StepHead onBack={backToSteps} title={step.verb} where="Step 1 of 2" />}
+            <div className="mg-palette__search shrink-0">
+              <Search size={18} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-muted-foreground" />
               <Command.Input
                 autoFocus
                 value={q}
                 onValueChange={setQ}
                 placeholder={picking ? step.picks.label : 'Search or do anything'}
-                className="flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+                className="outline-none focus:outline-none focus-visible:outline-none"
               />
-              <kbd className="rounded-[4px] bg-secondary px-1.5 py-0.5 font-mono text-[10.5px] text-secondary-text">esc</kbd>
+              <button type="button" className="mg-kbd h-[26px] cursor-pointer px-2" aria-label="Close" onClick={close}>Esc</button>
             </div>
 
-            <Command.List className="max-h-[420px] overflow-y-auto p-2">
-              <Command.Empty className="px-3 py-8 text-center text-[13px] text-muted-foreground">
-                {picking ? 'Nothing is waiting here.' : 'No step and no record matches that.'}
+            <Command.List className="mg-palette__list min-h-0 flex-1 max-[719px]:max-h-none">
+              <Command.Empty>
+                {picking
+                  ? listing === 'idle' && (
+                    <div className="mg-empty" style={{ padding: 24 }}>
+                      <p className="mg-empty__text">
+                        {term ? `Nothing in this list matches “${term}”.` : 'Nothing is waiting here.'}
+                      </p>
+                    </div>
+                  )
+                  : searching === 'idle' && (
+                    <div className="mg-empty" style={{ padding: 24 }}>
+                      <p className="mg-empty__text">No step, page or record matches “{term}”.</p>
+                    </div>
+                  )}
               </Command.Empty>
 
               {picking ? (
-                <Command.Group heading={step.picks.label} className={GROUP}>
-                  {choices.map((choice) => (
-                    <Command.Item
-                      key={choice.id}
-                      value={`${choice.title} ${choice.subtitle}`}
-                      onSelect={() => setRecord(choice)}
-                      className={ROW}
-                    >
-                      <Icon name={step.icon} className="size-[17px] shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">
-                        <span className="font-mono text-[12.5px] text-foreground">{choice.title}</span>
-                        {choice.subtitle && <span className="text-secondary-text"> · {choice.subtitle}</span>}
-                      </span>
-                      <ChevronRight className="size-4 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
-                    </Command.Item>
-                  ))}
-                </Command.Group>
+                <>
+                  {listing === 'loading' && (
+                    <div className="flex flex-col gap-1.5 px-1 py-1" aria-busy="true" aria-label="Loading the list">
+                      {[0, 1, 2, 3].map((i) => <span key={i} className="mg-skel" style={{ height: 44, borderRadius: 14 }} />)}
+                    </div>
+                  )}
+                  {listing === 'error' && (
+                    <div className="mg-banner mg-banner--late m-1" role="alert">
+                      <CircleAlert strokeWidth={1.8} aria-hidden="true" />
+                      <div className="mg-banner__body">
+                        <strong>Couldn&rsquo;t load the list to pick from</strong>
+                        <button type="button" className="mg-btn mg-btn--sm mt-2" onClick={() => beginStep(step)}>Try again</button>
+                      </div>
+                    </div>
+                  )}
+                  {choices.length > 0 && (
+                    <Command.Group heading={step.picks.label} className={GROUP}>
+                      {choices.map((choice) => (
+                        <Command.Item
+                          key={choice.id}
+                          value={`${choice.title} ${choice.subtitle}`}
+                          onSelect={() => setRecord(choice)}
+                          className={ROW}
+                        >
+                          <Icon name={step.icon} />
+                          <span className="min-w-0 flex-1 truncate">
+                            <strong className="mg-num">{choice.title}</strong>
+                            {choice.subtitle && <span className="text-muted-foreground"> · {choice.subtitle}</span>}
+                          </span>
+                          <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="shrink-0" />
+                        </Command.Item>
+                      ))}
+                    </Command.Group>
+                  )}
+                </>
               ) : (
                 <>
                   <Command.Group heading="Do" className={GROUP}>
@@ -340,12 +407,12 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
                         onSelect={() => beginStep(entry)}
                         className={ROW}
                       >
-                        <Icon name={entry.icon} className="size-[17px] shrink-0 text-primary" />
-                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                          {entry.verb}
-                          <span className="font-normal text-secondary-text"> · {entry.hint}</span>
+                        <Icon name={entry.icon} className="!text-caramel-text" />
+                        <span className="min-w-0 flex-1 truncate">
+                          <strong>{entry.verb}</strong>
+                          <span className="text-muted-foreground"> · {entry.hint}</span>
                         </span>
-                        <span className="shrink-0 font-mono text-[11px] text-primary opacity-0 group-data-[selected=true]:opacity-100">↵</span>
+                        <span className="mg-kbd opacity-0 group-data-[selected=true]:opacity-100" aria-hidden="true">↵</span>
                       </Command.Item>
                     ))}
                   </Command.Group>
@@ -358,14 +425,14 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
                         onSelect={() => { navigate(entry.to); close(); }}
                         className={ROW}
                       >
-                        <Icon name={entry.icon} className="size-[17px] shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate text-foreground">{entry.verb}</span>
+                        <Icon name={entry.icon} />
+                        <span className="min-w-0 flex-1 truncate">{entry.verb}</span>
                       </Command.Item>
                     ))}
                   </Command.Group>
 
                   {grouped.map(([type, hits]) => (
-                    <Command.Group key={type} heading={`${PLURAL[type]} matching “${q.trim()}”`} className={GROUP}>
+                    <Command.Group key={type} heading={`${PLURAL[type]} matching “${term}”`} className={GROUP}>
                       {hits.map((hit) => (
                         <Command.Item
                           key={`${hit.type}-${hit.id}`}
@@ -373,24 +440,37 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
                           onSelect={() => { navigate(hit.href); close(); }}
                           className={ROW}
                         >
-                          <Icon name={hit.icon} className="size-[17px] shrink-0 text-muted-foreground" />
+                          <Icon name={hit.icon} />
                           <span className="min-w-0 flex-1 truncate">
-                            <span className="font-mono text-[12.5px] text-foreground">{hit.title}</span>
-                            {hit.subtitle && <span className="text-secondary-text"> · {hit.subtitle}</span>}
+                            <strong className="mg-num">{hit.title}</strong>
+                            {hit.subtitle && <span className="text-muted-foreground"> · {hit.subtitle}</span>}
                           </span>
                           <StateChip state={hit.state} />
                         </Command.Item>
                       ))}
                     </Command.Group>
                   ))}
+
+                  {searching === 'loading' && (
+                    <Note><span className="app-spin" aria-hidden="true" />Searching the records…</Note>
+                  )}
+                  {searching === 'error' && (
+                    <Note tone="late" role="alert">
+                      <CircleAlert size={16} strokeWidth={1.8} aria-hidden="true" />
+                      Couldn&rsquo;t search the records. Steps and pages still work.
+                      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm ml-auto" onClick={() => setSearchTick((n) => n + 1)}>Try again</button>
+                    </Note>
+                  )}
                 </>
               )}
             </Command.List>
 
-            <div className="flex h-9 items-center gap-5 border-t border-border bg-muted px-5 text-[11.5px] text-muted-foreground">
-              <span><span className="font-mono text-secondary-text">↑↓</span> move</span>
-              <span><span className="font-mono text-secondary-text">↵</span> run</span>
-              <span className="ml-auto hidden sm:inline">Steps run here — the page never changes under you</span>
+            <div className="mg-palette__foot shrink-0">
+              <span className="hidden sm:inline"><kbd className="mg-kbd">↑</kbd> <kbd className="mg-kbd">↓</kbd> move</span>
+              <span className="hidden sm:inline"><kbd className="mg-kbd">↵</kbd> {picking ? 'choose' : 'run'}</span>
+              <span><kbd className="mg-kbd">Esc</kbd> close</span>
+              {!picking && <span className="hidden sm:inline"><kbd className="mg-kbd">/</kbd> opens this too</span>}
+              <span className="ml-auto hidden md:inline">{picking ? 'Then fill in the step.' : 'Steps run here. The page stays as it is.'}</span>
             </div>
           </Command>
         )}
@@ -399,22 +479,36 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
   );
 }
 
-/** ⌘K anywhere, and / when you are not already typing into something. */
+/**
+ * Ctrl K (⌘K) anywhere, and / when you are not already typing into
+ * something. `openWith` opens it on a step or with text already typed.
+ */
 export function useCommandPalette() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  const [start, setStart] = useState(null);
   useEffect(() => {
     const onKey = (event) => {
       const typing = /^(input|textarea|select)$/i.test(event.target?.tagName) || event.target?.isContentEditable;
       if ((event.key === 'k' || event.key === 'K') && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        setOpen((was) => !was);
+        setStart(null);
+        setOpenState((was) => !was);
       } else if (event.key === '/' && !typing) {
         event.preventDefault();
-        setOpen(true);
+        setStart(null);
+        setOpenState(true);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  return { open, setOpen };
+  const setOpen = useCallback((value) => {
+    setOpenState(value);
+    if (!value) setStart(null);
+  }, []);
+  const openWith = useCallback((opts = {}) => {
+    setStart(opts.step || opts.q ? { ...opts } : null);
+    setOpenState(true);
+  }, []);
+  return { open, setOpen, start, openWith };
 }
