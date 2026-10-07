@@ -71,6 +71,8 @@ const userChanges = z
     email: z.preprocess(blankToNull, email.nullable()).optional(),
     role: role.optional(),
     active: z.boolean().optional(),
+    // false exempts them from the personal daily MIS (mis-report-sender-plan.md §B2).
+    daily_mis: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, { message: 'Nothing to change' });
 
@@ -179,7 +181,7 @@ function userEditAction(before, after) {
 
 /** Which of the editable fields actually moved, and what the notable ones moved from. */
 function userEditMetadata(before, after) {
-  const fields = ['name', 'email', 'role', 'active'];
+  const fields = ['name', 'email', 'role', 'active', 'daily_mis'];
   const changed = before ? fields.filter((f) => before[f] !== after[f]) : fields;
   const metadata = { changed_fields: changed };
 
@@ -192,6 +194,10 @@ function userEditMetadata(before, after) {
       metadata[`old_${field}`] = before[field];
       metadata[`new_${field}`] = after[field];
     }
+  }
+  if (before && changed.includes('daily_mis')) {
+    metadata.old_daily_mis = before.daily_mis;
+    metadata.new_daily_mis = after.daily_mis;
   }
   if (before && changed.includes('role')) {
     metadata.old_role = before.role;

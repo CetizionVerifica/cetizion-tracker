@@ -12,6 +12,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SettingsPane } from './SettingsArea.jsx';
 import { AutoEntryPanel } from '../components/AutoEntryPanel.jsx';
+import { DailyMisNotice, useMyDailyMis } from '../components/MyDailyMis.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date, number } from '../lib/format.js';
@@ -72,6 +73,7 @@ export default function Mailboxes() {
   const { isAdmin, user } = useAuth();
   const [params, setParams] = useSearchParams();
   const { data, loading, refetch } = useFetch(() => api.raw('/mailboxes'));
+  const myMis = useMyDailyMis();
   const block = useFetch(() => (isAdmin ? api.raw('/mailboxes/blocklist') : Promise.resolve(null)), [isAdmin]);
   const people = useFetch(() => (isAdmin ? api.users.list() : Promise.resolve(null)), [isAdmin]);
   const [pattern, setPattern] = useState('');
@@ -218,6 +220,9 @@ export default function Mailboxes() {
             differently: "it worked" only needs to be noticed, while a reason
             it did not needs to sit there until somebody has acted on it. */}
         {params.get('error') && <Alert tone="danger"><span>{params.get('error')}</span></Alert>}
+
+        {/* What connecting a personal mailbox means for the daily MIS (§B2). */}
+        <DailyMisNotice mine={myMis} always />
 
         {/* Both Connect buttons are dead until the server is set up, and a
             disabled button that does not say why is the thing this whole

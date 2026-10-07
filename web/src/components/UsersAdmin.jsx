@@ -127,6 +127,9 @@ export function UsersAdmin() {
                       <div className="text-[12px] break-words text-muted-foreground">
                         {user.email ?? <em>no email — attribution only, from the workbook</em>}
                       </div>
+                      {user.daily_mis === false && user.role !== 'hr' && (
+                        <div className="text-[12px] text-muted-foreground">Exempt from the personal daily MIS</div>
+                      )}
                       {mailboxesOf(user).map((m) => (
                         <div key={m.id} className="text-[12px] break-words text-muted-foreground">
                           Mailbox {m.email}
@@ -184,6 +187,18 @@ export function UsersAdmin() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem className="text-[13px]" onSelect={() => setResetting(user)}>Set a new password</DropdownMenuItem>
+                          {user.role !== 'hr' && (
+                            <DropdownMenuItem
+                              className="text-[13px]"
+                              onSelect={() => update(
+                                user,
+                                { daily_mis: user.daily_mis === false },
+                                user.daily_mis === false ? `${user.name}'s daily MIS goes to management again` : `${user.name} is exempt from the personal daily MIS`
+                              )}
+                            >
+                              {user.daily_mis === false ? 'Include in the personal daily MIS' : 'Exempt from the personal daily MIS'}
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem className="text-[13px]" onSelect={() => toggleActive(user)}>
                             {user.active ? 'Stop them signing in' : 'Let them sign in again'}
                           </DropdownMenuItem>

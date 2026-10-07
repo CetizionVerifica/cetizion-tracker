@@ -177,7 +177,7 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     assert.equal(res.status, 200);
     assert.equal(res.body.data.length, 3);
     assert.deepEqual(Object.keys(res.body.data[0]).sort(), [
-      'active', 'created_at', 'email', 'id', 'last_login_at', 'name', 'role', 'updated_at',
+      'active', 'created_at', 'daily_mis', 'email', 'id', 'last_login_at', 'name', 'role', 'updated_at',
     ]);
     const text = JSON.stringify(res.body);
     assert.ok(!/password_hash|scrypt/.test(text), text);

@@ -373,6 +373,11 @@ const lakh = (v) => {
   return inr(n);
 };
 const FX_NOTE = 'Converted at the exchange rate on each record\'s date (ECB). Earlier reports used fixed rates of USD 88 and EUR 103.';
+/** The briefing's Team reports line (mis-report-sender-plan.md §B2): misPersonal.js teamReports() in words. */
+export function teamReportsLine(t) {
+  if (!t) return null;
+  return `Team reports: Sent: ${t.sent}${t.not_sent.length ? ` · Not sent: ${t.not_sent.map((n) => `${n.name} (${n.why})`).join(', ')}` : ''}`;
+}
 const link = (appUrl, path, text) => (appUrl ? `<a href="${esc(appUrl)}${esc(path)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
 
 /**
@@ -416,7 +421,7 @@ ${reminders.length ? reminders.map((r) => `- ${r.text}`).join('\n') : `- ${noRem
 
 3. ACTION ITEMS FOR TODAY (TOP 5)
 ${data.top_actions.length ? data.top_actions.map((x, i) => `${i + 1}. ${actionLine(x)}`).join('\n') : '- Nothing is pending.'}
-
+${data.team_reports ? `\n${teamReportsLine(data.team_reports)}\n` : ''}
 The full briefing, with every pending item, is attached as a PDF. ${FX_NOTE}
 
 Regards,
@@ -439,6 +444,7 @@ ${h3('3. Action items for today (top 5)')}
 ${data.top_actions.length
     ? `<ol>${data.top_actions.map((x) => `<li>${esc(actionLine(x))} · ${a(url(x.email_link || x.link), 'open')}</li>`).join('')}</ol>`
     : muted('Nothing is pending.')}
+${data.team_reports ? `<p>${esc(teamReportsLine(data.team_reports))}</p>` : ''}
 <p>The full briefing, with every pending item, is attached as a PDF.</p>
 <p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
 <p>Regards,<br>Cetizion Tracker</p>`);
@@ -481,5 +487,85 @@ ${table([], figures.map(([k, v]) => [k, String(v)]))}
 <p>The full report is attached as a PDF, with the enquiry table, sector-wise and service-wise sales, customer analysis, pending items and conversion figures.${appUrl ? ` ${link(appUrl, '/reports', 'Open the Reports page')}.` : ''}</p>
 <p style="font-size:12px;color:#64748b">${esc(FX_NOTE)}</p>
 <p>Regards,<br>Cetizion Tracker</p>`);
+  return { subject, text, html };
+}
+
+// ---------------------------------------------------------------------
+// The personal daily MIS (mis-report-sender-plan.md §B1)
+// ---------------------------------------------------------------------
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** "Tue 6 Oct 2026", as the subject has it. */
+export function dayTitle(d) {
+  const [y, m, day] = String(d).slice(0, 10).split('-').map(Number);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${WEEKDAY_SHORT[new Date(Date.UTC(y, m - 1, day)).getUTCDay()]} ${day} ${months[m - 1]} ${y}`;
+}
+
+/** The headings of the seven sections; every line under them is the AI's (misAi.js writePersonal). */
+export const PERSONAL_SECTIONS = [
+  ['actions', 'Actions taken'],
+  ['mailbox', 'From the mailbox'],
+  ['not_in_tracker', 'In email, not in the tracker'],
+  ['waiting', 'Waiting on them'],
+  ['today', 'Today'],
+  ['for_management', 'For management'],
+];
+export const MAILBOX_PARTS = [['highlights', 'What mattered'], ['commitments', 'Commitments'], ['owed_replies', 'Replies owed'], ['awaiting', 'Awaiting a reply']];
+const COUNT_WORDS = [['emails_sent', 'Emails sent'], ['emails_received', 'Emails received'], ['calls', 'Calls and meetings'], ['records_created', 'Records created'], ['tasks_done', 'Tasks done'], ['overdue', 'Overdue']];
+
+/**
+ * The personal daily MIS email (§B1): the AI's report in short, the PDF
+ * attached. `data` is { person, period, report } with `report` as
+ * writePersonal checked it. Code adds the headings and the counts' labels,
+ * never a sentence of its own.
+ */
+export function personalMis({ data, appUrl = '' }) {
+  const r = data.report;
+  const day = dayTitle(data.period.from);
+  const subject = `Daily MIS · ${data.person.name} · ${day}`;
+  const url = (path) => (!path ? '' : /^https?:/i.test(path) ? path : appUrl ? `${appUrl}${path}` : '');
+  const a = (href, text) => (href ? `<a href="${esc(href)}" style="color:#0F3D5E">${esc(text)}</a>` : esc(text));
+  const h3 = (text) => `<h3 style="font-size:14px;margin:16px 0 4px">${esc(text)}</h3>`;
+  const none = '<p style="color:#64748b">—</p>';
+  const itemsOf = (key) => (key === 'for_management' ? r.for_management.map((text) => ({ text })) : key === 'actions' ? r.actions.map((x) => ({ ...x, text: `${x.at} ${x.text}` })) : r[key]);
+  const flag = (x) => (x.no_action_yesterday ? ' [no action yesterday]' : '');
+  const due = (x) => (x.due ? ` (by ${date(x.due)})` : '');
+
+  const textSections = PERSONAL_SECTIONS.map(([key, title], i) => {
+    if (key === 'mailbox') {
+      const parts = MAILBOX_PARTS.map(([k, t]) => `${t}:\n${r.mailbox[k].length ? r.mailbox[k].map((x) => `- ${x.text}${due(x)}`).join('\n') : '- —'}`).join('\n');
+      return `${i + 2}. ${title.toUpperCase()}\n${parts}`;
+    }
+    const items = itemsOf(key);
+    return `${i + 2}. ${title.toUpperCase()}\n${items.length ? items.map((x) => `- ${x.text}${flag(x)}`).join('\n') : '- —'}`;
+  }).join('\n\n');
+  const text = `${subject}
+
+1. SUMMARY OF THE DAY
+${r.summary.text}
+${COUNT_WORDS.map(([k, label]) => `${label}: ${r.summary.counts[k]}`).join(' · ')}
+
+${textSections}
+
+PDF attached.
+`;
+
+  const htmlSections = PERSONAL_SECTIONS.map(([key, title], i) => {
+    if (key === 'mailbox') {
+      return h3(`${i + 2}. ${title}`) + MAILBOX_PARTS.map(([k, t]) => `<p style="margin:8px 0 2px"><strong>${esc(t)}</strong></p>${r.mailbox[k].length ? `<ul>${r.mailbox[k].map((x) => `<li>${a(url(x.link), `${x.text}${due(x)}`)}</li>`).join('')}</ul>` : none}`).join('');
+    }
+    const items = itemsOf(key);
+    return h3(`${i + 2}. ${title}`) + (items.length
+      ? `<ul>${items.map((x) => `<li>${a(url(x.link), x.text)}${x.no_action_yesterday ? ' <strong style="color:#b42318">no action yesterday</strong>' : ''}</li>`).join('')}</ul>`
+      : none);
+  }).join('\n');
+  const html = layout(`Daily MIS · ${data.person.name}`, `
+<p style="color:#64748b;margin:0 0 8px">${esc(day)}</p>
+${h3('1. Summary of the day')}
+<p>${esc(r.summary.text)}</p>
+${table(COUNT_WORDS.map(([, label]) => label), [COUNT_WORDS.map(([k]) => String(r.summary.counts[k]))])}
+${htmlSections}
+<p style="font-size:12px;color:#64748b">PDF attached.</p>`);
   return { subject, text, html };
 }

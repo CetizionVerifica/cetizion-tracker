@@ -229,6 +229,11 @@ export const routes = [
   { method: 'GET', path: '/api/mis-reports/sender', access: mustBeAdmin, why: 'Which mailbox and address the management reports go from, and why that mailbox cannot send; part of the reports\' settings.' },
   { method: 'GET', path: '/api/mis-reports/personal/people', access: mustBeAdmin, why: 'Who a personal daily MIS is for and the state of each one\'s mailbox; part of the reports\' settings.' },
   { method: 'GET', path: '/api/mis-reports/personal/:userId/preview', access: mustBeAdmin, why: 'One person\'s day as the personal MIS sees it, and the AI\'s report on it; a manager\'s view of someone else\'s work. Their mail text stays hidden.' },
+  { method: 'GET', path: '/api/mis-reports/personal/:userId/preview.pdf', access: mustBeAdmin, why: 'One person\'s daily MIS as it would be sent to management, written now by the AI; a manager\'s view of someone else\'s work.' },
+  { method: 'POST', path: '/api/mis-reports/personal/:userId/send', access: mustBeAdmin, why: 'Emails management one person\'s daily MIS now, from their mailbox; only an admin decides when a report about someone goes.' },
+  { method: 'GET', path: '/api/mis-reports/mine', access: signedIn, restrictions: ['self-only'] },
+  { method: 'GET', path: '/api/mis-reports/mine/:id/pdf', access: signedIn, restrictions: ['self-only'] },
+  { method: 'POST', path: '/api/mis-reports/mine/notice', access: signedIn, restrictions: ['self-only'] },
   { method: 'POST', path: '/api/mis-reports/sender/test', access: mustBeAdmin, why: 'Sends real mail from the reports\' sender (to the caller only); trying the company\'s sending path is an admin\'s act.' },
   { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 
