@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
 import { ErrorState } from '../components/ui.jsx';
+import { DailyMisNotice, MyDailyMis, useMyDailyMis } from '../components/MyDailyMis.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money } from '../lib/format.js';
@@ -283,6 +284,7 @@ export default function Today() {
   const work = useFetch(() => api.raw('/dashboard/worklist'));
   const diary = useFetch(() => api.raw('/visits/today'));
   const bell = useFetch(() => api.raw('/notifications/summary'));
+  const mine = useMyDailyMis();
 
   const d = data?.data;
   const w = work.data?.data;
@@ -330,6 +332,8 @@ export default function Today() {
               only sign of life was one line of header text. */}
           {loading && <TodaySkeleton />}
 
+          <DailyMisNotice mine={mine} />
+
           {!loading && overdue.length > 0 && <StartHere overdue={overdue} />}
 
           {!loading && list.length > 0 && (
@@ -351,6 +355,8 @@ export default function Today() {
           )}
 
           <Diary visits={diary.data?.data || []} />
+
+          <MyDailyMis mine={mine} />
 
           {/* One line, not the charts: Insights is where they live. */}
           <Link to="/insights" className="self-start text-[13px] font-medium text-primary hover:underline">See all insights →</Link>

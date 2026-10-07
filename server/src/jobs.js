@@ -17,7 +17,7 @@ import { runPoBackfills } from './lib/mailbox/autoPurchaseOrder.js';
 import { runInvoiceBackfills } from './lib/mailbox/autoInvoice.js';
 import { runReviewDigest } from './lib/mailbox/reviewDigest.js';
 import { runVisitReminders } from './lib/visits.js';
-import { runDailyBriefing, runWeeklyMis } from './lib/misSend.js';
+import { isFinalAttempt, runDailyBriefing, runPersonalDaily, runWeeklyMis } from './lib/misSend.js';
 import { runWebhooks } from './lib/webhooks.js';
 import { runAccountingSync } from './routes/accounting.js';
 import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
@@ -131,6 +131,20 @@ export const JOBS = {
     description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the chosen sender with the PDF attached',
     cron: '54 8 * * 1',
     run: (opts) => runWeeklyMis(opts),
+  },
+  // Each person's daily MIS (mis-report-sender-plan.md §B5), before the
+  // briefing so it can say whose went. Tuesday to Saturday, for Monday to
+  // Friday. A report the AI could not write is tried again at 09:10 and
+  // 09:40; what still fails at 09:40 is not sent, and admins are told.
+  'reports.personal_daily': {
+    description: 'Email management each person\'s daily MIS for the previous working day, written by AI, from their own mailbox',
+    cron: '40 8 * * 2-6',
+    run: (opts) => runPersonalDaily({ startedBy: opts?.startedBy || 'schedule' }),
+  },
+  'reports.personal_daily_retry': {
+    description: 'Try again the personal daily MIS reports that could not be written or sent at 08:40; the 09:40 try is the last',
+    cron: '10,40 9 * * 2-6',
+    run: (opts) => runPersonalDaily({ startedBy: opts?.startedBy || 'schedule', final: isFinalAttempt() }),
   },
   'deliverables.daily': {
     description: 'Mark expired certificates and deliverables; remind owners before expiry with a task',

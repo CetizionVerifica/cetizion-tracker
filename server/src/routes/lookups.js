@@ -229,6 +229,11 @@ const SENDER_SETTINGS = {
     return name;
   },
   // The personal daily MIS's own AI ceiling (§B4.2): a whole number, 0 stops it.
+  // The personal daily MIS on or off (§B2): a plain true or false.
+  async personal_mis_enabled(v) {
+    if (!['true', 'false'].includes(v.trim().toLowerCase())) throw unprocessable('true or false');
+    return v.trim().toLowerCase();
+  },
   async personal_mis_ai_limit(v) {
     if (!/^\d{1,4}$/.test(v.trim()) || Number(v) > 1000) throw unprocessable('A whole number of calls a day, from 0 to 1000');
     return String(Number(v));

@@ -9,7 +9,7 @@ import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date } from '../lib/format.js';
 import { recipientLists } from '../lib/addresses.js';
-import PersonalMisPreview from '../components/PersonalMisPreview.jsx';
+import PersonalMisCard from '../components/PersonalMisPreview.jsx';
 
 /**
  * Reports → Scheduled reports (docs/mis-reports-plan.md §5): the Daily Sales
@@ -27,7 +27,7 @@ const KINDS = [
   { kind: 'daily_briefing', settingKey: 'mis_daily_enabled', title: 'Daily Sales Briefing', when: 'Every day at 08:56 IST, for the previous day', what: 'What happened yesterday, the pending invoices, POs and quotations with Overdue marked, and the top five actions for today.' },
   { kind: 'weekly_mis', settingKey: 'mis_weekly_enabled', title: 'Weekly Sales MIS Report', when: 'Every Monday at 08:54 IST, for the previous Monday to Sunday', what: 'The eight management questions: enquiries per day with first-response times, outcomes, sector-wise and service-wise sales, customers, invoiced and received, receivables over 90 days, pending follow-ups, conversion and speed.' },
 ];
-const TITLE = Object.fromEntries(KINDS.map((k) => [k.kind, k.title]));
+const TITLE = { ...Object.fromEntries(KINDS.map((k) => [k.kind, k.title])), personal_daily: 'Daily MIS' };
 
 const setting = (list, key) => (list ?? []).find((s) => s.key === key)?.value ?? '';
 // A text setting saved as "none" (a setting cannot be blank) reads as empty.
@@ -295,7 +295,8 @@ function Runs({ runs, onChanged }) {
     try {
       // The period is the run's; "as of" the day after it ended rebuilds exactly that period.
       const next = new Date(`${String(run.period_to).slice(0, 10)}T00:00:00Z`); next.setUTCDate(next.getUTCDate() + 1);
-      const r = await api.action(`/mis-reports/${run.kind}/send`, { date: next.toISOString().slice(0, 10) });
+      const path = run.kind === 'personal_daily' ? `/mis-reports/personal/${run.user_id}/send` : `/mis-reports/${run.kind}/send`;
+      const r = await api.action(path, { date: next.toISOString().slice(0, 10) });
       toast(r.data.status === 'sent' ? `Sent again to ${r.data.recipients.join(', ')}` : `Not sent: ${r.data.error}`, r.data.status === 'sent' ? 'success' : 'danger');
       onChanged();
     } catch (err) { toast(err.message, 'danger'); }
@@ -309,17 +310,17 @@ function Runs({ runs, onChanged }) {
         rows={runs}
         empty="Nothing has been sent yet."
         columns={[
-          { key: 'kind', header: 'Report', render: (r) => TITLE[r.kind] },
+          { key: 'kind', header: 'Report', render: (r) => (r.person ? `${TITLE[r.kind]} · ${r.person}` : TITLE[r.kind]) },
           { key: 'period', header: 'Period', render: period },
           { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{`sent · ${howSent(r)}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>) },
           { key: 'recipients', header: 'To', className: 'wrap', render: (r) => (r.recipients || []).join(', ') || '—' },
           { key: 'created_at', header: 'When', render: (r) => `${ago(r.created_at)} · ${r.triggered_by}` },
-          { key: 'error', header: 'Note', className: 'wrap small', render: (r) => r.error || (r.ai_used ? 'AI commentary' : '') },
+          { key: 'error', header: 'Note', className: 'wrap small', render: (r) => r.error || (r.kind === 'personal_daily' ? 'Written by AI' : r.ai_used ? 'AI commentary' : '') },
           {
             key: 'actions', header: '', render: (r) => (
               <span className="flex gap-1">
                 {r.document_id && <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" asChild><a href={`/api/mis-reports/runs/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a></Button>}
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" onClick={() => setResending(r)}>Resend</Button>
+                {(r.kind !== 'personal_daily' || r.user_id) && <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" onClick={() => setResending(r)}>Resend</Button>}
               </span>
             ),
           },
@@ -328,7 +329,7 @@ function Runs({ runs, onChanged }) {
       {resending && (
         <ConfirmDialog
           tone="normal"
-          title={`Send the ${TITLE[resending.kind]} for ${period(resending)} again?`}
+          title={`Send the ${TITLE[resending.kind]}${resending.person ? ` for ${resending.person}` : ''} for ${period(resending)} again?`}
           message="It is rebuilt from the records as they are now, so figures may differ from the first send, and goes to the current recipients."
           confirmLabel="Resend"
           busy={busy}
@@ -374,7 +375,7 @@ export default function ScheduledReports() {
         {list && <SharedSettings key={`recipients:${saved}`} settings={list} onChanged={refetch} />}
         {list && <SenderCard key={`sender:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
         {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
-        <PersonalMisPreview />
+        {list && <PersonalMisCard enabled={setting(list, 'personal_mis_enabled') === 'true'} recipients={recipientsIn(list)} onChanged={refetch} />}
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
     </>

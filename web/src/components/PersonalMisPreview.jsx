@@ -1,21 +1,26 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Alert, Field, Input, useToast } from './ui.jsx';
+import { Alert, ConfirmDialog, Field, Input, useToast } from './ui.jsx';
 import { Chip } from './record.jsx';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { date } from '../lib/format.js';
+import { ago, date } from '../lib/format.js';
 
 /**
- * The personal daily MIS, before it is sent to anyone
- * (mis-report-sender-plan.md §C4 phase 3): one person's day as the
- * tracker and their mailbox record it, beside the report the AI writes
- * from it and what the checks dropped. Nothing here sends.
+ * Reports → Scheduled reports → Personal daily MIS
+ * (mis-report-sender-plan.md §B6): the on/off switch, who it goes for and
+ * why not for the others, and for any one person the preview (their day as
+ * the tracker and their mailbox record it, beside the report the AI writes
+ * from it and what the checks dropped), the PDF, Send now and their runs.
  */
 
-const STATE = { ready: 'mailbox connected', no_mailbox: 'no mailbox connected', mailbox_needs_reconnect: 'mailbox needs reconnecting' };
+const STATE = { ready: 'mailbox connected', no_mailbox: 'no mailbox connected', mailbox_needs_reconnect: 'mailbox needs reconnecting', exempt: 'exempt' };
+const STATE_CHIP = {
+  ready: ['settled', 'will be sent'], exempt: [undefined, 'exempt'],
+  no_mailbox: ['waiting', 'no mailbox'], mailbox_needs_reconnect: ['late', 'mailbox needs reconnecting'],
+};
 const COUNT_LABEL = {
   emails_sent: ['email sent', 'emails sent'], emails_received: ['email received', 'emails received'], calls: ['call or meeting', 'calls and meetings'],
   records_created: ['record created', 'records created'], tasks_done: ['task done', 'tasks done'], overdue: ['overdue', 'overdue'],
@@ -64,7 +69,7 @@ function Facts({ facts }) {
 }
 
 function Report({ ai }) {
-  if (!ai) return <p className="text-[12.5px] text-muted-foreground">Press Write with AI to see the report the AI writes from these facts. It is one counted AI call (two when it has to be asked again).</p>;
+  if (!ai) return <p className="text-[12.5px] text-muted-foreground">Press Preview with AI to see the report the AI writes from these facts. It is one counted AI call (two when it has to be asked again).</p>;
   const r = ai.report;
   return (
     <div className="flex flex-col gap-1">
@@ -104,7 +109,25 @@ function Report({ ai }) {
   );
 }
 
-export default function PersonalMisPreview() {
+/** One person's runs, newest first. */
+function PersonRuns({ userId, version }) {
+  const runs = useFetch(() => api.raw(`/mis-reports/runs?kind=personal_daily&user_id=${userId}`), [userId, version]);
+  const list = runs.data?.data ?? [];
+  if (!list.length) return <div className="text-[12.5px] text-muted-foreground">No report has been sent for them yet.</div>;
+  return (
+    <ul className="flex flex-col gap-1 text-[12.5px] text-secondary-text">
+      {list.slice(0, 10).map((r) => (
+        <li key={r.id}>
+          {date(r.period_from)} · {r.status === 'sent' ? <Chip tone="settled">sent</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>}
+          {' '}{ago(r.created_at)} · {r.triggered_by}{r.error ? ` · ${r.error}` : ''}
+          {r.document_id && <> · <a href={`/api/mis-reports/runs/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a></>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default function PersonalMisCard({ enabled = false, recipients = { to: [], cc: [] }, onChanged = () => {} }) {
   const toast = useToast();
   const people = useFetch(() => api.raw('/mis-reports/personal/people'), []);
   const list = people.data?.data ?? [];
@@ -112,6 +135,11 @@ export default function PersonalMisPreview() {
   const [asOf, setAsOf] = useState('');
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [version, setVersion] = useState(0);
+  const person = list.find((p) => String(p.id) === who) || null;
+  const counts = list.reduce((acc, p) => ({ ...acc, [p.state]: (acc[p.state] || 0) + 1 }), {});
+  const unseen = list.filter((p) => p.state === 'ready' && !p.daily_mis_notice_seen_at).length;
 
   async function load(ai) {
     if (!who) { toast('Choose a person first', 'danger'); return; }
@@ -126,19 +154,52 @@ export default function PersonalMisPreview() {
     finally { setBusy(null); }
   }
 
+  async function toggle() {
+    setBusy('switch');
+    try {
+      await api.update('settings', 'personal_mis_enabled', { value: enabled ? 'false' : 'true' });
+      toast(enabled ? 'The personal daily MIS is switched off' : 'The personal daily MIS is switched on', 'success');
+      onChanged();
+    } catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); }
+  }
+
+  async function send() {
+    setBusy('send');
+    try {
+      const r = (await api.action(`/mis-reports/personal/${who}/send`, asOf ? { date: asOf } : {})).data;
+      if (r.status === 'sent') toast(`${person?.name}'s report sent to ${r.recipients.join(', ')}${r.error ? ` (${r.error})` : ''}`, 'success');
+      else toast(r.sent_via === 'log' ? `Logged only (${r.suppressed || 'delivery is off'}); nothing left the server` : `Not sent: ${r.error || r.skipped}`, r.sent_via === 'log' ? 'success' : 'danger');
+    } catch (err) { toast(err.message, 'danger'); }
+    finally { setBusy(null); setVersion((v) => v + 1); onChanged(); }
+  }
+
+  const pdfQuery = asOf ? `?date=${asOf}` : '';
   return (
     <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-        Personal daily MIS
-        <Chip>Preview only</Chip>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
+            Personal daily MIS
+            <Chip tone={enabled ? 'settled' : undefined}>{enabled ? 'On' : 'Off'}</Chip>
+          </div>
+          <div className="text-[12px] text-muted-foreground">Tuesday to Saturday at 08:40 IST, for the previous working day; tried again at 09:10 and 09:40</div>
+          <p className="mt-1 text-[12.5px]/[1.6] text-secondary-text">
+            Each sales and admin user's day, written by AI from their mailbox and their records in the tracker, sent from their own mailbox to the recipients below with them copied. Every line must cite one of their facts, nothing may be left out, and the counts must be the tracker's; a report that fails is not sent. No report for a weekend, a holiday or a day of leave.
+          </p>
+        </div>
+        <Button variant={enabled ? 'secondary' : 'default'} size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
+          {enabled ? 'Switch off' : 'Switch on'}
+        </Button>
       </div>
-      <p className="text-[12.5px]/[1.6] text-secondary-text">
-        One person's previous working day: what they did in the tracker, the email they sent and received with clients, and what is waiting on them, beside the report the AI writes from it. Every line the AI writes must cite one of these facts, nothing may be left out, and the counts must be the tracker's; a report that fails is not sent. Nothing is sent from here.
-      </p>
+      <div className="flex flex-wrap gap-1.5 text-[12.5px]">
+        {Object.entries(STATE_CHIP).filter(([k]) => counts[k]).map(([k, [tone, text]]) => <Chip key={k} tone={tone}>{counts[k]} {text}</Chip>)}
+        {enabled && unseen > 0 && <span className="text-[12px] text-muted-foreground">{unseen} of them {unseen === 1 ? 'has' : 'have'} not yet seen the notice that it is sent.</span>}
+      </div>
       <div className="flex flex-wrap items-end gap-2">
         <Field label="Person">
           <Select value={who} onValueChange={(v) => { setWho(v); setResult(null); }}>
-            <SelectTrigger className="h-8 w-[280px] text-[13px]"><SelectValue placeholder="Choose a person" /></SelectTrigger>
+            <SelectTrigger className="h-8 w-[300px] text-[13px]"><SelectValue placeholder="Choose a person" /></SelectTrigger>
             <SelectContent>
               {list.map((p) => <SelectItem key={p.id} value={String(p.id)} className="text-[13px]">{p.name} · {STATE[p.state] || p.state}</SelectItem>)}
             </SelectContent>
@@ -148,8 +209,19 @@ export default function PersonalMisPreview() {
           <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-8 text-[12.5px]" />
         </Field>
         <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy !== null} onClick={() => load(false)}>{busy === 'facts' ? 'Gathering…' : 'Show the facts'}</Button>
-        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy !== null} onClick={() => load(true)}>{busy === 'ai' ? 'Writing…' : 'Write with AI'}</Button>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy !== null} onClick={() => load(true)}>{busy === 'ai' ? 'Writing…' : 'Preview with AI'}</Button>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={!who} asChild={Boolean(who)}>
+          {who ? <a href={`/api/mis-reports/personal/${who}/preview.pdf${pdfQuery}`} target="_blank" rel="noreferrer">Open the PDF</a> : <span>Open the PDF</span>}
+        </Button>
+        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={!who || busy !== null} onClick={() => setSending(true)}>{busy === 'send' ? 'Sending…' : 'Send now'}</Button>
       </div>
+      {person && (
+        <div className="flex flex-col gap-1 border-t border-border pt-3">
+          <div className="text-[13px] font-medium text-foreground">{person.name}'s reports</div>
+          {person.state === 'mailbox_needs_reconnect' && <Alert tone="warning"><span>Their mailbox needs reconnecting, so the schedule skips them; Send now goes by SMTP.</span></Alert>}
+          <PersonRuns userId={person.id} version={version} />
+        </div>
+      )}
       {result && (
         <div className="grid gap-4 border-t border-border pt-3 @3xl:grid-cols-2">
           <div>
@@ -161,6 +233,17 @@ export default function PersonalMisPreview() {
             <Report ai={result.ai} />
           </div>
         </div>
+      )}
+      {sending && person && (
+        <ConfirmDialog
+          tone="normal"
+          title={`Send ${person.name}'s daily MIS now?`}
+          message={`The AI writes it for the working day before ${asOf ? date(asOf) : 'today'}, and it goes from ${person.mailbox?.email || 'the SMTP sender'} to ${recipients.to.join(', ') || 'nobody — set the recipients first'}, copying ${[...recipients.cc, person.email].filter(Boolean).join(', ')}, with the PDF attached. A day already sent is sent again. A report that fails the checks is not sent.`}
+          confirmLabel="Send"
+          busy={busy === 'send'}
+          onClose={() => setSending(false)}
+          onConfirm={() => { setSending(false); send(); }}
+        />
       )}
     </div>
   );

@@ -27,7 +27,7 @@ export const ROLES = ['admin', 'sales', 'hr'];
 // page in one read. withoutSecrets still strips the hash, which is the only
 // column on this table that must never leave it.
 const COLUMNS = 'id, name, email, password_hash, role, active, session_version, '
-  + 'phone, signature, time_zone, notify, last_login_at, created_at, updated_at';
+  + 'phone, signature, time_zone, notify, last_login_at, created_at, updated_at, daily_mis, daily_mis_notice_seen_at';
 
 /** Trimmed as typed, or null when there is nothing there. Case is kept: it is the reader's, not the index's. */
 export function normalizeEmail(email) {
@@ -179,7 +179,7 @@ function asDomainError(err) {
  */
 export async function listUsers(db = pool) {
   const { rows } = await db.query(
-    `SELECT id, name, email, role, active, last_login_at, created_at, updated_at
+    `SELECT id, name, email, role, active, daily_mis, last_login_at, created_at, updated_at
        FROM users ORDER BY active DESC, lower(name), id`
   );
   return rows;
@@ -217,7 +217,7 @@ function guardingAdmins(db, fn) {
   });
 }
 
-const FIELDS = { name: 'name', email: 'email', role: 'role', active: 'active' };
+const FIELDS = { name: 'name', email: 'email', role: 'role', active: 'active', daily_mis: 'daily_mis' };
 
 /**
  * Change a user's name, email, role or active flag — and nothing else.
@@ -268,6 +268,12 @@ export async function updateUser(id, changes, db = pool, audit = null) {
         `CASE WHEN ${FIELDS.active} AND NOT $${values.length} THEN 1 ELSE 0 END`
     );
   }
+  // Whether their personal daily MIS goes (mis-report-sender-plan.md §B2):
+  // only an admin may exempt someone.
+  if (changes.daily_mis !== undefined) {
+    values.push(Boolean(changes.daily_mis));
+    sets.push(`${FIELDS.daily_mis} = $${values.length}`);
+  }
   if (sets.length === 0) throw new Error('Nothing to change.');
 
   values.push(id);
@@ -281,13 +287,13 @@ export async function updateUser(id, changes, db = pool, audit = null) {
       // this table can slip between the two statements.
       const before = audit
         ? (await client.query(
-            `SELECT id, name, email, role, active FROM users WHERE id = $1`, [id]
+            `SELECT id, name, email, role, active, daily_mis FROM users WHERE id = $1`, [id]
           )).rows[0] ?? null
         : null;
 
       const { rows } = await client.query(
         `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length}
-         RETURNING id, name, email, role, active, last_login_at, created_at, updated_at`,
+         RETURNING id, name, email, role, active, daily_mis, last_login_at, created_at, updated_at`,
         values
       );
       if (!rows.length) return null;

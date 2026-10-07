@@ -317,7 +317,12 @@ session is **401**, before any of these is considered.
 | `GET /api/mis-reports/:kind/preview` | **admin** | The Daily Sales Briefing and Weekly MIS are management reports over every record and every mailbox's readers; nothing is scoped to the caller. |
 | `GET /api/mis-reports/:kind/preview.pdf` | **admin** | The same report as a PDF, built over the whole book. |
 | `POST /api/mis-reports/:kind/send` | **admin** | Emails management a report now, from the chosen sender; not a preview. |
+| `GET /api/mis-reports/mine` | any | Scoped: self-only. |
+| `GET /api/mis-reports/mine/:id/pdf` | any | Scoped: self-only. |
+| `POST /api/mis-reports/mine/notice` | any | Scoped: self-only. |
 | `GET /api/mis-reports/personal/:userId/preview` | **admin** | One person's day as the personal MIS sees it, and the AI's report on it; a manager's view of someone else's work. Their mail text stays hidden. |
+| `GET /api/mis-reports/personal/:userId/preview.pdf` | **admin** | One person's daily MIS as it would be sent to management, written now by the AI; a manager's view of someone else's work. |
+| `POST /api/mis-reports/personal/:userId/send` | **admin** | Emails management one person's daily MIS now, from their mailbox; only an admin decides when a report about someone goes. |
 | `GET /api/mis-reports/personal/people` | **admin** | Who a personal daily MIS is for and the state of each one's mailbox; part of the reports' settings. |
 | `GET /api/mis-reports/runs` | **admin** | Every report sent to management, with its recipients. |
 | `GET /api/mis-reports/runs/:id/pdf` | **admin** | The PDF that went to management, over the whole book. |

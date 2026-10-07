@@ -336,11 +336,12 @@ export async function personalFacts({ userId, today = businessToday(), db = { qu
 
 /**
  * The people a personal daily MIS is for (§B2): active sales and admin
- * users, not HR, each with the state of their personal mailbox.
+ * users, not HR, each with the state of their personal mailbox. An admin
+ * may exempt someone (users.daily_mis); they are listed, as exempt.
  */
 export async function personalPeople(db = { query }) {
   const { rows } = await db.query(
-    `SELECT u.id, u.name, u.email, u.role,
+    `SELECT u.id, u.name, u.email, u.role, u.daily_mis, u.daily_mis_notice_seen_at,
             (SELECT json_build_object('id', a.id, 'email', a.email, 'status', a.status, 'visibility', a.visibility)
                FROM connected_accounts a WHERE a.user_id = u.id AND NOT a.is_shared AND a.status <> 'disconnected'
               ORDER BY (a.status = 'active') DESC, a.id LIMIT 1) AS mailbox
@@ -349,9 +350,65 @@ export async function personalPeople(db = { query }) {
       ORDER BY lower(u.name), u.id`);
   return rows.map((r) => ({
     ...r,
-    state: !r.mailbox ? 'no_mailbox' : r.mailbox.status === 'active' ? 'ready' : 'mailbox_needs_reconnect',
+    state: !r.daily_mis ? 'exempt' : !r.mailbox ? 'no_mailbox' : r.mailbox.status === 'active' ? 'ready' : 'mailbox_needs_reconnect',
   }));
 }
+
+/** The person's personal mailbox that can send, or null. */
+export async function sendingMailbox(db, userId) {
+  const { rows: [a] } = await db.query(
+    `SELECT * FROM connected_accounts WHERE user_id = $1 AND NOT is_shared AND status = 'active' ORDER BY id LIMIT 1`, [userId]);
+  return a || null;
+}
+
+/**
+ * Why there is no personal report for `day` at all, or null when there is
+ * one (§B2): a Saturday or Sunday, a holiday, or the person's approved
+ * leave (their staff row, matched by email).
+ */
+export async function dayOff(db, { day, userId = null }) {
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return 'a weekend';
+  const { rows: [h] } = await db.query('SELECT name FROM holidays WHERE holiday_on = $1 LIMIT 1', [day]);
+  if (h) return `a holiday${h.name ? ` (${h.name})` : ''}`;
+  if (userId) {
+    const { rowCount } = await db.query(
+      `SELECT 1 FROM staff_leave l JOIN staff s ON s.id = l.staff_id JOIN users u ON lower(btrim(u.email)) = lower(btrim(s.email))
+        WHERE u.id = $1 AND $2::date BETWEEN l.starts_on AND l.ends_on LIMIT 1`, [userId, day]);
+    if (rowCount) return 'on leave';
+  }
+  return null;
+}
+
+const NOT_SENT_STATE = { no_mailbox: 'no mailbox connected', mailbox_needs_reconnect: 'mailbox needs reconnecting' };
+
+/**
+ * The company briefing's Team reports line (§B2): whose personal report for
+ * `day` went, and why the others did not. Null when the feature is off or
+ * the day had no reports (a weekend or a holiday).
+ */
+export async function teamReports(db, day) {
+  const { rows: [on] } = await db.query(`SELECT value FROM settings WHERE key = 'personal_mis_enabled'`);
+  if (on?.value !== 'true' || await dayOff(db, { day })) return null;
+  const people = (await personalPeople(db)).filter((p) => p.state !== 'exempt');
+  if (!people.length) return null;
+  const { rows: runs } = await db.query(
+    `SELECT DISTINCT ON (user_id) user_id, status, sent_via, error FROM report_runs
+      WHERE kind = 'personal_daily' AND period_from = $1 AND user_id IS NOT NULL
+      ORDER BY user_id, (status = 'sent') DESC, created_at DESC, id DESC`, [day]);
+  const byUser = new Map(runs.map((r) => [r.user_id, r]));
+  const sent = [];
+  const notSent = [];
+  for (const p of people) {
+    const run = byUser.get(p.id);
+    if (run?.status === 'sent') { sent.push(p.name); continue; }
+    if (await dayOff(db, { day, userId: p.id })) continue;
+    const why = NOT_SENT_STATE[p.state] || (run?.status === 'failed' ? 'failed, retrying' : run?.status === 'skipped' ? 'composed but not delivered' : 'not sent yet');
+    notSent.push({ name: p.name, why });
+  }
+  return { sent: sent.length, sent_names: sent, not_sent: notSent };
+}
+
 
 /**
  * The facts as someone other than the mailbox's owner may see them (the

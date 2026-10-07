@@ -1611,6 +1611,10 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
+  -- The personal daily MIS (093): false when an admin exempted them, and
+  -- when they acknowledged the notice that it is sent.
+  daily_mis      boolean NOT NULL DEFAULT true,
+  daily_mis_notice_seen_at timestamptz,
   CONSTRAINT users_name_not_blank  CHECK (btrim(name) <> ''),
   -- '' would satisfy "email IS NOT NULL" while being no address at all.
   CONSTRAINT users_email_not_blank CHECK (email IS NULL OR btrim(email) <> ''),
@@ -3050,7 +3054,7 @@ ON CONFLICT (key) DO NOTHING;
 -- (docs/mis-reports-plan.md §4): what was sent, to whom, how, and the PDF.
 CREATE TABLE IF NOT EXISTS report_runs (
   id            serial PRIMARY KEY,
-  kind          text NOT NULL CHECK (kind IN ('daily_briefing','weekly_mis')),
+  kind          text NOT NULL CHECK (kind IN ('daily_briefing','weekly_mis','personal_daily')),
   period_from   date NOT NULL,
   period_to     date NOT NULL,
   status        text NOT NULL CHECK (status IN ('sent','preview','failed','skipped')),
@@ -3064,11 +3068,16 @@ CREATE TABLE IF NOT EXISTS report_runs (
   -- The From the report carried, and the mailbox it went through; null for SMTP (090).
   sent_from     text,
   sent_through  int REFERENCES connected_accounts(id) ON DELETE SET NULL,
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  -- A personal daily MIS: whose it was, and what the checks on the AI's
+  -- report dropped or found missing (093). Null for the company reports.
+  user_id       int REFERENCES users(id) ON DELETE SET NULL,
+  ai_checks     jsonb
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS report_runs_sent_once
-  ON report_runs (kind, period_from) WHERE status = 'sent' AND triggered_by = 'schedule';
+  ON report_runs (kind, period_from, COALESCE(user_id, 0)) WHERE status = 'sent' AND triggered_by = 'schedule';
+CREATE INDEX IF NOT EXISTS report_runs_user_idx ON report_runs (user_id, created_at DESC) WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS report_runs_recent_idx ON report_runs (kind, created_at DESC);
 
 INSERT INTO settings (key, value, notes) VALUES
@@ -3085,6 +3094,11 @@ ON CONFLICT (key) DO NOTHING;
 -- The personal daily MIS's own AI ceiling (092), apart from the readers'.
 INSERT INTO settings (key, value, notes) VALUES
   ('personal_mis_ai_limit', '30', 'AI calls a day for the personal daily MIS, apart from the readers'' ceiling.')
+ON CONFLICT (key) DO NOTHING;
+
+-- The personal daily MIS itself, off until an admin turns it on (093).
+INSERT INTO settings (key, value, notes) VALUES
+  ('personal_mis_enabled', 'false', 'Send each user''s daily MIS to management from their own mailbox, at 08:40 IST Tuesday to Saturday for the previous working day.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ------------------------------------------- Finance's debtors list (078)
