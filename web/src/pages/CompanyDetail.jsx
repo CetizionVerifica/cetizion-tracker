@@ -8,6 +8,7 @@ import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { PortalSettings } from '../components/PortalSettings.jsx';
+import { PortalPreview } from '../components/PortalPreview.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -262,6 +263,7 @@ export default function CompanyDetail() {
         <Timeline entity="company" id={id} />
 
         {isAdmin && <PortalSettings companyId={c.id} />}
+        {isAdmin && <PortalPreview companyId={c.id} />}
       </RecordPage>
 
       {editing && (

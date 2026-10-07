@@ -176,6 +176,8 @@ export const routes = [
   { method: 'GET', path: '/api/portal/certificates', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own certificates.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/files/document/:id', access: 'public', mechanism: 'portal-session', openBecause: 'A document file, checked against the session\'s company before it is served.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/files/quotation/:no', access: 'public', mechanism: 'portal-session', openBecause: 'A quotation PDF, checked against the session\'s company before it is served.', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/files/invoice/:id', access: 'public', mechanism: 'portal-session', openBecause: 'An invoice\'s PDF, from the Invoices section; the invoice is checked against the session\'s company before it is served (#198).', restrictions: ['record-owner', 'portal-section'] },
+  { method: 'GET', path: '/api/portal/files/po/:no', access: 'public', mechanism: 'portal-session', openBecause: 'A live purchase order\'s file, from Projects & orders; checked against the session\'s company before it is served (#198).', restrictions: ['record-owner', 'portal-section'] },
   { method: 'GET', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client\'s own messages.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'POST', path: '/api/portal/messages', access: 'public', mechanism: 'portal-session', openBecause: 'The client writes to us.', restrictions: ['record-owner', 'portal-section'] },
 
@@ -432,6 +434,7 @@ export const routes = [
   { method: 'PATCH', path: '/api/portal-admin/companies/:id', access: mustBeAdmin, why: 'Switching the portal on and choosing its sections.' },
   { method: 'PATCH', path: '/api/portal-admin/contacts/:id', access: mustBeAdmin, why: 'Granting or withdrawing a client contact\'s portal access.' },
   { method: 'POST', path: '/api/portal-admin/contacts/:id/invite', access: mustBeAdmin, why: 'Emailing a sign-in link to somebody outside the company.' },
+  { method: 'GET', path: '/api/portal-admin/companies/:id/preview/:section', access: mustBeAdmin, why: 'Preview as client (#198): everything the client\'s portal shows of this company, invoices and GST included.' },
 
   // ----------------------------------------------------------- accounting
   { method: 'GET', path: '/api/accounting/status', access: mustBeAdmin, why: 'The whole accounting router is admin-only: it is the books (#42).' },

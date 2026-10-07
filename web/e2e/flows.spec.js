@@ -498,3 +498,39 @@ test('a PO registered from email carries a banner until somebody marks it checke
   await page.goto('/purchase-orders?from_email=1');
   await expect(page.locator('table')).toContainText(poNumber);
 });
+
+test('the client portal shows each PO and its invoices with GST, and staff preview the same', async ({ page }) => {
+  await signIn(page);
+  const client = `E2E Portal Client ${stamp}`;
+  const q = await quotationFor(page, client);
+  const poNumber = `E2E-PORTAL-${stamp}`;
+  const invoiceNo = `E2E-INV-${stamp}`;
+  await page.request.post(`/api/quotations/${encodeURIComponent(q.quotation_no)}/register`, { data: { po_number: poNumber } });
+  // A contact allowed into the portal, and the PO's first stage invoiced.
+  const { companyId, contactId } = await withDatabase(async (db) => {
+    const { rows: [po] } = await db.query('SELECT p.company_id FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE po.po_number = $1', [poNumber]);
+    const { rows: [ct] } = await db.query('INSERT INTO contacts (company_id, name, email, portal_access) VALUES ($1, $2, $3, true) RETURNING id', [po.company_id, 'Portal Person', `portal-${stamp}@example.com`]);
+    await db.query(`UPDATE payment_stages SET invoice_no = $2, invoice_date = CURRENT_DATE
+                     WHERE id = (SELECT id FROM payment_stages WHERE po_number = $1 ORDER BY stage_no LIMIT 1)`, [poNumber, invoiceNo]);
+    return { companyId: po.company_id, contactId: ct.id };
+  });
+  await page.request.patch(`/api/portal-admin/companies/${companyId}`, { data: { portal_enabled: true, portal_sections: ['projects', 'documents', 'invoices', 'certificates', 'contact'] } });
+  const { data: invite } = await (await page.request.post(`/api/portal-admin/contacts/${contactId}/invite`)).json();
+
+  // Staff see the client's view from the company page.
+  await page.goto(`/companies/${companyId}`);
+  await page.getByRole('button', { name: 'Show the client\'s view' }).click();
+  await expect(page.getByText(invoiceNo).first()).toBeVisible();
+  await expect(page.getByText('Taxable').first()).toBeVisible();
+
+  // The client, from the emailed link: the PO with what is still to bill, then the invoice with its GST.
+  const link = new URL(invite.url);
+  await page.goto(link.pathname);
+  await expect(page.getByRole('heading', { name: client })).toBeVisible();
+  await page.getByRole('button', { name: 'Projects & orders' }).click();
+  await expect(page.getByText(`PO ${poNumber}`).first()).toBeVisible();
+  await expect(page.getByText('Still to bill')).toBeVisible();
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('GST', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(invoiceNo).first()).toBeVisible();
+});

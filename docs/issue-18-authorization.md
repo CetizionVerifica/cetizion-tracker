@@ -109,7 +109,7 @@ arrangement exists to prevent.
 | `GET /api/health`<br>`GET /api/auth/config`<br>`POST /api/auth/logout`<br>`GET /api/auth/oauth/:provider/start`<br>`POST /api/portal/request-link`<br>`GET /api/mcp`<br>`DELETE /api/mcp` | no | Deliberately open. Nothing identifies the caller. |
 | `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
-| `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
+| `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/files/invoice/:id`<br>`GET /api/portal/files/po/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
 | `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
 | `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
@@ -340,6 +340,8 @@ session is **401**, before any of these is considered.
 | `GET /api/portal/certificates` | public | portal-session — The client's own certificates. |
 | `GET /api/portal/documents` | public | portal-session — The client's own documents. |
 | `GET /api/portal/files/document/:id` | public | portal-session — A document file, checked against the session's company before it is served. |
+| `GET /api/portal/files/invoice/:id` | public | portal-session — An invoice's PDF, from the Invoices section; the invoice is checked against the session's company before it is served (#198). |
+| `GET /api/portal/files/po/:no` | public | portal-session — A live purchase order's file, from Projects & orders; checked against the session's company before it is served (#198). |
 | `GET /api/portal/files/quotation/:no` | public | portal-session — A quotation PDF, checked against the session's company before it is served. |
 | `GET /api/portal/invoices` | public | portal-session — The client's own invoices. |
 | `GET /api/portal/invoices/statement.pdf` | public | portal-session — The client's own statement. |
@@ -353,6 +355,7 @@ session is **401**, before any of these is considered.
 | **/api/portal-admin** | | |
 | `GET /api/portal-admin/companies/:id` | **admin** | Who outside the company may see this client's records (#47). |
 | `PATCH /api/portal-admin/companies/:id` | **admin** | Switching the portal on and choosing its sections. |
+| `GET /api/portal-admin/companies/:id/preview/:section` | **admin** | Preview as client (#198): everything the client's portal shows of this company, invoices and GST included. |
 | `PATCH /api/portal-admin/contacts/:id` | **admin** | Granting or withdrawing a client contact's portal access. |
 | `POST /api/portal-admin/contacts/:id/invite` | **admin** | Emailing a sign-in link to somebody outside the company. |
 | **/api/profitability** | | |

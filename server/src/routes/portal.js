@@ -12,6 +12,8 @@
  *   GET  /api/portal/invoices/statement.pdf
  *   GET  /api/portal/files/document/:id
  *   GET  /api/portal/files/quotation/:no
+ *   GET  /api/portal/files/invoice/:id    an invoice's PDF, from the Invoices section (#198)
+ *   GET  /api/portal/files/po/:no         a live PO's file, from Projects & orders (#198)
  *   POST /api/portal/messages       { subject, body }
  *
  * Staff side (signed in):
@@ -19,6 +21,7 @@
  *   PATCH /api/portal-admin/companies/:id           { portal_enabled, portal_sections }
  *   PATCH /api/portal-admin/contacts/:id            { portal_access }   (off revokes sessions)
  *   POST /api/portal-admin/contacts/:id/invite      send a sign-in link now
+ *   GET  /api/portal-admin/companies/:id/preview/:section   what the client sees (#198)
  */
 import crypto from 'node:crypto';
 import { Router } from 'express';
@@ -34,7 +37,10 @@ import { notify } from '../lib/notify.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { fetchDocument, isInlineType } from '../lib/documents.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
-import { companyOwnsDocument, portalCertificates, portalDocuments, portalInvoices, portalProjects, SECTIONS, statementPdf } from '../lib/portal.js';
+import {
+  companyOwnsDocument, invoiceDocument, poDocument, portalCertificates, portalDocuments, portalInvoices, portalProjects,
+  SECTION_DATA, SECTIONS, statementPdf,
+} from '../lib/portal.js';
 import { fullQuotation } from './quotations.js';
 
 export const portalRouter = Router();
@@ -175,15 +181,37 @@ portalRouter.get('/certificates', section('certificates'), async (req, res) => {
   res.json({ data: await portalCertificates(req.portal.company_id) });
 });
 
+/** Send a stored file the caller has already checked belongs to the company, and audit it. */
+async function serveDocument(req, res, id, target) {
+  const { document, body } = await fetchDocument(id);
+  await audit(req, 'download', target);
+  res.setHeader('Content-Type', isInlineType(document.content_type) ? document.content_type : 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(document.file_name)}"`);
+  res.send(body);
+}
+
 portalRouter.get('/files/document/:id', section('documents'), async (req, res) => {
   const id = Number(req.params.id);
   // Same answer for "not yours" and "not there".
   if (!Number.isInteger(id) || !(await companyOwnsDocument(req.portal.company_id, id))) throw new ApiError(404, 'Not found');
-  const { document, body } = await fetchDocument(id);
-  await audit(req, 'download', `document:${id}`);
-  res.setHeader('Content-Type', isInlineType(document.content_type) ? document.content_type : 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(document.file_name)}"`);
-  res.send(body);
+  await serveDocument(req, res, id, `document:${id}`);
+});
+
+// An invoice's PDF opens from the Invoices section (#198, G3), whether or
+// not the Documents section is on: it is the invoice the client is asked to pay.
+portalRouter.get('/files/invoice/:id', section('invoices'), async (req, res) => {
+  const id = Number(req.params.id);
+  const invoice = Number.isInteger(id) ? await invoiceDocument(req.portal.company_id, id) : null;
+  if (!invoice) throw new ApiError(404, 'Not found');
+  await serveDocument(req, res, invoice.document_id, `invoice:${invoice.invoice_no}`);
+});
+
+// A live PO's file opens from Projects & orders, where the PO is shown.
+portalRouter.get('/files/po/:no', section('projects'), async (req, res) => {
+  const no = decodeURIComponent(req.params.no);
+  const po = await poDocument(req.portal.company_id, no);
+  if (!po) throw new ApiError(404, 'Not found');
+  await serveDocument(req, res, po.document_id, `po:${no}`);
 });
 
 portalRouter.get('/files/quotation/:no', section('documents'), async (req, res) => {
@@ -267,6 +295,17 @@ portalAdminRouter.get('/companies/:id', async (req, res) => {
             WHERE a.company_id = $1 ORDER BY a.created_at DESC LIMIT 200`, [id]),
   ]);
   res.json({ data: { ...co, sections: SECTIONS, contacts: contacts.rows, sessions: sessions.rows.map((s) => ({ ...s, id: undefined })), audit: log.rows } });
+});
+
+// Preview as client (#198, G7): the very functions the portal serves, for
+// this company, so what staff see cannot drift from what the client sees.
+// Staff also see where each GST split came from. Not audited as the client.
+portalAdminRouter.get('/companies/:id/preview/:section', async (req, res) => {
+  const { rows: [co] } = await query('SELECT id, portal_sections FROM companies WHERE id = $1', [Number(req.params.id)]);
+  if (!co) throw new ApiError(404, 'Company not found');
+  const load = SECTION_DATA[req.params.section];
+  if (!load) throw new ApiError(404, 'No such section');
+  res.json({ data: await load(co.id, { staff: true }), meta: { enabled: co.portal_sections.includes(req.params.section) } });
 });
 
 portalAdminRouter.patch('/companies/:id', async (req, res) => {

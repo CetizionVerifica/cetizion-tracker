@@ -725,6 +725,23 @@
   .portal__tab:hover { background: var(--accent); }
   .portal__tab.is-on { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
   .portal__item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+  /* #198: a PO inside its project, its figures and its schedule. Wide tables
+     scroll inside the card, never the page. */
+  .portal__po { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .portal__figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px 16px; margin: 4px 0 0; }
+  .portal__figures dt { font-size: 11.5px; color: var(--muted-foreground); }
+  .portal__figures dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .portal__schedule { display: flex; flex-direction: column; margin: 4px 0 0; padding: 0; list-style: none; }
+  .portal__schedule li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .portal__scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+  .portal__scroll .table td, .portal__scroll .table th { white-space: nowrap; }
+  .portal__scroll .table td:first-child { white-space: normal; min-width: 180px; }
+  .portal--preview { max-width: none; margin-top: 8px; }
+  .portal__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+  .portal__figures--six { grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px 12px; }
+  .portal__head + .portal__item, .portal__item + .portal__item { margin-top: 8px; }
+  .portal__strong { font-weight: 700; }
+  .portal__item--total { background: var(--secondary); }
 
   /* The portal writes `badge` directly rather than going through the kit. */
   .badge {

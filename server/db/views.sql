@@ -26,6 +26,58 @@ RETURNS numeric AS $$
     p_default);
 $$ LANGUAGE sql STABLE;
 
+-- The GST inside an amount that includes it (#198 §5). Nothing is stored:
+-- a PO's value, and so every invoice (a share of it), is a total including
+-- GST, grossed up at the quotation's own rates when the PO was registered.
+-- A client's books keep taxable value and GST apart, so the portal shows the
+-- split, worked out here, in one place, for the portal, its statement and
+-- the staff preview alike:
+--   1. An invoice matched to the accounts import (#48) whose total agrees:
+--      the books' own taxable value and GST. The books are the legal record.
+--   2. Otherwise the PO's effective rate from its quotation's lines,
+--      Σ(amount × gst_rate) / Σ(amount): the PO's own quotation, or the won
+--      quotations of its project when the PO names none.
+--   3. No quotation lines: the gst_rate_default setting, marked estimated
+--      (staff see that; the client does not).
+--   4. A PO in another currency (an export): no GST.
+-- Taxable is the total over (1 + rate), to the paisa; GST takes what is left,
+-- so taxable + GST is always exactly the total.
+CREATE OR REPLACE FUNCTION po_gst_split(p_po text, p_total numeric, p_stage int DEFAULT NULL)
+RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $$
+  WITH books AS (
+    SELECT b.taxable_amount AS b_taxable, b.tax_amount AS b_gst
+      FROM reconciliation_items ri JOIN books_entries b ON b.id = ri.books_entry_id
+     WHERE p_stage IS NOT NULL AND ri.stage_id = p_stage AND ri.kind = 'invoice'
+       AND b.taxable_amount IS NOT NULL AND b.tax_amount IS NOT NULL
+       AND abs(b.taxable_amount + b.tax_amount - p_total) <= 1
+     ORDER BY ri.checked_at DESC
+     LIMIT 1
+  ), rate AS (
+    SELECT CASE WHEN po.currency <> 'INR' THEN 0
+                WHEN q.base > 0 THEN round(q.taxed / q.base, 2)
+                ELSE setting_num('gst_rate_default', 18) END AS r_rate,
+           CASE WHEN po.currency <> 'INR' THEN 'export'
+                WHEN q.base > 0 THEN 'quotation'
+                ELSE 'estimated' END AS r_source
+      FROM purchase_orders po
+      LEFT JOIN LATERAL (
+        SELECT SUM(l.amount) AS base, SUM(l.amount * l.gst_rate) AS taxed
+          FROM quotations qt JOIN quotation_lines l ON l.quotation_id = qt.id
+         WHERE qt.quotation_no = po.quotation_no
+            OR (po.quotation_no IS NULL AND qt.project_id = po.project_id AND qt.status = 'Won - PO Received')
+      ) q ON true
+     WHERE po.po_number = p_po
+  )
+  SELECT x_taxable, x_gst, x_rate, x_source FROM (
+    SELECT 1 AS pref, b_taxable AS x_taxable, b_gst AS x_gst,
+           round(b_gst * 100 / NULLIF(b_taxable, 0), 2) AS x_rate, 'books'::text AS x_source
+      FROM books
+    UNION ALL
+    SELECT 2, round(p_total / (1 + r_rate / 100), 2), p_total - round(p_total / (1 + r_rate / 100), 2), r_rate, r_source
+      FROM rate
+  ) x ORDER BY pref LIMIT 1;
+$$ LANGUAGE sql STABLE;
+
 -- ---------------------------------------------------------------------
 -- Payment stages — the finance worklist
 --   Payment Schedule columns B-G, L-M, P, S-U, X-Z
