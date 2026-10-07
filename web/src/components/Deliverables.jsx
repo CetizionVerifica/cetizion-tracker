@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
+import { Badge, Card, DataTable, Empty, ErrorState, Field, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
+import { earlierLabel, reissueChain } from '../lib/deliverableHistory.js';
 
 /**
  * Certificates and deliverables (#43): the table, the issue/edit dialog,
@@ -34,6 +35,11 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
     {
       key: 'act', header: '', align: 'right', render: (r) => (
         <div className="table__actions">
+          {/* Read-only, so it is offered on every row — including a superseded
+              one, which until now had no action at all (#103 item 6). Whether
+              there is anything earlier to show is the server's answer, not a
+              guess made from this list's one-hop superseded_by_reference. */}
+          <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ mode: 'history', row: r })}>History</button>
           {['draft', 'issued', 'expired'].includes(r.status) && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ mode: 'edit', row: r })}>Edit</button>}
           {['issued', 'expired'].includes(r.status) && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ mode: 'supersede', row: r })}>Supersede</button>}
           {['issued', 'expired'].includes(r.status) && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setDialog({ mode: 'withdraw', row: r })}>Withdraw</button>}
@@ -45,9 +51,73 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
   return (
     <Card flush title={title} hint={hint} actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ mode: 'new' })}>+ Issue</button>}>
       <DataTable rows={rows} loading={loading && !data} columns={cols} empty={<Empty title="Nothing recorded yet" text="Record what the client holds: its reference, dates, scope and file. An expiry date schedules the renewal." />} />
+      {dialog?.mode === 'history' && <HistoryDialog row={dialog.row} onClose={() => setDialog(null)} />}
       {dialog?.mode === 'withdraw' && <WithdrawDialog row={dialog.row} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
-      {dialog && dialog.mode !== 'withdraw' && <DeliverableDialog mode={dialog.mode} row={dialog.row} preset={preset} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
+      {dialog && !['withdraw', 'history'].includes(dialog.mode) && <DeliverableDialog mode={dialog.mode} row={dialog.row} preset={preset} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
     </Card>
+  );
+}
+
+/** One line per issue in a chain: what it is, where it stands, its dates, its file. */
+function ChainRows({ entries }) {
+  return (
+    <table className="table">
+      <tbody>
+        {entries.map((e) => (
+          <tr key={e.id}>
+            <td className="mono">{e.reference || <span className="muted">no reference</span>}</td>
+            <td>{e.status ? <Badge tone={TONE[e.status]}>{e.status}</Badge> : null}{e.current && <span className="small muted"> · the one you opened</span>}</td>
+            <td className="small">Issued {date(e.issued_on)}</td>
+            <td className="small">Valid until {date(e.valid_until)}</td>
+            <td>{e.document_id ? <a className="btn btn--sm btn--ghost" href={api.documentUrl(e.document_id)} target="_blank" rel="noopener noreferrer">Open</a> : null}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * The reissue chain for one certificate (#103 item 6).
+ *
+ * Read-only and fetched when it opens, the way Collections' invoice history
+ * dialog works. Its own fetch, so a chain that fails to load leaves the
+ * register beside it untouched — the list never re-reads anything here.
+ */
+function HistoryDialog({ row, onClose }) {
+  const { data, loading, error, refetch } = useFetch(() => api.raw(`/deliverables/${row.id}`), [row.id]);
+  const { current, earlier, supersededById } = reissueChain(data?.data);
+
+  return (
+    <Modal title={`${row.reference || row.title}: reissue history`} subtitle={`${row.client_name} · ${row.title}`} size="lg" onClose={onClose}
+      footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+      {loading && !data ? <div className="skeleton" style={{ height: 140 }} />
+        : error ? <ErrorState message={error} onRetry={refetch} />
+          : (
+            <div className="stack">
+              <div>
+                <div className="strong" style={{ marginBottom: 6 }}>This issue</div>
+                {current ? <ChainRows entries={[current]} /> : <span className="muted small">Not available.</span>}
+                {/* The route walks backwards only, so an older issue cannot see
+                    the newer ones. Say that instead of showing half a chain. */}
+                {supersededById !== null && (
+                  <div className="small muted" style={{ marginTop: 6 }}>
+                    This one has since been replaced{row.superseded_by_reference ? ` by ${row.superseded_by_reference}` : ''}. Open the newest issue to see the whole chain.
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="strong" style={{ marginBottom: 6 }}>{earlierLabel(earlier.length)}</div>
+                {earlier.length ? (
+                  <>
+                    <ChainRows entries={earlier} />
+                    {earlier.length > 1 && <div className="small muted" style={{ marginTop: 6 }}>Most recent first, by validity date.</div>}
+                  </>
+                ) : <span className="muted small">Nothing earlier on file — this is the first issue.</span>}
+              </div>
+            </div>
+          )}
+    </Modal>
   );
 }
 
