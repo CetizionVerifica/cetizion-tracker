@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { readFromEmail } from '../lib/mailbox/autoQuotation.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { actAs, logStageMoves, logUpdated } from '../lib/recordActs.js';
 import { z } from 'zod';
 import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
@@ -101,6 +102,7 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
   const body = reviseSchema.parse(req.body || {});
   const scope = scopeOf(req);
   const data = await transaction(async (client) => {
+    await actAs(client, req.user);
     // Lock first, then read: two clicks must not both snapshot the same revision.
     // Both reads are scoped, so the id every statement below works from came
     // from a row this caller may reach (#18 Phase 2C).
@@ -126,6 +128,11 @@ quotationDocRouter.post('/:key/revise', async (req, res) => {
     );
     // The discount check runs again on the new version.
     await client.query('SELECT quotation_totals($1)', [q.id]);
+    await logUpdated(client, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'revised', client_name: q.client_name, revision: updated.revision, note: body.note || null },
+    });
+    await logStageMoves(client, req.user, [q.id]);
     return updated;
   });
   res.json({ data });
@@ -173,7 +180,13 @@ quotationDocRouter.post('/:key/send', async (req, res) => {
     ? await uploadDocument({ buffer: pdf, fileName, contentType: 'application/pdf', owner: 'attachments' }).catch(() => null)
     : null;
   const updated = await transaction(async (db) => {
+    await actAs(db, req.user);
     const { rows: [u] } = await db.query(`UPDATE quotations SET sent_at = COALESCE(sent_at, now()) WHERE id = $1 RETURNING sent_at`, [q.id]);
+    await logUpdated(db, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'sent', client_name: q.client_name, revision: q.revision, emailed_to: to || null },
+    });
+    await logStageMoves(db, req.user, [q.id]);
     if (doc) {
       // Kept on the quotation, on its timeline as a file; the client copy slot stays theirs.
       await db.query(`INSERT INTO attachments (entity, entity_id, document_id, label, uploaded_by) VALUES ('quotation', $1, $2, $3, $4)`,
@@ -190,11 +203,20 @@ quotationDocRouter.post('/:key/accept', async (req, res) => {
   const parsed = acceptSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: { accepted_by_name: parsed.error.issues[0].message } });
   const q = await loadQuotation(req.params.key, { query }, scopeOf(req));
-  const { rows: [updated] } = await query(
-    `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
-            status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
-      WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
-    [q.id, parsed.data.accepted_by_name]
-  );
+  const updated = await transaction(async (client) => {
+    await actAs(client, req.user);
+    const { rows: [u] } = await client.query(
+      `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
+              status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
+        WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
+      [q.id, parsed.data.accepted_by_name]
+    );
+    await logUpdated(client, req.user, {
+      entity: 'quotation', ref: q.quotation_no, changes: {},
+      extra: { event: 'accepted', client_name: q.client_name, accepted_by_name: u.accepted_by_name },
+    });
+    await logStageMoves(client, req.user, [q.id]);
+    return u;
+  });
   res.json({ data: updated });
 });

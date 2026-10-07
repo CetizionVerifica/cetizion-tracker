@@ -195,7 +195,7 @@ function buildServer(token) {
     { write: true, out: { quotation_no: str, next_step: str, expected_close_date: str } });
   tool('complete_task', 'Mark a task done. Calling it twice is calling it once: a task already done reports already_done rather than failing.',
     { task_id: z.number().int().describe('Task id, from list_tasks or create_task') },
-    async (a) => { const r = await data.completeTask(scope, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
+    async (a) => { const r = await data.completeTask(scope, token, a); return r ? json(r) : notFound(`Task ${a.task_id}`); },
     { write: true, out: { id: num, title: str, status: str, completed_at: str, already_done: z.boolean(), entity: str, entity_id: str } });
 
   // ---- bulk import (#135) ------------------------------------------

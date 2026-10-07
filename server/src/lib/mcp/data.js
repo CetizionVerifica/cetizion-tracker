@@ -505,10 +505,10 @@ function mine(scope, params) {
  * Reads first, then writes: a task this token may not see returns null, so
  * it cannot learn an id exists by being refused it, and a task already done
  * says so rather than erroring. Calling it twice is calling it once. Who
- * completed it is in api_token_log, which every MCP call writes; tasks
- * itself has no column for it and the web app does not record one either.
+ * completed it goes in tasks.completed_by, named as the token's other
+ * writes name it, and every MCP call is in api_token_log as well.
  */
-export async function completeTask(scope, { task_id: id }) {
+export async function completeTask(scope, token, { task_id: id }) {
   const params = [Number(id)];
   const visible = isAdmin(scope) ? 'TRUE' : mine(scope, params);
   const { rows: [t] } = await query(
@@ -517,7 +517,7 @@ export async function completeTask(scope, { task_id: id }) {
   if (!t) return null;
   if (t.status === 'done') return { ...t, already_done: true };
   const { rows: [done] } = await query(
-    `UPDATE tasks SET status = 'done', completed_at = now(), updated_at = now()
-      WHERE id = $1 RETURNING id, title, status, completed_at, assignee, entity, entity_id`, [t.id]);
+    `UPDATE tasks SET status = 'done', completed_at = now(), completed_by = $2, updated_at = now()
+      WHERE id = $1 RETURNING id, title, status, completed_at, assignee, entity, entity_id`, [t.id, actor(token)]);
   return { ...done, already_done: false };
 }
