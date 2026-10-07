@@ -9,6 +9,7 @@ import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { ago, date } from '../lib/format.js';
 import { recipientLists } from '../lib/addresses.js';
+import PersonalMisPreview from '../components/PersonalMisPreview.jsx';
 
 /**
  * Reports → Scheduled reports (docs/mis-reports-plan.md §5): the Daily Sales
@@ -373,6 +374,7 @@ export default function ScheduledReports() {
         {list && <SharedSettings key={`recipients:${saved}`} settings={list} onChanged={refetch} />}
         {list && <SenderCard key={`sender:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
         {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
+        <PersonalMisPreview />
         <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
       </div>
     </>

@@ -26,6 +26,8 @@ import { fetchDocument } from '../lib/documents.js';
 import { KINDS } from '../lib/misReports.js';
 import { misPdf, pdfPageCount } from '../lib/misPdf.js';
 import { buildReport, describeSender, listRuns, runReport, sendSenderTest } from '../lib/misSend.js';
+import { writePersonal } from '../lib/misAi.js';
+import { personalFacts, personalPeople, redactFacts } from '../lib/misPersonal.js';
 
 export const misReportsRouter = Router();
 misReportsRouter.use(requireAdmin);
@@ -77,6 +79,29 @@ misReportsRouter.post('/sender/test', async (req, res) => {
   if (at && Date.now() - at < 60_000) throw new ApiError(429, 'A test was sent less than a minute ago. Try again shortly.');
   lastTest.set(key, Date.now());
   res.json({ data: await sendSenderTest({ to, startedBy: req.user?.username || 'admin' }) });
+});
+
+// ---------------------------------------------------------------------
+// The personal daily MIS (mis-report-sender-plan.md Part B)
+// ---------------------------------------------------------------------
+
+misReportsRouter.get('/personal/people', async (req, res) => {
+  res.json({ data: await personalPeople() });
+});
+
+/**
+ * One person's facts for a day, and with ?ai=1 the report the AI writes
+ * from them and what the checks dropped (§B4.3). Nothing is sent. The
+ * person's mail text is not shown to anyone else (redactFacts), though the
+ * AI reads it to write their report.
+ */
+misReportsRouter.get('/personal/:userId/preview', async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new ApiError(404, 'No such person');
+  const facts = await personalFacts({ userId, today: dateOf(req.query.date) });
+  if (!facts) throw new ApiError(404, 'No such person');
+  const ai = req.query.ai === '1' ? await writePersonal(facts) : null;
+  res.json({ data: { facts: redactFacts(facts, req.user?.id ?? null), ai } });
 });
 
 // ?ai=1 has the AI word the preview too; it is a counted call, so not by default.

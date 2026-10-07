@@ -7,7 +7,11 @@
  *
  *   Daily    highlights of yesterday's mail in the SHARED mailboxes that
  *            store everything, and the wording of the five actions the code
- *            already picked. Personal mailboxes are never read.
+ *            already picked. Personal mailboxes are not read for it.
+ *   Personal every sentence of one person's daily MIS, from the facts
+ *            misPersonal.js gathers, their own mailbox included: a personal
+ *            mailbox is read only for its owner's own report. Counted as
+ *            mis_personal against its own ceiling (personal_mis_ai_limit).
  *   Weekly   four headline bullets and a short paragraph per section, from
  *            the computed figures only — never email text.
  *
@@ -36,7 +40,7 @@ export const MAX_CHARS = 30_000;
 export const MAX_HIGHLIGHTS = 8;
 const MESSAGE_CHARS = 1_500;
 
-const chatFn = () => deps.chat || (aiConfig.enabled ? (system, user) => chatJSON(system, user, { title: 'Cetizion Tracker sales reports', maxTokens: 3000 }) : null);
+const chatFn = (maxTokens = 3000) => deps.chat || (aiConfig.enabled ? (system, user) => chatJSON(system, user, { title: 'Cetizion Tracker sales reports', maxTokens }) : null);
 
 /** Whether the model may be asked today: configured, and under the readers' shared ceiling. */
 export async function aiAvailable(db = { query }) {
@@ -348,5 +352,271 @@ export async function wordReport(data, { db = { query } } = {}) {
     // The report goes without the AI's words; the figures were never its to change.
     console.error('[mis] AI wording failed:', err.message);
     return { used: false, why: `AI failed: ${err.message}` };
+  }
+}
+
+// ---------------------------------------------------------------------
+// The personal daily MIS (mis-report-sender-plan.md §B4.2, §B4.3)
+// ---------------------------------------------------------------------
+
+export const PERSONAL_LIMITS = { highlights: 8, list: 10, for_management: 3 };
+export const NOT_IN_TRACKER_KINDS = ['po', 'quotation', 'enquiry', 'payment', 'meeting'];
+const COUNT_KEYS = ['emails_sent', 'emails_received', 'calls', 'records_created', 'tasks_done', 'overdue'];
+
+/**
+ * Whether the model may be asked for a personal report today: configured,
+ * and under the personal reports' own ceiling, apart from the readers'
+ * (personal_mis_ai_limit). Ten people's reports must not stop the readers.
+ */
+export async function personalAiAvailable(db = { query }) {
+  if (!chatFn()) return { ok: false, why: 'no AI configured' };
+  const { rows: [s] } = await db.query(`SELECT value FROM settings WHERE key = 'personal_mis_ai_limit'`);
+  const limit = Math.max(0, Math.trunc(Number(s?.value ?? 30)) || 0);
+  const { rows: [r] } = await db.query(
+    `SELECT count(*)::int AS n FROM email_ai_calls
+      WHERE purpose = 'mis_personal' AND made_at >= date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1`, [config.businessTimeZone]);
+  if (r.n >= limit) return { ok: false, why: `the personal reports' daily AI ceiling (${limit}) is reached` };
+  return { ok: true };
+}
+
+/** What the model is given: every fact with its id, nothing it may not cite. */
+export function personalInput(facts) {
+  return {
+    person: facts.person.name, day: facts.day, today: facts.today,
+    counts: facts.counts,
+    acts: facts.acts.map(({ id, time, kind, entity, entity_id: entityId, detail }) => ({ id, time, kind, record: entity ? `${entity} ${entityId ?? ''}`.trim() : null, detail })),
+    sent: facts.sent.map(({ id, time, to, company, subject, text, record, from_tracker: fromTracker }) => ({ id, time, to, company, subject, text, record: record ? `${record.entity} ${record.id}` : null, from_tracker: fromTracker })),
+    threads: facts.threads.map(({ thread_id: threadId, subject, company, record, messages, waiting_on: waitingOn }) => ({
+      thread_id: threadId, subject, company, record: record ? `${record.entity} ${record.id}` : null, next_reply_from: waitingOn,
+      messages: messages.map(({ id, direction, from, to, time, text }) => ({ id, direction, from, to, time, text })),
+    })),
+    waiting: facts.waiting.map(({ key, kind, client, reference, days, amount, currency, next_action: nextAction, no_action_yesterday: idle }) => ({ key, kind, client, reference, days, amount, currency, next_action: nextAction, no_action_yesterday: idle })),
+    today: facts.today_items.map(({ ref, kind, title, type, due, overdue, time, company }) => ({ ref, kind, title, type, due, overdue, time, company })),
+  };
+}
+
+export function personalPrompt(facts, { missed = null } = {}) {
+  const system = `You write one salesperson's daily MIS for their management, from the facts given: what they did on ${facts.day}, their email that day, what is waiting on them, and their day ahead. Every sentence in the report is yours; every one must rest on the facts you cite.
+Answer in JSON only:
+{"summary":{"text":"a short paragraph","counts":{"emails_sent":0,"emails_received":0,"calls":0,"records_created":0,"tasks_done":0,"overdue":0}},
+ "actions":[{"at":"HH:MM","text":"one line","refs":["act:…","msg:…"]}],
+ "mailbox":{"highlights":[{"thread_id":1,"text":"..."}],"commitments":[{"thread_id":1,"text":"...","due":"YYYY-MM-DD or null"}],"owed_replies":[{"thread_id":1,"text":"..."}],"awaiting":[{"thread_id":1,"text":"..."}]},
+ "not_in_tracker":[{"thread_id":1,"kind":"po|quotation|enquiry|payment|meeting","ref":"the PO or quotation number, or null","client":"...","text":"..."}],
+ "waiting":[{"key":"...","text":"the next step, one line","no_action_yesterday":true}],
+ "today":[{"ref":"task:1","text":"one line"}],
+ "for_management":["two or three lines"]}
+Rules:
+- actions: every act and every sent email must be cited by at least one line, in time order; "at" is the time of the first act or email the line cites. Small acts on one record may share a line. Name the client and the record number, e.g. "Moved Honor Labs' quotation CTZ/QT/2026/118 to Negotiation", "Emailed Mr Shah (Infra Ltd) the revised quotation".
+- summary.counts: copy the counts given, exactly.
+- mailbox: highlights are what mattered (at most ${PERSONAL_LIMITS.highlights}); commitments are what the person promised; owed_replies are threads whose next_reply_from is "them"; awaiting are threads whose next_reply_from is "client". At most ${PERSONAL_LIMITS.list} in each.
+- not_in_tracker: only what an email shows that the tracker does not: a PO received but not entered, a quotation sent but not recorded, a call or meeting agreed with no task. Give the number in "ref" when the email has one.
+- waiting: one line for every row given, with its key; keep no_action_yesterday as given.
+- today: one line per item given.
+- for_management: at most ${PERSONAL_LIMITS.for_management} lines: what went well, what is slipping, what needs a manager's word.
+- Use only the ids, keys, refs and thread_ids given. Never invent a number, amount, date or time: write only figures that appear in the facts you cite. Plain English for a managing director, no marketing tone.
+- A day with no acts and no email gets a one-line summary saying so, and empty lists.`;
+  const input = personalInput(facts);
+  const user = JSON.stringify(missed ? { ...input, previous_answer_missed: missed, instruction: 'Your previous answer left these out. Answer again, in full, covering every one of them.' } : input);
+  return { system, user };
+}
+
+/**
+ * Whether a thing the mail suggests is missing from the tracker is really
+ * missing: a reference that is a PO, quotation or enquiry number on record
+ * is not; nor is a client with a record of that kind made in the week
+ * around the day.
+ */
+async function foundInTracker(db, item, day) {
+  const ref = String(item.ref || '').trim();
+  if (ref) {
+    const { rowCount } = await db.query(
+      `SELECT 1 FROM purchase_orders WHERE lower(btrim(po_number)) = lower($1)
+       UNION ALL SELECT 1 FROM quotations WHERE lower(btrim(quotation_no)) = lower($1) OR lower(btrim(printed_no)) = lower($1)
+       UNION ALL SELECT 1 FROM enquiries WHERE lower(btrim(enquiry_no)) = lower($1)
+       UNION ALL SELECT 1 FROM payment_stages WHERE lower(btrim(invoice_no)) = lower($1)
+       LIMIT 1`, [ref]);
+    if (rowCount) return true;
+  }
+  const client = String(item.client || '').trim();
+  if (!client) return false;
+  const near = `BETWEEN $2::date - 7 AND $2::date + 1`;
+  const sql = {
+    po: `SELECT 1 FROM purchase_orders po JOIN projects p ON p.project_id = po.project_id WHERE name_key(p.client_name) = name_key($1) AND (po.created_at AT TIME ZONE $3)::date ${near}`,
+    quotation: `SELECT 1 FROM quotations WHERE name_key(client_name) = name_key($1) AND (created_at AT TIME ZONE $3)::date ${near}`,
+    enquiry: `SELECT 1 FROM enquiries WHERE name_key(client_name) = name_key($1) AND (created_at AT TIME ZONE $3)::date ${near}`,
+    payment: `SELECT 1 FROM payments pm JOIN v_payment_stages ps ON ps.id = pm.stage_id WHERE name_key(ps.client_name) = name_key($1) AND (pm.created_at AT TIME ZONE $3)::date ${near}`,
+    meeting: `SELECT 1 FROM tasks t JOIN companies c ON t.entity = 'company' AND t.entity_id = c.id::text WHERE name_key(c.name) = name_key($1) AND (t.created_at AT TIME ZONE $3)::date ${near}
+              UNION ALL SELECT 1 FROM visits v JOIN companies c ON c.id = v.company_id WHERE name_key(c.name) = name_key($1) AND (v.created_at AT TIME ZONE $3)::date ${near}`,
+  }[item.kind];
+  if (!sql) return false;
+  const { rowCount } = await db.query(`${sql} LIMIT 1`, [client, day, config.businessTimeZone]);
+  return rowCount > 0;
+}
+
+/**
+ * What the model wrote, checked against the facts (§B4.3). Lines citing
+ * what is not in the facts, or carrying a number the cited facts do not,
+ * are dropped and listed; nothing is repaired but the two things code
+ * decides (no_action_yesterday, and which threads owe or await a reply).
+ * `missing` lists what must be covered and is not; `failed` says why the
+ * report cannot go.
+ */
+export async function checkPersonal(raw, facts, { db = { query } } = {}) {
+  const dropped = [];
+  const drop = (section, item, why) => dropped.push({ section, item, why });
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const line = (v) => String(v ?? '').trim();
+
+  const cited = new Map([...facts.acts, ...facts.sent].map((f) => [f.id, f]));
+  const threads = new Map(facts.threads.map((t) => [t.thread_id, t]));
+  const waiting = new Map(facts.waiting.map((w) => [w.key, w]));
+  const ahead = new Map(facts.today_items.map((t) => [t.ref, t]));
+  const allowedFor = (...values) => figuresIn([facts.day, facts.today, ...values]);
+
+  if (!raw || typeof raw !== 'object') return { report: null, dropped, missing: [], failed: 'the AI gave no report' };
+
+  // 1. Summary, and code's counts.
+  const summaryText = line(raw.summary?.text);
+  const wrongCounts = COUNT_KEYS.filter((k) => Number(raw.summary?.counts?.[k]) !== facts.counts[k]);
+  let failed = null;
+  if (!summaryText) failed = 'the AI wrote no summary';
+  else if (wrongCounts.length) failed = `the AI's counts do not match: ${wrongCounts.join(', ')}`;
+  else if (!numbersAllowed(summaryText, allowedFor(facts.counts, facts.person.name))) failed = 'the summary has a number not in the facts';
+
+  // 2. Actions taken: every line cites real acts or emails, at the time of one of them.
+  const actions = [];
+  for (const a of list(raw.actions)) {
+    const text = line(a?.text);
+    const refs = list(a?.refs).map(String);
+    const facts_ = refs.map((r) => cited.get(r));
+    if (!text || !refs.length) { drop('actions', a, 'no text or no reference'); continue; }
+    if (facts_.some((f) => !f)) { drop('actions', a, 'cites an act or email that is not in the facts'); continue; }
+    if (a.at && !facts_.some((f) => f.time === line(a.at))) { drop('actions', a, 'its time is not the time of what it cites'); continue; }
+    if (!numbersAllowed(text, allowedFor(facts_, facts_.map((f) => f.time)))) { drop('actions', a, 'a number not in what it cites'); continue; }
+    actions.push({ at: line(a.at) || facts_[0].time, text, refs, link: facts_.find((f) => f.link)?.link || null });
+  }
+  actions.sort((x, y) => x.at.localeCompare(y.at));
+  const coveredActs = new Set(actions.flatMap((a) => a.refs));
+
+  // 3. From the mailbox. Who owes a reply is code's, from the messages.
+  const threadLine = (section, item, extra = {}) => {
+    const t = threads.get(Number(item?.thread_id));
+    const text = line(item?.text);
+    if (!t || !text) { drop(section, item, t ? 'no text' : 'a thread that is not in the facts'); return null; }
+    if (!numbersAllowed(text, allowedFor(t))) { drop(section, item, 'a number not in the thread'); return null; }
+    return { thread_id: t.thread_id, text, link: t.link, ...extra };
+  };
+  const mailbox = {};
+  for (const [section, max, only] of [
+    ['highlights', PERSONAL_LIMITS.highlights, null], ['commitments', PERSONAL_LIMITS.list, null],
+    ['owed_replies', PERSONAL_LIMITS.list, 'them'], ['awaiting', PERSONAL_LIMITS.list, 'client'],
+  ]) {
+    const out = [];
+    for (const item of list(raw.mailbox?.[section])) {
+      const t = threads.get(Number(item?.thread_id));
+      if (only && t && t.waiting_on !== only) { drop(section, item, `the thread's next reply is not from ${only === 'them' ? 'the person' : 'the client'}`); continue; }
+      const kept = threadLine(section, item, section === 'commitments' ? { due: /^\d{4}-\d{2}-\d{2}$/.test(line(item?.due)) ? line(item.due) : null } : {});
+      if (kept && out.some((o) => o.thread_id === kept.thread_id)) continue;
+      if (kept) out.push(kept);
+    }
+    if (out.length > max) { out.slice(max).forEach((o) => drop(section, o, 'over the limit')); out.length = max; }
+    mailbox[section] = out;
+  }
+  // A due date the model gives must appear in the thread.
+  mailbox.commitments = mailbox.commitments.filter((c) => {
+    if (!c.due || numbersAllowed(c.due, allowedFor(threads.get(c.thread_id)))) return true;
+    drop('commitments', c, 'a due date not in the thread');
+    return false;
+  });
+
+  // 4. In email, not in the tracker: only what the tracker really lacks.
+  const notInTracker = [];
+  for (const item of list(raw.not_in_tracker)) {
+    if (!NOT_IN_TRACKER_KINDS.includes(item?.kind)) { drop('not_in_tracker', item, 'an unknown kind'); continue; }
+    const kept = threadLine('not_in_tracker', item, { kind: item.kind, ref: line(item.ref) || null, client: line(item.client) || threads.get(Number(item?.thread_id))?.company || null });
+    if (!kept) continue;
+    if (kept.ref && !numbersAllowed(kept.ref, allowedFor(threads.get(kept.thread_id)))) { drop('not_in_tracker', item, 'a reference not in the thread'); continue; }
+    if (await foundInTracker(db, kept, facts.day)) { drop('not_in_tracker', item, 'it is in the tracker'); continue; }
+    notInTracker.push(kept);
+  }
+  if (notInTracker.length > PERSONAL_LIMITS.list) { notInTracker.slice(PERSONAL_LIMITS.list).forEach((o) => drop('not_in_tracker', o, 'over the limit')); notInTracker.length = PERSONAL_LIMITS.list; }
+
+  // 5. Waiting on them: every row, with code's "no action yesterday".
+  const waitingOut = [];
+  for (const item of list(raw.waiting)) {
+    const w = waiting.get(line(item?.key));
+    const text = line(item?.text);
+    if (!w || !text) { drop('waiting', item, w ? 'no text' : 'a row that is not waiting on them'); continue; }
+    if (waitingOut.some((o) => o.key === w.key)) continue;
+    if (!numbersAllowed(text, allowedFor(w))) { drop('waiting', item, 'a number not in the row'); continue; }
+    waitingOut.push({ key: w.key, text, no_action_yesterday: w.no_action_yesterday, link: w.link });
+  }
+
+  // 6. Today.
+  const todayOut = [];
+  for (const item of list(raw.today)) {
+    const t = ahead.get(line(item?.ref));
+    const text = line(item?.text);
+    if (!t || !text) { drop('today', item, t ? 'no text' : 'an item that is not on their day'); continue; }
+    if (!numbersAllowed(text, allowedFor(t))) { drop('today', item, 'a number not in the item'); continue; }
+    if (!todayOut.some((o) => o.ref === t.ref)) todayOut.push({ ref: t.ref, text, link: t.link });
+  }
+
+  // 7. For management: may speak from anything in the facts.
+  const everything = allowedFor(personalInput(facts));
+  const forManagement = [];
+  for (const text of list(raw.for_management).map(line).filter(Boolean)) {
+    if (!numbersAllowed(text, everything)) { drop('for_management', text, 'a number not in the facts'); continue; }
+    if (forManagement.length < PERSONAL_LIMITS.for_management) forManagement.push(text);
+  }
+
+  // Nothing left out.
+  const missing = [
+    ...[...cited.keys()].filter((id) => !coveredActs.has(id)),
+    ...facts.waiting.map((w) => w.key).filter((k) => !waitingOut.some((o) => o.key === k)),
+    ...facts.threads.filter((t) => t.waiting_on === 'them').map((t) => `thread:${t.thread_id}`).filter((k) => !mailbox.owed_replies.some((o) => `thread:${o.thread_id}` === k)),
+  ];
+
+  return {
+    report: {
+      summary: { text: summaryText, counts: { ...facts.counts } },
+      actions, mailbox, not_in_tracker: notInTracker, waiting: waitingOut, today: todayOut, for_management: forManagement,
+    },
+    dropped, missing, failed,
+  };
+}
+
+/**
+ * The personal report, written by the model and checked (§B4.2, §B4.3).
+ * One call, and one more when the first left something out. Returns
+ * { ok, report, checks, why }: a report that fails is not used.
+ */
+export async function writePersonal(facts, { db = { query } } = {}) {
+  const available = await personalAiAvailable(db);
+  if (!available.ok) return { ok: false, report: null, checks: null, why: available.why };
+  // The whole report in one answer: more room than the briefing's highlights.
+  const chat = chatFn(8000);
+  const ask = async (missed) => {
+    const { system, user } = personalPrompt(facts, { missed });
+    await countCall(db, 'mis_personal');
+    return chat(system, user);
+  };
+  try {
+    let checked = await checkPersonal(await ask(null), facts, { db });
+    let asked = 1;
+    if (!checked.failed && checked.missing.length) {
+      const again = await personalAiAvailable(db);
+      if (again.ok) {
+        checked = await checkPersonal(await ask(checked.missing), facts, { db });
+        asked = 2;
+      }
+    }
+    const checks = { asked, dropped: checked.dropped, missing: checked.missing };
+    if (checked.failed) return { ok: false, report: null, checks, why: checked.failed };
+    if (checked.missing.length) return { ok: false, report: null, checks, why: `the AI left out ${checked.missing.length} required item${checked.missing.length === 1 ? '' : 's'}` };
+    return { ok: true, report: checked.report, checks, why: null };
+  } catch (err) {
+    console.error('[mis] personal report AI failed:', err.message);
+    return { ok: false, report: null, checks: null, why: `AI failed: ${err.message}` };
   }
 }

@@ -196,9 +196,10 @@ const unprocessable = (message) => new ApiError(422, message, { fields: { value:
 const isNone = (v) => v.toLowerCase() === 'none';
 
 /**
- * Who the scheduled reports go from (mis-report-sender-plan.md §A3): saved
- * only when the reports could use it, so a wrong value is refused with the
- * reason instead of being found at 08:56.
+ * Who the scheduled reports go from (mis-report-sender-plan.md §A3), and
+ * the personal reports' AI ceiling: saved only when the reports could use
+ * it, so a wrong value is refused with the reason instead of being found at
+ * 08:56.
  */
 const SENDER_SETTINGS = {
   async mis_sender_account_id(v) {
@@ -226,6 +227,11 @@ const SENDER_SETTINGS = {
     const name = v.trim();
     if (name.length > 80 || /[<>"\r\n]/.test(name)) throw unprocessable('A name of up to 80 characters, without < > or quotes');
     return name;
+  },
+  // The personal daily MIS's own AI ceiling (§B4.2): a whole number, 0 stops it.
+  async personal_mis_ai_limit(v) {
+    if (!/^\d{1,4}$/.test(v.trim()) || Number(v) > 1000) throw unprocessable('A whole number of calls a day, from 0 to 1000');
+    return String(Number(v));
   },
 };
 
