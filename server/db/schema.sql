@@ -3082,6 +3082,11 @@ INSERT INTO settings (key, value, notes) VALUES
   ('mis_overdue_days', '7', 'Days after which a pending invoice, PO or quotation is marked Overdue in the reports.')
 ON CONFLICT (key) DO NOTHING;
 
+-- The personal daily MIS's own AI ceiling (092), apart from the readers'.
+INSERT INTO settings (key, value, notes) VALUES
+  ('personal_mis_ai_limit', '30', 'AI calls a day for the personal daily MIS, apart from the readers'' ceiling.')
+ON CONFLICT (key) DO NOTHING;
+
 -- ------------------------------------------- Finance's debtors list (078)
 -- Finance's Sundry Debtors list, read from a shared mailbox once and
 -- reconciled with the tracker's receivables in the Daily Sales Briefing

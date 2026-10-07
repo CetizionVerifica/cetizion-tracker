@@ -227,6 +227,8 @@ export const routes = [
   { method: 'GET', path: '/api/mis-reports/runs/:id/pdf', access: mustBeAdmin, why: 'The PDF that went to management, over the whole book.' },
   { method: 'POST', path: '/api/mis-reports/:kind/send', access: mustBeAdmin, why: 'Emails management a report now, from the chosen sender; not a preview.' },
   { method: 'GET', path: '/api/mis-reports/sender', access: mustBeAdmin, why: 'Which mailbox and address the management reports go from, and why that mailbox cannot send; part of the reports\' settings.' },
+  { method: 'GET', path: '/api/mis-reports/personal/people', access: mustBeAdmin, why: 'Who a personal daily MIS is for and the state of each one\'s mailbox; part of the reports\' settings.' },
+  { method: 'GET', path: '/api/mis-reports/personal/:userId/preview', access: mustBeAdmin, why: 'One person\'s day as the personal MIS sees it, and the AI\'s report on it; a manager\'s view of someone else\'s work. Their mail text stays hidden.' },
   { method: 'POST', path: '/api/mis-reports/sender/test', access: mustBeAdmin, why: 'Sends real mail from the reports\' sender (to the caller only); trying the company\'s sending path is an admin\'s act.' },
   { method: 'GET', path: '/api/reports/categories', access: mustBeAdmin, why: 'Settings → Reports: lists every sector spelling in use across all quotations, enquiries and companies, which is the whole book rather than the caller\'s own records.' },
 

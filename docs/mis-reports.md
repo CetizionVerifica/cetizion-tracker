@@ -92,6 +92,30 @@ an AI, or once the readers' daily AI ceiling is reached, the briefing lists
 what the readers made and the MIS uses the Reports page's own sentences.
 The report goes either way.
 
+## The personal daily MIS (preview)
+
+Being built (`/mnt/project-files/plans/mis-report-sender-plan.md` Part B). Nothing is sent yet: the
+**Personal daily MIS** card on Scheduled reports shows, for one person and day, the facts the report
+is written from beside the report the AI writes from them.
+
+* **The facts** (`server/src/lib/misPersonal.js`, `personalFacts`): the person's acts in the tracker
+  (activity rows, notes, tasks made and completed, calls and meetings, collection follow-ups, visits
+  planned, reassignments), the email they sent and received with clients in their own mailbox, the
+  overdue rows that are theirs with **no action yesterday** worked out by code, and their tasks and
+  visits for the day. Internal-only mail, automatic replies, bulk mail and blocked senders are left
+  out and counted. A body the mailbox does not store is read live and never written back. Every
+  fact has an id (`act:…`, `msg:…`, a thread, a pending row's key, `task:…`, `visit:…`).
+* **The checks** (`server/src/lib/misAi.js`, `checkPersonal`): a line citing what is not in the
+  facts, with a number the cited facts do not carry, or at a time that is not the act's, is
+  dropped. Every act and sent email must be cited, every overdue row and every reply owed must be
+  there; the AI is asked once more for what it missed, and a report still missing any is refused.
+  Wrong counts refuse it. Who owes a reply and "no action yesterday" are code's. Something "in
+  email, not in the tracker" is dropped when the tracker has it.
+* **Its own AI ceiling**: `personal_mis_ai_limit` (default 30 a day), counted as `mis_personal`,
+  apart from the email readers' ceiling.
+* **Privacy**: the preview never shows another person's mail text, nor the subject when their
+  mailbox shares only metadata.
+
 ## Running and checking
 
 **Reports → Scheduled reports** (admins):
