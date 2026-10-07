@@ -205,9 +205,15 @@ describe('follow-up runner', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
 
   test('U-A15: 500 keys in one query', async () => {
     const keys = Array.from({ length: 500 }, (_, n) => `enquiry:ENQ-${n}`);
+    // What matters is one round trip for every key, never one per key. A
+    // wall-clock bound alone failed whenever the whole suite ran in
+    // parallel; this one is generous and only catches a pathological plan.
+    let queries = 0;
+    const counting = { query: (...args) => { queries += 1; return db.query(...args); } };
     const started = performance.now();
-    await lastActivity(db, keys);
-    assert.ok(performance.now() - started < 200);
+    await lastActivity(counting, keys);
+    assert.equal(queries, 1, 'one query for all 500 keys');
+    assert.ok(performance.now() - started < 2000);
   });
 
   // --------------------------------------------------------- §8 runner
