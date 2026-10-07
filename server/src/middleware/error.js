@@ -19,9 +19,19 @@ const CONSTRAINT_FIELDS = {
   company_document_profiles_company_id_doc_type_key: ['company_id', 'This client already has a note for these documents: edit that one instead'],
 };
 
+// A company still named on these records cannot be deleted (089): the
+// records would only bring it back. Merging is the way to get rid of one.
+const COMPANY_IN_USE = new Set(['quotations_company_id_fkey', 'enquiries_company_id_fkey', 'projects_company_id_fkey']);
+
 // Postgres constraint violations are user mistakes far more often than
 // bugs, so translate the common ones into something a person can act on.
 export function fromPgError(err) {
+  if (err.code === '23503' && COMPANY_IN_USE.has(err.constraint) && /is still referenced/.test(err.detail || '')) {
+    return {
+      status: 409,
+      message: `This company still has ${err.table || 'records'} under its name, so it cannot be deleted. Merge it into the company those records belong to instead.`,
+    };
+  }
   const field = CONSTRAINT_FIELDS[err.constraint];
   if (field && ['23505', '23514', '23503'].includes(err.code)) {
     return { status: 422, message: 'Please check the highlighted fields', fields: { [field[0]]: field[1] } };
