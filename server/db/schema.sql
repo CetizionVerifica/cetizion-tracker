@@ -1311,6 +1311,8 @@ CREATE TABLE IF NOT EXISTS email_log (
   body_text            text,
   body_html            text,
   sent_by              text,
+  -- The From address it carried (090).
+  from_email           text,
   created_at           timestamptz NOT NULL DEFAULT now(),
   sent_at              timestamptz
 );
@@ -1859,6 +1861,9 @@ CREATE TABLE IF NOT EXISTS connected_accounts (
   read_scope         text NOT NULL DEFAULT 'all' CHECK (read_scope IN ('all','inbox_sent')),
   -- Stored message ids are Graph's immutable ids (076); translated once on the first sync after it.
   immutable_ids      boolean NOT NULL DEFAULT false,
+  -- The owner of a personal mailbox allows the scheduled reports to be sent
+  -- from it (090). A shared mailbox needs no switch.
+  may_send_reports   boolean NOT NULL DEFAULT false,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT connected_accounts_shared_unowned CHECK (NOT (is_shared AND user_id IS NOT NULL))
@@ -3029,6 +3034,9 @@ CREATE TABLE IF NOT EXISTS report_runs (
   ai_used       boolean NOT NULL DEFAULT false,
   error         text,
   triggered_by  text NOT NULL DEFAULT 'schedule',
+  -- The From the report carried, and the mailbox it went through; null for SMTP (090).
+  sent_from     text,
+  sent_through  int REFERENCES connected_accounts(id) ON DELETE SET NULL,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
@@ -3041,7 +3049,9 @@ INSERT INTO settings (key, value, notes) VALUES
   ('mis_weekly_enabled', 'false', 'Send the Weekly Sales MIS every Monday at 08:54 IST, for the previous Monday to Sunday.'),
   ('mis_to', '', 'Recipients of both reports, comma-separated.'),
   ('mis_cc', '', 'Copied on both reports, comma-separated.'),
-  ('mis_sender_account_id', '', 'The connected mailbox the reports are sent from (sales@). Blank: the SMTP sender.'),
+  ('mis_sender_account_id', '', 'The connected mailbox the reports are sent through: a shared one, or a personal one whose owner allowed it. none: the SMTP sender.'),
+  ('mis_sender_address', 'none', 'Send the reports as this address: Send As in Exchange for a mailbox, or one of EMAIL_FROM_ALLOWED for SMTP. none: the mailbox''s own address.'),
+  ('mis_sender_name', 'none', 'The display name on the reports'' From. none: the name the address already has.'),
   ('mis_overdue_days', '7', 'Days after which a pending invoice, PO or quotation is marked Overdue in the reports.')
 ON CONFLICT (key) DO NOTHING;
 

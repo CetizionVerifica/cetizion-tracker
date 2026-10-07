@@ -105,7 +105,7 @@ export function microsoftProvider(account, tokens) {
     });
     if (r.status === 204 || r.status === 202) return null;
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { const e = new Error(j.error?.message || `Graph ${r.status}`); e.status = r.status; e.reconnect = r.status === 401; throw e; }
+    if (!r.ok) { const e = new Error(j.error?.message || `Graph ${r.status}`); e.status = r.status; e.code = j.error?.code || null; e.reconnect = r.status === 401; throw e; }
     return j;
   }
   const person = (x) => (x?.emailAddress ? { email: x.emailAddress.address, name: x.emailAddress.name } : null);
@@ -324,11 +324,15 @@ export function microsoftProvider(account, tokens) {
      * `attachments`: [{ name, contentType, content: Buffer }], sent inline
      * as Graph's fileAttachment, which takes a file of up to about 3 MB —
      * plenty for a report PDF (docs/mis-reports-plan.md §3.6).
+     *
+     * `from`: { address, name } to send as another address (Send As or
+     * Send on Behalf, granted in Exchange); Graph refuses it with
+     * ErrorSendAsDenied otherwise. Omitted, the mailbox's own address.
      */
-    async send({ to, cc = [], subject, html, attachments = [] }) {
+    async send({ to, cc = [], subject, html, attachments = [], from = null }) {
       const rec = (list) => list.map((address) => ({ emailAddress: { address } }));
       const files = attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType || 'application/octet-stream', contentBytes: Buffer.from(a.content).toString('base64') }));
-      await graph(`${who}/sendMail`, { method: 'POST', body: { message: { subject, body: { contentType: 'HTML', content: html }, toRecipients: rec(to), ccRecipients: rec(cc), ...(files.length ? { attachments: files } : {}) }, saveToSentItems: true } });
+      await graph(`${who}/sendMail`, { method: 'POST', body: { message: { subject, body: { contentType: 'HTML', content: html }, toRecipients: rec(to), ccRecipients: rec(cc), ...(from?.address ? { from: { emailAddress: { address: from.address, ...(from.name ? { name: from.name } : {}) } } } : {}), ...(files.length ? { attachments: files } : {}) }, saveToSentItems: true } });
     },
     async subscribe(folder, clientState) {
       const expires = new Date(Date.now() + 4200 * 60 * 1000).toISOString(); // under Graph's mail limit of ~7 days

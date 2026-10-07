@@ -475,6 +475,7 @@ export default function Mailboxes() {
       {tuning && (
         <SyncSettingsDialog
           row={tuning}
+          isOwner={!tuning.is_shared && tuning.user_id != null && tuning.user_id === user?.id}
           onClose={() => setTuning(null)}
           onSaved={(message) => { setTuning(null); toast(message, 'success'); refetch(); }}
         />
@@ -544,12 +545,14 @@ export default function Mailboxes() {
  * the rarer, duller kind: set once when the mailbox is connected, and
  * almost never again.
  */
-function SyncSettingsDialog({ row, onClose, onSaved }) {
+function SyncSettingsDialog({ row, isOwner = false, onClose, onSaved }) {
   const toast = useToast();
   const [days, setDays] = useState(String(row.import_days ?? 30));
   const [internal, setInternal] = useState(!row.exclude_internal);
   const [contacts, setContacts] = useState(Boolean(row.auto_create_contacts));
   const [everyFolder, setEveryFolder] = useState(row.read_scope === 'all');
+  // The owner's own decision (mis-report-sender-plan.md §A3): an admin can then choose it as the reports' sender.
+  const [sendReports, setSendReports] = useState(Boolean(row.may_send_reports));
   const [busy, setBusy] = useState(false);
   const daysChanged = Number(days) !== Number(row.import_days ?? 30);
 
@@ -558,7 +561,7 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
     try {
       await api.raw(`/mailboxes/${row.id}`, {
         method: 'PATCH',
-        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts, read_scope: everyFolder ? 'all' : 'inbox_sent' },
+        body: { import_days: Number(days), exclude_internal: !internal, auto_create_contacts: contacts, read_scope: everyFolder ? 'all' : 'inbox_sent', ...(isOwner ? { may_send_reports: sendReports } : {}) },
       });
       // Changing the window drops the sync cursor, so the older mail only
       // appears on the next pass. Saying "Saved" and leaving an unchanged
@@ -626,6 +629,18 @@ function SyncSettingsDialog({ row, onClose, onSaved }) {
             </span>
           </span>
         </label>
+
+        {isOwner && (
+          <label className="flex items-start gap-2 text-[13px]">
+            <input type="checkbox" className="mt-0.5" checked={sendReports} onChange={(e) => setSendReports(e.target.checked)} />
+            <span>
+              Allow scheduled reports to be sent from this mailbox
+              <span className="block text-[12px] text-muted-foreground">
+                Off by default. On lets an admin choose your mailbox to send the Daily Sales Briefing and the Weekly Sales MIS; they would go out from your address and sit in your Sent Items.
+              </span>
+            </span>
+          </label>
+        )}
       </div>
     </Modal>
   );

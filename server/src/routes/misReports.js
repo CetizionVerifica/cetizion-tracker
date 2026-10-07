@@ -8,6 +8,8 @@
  *   POST /api/mis-reports/:kind/send           { date? } send it now (or again) for the period `date` decides
  *   GET  /api/mis-reports/runs                 the run history
  *   GET  /api/mis-reports/runs/:id/pdf         the PDF a run sent, from document storage
+ *   GET  /api/mis-reports/sender               who the reports will go from, and any problem
+ *   POST /api/mis-reports/sender/test          a short test, to the caller only, by the reports' path
  *
  * `kind` is daily_briefing or weekly_mis. `date` (YYYY-MM-DD) runs the
  * report as if that were today — yesterday's briefing, the previous week's
@@ -23,7 +25,7 @@ import { businessToday } from '../lib/businessDate.ts';
 import { fetchDocument } from '../lib/documents.js';
 import { KINDS } from '../lib/misReports.js';
 import { misPdf, pdfPageCount } from '../lib/misPdf.js';
-import { buildReport, listRuns, runReport } from '../lib/misSend.js';
+import { buildReport, describeSender, listRuns, runReport, sendSenderTest } from '../lib/misSend.js';
 
 export const misReportsRouter = Router();
 misReportsRouter.use(requireAdmin);
@@ -55,11 +57,33 @@ misReportsRouter.get('/runs/:id/pdf', async (req, res) => {
   res.send(body);
 });
 
+misReportsRouter.get('/sender', async (req, res) => {
+  res.json({ data: await describeSender() });
+});
+
+// One test a minute per caller: it sends real mail.
+const lastTest = new Map();
+
+/**
+ * The sender test (mis-report-sender-plan.md §A2). It goes to the signed-in
+ * admin's own address and nowhere else, so it cannot be used to mail anyone
+ * as the company.
+ */
+misReportsRouter.post('/sender/test', async (req, res) => {
+  const to = String(req.user?.email || '').trim();
+  if (!to.includes('@')) throw new ApiError(422, 'Your account has no email address to send the test to. Sign in with your own account.');
+  const key = req.user?.id ?? to;
+  const at = lastTest.get(key);
+  if (at && Date.now() - at < 60_000) throw new ApiError(429, 'A test was sent less than a minute ago. Try again shortly.');
+  lastTest.set(key, Date.now());
+  res.json({ data: await sendSenderTest({ to, startedBy: req.user?.username || 'admin' }) });
+});
+
 // ?ai=1 has the AI word the preview too; it is a counted call, so not by default.
 misReportsRouter.get('/:kind/preview', async (req, res) => {
   const kind = kindOf(req.params.kind);
   const built = await buildReport(kind, { today: dateOf(req.query.date), ai: req.query.ai === '1' });
-  res.json({ data: { kind, period: built.data.period, file_name: built.fileName, email: { subject: built.email.subject, text: built.email.text }, report: built.data, ai: built.ai, settings: { to: built.settings.to, cc: built.settings.cc, sender_account_id: built.settings.senderAccountId, enabled: kind === 'daily_briefing' ? built.settings.dailyEnabled : built.settings.weeklyEnabled } } });
+  res.json({ data: { kind, period: built.data.period, file_name: built.fileName, email: { subject: built.email.subject, text: built.email.text }, report: built.data, ai: built.ai, settings: { to: built.settings.to, cc: built.settings.cc, sender_account_id: built.settings.senderAccountId, sender_address: built.settings.senderAddress, sender_name: built.settings.senderName, enabled: kind === 'daily_briefing' ? built.settings.dailyEnabled : built.settings.weeklyEnabled } } });
 });
 
 misReportsRouter.get('/:kind/preview.pdf', async (req, res) => {

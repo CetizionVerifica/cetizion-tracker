@@ -123,12 +123,12 @@ export const JOBS = {
   // The scheduled sales reports (docs/mis-reports-plan.md §3.7). Each
   // period is sent once: a run that finds it already sent does nothing.
   'reports.daily_briefing': {
-    description: 'Email management the Daily Sales Briefing for the previous day, from the sales mailbox with the PDF attached',
+    description: 'Email management the Daily Sales Briefing for the previous day, from the chosen sender with the PDF attached',
     cron: '56 8 * * *',
     run: (opts) => runDailyBriefing(opts),
   },
   'reports.weekly_mis': {
-    description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the sales mailbox with the PDF attached',
+    description: 'Email management the Weekly Sales MIS for the previous Monday to Sunday, from the chosen sender with the PDF attached',
     cron: '54 8 * * 1',
     run: (opts) => runWeeklyMis(opts),
   },
