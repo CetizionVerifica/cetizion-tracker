@@ -5,6 +5,7 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert, DocumentLink, Tabs } from '../components/ui.jsx';
 import { InvoiceReviewList, useReviewCount } from '../components/EmailReview.jsx';
 import { RecordInvoiceDialog, RecordPaymentDialog } from '../components/actions.jsx';
+import { ClientSaidBadge, useClientSaid } from '../components/ClientSaid.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date, percent } from '../lib/format.js';
 
@@ -21,6 +22,8 @@ export default function PaymentStages() {
   const tab = params.get('tab') === 'invoice-review' ? 'invoice-review' : 'all';
   const toReview = useReviewCount('/payment-stages/invoice-review');
   const [version, setVersion] = useState(0);
+  // What the client last said in the portal about each invoice (#198).
+  const clientSaid = useClientSaid();
 
   const refresh = () => {
     setDialog(null);
@@ -48,7 +51,7 @@ export default function PaymentStages() {
     { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
     { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
     { key: 'to_bill_amount', header: 'To bill', align: 'right', render: (r) => (r.to_bill_amount > 0 ? money(r.to_bill_amount, r.currency) : <span className="muted">—</span>) },
-    { key: 'stage_status', header: 'Status', render: (r) => <Badge>{r.stage_status}</Badge> },
+    { key: 'stage_status', header: 'Status', render: (r) => <><Badge>{r.stage_status}</Badge><ClientSaidBadge said={clientSaid.get(r.id)} /></> },
     { key: 'follow_up_action', header: 'Follow-up', className: 'wrap small' },
     {
       key: 'act',

@@ -5,6 +5,7 @@ import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat
 import { RecordPaymentDialog } from '../components/actions.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { PortalAnswers } from '../components/PortalAnswers.jsx';
+import { ClientSaidBadge, useClientSaid } from '../components/ClientSaid.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch } from '../lib/hooks.js';
@@ -25,6 +26,8 @@ export default function Collections() {
   const [paying, setPaying] = useState(null);       // stage
   const [logFor, setLogFor] = useState(null);       // stage id
   const { data, loading, error, refetch } = useFetch(() => api.raw('/collections'), []);
+  // What the client last said in the portal about each invoice (#198).
+  const clientSaid = useClientSaid();
   // Reports links an ageing bar here as ?bucket=31-60. The list narrows to
   // the clients with money in that band, and says so, rather than opening on
   // everything owed and leaving the reader to find the nine invoices.
@@ -112,7 +115,7 @@ export default function Collections() {
                 { key: 'invoice_no', header: 'Invoice', className: 'mono', render: (s) => <>{s.invoice_no}<div className="small muted">{date(s.invoice_date)} · <Link to={`/purchase-orders/${encodeURIComponent(s.po_number)}`}>{s.po_number}</Link> · {s.stage_name}</div></> },
                 { key: 'outstanding', header: 'Outstanding', align: 'right', render: (s) => <>{money(s.outstanding, s.currency)}<div className="small muted">of {money(s.stage_amount, s.currency)}</div></> },
                 { key: 'due', header: 'Due', render: (s) => <>{date(s.invoice_due_date)}{s.days_overdue > 0 && <div className="small" style={{ color: 'var(--danger-fg)' }}>{s.days_overdue} days overdue · {s.bucket}</div>}</> },
-                { key: 'status', header: 'Status', render: (s) => <><Badge>{s.stage_status}</Badge>{s.on_hold && <div><Badge tone="warning">on hold</Badge> <span className="small muted">{s.hold_reason}</span></div>}{s.promise_to_pay_date && <div className="small">promised {date(s.promise_to_pay_date)}</div>}{s.reminder_level > 0 && <div className="small muted">reminder level {s.reminder_level}{s.reminder_sent_on ? ` on ${date(s.reminder_sent_on)}` : ''}</div>}</> },
+                { key: 'status', header: 'Status', render: (s) => <><Badge>{s.stage_status}</Badge>{s.on_hold && <div><Badge tone="warning">on hold</Badge> <span className="small muted">{s.hold_reason}</span></div>}{s.promise_to_pay_date && <div className="small">promised {date(s.promise_to_pay_date)}</div>}{s.reminder_level > 0 && <div className="small muted">reminder level {s.reminder_level}{s.reminder_sent_on ? ` on ${date(s.reminder_sent_on)}` : ''}</div>}<ClientSaidBadge said={clientSaid.get(s.id)} /></> },
                 { key: 'last', header: 'Last chase', className: 'wrap small', render: (s) => (s.last_chased_at ? <>{new Date(s.last_chased_at).toLocaleDateString()} · {s.last_channel}<div className="muted">{s.last_summary}</div>{s.next_action_on && <div>next: {date(s.next_action_on)}</div>}</> : <span className="muted">never</span>) },
                 { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm btn--primary" onClick={() => setPaying(s)}>Payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{isAdmin && (s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>)}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
               ]}

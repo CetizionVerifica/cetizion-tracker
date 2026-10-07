@@ -11,8 +11,11 @@
  *
  * Only a company with the portal and its Invoices section switched on, and
  * only contacts allowed in, with an email, who have not opted out of
- * automatic email. An invoice is announced once, however often it is
- * recorded again.
+ * automatic email; of those, the billing contacts, else the first. An
+ * invoice is announced once, however often it is recorded again. An invoice
+ * we emailed to the client ourselves (the email reader found it in our sent
+ * mail, or a person recorded it from the review queue) is not announced: the
+ * client already has it in their inbox.
  */
 import { query } from '../db.js';
 import { portalNewInvoice } from './emailTemplates.js';
@@ -35,9 +38,18 @@ export async function portalAddress(db, base = null) {
   return root ? `${root}/portal` : null;
 }
 
-/** Of a company's contacts, those a portal email goes to. */
-export const PORTAL_RECIPIENTS = `SELECT id, name, email FROM contacts
+/** Of a company's contacts, those a portal email may go to. */
+export const PORTAL_RECIPIENTS = `SELECT id, name, email, is_billing FROM contacts
   WHERE company_id = $1 AND portal_access AND email IS NOT NULL AND NOT opt_out_reminders ORDER BY id`;
+
+/**
+ * Who hears of a new invoice: the billing contacts among them, else the
+ * first, as a payment reminder picks its contact (lib/reminders.js).
+ */
+export function invoiceRecipients(contacts) {
+  const billing = contacts.filter((c) => c.is_billing);
+  return billing.length ? billing : contacts.slice(0, 1);
+}
 
 /**
  * Tell the client's portal contacts that this invoice is in the portal.
@@ -60,9 +72,12 @@ export async function emailNewInvoice(stageId, { db = { query }, base = null, se
   const { rowCount: told } = await db.query(
     `SELECT 1 FROM email_log WHERE template = 'portal_new_invoice' AND entity = 'payment_stage' AND entity_id = $1 LIMIT 1`, [String(s.id)]);
   if (told) return { sent: 0, skipped: 'already announced' };
+  const { rowCount: emailed } = await db.query(
+    `SELECT 1 FROM email_invoice_decisions WHERE stage_id = $1 AND outcome IN ('recorded', 'linked', 'recorded_by_hand') LIMIT 1`, [s.id]);
+  if (emailed) return { sent: 0, skipped: 'we emailed this invoice to the client ourselves' };
   const url = await portalAddress(db, base);
   if (!url) return { sent: 0, skipped: 'the public address is not set (Settings)' };
-  const { rows: contacts } = await db.query(PORTAL_RECIPIENTS, [s.company_id]);
+  const contacts = invoiceRecipients((await db.query(PORTAL_RECIPIENTS, [s.company_id])).rows);
   for (const c of contacts) {
     const mail = portalNewInvoice({ contactName: c.name, company: s.company_name, invoice: s, url });
     await send({ ...mail, to: c.email, template: 'portal_new_invoice', entity: 'payment_stage', entityId: s.id, sentBy }, db);
