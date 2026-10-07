@@ -42,7 +42,7 @@ const TONE = {
 
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
-    <UiCard className={cn('gap-0 rounded-[10px] border-border bg-card py-0 shadow-none', className)}>
+    <UiCard className={cn('gap-0 py-0', className)}>
       {/* The actions sit beside the title when there is room and under it
           when there is not. Held `shrink-0` beside it, a card header
           carrying two filters pushed a phone page past its viewport. */}
@@ -73,8 +73,8 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
     info: 'text-info',
   }[tone];
   const className = cn(
-    'flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
-    (to || onClick) && 'hover:border-primary/40 hover:bg-accent'
+    'mg-glass flex min-w-0 flex-col gap-1 px-5 py-4 text-left transition-[box-shadow,border-color] duration-150',
+    (to || onClick) && 'hover:border-caramel/50'
   );
   const inner = (
     <>
@@ -100,7 +100,7 @@ export function Badge({ children, tone, dot = false, className }) {
   // says anything here, which is the design's rule and also the accessible
   // one.
   return (
-    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral, className)}>
+    <UiBadge variant="outline" className={cn('gap-1.5 font-semibold', TONE[resolved] || TONE.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </UiBadge>
@@ -149,7 +149,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
           <UiCard
             key={row.id ?? i}
             className={cn(
-              'gap-0 rounded-[10px] border-border bg-card py-0 shadow-none',
+              'gap-0 rounded-[18px] border-line py-0 shadow-none [background:var(--track)] [backdrop-filter:none]',
               onRowClick && 'cursor-pointer',
               rowClassName ? rowClassName(row) || '' : ''
             )}
@@ -335,7 +335,7 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         className={cn(
-          'max-h-[86vh] gap-0 overflow-hidden rounded-[14px] border-border bg-popover p-0',
+          'max-h-[86vh] gap-0 overflow-hidden p-0',
           size === 'lg' ? 'sm:max-w-3xl' : size === 'sm' ? 'sm:max-w-md' : 'sm:max-w-xl'
         )}
       >
@@ -377,7 +377,7 @@ export function Input({ error, className, ...props }) {
   return (
     <UiInput
       aria-invalid={error ? true : undefined}
-      className={cn('h-control rounded-[6px] bg-secondary text-[13px]', className)}
+      className={cn(className)}
       {...props}
     />
   );
@@ -389,8 +389,8 @@ export function Textarea({ error, className, ...props }) {
     <textarea
       aria-invalid={error ? true : undefined}
       className={cn(
-        'min-h-20 w-full rounded-[6px] border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
-        'placeholder:text-muted-foreground aria-invalid:border-late',
+        'min-h-20 w-full rounded-[14px] border border-input bg-glass-strong px-3.5 py-2.5 text-[13.5px] text-foreground transition-[border-color,box-shadow] hover:border-glass-edge',
+        'placeholder:text-muted-foreground aria-invalid:border-late focus-visible:border-caramel focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-wait-soft',
         className
       )}
       {...props}
@@ -404,8 +404,8 @@ export function Select({ error, options = [], placeholder = '—', children, cla
     <select
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-control w-full rounded-[6px] border border-input bg-secondary px-2.5 text-[13px] text-foreground',
-        'aria-invalid:border-late',
+        'h-11 w-full rounded-[14px] border border-input bg-glass-strong px-3.5 text-[13.5px] text-foreground transition-[border-color,box-shadow] hover:border-glass-edge',
+        'aria-invalid:border-late focus-visible:border-caramel focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-wait-soft',
         className
       )}
       {...props}
@@ -445,13 +445,13 @@ export function Progress({ value }) {
   return (
     <div className="flex items-center gap-2">
       <div
-        className="h-1.5 flex-1 overflow-hidden rounded-[6px] bg-secondary"
+        className="h-2.5 flex-1 overflow-hidden rounded-full bg-track"
         role="progressbar"
         aria-valuenow={Math.round(pct * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        <div className="h-full rounded-[6px] bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
+        <div className="h-full rounded-full bg-figure transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
       </div>
       <span className="num min-w-8 text-right text-[12px] text-muted-foreground">{Math.round(pct * 100)}%</span>
     </div>
@@ -472,9 +472,9 @@ export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
             </span>
             <span className="num shrink-0 text-[12.5px] text-secondary-foreground">{valueFormat(item.value, item)}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-[6px] bg-secondary">
+          <div className="h-2.5 overflow-hidden rounded-full bg-track">
             <div
-              className="h-full rounded-[6px] bg-primary/80"
+              className="h-full rounded-full bg-figure"
               style={{ width: `${((Number(item.value) || 0) / max) * 100}%` }}
             />
           </div>
@@ -509,19 +509,19 @@ export function Tabs({ tabs, active, onChange }) {
           role="tab"
           aria-selected={active === tab.key}
           className={cn(
-            'flex h-control items-center gap-1.5 rounded-t-[6px] border-b-2 px-3 text-[13px] transition-colors duration-150',
+            'flex h-10 items-center gap-2 border-b-[2.5px] px-3 text-[13px] font-bold transition-colors duration-150',
             active === tab.key
-              ? 'border-primary font-medium text-foreground'
+              ? 'border-caramel text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           )}
           onClick={() => onChange(tab.key)}
         >
           {tab.label}
           {tab.count !== undefined && (
-            <span className="num rounded-[6px] bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
+            <span className={cn('num rounded-full px-1.5 text-[10.5px] font-extrabold', active === tab.key ? 'bg-caramel text-on-caramel' : 'bg-track text-secondary-text')}>{tab.count}</span>
           )}
           {tab.warning ? (
-            <span className="num rounded-[6px] bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
+            <span className="num rounded-full bg-wait-soft px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
           ) : null}
         </button>
       ))}
@@ -534,13 +534,13 @@ export function Alert({ tone = 'info', children }) {
   // Tone is never the only signal: the text says what it is, and the icon
   // agrees with it.
   const look = {
-    info: 'border-info/30 bg-info/10 text-info',
-    warning: 'border-waiting/30 bg-waiting/10 text-waiting',
-    danger: 'border-late/30 bg-late/10 text-late',
-    success: 'border-settled/30 bg-settled/10 text-settled',
-  }[tone] || 'border-info/30 bg-info/10 text-info';
+    info: 'bg-info-soft [&>svg]:text-info',
+    warning: 'bg-wait-soft [&>svg]:text-wait',
+    danger: 'bg-late-soft [&>svg]:text-late',
+    success: 'bg-ok-soft [&>svg]:text-ok',
+  }[tone] || 'bg-info-soft [&>svg]:text-info';
   return (
-    <div className={cn('alert flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px]', look)} role="status">
+    <div className={cn('alert flex items-start gap-3 rounded-[18px] px-4 py-3.5 text-[13.5px] text-foreground [&>svg]:size-[18px] [&>svg]:shrink-0', look)} role="status">
       {children}
     </div>
   );
@@ -577,7 +577,7 @@ export function ToastProvider({ children }) {
   return (
     <>
       {children}
-      <Toaster position="bottom-right" richColors closeButton theme="dark" toastOptions={{ className: 'toast' }} />
+      <Toaster position="bottom-right" closeButton toastOptions={{ className: 'toast' }} />
     </>
   );
 }

@@ -3,20 +3,30 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 import { Slot } from "radix-ui"
 
+/*
+ * Mocha Glass badges (design-system Badge). The four states — late, wait, ok,
+ * info — carry a dot and their -soft ground; a state is always said in words
+ * too. The shadcn variants map onto the system: destructive is late, secondary
+ * the neutral track pill, default the coffee pill.
+ */
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3",
+  "mg-badge w-fit shrink-0 overflow-hidden transition-[color,box-shadow] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-wait-soft aria-invalid:ring-4 aria-invalid:ring-late-soft [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
-        secondary:
-          "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
-        destructive:
-          "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
+        default: "mg-badge--plain bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        secondary: "mg-badge--plain [a&]:hover:bg-accent",
+        destructive: "mg-badge--late",
         outline:
-          "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 [a&]:hover:underline",
+          "mg-badge--plain border border-border bg-transparent text-foreground [a&]:hover:bg-accent",
+        ghost: "mg-badge--plain bg-transparent [a&]:hover:bg-accent",
+        link: "mg-badge--plain bg-transparent text-caramel-text underline-offset-4 [a&]:hover:underline",
+        late: "mg-badge--late",
+        wait: "mg-badge--wait",
+        warning: "mg-badge--wait",
+        ok: "mg-badge--ok",
+        success: "mg-badge--ok",
+        info: "mg-badge--info",
       },
     },
     defaultVariants: {
