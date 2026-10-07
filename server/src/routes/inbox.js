@@ -26,6 +26,7 @@ import { createEnquiryFromEmail } from '../lib/mailbox/enquiryFromEmail.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate, wake } from '../lib/inbox.js';
 import { isSyncing, kickSync } from '../lib/mailbox/autoSync.js';
+import { logCreated } from '../lib/recordActs.js';
 
 export const inboxRouter = Router();
 
@@ -447,7 +448,7 @@ inboxRouter.post('/:id/convert', async (req, res) => {
   const enquiry = await transaction(async (db) => {
     const { rows: [src] } = v.source_id ? { rows: [{ id: v.source_id }] } : await db.query(`SELECT id FROM lead_sources WHERE name = 'Inbound email or call'`);
     const { rows: [{ first }] } = await db.query('SELECT MIN(sent_at) AS first FROM email_messages WHERE thread_id = $1', [c.thread_id]);
-    return createEnquiryFromEmail(db, {
+    const created = await createEnquiryFromEmail(db, {
       threadId: c.thread_id, fromEmail: c.from_email, fromName: c.from_name,
       enquiry: {
         dated_at: first || new Date().toISOString(), client_name: client, status: 'New',
@@ -456,6 +457,8 @@ inboxRouter.post('/:id/convert', async (req, res) => {
         notes: v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, first_responded_at: c.first_response_at,
       },
     });
+    await logCreated(db, req.user, { entity: 'enquiry', ref: created.enquiry_no, row: created, extra: { from_email: c.from_email, thread_id: c.thread_id } });
+    return created;
   });
   res.status(201).json({ data: enquiry });
 });

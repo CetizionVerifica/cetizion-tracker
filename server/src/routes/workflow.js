@@ -10,6 +10,7 @@ import { ApiError } from '../middleware/error.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { actAs, logCreated, logInvoiceRaised, logPaymentRecorded, logStageMoves } from '../lib/recordActs.js';
 import { ONBOARDING_TEMPLATE } from '../lib/resources.js';
 import { normalizeName } from '../lib/names.ts';
 import { onboardingProgress, withDerivedSteps } from '../lib/onboarding.js';
@@ -201,6 +202,7 @@ quotationRouter.post('/:id/convert', async (req, res) => {
   const scope = scopeOf(req);
 
   const data = await transaction(async (client) => {
+    await actAs(client, req.user);
     // The ownership predicate rides along in the locking read, so a sales
     // user cannot register somebody else's quotation — and cannot learn that
     // it exists either (#18 Phase 2C).
@@ -258,6 +260,7 @@ quotationRouter.post('/:id/convert', async (req, res) => {
           WHERE id = $2`,
         [existingProject.project_id, quotation.id]
       );
+      await logStageMoves(client, req.user, [quotation.id]);
 
       return { project: existingProject, onboarding_steps_added: 0 };
     }
@@ -304,6 +307,8 @@ quotationRouter.post('/:id/convert', async (req, res) => {
         WHERE id = $2`,
       [project.project_id, quotation.id]
     );
+    await logCreated(client, req.user, { entity: 'project', ref: project.project_id, row: project, extra: { quotation_no: quotation.quotation_no } });
+    await logStageMoves(client, req.user, [quotation.id]);
 
     let steps = 0;
     if (body.apply_onboarding_template) {
@@ -389,6 +394,7 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
   const scope = scopeOf(req);
 
   const { createdIds, removedDocuments } = await transaction(async (client) => {
+    await actAs(client, req.user);
     // A purchase order takes its access from the quotation it fulfils or the
     // project it sits under, so the check is on the parent, in the same
     // statement that proves the PO exists (#18 Phase 2C).
@@ -440,9 +446,10 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
       n += 1;
       const { rows: r } = await client.query(
         `INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, credit_days, milestone_name)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
         [po, n, stage.stage_name, stage.trigger_event, stage.stage_percent, stage.credit_days ?? null, stage.milestone_name || null]
       );
+      await logCreated(client, req.user, { entity: 'payment_stage', ref: String(r[0].id), row: r[0] });
       created.push(r[0].id);
     }
     return { createdIds: created, removedDocuments };
@@ -488,9 +495,12 @@ stageRouter.post('/:id/invoice', async (req, res) => {
   const body = parse(invoiceSchema, req.body || {});
   const scope = scopeOf(req);
   const { id, replaced } = await transaction(async (client) => {
+    await actAs(client, req.user);
     const recorded = await recordInvoice(client, {
       stageId: Number(req.params.id), invoiceNo: body.invoice_no ?? null, invoiceDate: body.invoice_date, documentId: body.document_id, scope,
     });
+    const { rows: [stage] } = await client.query('SELECT * FROM payment_stages WHERE id = $1', [recorded.id]);
+    await logInvoiceRaised(client, req.user, stage);
     // An invoice email from the review queue (invoiceReview.js), settled by this.
     if (body.review_id) await settleInvoiceReview(client, req, body.review_id, { stageId: recorded.id, invoiceNo: recorded.invoice_no });
     return recorded;
@@ -533,7 +543,7 @@ stageRouter.post('/:id/payment', async (req, res) => {
   const params = [req.params.id];
   const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
   const { rows: [stage] } = await query(
-    `SELECT ps.id, ps.amount_received FROM payment_stages ps
+    `SELECT ps.id, ps.amount_received, ps.po_number, ps.stage_no, ps.invoice_no FROM payment_stages ps
       WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}`,
     params
   );
@@ -550,11 +560,14 @@ stageRouter.post('/:id/payment', async (req, res) => {
   if (delta > 0 || Number(body.tds_amount || 0) > 0) {
     // The receipt and the advice it settles, in one transaction (#198).
     await transaction(async (client) => {
-      await client.query(
+      const { rows: [payment] } = await client.query(
         `INSERT INTO payments (stage_id, amount, tds_amount, received_on, mode, reference, notes, recorded_by, portal_action_id)
-         VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8,$9)`,
+         VALUES ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,$8,$9) RETURNING id, amount, tds_amount, received_on, mode`,
         [stage.id, Math.max(delta, 0), Number(body.tds_amount || 0), body.payment_received_date ?? null, body.payment_mode || 'bank_transfer', body.reference ?? null, body.notes ?? null, req.user?.username || null, body.portal_action_id ?? null]
       );
+      await logPaymentRecorded(client, req.user, {
+        stage, amount: payment.amount, tds: payment.tds_amount, receivedOn: payment.received_on, mode: payment.mode, paymentId: payment.id,
+      });
       // Matched once every invoice the advice covers has its receipt.
       if (body.portal_action_id) {
         await client.query(
@@ -569,12 +582,17 @@ stageRouter.post('/:id/payment', async (req, res) => {
     // Bringing the total down is a negative row in the ledger, not a figure
     // written over the top of it: the stage total is computed from the rows,
     // so anything written by hand is undone by the next receipt.
-    await query(
-      `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
-       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5)`,
-      [stage.id, delta, body.payment_received_date ?? null,
-        `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
-    );
+    await transaction(async (client) => {
+      const { rows: [payment] } = await client.query(
+        `INSERT INTO payments (stage_id, amount, received_on, mode, notes, recorded_by)
+         VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), 'other', $4, $5) RETURNING id, amount, received_on, mode`,
+        [stage.id, delta, body.payment_received_date ?? null,
+          `Adjusted: total set to ${body.amount_received}`, req.user?.username || null]
+      );
+      await logPaymentRecorded(client, req.user, {
+        stage, amount: payment.amount, receivedOn: payment.received_on, mode: payment.mode, paymentId: payment.id, adjustment: true,
+      });
+    });
   }
   const rows = [stage];
   const { rows: full } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [rows[0].id]);

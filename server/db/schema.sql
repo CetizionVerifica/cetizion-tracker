@@ -1068,6 +1068,14 @@ CREATE TABLE quotation_stage_history (
 
 CREATE INDEX quotation_stage_history_quotation_idx ON quotation_stage_history (quotation_id, changed_at);
 
+CREATE OR REPLACE FUNCTION stage_history_actor() RETURNS trigger AS $$
+BEGIN
+  NEW.changed_by_user_id := COALESCE(NEW.changed_by_user_id, NULLIF(current_setting('app.actor_user_id', true), '')::int);
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER stage_history_actor BEFORE INSERT ON quotation_stage_history FOR EACH ROW EXECUTE FUNCTION stage_history_actor();
+
 CREATE OR REPLACE FUNCTION quotation_stage_sync() RETURNS trigger AS $$
 DECLARE st pipeline_stages%ROWTYPE; stage_changed boolean; status_changed boolean;
 BEGIN
@@ -1354,6 +1362,7 @@ CREATE TABLE tasks (
   assignee      text,
   created_by    text,
   completed_at  timestamptz,
+  completed_by  text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
@@ -1456,6 +1465,19 @@ BEGIN
 END $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER task_stamps BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION task_stamps();
+
+-- And who, from the request's actor (src/lib/recordActs.js); null for a job.
+CREATE OR REPLACE FUNCTION task_completed_by() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status = 'done' AND (TG_OP = 'INSERT' OR OLD.status <> 'done') THEN
+    NEW.completed_by := COALESCE(NEW.completed_by, NULLIF(current_setting('app.actor_name', true), ''));
+  ELSIF NEW.status <> 'done' THEN
+    NEW.completed_by := NULL;
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER task_completed_by BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION task_completed_by();
 CREATE TRIGGER tasks_set_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER notes_set_updated_at BEFORE UPDATE ON notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
@@ -1611,6 +1633,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email)) WHERE 
 
 CREATE TRIGGER users_set_updated_at BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Who moved a quotation's stage (091), declared here because users is
+-- created further down this file than the history is. Filled by the
+-- stage_history_actor trigger from the request's actor; null for a job.
+ALTER TABLE quotation_stage_history ADD COLUMN changed_by_user_id int REFERENCES users(id) ON DELETE SET NULL;
 
 -- ----------------------------------------------------------- ownership
 -- enquiries.owner_user_id, quotations.owner_user_id and

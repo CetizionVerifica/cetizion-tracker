@@ -119,6 +119,8 @@ async function saveQuotationContact(client, { after, input }) {
 
 export const resources = {
   companies: {
+    // Who created or changed one is recorded (recordActs.js, the daily MIS).
+    audit: 'company',
     // Shared master data: every quotation, enquiry and project that ever
     // named this client points at it, and the link trigger creates one on
     // its own the first time somebody types a new name. Anybody may add and
@@ -144,6 +146,7 @@ export const resources = {
   },
 
   contacts: {
+    audit: 'contact',
     // Shared master data, for the same reasons as companies above, and
     // created the same way — by the trigger, from a name on a record.
     adminOnlyDeletes: true,
@@ -173,6 +176,7 @@ export const resources = {
   },
 
   enquiries: {
+    audit: 'enquiry',
     table: 'enquiries',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -237,6 +241,7 @@ export const resources = {
   },
 
   quotations: {
+    audit: 'quotation',
     table: 'quotations',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -303,6 +308,7 @@ export const resources = {
   },
 
   projects: {
+    audit: 'project',
     table: 'projects',
     // Row-level ownership applies (#18 Phase 2C): a sales user reaches only
     // the rows they own, and an unowned row is admin-only. Declared here so
@@ -384,6 +390,7 @@ export const resources = {
   },
 
   'purchase-orders': {
+    audit: 'purchase_order',
     // Ownership is not this row's own — it belongs to the record above it
     // (#18 Phase 2C). A sales user reaches it only through a quotation or
     // project they own; an unreachable parent means unknown ownership, which
@@ -473,6 +480,7 @@ export const resources = {
   },
 
   'payment-stages': {
+    audit: 'payment_stage',
     // Ownership is not this row's own — it belongs to the record above it
     // (#18 Phase 2C). A sales user reaches it only through a quotation or
     // project they own; an unreachable parent means unknown ownership, which
@@ -719,6 +727,7 @@ export const resources = {
   },
 
   payments: {
+    audit: 'payment',
     // What has actually been received. payment_stages.amount_received is
     // computed from these rows by trigger, so a deleted or re-pointed
     // payment silently moves Due now, Collections and the forecast.

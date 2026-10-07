@@ -59,6 +59,14 @@ export const ACTIONS = {
   // Who a personal mailbox belongs to, changed by an admin
   // (docs/per-user-mailboxes-plan.md §4.3). Records already made stay put.
   MAILBOX_OWNER_CHANGED: 'mailbox.owner_changed',
+  // Who did what to the sales records (mis-report-sender-plan.md §B3.2):
+  // the facts a person's daily MIS reads as their Actions taken. Written by
+  // src/lib/recordActs.js in the transaction of the change.
+  RECORD_CREATED: 'record.created',
+  RECORD_UPDATED: 'record.updated',
+  QUOTATION_STAGE_CHANGED: 'quotation.stage_changed',
+  PAYMENT_RECORDED: 'payment.recorded',
+  INVOICE_RAISED: 'invoice.raised',
 };
 
 /** Whoever asked, nobody did — a scheduled job, a migration, a script. */
