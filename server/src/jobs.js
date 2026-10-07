@@ -24,6 +24,7 @@ import { runOpsWatch, raiseAlert } from './lib/ops/alerts.js';
 import { jobRuns } from './lib/ops/metrics.js';
 import './lib/inbox.js'; // routes shared-mailbox mail into the inbox while syncing
 import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
+import { runQuestionnaireReminders } from './lib/questionnaires.js';
 
 /**
  * Quotations sent from the tracker whose validity passed more than the grace
@@ -48,6 +49,12 @@ async function expireQuotations() {
 }
 
 export const JOBS = {
+  'questionnaires.remind': {
+    description: 'Remind clients who have not submitted a service questionnaire, after the days in Settings, at most twice, never after the link expires',
+    cron: '30 10 * * *',
+    run: (opts) => runQuestionnaireReminders(opts),
+    quiet: (result) => !result?.reminded?.length,
+  },
   'quotations.expire': {
     description: 'Mark quotations sent from the tracker as lost (expired) once their validity has passed by the grace period',
     cron: '15 8 * * *',

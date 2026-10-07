@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { AlignLeft, ChevronLeft, ChevronRight, IndianRupee, ListChecks } from 'lucide-react';
+import { AlignLeft, ChevronLeft, ChevronRight, ClipboardList, IndianRupee, ListChecks } from 'lucide-react';
 import { cn } from 'cn';
 import { Alert, ConfirmDialog, DataTable, Empty, useToast } from '../components/ui.jsx';
 import { Chip, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { QuestionnaireBuilder } from '../components/QuestionnaireBuilder.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useList } from '../lib/hooks.js';
@@ -97,7 +98,15 @@ const TERMS = {
   meta: 'printed on every quotation',
 };
 
-const KINDS = [PAYMENT, ONBOARDING, TERMS];
+/** What a client is asked before a quotation, one form per service (#208). */
+const QUESTIONNAIRES = {
+  key: 'questionnaires',
+  icon: ClipboardList,
+  label: 'Questionnaires',
+  meta: 'what a client is asked before we quote, one per service',
+};
+
+const KINDS = [PAYMENT, ONBOARDING, TERMS, QUESTIONNAIRES];
 
 /** One kind of template, as a row you open. */
 function KindRow({ kind, count, last, onOpen }) {
@@ -127,7 +136,7 @@ export default function Templates() {
         title={open ? open.label : 'Templates'}
         description={open
           ? open.meta
-          : 'The payment splits and onboarding steps a new order starts from, and the terms printed on every quotation. Pick the one you came to change.'}
+          : 'The payment splits and onboarding steps a new order starts from, the terms printed on every quotation, and the questionnaires a client fills in before we quote. Pick the one you came to change.'}
         actions={open && (
           <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" onClick={() => setOpen(null)}>
             <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />All templates
@@ -135,7 +144,7 @@ export default function Templates() {
         )}
       >
         {open ? (
-          open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />
+          open.key === 'terms' ? <DefaultTerms /> : open.key === 'questionnaires' ? <QuestionnaireBuilder /> : <TemplateSet {...open} />
         ) : (
           <>
             <div className="overflow-hidden rounded-[10px] border border-border bg-card">

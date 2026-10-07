@@ -110,6 +110,7 @@ arrangement exists to prevent.
 | `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
 | `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/files/invoice/:id`<br>`GET /api/portal/files/po/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages`<br>`GET /api/portal/actions`<br>`POST /api/portal/actions`<br>`POST /api/portal/documents`<br>`DELETE /api/portal/documents/:id` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
+| `GET /api/public/questionnaire/:token`<br>`PUT /api/public/questionnaire/:token/answers`<br>`POST /api/public/questionnaire/:token/files`<br>`POST /api/public/questionnaire/:token/submit` | **yes** | A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
 | `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
 | `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
@@ -376,6 +377,10 @@ session is **401**, before any of these is considered.
 | `POST /api/public/accept/:token/accept` | public | acceptance-link-token — The client accepts the quotation the token is bound to. |
 | `POST /api/public/accept/:token/changes` | public | acceptance-link-token — The client asks for changes to the quotation the token is bound to. |
 | `GET /api/public/accept/:token/pdf` | public | acceptance-link-token — The same quotation as a PDF. |
+| `GET /api/public/questionnaire/:token` | public | questionnaire-link-token — A client opens the questionnaire sent to them (#208) without an account; only the questions, answers and file names of that response go out. |
+| `PUT /api/public/questionnaire/:token/answers` | public | questionnaire-link-token — The answers of the client, saved as they go; checked against the questions, refused once submitted. |
+| `POST /api/public/questionnaire/:token/files` | public | questionnaire-link-token — A file for a file question: PDF, image, Word or Excel, within the document size cap, held on that response only. |
+| `POST /api/public/questionnaire/:token/submit` | public | questionnaire-link-token — The client submits; every required answer checked, then read-only and the owner of the enquiry told. |
 | **/api/purchase-orders** | | |
 | `POST /api/purchase-orders/:poNumber/email-read-checked` | any | Scoped: parent-owner. |
 | `GET /api/purchase-orders/:poNumber/full` | any |  |
@@ -384,6 +389,27 @@ session is **401**, before any of these is considered.
 | `GET /api/purchase-orders/review` | any | A salesperson sees the items whose suggested quotation is theirs; an admin sees all. |
 | `POST /api/purchase-orders/review/:id/dismiss` | any | Scoped: record-owner. |
 | `POST /api/purchase-orders/review/:id/register` | any | Reads the PO again for the Register PO dialog; saves nothing but an unattached upload. |
+| **/api/questionnaire-responses** | | |
+| `GET /api/questionnaire-responses` | any | The questionnaires sent from one enquiry (#208), when the caller can open it. |
+| `POST /api/questionnaire-responses` | any | Sends a questionnaire from an enquiry (#208): only on an enquiry the caller can open. |
+| `GET /api/questionnaire-responses/:id` | any | The answers a client gave (#208): the owner of the enquiry, and admins. |
+| `PATCH /api/questionnaire-responses/:id` | any | Staff filling in a questionnaire for the client, on an enquiry they own (#208). |
+| `POST /api/questionnaire-responses/:id/files` | any | A file for a file question, by staff filling in (#208). |
+| `POST /api/questionnaire-responses/:id/link` | any | A new link to the questionnaire, to copy or email (#208). |
+| `POST /api/questionnaire-responses/:id/remind` | any | Emails the client a reminder with a new link (#208). |
+| `POST /api/questionnaire-responses/:id/reopen` | any | A submitted questionnaire is open to changes again (#208). |
+| `POST /api/questionnaire-responses/:id/revoke` | any | Every open link to the questionnaire stops working (#208). |
+| `POST /api/questionnaire-responses/:id/submit` | any | Staff submitting what they filled in for the client (#208). |
+| **/api/questionnaire-versions** | | |
+| `DELETE /api/questionnaire-versions/:id` | **admin** | Discards a draft questionnaire version (#208). |
+| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire (#208). |
+| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once it passes every check; the previous version is retired. |
+| **/api/questionnaires** | | |
+| `GET /api/questionnaires` | any | The service questionnaires, to choose one to send (#208). Templates, not client data: every signed-in user reads them; only admins write. |
+| `POST /api/questionnaires` | **admin** | Builds a service questionnaire (#208): what clients are asked before a quotation. Admin › Templates. |
+| `GET /api/questionnaires/:id` | any | One questionnaire and its versions (#208), as above. |
+| `PATCH /api/questionnaires/:id` | **admin** | Renames a questionnaire or switches it off (#208). |
+| `POST /api/questionnaires/:id/versions` | **admin** | A new draft of a questionnaire (#208); published versions are frozen. |
 | **/api/quotations** | | |
 | `POST /api/quotations/:id/convert` | any |  |
 | `POST /api/quotations/:key/accept` | any |  |

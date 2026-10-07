@@ -76,6 +76,21 @@ runs on every push.
   database name.
 - **Tokens** (acceptance links, portal links, API tokens) are stored only as
   hashes; mailbox tokens are encrypted.
+- **Service questionnaires** (#208). A client fills in a questionnaire from a
+  link with no sign-in, built like an acceptance link: a random token of
+  which only the SHA-256 is stored, an expiry (Settings, 30 days), revoke,
+  rate limits, the same 404 for a wrong, expired, revoked or withdrawn link,
+  and the link built only from the public address in Settings or
+  CORS_ORIGIN, never from request headers. The token is redacted from the
+  email log. A token reaches one response: its questions, its own answers
+  and the names of its own files; nothing else about the enquiry, its
+  quotation or the company. Every answer is checked against its question on
+  the server (lib/questionnaireDefinition.js) and stored as a typed value,
+  never as markup or code; an answer may name only files uploaded into its
+  own response. Uploads: PDF, image, Word or Excel, within the document size
+  cap, served as downloads, and reachable by staff through the enquiry's
+  owner. No AI reads answers or files. Questionnaires are built by admins
+  only, and a published version is frozen by a database trigger.
 - **What a client can write in the portal** (#198). Besides a message, a
   signed-in client contact can confirm an invoice, raise a query on an
   invoice or PO, report a payment (amount, TDS, date, reference and an

@@ -554,3 +554,50 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.getByRole('button', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
 });
+
+test('a service questionnaire: sent from an enquiry, filled in on a phone, and the answers back on the enquiry', async ({ page }) => {
+  await signIn(page);
+  // The link is built on the public address; here, the address the tests run on.
+  await page.request.patch('/api/settings/public_app_url', { data: { value: new URL(page.url()).origin } });
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Certification ${stamp}` } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E questionnaire' } })).json();
+  await page.request.patch(`/api/questionnaire-versions/${form.versions[0].id}`, { data: { definition: { steps: [
+    { key: 'organisation', title: 'Your organisation', questions: [{ key: 'employee_count', type: 'number', label: 'Employees in scope', required: true, integer: true, min: 1 }] },
+    { key: 'scope', title: 'Scope', questions: [
+      { key: 'certified', type: 'yesno', label: 'Certified before?', required: true },
+      { key: 'body', type: 'text', label: 'Which body?', required: true, show_if: { key: 'certified', op: 'eq', value: true } },
+    ] },
+  ] } } });
+  expect((await page.request.post(`/api/questionnaire-versions/${form.versions[0].id}/publish`)).status()).toBe(200);
+  const { data: enquiry } = await (await page.request.post('/api/enquiries', { data: { client_name: `E2E Questionnaire Client ${stamp}`, service: svc.name, status: 'New' } })).json();
+
+  // Staff make a link from the enquiry list.
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Send', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Make a link only' }).click();
+  const link = await page.locator('.mono.small').filter({ hasText: '/q/' }).first().innerText();
+  await page.keyboard.press('Escape');
+
+  // The client, on a phone: a required answer is asked for, a conditional one appears.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(new URL(link).pathname);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Required', { exact: true })).toBeVisible();
+  await page.getByLabel('Employees in scope').fill('45');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByLabel('Which body?')).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Yes' }).check();
+  await page.getByLabel('Which body?').fill('Example Body');
+  await page.getByRole('button', { name: 'Review' }).click();
+  await page.getByLabel('Your name').fill('Asha Example');
+  await page.getByLabel('Your email').fill(`asha-${stamp}@example.com`);
+  await page.getByRole('button', { name: 'Submit answers' }).click();
+  await expect(page.getByText('Thank you', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  // Back on the enquiry: submitted, with the answers.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Submitted' }).first().click();
+  await expect(page.getByText('Example Body')).toBeVisible();
+});
