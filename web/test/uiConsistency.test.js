@@ -191,6 +191,51 @@ test('every sidebar entry opens a page with the same name (web/CLAUDE.md §3)', 
   assert.deepEqual(wrong, [], 'The page title should be the sidebar name');
 });
 
+// ------------------------------------------------------------- the sidebar
+
+/**
+ * Who sees which sidebar entry (#214 decision 8).
+ *
+ * The sidebar is built from two lists — NAV_GROUPS for an administrator and a
+ * sales user, NAV_HR_GROUPS for the travel desk — and an item marked
+ * `adminOnly` is filtered out for anyone who is not an administrator. So an
+ * entry's audience is decided by which list holds it and whether it carries
+ * that flag, which is what these read.
+ *
+ * Read from the source rather than rendered: these lists are plain data, and
+ * the rest of this file already checks the sidebar the same way.
+ */
+function navEntries(source, listName) {
+  const list = source.match(new RegExp(`const ${listName} = \\[[\\s\\S]*?\\n\\];`));
+  assert.ok(list, `${listName} not found in App.jsx`);
+  return [...list[0].matchAll(/\{ to: '([^']+)', icon: \w+, label: '([^']+)'([^}]*)\}/g)]
+    .map((m) => ({ to: m[1], label: m[2], adminOnly: /adminOnly:\s*true/.test(m[3]) }));
+}
+
+test('an administrator sees Vendor invoices in the sidebar, a sales user does not (#214)', () => {
+  const app = readFileSync(join(SRC, 'App.jsx'), 'utf8');
+  const entry = navEntries(app, 'NAV_GROUPS').filter((e) => e.to === '/vendor-invoices');
+
+  assert.equal(entry.length, 1, 'NAV_GROUPS should carry exactly one Vendor invoices entry');
+  assert.equal(entry[0].label, 'Vendor invoices');
+  assert.equal(
+    entry[0].adminOnly, true,
+    'Vendor invoices must be adminOnly: NAV_GROUPS is the sidebar for an administrator *and* a sales user, '
+    + 'and paying a travel agency is not a salesperson\'s work (#214 decision 8).'
+  );
+});
+
+test('the travel desk keeps its own Vendor invoices entry, unflagged (#196)', () => {
+  const app = readFileSync(join(SRC, 'App.jsx'), 'utf8');
+  const entry = navEntries(app, 'NAV_HR_GROUPS').filter((e) => e.to === '/vendor-invoices');
+
+  assert.equal(entry.length, 1, 'HR must keep its Vendor invoices entry');
+  assert.equal(
+    entry[0].adminOnly, false,
+    'HR is not an administrator, so marking its own entry adminOnly would hide the travel desk\'s own screen from it.'
+  );
+});
+
 // ---------------------------------------------------------------- branding
 
 test('the app carries no company name (web/CLAUDE.md §3)', () => {
