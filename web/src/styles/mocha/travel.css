@@ -1,0 +1,90 @@
+/* Projects and travel (Wave 6): projects, trips, vendor bills, payables,
+   expense claims, the travel dashboard and the travel import. Only layout
+   the system's own classes (mg-strip, mg-table, mg-rows, mg-tabs…) can't
+   say from React. */
+
+/* Onboarding bar in the projects table. */
+.app-onb { display: flex; align-items: center; gap: 8px; }
+.app-onb .mg-progress { width: 60px; height: 8px; flex: none; }
+.app-onb b { font-size: 12.5px; }
+
+/* Rail cards on the record pages. */
+.app-w6card { border-radius: 22px; display: flex; flex-direction: column; min-width: 0; }
+.app-w6card__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 16px 18px 8px; }
+.app-w6card__head h2 { margin: 0; font-size: 14.5px; font-weight: 700; }
+.app-w6card__head span { margin-left: auto; font-size: 12px; color: var(--muted); }
+.app-w6card__note { margin: 0; padding: 4px 18px 16px; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.app-w6card__text { margin: 0; padding: 0 18px 16px; font-size: 13px; line-height: 1.6; color: var(--text2); }
+.app-raillink { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 9px 18px; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+.app-raillink:first-of-type { border-top: 0; }
+a.app-raillink:hover { background: var(--track); }
+.app-raillink__mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-raillink__mark svg { width: 16px; height: 16px; }
+.app-raillink__title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.app-raillink__sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.app-raillink__end { text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-raillink__end .mg-badge { margin-top: 4px; }
+
+/* Wave 6 record layout: rail at 320px, above the tabs under 1180px. */
+.app-rec__body.has-rail.app-w6 { grid-template-columns: minmax(0, 1fr) 320px; }
+@media (max-width: 1179px) {
+  .app-rec__body.has-rail.app-w6 { grid-template-columns: minmax(0, 1fr); }
+  .app-rec__body.app-w6 .app-rec__rail { order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+}
+
+/* Rows inside a tab: an icon square, the words, the amount and its badge, the row's buttons. */
+.app-line { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 12px 4px; border-top: 1px solid var(--line); min-width: 0; }
+.app-line:first-child { border-top: 0; }
+.app-line__mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-line__mark svg { width: 17px; height: 17px; }
+.app-line__mark.is-late { background: var(--late-soft); color: var(--late); }
+.app-line__mark.is-wait { background: var(--wait-soft); color: var(--wait); }
+.app-line__mark.is-ok { background: var(--ok-soft); color: var(--ok); }
+.app-line__mark.is-gap { background: transparent; border: 1.5px dashed var(--wait); color: var(--wait); }
+.app-line__text { min-width: 0; }
+.app-line__title { font-size: 13.5px; font-weight: 700; overflow-wrap: anywhere; color: var(--text); text-decoration: none; }
+a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.app-line__title small { font-size: 12.5px; font-weight: 500; color: var(--text2); }
+.app-line__meta { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.app-line__meta.is-ok { color: var(--ok); } .app-line__meta.is-text { color: var(--text2); }
+.app-line__end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 8px; }
+.app-line__amount { font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.app-line__amount small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.app-line.is-dim { opacity: .62; }
+@media (max-width: 559px) { .app-line { grid-template-columns: 38px minmax(0, 1fr); } .app-line__end { grid-column: 2; justify-content: flex-start; } .app-line__amount { text-align: left; } }
+
+/* Facts as a two-column key/value grid inside a tab (margin). */
+.app-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 24px; margin: 0; }
+.app-kv > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.app-kv dt { color: var(--text2); }
+.app-kv dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The project flow beside its verdict (one row from 1180px). */
+@media (min-width: 1180px) {
+  .app-flow.is-row { display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr); align-items: center; gap: 4px 28px; }
+  .app-flow.is-row > .app-flow__head { display: none; }
+  .app-flow.is-row > .mg-ladder { grid-column: 1; grid-row: 1 / span 2; }
+  .app-flow.is-row > .app-flow__say { grid-column: 2; border-top: 0; padding-top: 0; padding-left: 28px; border-left: 1px solid var(--line); }
+  .app-flow.is-row > .app-flow__note { grid-column: 2; padding-left: 28px; border-left: 1px solid var(--line); }
+}
+
+/* The onboarding checklist. */
+.app-steps { list-style: none; margin: 0; padding: 0; }
+.app-step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 4px 14px; padding: 11px 4px; border-top: 1px solid var(--line); }
+.app-step:first-child { border-top: 0; }
+.app-step__box { justify-self: center; }
+.app-step__disc { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--line); color: var(--muted); }
+.app-step__disc svg { width: 12px; height: 12px; }
+.app-step__disc.is-done { border: 0; background: var(--ok); color: var(--on-pill, #fff); }
+.app-step__disc.is-moving { border: 0; background: var(--wait-soft); color: var(--wait); }
+.app-step__text { min-width: 0; }
+.app-step__title { font-size: 13.5px; font-weight: 600; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.app-step__title.is-done { color: var(--text2); }
+.app-step.is-skipped .app-step__title { color: var(--muted); text-decoration: line-through; }
+.app-step__no { margin-right: 8px; color: var(--muted); font-weight: 700; }
+.app-step__detail { margin-top: 2px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.app-step__end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.app-step__more { width: 36px; height: 36px; }
+@media (max-width: 559px) { .app-step { grid-template-columns: 22px minmax(0, 1fr); } .app-step__end { grid-column: 2; justify-content: flex-start; } }
+.app-gaprow td { background: var(--wait-soft); } .app-gaprow td:first-child { box-shadow: inset 3px 0 0 var(--wait); }
+.app-tabnote { margin: 0; padding: 4px 2px 6px; font-size: 13px; line-height: 1.6; color: var(--muted); }

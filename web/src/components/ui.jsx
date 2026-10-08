@@ -187,8 +187,10 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
  * cell would silently sort by something else. `label` names the table for
  * anybody who cannot see it sitting under a heading.
  */
-export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false, phone }) {
-  const wide = useMediaQuery('(min-width: 768px)');
+export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false, phone, phoneBelow = 768 }) {
+  // `phoneBelow`: a wide table (Wave 6 lists) switches to its phone rows
+  // under 1024px, so a tablet never scrolls a table sideways.
+  const wide = useMediaQuery(`(min-width: ${phone ? phoneBelow : 768}px)`);
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 

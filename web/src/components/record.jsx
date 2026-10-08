@@ -228,11 +228,11 @@ export function flowSteps(reached) {
  * the header's menu, which is the point of the shape. `note` is the small
  * print: what the primary button will actually do, and what is in the menu.
  */
-export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, title = 'Where it stands' }) {
+export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, title = 'Where it stands', className }) {
   const at = steps.findIndex((s) => s.state === 'current' || s.state === 'blocked');
   const next = at >= 0 ? steps[at] : null;
   return (
-    <section className="mg-glass mg-glass--strong app-flow" data-a="rise" aria-label={title}>
+    <section className={cn('mg-glass mg-glass--strong app-flow', className)} data-a="rise" aria-label={title}>
       {banner}
       <div className="app-flow__head">
         <h2>{title}</h2>
@@ -271,7 +271,7 @@ export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, 
  */
 export function RecordPage({
   parent, parentTo, title, crumb, mark, markTone, eyebrow, badges, facts = [], factsGrid, headExtra,
-  action, menu, flow, stats, children, rail, railFirst = false,
+  action, menu, flow, stats, children, rail, railFirst = false, bodyClassName, notice,
 }) {
   return (
     <div className="app-page app-rec">
@@ -339,7 +339,9 @@ export function RecordPage({
 
       {stats && <div className="app-rec__stats">{stats}</div>}
 
-      <div className={cn('app-rec__body', rail && 'has-rail', rail && railFirst && 'rail-first')}>
+      {notice}
+
+      <div className={cn('app-rec__body', rail && 'has-rail', rail && railFirst && 'rail-first', bodyClassName)}>
         <div className="app-rec__main">{children}</div>
         {rail && <aside className="app-rec__rail" aria-label="On this record">{rail}</aside>}
       </div>

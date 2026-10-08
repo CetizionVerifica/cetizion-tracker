@@ -12,6 +12,7 @@ import {
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
+import { Sec } from '../components/sales.jsx';
 
 /**
  * Audit and site-visit schedule (#42): a month calendar, an agenda, each
@@ -414,13 +415,15 @@ function People({ isAdmin }) {
   );
 }
 
-export function ProjectVisits({ projectId }) {
+export function ProjectVisits({ projectId, flat = false }) {
   const { data, refetch } = useFetch(() => api.raw(`/visits?project_id=${encodeURIComponent(projectId)}`), [projectId]);
   const [dialog, setDialog] = useState(null);
   const rows = data?.data ?? [];
+  // `flat`: a section of the project's tab panel, which is already glass.
+  const Wrap = flat ? FlatSection : Panel;
   return (
-    <Panel id="prj-visits" title="Visits" hint="Audits and site visits for this project."
-      tools={<button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ preset: { project_id: projectId, day: today() } })}><Plus className="size-4" aria-hidden="true" />Visit</button>}>
+    <Wrap id="prj-visits" title="Visits" hint="Audits and site visits for this project."
+      tools={<button type="button" className="mg-btn mg-btn--sm" onClick={() => setDialog({ preset: { project_id: projectId, day: today() } })}><Plus className="size-4" aria-hidden="true" />Plan a visit</button>}>
       {rows.length ? (
         <ListTable
           label="Visits"
@@ -434,10 +437,19 @@ export function ProjectVisits({ projectId }) {
           ]}
           phone={(r) => <PhoneRow onClick={() => setDialog({ visit: r })} title={r.title} amount={<span className="text-[12.5px]">{date(dayOf(r.starts_at))}</span>} meta={r.assignees.map((a) => a.name).join(', ') || 'Nobody yet'} state={<span className={`mg-badge ${BADGE[r.status]}`}>{statusLabel(r.status)}</span>} />}
         />
-      ) : <p className="app-panel__note">No visits planned.</p>}
+      ) : <p className="app-panel__note">No visits planned. Plan one and the team sees it in Schedule.</p>}
       {dialog?.visit && <VisitSheet visit={dialog.visit} onClose={() => setDialog(null)} onChanged={refetch} />}
       {dialog?.preset && <VisitDialog preset={dialog.preset} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); refetch(); }} />}
-    </Panel>
+    </Wrap>
+  );
+}
+
+/** A titled section inside a panel, its rows in a bordered box. */
+function FlatSection({ id, title, hint, tools, children }) {
+  return (
+    <Sec id={id} title={title} hint={hint} tools={tools}>
+      <div className="app-box app-box--flush">{children}</div>
+    </Sec>
   );
 }
 

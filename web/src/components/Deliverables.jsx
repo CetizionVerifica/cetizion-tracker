@@ -30,7 +30,7 @@ const renewal = (r) => (r.engagement_status ? `${r.engagement_status.replace('_'
  * head; `filtered` says whether any are set, so an empty list can say
  * "nothing matches" rather than "nothing recorded", and `onClear` resets them.
  */
-export function DeliverablesTable({ params, preset = {}, title = 'Certificates and deliverables', hint, compact = false, filters, filtered = false, onClear, flat = false }) {
+export function DeliverablesTable({ params, preset = {}, title = 'Certificates and deliverables', hint, compact = false, filters, filtered = false, onClear, flat = false, newLabel = 'Issue a deliverable' }) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null)).toString();
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/deliverables${qs ? `?${qs}` : ''}`), [qs]);
   const [dialog, setDialog] = useState(null);   // { mode: 'new'|'edit'|'supersede'|'withdraw', row }
@@ -62,7 +62,7 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
   const Wrap = flat ? FlatPanel : Panel;
   return (
     <Wrap id={`dl-${compact ? 'c' : 'r'}`} title={title} hint={hint}
-      tools={<button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ mode: 'new' })}><Plus className="size-4" aria-hidden="true" />Issue a deliverable</button>}>
+      tools={<button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ mode: 'new' })}><Plus className="size-4" aria-hidden="true" />{newLabel}</button>}>
       {filters && <div className="mg-filterbar px-[22px] pt-1 pb-3.5">{filters}</div>}
       {error ? (
         <StateCard inPanel tone="late" role="alert" title="Couldn’t load the register" text="The server didn’t answer. Nothing on file has changed; try again.">
@@ -91,7 +91,7 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
         </StateCard>
       ) : (
         <StateCard inPanel tone="plain" title="Nothing recorded yet" text="Record what the client holds: its reference, dates, scope and file. An expiry date schedules the renewal.">
-          <button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ mode: 'new' })}>Issue a deliverable</button>
+          <button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ mode: 'new' })}>{newLabel}</button>
         </StateCard>
       )}
       {dialog?.mode === 'withdraw' && <WithdrawDialog row={dialog.row} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}

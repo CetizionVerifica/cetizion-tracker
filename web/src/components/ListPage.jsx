@@ -58,6 +58,8 @@ export function ListPage({
   deleteTitle,
   deleteText,
   noun,
+  phoneBelow,
+  footer,
 }) {
   const toast = useToast();
   const [urlParams, setUrlParams] = useSearchParams();
@@ -363,6 +365,8 @@ export function ListPage({
               onSort={setSort}
               stickyHeader
               phone={phoneRow}
+              phoneBelow={phoneBelow}
+              footer={typeof footer === 'function' ? footer(rows) : footer}
               empty={
                 emptyState || (filtered ? (
                   <div className="mg-empty" style={{ borderTop: '1px solid var(--line)' }}>
