@@ -523,6 +523,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   // Staff see the client's view from the company page.
   await page.goto(`/companies/${companyId}?tab=preview`);
   await page.getByRole('button', { name: 'Show the client\'s view' }).click();
+  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
   await expect(page.getByText('Taxable').first()).toBeVisible();
 
@@ -530,10 +531,10 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   const link = new URL(invite.url);
   await page.goto(link.pathname);
   await expect(page.getByRole('heading', { name: client })).toBeVisible();
-  await page.getByRole('button', { name: 'Projects & orders' }).click();
+  await page.getByRole('tab', { name: 'Projects & orders' }).click();
   await expect(page.getByText(`PO ${poNumber}`).first()).toBeVisible();
-  await expect(page.getByText('Still to bill')).toBeVisible();
-  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('Still to bill').first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('GST', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
 
@@ -542,7 +543,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.getByLabel('Reference').fill(`UTR-${stamp}`);
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText(/finance team will check/)).toBeVisible();
-  await expect(page.getByText('Being checked')).toBeVisible();
+  await expect(page.getByText('Being checked', { exact: true })).toBeVisible();
 
   // Finance sees it in Collections and matches it by recording the receipt it reports.
   await page.goto('/collections');
@@ -554,6 +555,6 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
 
   // The client sees it recorded.
   await page.goto('/portal');
-  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
+  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
 });
