@@ -177,7 +177,7 @@
 .set-dirtybar > span { flex: 1 1 200px; }
 .set-kv { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
 .set-kv:first-child { border-top: 0; }
-.set-kv .mg-select-wrap { flex: 0 1 220px; min-width: 0; }
+.set-kv .mg-select-wrap { flex: 0 1 280px; min-width: 0; }
 .set-kv .mg-select { height: 40px; }
 
 /* Users & roles: what each role sees. */

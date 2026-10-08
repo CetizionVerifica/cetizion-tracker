@@ -1,67 +1,61 @@
 import { useState } from 'react';
-import { AlignLeft, ChevronLeft, ChevronRight, IndianRupee, ListChecks } from 'lucide-react';
+import { Link, Navigate, Route, Routes } from 'react-router-dom';
+import { AlignLeft, ChevronLeft, ChevronRight, IndianRupee, ListChecks, Plus } from 'lucide-react';
 import { cn } from 'cn';
-import { Alert, ConfirmDialog, DataTable, Empty, useToast } from '../components/ui.jsx';
-import { Chip, RecordSection } from '../components/record.jsx';
-import { Button } from '../components/ui/button';
-import { Textarea } from '../components/ui/textarea';
+import { ConfirmDialog, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { FailedCard, ListTable, LoadingPanel, PhoneRow, StateCard } from '../components/daily.jsx';
+import { MoneyBanner } from '../components/money.jsx';
+import { Tone } from '../components/sales.jsx';
+import { RowActions } from '../components/settings.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useList } from '../lib/hooks.js';
 
 /**
- * Admin › Templates (#26), on C12's shape.
+ * Settings › Lists › Templates (#26), Wave 8.
  *
- * The design's win here is that the kinds of template stop being one
- * undifferentiated screen: you pick the thing you came to change, then
- * change it. The editors underneath are the ones that were already here
- * and are deliberately not rewritten — nothing was wrong with them except
- * that both were open at once.
- *
- * C12 lists five rows: Quotation PDF, Quotation cover email, Overdue
- * reminder, Default terms and Onboarding checklist. Three of those are
- * not templates in this codebase and are not drawn. The quotation PDF is
- * laid out in `lib/quotationPdf.js`, and the cover email and the overdue
- * reminder are strings built in the route that sends them — editing any
- * of them means building a template system first, not adding a row here.
- * What is real is listed: the two template tables, and the default terms
- * setting that is printed on every quotation.
+ * A chooser, then one kind at a time, each at its own address
+ * (/settings/templates/payment, /onboarding, /terms) with its own crumb.
+ * The 100% warning sits on the template that is off; Delete buttons are
+ * labelled; onboarding's Owner says "People team (HR)", which is not the
+ * HR (travel) sign-in role. The quotation PDF, cover email and overdue
+ * reminder are built in code, so they are not rows here.
  */
 
-const ROW = 'flex h-11 w-full items-center gap-3 px-4 text-left transition-colors hover:bg-secondary';
-const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
+const TRIGGER = { 'On PO Registration': 'On PO registration', 'On Delivery': 'On delivery', 'On Milestone': 'On milestone', Manual: 'By hand' };
+const OWNER = { HR: 'People team (HR)' };
 
 const PAYMENT = {
   key: 'payment',
   icon: IndianRupee,
   label: 'Payment schedules',
   meta: 'offered when a PO is registered',
-  title: 'Payment schedules',
-  hint: 'Each line is a payment stage. Percentages must add up to 100. Credit days blank: the PO’s payment terms apply.',
+  hint: 'Each line is a payment stage. Percentages must add up to 100. Credit days left blank: the PO’s payment terms apply.',
+  noun: 'payment schedule',
+  lineNoun: 'line',
   resource: 'payment-terms-templates',
   lineResource: 'payment-terms-template-lines',
   lineColumns: [
-    { key: 'sort_order', header: '#', width: 40 },
-    { key: 'stage_name', header: 'Stage', className: 'strong' },
-    { key: 'percent', header: '%', align: 'right', render: (l) => `${Number(l.percent)}%` },
-    { key: 'trigger_event', header: 'Trigger' },
-    { key: 'credit_days', header: 'Credit days', align: 'right', render: (l) => l.credit_days ?? <span className="muted">PO terms</span> },
-    { key: 'milestone_name', header: 'Milestone', render: (l) => l.milestone_name || <span className="muted">—</span> },
+    { key: 'sort_order', header: '#', num: true, width: '48px', render: (l) => <span className="text-muted-foreground">{l.sort_order}</span> },
+    { key: 'stage_name', header: 'Stage', render: (l) => <b>{l.stage_name}</b> },
+    { key: 'percent', header: '%', num: true, render: (l) => <b>{Number(l.percent)}%</b> },
+    { key: 'trigger_event', header: 'Trigger', render: (l) => TRIGGER[l.trigger_event] || l.trigger_event },
+    { key: 'credit_days', header: 'Credit days', num: true, render: (l) => l.credit_days ?? <span className="text-muted-foreground">PO terms</span> },
+    { key: 'milestone_name', header: 'Milestone', className: 'app-wrap--sm', render: (l) => l.milestone_name || <span className="text-muted-foreground">—</span> },
   ],
-  lineFields: (templateId) => [
+  linePhone: (l) => ({ title: `${l.sort_order}. ${l.stage_name}`, amount: `${Number(l.percent)}%`, meta: [TRIGGER[l.trigger_event] || l.trigger_event, `credit ${l.credit_days ?? 'PO terms'}`, l.milestone_name].filter(Boolean).join(' · ') }),
+  lineName: (l) => `line ${l.sort_order}, “${l.stage_name}”`,
+  lineFields: (templateId, next) => [
     { name: 'template_id', type: 'hidden', default: templateId },
-    { name: 'sort_order', label: 'Order', type: 'number', default: 1 },
+    { name: 'sort_order', label: 'Order', type: 'number', default: next },
     { name: 'stage_name', label: 'Stage name', required: true },
     { name: 'percent', label: 'Percent', type: 'number', required: true, step: '0.5' },
-    { name: 'trigger_event', label: 'Trigger', type: 'select', options: ['On PO Registration', 'On Delivery', 'On Milestone', 'Manual'], default: 'On PO Registration', required: true },
-    { name: 'credit_days', label: 'Credit days', type: 'number', hint: 'Blank: the PO payment terms' },
-    { name: 'milestone_name', label: 'Milestone', hint: 'For On Milestone stages: what has to happen' },
+    { name: 'trigger_event', label: 'Trigger', type: 'select', options: Object.entries(TRIGGER).map(([value, label]) => ({ value, label })), default: 'On PO Registration', required: true },
+    { name: 'credit_days', label: 'Credit days', type: 'number', hint: 'Blank: the PO’s payment terms.' },
+    { name: 'milestone_name', label: 'Milestone', hint: 'For On milestone stages: what has to happen.' },
   ],
-  lineCheck: (lines) => {
-    const total = lines.reduce((n, l) => n + Number(l.percent), 0);
-    return Math.abs(total - 100) > 0.01 ? `Adds up to ${total}%, not 100%` : null;
-  },
+  total: (lines) => lines.reduce((n, l) => n + Number(l.percent), 0),
 };
 
 const ONBOARDING = {
@@ -69,101 +63,94 @@ const ONBOARDING = {
   icon: ListChecks,
   label: 'Onboarding checklists',
   meta: 'the steps a new project starts with',
-  title: 'Onboarding checklists',
-  hint: 'Each line is a step on the project’s checklist. Days after start set the step’s target date.',
+  hint: 'Each line is a step on a new project’s checklist. Days after start set the step’s target date.',
+  noun: 'onboarding checklist',
+  lineNoun: 'step',
   resource: 'onboarding-templates',
   lineResource: 'onboarding-template-lines',
   lineColumns: [
-    { key: 'step_no', header: '#', width: 40 },
-    { key: 'stage', header: 'Stage' },
-    { key: 'step', header: 'Step', className: 'wrap strong' },
-    { key: 'owner_role', header: 'Owner' },
-    { key: 'days_after_start', header: 'Days after start', align: 'right' },
+    { key: 'step_no', header: '#', num: true, width: '48px', render: (l) => <span className="text-muted-foreground">{l.step_no}</span> },
+    { key: 'stage', header: 'Stage', render: (l) => <span className="text-secondary-text">{l.stage || '—'}</span> },
+    { key: 'step', header: 'Step', className: 'app-wrap', render: (l) => <b>{l.step}</b> },
+    { key: 'owner_role', header: 'Owner', render: (l) => OWNER[l.owner_role] || l.owner_role || '—' },
+    { key: 'days_after_start', header: 'Days after start', num: true, render: (l) => l.days_after_start ?? '—' },
   ],
-  lineFields: (templateId) => [
+  linePhone: (l) => ({ title: `${l.step_no}. ${l.step}`, amount: l.days_after_start != null ? `day ${l.days_after_start}` : '', meta: [l.stage, OWNER[l.owner_role] || l.owner_role].filter(Boolean).join(' · ') }),
+  lineName: (l) => `step ${l.step_no}, “${l.step}”`,
+  lineFields: (templateId, next) => [
     { name: 'template_id', type: 'hidden', default: templateId },
-    { name: 'step_no', label: 'Step number', type: 'number', required: true, default: 1 },
+    { name: 'step_no', label: 'Step number', type: 'number', required: true, default: next },
     { name: 'stage', label: 'Stage', type: 'select', options: ['Onboarding', 'Execution', 'Delivery', 'Closure'] },
-    { name: 'step', label: 'Step', required: true, span: 2 },
-    { name: 'owner_role', label: 'Owner role', type: 'select', options: ['Sales', 'Finance', 'Delivery', 'HR', 'Admin'] },
+    { name: 'step', label: 'Step', required: true, span: 'all' },
+    { name: 'owner_role', label: 'Owner', type: 'select', options: ['Sales', 'Finance', 'Delivery', { value: 'HR', label: 'People team (HR)' }, 'Admin'], hint: 'Who does the step. Not the same as the HR (travel) sign-in role.' },
     { name: 'days_after_start', label: 'Days after start', type: 'number' },
   ],
 };
 
-const TERMS = {
-  key: 'terms',
-  icon: AlignLeft,
-  label: 'Default terms',
-  meta: 'printed on every quotation',
-};
+const TERMS = { key: 'terms', icon: AlignLeft, label: 'Default terms', meta: 'Printed on every quotation that doesn’t set its own', hint: 'Printed on every quotation that doesn’t set its own.' };
 
-const KINDS = [PAYMENT, ONBOARDING, TERMS];
+const crumbs = [{ label: 'Lists' }, { label: 'Templates', to: '/settings/templates' }];
+const back = { to: '/settings/templates', label: 'Templates' };
+const allBtn = <Link to="/settings/templates" className="mg-btn"><ChevronLeft className="size-4" aria-hidden="true" />All templates</Link>;
 
-/** One kind of template, as a row you open. */
-function KindRow({ kind, count, last, onOpen }) {
-  const Icon = kind.icon;
+export default function Templates() {
   return (
-    <button type="button" className={cn(ROW, !last && 'border-b border-border')} onClick={onOpen}>
-      <Icon className="size-4 shrink-0 text-secondary-text" strokeWidth={1.75} aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{kind.label}</span>
-      <span className="hidden truncate text-[12px] text-muted-foreground sm:block">
-        {count === undefined ? kind.meta : `${count} template${count === 1 ? '' : 's'} · ${kind.meta}`}
-      </span>
-      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
-    </button>
+    <Routes>
+      <Route index element={<Chooser />} />
+      <Route path="payment" element={<TemplateSet kind={PAYMENT} />} />
+      <Route path="onboarding" element={<TemplateSet kind={ONBOARDING} />} />
+      <Route path="terms" element={<DefaultTerms />} />
+      <Route path="*" element={<Navigate to="/settings/templates" replace />} />
+    </Routes>
   );
 }
 
-export default function Templates() {
-  const [open, setOpen] = useState(null);
+function Chooser() {
   const payment = useList('payment-terms-templates', { limit: 200 });
+  const lines = useList('payment-terms-template-lines', { limit: 1000 });
   const onboarding = useList('onboarding-templates', { limit: 200 });
-  // useList exposes `rows`/`total`; `data` is the raw envelope.
-  const counts = { payment: payment.total, onboarding: onboarding.total };
-
+  const off = payment.rows.filter((t) => Math.abs(PAYMENT.total(lines.rows.filter((l) => l.template_id === t.id)) - 100) > 0.01).length;
+  const meta = (n, kind) => (n === undefined || (kind === 'payment' ? payment.loading && !payment.data : onboarding.loading && !onboarding.data) ? '' : `${n} template${n === 1 ? '' : 's'} · `);
+  const kinds = [
+    { ...PAYMENT, line: `${meta(payment.total, 'payment')}${PAYMENT.meta}`, badge: off ? `${off} need${off === 1 ? 's' : ''} fixing` : null },
+    { ...ONBOARDING, line: `${meta(onboarding.total, 'onboarding')}${ONBOARDING.meta}` },
+    { ...TERMS, line: TERMS.meta },
+  ];
   return (
-    <>
-      <SettingsPane
-        title={open ? open.label : 'Templates'}
-        description={open
-          ? open.meta
-          : 'The payment splits and onboarding steps a new order starts from, and the terms printed on every quotation. Pick the one you came to change.'}
-        actions={open && (
-          <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" onClick={() => setOpen(null)}>
-            <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />All templates
-          </Button>
-        )}
-      >
-        {open ? (
-          open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />
-        ) : (
-          <>
-            <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-              {KINDS.map((kind, i) => (
-                <KindRow key={kind.key} kind={kind} count={counts[kind.key]} last={i === KINDS.length - 1} onOpen={() => setOpen(kind)} />
-              ))}
-            </div>
-
-            <p className="max-w-[70ch] text-[11.5px]/[1.6] text-muted-foreground">
-              The quotation PDF is laid out in code, and the cover email and overdue reminder are built by the routes
-              that send them — none of the three is editable here yet.
-            </p>
-          </>
-        )}
-      </SettingsPane>
-    </>
+    <SettingsPane
+      title="Templates"
+      description="The payment splits and onboarding steps a new order starts from, and the terms printed on every quotation. Pick the one you came to change."
+    >
+      <nav className="mg-glass mg-glass--strong set-kinds" data-a="rise" aria-label="Kinds of template">
+        {kinds.map((k) => {
+          const Icon = k.icon;
+          return (
+            <Link key={k.key} to={`/settings/templates/${k.key}`} className="set-kind">
+              <span className="set-kind__icon"><Icon aria-hidden="true" /></span>
+              <span className="set-kind__text"><b>{k.label}</b><small>{k.line}</small></span>
+              {k.badge && <Tone tone="late">{k.badge}</Tone>}
+              <ChevronRight aria-hidden="true" />
+            </Link>
+          );
+        })}
+      </nav>
+      <p className="mg-glass set-note" data-a="rise">
+        The quotation PDF is laid out in code, and the cover email and overdue reminder are built by the routes that send them, so none of the three is edited here.
+      </p>
+    </SettingsPane>
   );
 }
 
 /** The terms printed on every quotation, which live in settings. */
 function DefaultTerms() {
   const toast = useToast();
-  const { data, loading, refetch } = useFetch(() => api.raw('/lookups'));
+  const { data, loading, error, refetch } = useFetch(() => api.raw('/lookups'));
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const stored = data?.data?.settings?.quotation_terms_default ?? '';
   const value = draft ?? stored;
+  const dirty = draft !== null && draft !== stored;
 
   async function save() {
     setBusy(true);
@@ -180,119 +167,195 @@ function DefaultTerms() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 180 }} />;
-
   return (
-    <RecordSection title="Default terms" hint="printed on every quotation that does not set its own">
-      <div className="flex flex-col gap-3 p-5">
-        <Textarea rows={6} className="text-[13px]/[1.6]" value={value} onChange={(e) => setDraft(e.target.value)} aria-label="Default quotation terms" />
-        <div className="flex items-center gap-3">
-          <Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy || draft === null || draft === stored} onClick={save}>
-            {busy ? 'Saving…' : 'Save terms'}
-          </Button>
-          <span className="text-[12px] text-muted-foreground">
-            A quotation that already has its own terms keeps them; this is what a new one starts with.
-          </span>
-        </div>
-      </div>
-    </RecordSection>
+    <SettingsPane title="Default terms" description={TERMS.hint} crumbs={crumbs} back={back} actions={allBtn}>
+      {error ? <FailedCard title="Couldn’t load the default terms" text="The server didn’t answer, so nothing is shown. Nothing has changed. Try again in a moment." onRetry={refetch} />
+      : loading && !data ? <LoadingPanel rows={3} />
+      : (
+        <section className="mg-glass mg-glass--strong mg-panel" data-a="rise" aria-label="Default terms">
+          <label className="mg-field">
+            <span className="mg-field__label">Default quotation terms</span>
+            <textarea className="mg-textarea" rows={9} value={value} onChange={(e) => setDraft(e.target.value)} />
+          </label>
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
+            <button type="button" className="mg-btn mg-btn--primary" disabled={busy || !dirty} onClick={save}>{busy ? 'Saving…' : 'Save terms'}</button>
+            {dirty && !busy && <button type="button" className="mg-btn mg-btn--ghost" onClick={() => setDraft(null)}>Discard</button>}
+            <span className={cn('text-[13px]', dirty ? 'font-semibold text-caramel-text' : 'text-secondary-text')}>
+              {dirty ? 'The terms have changed. Save, or they’re lost when you leave.' : 'A quotation that already has its own terms keeps them; this is what a new one starts with.'}
+            </span>
+          </div>
+        </section>
+      )}
+    </SettingsPane>
   );
 }
 
-function TemplateSet({ title, hint, resource, lineResource, lineColumns, lineFields, lineCheck }) {
+function TemplateSet({ kind }) {
+  const { label, hint, noun, lineNoun, resource, lineResource, lineColumns, lineFields, lineName, linePhone, total } = kind;
   const toast = useToast();
-  const [open, setOpen] = useState(null);
+  const [open, setOpen] = useState(() => new Set());
   const [editing, setEditing] = useState(null);       // template record | 'new'
-  const [line, setLine] = useState(null);             // { templateId, record | null }
-  const [removing, setRemoving] = useState(null);     // { kind: 'template' | 'line', record }
+  const [line, setLine] = useState(null);             // { template, record | null }
+  const [removing, setRemoving] = useState(null);     // { kind: 'template' | 'line', record, template }
   const [busy, setBusy] = useState(false);
   const templates = useFetch(() => api.list(resource, { limit: 200 }), []);
   const lines = useFetch(() => api.list(lineResource, { limit: 1000 }), []);
   const rows = templates.data?.data ?? [];
   const linesOf = (t) => (lines.data?.data ?? []).filter((l) => l.template_id === t.id);
   const refresh = () => { templates.refetch(); lines.refetch(); invalidateLookups(); };
+  const isOpen = (t, i) => (open.has(t.id) ? true : open.has(-t.id) ? false : i === 0);
+  const toggle = (t, i) => setOpen((s) => { const n = new Set(s); n.delete(t.id); n.delete(-t.id); n.add(isOpen(t, i) ? -t.id : t.id); return n; });
 
   async function remove() {
     setBusy(true);
     try {
       await api.remove(removing.kind === 'template' ? resource : lineResource, removing.record.id);
-      toast('Removed', 'success'); setRemoving(null); refresh();
+      toast(removing.kind === 'template' ? 'Template deleted' : `${lineNoun[0].toUpperCase()}${lineNoun.slice(1)} deleted`, 'success');
+      setRemoving(null);
+      refresh();
     } catch (err) { toast(err.message, 'danger'); }
     finally { setBusy(false); }
   }
 
   const headerFields = [
-    { name: 'name', label: 'Name', required: true, span: 2 },
-    { name: 'is_default', label: 'Default', type: 'boolean', default: 'false', hint: 'Offered first when a PO is registered' },
-    { name: 'active', label: 'Active', type: 'boolean', default: 'true' },
-    { name: 'sort_order', label: 'Order', type: 'number', default: 0 },
+    { name: 'name', label: 'Name', required: true, span: 'all' },
+    { name: 'is_default', label: 'Default', type: 'boolean', default: 'false', hint: resource === 'onboarding-templates' ? 'Offered first when a project starts' : 'Offered first when a PO is registered' },
+    { name: 'active', label: 'Active', type: 'boolean', default: 'true', hint: 'Inactive templates aren’t offered' },
+    { name: 'sort_order', label: 'Order', type: 'number', default: 0, hint: 'Lower comes first in the list.' },
   ];
+  const nextNo = (t) => linesOf(t).reduce((n, l) => Math.max(n, Number(l.sort_order ?? l.step_no) || 0), 0) + 1;
+  const sumText = (t) => {
+    const tl = linesOf(t);
+    const count = `${tl.length} ${lineNoun}${tl.length === 1 ? '' : 's'}`;
+    if (!total) return { text: count };
+    const sum = total(tl);
+    const off = Math.abs(sum - 100) > 0.01;
+    return { text: `${count} · adds up to ${sum}%${off ? ', not 100%' : ''}`, off, sum };
+  };
+  const removingSum = removing?.kind === 'line' && total ? total(linesOf(removing.template).filter((l) => l.id !== removing.record.id)) : null;
 
   return (
-    <>
-      <RecordSection
-        title={title}
-        hint={hint}
-        action={<Button size="sm" className={ROW_BUTTON} onClick={() => setEditing('new')}>Add template</Button>}
-      >
-        {templates.loading && !templates.data ? <div className="skeleton" style={{ height: 120, margin: 16 }} />
-          : rows.length === 0 ? (
-            <Empty
-              title="No templates yet"
-              text="A template is a named set of lines reused every time — the payment split on a new order, or the checklist on a new project. Add one and it is offered wherever it applies."
-              action={<Button size="sm" className={ROW_BUTTON} onClick={() => setEditing('new')}>Add template</Button>}
-            />
-          ) : rows.map((t, i) => {
-          const tl = linesOf(t);
-          const problem = lineCheck ? lineCheck(tl) : null;
-          const isOpen = open === t.id;
-          return (
-            <div key={t.id} className={cn(i < rows.length - 1 && 'border-b border-border')}>
-              <div className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-foreground">
-                    {t.name}
-                    {t.is_default && <Chip tone="info">default</Chip>}
-                    {!t.active && <Chip>inactive</Chip>}
+    <SettingsPane
+      title={label}
+      description={hint}
+      crumbs={crumbs}
+      back={back}
+      actions={<>{allBtn}<button type="button" className="mg-btn mg-btn--primary" onClick={() => setEditing('new')}><Plus className="size-4" aria-hidden="true" />Add template</button></>}
+    >
+      {templates.error ? <FailedCard title={`Couldn’t load the ${label.toLowerCase()}`} text="The server didn’t answer, so nothing is shown. Nothing has changed. Try again in a moment." onRetry={refresh} />
+      : templates.loading && !templates.data ? <LoadingPanel rows={3} />
+      : rows.length === 0 ? (
+        <StateCard tone="plain" title="No templates yet" text="A template is a named set of lines reused every time: the payment split on a new order, or the checklist on a new project.">
+          <button type="button" className="mg-btn mg-btn--primary mg-btn--sm" onClick={() => setEditing('new')}>Add template</button>
+        </StateCard>
+      ) : (
+        <section className="mg-glass mg-glass--strong set-tset" data-a="rise" aria-label={label}>
+          {rows.map((t, i) => {
+            const tl = linesOf(t);
+            const s = sumText(t);
+            const shown = isOpen(t, i);
+            return (
+              <div key={t.id} className="set-tpl">
+                <div className="set-tpl__head">
+                  <div className="set-tpl__title">
+                    <div>
+                      <h2>{t.name}</h2>
+                      {t.is_default && <Tone tone="info">Default</Tone>}
+                      {!t.active && <Tone>Inactive</Tone>}
+                    </div>
+                    <span className={cn('set-tpl__sub', s.off && 'is-late')}>{s.text}</span>
                   </div>
-                  <div className="mt-0.5 text-[12px] text-muted-foreground">
-                    {tl.length} line{tl.length === 1 ? '' : 's'}
-                    {problem && <> · <span className="text-late">{problem}</span></>}
-                  </div>
+                  <span className="flex flex-wrap gap-1.5">
+                    <button type="button" className={cn('mg-btn mg-btn--sm', s.off && 'mg-btn--primary')} aria-label={`Add a ${lineNoun} to ${t.name}`} onClick={() => setLine({ template: t, record: null })}>Add {lineNoun}</button>
+                    <button type="button" className="mg-btn mg-btn--sm mg-btn--ghost" aria-label={`Edit ${t.name}`} onClick={() => setEditing(t)}>Edit</button>
+                    <button type="button" className="mg-btn mg-btn--sm mg-btn--ghost" aria-expanded={shown} aria-label={`${shown ? 'Hide' : 'Show'} the ${lineNoun}s of ${t.name}`} onClick={() => toggle(t, i)}>{shown ? `Hide ${lineNoun}s` : `Show ${lineNoun}s`}</button>
+                    <button type="button" className="mg-btn mg-btn--sm mg-btn--ghost" aria-label={`Delete ${t.name}`} onClick={() => setRemoving({ kind: 'template', record: t })}>Delete</button>
+                  </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setLine({ templateId: t.id, record: null })}>Add line</Button>
-                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setEditing(t)}>Edit</Button>
-                  <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setOpen(isOpen ? null : t.id)}>{isOpen ? 'Hide lines' : 'Show lines'}</Button>
-                  <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`Delete ${t.name}`} onClick={() => setRemoving({ kind: 'template', record: t })}>✕</Button>
-                </div>
+                {s.off && (
+                  <MoneyBanner tone="late" title="Can’t be used to register a PO yet.">
+                    {' '}Its lines add up to {s.sum}%. Change a line, or add one for the missing {Math.round((100 - s.sum) * 100) / 100}%.
+                  </MoneyBanner>
+                )}
+                {shown && (
+                  tl.length === 0 ? (
+                    <div className="set-tpl__lines">
+                      <StateCard inPanel bordered={false} tone="plain" title={`No ${lineNoun}s yet`} text={`Add the first ${lineNoun}; the template is used as it stands.`}>
+                        <button type="button" className="mg-btn mg-btn--sm" onClick={() => setLine({ template: t, record: null })}>Add {lineNoun}</button>
+                      </StateCard>
+                    </div>
+                  ) : (
+                    <div className="set-tpl__lines">
+                      <ListTable
+                        bordered={false}
+                        label={`${lineNoun === 'step' ? 'Steps' : 'Lines'} of ${t.name}`}
+                        rows={tl}
+                        columns={[...lineColumns, { key: 'act', header: '', className: 'actions', render: (l) => (
+                          <RowActions>
+                            <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Edit ${lineName(l)}`} onClick={() => setLine({ template: t, record: l })}>Edit</button>
+                            <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Delete ${lineName(l)}`} onClick={() => setRemoving({ kind: 'line', record: l, template: t })}>Delete</button>
+                          </RowActions>
+                        ) }]}
+                        phone={(l) => {
+                          const p = linePhone(l);
+                          return (
+                            <PhoneRow title={p.title} amount={p.amount} meta={p.meta} wraps>
+                              <span className="set-rowacts">
+                                <button type="button" className="mg-btn mg-btn--sm" aria-label={`Edit ${lineName(l)}`} onClick={() => setLine({ template: t, record: l })}>Edit</button>
+                                <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Delete ${lineName(l)}`} onClick={() => setRemoving({ kind: 'line', record: l, template: t })}>Delete</button>
+                              </span>
+                            </PhoneRow>
+                          );
+                        }}
+                      />
+                    </div>
+                  )
+                )}
               </div>
-              {isOpen && (
-                <DataTable
-                  rows={tl}
-                  columns={[...lineColumns, {
-                    key: 'act', header: '', align: 'right', render: (l) => (
-                      <div className="table__actions">
-                        <Button variant="ghost" size="sm" className={ROW_BUTTON} onClick={() => setLine({ templateId: t.id, record: l })}>Edit</Button>
-                        <Button variant="ghost" size="icon-sm" className="size-7" aria-label="Delete line" onClick={() => setRemoving({ kind: 'line', record: l })}>✕</Button>
-                      </div>
-                    ),
-                  }]}
-                  empty={<Empty title="No lines yet" action={<Button size="sm" className={ROW_BUTTON} onClick={() => setLine({ templateId: t.id, record: null })}>Add line</Button>} />}
-                />
-              )}
-            </div>
-          );
-        })}
-      </RecordSection>
-
-      {lineCheck && rows.some((t) => lineCheck(linesOf(t))) && (
-        <Alert tone="warning"><span>A template whose lines do not add up to 100% cannot be used to register a PO.</span></Alert>
+            );
+          })}
+        </section>
       )}
 
-      {editing && <RecordForm title={editing === 'new' ? `New ${title.toLowerCase().replace(/s$/, '')} template` : 'Edit template'} resource={resource} fields={headerFields} record={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={refresh} />}
-      {line && <RecordForm title={line.record ? 'Edit line' : 'Add line'} resource={lineResource} fields={lineFields(line.templateId)} record={line.record} onClose={() => setLine(null)} onSaved={refresh} />}
-      {removing && <ConfirmDialog title={removing.kind === 'template' ? `Delete "${removing.record.name}"?` : 'Delete this line?'} message={removing.kind === 'template' ? 'Its lines go with it. POs already registered from it are not affected.' : 'The template changes for future POs only.'} onConfirm={remove} onClose={() => setRemoving(null)} busy={busy} />}
-    </>
+      {editing && (
+        <RecordForm
+          title={editing === 'new' ? `New ${noun} template` : 'Edit template'}
+          subtitle={editing === 'new' ? `Add its ${lineNoun}s next` : `${editing.name} · ${sumText(editing).text}`}
+          submitLabel={editing === 'new' ? 'Add template' : 'Save changes'}
+          resource={resource}
+          fields={headerFields}
+          record={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={refresh}
+        />
+      )}
+      {line && (
+        <RecordForm
+          title={line.record ? `Edit ${lineName(line.record)}` : `Add a ${lineNoun} to ${line.template.name}`}
+          subtitle={sumText(line.template).text}
+          submitLabel={line.record ? 'Save changes' : `Add ${lineNoun}`}
+          size="lg"
+          resource={lineResource}
+          fields={lineFields(line.template.id, nextNo(line.template))}
+          record={line.record}
+          onClose={() => setLine(null)}
+          onSaved={refresh}
+        />
+      )}
+      {removing && (
+        <ConfirmDialog
+          title={removing.kind === 'template' ? `Delete “${removing.record.name}”?` : `Delete ${lineName(removing.record)}?`}
+          subtitle={removing.kind === 'template' ? `${noun[0].toUpperCase()}${noun.slice(1)} · ${sumText(removing.record).text.split(' · ')[0]}` : removing.template.name}
+          message={removing.kind === 'template'
+            ? `Its ${lineNoun}s go with it. ${resource === 'onboarding-templates' ? 'Projects' : 'POs'} already started from it are not affected.`
+            : `The template changes for future ${resource === 'onboarding-templates' ? 'projects' : 'POs'} only.${removingSum != null && Math.abs(removingSum - 100) > 0.01 ? ` Afterwards its lines add up to ${removingSum}%, so add another before it’s used again.` : ''}`}
+          confirmLabel={removing.kind === 'template' ? 'Delete template' : `Delete ${lineNoun}`}
+          cancelLabel="Keep it"
+          onConfirm={remove}
+          onClose={() => setRemoving(null)}
+          busy={busy}
+        />
+      )}
+    </SettingsPane>
   );
 }
