@@ -8,7 +8,9 @@ import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { claimAttachment, purgeAfterCommit } from './documents.js';
 import { nameKey, normalizeName } from './names.ts';
+import { actorFrom } from './activity.js';
 import { actAs, logCrudCreate, logCrudUpdate } from './recordActs.js';
+import { assignOwnerFromSalesperson } from './salespersonOwner.js';
 import { reportPeriod } from './salesReport.js';
 import { claimNextId, sequenceColumn } from './sequences.js';
 
@@ -560,6 +562,11 @@ export function crudRouter(name, def) {
       await assertParentReachable(client, def, values, scopeOf(req), input);
       const written = await insertRecord(client, def, { values, input, scope: scopeOf(req) });
       await logCrudCreate(client, req.user, def, written.row);
+      // An admin's record goes to the salesperson they named on it, when
+      // that names a sales user exactly; otherwise it stays unowned.
+      if (isUnrestricted(req.user)) {
+        await assignOwnerFromSalesperson(client, def, written.row, { actor: actorFrom(req.user) });
+      }
       return { id: written.row.id, extra: written.extra };
     });
 
@@ -653,6 +660,11 @@ export function crudRouter(name, def) {
       if (!rows.length) throw new ApiError(404, `${def.label} not found`);
       const extra = await def.onSave?.(client, { before, after: rows[0], input, scope: scopeOf(req) });
       await logCrudUpdate(client, req.user, def, before, rows[0], cols);
+      // A sales user cannot hand a record away by retyping its salesperson;
+      // only an admin's change of salesperson moves the owner.
+      if (isUnrestricted(req.user)) {
+        await assignOwnerFromSalesperson(client, def, rows[0], { fields: cols, actor: actorFrom(req.user) });
+      }
       return { id: rows[0].id, extra, replacedDocument };
     });
 
