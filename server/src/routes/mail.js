@@ -6,15 +6,18 @@
  *   GET /api/mail/mailboxes                                   the mailboxes the caller may read, each with its folders and Outlook's unread counts
  *   GET /api/mail/folders/:accountId/:folderId/messages       ?q&unread=1&flagged=1&page&page_size  one row per conversation, newest first
  *   GET /api/mail/messages/:id                                From, To, Cc (Bcc on our own mail), state, attachments, body — read live for the owner
- *   GET /api/mail/messages/:id/attachments/:attId             ?inline=1  the file, streamed from the provider; never stored here
+ *   GET /api/mail/messages/:id/attachments/:attId/view        the file for the tracker's viewer, never a download (docs/inbox-attachments-plan.md)
  *   GET /api/mail/messages/:id/inline/:contentId              a cid: image of the message, for the reading pane's frame
  *
  * Nothing here writes to the provider; the actions come with step 3. What
  * is stored follows each mailbox's visibility, as at ingest. Two things go
  * past what is stored, for the **owner** of a personal mailbox only: the
- * live read of a body the mailbox does not store (§3.3), and attachment
- * downloads from a mailbox that stores metadata or subjects. Neither
- * stores anything; the file and the body pass through.
+ * live read of a body the mailbox does not store (§3.3), and attachments
+ * viewed from a mailbox that stores metadata or subjects — for which a
+ * shared mailbox's readers count as its owner (rules.js
+ * mayViewAttachments). Neither stores anything; the file and the body pass
+ * through. No attachment is ever downloaded from the tracker: it is
+ * viewed in the Inbox and lives on in Outlook.
  */
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -22,7 +25,9 @@ import { Router } from 'express';
 import { mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { canReadLive, cleanHtml, isOwner, mayReadContent, snippet } from '../lib/mailbox/rules.js';
+import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { publicAttachment, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
+import { canReadLive, cleanHtml, isOwner, mayReadContent, mayViewAttachments, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
 
@@ -161,6 +166,8 @@ mailRouter.get('/folders/:accountId/:folderId/messages', async (req, res) => {
   const { rows } = await query(`${base.replace('FROM newest c', `SELECT c.thread_id AS id, c.message_id, c.sent_at, c.direction, c.from_email, c.from_name, c.to_emails, c.cc_emails,
                  COALESCE(c.subject, t.subject) AS subject, c.snippet, c.flag_status, c.importance, c.is_read, c.web_link,
                  g.in_folder, g.unread, g.has_attachments, g.flagged, g.high,
+                 (SELECT array_agg(x.name ORDER BY x.id) FROM email_attachments x
+                   WHERE x.message_id = c.message_id AND NOT x.is_inline AND x.name IS NOT NULL) AS attachment_names,
                  t.message_count, t.entity, t.entity_id, t.company_id, co.name AS company_name, ct.name AS contact_name,
                  count(*) OVER ()::int AS total
             FROM newest c`)}
@@ -199,7 +206,7 @@ const PUBLIC_COLUMNS = ['id', 'thread_id', 'account_id', 'direction', 'from_emai
   'mailbox', 'visibility', 'company_id', 'contact_id', 'company_name', 'contact_name', 'entity', 'entity_id', 'live_error'];
 
 /** What a message answers with: the public columns, Bcc only on mail we sent, no body once deleted in Outlook. */
-function publicMessage(m, { attachments, live = false, canDownload }) {
+function publicMessage(m, { attachments, live = false, canView }) {
   // Deleted in Outlook: the record timeline still shows that the email
   // existed, with no body (plan §3.4).
   const gone = Boolean(m.removed_at);
@@ -210,12 +217,9 @@ function publicMessage(m, { attachments, live = false, canDownload }) {
     snippet: gone ? null : m.snippet,
     body_html: gone ? null : m.body_html,
     bcc_emails: m.direction === 'outbound' ? m.bcc_emails || [] : [],
-    attachments: attachments.map((a) => ({
-      id: a.id, name: a.name, content_type: a.content_type, size_bytes: a.size_bytes, is_inline: a.is_inline, content_id: a.content_id,
-      url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null,
-    })),
+    attachments: attachments.map((a) => publicAttachment(m.id, a, canView)),
     live,
-    can_download: canDownload,
+    can_view_attachments: canView,
   };
 }
 
@@ -248,13 +252,18 @@ const withLiveNames = (stored, live) => (live ? stored.map((s) => {
   const l = live.find((x) => x.provider_id === s.provider_id);
   return l ? { ...s, name: s.name ?? l.name ?? null, content_id: s.content_id ?? l.content_id ?? null } : s;
 }) : stored);
-/** The owner of a metadata-only mailbox is the one reader the stored attachment rows are not enough for. */
-const needsLiveNames = (req, m, account) => account.visibility === 'metadata' && m.has_attachments && !m.removed_at && isOwner(userOf(req), account);
+/**
+ * The stored attachment rows of a metadata-only mailbox carry no names; its
+ * owner, and the readers of a shared one (who may view its attachments),
+ * see them read from the provider.
+ */
+const needsLiveNames = (req, m, account) => account.visibility === 'metadata' && m.has_attachments && !m.removed_at
+  && (isOwner(userOf(req), account) || (account.is_shared && mayViewAttachments(userOf(req), account)));
 
 mailRouter.get('/messages/:id', async (req, res) => {
   const m = await readableMessage(req, req.params.id);
   const account = accountOf(m);
-  const canDownload = mayReadContent(userOf(req), account);
+  const canView = mayViewAttachments(userOf(req), account);
   let live = false;
   // The owner's live read (plan §3.3): the mailbox stores less than the
   // whole message, and this is its owner asking. The body comes from the
@@ -279,21 +288,18 @@ mailRouter.get('/messages/:id', async (req, res) => {
   }
   const stored = await attachmentsOf(m.id);
   const attachments = needsLiveNames(req, m, account) ? withLiveNames(stored, await liveAttachmentList(m)) : stored;
-  res.json({ data: publicMessage(m, { attachments, live, canDownload }) });
+  res.json({ data: publicMessage(m, { attachments, live, canView }) });
 });
 
 // ------------------------------------------------------------ attachments
 
-/** What may open in the browser rather than download: a PDF, an image. Anything else is a file to save. */
-const previewable = (type) => /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|svg\+xml))$/i.test(String(type || ''));
-
 /**
- * Pass one attachment through from the provider (plan §3.3). The bytes are
- * counted on the way and cut off past the cap; `nosniff` so the browser
- * trusts the declared type and nothing else; and a preview is served with
- * a policy under which nothing in it can run or reach the app's origin.
+ * One attachment's bytes from the provider (plan §3.3), after the checks
+ * every reader of them shares: the cap, by what the provider said of the
+ * file, and a mailbox that can still be read. Throws the ApiError a
+ * person can act on; the provider's own words stay on the server.
  */
-async function streamAttachment(req, res, { m, att, inline }) {
+async function openAttachment(m, att) {
   if (att.size_bytes && att.size_bytes > ATTACHMENT_MAX_BYTES) throw new ApiError(413, 'This attachment is larger than 25 MB; open it in Outlook');
   const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [m.account_id]);
   if (!a || a.status !== 'active') throw new ApiError(409, 'The mailbox needs to be reconnected before its attachments can be read');
@@ -309,49 +315,100 @@ async function streamAttachment(req, res, { m, att, inline }) {
     throw new ApiError(502, 'The attachment could not be read from the mailbox just now');
   }
   await saveTokens(a, provider).catch(() => {});
-  const name = String(att.name || 'attachment').replace(/[\r\n"\\]/g, '_').slice(0, 200);
-  // RFC 6266: the real name goes in filename*, and the plain filename= is
-  // for a client that ignores it — so plain ASCII, with anything else
-  // replaced, rather than a percent-encoded name it would save as typed.
-  const ascii = name.replace(/[^\x20-\x7e]/g, '_');
-  const type = inline && previewable(att.content_type) ? att.content_type : (att.content_type || 'application/octet-stream');
-  res.status(200);
-  res.setHeader('Content-Type', type);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `${inline && previewable(att.content_type) ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
-  // A preview is somebody else's file drawn by the browser: it gets a
-  // document policy of its own, so a PDF's scripts and a crafted image
-  // cannot touch the app's origin or the network.
-  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-  res.setHeader('Cache-Control', 'private, max-age=600');
-  if (got.size) res.setHeader('Content-Length', String(got.size));
+  return got;
+}
+
+/** Counts bytes on the way through and fails past the cap, whatever the provider said the size was. */
+const capped = () => {
   let sent = 0;
-  const cap = new Transform({
+  return new Transform({
     transform(chunk, _enc, cb) {
       sent += chunk.length;
       if (sent > ATTACHMENT_MAX_BYTES) return cb(new Error('attachment over the cap'));
       return cb(null, chunk);
     },
   });
+};
+
+/** The whole file, for the viewers that read it here (a sheet, a text file). */
+async function readAttachment(m, att) {
+  const got = await openAttachment(m, att);
+  const chunks = [];
   try {
-    await pipeline(Readable.fromWeb(got.stream), cap, res);
+    for await (const chunk of Readable.fromWeb(got.stream).pipe(capped())) chunks.push(chunk);
+  } catch {
+    throw new ApiError(413, 'This attachment is larger than 25 MB; open it in Outlook');
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * Pass one file through for the browser to draw (a PDF, a picture). Never
+ * a download: `inline`, under the type the viewer asked for, `nosniff` so
+ * the browser trusts that type and nothing else, not kept in any cache,
+ * and under a document policy of its own, so a PDF's scripts or a crafted
+ * image cannot touch the app's origin or the network even if the file is
+ * opened on its own.
+ */
+async function streamAttachment(res, { m, att, type, opened = null }) {
+  const got = await openAttachment(m, att);
+  if (opened) await opened();
+  const name = String(att.name || 'attachment').replace(/[\r\n"\\]/g, '_').slice(0, 200);
+  // RFC 6266: the real name goes in filename*, and the plain filename= is
+  // for a client that ignores it — so plain ASCII, with anything else
+  // replaced, rather than a percent-encoded name it would show as typed.
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_');
+  res.status(200);
+  res.setHeader('Content-Type', type);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  res.setHeader('Cache-Control', 'private, no-store');
+  if (got.size) res.setHeader('Content-Length', String(got.size));
+  try {
+    await pipeline(Readable.fromWeb(got.stream), capped(), res);
   } catch (err) {
     // Headers are gone; the only honest answer is to cut the connection.
     if (!res.writableEnded) res.destroy(err);
   }
 }
 
-mailRouter.get('/messages/:id/attachments/:attId', async (req, res) => {
+/**
+ * The tracker's attachment viewer reads a file here (docs/inbox-attachments-plan.md
+ * §4). Only the viewer: it asks with `X-Tracker-View: 1`, which a link, an
+ * address typed in the bar or an <a download> cannot send, so pasting this
+ * address into a tab gives a refusal rather than the file. A PDF or a
+ * picture comes back as bytes for the viewer to draw; a spreadsheet or a
+ * text file as data; anything else is not viewable yet (415). Each view is
+ * recorded in the activity log.
+ */
+mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
+  if (req.get('X-Tracker-View') !== '1') throw new ApiError(403, 'Attachments open in the tracker\'s viewer, in the Inbox');
   const m = await readableMessage(req, req.params.id);
-  // Content the mailbox holds back is not reachable by its id either: a
-  // metadata-only mailbox's attachments are its owner's.
+  // Content the mailbox holds back is not reachable by its id either.
   const account = accountOf(m);
-  if (!mayReadContent(userOf(req), account)) throw new ApiError(404, 'Attachment not found');
+  if (!mayViewAttachments(userOf(req), account)) throw new ApiError(404, 'Attachment not found');
   let { rows: [att] } = await query('SELECT * FROM email_attachments WHERE message_id = $1 AND id = $2', [m.id, Number(req.params.attId) || 0]);
   if (!att) throw new ApiError(404, 'Attachment not found');
-  // The owner of a metadata-only mailbox saves the file under its name, not "attachment".
+  // A metadata-only mailbox stores no names; which viewer to use may hang on one.
   if (!att.name && needsLiveNames(req, m, account)) [att] = withLiveNames([att], await liveAttachmentList(m));
-  await streamAttachment(req, res, { m, att, inline: req.query.inline === '1' });
+  const kind = viewKind(att);
+  if (!kind) throw new ApiError(415, 'This kind of file cannot be shown in the tracker yet; open it in Outlook');
+  // Recorded once the provider has handed the file over: a view that
+  // never happened is not in the log.
+  const viewed = () => logActivity(undefined, {
+    actor: actorFrom(req.user), action: ACTIONS.MAIL_ATTACHMENT_VIEWED, entityType: 'email_message', entityId: String(m.id),
+    metadata: { attachment_id: att.id, name: att.name ?? null, content_type: att.content_type ?? null, mailbox: m.mailbox },
+  });
+  if (kind === 'pdf' || kind === 'image') return streamAttachment(res, { m, att, type: viewType(att), opened: viewed });
+  const bytes = await readAttachment(m, att);
+  await viewed();
+  res.setHeader('Cache-Control', 'private, no-store');
+  if (kind === 'text') return res.json({ data: { kind, ...toText(bytes) } });
+  let sheets;
+  try { sheets = toSheets(bytes, att); }
+  catch { throw new ApiError(422, 'This spreadsheet could not be read; open it in Outlook'); }
+  return res.json({ data: { kind, sheets } });
 });
 
 mailRouter.get('/messages/:id/inline/:contentId', async (req, res) => {
@@ -372,5 +429,5 @@ mailRouter.get('/messages/:id/inline/:contentId', async (req, res) => {
       .sort((x, y) => Number(y.is_inline) - Number(x.is_inline) || x.id - y.id)[0] || null;
   }
   if (!att) throw new ApiError(404, 'Image not found');
-  await streamAttachment(req, res, { m, att, inline: true });
+  await streamAttachment(res, { m, att, type: viewType(att) });
 });

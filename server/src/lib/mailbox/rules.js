@@ -85,8 +85,17 @@ export function forReaders(c, readAll) {
  * `can_read_live`, and GET /api/mail/messages/:id has to keep that promise.
  */
 export const isOwner = (userId, account) => !account.is_shared && account.user_id !== null && account.user_id !== undefined && account.user_id === (userId ?? null);
-/** Whether the caller may see the content the mailbox holds back — bodies read live, attachments downloaded. */
+/** Whether the caller may see the content the mailbox holds back: a body read live, an inline image. */
 export const mayReadContent = (userId, account) => account.visibility === 'share_everything' || isOwner(userId, account);
+/**
+ * Whether the caller may open a message's attachments in the tracker's
+ * viewer (docs/inbox-attachments-plan.md §8). What mayReadContent allows,
+ * and every attachment of a shared mailbox to whoever may read its mail
+ * (its Inbox's members, the owner of the record a thread is on, an admin),
+ * whatever the mailbox stores: a team address's files are the team's.
+ * Nobody downloads one; they are viewed, never saved from the tracker.
+ */
+export const mayViewAttachments = (userId, account) => Boolean(account.is_shared) || mayReadContent(userId, account);
 /** Whether a stored message's body is read live from the provider for this caller (docs/inbox-outlook-plan.md §3.3). */
 export const canReadLive = (userId, account, message) => isOwner(userId, account) && !message.body_html && !message.removed_at
   && account.visibility !== 'share_everything' && account.status === 'active';

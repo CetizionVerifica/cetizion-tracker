@@ -284,7 +284,7 @@ export function Message({ m, openByDefault }) {
                   {snippet || (liveData?.live_error || (m.can_read_live ? 'The message could not be read from the mailbox just now.' : 'The mailbox owner shares only who and when.'))}
                 </div>
               )}
-          <AttachmentStrip attachments={attachments} bodyHtml={body} className="mt-2 px-1" />
+          <AttachmentStrip attachments={attachments} bodyHtml={body} webLink={m.web_link} className="mt-2 px-1" />
         </div>
       )}
     </article>

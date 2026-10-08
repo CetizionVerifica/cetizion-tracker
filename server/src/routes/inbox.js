@@ -195,7 +195,12 @@ const LIST = `
          -- already stored this as NULL. The privacy choice was made
          -- before the row existed, not on the way out.
          last.snippet,
-         COALESCE(last.has_attachments, false) AS has_attachments
+         COALESCE(last.has_attachments, false) AS has_attachments,
+         -- What is attached to the newest message, by name, so the list
+         -- shows the files before anybody opens the thread. Names are
+         -- stored only where the mailbox's visibility lets them be, so
+         -- this says no more than the mailbox shares.
+         last.attachment_names
     FROM inbox_conversations c
     JOIN inboxes i ON i.id = c.inbox_id
     -- Which shared address the thread actually arrived at. With more than
@@ -207,7 +212,9 @@ const LIST = `
     LEFT JOIN companies co ON co.id = c.company_id
     LEFT JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN LATERAL (
-      SELECT m.snippet, m.has_attachments
+      SELECT m.snippet, m.has_attachments,
+             (SELECT array_agg(x.name ORDER BY x.id) FROM email_attachments x
+               WHERE x.message_id = m.id AND NOT x.is_inline AND x.name IS NOT NULL) AS attachment_names
         FROM email_messages m
        WHERE m.thread_id = t.id
        ORDER BY m.sent_at DESC, m.id DESC
