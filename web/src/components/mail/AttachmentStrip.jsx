@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileSpreadsheet, FileText, Image as ImageIcon, Paperclip } from 'lucide-react';
+import { FileSpreadsheet, FileText, Image as ImageIcon, Paperclip, Presentation } from 'lucide-react';
 import { cn } from 'cn';
 import { fileSize } from '../../lib/format.js';
 import { AttachmentViewer } from './AttachmentViewer.jsx';
@@ -17,7 +17,13 @@ import { AttachmentViewer } from './AttachmentViewer.jsx';
  * not here — unless the body never referenced them, in which case they
  * are ordinary attachments and listed.
  */
-const iconFor = (view) => (view === 'image' ? ImageIcon : view === 'sheet' ? FileSpreadsheet : view === 'pdf' || view === 'text' ? FileText : Paperclip);
+const iconFor = (view, name) => {
+  if (view === 'image') return ImageIcon;
+  if (view === 'sheet') return FileSpreadsheet;
+  if (view === 'office' && /\.(pptx?|pps[xm]?|pptm|odp)$/i.test(name || '')) return Presentation;
+  if (view === 'pdf' || view === 'text' || view === 'word' || view === 'office') return FileText;
+  return Paperclip;
+};
 
 export function AttachmentStrip({ attachments = [], bodyHtml = '', webLink = null, className }) {
   const [open, setOpen] = useState(null);
@@ -30,7 +36,7 @@ export function AttachmentStrip({ attachments = [], bodyHtml = '', webLink = nul
     <>
       <ul className={cn('flex flex-wrap gap-1.5', className)} aria-label="Attachments">
         {shown.map((a) => {
-          const Icon = iconFor(a.view);
+          const Icon = iconFor(a.view, a.name);
           const name = a.name || 'Attachment';
           const locked = !a.view_url;
           return (
