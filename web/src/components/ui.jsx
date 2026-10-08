@@ -586,10 +586,11 @@ export function ToastProvider({ children }) {
  * action whose own message says it can be run twice — a red button and a
  * calm sentence disagree, and the button is the one people read.
  */
-export function ConfirmDialog({ title, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', busyLabel = 'Working…', children }) {
+export function ConfirmDialog({ title, subtitle, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', busyLabel = 'Working…', children }) {
   return (
     <Modal
       title={title}
+      subtitle={subtitle}
       onClose={onClose}
       size="sm"
       footer={

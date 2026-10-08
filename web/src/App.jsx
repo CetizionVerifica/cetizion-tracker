@@ -265,11 +265,11 @@ function LegacyRedirect({ to }) {
  * the mark, the word and the bell share a row above the title, and the
  * actions go under the title rather than beside it.
  */
-export function PageHeader({ title, subtitle, actions, eyebrow, nav, titleClassName = 'mg-display', titleAside }) {
+export function PageHeader({ title, subtitle, actions, eyebrow, nav, lead, titleClassName = 'mg-display', titleAside, className }) {
   const shell = useShell();
   const word = eyebrow ?? shell.eyebrow;
   return (
-    <header className="mg-header page-header" data-a="rise">
+    <header className={`mg-header page-header${className ? ` ${className}` : ''}`} data-a="rise">
       <div className="page-header__top">
         <Link to={shell.isHr ? '/travel-dashboard' : '/'} aria-label={shell.isHr ? 'Go to the travel dashboard' : 'Go to Today'} className="grid place-items-center">
           <BrandMark size={28} />
@@ -279,6 +279,7 @@ export function PageHeader({ title, subtitle, actions, eyebrow, nav, titleClassN
       </div>
       <div className="mg-header__text">
         {word && <span className="mg-eyebrow page-header__eyebrow">{word}</span>}
+        {lead}
         {titleAside ? (
           <div className="page-header__title">
             <h1 className={titleClassName}>{title}</h1>
