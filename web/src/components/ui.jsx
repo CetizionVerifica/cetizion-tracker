@@ -52,7 +52,7 @@ export function Card({ title, hint, actions, children, flush = false, className 
               beside it wrap onto their own line rather than squeezing it
               to a word per line. */}
           <div className="min-w-0 sm:flex-[1_1_260px]">
-            {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
+            {title && <h2 className="font-display text-base font-bold text-foreground">{title}</h2>}
             {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
           {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
@@ -78,8 +78,8 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
   );
   const inner = (
     <>
-      <div className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{label}</div>
-      <div className={cn('num text-2xl font-semibold', accent || 'text-foreground')}>{value}</div>
+      <div className="text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">{label}</div>
+      <div className={cn('num font-display text-2xl font-bold', accent || 'text-foreground')}>{value}</div>
       {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
     </>
   );
@@ -100,7 +100,7 @@ export function Badge({ children, tone, dot = false, className }) {
   // says anything here, which is the design's rule and also the accessible
   // one.
   return (
-    <UiBadge variant="outline" className={cn('gap-1.5 rounded-[6px] font-medium', TONE[resolved] || TONE.neutral, className)}>
+    <UiBadge variant="outline" className={cn('gap-1.5 rounded-full font-semibold', TONE[resolved] || TONE.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </UiBadge>
@@ -161,7 +161,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
             <CardContent className="px-3 py-3">
             {labelled.map((col, index) => (
               <div key={col.key} className={cn('flex gap-3 py-1', index > 0 && 'border-t border-border/60 pt-2')}>
-                <span className="w-[38%] shrink-0 text-[11px] font-semibold tracking-[0.04em] text-muted-foreground uppercase">
+                <span className="w-[38%] shrink-0 text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">
                   {col.header}
                 </span>
                 <span className={cn('min-w-0 flex-1 wrap-anywhere text-[13px]', col.align === 'right' && 'num')}>
@@ -320,7 +320,7 @@ export function Empty({ icon, title, text, action }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
       {icon && <div className="text-muted-foreground" aria-hidden="true">{icon}</div>}
-      <div className="text-[15px] font-semibold text-foreground">{title}</div>
+      <div className="font-display text-base font-bold text-foreground">{title}</div>
       {text && <p className="measure m-0 text-[13px] text-muted-foreground">{text}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
@@ -340,7 +340,7 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
         )}
       >
         <DialogHeader className="border-b border-border px-5 py-4 text-left">
-          <DialogTitle className="text-[15px] font-semibold">{title}</DialogTitle>
+          <DialogTitle className="font-display text-base font-bold">{title}</DialogTitle>
           {subtitle && <DialogDescription className="measure text-[12.5px]">{subtitle}</DialogDescription>}
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4">{children}</div>

@@ -43,8 +43,8 @@ async function signIn(page) {
   await page.getByLabel(label, { exact: true }).fill(who);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 }
 
 /**
@@ -109,8 +109,8 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
   await expect(page.getByText('Invoice date is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -127,7 +127,7 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click();
   // A real alert, announced, not a div with a class on it.
   await expect(page.getByRole('alert')).toContainText(/do not match/);
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toHaveCount(0);
   // And the password box is cleared rather than left holding a wrong one.
   await expect(page.getByLabel('Password')).toHaveValue('');
 });

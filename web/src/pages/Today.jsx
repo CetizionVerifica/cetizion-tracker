@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom';
-import {
-  AlertTriangle, ArrowRight, Bell, Briefcase, CheckCircle2, CreditCard, FileText, Plane, Plus,
-} from 'lucide-react';
+import { ArrowRight, CheckCircle2, Plus } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
+import { Chip } from '../components/record.jsx';
+import { Button } from '../components/ui/button';
 import { ErrorState } from '../components/ui.jsx';
+import { useAuth } from '../lib/auth.jsx';
 import { DailyMisNotice, MyDailyMis, useMyDailyMis } from '../components/MyDailyMis.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
@@ -55,13 +56,21 @@ function TodaySkeleton() {
     </div>
   );
 }
-const EYEBROW = 'text-[11px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const EYEBROW = 'text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground';
+const SECTION = 'font-display text-base font-bold text-foreground';
 
-/** "Tuesday, 22 September" — the date is the title, because the page is a day. */
+/** "Tuesday 7 October", the eyebrow over the greeting. */
 function todayLabel() {
   const d = new Date();
-  const weekday = d.toLocaleDateString('en-GB', { weekday: 'long' });
-  return `${weekday}, ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}`;
+  return `${d.toLocaleDateString('en-GB', { weekday: 'long' })} ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}`;
+}
+
+/** "Good afternoon, Shyam": the first name only, and nothing when there is none. */
+function greeting(name) {
+  const hour = new Date().getHours();
+  const part = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const first = String(name || '').trim().split(/\s+/)[0];
+  return first && !first.includes('@') ? `${part}, ${first}` : part;
 }
 
 /**
@@ -86,34 +95,34 @@ function queues(w, unread) {
 
   return [
     toInvoice.length && {
-      key: 'to-invoice', icon: CreditCard, tone: 'waiting', to: '/payment-stages', action: 'Raise them',
+      key: 'to-invoice', chip: 'Ready to invoice', tone: 'waiting', to: '/payment-stages', action: 'Raise them',
       lead: <><strong className="font-semibold">{count(toInvoice.length, 'invoice is', 'invoices are')} ready to raise</strong> — <span className="num">{money(sum(toInvoice, 'stage_amount'), 'INR', { compact: true })}</span>.</>,
       detail: 'Every trigger has happened; nothing else is in the way.',
     },
     unregistered.length && {
-      key: 'unregistered', icon: Briefcase, tone: 'waiting', to: '/quotations?status=Won+-+PO+Received', action: 'Register',
+      key: 'unregistered', chip: 'Won, not registered', tone: 'info', to: '/quotations?status=Won+-+PO+Received', action: 'Register',
       lead: <><strong className="font-semibold">{count(unregistered.length, 'won deal has', 'won deals have')} no project</strong>, so none of them can be invoiced.</>,
       detail: <><span className="num">{money(sum(unregistered, 'quotation_value'), 'INR', { compact: true })}</span> of signed work sitting outside delivery.</>,
     },
     noAmount.length && {
-      key: 'bills', icon: Plane, tone: 'plain', to: '/vendor-invoices', action: 'Fill in',
+      key: 'bills', chip: 'Amount missing', tone: 'waiting', to: '/vendor-invoices', action: 'Fill in',
       lead: <><strong className="font-semibold">{count(noAmount.length, 'travel bill has', 'travel bills have')} a reference but no amount.</strong></>,
       detail: 'They cannot be paid until a figure is entered.',
     },
     claims.length && {
-      key: 'claims', icon: FileText, tone: 'plain', to: '/expense-claims', action: 'Review',
+      key: 'claims', chip: 'Approval', tone: 'info', to: '/expense-claims', action: 'Review',
       lead: <><strong className="font-semibold">{count(claims.length, 'expense claim needs', 'expense claims need')} a decision</strong> — <span className="num">{money(sum(claims, 'amount_claimed'), 'INR', { compact: true })}</span>.</>,
       detail: `Across ${new Set(claims.map((c) => c.employee_name)).size} people.`,
     },
     late.length && {
-      key: 'late', icon: AlertTriangle, tone: 'plain', to: '/projects', action: 'Open',
+      key: 'late', chip: 'Late delivery', tone: 'late', to: '/projects', action: 'Open',
       lead: <><strong className="font-semibold">{count(late.length, 'project is', 'projects are')} past the delivery date.</strong></>,
       detail: `The latest by ${Math.max(...late.map((p) => Number(p.days_late || 0)))} days.`,
     },
     // The bell, folded in. A notification nobody opens a page to read is a
     // notification nobody reads, so it queues here with everything else.
     unread > 0 && {
-      key: 'unread', icon: Bell, tone: 'plain', to: '/notifications', action: 'Read them',
+      key: 'unread', chip: 'Alerts', tone: 'info', to: '/notifications', action: 'Read them',
       lead: <><strong className="font-semibold">{count(unread, 'alert', 'alerts')} you have not seen.</strong></>,
       detail: 'Expiring quotations, overdue stages and anything a rule raised.',
     },
@@ -129,136 +138,159 @@ function StartHere({ overdue }) {
     .slice(0, 3);
 
   return (
-    <section className="overflow-hidden rounded-lg border border-late/25 bg-card">
-      <div className="flex items-center gap-2 border-b border-late/20 bg-late/[0.07] px-5 py-3">
-        <AlertTriangle className="size-3.5 text-late" strokeWidth={2.2} aria-hidden="true" />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-late">Start here</span>
-        <span className="ml-auto text-[12px] text-secondary-text">Most overdue money, oldest first</span>
+    <article className={`${CARD} overflow-hidden border-l-4 border-l-late shadow-sm`}>
+      <div className="flex flex-wrap items-center gap-3 px-6 pt-5">
+        <Chip tone="late">! {oldest} {oldest === 1 ? 'day' : 'days'} overdue</Chip>
+        <span className="text-[12.5px] text-muted-foreground">Start here: the money owed longest comes first</span>
       </div>
-      <div className="p-5">
-        <h2 className="max-w-[62ch] text-[19px]/[1.4] font-semibold text-foreground">
-          {overdue.length === 1 ? 'One invoice is overdue' : `${overdue.length} invoices are overdue`} — <span className="num">{money(total)}</span> is
-          sitting with clients, the oldest for {oldest} {oldest === 1 ? 'day' : 'days'}.
+      <div className="px-6 pt-3">
+        <h2 className="max-w-[62ch] font-display text-xl/[1.35] font-bold text-foreground">
+          {overdue.length === 1 ? 'One invoice is overdue' : `${overdue.length} invoices are overdue`}, and <span className="num">{money(total)}</span> is sitting with clients.
         </h2>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           {named.map((stage) => (
-            <span key={stage.id} className="inline-flex h-7 items-center gap-2 rounded-[6px] border border-border bg-secondary px-2.5 text-[12.5px] text-secondary-text">
-              <span className="num text-foreground">{stage.client_name}</span>
-              {money(stage.due_now_amount, stage.currency, { compact: true })} · {stage.days_overdue}d
+            <span key={stage.id} className="inline-flex h-7 items-center gap-2 rounded-sm border border-border bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+              <span className="text-foreground">{stage.client_name}</span>
+              <span className="num">{money(stage.due_now_amount, stage.currency, { compact: true })} · {stage.days_overdue}d</span>
             </span>
           ))}
           {overdue.length > named.length && (
-            <span className="inline-flex h-7 items-center rounded-[6px] border border-border bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+            <span className="inline-flex h-7 items-center rounded-sm border border-border bg-secondary px-2.5 text-[12.5px] text-secondary-text">
               +{overdue.length - named.length} more
             </span>
           )}
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          {/* The one primary action on the page. */}
-          <Link
-            to="/collections"
-            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-primary bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary/90"
-          >
-            {overdue.length === 1 ? 'Chase it' : `Chase all ${overdue.length}`}
-            <ArrowRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-          </Link>
-          <span className="text-[12.5px] text-secondary-text">
-            Opens one client at a time with the history beside it. You decide what to send.
-          </span>
-        </div>
       </div>
-    </section>
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border bg-secondary/50 px-6 py-4">
+        {/* The one primary action on the page. */}
+        <Button asChild size="sm">
+          <Link to="/collections">
+            {overdue.length === 1 ? 'Chase it' : `Chase all ${overdue.length}`}
+            <ArrowRight strokeWidth={2.2} aria-hidden="true" />
+          </Link>
+        </Button>
+        <span className="text-[12.5px] text-secondary-text">
+          Opens one client at a time with the history beside it. You decide what to send.
+        </span>
+      </div>
+    </article>
   );
 }
 
-const TONES = {
-  waiting: 'border-waiting/25 bg-waiting/10 text-waiting',
-  plain: 'border-border bg-secondary text-secondary-text',
-};
-
+/** A row of the queue: the state as a chip, the sentence, and its one move. */
 function Queue({ item }) {
   return (
-    <div className="flex items-center gap-4 border-b border-border px-5 py-4 last:border-b-0 hover:bg-secondary">
-      <span className={`grid size-8 shrink-0 place-items-center rounded-[6px] border ${TONES[item.tone]}`}>
-        <item.icon className="size-4" strokeWidth={1.75} aria-hidden="true" />
-      </span>
+    <div className="flex flex-col gap-3 border-b border-border px-5 py-3.5 last:border-b-0 hover:bg-secondary/60 sm:flex-row sm:items-center sm:gap-4">
+      <Chip tone={item.tone} className="w-fit shrink-0 sm:min-w-[136px] sm:justify-center">{item.chip}</Chip>
       <div className="min-w-0 flex-1">
         <div className="text-[14px]/[1.45] text-foreground">{item.lead}</div>
-        <div className="mt-0.5 text-[12.5px] text-secondary-text">{item.detail}</div>
+        <div className="mt-0.5 text-[12.5px] text-muted-foreground">{item.detail}</div>
       </div>
-      <Link
-        to={item.to}
-        className="inline-flex h-control shrink-0 items-center rounded-[6px] border border-border-strong bg-secondary px-3.5 text-[13px] font-medium text-foreground transition-colors duration-150 hover:border-muted-foreground"
-      >
-        {item.action}
-      </Link>
+      <Button asChild variant="outline" size="sm" className="w-fit shrink-0">
+        <Link to={item.to}>{item.action}</Link>
+      </Button>
     </div>
   );
 }
 
-/** Time, what, who, and what it is waiting on. Reference, not a task. */
-function Diary({ visits }) {
-  if (!visits.length) return null;
+/**
+ * From quote to cash, as four steps a person can open.
+ *
+ * The same journey the process rail shows on one deal, summed over all of
+ * them. Each bar is its step's share of what was quoted, so the drop from
+ * one step to the next is the thing the eye lands on. The figures are the
+ * overview's own (rupee records), and each opens the list behind it.
+ */
+function QuoteToCash({ finance, sales }) {
+  const quoted = Number(sales.value_inr) || 0;
+  const won = Number(sales.won_value_inr) || 0;
+  const invoiced = Number(finance.invoiced) || 0;
+  const received = Number(finance.received) || 0;
+  const share = (value) => (quoted ? Math.max(2, Math.min(100, Math.round((value / quoted) * 100))) : 0);
+  const decided = Number(sales.won) + Number(sales.lost);
+  const steps = [
+    { step: 'Quoted', value: quoted, note: `${sales.quotations} quotations`, to: '/quotations', tone: 'bg-info' },
+    { step: 'Won', value: won, note: decided ? `${sales.won} deals · ${Math.round((Number(sales.won) / decided) * 100)}% of decided` : `${sales.won} deals`, to: '/quotations?status=Won+-+PO+Received', tone: 'bg-settled' },
+    { step: 'Invoiced', value: invoiced, note: `${money(finance.to_invoice_amount, 'INR', { compact: true })} ready to raise`, to: '/payment-stages', tone: 'bg-settled' },
+    { step: 'Received', value: received, note: `${money(Math.max(0, invoiced - received), 'INR', { compact: true })} still due`, to: '/collections', tone: 'bg-settled' },
+  ];
   return (
-    <section className="flex flex-col gap-3">
-      <div className={EYEBROW}>In the diary today</div>
-      <div className={`${CARD} overflow-hidden`}>
-        {visits.map((visit) => (
-          <div key={visit.id} className="flex items-center gap-4 border-b border-border px-5 py-2 last:border-b-0">
-            <span className="num w-14 shrink-0 text-[12.5px] font-medium text-info">
-              {visit.all_day ? 'All day' : new Date(visit.starts_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+    <section aria-label="From quote to cash" className={`${CARD} p-5`}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className={SECTION}>From quote to cash</h2>
+        <span className="hidden text-[12.5px] text-muted-foreground sm:inline">All records in rupees</span>
+        <Link to="/insights" className="ml-auto text-[13px] font-semibold text-primary hover:underline">Open insights</Link>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {steps.map((s) => (
+          <Link key={s.step} to={s.to} className="group flex flex-col gap-1 rounded-md border border-border p-3 no-underline transition-colors duration-150 hover:border-primary/40 hover:bg-secondary/60">
+            <span className={EYEBROW}>{s.step}</span>
+            <span className="num font-display text-xl font-bold text-foreground sm:text-2xl">{money(s.value, 'INR', { compact: true })}</span>
+            <span className="text-[12px] text-muted-foreground">{s.note}</span>
+            <span className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+              <span className={`block h-full rounded-full ${s.tone}`} style={{ width: `${share(s.value)}%` }} />
             </span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-              {visit.title}{visit.client_name && <> — <strong className="font-semibold">{visit.client_name}</strong></>}
-              {visit.city && <span className="text-secondary-text">, {visit.city}</span>}
-            </span>
-            <span className="hidden shrink-0 text-[12.5px] text-secondary-text sm:block">{visit.assignee_names || '—'}</span>
-            <span className={`inline-flex h-[22px] shrink-0 items-center rounded-[6px] border px-2.5 text-[11.5px] font-semibold ${
-              visit.status === 'confirmed' ? 'border-settled/28 bg-settled/10 text-settled' : 'border-border bg-secondary text-secondary-text'
-            }`}>
-              {visit.status === 'confirmed' ? 'Confirmed' : 'Planned'}
-            </span>
-          </div>
+          </Link>
         ))}
       </div>
     </section>
   );
 }
 
-/** Reference only. Nothing here is a task, and nothing here is primary. */
-function Rail({ finance, sales, travel }) {
-  const collected = finance.invoiced ? Number(finance.received) / Number(finance.invoiced) : 0;
+/** Time, what, who, and whether it is confirmed. Reference, not a task. */
+function Diary({ visits }) {
   return (
-    <aside className="flex flex-col gap-4">
-      <div className={`${CARD} flex flex-col gap-4 p-5`}>
-        <div className={EYEBROW}>Collected so far</div>
-        <div>
-          <div className="num text-[26px]/[1.1] font-semibold tracking-[-0.02em] text-foreground">
-            {money(finance.received, 'INR', { compact: true })}
-          </div>
-          <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-secondary">
-            <span className="bg-primary" style={{ width: `${Math.min(100, Math.round(collected * 100))}%` }} />
-          </div>
-          <div className="mt-2 text-[12px] text-secondary-text">
-            {Math.round(collected * 100)}% of <span className="num">{money(finance.invoiced, 'INR', { compact: true })}</span> invoiced
-            {Number(finance.outstanding) > 0 && <> · <span className="num text-late">{money(finance.outstanding, 'INR', { compact: true })}</span> still out</>}
-          </div>
-        </div>
-        <div className="flex flex-col gap-2.5 border-t border-border pt-4">
-          {[
-            ['Won', sales.won_value_inr],
-            ['Open pipeline', Number(sales.value_inr) - Number(sales.won_value_inr)],
-            ['Travel cost', travel.total_cost],
-          ].map(([label, value]) => (
-            <div key={label} className="flex justify-between gap-3 text-[12.5px] text-secondary-text">
-              {label}<span className="num text-foreground">{money(value, 'INR', { compact: true })}</span>
+    <div className={`${CARD} p-5`}>
+      <h3 className={SECTION}>In the diary today</h3>
+      {visits.length === 0 ? (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">No visits or audits today. Planned ones show here on the day.</p>
+      ) : (
+        <div className="mt-3 flex flex-col">
+          {visits.map((visit) => (
+            <div key={visit.id} className="flex gap-3 border-b border-border py-2.5 last:border-b-0">
+              <span className="num w-12 shrink-0 pt-0.5 text-[12px] font-semibold text-primary">
+                {visit.all_day ? 'All day' : new Date(visit.starts_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-foreground">{visit.title}</span>
+                <span className="block truncate text-[12px] text-muted-foreground">
+                  {[visit.client_name, visit.city, visit.assignee_names].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+              <Chip tone={visit.status === 'confirmed' ? 'settled' : 'plain'} className="shrink-0">
+                {visit.status === 'confirmed' ? 'Confirmed' : 'Planned'}
+              </Chip>
             </div>
           ))}
         </div>
-      </div>
+      )}
+    </div>
+  );
+}
 
-      <div className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/[0.06] p-5">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-primary">How do I…</div>
+/** Reference only. Nothing here is a task, and nothing here is primary. */
+function Rail({ finance, sales, travel, visits }) {
+  return (
+    <aside aria-label="For reference" className="flex flex-col gap-4">
+      <Diary visits={visits} />
+
+      {finance && (
+        <div className={`${CARD} flex flex-col gap-2.5 p-5`}>
+          <h3 className={SECTION}>At a glance</h3>
+          {[
+            ['Left to collect', finance.outstanding, Number(finance.outstanding) > 0 ? 'text-late' : 'text-foreground'],
+            ['Open pipeline', Number(sales.value_inr) - Number(sales.won_value_inr), 'text-foreground'],
+            ['Travel cost', travel.total_cost, 'text-foreground'],
+          ].map(([label, value, tone]) => (
+            <div key={label} className="flex justify-between gap-3 text-[13px] text-secondary-text">
+              {label}<span className={`num font-semibold ${tone}`}>{money(value, 'INR', { compact: true })}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2.5 rounded-lg border border-primary/20 bg-primary/[0.06] p-5">
+        <h3 className="font-display text-base font-bold text-primary">How do I…</h3>
         {[
           '…raise an invoice for a stage?',
           '…register a PO on a won deal?',
@@ -268,18 +300,19 @@ function Rail({ finance, sales, travel }) {
             key={question}
             type="button"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-            className="text-left text-[12.5px] text-secondary-text hover:text-foreground"
+            className="text-left text-[13px] text-secondary-text hover:text-foreground"
           >
             {question}
           </button>
         ))}
-        <p className="mt-1 text-[11.5px]/[1.6] text-muted-foreground">Each one opens the palette, where the step runs.</p>
+        <p className="mt-1 text-[12px]/[1.6] text-muted-foreground">Each one opens the palette, where the step runs.</p>
       </div>
     </aside>
   );
 }
 
 export default function Today() {
+  const { displayName } = useAuth() ?? {};
   const { data, loading, error, refetch } = useFetch(() => api.raw('/dashboard/overview'));
   const work = useFetch(() => api.raw('/dashboard/worklist'));
   const diary = useFetch(() => api.raw('/visits/today'));
@@ -295,7 +328,7 @@ export default function Today() {
   if (error) {
     return (
       <>
-        <PageHeader title={todayLabel()} />
+        <PageHeader eyebrow={todayLabel()} title={greeting(displayName)} />
         <div className="page"><ErrorState message={error} onRetry={refetch} /></div>
       </>
     );
@@ -304,65 +337,68 @@ export default function Today() {
   return (
     <>
       <PageHeader
-        title={todayLabel()}
+        eyebrow={todayLabel()}
+        title={greeting(displayName)}
         subtitle={
           loading ? 'Working out what needs a person…'
             : waiting === 0 ? 'Nothing is waiting on anybody. Everything raised is either paid or not yet due.'
-            : `${waiting} ${waiting === 1 ? 'thing needs' : 'things need'} a person today. Work down the list — it empties as you go.`
+            : `${waiting} ${waiting === 1 ? 'thing needs' : 'things need'} a person today. The money owed longest is first, and the list empties as you go.`
         }
         actions={
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-            className="inline-flex h-control items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-3.5 text-[13px] font-medium text-foreground hover:border-muted-foreground"
           >
-            <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+            <Plus strokeWidth={2} aria-hidden="true" />
             New
-            <span className="num text-[10.5px] text-muted-foreground">⌘K</span>
-          </button>
+            <span className="num text-[11px] text-muted-foreground">⌘K</span>
+          </Button>
         }
       />
 
-      <div className="grid items-start gap-6 p-6 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="flex min-w-0 flex-col gap-6">
-          {/* While the day is being worked out, the column shows the shape it
-              is about to have. It used to render nothing at all — every
-              branch below is gated on data, so the busiest page in the app
-              looked empty rather than busy on a slow connection, and the
-              only sign of life was one line of header text. */}
-          {loading && <TodaySkeleton />}
+      <div className="flex flex-col gap-6 p-4 sm:p-6">
+        {d && <QuoteToCash finance={d.finance} sales={d.sales} />}
 
-          <DailyMisNotice mine={mine} />
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <section aria-label="Needs you" className="flex min-w-0 flex-col gap-6">
+            {/* While the day is being worked out, the column shows the shape it
+                is about to have. It used to render nothing at all — every
+                branch below is gated on data, so the busiest page in the app
+                looked empty rather than busy on a slow connection, and the
+                only sign of life was one line of header text. */}
+            {loading && <TodaySkeleton />}
 
-          {!loading && overdue.length > 0 && <StartHere overdue={overdue} />}
+            <DailyMisNotice mine={mine} />
 
-          {!loading && list.length > 0 && (
-            <section className="flex min-w-0 flex-col gap-3">
-              <div className={EYEBROW}>{overdue.length ? 'Then, in order' : 'Waiting on somebody'}</div>
-              <div className={`${CARD} overflow-hidden`}>
-                {list.map((item) => <Queue key={item.key} item={item} />)}
+            {!loading && overdue.length > 0 && <StartHere overdue={overdue} />}
+
+            {!loading && list.length > 0 && (
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="flex items-baseline gap-3">
+                  <h2 className={SECTION}>{overdue.length ? 'Then, in order' : 'Waiting on somebody'}</h2>
+                  <span className="text-[12.5px] text-muted-foreground">{list.length} left</span>
+                </div>
+                <div className={`${CARD} overflow-hidden`}>
+                  {list.map((item) => <Queue key={item.key} item={item} />)}
+                </div>
               </div>
-            </section>
-          )}
+            )}
 
-          {!loading && waiting === 0 && (
-            <div className="flex items-center gap-2.5 rounded-lg border border-dashed border-border px-4 py-3">
-              <CheckCircle2 className="size-4 text-settled" strokeWidth={2.2} aria-hidden="true" />
-              <span className="text-[13px] text-secondary-text">
-                Nothing is waiting. Anything raised is either paid or not yet due.
-              </span>
-            </div>
-          )}
+            {!loading && waiting === 0 && (
+              <div className="flex items-center gap-2.5 rounded-lg border border-dashed border-border px-4 py-3">
+                <CheckCircle2 className="size-4 text-settled" strokeWidth={2.2} aria-hidden="true" />
+                <span className="text-[13px] text-secondary-text">
+                  Nothing is waiting. Anything raised is either paid or not yet due.
+                </span>
+              </div>
+            )}
 
-          <Diary visits={diary.data?.data || []} />
+            <MyDailyMis mine={mine} />
+          </section>
 
-          <MyDailyMis mine={mine} />
-
-          {/* One line, not the charts: Insights is where they live. */}
-          <Link to="/insights" className="self-start text-[13px] font-medium text-primary hover:underline">See all insights →</Link>
+          <Rail finance={d?.finance} sales={d?.sales} travel={d?.travel} visits={diary.data?.data || []} />
         </div>
-
-        {d && <Rail finance={d.finance} sales={d.sales} travel={d.travel} />}
       </div>
     </>
   );
