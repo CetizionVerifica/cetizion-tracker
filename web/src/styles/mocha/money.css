@@ -252,3 +252,7 @@
 .app-gst > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12.5px; color: var(--text2); }
 .app-gst b { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 @media (max-width: 479px) { .app-period__dates .mg-input { width: 100%; } .app-period__dates .mg-field { flex: 1 1 140px; } }
+.app-client { min-width: 200px; }
+.app-client__text .app-sub2 { max-width: 100%; }
+.app-strip .mg-tile__figure { white-space: normal; }
+@media (max-width: 1099px) { .app-span-wide { grid-column: 1 / -1; } }

@@ -126,7 +126,7 @@ export default function Collections() {
                   </div>
                   {!shown.length ? (
                     <StateCard inPanel title="No client in this band" text="Nothing outstanding falls in it right now." tone="plain">
-                      <button type="button" className="mg-btn mg-btn--sm" onClick={() => setBucket(null)}>Show all</button>
+                      <button type="button" className="mg-btn mg-btn--sm" onClick={() => setBucket(null)}>Show every client</button>
                     </StateCard>
                   ) : wide ? (
                     <ClientTable clients={shown} buckets={raw.buckets} open={open} setOpen={setOpen} said={clientSaid} acts={acts} onChaseClient={(c) => setChase({ company: c })} />
@@ -205,7 +205,7 @@ function AgeChart({ d, bucket, onPick }) {
           const late = b.key === '90+';
           return (
             <button key={b.key} type="button" aria-pressed={bucket === b.key} onClick={() => onPick(b.key)}
-              aria-label={`${b.label}: ${money(amounts[i])}, ${plural(n, 'client')}. ${bucket === b.key ? 'Showing only this band; press to show all' : 'Show only this band'}`}>
+              aria-label={`${b.label}: ${money(amounts[i])}, ${plural(n, 'client')}. ${bucket === b.key ? 'Showing only this band; press again for every band' : 'Show only this band'}`}>
               <span className={cn('app-age__fig', late && amounts[i] > 0 ? 'is-late-text' : b.key === 'not-due' ? 'is-wait-text' : '')}>{money(amounts[i], 'INR', { compact: true })}</span>
               <span className="app-age__plot">
                 <span className={cn('app-age__bar', b.key === 'not-due' && 'mg-hatch')} data-a="grow"

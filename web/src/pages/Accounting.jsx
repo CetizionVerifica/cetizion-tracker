@@ -192,7 +192,7 @@ function Import({ onDone }) {
         <div className="app-form4">
           <Field label="What is in the file"><Select value={kind} placeholder={null} options={[{ value: 'invoice', label: 'Invoices' }, { value: 'payment', label: 'Payments received' }]} onChange={(e) => setKind(e.target.value)} /></Field>
           <Field label="From"><Select value={source} placeholder={null} options={[{ value: 'zoho', label: 'Zoho Books export' }, { value: 'tally', label: 'Tally export (day book sorts itself)' }, { value: 'file', label: 'Another sheet' }]} onChange={(e) => setSource(e.target.value)} /></Field>
-          <Field as="div" label="File" required hint="CSV or Excel, up to 10 MB. Dates are read day first."><FileDrop label="File" accept=".csv,.xlsx,.xls" text={file ? file.name : 'Drop the export here, or choose a file'} onFile={setFile} /></Field>
+          <div className="app-span-wide"><Field as="div" label="File" required hint="CSV or Excel, up to 10 MB. Dates are read day first."><FileDrop label="File" accept=".csv,.xlsx,.xls" text={file ? file.name : 'Drop the export here, or choose a file'} onFile={setFile} /></Field></div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button type="submit" className="mg-btn mg-btn--primary" disabled={!file || busy}>{busy ? 'Reading…' : 'Import and compare'}</button>
