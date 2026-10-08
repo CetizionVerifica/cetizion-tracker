@@ -149,7 +149,7 @@ export default function Worklist() {
                 const act = r.stage_status === 'To Invoice' ? 'Invoice' : 'Record payment';
                 return (
                   <PhoneRow
-                    title={r.client_name} amount={money(r.due_now_amount, r.currency)}
+                    title={r.client_name} amount={money(r.stage_status === 'To Invoice' ? r.stage_amount : r.due_now_amount, r.currency)}
                     meta={`${r.po_number} · ${r.stage_name}${r.invoice_due_date ? ` · due ${date(r.invoice_due_date)}` : ''}`}
                     state={<span className={`mg-badge ${statusTone(r.stage_status)}`}>{r.stage_status === 'Partially Paid' ? 'Partly paid' : r.stage_status}</span>}
                     go={`${act} →`} label={`${r.client_name}, ${r.stage_name}, ${r.stage_status}. ${act}`}
