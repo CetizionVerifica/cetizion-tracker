@@ -140,31 +140,47 @@ function NoteDialog({ entity, id, record, onClose, onSaved }) {
   );
 }
 
-function TaskDialog({ entity, id, record, people, onClose, onSaved }) {
+/**
+ * New or edit task. Opened from a record (`entity`, `id`) the task lives
+ * there; opened from the Tasks page with no record, the first record picked
+ * under "On" is where it lives and the rest are "also on". A task row from
+ * the Tasks list carries no `targets`, so its "Also on" records are left as
+ * they are rather than cleared.
+ */
+export function TaskDialog({ entity, id, record, people, onClose, onSaved }) {
   const toast = useToast();
+  const free = !record && !entity;
+  const knowsTargets = !record || Array.isArray(record.targets);
   const [v, setV] = useState(() => record ? { ...record, due_at: record.due_at || '', targets: record.targets || [] } : { title: '', description: '', due_at: '', type: 'follow_up', priority: 'normal', assignee: '', status: 'todo', targets: [] });
   const [busy, setBusy] = useState(false);
   const set = (k, val) => setV((s) => ({ ...s, [k]: val }));
   async function save(e) {
     e.preventDefault(); setBusy(true);
+    const targets = v.targets.map((t) => ({ entity: t.entity, entity_id: t.entity_id }));
     const payload = { title: v.title, description: v.description || null, due_at: v.due_at || null, type: v.type, priority: v.priority, assignee: v.assignee || null, status: v.status,
-      targets: v.targets.map((t) => ({ entity: t.entity, entity_id: t.entity_id })) };
+      ...(knowsTargets ? { targets } : {}) };
     try {
-      if (record) await api.update('tasks', record.id, payload); else await api.create('tasks', { ...payload, entity, entity_id: id });
+      if (record) await api.update('tasks', record.id, payload);
+      else if (free) await api.create('tasks', { ...payload, entity: targets[0].entity, entity_id: targets[0].entity_id, targets: targets.slice(1) });
+      else await api.create('tasks', { ...payload, entity, entity_id: id });
       onSaved();
     } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); setBusy(false); }
   }
   return (
-    <Modal title={record ? 'Edit task' : 'New task'} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="task-form" className="btn btn--primary" disabled={busy || !v.title.trim()}>Save</button></>}>
+    <Modal title={record ? 'Edit task' : 'New task'} subtitle={record ? `${record.title}` : free ? 'Pick the record it is about; it shows on that record’s Activity too.' : undefined} onClose={onClose} footer={<>
+      <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+      <button type="submit" form="task-form" className="mg-btn mg-btn--primary" disabled={busy || !v.title.trim() || (free && !v.targets.length)} aria-describedby="task-why">{busy ? 'Saving…' : record ? 'Save task' : 'Add task'}</button>
+      {(!v.title.trim() || (free && !v.targets.length)) && <span id="task-why" className="app-why">{!v.title.trim() ? 'Say what the task is to save it.' : 'Pick the record it is on to save it.'}</span>}
+    </>}>
       <form id="task-form" onSubmit={save} className="form-grid">
         <div className="span-all"><Field label="What" required><Input value={v.title} onChange={(e) => set('title', e.target.value)} autoFocus placeholder="Call Ravi about the revised scope" /></Field></div>
-        <Field label="Type"><Select value={v.type} placeholder={null} options={['call', 'email', 'meeting', 'follow_up', 'document', 'other'].map((t) => ({ value: t, label: t.replace('_', ' ') }))} onChange={(e) => set('type', e.target.value)} /></Field>
+        <Field label="Type"><Select value={v.type} placeholder={null} options={[['call', 'Call'], ['email', 'Email'], ['meeting', 'Meeting'], ['follow_up', 'Follow-up'], ['document', 'Document'], ['other', 'Other']].map(([value, label]) => ({ value, label }))} onChange={(e) => set('type', e.target.value)} /></Field>
         <Field label="Due"><Input type="date" value={v.due_at} onChange={(e) => set('due_at', e.target.value)} /></Field>
-        <Field label="Priority"><Select value={v.priority} placeholder={null} options={['low', 'normal', 'high']} onChange={(e) => set('priority', e.target.value)} /></Field>
+        <Field label="Priority"><Select value={v.priority} placeholder={null} options={[{ value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }, { value: 'low', label: 'Low' }]} onChange={(e) => set('priority', e.target.value)} /></Field>
         <Field label="For"><Input list="task-people" value={v.assignee} onChange={(e) => set('assignee', e.target.value)} placeholder="Who does it" /><datalist id="task-people">{people.map((p) => <option key={p} value={p} />)}</datalist></Field>
         {record && <Field label="Status"><Select value={v.status} placeholder={null} options={[{ value: 'todo', label: 'To do' }, { value: 'in_progress', label: 'In progress' }, { value: 'done', label: 'Done' }]} onChange={(e) => set('status', e.target.value)} /></Field>}
         <div className="span-all"><Field label="Details"><Textarea rows={3} value={v.description || ''} onChange={(e) => set('description', e.target.value)} /></Field></div>
-        <div className="span-all"><AlsoOn value={v.targets} main={{ entity: record?.entity || entity, entity_id: record?.entity_id || id }} onChange={(targets) => set('targets', targets)} /></div>
+        {knowsTargets && <div className="span-all"><AlsoOn heading={free ? 'On' : 'Also on'} hint={free ? 'The first record is where the task lives; add more to show it on them too.' : undefined} value={v.targets} main={{ entity: record?.entity || entity, entity_id: record?.entity_id || id }} onChange={(targets) => set('targets', targets)} /></div>}
       </form>
     </Modal>
   );
@@ -187,7 +203,7 @@ const targetKey = (t) => `${t.entity}:${t.entity_id}`;
  * The other records a task is on (#22): "send the revised quotation" is
  * work on the quotation and on the company, and shows on both timelines.
  */
-function AlsoOn({ value, main, onChange }) {
+function AlsoOn({ value, main, onChange, heading = 'Also on', hint }) {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState([]);
   useEffect(() => {
@@ -211,7 +227,7 @@ function AlsoOn({ value, main, onChange }) {
     // Not a Field: that is a <label>, and a click on its text would press the
     // first chip's remove button.
     <div role="group" aria-labelledby="also-on-label" className="flex flex-col gap-1.5">
-      <span id="also-on-label" className="text-[12px] font-medium text-secondary-foreground">Also on</span>
+      <span id="also-on-label" className="text-[12px] font-medium text-secondary-foreground">{heading}{heading === 'On' && <span className="ml-0.5 text-late" aria-hidden="true">*</span>}</span>
       {value.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
           {value.map((t) => (
@@ -234,7 +250,7 @@ function AlsoOn({ value, main, onChange }) {
           ))}
         </ul>
       )}
-      <span className="text-[12px] text-muted-foreground">Other records this task is about. It shows on each of their timelines too.</span>
+      <span className="text-[12px] text-muted-foreground">{hint || 'Other records this task is about. It shows on each of their timelines too.'}</span>
     </div>
   );
 }
