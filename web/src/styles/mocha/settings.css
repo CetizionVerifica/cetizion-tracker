@@ -220,7 +220,7 @@
 .acc-who { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 24px; }
 .acc-who .mg-avatar { width: 52px; height: 52px; font-size: 17px; flex: none; }
 .acc-tabs { display: none; }
-@media (max-width: 1099px) { .acc-tabs { display: flex; } }
+@media (max-width: 1099px) { .acc-tabs { display: flex; flex-wrap: nowrap; min-width: 0; } .acc-tabs > .mg-tabs { min-width: 0; } }
 .acc-list { display: flex; flex-direction: column; }
 .acc-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 14px 0; border-top: 1px solid var(--line); min-width: 0; }
 .acc-item:first-child { border-top: 0; }

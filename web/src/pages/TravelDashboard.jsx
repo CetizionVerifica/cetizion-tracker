@@ -214,12 +214,12 @@ export default function TravelDashboard() {
               <Link className="mg-glass mg-tile app-desktile" to={tripLink(missing)} data-a="rise" aria-label={`${count(Number(d.attention.missing_documents), 'trip')} missing documents. Show them`}>
                 <span className="mg-label">Trips missing documents</span>
                 <span className={cn('mg-tile__figure mg-num', d.attention.missing_documents > 0 && 'text-caramel-text')}>{d.attention.missing_documents}</span>
-                <span className="mg-tile__foot"><span>A ticket or the vendor's invoice is not on file.</span>{missing.length > 0 && <Tone tone="wait">{ids(missing)}</Tone>}</span>
+                <span className="mg-tile__foot"><span>A ticket or the vendor's invoice is not on file.</span>{missing.length > 0 && <Tone tone="wait" className="max-w-full whitespace-normal [overflow-wrap:anywhere]">{ids(missing)}</Tone>}</span>
               </Link>
               <Link className="mg-glass mg-tile app-desktile" to={tripLink(unbilled)} data-a="rise" aria-label={`${count(Number(d.attention.unbilled_chargeable), 'chargeable trip')} not yet billed, ${money(d.attention.unbilled_value)}. Show them`}>
                 <span className="mg-label">Chargeable, not yet billed</span>
                 <span className={cn('mg-tile__figure mg-num', d.attention.unbilled_chargeable > 0 && 'text-caramel-text')}>{d.attention.unbilled_chargeable}</span>
-                <span className="mg-tile__foot"><span>{money(d.attention.unbilled_value)} to bill to clients on their next invoice.</span>{unbilled.length > 0 && <Tone tone="wait">{ids(unbilled)}</Tone>}</span>
+                <span className="mg-tile__foot"><span>{money(d.attention.unbilled_value)} to bill to clients on their next invoice.</span>{unbilled.length > 0 && <Tone tone="wait" className="max-w-full whitespace-normal [overflow-wrap:anywhere]">{ids(unbilled)}</Tone>}</span>
               </Link>
             </div>
           )}
