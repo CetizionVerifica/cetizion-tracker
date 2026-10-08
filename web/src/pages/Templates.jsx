@@ -17,7 +17,7 @@ import { invalidateLookups, useFetch, useList } from '../lib/hooks.js';
  * Settings › Lists › Templates (#26), Wave 8.
  *
  * A chooser, then one kind at a time, each at its own address
- * (/settings/templates/payment, /onboarding, /terms) with its own crumb.
+ * (/settings/templates/payment, /onboarding, /terms, /questionnaires) with its own crumb.
  * The 100% warning sits on the template that is off; Delete buttons are
  * labelled; onboarding's Owner says "People team (HR)", which is not the
  * HR (travel) sign-in role. The quotation PDF, cover email and overdue
@@ -90,6 +90,8 @@ const ONBOARDING = {
 
 const TERMS = { key: 'terms', icon: AlignLeft, label: 'Default terms', meta: 'Printed on every quotation that doesn’t set its own', hint: 'Printed on every quotation that doesn’t set its own.' };
 
+const QUESTIONNAIRES = { key: 'questionnaires', icon: ClipboardList, label: 'Questionnaires', meta: 'what a client is asked before we quote, one per service', hint: 'What a client is asked before we quote, one form per service. Staff send it from an enquiry; the client fills it in from a link, on any device.' };
+
 const crumbs = [{ label: 'Lists' }, { label: 'Templates', to: '/settings/templates' }];
 const back = { to: '/settings/templates', label: 'Templates' };
 const allBtn = <Link to="/settings/templates" className="mg-btn"><ChevronLeft className="size-4" aria-hidden="true" />All templates</Link>;
@@ -101,6 +103,7 @@ export default function Templates() {
       <Route path="payment" element={<TemplateSet kind={PAYMENT} />} />
       <Route path="onboarding" element={<TemplateSet kind={ONBOARDING} />} />
       <Route path="terms" element={<DefaultTerms />} />
+      <Route path="questionnaires" element={<Questionnaires />} />
       <Route path="*" element={<Navigate to="/settings/templates" replace />} />
     </Routes>
   );
@@ -110,6 +113,10 @@ function Chooser() {
   const payment = useList('payment-terms-templates', { limit: 200 });
   const lines = useList('payment-terms-template-lines', { limit: 1000 });
   const onboarding = useList('onboarding-templates', { limit: 200 });
+  const questionnaires = useFetch(() => api.raw('/questionnaires'), []);
+  const qRows = questionnaires.data?.data;
+  const qDrafts = (qRows || []).filter((q) => q.draft).length;
+  const qMeta = questionnaires.error ? 'Couldn’t count them · ' : qRows ? `${qRows.length} questionnaire${qRows.length === 1 ? '' : 's'} · ` : '';
   const off = payment.rows.filter((t) => Math.abs(PAYMENT.total(lines.rows.filter((l) => l.template_id === t.id)) - 100) > 0.01).length;
   // A failed count says so: "0 templates" would read as none set up.
   const meta = (n, kind) => {
@@ -121,11 +128,12 @@ function Chooser() {
     { ...PAYMENT, line: `${meta(payment.total, 'payment')}${PAYMENT.meta}`, badge: off ? `${off} need${off === 1 ? 's' : ''} fixing` : null },
     { ...ONBOARDING, line: `${meta(onboarding.total, 'onboarding')}${ONBOARDING.meta}` },
     { ...TERMS, line: TERMS.meta },
+    { ...QUESTIONNAIRES, line: `${qMeta}${QUESTIONNAIRES.meta}`, badge: qDrafts ? `${qDrafts} draft${qDrafts === 1 ? '' : 's'}` : null, badgeTone: 'plain' },
   ];
   return (
     <SettingsPane
       title="Templates"
-      description="The payment splits and onboarding steps a new order starts from, and the terms printed on every quotation. Pick the one you came to change."
+      description="The payment splits and onboarding steps a new order starts from, the terms printed on every quotation, and the questionnaires a client fills in before we quote. Pick the one you came to change."
     >
       <nav className="mg-glass mg-glass--strong set-kinds" data-a="rise" aria-label="Kinds of template">
         {kinds.map((k) => {
@@ -134,7 +142,7 @@ function Chooser() {
             <Link key={k.key} to={`/settings/templates/${k.key}`} className="set-kind">
               <span className="set-kind__icon"><Icon aria-hidden="true" /></span>
               <span className="set-kind__text"><b>{k.label}</b><small>{k.line}</small></span>
-              {k.badge && <Tone tone="late">{k.badge}</Tone>}
+              {k.badge && <Tone tone={k.badgeTone || 'late'}>{k.badge}</Tone>}
               <ChevronRight aria-hidden="true" />
             </Link>
           );
@@ -144,6 +152,19 @@ function Chooser() {
         The quotation PDF is laid out in code, and the cover email and overdue reminder are built by the routes that send them, so none of the three is edited here.
       </p>
     </SettingsPane>
+  );
+}
+
+/** The questionnaire builder (#208), in a pane like the other kinds. */
+function Questionnaires() {
+  return (
+    <QuestionnaireBuilder
+      pane={(actions, body) => (
+        <SettingsPane title={QUESTIONNAIRES.label} description={QUESTIONNAIRES.hint} crumbs={crumbs} back={back} actions={<>{allBtn}{actions}</>}>
+          {body}
+        </SettingsPane>
+      )}
+    />
   );
 }
 
