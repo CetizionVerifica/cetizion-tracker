@@ -131,7 +131,12 @@ dashboardRouter.get('/worklist', async (req, res) => {
     query(`
       SELECT id, vendor_invoice_id, travel_id, vendor_invoice_no, travel_vendor,
              employee_name, invoice_amount, amount_paid, pay_by, payment_status,
-             days_overdue, finance_action
+             days_overdue, finance_action,
+             -- What is actually payable, so the Pay dialog opened from here
+             -- warns against the bill after its credit notes rather than
+             -- against the gross figure (#214). Columns the view already
+             -- computes; nothing new is derived.
+             credited, net_payable, trip_count
       FROM v_travel_vendor_invoices
       WHERE payment_status IN ('Overdue','To Pay','Partially Paid','Enter amount','Enter date')
       ORDER BY CASE payment_status WHEN 'Overdue' THEN 0 ELSE 1 END,

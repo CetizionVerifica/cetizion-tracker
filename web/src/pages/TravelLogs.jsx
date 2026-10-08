@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Alert } from '../components/ui.jsx';
+import { Chip } from '../components/record.jsx';
+import { agencyTripChip } from '../lib/vendorPayments.js';
 import { useLookups } from '../lib/hooks.js';
 import { useAuth } from '../lib/auth.jsx';
 import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
@@ -53,7 +55,17 @@ export default function TravelLogs() {
     { key: 'vendor_cost', header: 'Vendor cost', align: 'right', render: (r) => money(r.vendor_cost) },
     { key: 'employee_claims', header: 'Claims', align: 'right', render: (r) => money(r.employee_claims) },
     { key: 'total_travel_cost', header: 'Total', align: 'right', className: 'strong', render: (r) => money(r.total_travel_cost) },
-    { key: 'vendor_invoice_status', header: 'Vendor invoice', render: (r) => <Badge>{r.vendor_invoice_status}</Badge> },
+    {
+      // Whether the agency has been paid, as the trip view derives it
+      // (#214). Worded "Agency:" so it cannot be read as the client's side,
+      // and never recomputed here.
+      key: 'vendor_invoice_status',
+      header: 'Agency status',
+      render: (r) => {
+        const chip = agencyTripChip(r.vendor_invoice_status);
+        return chip ? <Chip tone={chip.tone}>{chip.label}</Chip> : <Badge>{r.vendor_invoice_status}</Badge>;
+      },
+    },
     { key: 'missing_documents', header: 'Documents', className: 'small', render: (r) => (r.missing_documents?.length ? <span className="text-waiting">needs {r.missing_documents.join(', ')}</span> : <span className="muted">✓ {r.document_count || 0}</span>) },
     { key: 'reimbursement_status', header: 'Reimbursement', render: (r) => <Badge>{r.reimbursement_status}</Badge> },
   ];

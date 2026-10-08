@@ -101,7 +101,7 @@ export function RecordSection({ title, hint, action, children, className }) {
  * The amount is mono, right-aligned and a fixed width, so a column of
  * them reads as a column of money rather than as ragged text.
  */
-export function RecordRow({ icon: Icon, to, title, chip, amount, muted, last }) {
+export function RecordRow({ icon: Icon, to, title, chip, amount, muted, last, action }) {
   const inner = (
     <>
       {Icon && <Icon className={cn('size-4 shrink-0', muted ? 'text-muted-foreground' : 'text-secondary-text')} strokeWidth={1.75} aria-hidden="true" />}
@@ -118,10 +118,20 @@ export function RecordRow({ icon: Icon, to, title, chip, amount, muted, last }) 
   );
   const className = cn(
     'flex h-11 items-center gap-4 px-5 no-underline transition-colors duration-150',
-    !last && 'border-b border-border',
+    !last && !action && 'border-b border-border',
     to && 'hover:bg-secondary'
   );
-  return to ? <Link to={to} className={className}>{inner}</Link> : <div className={className}>{inner}</div>;
+  const row = to ? <Link to={to} className={className}>{inner}</Link> : <div className={className}>{inner}</div>;
+  // A button inside the row's own link would be a control inside a link, so
+  // an action sits beside the link rather than within it and the row keeps
+  // one border between the two.
+  if (!action) return row;
+  return (
+    <div className={cn('flex items-center', !last && 'border-b border-border')}>
+      <div className="min-w-0 flex-1">{row}</div>
+      <div className="shrink-0 pr-5">{action}</div>
+    </div>
+  );
 }
 
 /** The states a row can be in, as the design draws them: never hue alone. */

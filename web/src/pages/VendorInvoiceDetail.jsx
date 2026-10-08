@@ -5,11 +5,13 @@ import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, ErrorState, useToast } from '../components/ui.jsx';
 import { Chip, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
-import { PayVendorDialog } from '../components/actions.jsx';
+import { CorrectVendorPaymentDialog, PayVendorDialog, VendorPaymentHistory } from '../components/vendorPayments.jsx';
 import { Button } from '../components/ui/button';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
+import { agencyInvoiceChip, mayCorrectVendorPayment, mayRecordVendorPayment, paymentTotals } from '../lib/vendorPayments.js';
 import { creditNoteFields, vendorInvoiceFields } from './VendorInvoices.jsx';
 
 /**
@@ -21,12 +23,18 @@ export default function VendorInvoiceDetail() {
   const { id } = useParams();
   const lookups = useLookups();
   const toast = useToast();
+  const { isAdmin, isHr } = useAuth();
+  const mayPay = mayRecordVendorPayment({ isAdmin, isHr });
+  const mayCorrect = mayCorrectVendorPayment({ isAdmin });
   const [dialog, setDialog] = useState(null);
   const [busy, setBusy] = useState(false);
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/vendor-invoices/${encodeURIComponent(id)}/full`), [id]);
   const invoice = data?.data?.invoice;
   const lines = data?.data?.lines ?? [];
   const credits = data?.data?.credit_notes ?? [];
+  // Absent, not empty, for a role the server will not show the ledger to:
+  // the key is left out of the reply altogether, so the history is not drawn.
+  const payments = data?.data?.payments;
   const trips = [...new Set(lines.map((l) => l.travel_id))];
   const { data: legData } = useFetch(
     () => (trips.length ? Promise.all(trips.map((t) => api.list('travel-segments', { travel_id: t }))) : Promise.resolve([])),
@@ -76,8 +84,8 @@ export default function VendorInvoiceDetail() {
       markTone={invoice.payment_status === 'Overdue' ? 'late' : undefined}
       action={
         <div className="flex gap-2">
-          {invoice.payment_status !== 'Paid' && invoice.invoice_amount !== null && (
-            <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setDialog({ type: 'pay' })}>Pay</Button>
+          {mayPay && invoice.payment_status !== 'Paid' && invoice.invoice_amount !== null && (
+            <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setDialog({ type: 'pay' })}>Record payment</Button>
           )}
           <Button size="sm" variant="outline" className="h-8 px-4 text-[13px]" onClick={() => setDialog({ type: 'invoice' })}>Edit invoice</Button>
         </div>
@@ -86,14 +94,25 @@ export default function VendorInvoiceDetail() {
         <span key="ref" className="num text-[12px]">{invoice.vendor_invoice_id}</span>,
         invoice.invoice_date && `Dated ${date(invoice.invoice_date)}`,
         invoice.pay_by && `Pay by ${date(invoice.pay_by)}`,
-        <Chip key="status" tone={invoice.payment_status === 'Overdue' ? 'late' : invoice.payment_status === 'Paid' ? 'settled' : 'waiting'}>{invoice.payment_status}</Chip>,
+        // The view's own `payment_status`, worded so it cannot be read as
+        // what a client owes us (#214). No second calculation here.
+        (() => {
+          const chip = agencyInvoiceChip(invoice.payment_status);
+          return chip && <Chip key="status" tone={chip.tone}>{chip.label}</Chip>;
+        })(),
         invoice.vendor_gstin_on_invoice && `GSTIN ${invoice.vendor_gstin_on_invoice}`,
       ]}
       stats={
         <>
           <RecordStat label="Invoice total" value={invoice.invoice_amount === null ? '—' : money(invoice.invoice_amount)} detail={`${lines.length} line${lines.length === 1 ? '' : 's'} · ${invoice.trip_count} trip${invoice.trip_count === 1 ? '' : 's'}`} />
           <RecordStat label="Credit notes" value={money(invoice.credited)} detail={credits.length ? `${credits.length} against this bill` : 'None'} />
-          <RecordStat label="To pay" value={money(invoice.net_payable === null ? null : Number(invoice.net_payable) - Number(invoice.amount_paid))} detail={`${money(invoice.amount_paid)} paid of ${money(invoice.net_payable)}`} />
+          <RecordStat
+            label="To pay"
+            value={money(invoice.net_payable === null ? null : Number(invoice.net_payable) - Number(invoice.amount_paid))}
+            detail={payments
+              ? `${money(invoice.amount_paid)} settled of ${money(invoice.net_payable)} — ${money(paymentTotals(payments).cash)} transferred, ${money(paymentTotals(payments).tds)} TDS`
+              : `${money(invoice.amount_paid)} settled of ${money(invoice.net_payable)}`}
+          />
         </>
       }
     >
@@ -169,6 +188,15 @@ export default function VendorInvoiceDetail() {
         ))}
       </RecordSection>
 
+      <VendorPaymentHistory
+        payments={payments}
+        action={mayCorrect && payments?.length > 0 && (
+          <Button size="sm" variant="outline" className="h-7 px-3 text-[12.5px]" onClick={() => setDialog({ type: 'correct' })}>
+            Correct a payment
+          </Button>
+        )}
+      />
+
       <RecordSection title="The bill" hint="the agency's PDF">
         {invoice.document_id ? (
           <RecordRow icon={FileText} title={<a className="underline underline-offset-2" href={api.documentUrl(invoice.document_id)} target="_blank" rel="noreferrer">{invoice.document_name || 'Invoice PDF'}</a>} last />
@@ -198,6 +226,9 @@ export default function VendorInvoiceDetail() {
       )}
       {dialog?.type === 'pay' && (
         <PayVendorDialog invoice={invoice} onClose={close} onDone={changed} />
+      )}
+      {dialog?.type === 'correct' && (
+        <CorrectVendorPaymentDialog invoice={invoice} payments={payments ?? []} onClose={close} onDone={changed} />
       )}
       {dialog?.type === 'delete' && (
         <ConfirmDialog title={dialog.title} message="This cannot be undone." confirmLabel="Remove" busy={busy} onConfirm={remove} onClose={close} />
