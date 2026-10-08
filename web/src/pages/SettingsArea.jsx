@@ -118,7 +118,7 @@ const GROUPS = [
       { to: 'import', label: 'Import', element: <BulkImport />, adminOnly: true },
       { to: 'import-travel', label: 'Import travel', element: <TravelImport />, adminOnly: true, hr: true },
       { to: 'emails', label: 'Emails & jobs', element: <Emails />, adminOnly: true },
-      { to: 'client-emails', label: 'Client emails', element: <ClientEmails />, adminOnly: true },
+      { to: 'client-emails', label: 'Client emails', element: <ClientEmails /> },
     ],
   },
 ];

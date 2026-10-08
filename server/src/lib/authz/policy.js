@@ -303,10 +303,10 @@ export const routes = [
   { method: 'POST', path: '/api/companies/:id/merge', access: mustBeAdmin, why: 'A merge folds every record of one client into another and deletes the loser. It cannot be undone from the UI.' },
 
   // --------------------------------------------------------------- emails
-  { method: 'GET', path: '/api/emails', access: signedIn },
-  { method: 'GET', path: '/api/emails/:id', access: signedIn },
+  { method: 'GET', path: '/api/emails', access: signedIn, restrictions: ['record-owner'], note: 'A sales user sees only the client emails on records they own; an admin sees every email.' },
+  { method: 'GET', path: '/api/emails/:id', access: signedIn, restrictions: ['record-owner'], note: 'An email that is not a client email on one of the caller\'s records is a 404 for a sales user.' },
   { method: 'POST', path: '/api/emails/test', access: mustBeAdmin, why: 'It sends real mail to an address the caller names — an effect outside the application.' },
-  { method: 'GET', path: '/api/client-emails', access: mustBeAdmin, why: 'Every client email the tracker composed, with the client\'s address, and the switches that hold them.' },
+  { method: 'GET', path: '/api/client-emails', access: signedIn, restrictions: ['record-owner'], note: 'An admin sees every client email and whose record it is on; a sales user only the client emails on records they own. HR is refused.' },
   { method: 'PUT', path: '/api/client-emails', access: mustBeAdmin, why: 'Holding or releasing client email decides whether clients hear from the company at all.' },
 
   // ------------------------------------------------------------- pipeline

@@ -173,7 +173,7 @@ session is **401**, before any of these is considered.
 | **/api/cashflow** | | |
 | `GET /api/cashflow` | any |  |
 | **/api/client-emails** | | |
-| `GET /api/client-emails` | **admin** | Every client email the tracker composed, with the client's address, and the switches that hold them. |
+| `GET /api/client-emails` | any | An admin sees every client email and whose record it is on; a sales user only the client emails on records they own. HR is refused. |
 | `PUT /api/client-emails` | **admin** | Holding or releasing client email decides whether clients hear from the company at all. |
 | **/api/client-errors** | | |
 | `POST /api/client-errors` | any | Mounted after requireAuth: browser errors are reported by signed-in people only. |
@@ -210,8 +210,8 @@ session is **401**, before any of these is considered.
 | `POST /api/documents` | any |  |
 | `GET /api/documents/:id` | any |  |
 | **/api/emails** | | |
-| `GET /api/emails` | any |  |
-| `GET /api/emails/:id` | any |  |
+| `GET /api/emails` | any | A sales user sees only the client emails on records they own; an admin sees every email. |
+| `GET /api/emails/:id` | any | An email that is not a client email on one of the caller's records is a 404 for a sales user. |
 | `POST /api/emails/test` | **admin** | It sends real mail to an address the caller names — an effect outside the application. |
 | **/api/expense-claims** | | |
 | `POST /api/expense-claims/:id/correct` | **admin** | The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up. |

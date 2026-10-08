@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Alert, DataTable, Empty, ErrorState, KeyValues, useToast } from '../components/ui.jsx';
 import { Chip, RecordSection } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { SettingsPane } from './SettingsArea.jsx';
 import { EmailBody } from './Emails.jsx';
 import { api } from '../lib/api.js';
@@ -17,6 +18,10 @@ import { useFetch } from '../lib/hooks.js';
  * can be live for the team while clients hear nothing until an admin
  * releases them. A held email is still written to the log, which is the
  * table at the bottom: what would have gone out, to whom, and why it did not.
+ *
+ * Everyone but HR sees it. A sales user sees the list read-only, with the
+ * emails and counts for the records they own; an admin sees every owner's,
+ * can narrow the list to one owner, and is the only one who can hold.
  */
 
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
@@ -37,7 +42,8 @@ export default function ClientEmails() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(null);
-  const overview = useFetch(() => api.raw('/client-emails'), []);
+  const [owner, setOwner] = useState('');
+  const overview = useFetch(() => api.raw(`/client-emails${owner ? `?owner=${owner}` : ''}`), [owner]);
   const d = overview.data?.data;
 
   async function save(body, done) {
@@ -56,13 +62,16 @@ export default function ClientEmails() {
   const sentence = deliverySentence(d);
   const labels = Object.fromEntries(d.scenarios.map((s) => [s.key, s.label]));
   const heldCount = d.scenarios.filter((s) => s.held).length;
+  const ownerName = d.owners.find((o) => String(o.id) === owner)?.name;
 
   return (
     <>
       <SettingsPane
         title="Client emails"
-        description="Every email the tracker can send to a client and when it goes. Hold them all, or one kind at a time, and the team's own email carries on. A held email is logged here and is not sent later."
-        actions={(
+        description={d.can_change
+          ? "Every email the tracker can send to a client and when it goes. Hold them all, or one kind at a time, and the team's own email carries on. A held email is logged here and is not sent later."
+          : 'Every email the tracker can send to a client and when it goes, with the ones sent for the records you own. Only an admin can hold them.'}
+        actions={d.can_change && (
           <Button
             variant={d.hold_all ? 'outline' : 'default'}
             size="sm"
@@ -87,84 +96,101 @@ export default function ClientEmails() {
           </div>
         </RecordSection>
 
-        <RecordSection title="What goes to clients" hint={`${d.scenarios.length} kinds · counts are the last 30 days`}>
+        <RecordSection title="What goes to clients" hint={`${d.scenarios.length} kinds · counts are the last 30 days${d.only_mine ? ', your records' : ownerName ? `, ${ownerName}'s records` : ''}`}>
           <DataTable
             label="Kinds of client email"
             rows={d.scenarios}
             columns={[
               {
                 key: 'label', header: 'Email', render: (s) => (
-                  <>
+                  <div className="min-w-[150px]">
                     <div className="font-semibold text-foreground">{s.label}</div>
                     <div className="small muted">{s.automatic ? 'Sent on its own' : 'Sent when someone acts'}</div>
-                  </>
+                  </div>
                 ),
               },
               {
                 key: 'when', header: 'When it goes', className: 'wrap', render: (s) => (
-                  <>
+                  <div className="max-w-[46ch]">
                     <div>{s.when}</div>
-                    <div className="small muted">To: {s.to}</div>
-                    {s.skips && <div className="small muted">Not sent for: {s.skips}</div>}
-                  </>
+                    <div className="small muted" title={s.skips ? `Not sent for: ${s.skips}` : undefined}>To: {s.to}</div>
+                  </div>
                 ),
               },
               {
                 key: 'counts', header: 'Last 30 days', className: 'small', render: (s) => (
-                  <>
-                    <div className="num whitespace-nowrap">{number(s.last_30_days.sent)} sent</div>
-                    <div className="num whitespace-nowrap">{number(s.last_30_days.held)} held</div>
-                    {s.last_30_days.failed > 0 && <div className="num text-late">{number(s.last_30_days.failed)} failed</div>}
+                  <div className="whitespace-nowrap">
+                    <div className="num">{number(s.last_30_days.sent)} sent · {number(s.last_30_days.held)} held{s.last_30_days.failed > 0 && <span className="text-late"> · {number(s.last_30_days.failed)} failed</span>}</div>
                     {s.last_at && <div className="muted">last {ago(s.last_at)}</div>}
-                  </>
+                  </div>
                 ),
               },
               {
-                key: 'held', header: 'Status', render: (s) => (
-                  <Chip tone={s.held ? 'waiting' : 'settled'}>{s.held ? 'Held' : 'Goes out'}</Chip>
+                key: 'held', header: 'Status', align: 'right', render: (s) => (
+                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                    <Chip tone={s.held ? 'waiting' : 'settled'}>{s.held ? 'Held' : 'Goes out'}</Chip>
+                    {d.can_change && !d.hold_all && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className={ROW_BUTTON}
+                        disabled={busy}
+                        aria-label={`${s.held_here ? 'Release' : 'Hold'} ${s.label}`}
+                        onClick={() => save({ held: { [s.key]: !s.held_here } }, s.held_here ? `${s.label} released` : `${s.label} held`)}
+                      >
+                        {s.held_here ? 'Release' : 'Hold'}
+                      </Button>
+                    )}
+                  </div>
                 ),
-              },
-              {
-                key: 'action', header: '', align: 'right', render: (s) => (d.hold_all ? (
-                  <span className="small muted">Held with all</span>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={ROW_BUTTON}
-                    disabled={busy}
-                    onClick={() => save({ held: { [s.key]: !s.held_here } }, s.held_here ? `${s.label} released` : `${s.label} held`)}
-                  >
-                    {s.held_here ? 'Release' : 'Hold'}
-                  </Button>
-                )),
               },
             ]}
           />
+          {d.can_change && d.hold_all && (
+            <p className="border-t border-border px-5 py-3 text-[12.5px] text-muted-foreground">Every kind is held while all client emails are held. Release them to hold one kind at a time.</p>
+          )}
         </RecordSection>
 
-        <RecordSection title="Recent client emails" hint={`sent, held or failed, newest first · ${number(d.recent.length)} shown`}>
+        <RecordSection
+          title="Recent client emails"
+          hint={`newest first · ${number(d.recent.length)} shown${d.only_mine ? ' · on records you own' : ''}`}
+          action={d.can_change && d.owners.length > 0 && (
+            <Select value={owner || 'all'} onValueChange={(v) => setOwner(v === 'all' ? '' : v)}>
+              <SelectTrigger size="sm" className="h-7 text-[12.5px]" aria-label="Show the emails on one owner's records"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-[12.5px]">All owners</SelectItem>
+                {d.owners.map((o) => <SelectItem key={o.id} value={String(o.id)} className="text-[12.5px]">{o.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        >
           <DataTable
             label="Recent client emails"
             rows={d.recent}
             onRowClick={(r) => setOpen(r)}
             columns={[
-              { key: 'created_at', header: 'When', className: 'small', render: (r) => ago(r.created_at) },
-              { key: 'to_email', header: 'To', className: 'mono small' },
-              { key: 'subject', header: 'Subject', className: 'wrap strong' },
-              { key: 'template', header: 'Kind', render: (r) => <Chip>{labels[r.template] || r.template}</Chip> },
+              { key: 'created_at', header: 'When', className: 'small whitespace-nowrap', render: (r) => ago(r.created_at) },
               {
-                key: 'status', header: 'Status', render: (r) => (
+                key: 'subject', header: 'Email', className: 'wrap', render: (r) => (
                   <>
-                    <Chip tone={statusTone(r.status)}>{statusWord(r.status)}</Chip>
-                    {r.reason && <div className="small muted">{r.reason}</div>}
-                    {r.error && <div className="small text-late">{r.error}</div>}
+                    <div className="font-semibold text-foreground">{r.subject}</div>
+                    <div className="small muted">{labels[r.template] || r.template} · to <span className="mono">{r.to_email}</span></div>
                   </>
                 ),
               },
-              { key: 'sent_by', header: 'By', className: 'small muted' },
+              ...(d.can_change ? [{ key: 'owners', header: 'Owner', className: 'small whitespace-nowrap', render: (r) => (r.owners?.length ? r.owners.join(', ') : <span className="muted">No owner</span>) }] : []),
+              {
+                key: 'status', header: 'Status', render: (r) => (
+                  <div className="max-w-[220px]">
+                    <Chip tone={statusTone(r.status)}>{statusWord(r.status)}</Chip>
+                    {r.reason && <div className="small muted truncate" title={r.reason}>{r.reason}</div>}
+                    {r.error && <div className="small text-late truncate" title={r.error}>{r.error}</div>}
+                  </div>
+                ),
+              },
+              { key: 'sent_by', header: 'By', className: 'small muted whitespace-nowrap' },
             ]}
-            empty={<Empty title="No client emails yet" text="Each email the tracker composes for a client appears here, whether it went out or was held." />}
+            empty={<Empty title="No client emails yet" text={d.only_mine ? 'Emails to clients on the records you own appear here, whether they went out or were held.' : 'Each email the tracker composes for a client appears here, whether it went out or was held.'} />}
           />
         </RecordSection>
       </SettingsPane>

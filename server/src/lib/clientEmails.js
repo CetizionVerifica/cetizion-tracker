@@ -117,3 +117,55 @@ export async function clientEmailHold(db, template) {
   if (held.includes(template)) return `${LABELS[template].toLowerCase()} emails are held by an admin`;
   return null;
 }
+
+/**
+ * Whose email it is. SQL for the ids of the users who own the
+ * record a logged email is about, for an email_log row aliased `e`:
+ *
+ *   quotation       the quotation's owner
+ *   payment_stage   the owner of the PO's quotation or of its project
+ *   company         anyone who owns a quotation, project or enquiry there
+ *                   (payment reminders, portal links and replies, visit
+ *                   confirmations are logged against the company)
+ *   email_thread    the same, for the company the thread is tied to
+ *
+ * Only owners who are active users of the app count: an owner who cannot
+ * sign in has no view to see it in, and is not listed against it.
+ * An email whose record has no owner is the admin's alone.
+ */
+export const emailOwnersSql = (e = 'e') => `ARRAY(
+  SELECT DISTINCT x.o FROM (
+    SELECT q.owner_user_id AS o FROM quotations q
+     WHERE ${e}.entity = 'quotation' AND q.quotation_no = ${e}.entity_id
+    UNION ALL
+    SELECT q.owner_user_id FROM payment_stages s
+      JOIN purchase_orders po ON po.po_number = s.po_number
+      JOIN quotations q ON q.quotation_no = po.quotation_no
+     WHERE ${e}.entity = 'payment_stage' AND s.id::text = ${e}.entity_id
+    UNION ALL
+    SELECT p.owner_user_id FROM payment_stages s
+      JOIN purchase_orders po ON po.po_number = s.po_number
+      JOIN projects p ON p.project_id = po.project_id
+     WHERE ${e}.entity = 'payment_stage' AND s.id::text = ${e}.entity_id
+    UNION ALL
+    SELECT r.owner_user_id FROM (
+        SELECT company_id, owner_user_id FROM quotations
+        UNION ALL SELECT company_id, owner_user_id FROM projects
+        UNION ALL SELECT company_id, owner_user_id FROM enquiries) r
+     WHERE r.company_id = CASE
+       WHEN ${e}.entity = 'company' AND ${e}.entity_id ~ '^[0-9]+$' THEN ${e}.entity_id::int
+       WHEN ${e}.entity = 'email_thread' AND ${e}.entity_id ~ '^[0-9]+$' THEN (SELECT t.company_id FROM email_threads t WHERE t.id = ${e}.entity_id::int)
+     END
+  ) x JOIN users u ON u.id = x.o AND u.active
+)`;
+
+/**
+ * A predicate limiting email_log rows aliased `e` to the client emails on
+ * the caller's own records, or '' for someone who sees everything. Pushes
+ * its value onto `params`, like ownerClause.
+ */
+export function ownEmailClause(scope, params, e = 'e') {
+  if (scope.unrestricted) return '';
+  params.push(CLIENT_EMAIL_KEYS, scope.ownerId);
+  return `(${e}.template = ANY($${params.length - 1}) AND $${params.length} = ANY(${emailOwnersSql(e)}))`;
+}

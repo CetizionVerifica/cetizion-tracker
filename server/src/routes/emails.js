@@ -9,7 +9,9 @@
  *
  * Reading is open to anyone signed in: the log and the job registry are how
  * somebody checks whether the reminder their client mentions actually went
- * out, and that is an ordinary question to have.
+ * out, and that is an ordinary question to have. A sales user's log holds
+ * only that, though: the client emails on records they own
+ * (lib/clientEmails.js ownEmailClause). An admin's holds every email.
  *
  * Making something happen is not. The two POSTs below are admin-only —
  * see each for why. Nothing here is the route by which the application's
@@ -32,6 +34,8 @@ import { config } from '../config.js';
 import { pool, query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
+import { scopeOf } from '../auth/ownership.js';
+import { ownEmailClause } from '../lib/clientEmails.js';
 import { testEmail } from '../lib/emailTemplates.js';
 import { decideDelivery, mailConfigured, sendMail } from '../lib/mail.js';
 import { isJob, JOBS, lastRuns, runJob } from '../jobs.js';
@@ -41,6 +45,8 @@ export const jobRouter = Router();
 
 emailRouter.get('/', async (req, res) => {
   const params = []; const where = [];
+  const mine = ownEmailClause(scopeOf(req), params, 'email_log');
+  if (mine) where.push(mine);
   if (req.query.status) { params.push(String(req.query.status)); where.push(`status = $${params.length}`); }
   if (req.query.entity) { params.push(String(req.query.entity)); where.push(`entity = $${params.length}`); }
   if (req.query.entity_id) { params.push(String(req.query.entity_id)); where.push(`entity_id = $${params.length}`); }
@@ -57,7 +63,9 @@ emailRouter.get('/', async (req, res) => {
 emailRouter.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new ApiError(404, 'Email not found');
-  const { rows } = await query('SELECT * FROM email_log WHERE id = $1', [id]);
+  const params = [id];
+  const mine = ownEmailClause(scopeOf(req), params, 'email_log');
+  const { rows } = await query(`SELECT * FROM email_log WHERE id = $1${mine ? ` AND ${mine}` : ''}`, params);
   if (!rows.length) throw new ApiError(404, 'Email not found');
   res.json({ data: rows[0] });
 });

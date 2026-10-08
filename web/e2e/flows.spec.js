@@ -596,7 +596,7 @@ test('an admin sees every client email and can hold them', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Hold all client emails' }).click();
   await expect(page.getByText(/Each one is logged below and none reaches a client/)).toBeVisible();
-  await expect(table.getByText('Held with all').first()).toBeVisible();
+  await expect(page.getByText('Every kind is held while all client emails are held.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Release client emails' }).click();
   await expect(page.getByRole('button', { name: 'Hold all client emails' })).toBeVisible();
