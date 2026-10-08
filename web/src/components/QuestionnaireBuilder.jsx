@@ -236,7 +236,7 @@ function StepEditor({ def, step, index, count, onChange, onMove, onRemove }) {
     setOpen(i + 1);
   };
   return (
-    <section className="rounded-[10px] border border-border bg-card p-4">
+    <section className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-wrap items-end gap-3">
         <div className="small muted" style={{ alignSelf: 'center' }}>Step {index + 1}</div>
         <div className="min-w-[200px] flex-1"><Field label="Title"><Input value={step.title} onChange={(e) => onChange({ ...step, title: e.target.value })} /></Field></div>

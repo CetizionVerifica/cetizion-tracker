@@ -35,7 +35,7 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'nume
 function Sheet({ children }) {
   return (
     <div className="min-h-dvh bg-background px-4 py-10 sm:px-6 sm:py-16">
-      <Card className="mx-auto w-full max-w-[720px] gap-0 rounded-[14px] py-0">
+      <Card className="mx-auto w-full max-w-[720px] gap-0 rounded-xl py-0">
         <CardContent className="px-5 py-6 sm:px-8 sm:py-8">{children}</CardContent>
       </Card>
     </div>
