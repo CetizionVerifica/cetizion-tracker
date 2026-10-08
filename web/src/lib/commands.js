@@ -22,9 +22,6 @@
  * keep `hint` to the thing somebody needs to know before choosing it.
  */
 
-/** A record the palette is acting on, when the person picked one first. */
-export const NEEDS_RECORD = 'needs-record';
-
 /**
  * The fields a step asks for.
  *

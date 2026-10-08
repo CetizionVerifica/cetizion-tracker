@@ -87,8 +87,6 @@
 .set-mono { font-variant-numeric: tabular-nums; letter-spacing: .02em; overflow-wrap: anywhere; }
 .set-hidden-row { color: var(--text2); }
 .set-passed td { color: var(--muted) !important; }
-.mg-table td.set-wide { white-space: normal; min-width: 180px; }
-.mg-table td.set-wide > * { min-width: 180px; }
 .set-panel-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 22px 16px; border-top: 1px solid var(--line); }
 .set-panel-foot > span { font-size: 12.5px; color: var(--muted); }
 .set-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -221,10 +219,6 @@
 /* My account. */
 .acc-who { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 24px; }
 .acc-who .mg-avatar { width: 52px; height: 52px; font-size: 17px; flex: none; }
-.acc-who__text { flex: 1 1 200px; min-width: 0; }
-.acc-who__text b { display: block; font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
-.acc-who__text small { display: block; font-size: 13px; color: var(--text2); overflow-wrap: anywhere; }
-.acc-who__chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .acc-tabs { display: none; }
 @media (max-width: 1099px) { .acc-tabs { display: flex; } }
 .acc-list { display: flex; flex-direction: column; }

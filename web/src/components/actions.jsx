@@ -627,7 +627,7 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
             <Input
               value=""
               placeholder={nextProjectId ? `${nextProjectId} (next number)` : 'Assigned on save'}
-              className="input mono"
+              className="mono"
               disabled
               readOnly
             />

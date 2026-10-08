@@ -53,14 +53,6 @@ export function localDate(value) {
   return date(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString());
 }
 
-/** "14 Sep 2026 – 21 Sep 2026", "From 1 Jan 2026", "Up to 21 Sep 2026", or "All time". */
-export function periodLabel({ from, to } = {}) {
-  if (from && to) return `${date(from)} – ${date(to)}`;
-  if (from) return `From ${date(from)}`;
-  if (to) return `Up to ${date(to)}`;
-  return 'All time';
-}
-
 const MINUTE = 60_000;
 
 /** "12 min ago", "2 hours ago", "3 days ago" — or null when never. */

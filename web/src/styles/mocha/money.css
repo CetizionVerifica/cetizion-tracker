@@ -32,7 +32,6 @@
 .app-textbtn:hover { text-decoration: underline; text-underline-offset: 3px; }
 .is-late-text { color: var(--late); }
 .is-wait-text { color: var(--caramel-text); }
-.is-ok-text { color: var(--ok); }
 
 /* Collections: the age chart, whose bands are filters. */
 .app-age { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; align-items: end; }

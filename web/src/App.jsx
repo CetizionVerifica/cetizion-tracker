@@ -126,7 +126,7 @@ function TravelDeskOnly({ children }) {
 }
 
 const Lazy = ({ children }) => (
-  <Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}>{children}</Suspense>
+  <Suspense fallback={<div className="page"><div className="mg-skel" style={{ height: 320 }} /></div>}>{children}</Suspense>
 );
 
 export default function App() {

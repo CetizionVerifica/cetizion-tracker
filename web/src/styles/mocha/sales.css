@@ -88,7 +88,6 @@
 .app-sub { display: block; font-size: 12px; color: var(--muted); }
 .app-late { color: var(--late); font-weight: 700; }
 .mg-rows .mg-row.is-clickable { cursor: pointer; }
-.app-rowmenu { grid-column: 1 / -1; display: flex; justify-content: flex-end; margin-top: -2px; }
 
 /* Record pages: crumbs bar, the header card, tabs and rail. */
 .app-rec__bar { display: flex; align-items: center; gap: 12px; min-height: 52px; }
@@ -239,9 +238,6 @@ a.app-recrow:hover { background: var(--track); }
 .app-portal { display: flex; flex-direction: column; gap: 12px; }
 .app-portal__sections { display: flex; flex-wrap: wrap; gap: 8px; }
 .app-portal__sections .mg-chip[aria-pressed="false"] { opacity: .78; }
-.app-preview { border: 1px solid var(--line); border-radius: 22px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.app-preview .portal { max-width: none; }
-.app-preview .accept__card { border: 0; background: transparent; padding: 0; }
 
 /* Companies: the duplicate groups. */
 .app-dupes { border-radius: 26px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }

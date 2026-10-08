@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Check, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from './ui/dropdown-menu';
@@ -70,22 +69,6 @@ export function RecordStat({ label, value, detail, tone, badge }) {
   );
 }
 
-/** A card with a header: a title, an optional hint, an optional action. */
-export function RecordSection({ title, hint, action, children, className }) {
-  return (
-    <Card className={cn(PANEL, 'overflow-hidden', className)}>
-      <CardHeader className="flex min-h-12 flex-row flex-wrap items-center gap-x-3 gap-y-1 space-y-0 border-b border-border px-5 py-2.5">
-        {/* The title never shrinks: letting it wrap broke the header and
-            pushed it into the hint beside it. The hint wraps instead. */}
-        <CardTitle className="shrink-0 text-[14.5px] font-bold text-foreground">{title}</CardTitle>
-        {hint && <span className="min-w-0 flex-[1_1_160px] text-[12.5px] font-normal text-muted-foreground">{hint}</span>}
-        {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
-      </CardHeader>
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
-  );
-}
-
 /**
  * A row: an icon square, what it is and its meta line, then how much with
  * its state under it. The amount is right-aligned in tabular figures, so a
@@ -143,19 +126,6 @@ export function RailPerson({ name, detail, last, badge }) {
         {detail && <div className="text-[12px] text-muted-foreground">{detail}</div>}
       </div>
       {badge}
-    </div>
-  );
-}
-
-/** Something that happened, in the rail: what, when, and one line of detail. */
-export function RailEvent({ what, when, detail, last }) {
-  return (
-    <div className={cn('px-5 py-3', !last && 'border-b border-border')}>
-      <div className="flex gap-2">
-        <span className="text-[12.5px] font-semibold text-foreground">{what}</span>
-        <span className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">{when}</span>
-      </div>
-      {detail && <div className="mt-0.5 text-[12px] text-secondary-text">{detail}</div>}
     </div>
   );
 }

@@ -40,7 +40,6 @@
 .app-ib__toolrow { display: flex; align-items: center; gap: 6px; }
 .app-ib__filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .app-ib__filters .app-ib__count { margin-left: auto; font-size: 12px; color: var(--muted); }
-.app-ib__note { margin: 0; padding: 0 2px; font-size: 12px; color: var(--muted); }
 
 /* Conversation rows: one option each. */
 .app-ib__rows { flex: 1; min-height: 0; overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; outline: none; }
@@ -117,7 +116,6 @@
 .app-ib__prompt > button:first-child { flex: 1; min-width: 0; height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass-strong); color: var(--muted); font: inherit; font-size: 13.5px; text-align: left; cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-ib__composehead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .app-ib__composehead label { flex: 1 1 200px; min-width: 0; font-size: 12.5px; font-weight: 700; overflow-wrap: anywhere; }
-.app-ib__composer textarea { min-height: 112px; }
 .app-ib__hint { margin: 0; font-size: 12px; color: var(--muted); }
 .app-ib__sendrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .app-ib__sendrow > :last-child { margin-left: auto; }
@@ -163,7 +161,6 @@
 .app-msg__facts dd { font-weight: 600; overflow-wrap: anywhere; }
 .app-msg__paper { max-width: 680px; min-width: 0; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-strong); overflow: hidden; }
 .app-msg__frame { display: block; width: 100%; height: 64px; border: 0; background: transparent; }
-.app-msg__frame.is-own { background: #fff; }
 .app-msg__quoted { align-self: flex-start; margin: 0 0 10px 10px; }
 .app-msg__note { margin: 0; padding: 12px 14px; border-radius: 14px; background: var(--track); font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
 .app-msg .mg-banner { flex-wrap: wrap; align-items: center; padding: 10px 12px 10px 14px; }

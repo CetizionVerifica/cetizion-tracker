@@ -1,10 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useMemo } from 'react';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
-import { TriangleAlert, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -62,29 +61,6 @@ export function Card({ title, hint, actions, children, flush = false, className 
 
 /* ------------------------------------------------------------------ stat */
 
-export function Stat({ label, value, meta, tone = '', to, onClick }) {
-  const accent = {
-    danger: 'text-late',
-    warning: 'text-waiting',
-    success: 'text-settled',
-    info: 'text-info',
-  }[tone];
-  const className = cn(
-    'mg-glass flex min-w-0 flex-col gap-1 px-5 py-4 text-left transition-[box-shadow,border-color] duration-150',
-    (to || onClick) && 'hover:border-caramel/50'
-  );
-  const inner = (
-    <>
-      <div className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{label}</div>
-      <div className={cn('num text-2xl font-semibold', accent || 'text-foreground')}>{value}</div>
-      {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
-    </>
-  );
-  if (to) return <Link className={className} to={to}>{inner}</Link>;
-  if (onClick) return <button type="button" className={className} onClick={onClick}>{inner}</button>;
-  return <div className={className}>{inner}</div>;
-}
-
 
 /* ----------------------------------------------------------------- badge */
 
@@ -111,7 +87,7 @@ export function DocumentLink({ id, name }) {
   if (!id) return <span className="muted">—</span>;
   return (
     <a
-      className="btn btn--sm btn--ghost"
+      className="mg-btn mg-btn--sm mg-btn--ghost"
       href={api.documentUrl(id)}
       target="_blank"
       rel="noopener noreferrer"
@@ -405,7 +381,7 @@ export function Combo({ options = [], listId, error, ...props }) {
   const id = useMemo(() => listId || `combo-${Math.random().toString(36).slice(2)}`, [listId]);
   return (
     <>
-      <input className={`input ${error ? 'has-error' : ''}`} list={id} {...props} />
+      <input className={cn('mg-input', error && 'border-late')} aria-invalid={error ? true : undefined} list={id} {...props} />
       <datalist id={id}>
         {options.map((opt) => (
           <option key={typeof opt === 'string' ? opt : opt.value} value={typeof opt === 'string' ? opt : opt.value} />
@@ -452,44 +428,6 @@ export function Progress({ value }) {
 }
 
 
-export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
-  const max = providedMax ?? Math.max(...items.map((i) => Number(i.value) || 0), 1);
-  if (!items.length) return <Empty title="No data yet" />;
-  return (
-    <div className="flex flex-col gap-3">
-      {items.map((item, i) => (
-        <div key={item.label ?? i} className="flex flex-col gap-1">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="min-w-0 truncate text-[13px] text-foreground" title={item.label}>
-              {item.label || 'Not recorded'}
-            </span>
-            <span className="num shrink-0 text-[12.5px] text-secondary-foreground">{valueFormat(item.value, item)}</span>
-          </div>
-          <div className="h-2.5 overflow-hidden rounded-full bg-track">
-            <div
-              className="h-full rounded-full bg-figure"
-              style={{ width: `${((Number(item.value) || 0) / max) * 100}%` }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-
-export function KeyValues({ items }) {
-  return (
-    <dl className="auto-grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
-      {items.filter(Boolean).map((item) => (
-        <div key={item.label} className="min-w-0">
-          <dt className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{item.label}</dt>
-          <dd className="mt-0.5 ml-0 text-[13px] text-foreground">{item.value ?? <span className="text-muted-foreground">—</span>}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
 
 export function Tabs({ tabs, active, onChange }) {
@@ -539,17 +477,6 @@ export function Alert({ tone = 'info', children }) {
   );
 }
 
-
-export function ErrorState({ message, onRetry }) {
-  return (
-    <Empty
-      icon={<TriangleAlert className="size-6" strokeWidth={1.75} />}
-      title="Could not load this"
-      text={message}
-      action={onRetry && <Button variant="outline" size="sm" onClick={onRetry}>Try again</Button>}
-    />
-  );
-}
 
 
 /* ---------------------------------------------------------------- toasts */

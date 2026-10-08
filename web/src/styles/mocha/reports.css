@@ -173,7 +173,7 @@ a.rp-tile:hover, a.rp-tile:focus-visible { background: var(--track); }
 .rp-dl a:hover { background: var(--track); }
 .rp-dl a svg { color: var(--caramel-text); flex: none; }
 .rp-dl a span { color: var(--muted); font-weight: 600; margin-left: auto; font-size: 12px; }
-.rp-sched-sub td .sub, .rp-twin .mg-table .sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.rp-twin .mg-table .sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
 
 /* ── Scheduled reports ── */
 .rp-card { display: flex; flex-direction: column; gap: 14px; min-width: 0; }

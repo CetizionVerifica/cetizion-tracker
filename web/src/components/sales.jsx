@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Download, FileSpreadsheet, FileText, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
@@ -214,11 +213,4 @@ export function daysFrom(iso) {
   const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
   const t = new Date(); t.setHours(0, 0, 0, 0);
   return Math.round((d - t) / 864e5);
-}
-
-/** Re-renders once a minute is enough for relative words; nothing more. */
-export function useNow() {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
-  return now;
 }

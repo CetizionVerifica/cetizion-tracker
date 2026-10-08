@@ -243,7 +243,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
         >
           <Input
             type="text"
-            className="input mono"
+            className="mono"
             value={value ?? ''}
             disabled
             readOnly
@@ -266,7 +266,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
       >
         <Input
           type="text"
-          className="input mono"
+          className="mono"
           value={value ?? ''}
           placeholder={preview ?? 'Assigned on save'}
           onChange={(e) => onChange(e.target.value)}
@@ -343,7 +343,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
     <Field label={field.label} required={field.required} hint={hint} error={error} as={field.type === 'document' ? 'div' : 'label'}>
       {control}
       {warning && !error && (
-        <span className="field__hint" role="status" style={{ color: 'var(--wait)' }}>{warning}</span>
+        <span className="mg-field__hint" role="status" style={{ color: 'var(--wait)' }}>{warning}</span>
       )}
     </Field>
   );
@@ -366,12 +366,12 @@ function DocumentInput({ current, file, onFile, error, disabled }) {
         }}
       />
       {file ? (
-        <span className="field__hint">
+        <span className="mg-field__hint">
           Chosen: {file.name} · {fileSize(file.size)}
           {current && ' · replaces the current document'}
         </span>
       ) : current ? (
-        <span className="field__hint">
+        <span className="mg-field__hint">
           Current:{' '}
           <a href={api.documentUrl(current.id)} target="_blank" rel="noopener noreferrer">
             {current.name || 'view document'}
