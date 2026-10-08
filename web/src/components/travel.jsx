@@ -163,3 +163,9 @@ export function RailLink({ to, icon: Icon, title, sub, end, label }) {
   );
   return to ? <Link className="app-raillink" to={to} aria-label={label}>{inner}</Link> : <div className="app-raillink">{inner}</div>;
 }
+
+/** "Client visit · chargeable": the trip type, and whether it may be billed (said once). */
+export function typeLine(t) {
+  const name = t.trip_type || 'Type not set';
+  return t.chargeable && !/chargeable/i.test(name) ? `${name} · chargeable` : name;
+}

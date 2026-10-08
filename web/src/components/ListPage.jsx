@@ -60,6 +60,8 @@ export function ListPage({
   noun,
   phoneBelow,
   footer,
+  exportable = true,
+  chips,
 }) {
   const toast = useToast();
   const [urlParams, setUrlParams] = useSearchParams();
@@ -256,7 +258,7 @@ export function ListPage({
         actions={
           <>
             {extraActions}
-            <ExportMenu resource={resource} params={params} />
+            {exportable && <ExportMenu resource={resource} params={params} />}
             {fields && (
               <button type="button" className="mg-btn mg-btn--primary" onClick={() => setEditing('new')}>
                 <Plus className="size-4" strokeWidth={2} aria-hidden="true" />{newText}
@@ -280,6 +282,12 @@ export function ListPage({
                 </div>
               )}
               {typeof banner === 'function' ? banner(rows, { filters: filterValues, setFilters: setFilterValues, setFilter }) : banner}
+            </div>
+          )}
+
+          {chips && (
+            <div className="app-quick" role="group" aria-label="Quick filters">
+              {chips({ filters: filterValues, setFilter, setFilters: setFilterValues, total, loading })}
             </div>
           )}
 

@@ -310,6 +310,9 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
     case 'date':
       control = <Input type="date" {...common} />;
       break;
+    case 'time':
+      control = <Input type="time" {...common} />;
+      break;
     case 'number':
     case 'money':
     case 'percent':
