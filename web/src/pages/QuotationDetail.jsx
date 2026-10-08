@@ -336,7 +336,7 @@ export default function QuotationDetail() {
       <Sec id="deal-about" title="About the quotation" tools={<button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => setEditing(true)}>Edit the quotation</button>}>
         <dl className="mg-facts" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
           {[
-            fact('Contact', q.contact ? <>{q.contact.name}{q.contact.email && <span className="block text-[12px] font-normal text-secondary-text [overflow-wrap:anywhere]">{q.contact.email}</span>}</> : q.contact_person),
+            fact('Contact', q.contact ? <>{q.contact.name}{q.contact.email && <span className="block text-[12px] font-normal text-secondary-text [overflow-wrap:anywhere]">{q.contact.email.split('@')[0]}{q.contact.email.includes('@') && <><wbr />@{q.contact.email.split('@').slice(1).join('@')}</>}</span>}</> : q.contact_person),
             fact('Owner', q.sales_person),
             fact('Quoted', date(q.quotation_date)),
             fact('Valid until', q.valid_until ? <span className={q.expired ? 'text-late' : undefined}>{date(q.valid_until)}{q.expired ? ' · expired' : ''}</span> : null),

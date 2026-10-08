@@ -46,7 +46,7 @@ function Who({ profile, identities }) {
       <span className="mg-avatar" style={{ width: 44, height: 44, flex: 'none' }}>{initialsOf(profile.name)}</span>
       <span className="min-w-0 flex-[1_1_140px]">
         <b className="block font-bold [overflow-wrap:anywhere]">{profile.name}</b>
-        <small className="block text-[12.5px] text-secondary-text [overflow-wrap:anywhere]">{profile.email}</small>
+        <small className="block text-[12.5px] text-secondary-text [overflow-wrap:anywhere]">{profile.email?.includes('@') ? <>{profile.email.split('@')[0]}<wbr />@{profile.email.split('@').slice(1).join('@')}</> : profile.email}</small>
       </span>
       <span className="flex flex-wrap gap-1.5">
         <Tone tone={tone}>{role}</Tone>
