@@ -64,7 +64,7 @@ export function MailboxSwitcher({ mailboxes = [], value, onChange, className }) 
           type="button"
           aria-label="Choose a mailbox and folder"
           className={cn(
-            'inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[18px] font-semibold tracking-[-0.018em] text-foreground transition-colors duration-150 hover:bg-secondary',
+            'inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left font-display text-xl font-bold text-foreground transition-colors duration-150 hover:bg-secondary',
             className
           )}
         >
