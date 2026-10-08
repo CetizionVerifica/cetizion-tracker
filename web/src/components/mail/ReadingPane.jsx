@@ -50,7 +50,7 @@ export function ReadingPane({ threadId, refreshKey = 0, onBack }) {
               href={newest.web_link}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex shrink-0 items-center gap-1 rounded-[6px] border border-border bg-secondary px-2 py-1 text-[12px] font-medium text-secondary-text hover:text-foreground"
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-border bg-secondary px-2 py-1 text-[12px] font-medium text-secondary-text hover:text-foreground"
               title="Open this conversation in Outlook on the web"
             >
               <ExternalLink className="size-3.5" strokeWidth={1.75} aria-hidden="true" /> Open in Outlook

@@ -16,7 +16,7 @@ import { useAuth } from '../lib/auth.jsx';
  * in everybody's sidebar, which is why only an admin may.
  */
 
-const CHIP = 'inline-flex h-7 shrink-0 items-center gap-2 rounded-[6px] border px-2.5 text-[12.5px] ' +
+const CHIP = 'inline-flex h-7 shrink-0 items-center gap-2 rounded-sm border px-2.5 text-[12.5px] ' +
   'transition-colors duration-150';
 
 /** Same filters, same values — so the chip can show which view you are on. */
@@ -112,7 +112,7 @@ export function SavedViews({ resource, filters, search, onApply }) {
                 type="button"
                 onClick={() => remove(view)}
                 aria-label={`Remove the view "${view.name}"`}
-                className="ml-0.5 hidden size-7 place-items-center rounded-[6px] text-muted-foreground hover:text-late group-hover/chip:grid"
+                className="ml-0.5 hidden size-7 place-items-center rounded-sm text-muted-foreground hover:text-late group-hover/chip:grid"
               >
                 <Trash2 className="size-3" strokeWidth={2} aria-hidden="true" />
               </button>
@@ -158,7 +158,7 @@ export function SavedViews({ resource, filters, search, onApply }) {
             onChange={(event) => setName(event.target.value)}
             placeholder="Name this view"
             maxLength={80}
-            className="h-7 w-48 rounded-[6px] border border-input bg-muted px-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground"
+            className="h-7 w-48 rounded-md border border-input bg-muted px-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground"
           />
           <label className="inline-flex items-center gap-1.5 text-[12px] text-secondary-text">
             <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} />
@@ -173,7 +173,7 @@ export function SavedViews({ resource, filters, search, onApply }) {
           <button
             type="submit"
             disabled={busy || !name.trim()}
-            className="inline-flex h-7 items-center rounded-[6px] border border-primary bg-primary px-3 text-[12.5px] font-semibold text-primary-foreground disabled:opacity-50"
+            className="inline-flex h-7 items-center rounded-md border border-primary bg-primary px-3 text-[12.5px] font-semibold text-primary-foreground disabled:opacity-50"
           >
             {busy ? 'Saving…' : 'Save'}
           </button>
@@ -181,7 +181,7 @@ export function SavedViews({ resource, filters, search, onApply }) {
             type="button"
             onClick={() => { setNaming(false); setName(''); }}
             aria-label="Cancel"
-            className="grid size-7 place-items-center rounded-[6px] text-muted-foreground hover:text-foreground"
+            className="grid size-7 place-items-center rounded-sm text-muted-foreground hover:text-foreground"
           >
             <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
           </button>

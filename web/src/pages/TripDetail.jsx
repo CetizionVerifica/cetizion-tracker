@@ -240,12 +240,12 @@ export default function TripDetail() {
                   aria-label={`Amount on the bill from ${bill.travel_vendor || 'this vendor'}`}
                   value={amounts[bill.id] ?? ''}
                   onChange={(e) => setAmounts((c) => ({ ...c, [bill.id]: e.target.value }))}
-                  className="h-control w-32 rounded-[6px] border border-input bg-muted px-2.5 text-right text-[13px] text-foreground"
+                  className="h-control w-32 rounded-md border border-input bg-muted px-2.5 text-right text-[13px] text-foreground"
                 />
                 <button
                   type="submit"
                   disabled={busy || !amounts[bill.id]}
-                  className="inline-flex h-control items-center rounded-[6px] border border-primary bg-primary px-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+                  className="inline-flex h-control items-center rounded-md border border-primary bg-primary px-3 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
                 >
                   Save
                 </button>
@@ -347,10 +347,10 @@ export default function TripDetail() {
         ))}
         <form className="flex flex-wrap items-center gap-2 px-5 py-3" onSubmit={attach}>
           <input type="file" aria-label="File to add" className="text-[12.5px]" onChange={(e) => setUpload((u) => ({ ...u, file: e.target.files?.[0] || null }))} />
-          <select aria-label="What the file is" className="h-control rounded-[6px] border border-input bg-muted px-2 text-[12.5px]" value={upload.doc_type} onChange={(e) => setUpload((u) => ({ ...u, doc_type: e.target.value }))}>
+          <select aria-label="What the file is" className="h-control rounded-md border border-input bg-muted px-2 text-[12.5px]" value={upload.doc_type} onChange={(e) => setUpload((u) => ({ ...u, doc_type: e.target.value }))}>
             {DOC_TYPES.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
           </select>
-          <input aria-label="Label" placeholder="Label (optional)" className="h-control w-44 rounded-[6px] border border-input bg-muted px-2.5 text-[12.5px]" value={upload.label} onChange={(e) => setUpload((u) => ({ ...u, label: e.target.value }))} />
+          <input aria-label="Label" placeholder="Label (optional)" className="h-control w-44 rounded-md border border-input bg-muted px-2.5 text-[12.5px]" value={upload.label} onChange={(e) => setUpload((u) => ({ ...u, label: e.target.value }))} />
           <Button size="sm" className="h-8 px-4 text-[13px]" type="submit" disabled={busy || !upload.file}>Add file</Button>
         </form>
       </RecordSection>
@@ -413,7 +413,7 @@ function BilledStage({ trip, onChanged }) {
   return (
     <RecordSection title="Billed to the client" hint="the invoice that carried this trip's cost">
       <div className="flex flex-wrap items-center gap-3 px-5 py-3">
-        <select aria-label="Invoice that billed this trip" className="h-control rounded-[6px] border border-input bg-muted px-2 text-[13px]" value={trip.billed_stage_id ?? ''} onChange={(e) => set(e.target.value)}>
+        <select aria-label="Invoice that billed this trip" className="h-control rounded-md border border-input bg-muted px-2 text-[13px]" value={trip.billed_stage_id ?? ''} onChange={(e) => set(e.target.value)}>
           <option value="">Not billed yet</option>
           {stages.map((s) => <option key={s.id} value={s.id}>{s.invoice_no} · {s.stage_name}</option>)}
         </select>

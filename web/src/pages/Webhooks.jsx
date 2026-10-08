@@ -108,7 +108,7 @@ export default function Webhooks() {
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {row.events.map((event) => (
-                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-[6px] border border-border-strong bg-secondary px-2 text-[11px] font-medium text-secondary-text">
+                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-sm border border-border-strong bg-secondary px-2 text-[11px] font-medium text-secondary-text">
                       {event}
                     </span>
                   ))}

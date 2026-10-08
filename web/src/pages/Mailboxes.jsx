@@ -448,7 +448,7 @@ export default function Mailboxes() {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {blocked.map((b) => (
-                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-sm border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
                     {b.pattern}
                     <button
                       type="button"
@@ -807,7 +807,7 @@ function AutoEnquiries() {
         </div>
       </div>
       {s.review_only && (
-        <div className="flex flex-col gap-2 rounded-[8px] border border-border p-3">
+        <div className="flex flex-col gap-2 rounded-md border border-border p-3">
           <p className="text-[12.5px]/[1.6] text-secondary-text">
             Review only: every PO and invoice the readers would register waits in review, saying what they would have done, so the new prompts can be checked against what you enter by hand.
             Turn automatic registration back on client by client here, then switch review only off.

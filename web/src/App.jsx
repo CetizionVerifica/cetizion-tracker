@@ -275,7 +275,7 @@ function SideGroup({ group, open, onToggle, children }) {
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={id}
-        className="flex w-full items-center gap-1 rounded-[6px] px-2.5 pt-5 pb-2 text-left text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase hover:text-sidebar-foreground"
+        className="flex w-full items-center gap-1 rounded-sm px-2.5 pt-5 pb-2 text-left text-[11px] font-bold tracking-[0.12em] text-sidebar-muted uppercase hover:text-sidebar-foreground"
       >
         <span className="flex-1">{group.label}</span>
         <ChevronDown className={cn('size-3.5 transition-transform duration-150', !open && '-rotate-90')} strokeWidth={2} aria-hidden="true" />
@@ -291,7 +291,7 @@ function SideLink({ item, counts, alerts }) {
       to={item.to}
       end={item.end}
       className={({ isActive }) => cn(
-        'flex h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
+        'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
         'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
         isActive && 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
       )}
@@ -389,7 +389,7 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
         {/* No company name or logo here: the app is the product, not a brand page. */}
-        <span className="grid size-7 shrink-0 place-items-center rounded-[8px] bg-sidebar-primary">
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-sidebar-primary">
           <Check className="size-4 text-sidebar-primary-foreground" strokeWidth={3} aria-hidden="true" />
         </span>
         <span className="min-w-0 flex-1 truncate font-display text-[14px] font-bold text-sidebar-accent-foreground">Sales Tracker</span>
@@ -433,7 +433,7 @@ function SidebarNav({ pinned, counts, alerts, displayName, signOut, onSearch, on
               <NavLink
                 to={viewHref(view)}
                 className={({ isActive }) => cn(
-                  'flex h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
+                  'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-[13.5px] font-medium text-sidebar-foreground transition-colors duration-150',
                   'hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
                   isActive && 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
                 )}

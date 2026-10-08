@@ -61,9 +61,9 @@ export function Timeline({ entity, id, title = 'Activity' }) {
       actions={
         <div className="card__actions">
           <Select value={kind} placeholder="Everything" options={KINDS} onChange={(e) => setKind(e.target.value)} />
-          <button type="button" className="btn btn--sm" onClick={() => setNote('new')}>+ Note</button>
-          <button type="button" className="btn btn--sm" onClick={() => setTask('new')}>+ Task</button>
-          <button type="button" className="btn btn--sm" onClick={() => setFile(true)}>+ File</button>
+          <button type="button" className="btn btn--sm" onClick={() => setNote('new')}>Add note</button>
+          <button type="button" className="btn btn--sm" onClick={() => setTask('new')}>Add task</button>
+          <button type="button" className="btn btn--sm" onClick={() => setFile(true)}>Add file</button>
         </div>
       }
     >
@@ -301,7 +301,7 @@ export function ContactBar({ entity, id, onLog }) {
           {c.preferred_channel && <span className="small muted">prefers {c.preferred_channel}{c.best_time_to_call ? `, ${c.best_time_to_call}` : ''}</span>}
         </>
       )}
-      {!c?.blocked && <button type="button" className="btn btn--sm btn--ghost" onClick={() => onLog({ channel: 'call', contact_id: c?.id ?? null })}>+ Log a touch</button>}
+      {!c?.blocked && <button type="button" className="btn btn--sm btn--ghost" onClick={() => onLog({ channel: 'call', contact_id: c?.id ?? null })}>Log a touch</button>}
     </div>
   );
 }

@@ -778,7 +778,7 @@ function InboxSetup() {
   return (
     <>
       <Card flush title="Inboxes" hint={<>A shared mailbox connected under <Link to="/mailboxes">Mailboxes</Link> becomes an inbox here.</>}
-        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>+ Inbox</button>}>
+        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>New inbox</button>}>
         <DataTable rows={rows} empty={<Empty title="No inbox yet" text="Connect the shared sales mailbox under Mailboxes, then add it here." />} columns={[
           { key: 'name', header: 'Inbox', className: 'strong', render: (r) => <>{r.name}<div className="small muted">{r.email}</div></> },
           { key: 'default_assignment', header: 'New email goes to', render: (r) => ({ owner_of_company: 'The client\'s owner, else round robin', round_robin: 'Round robin', unassigned: 'Unassigned queue' }[r.default_assignment]) },
@@ -795,7 +795,7 @@ function InboxSetup() {
           },
         ]} />
       </Card>
-      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>+ Response</button>}>
+      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>New response</button>}>
         <DataTable rows={canned.data?.data ?? []} columns={[
           { key: 'name', header: 'Name', className: 'strong' },
           { key: 'body', header: 'Text', className: 'wrap small', render: (r) => r.body.slice(0, 160) },

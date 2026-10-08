@@ -99,7 +99,7 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
             {' · '}to: {preview.settings.to.length ? preview.settings.to.join(', ') : <em>nobody yet — set the recipients below</em>}
           </div>
           <div className="text-[13px] font-medium text-foreground">{preview.email.subject}</div>
-          <pre className="max-h-[420px] overflow-auto rounded-[8px] bg-secondary p-3 text-[12px]/[1.5] whitespace-pre-wrap text-secondary-text">{preview.email.text}</pre>
+          <pre className="max-h-[420px] overflow-auto rounded-md bg-secondary p-3 text-[12px]/[1.5] whitespace-pre-wrap text-secondary-text">{preview.email.text}</pre>
         </div>
       )}
       {sending && (

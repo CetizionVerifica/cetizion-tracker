@@ -79,7 +79,7 @@ export function Devices() {
             <li
               key={s.id}
               className={cn(
-                'flex flex-wrap items-center gap-3 rounded-[8px] border px-4 py-3',
+                'flex flex-wrap items-center gap-3 rounded-md border px-4 py-3',
                 s.current ? 'border-primary/30 bg-primary/5' : 'border-border'
               )}
             >

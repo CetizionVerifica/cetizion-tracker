@@ -60,7 +60,7 @@ export default function Quotations() {
         r.project_id ? (
           <Link className="mono" to={`/projects/${r.project_id}`}>{r.project_id}</Link>
         ) : r.status === 'Won - PO Received' ? (
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => setConverting(r)}>
+          <button type="button" className="btn btn--sm" onClick={() => setConverting(r)}>
             Register
           </button>
         ) : (

@@ -60,7 +60,7 @@ export default function PaymentStages() {
       render: (r) => (
         <div className="table__actions">
           {r.stage_status === 'To Invoice' ? (
-            <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>
+            <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>
           ) : r.stage_status === 'Not Due' ? (
             <span className="muted small nowrap">waiting on trigger</span>
           ) : r.stage_status === 'Paid' ? (

@@ -30,7 +30,7 @@ export function PaneRail({ base, groups }) {
                 key={item.to}
                 to={`${base}/${item.to}`}
                 className={({ isActive }) => cn(
-                  'flex h-control shrink-0 items-center rounded-[6px] px-2.5 text-[13px] font-medium whitespace-nowrap',
+                  'flex h-control shrink-0 items-center rounded-md px-2.5 text-[13px] font-medium whitespace-nowrap',
                   'text-secondary-text transition-colors duration-150 hover:bg-accent hover:text-foreground',
                   isActive && 'bg-primary/12 font-semibold text-primary'
                 )}

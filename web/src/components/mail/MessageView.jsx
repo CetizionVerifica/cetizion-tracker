@@ -101,7 +101,7 @@ export function MailBody({ id, html }) {
   return (
     <>
       {blocked && (
-        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-[8px] border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
           <span className="text-[12.5px] text-secondary-text">
             Images are not loaded. Loading them tells the sender you opened this.
           </span>
@@ -125,7 +125,7 @@ export function MailBody({ id, html }) {
           type="button"
           onClick={() => setShowQuoted((v) => !v)}
           aria-expanded={showQuoted}
-          className="mt-1.5 inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
+          className="mt-1.5 inline-flex items-center gap-1.5 rounded-sm border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
         >
           <MoreHorizontal className="size-3.5" strokeWidth={2} aria-hidden="true" />
           {showQuoted ? 'Hide the earlier replies' : 'Show the earlier replies'}

@@ -307,7 +307,7 @@ function TableSkeleton() {
   return (
     <div className="flex flex-col gap-2.5 p-4">
       {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} className="h-4 rounded-[6px]" style={{ width: `${100 - (i % 3) * 12}%` }} />
+        <Skeleton key={i} className="h-4 rounded-sm" style={{ width: `${100 - (i % 3) * 12}%` }} />
       ))}
     </div>
   );
@@ -377,7 +377,7 @@ export function Input({ error, className, ...props }) {
   return (
     <UiInput
       aria-invalid={error ? true : undefined}
-      className={cn('h-control rounded-[6px] bg-secondary text-[13px]', className)}
+      className={cn('h-control rounded-md bg-secondary text-[13px]', className)}
       {...props}
     />
   );
@@ -389,7 +389,7 @@ export function Textarea({ error, className, ...props }) {
     <textarea
       aria-invalid={error ? true : undefined}
       className={cn(
-        'min-h-20 w-full rounded-[6px] border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
+        'min-h-20 w-full rounded-md border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
         'placeholder:text-muted-foreground aria-invalid:border-late',
         className
       )}
@@ -404,7 +404,7 @@ export function Select({ error, options = [], placeholder = '—', children, cla
     <select
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-control w-full rounded-[6px] border border-input bg-secondary px-2.5 text-[13px] text-foreground',
+        'h-control w-full rounded-md border border-input bg-secondary px-2.5 text-[13px] text-foreground',
         'aria-invalid:border-late',
         className
       )}
@@ -445,13 +445,13 @@ export function Progress({ value }) {
   return (
     <div className="flex items-center gap-2">
       <div
-        className="h-1.5 flex-1 overflow-hidden rounded-[6px] bg-secondary"
+        className="h-1.5 flex-1 overflow-hidden rounded-sm bg-secondary"
         role="progressbar"
         aria-valuenow={Math.round(pct * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        <div className="h-full rounded-[6px] bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
+        <div className="h-full rounded-md bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
       </div>
       <span className="num min-w-8 text-right text-[12px] text-muted-foreground">{Math.round(pct * 100)}%</span>
     </div>
@@ -472,9 +472,9 @@ export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
             </span>
             <span className="num shrink-0 text-[12.5px] text-secondary-foreground">{valueFormat(item.value, item)}</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-[6px] bg-secondary">
+          <div className="h-1.5 overflow-hidden rounded-sm bg-secondary">
             <div
-              className="h-full rounded-[6px] bg-primary/80"
+              className="h-full rounded-md bg-primary/80"
               style={{ width: `${((Number(item.value) || 0) / max) * 100}%` }}
             />
           </div>
@@ -518,10 +518,10 @@ export function Tabs({ tabs, active, onChange }) {
         >
           {tab.label}
           {tab.count !== undefined && (
-            <span className="num rounded-[6px] bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
+            <span className="num rounded-sm bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
           )}
           {tab.warning ? (
-            <span className="num rounded-[6px] bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
+            <span className="num rounded-sm bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
           ) : null}
         </button>
       ))}

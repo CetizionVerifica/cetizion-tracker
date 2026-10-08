@@ -71,7 +71,7 @@ export function ProjectProfit({ projectId, onChanged }) {
           { label: 'Gaps', value: p.cost_gaps + p.revenue_gaps > 0 ? <Badge tone="warning">{p.cost_gaps + p.revenue_gaps} missing amount or rate</Badge> : 'none' },
         ]} />
       </Card>
-      <Card flush title="Costs" hint="Travel vendor bills and expense claims on this project's trips, and costs added here." actions={mayWriteCost ? <button type="button" className="btn btn--sm btn--primary" onClick={() => setForm('new')}>+ Cost</button> : null}>
+      <Card flush title="Costs" hint="Travel vendor bills and expense claims on this project's trips, and costs added here." actions={mayWriteCost ? <button type="button" className="btn btn--sm" onClick={() => setForm('new')}>Add a cost</button> : null}>
         <DataTable rows={p.lines} rowClassName={(r) => (r.gap ? 'tr--dup' : '')} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No costs recorded yet.</div>} columns={[
           { key: 'kind', header: 'Source', render: (r) => <Badge>{KIND[r.kind]}</Badge> },
           { key: 'what', header: 'What', className: 'wrap', render: (r) => (r.kind === 'manual' ? <>{r.description}<div className="small muted">{COST_CATEGORIES.find((c) => c.value === r.category)?.label}</div></> : <>{r.ref}<div className="small muted">{r.kind === 'expense_claim' ? `${r.expense_category || 'claim'} · ${r.approval_status}` : r.destination} · trip {r.travel_id}</div></>) },

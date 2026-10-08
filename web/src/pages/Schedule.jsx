@@ -44,7 +44,7 @@ export default function Schedule() {
           <button type="button" className="btn" onClick={() => setMonth(shift(month, 1))}>›</button>
           <Select value={staffId} placeholder="Everyone" options={(lookups.staff || []).map((s) => ({ value: String(s.id), label: s.name }))} onChange={(e) => setStaffId(e.target.value)} />
           <Select value={type} placeholder="All types" options={VISIT_TYPES} onChange={(e) => setType(e.target.value)} />
-          <button type="button" className="btn btn--primary" onClick={() => setDialog({ preset: { day: today() } })}>+ Visit</button>
+          <button type="button" className="btn btn--primary" onClick={() => setDialog({ preset: { day: today() } })}>Schedule a visit</button>
         </>} />
       <div className="page stack">
         <Tabs active={tab} onChange={setTab} tabs={[{ key: 'calendar', label: 'Calendar' }, { key: 'agenda', label: 'Agenda', count: visits.length }, { key: 'capacity', label: 'Capacity' }, { key: 'people', label: 'People' }]} />
@@ -167,7 +167,7 @@ function People() {
         { key: 'email', header: 'Email (for reminders)', render: (r) => <Input defaultValue={r.email || ''} key={`${r.id}-${r.email}`} placeholder="name@cetizionverifica.com" onBlur={(e) => e.target.value !== (r.email || '') && run(() => api.raw(`/visits/staff/${r.id}`, { method: 'PATCH', body: { email: e.target.value } }), 'Saved')} /> },
         { key: 'days', header: 'Works on', render: (r) => <div className="chips">{WEEK.map((w, i) => <button type="button" key={w} className={`chip ${r.working_days.includes(i + 1) ? 'is-on' : ''}`} onClick={() => toggleDay(r, i + 1)}>{w}</button>)}</div> },
         { key: 'leave', header: 'Leave', className: 'small', render: (r) => r.leave.map((l) => <div key={l.id}>{date(l.starts_on)} – {date(l.ends_on)}{l.reason ? ` · ${l.reason}` : ''} <button type="button" className="btn btn--sm btn--ghost" onClick={() => run(() => api.remove('visits/leave', l.id), 'Removed')}>✕</button></div>) },
-        { key: 'act', header: '', align: 'right', render: (r) => <div className="table__actions"><button type="button" className="btn btn--sm" onClick={() => setLeave({ staff: r, starts_on: today(), ends_on: today(), reason: '' })}>+ Leave</button><button type="button" className="btn btn--sm btn--ghost" onClick={() => run(() => api.raw(`/visits/staff/${r.id}`, { method: 'PATCH', body: { active: !r.active } }))}>{r.active ? 'Deactivate' : 'Activate'}</button></div> },
+        { key: 'act', header: '', align: 'right', render: (r) => <div className="table__actions"><button type="button" className="btn btn--sm" onClick={() => setLeave({ staff: r, starts_on: today(), ends_on: today(), reason: '' })}>Add leave</button><button type="button" className="btn btn--sm btn--ghost" onClick={() => run(() => api.raw(`/visits/staff/${r.id}`, { method: 'PATCH', body: { active: !r.active } }))}>{r.active ? 'Deactivate' : 'Activate'}</button></div> },
       ]} />
       {leave && (
         <Modal size="sm" title={`Leave for ${leave.staff.name}`} onClose={() => setLeave(null)} footer={<><button type="button" className="btn" onClick={() => setLeave(null)}>Cancel</button><button type="button" className="btn btn--primary" onClick={() => run(() => api.action(`/visits/staff/${leave.staff.id}/leave`, { starts_on: leave.starts_on, ends_on: leave.ends_on, reason: leave.reason }), (r) => (r.clashes?.length ? `Saved. It clashes with ${r.clashes.length} planned visit(s).` : 'Saved')).then(() => setLeave(null))}>Save</button></>}>
@@ -187,7 +187,7 @@ export function ProjectVisits({ projectId }) {
   const [dialog, setDialog] = useState(null);
   const rows = data?.data ?? [];
   return (
-    <Card flush title="Visits" hint="Audits and site visits for this project." actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ preset: { project_id: projectId, day: today() } })}>+ Visit</button>}>
+    <Card flush title="Visits" hint="Audits and site visits for this project." actions={<button type="button" className="btn btn--sm" onClick={() => setDialog({ preset: { project_id: projectId, day: today() } })}>Schedule a visit</button>}>
       <DataTable rows={rows} onRowClick={(r) => setDialog({ visit: r })} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No visits planned.</div>} columns={[
         { key: 'when', header: 'When', render: (r) => <>{date(dayOf(r.starts_at))}{dayOf(r.ends_at) !== dayOf(r.starts_at) && ` – ${date(dayOf(r.ends_at))}`}</> },
         { key: 'title', header: 'Visit', className: 'wrap strong' },

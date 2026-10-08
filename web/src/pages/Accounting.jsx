@@ -66,7 +66,7 @@ function Differences({ onChanged, provider }) {
         {
           key: 'act', header: '', align: 'right', render: (r) => r.status !== 'resolved' && r.status !== 'matched' && (
             <div className="table__actions">
-              {(r.differences.some((d) => ['invoice_date', 'due_date', 'received_on', 'tds_amount', 'payment'].includes(d.field))) && <button type="button" className="btn btn--sm btn--primary" onClick={() => run(() => api.action(`/accounting/items/${r.id}/accept`), 'Books value applied')}>Take books value</button>}
+              {(r.differences.some((d) => ['invoice_date', 'due_date', 'received_on', 'tds_amount', 'payment'].includes(d.field))) && <button type="button" className="btn btn--sm" onClick={() => run(() => api.action(`/accounting/items/${r.id}/accept`), 'Books value applied')}>Take books value</button>}
               <button type="button" className="btn btn--sm btn--ghost" onClick={() => setResolving(r)}>Resolve</button>
             </div>
           ),

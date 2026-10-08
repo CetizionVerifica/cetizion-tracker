@@ -47,7 +47,7 @@ export default function Cashflow() {
           </div>
         )}
         <Card title="By month" hint="Bars: expected in (solid), pipeline on top (light), out (red). Click a month for the lines behind it.">
-          {loading && !d ? <div className="skeleton" style={{ height: 160 }} /> : (
+          {loading && !d ? <div className="skeleton h-[160px]" /> : (
             <div className="cashflow">
               {rows.map((m) => (
                 <div key={m.month} className={`cashflow__row ${open.includes(m.month) ? 'is-open' : ''}`} onClick={() => setOpen(open.length === 1 && open[0] === m.month ? [] : [m.month])}>
@@ -59,7 +59,7 @@ export default function Cashflow() {
                   <div className="cashflow__nums">
                     <span>in {money(m.inflow)}{m.pipeline > 0 && <span className="muted"> +{money(m.pipeline)}</span>}</span>
                     <span>out {money(m.outflow)}</span>
-                    <span className={m.net < 0 ? 'strong' : 'strong'} style={{ color: m.net < 0 ? 'var(--late)' : 'var(--settled)' }}>net {money(m.net)}</span>
+                    <span className={m.net < 0 ? 'strong text-late' : 'strong text-settled'}>net {money(m.net)}</span>
                   </div>
                 </div>
               ))}

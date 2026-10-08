@@ -116,7 +116,7 @@ export default function Login() {
       <Card className="w-full max-w-[480px] gap-0 rounded-xl py-0">
         <CardContent className="flex flex-col justify-center gap-7 px-6 py-10 sm:px-10 sm:py-12">
           <div className="flex items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-primary">
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary">
               <Check className="size-[18px] text-primary-foreground" strokeWidth={3.4} aria-hidden="true" />
             </span>
             <div className="min-w-0">

@@ -70,7 +70,7 @@ export function WaysIn() {
           {known.map((id) => {
             const mine = linked[id];
             return (
-              <div key={id} className="flex flex-wrap items-center gap-3 rounded-[8px] border border-border px-4 py-3">
+              <div key={id} className="flex flex-wrap items-center gap-3 rounded-md border border-border px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-medium text-foreground">{LABEL[id] || id}</div>
                   <div className="text-[12px] text-muted-foreground">

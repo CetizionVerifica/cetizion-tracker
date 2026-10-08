@@ -26,7 +26,7 @@ export function AcceptanceLinks({ quotation, canSend, onChanged }) {
       flush
       title="Client acceptance"
       hint="A private link where the client reviews this quotation and accepts it, or asks for changes. It stops working when the quotation is revised or expires."
-      actions={canSend && <button type="button" className="btn btn--sm btn--primary" onClick={() => setOpen(true)}>Send acceptance link</button>}
+      actions={canSend && <button type="button" className="btn btn--sm" onClick={() => setOpen(true)}>Send acceptance link</button>}
     >
       {rows.length === 0 ? (
         <div className="small muted" style={{ padding: '12px 18px' }}>No link sent yet.</div>
