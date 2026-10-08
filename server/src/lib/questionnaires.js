@@ -176,7 +176,7 @@ export async function storeResponseFile(db, r, { questionKey, file, uploadedBy }
   if (!UPLOAD_TYPES.has(file.mimetype)) throw new ApiError(422, 'Please check the highlighted fields', { fields: { file: 'PDF, image, Word or Excel files only' } });
   const { rows: [{ n }] } = await db.query('SELECT count(*)::int AS n FROM questionnaire_response_files WHERE response_id = $1', [r.id]);
   if (n >= 50) throw new ApiError(422, 'Fifty files is the most one questionnaire takes');
-  if (!documentStorageReady()) throw new ApiError(503, 'File storage is not set up on this server');
+  if (!documentStorageReady) throw new ApiError(503, 'File storage is not set up on this server');
   const doc = await uploadDocument({ buffer: file.buffer, fileName: safeFileName(file.originalname), contentType: file.mimetype, owner: 'questionnaires' });
   await db.query('INSERT INTO questionnaire_response_files (response_id, question_key, document_id, uploaded_by) VALUES ($1,$2,$3,$4)',
     [r.id, questionKey, doc.id, uploadedBy]);
