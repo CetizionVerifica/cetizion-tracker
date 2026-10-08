@@ -221,12 +221,17 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
   });
 
   /**
-   * Routes whose 403 is an object gate rather than a role gate: the row is
-   * somebody else's. A blanket sweep cannot tell those apart from a wrongly
-   * closed route, so they are excluded here and proved one by one in the
-   * named tests below, which is where a scoped rule can actually be checked.
+   * Routes whose 403 is not the route's own gate: either the row is somebody
+   * else's, or the handler narrows the roles further than the three access
+   * levels can express. A blanket sweep cannot tell those apart from a
+   * wrongly closed route, so they are excluded here and proved one by one in
+   * the named tests below, which is where such a rule can actually be checked.
+   *
+   * `travel-desk-only` is the second kind: `any` on the route, admin and HR
+   * in the handler, sales refused (#214). It is proved in "paying a travel
+   * agency is the travel desk's" below.
    */
-  const OBJECT_SCOPED = ['record-owner', 'mailbox-owner', 'self-only'];
+  const OBJECT_SCOPED = ['record-owner', 'mailbox-owner', 'self-only', 'travel-desk-only'];
   const objectScoped = (entry) => (entry.restrictions || []).some((r) => OBJECT_SCOPED.includes(r));
 
   // The HR role (#196 §3): the travel desk, and nothing else.
@@ -754,14 +759,42 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(Number(rows[0].amount_reimbursed), 0, 'and it did not reimburse it either');
     });
 
-    test('admin and sales may both record a vendor payment through its own route', async () => {
-      const bySales = await as(salesA)('post', `/api/vendor-invoices/${invoiceId}/pay`)
-        .send({ amount_paid: 10000, payment_date: '2026-02-05' });
-      assert.equal(bySales.status, 200, JSON.stringify(bySales.body));
-
+    /**
+     * #85 left this route open to every signed-in role, so a sales user could
+     * pay a travel agency. That was never a decision — it was what an open
+     * gate happened to allow — and #214 closes it: paying the agency is the
+     * travel desk's work with the administrator. The capability is withdrawn
+     * from sales deliberately, which is why this test now asserts the refusal
+     * it used to assert the opposite of.
+     */
+    test('paying a travel agency is the travel desk\'s and the administrator\'s, not a sales user\'s', async () => {
       const byAdmin = await as(admin)('post', `/api/vendor-invoices/${invoiceId}/pay`)
         .send({ amount_paid: 20000, payment_date: '2026-02-06' });
       assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+
+      const byHr = await as(hr)('post', `/api/vendor-invoices/${invoiceId}/pay`)
+        .send({ amount_paid: 30000, payment_date: '2026-02-07' });
+      assert.equal(byHr.status, 200, `the travel desk keeps it: ${JSON.stringify(byHr.body)}`);
+
+      const bySales = await as(salesA)('post', `/api/vendor-invoices/${invoiceId}/pay`)
+        .send({ amount_paid: 40000, payment_date: '2026-02-08' });
+      assert.equal(
+        bySales.status, 403,
+        `a sales user got ${bySales.status} paying a travel agency. requireRole('admin', 'hr') on `
+        + 'POST /api/vendor-invoices/:id/pay is the #214 decision; losing it hands the payment back to sales.'
+      );
+    });
+
+    test('correcting a vendor payment is the administrator\'s alone', async () => {
+      for (const who of [hr, salesA]) {
+        const res = await as(who)('post', `/api/vendor-invoices/${invoiceId}/pay/correct`)
+          .send({ amount: -1000, reason: 'Mistyped' });
+        assert.equal(
+          res.status, 403,
+          `${who.label} got ${res.status} correcting a vendor payment. Only an administrator may take a figure `
+          + 'back off an agency bill (#214) — HR pays but does not undo.'
+        );
+      }
     });
 
     test('protected vendor-payment fields cannot be written through ordinary CRUD', async () => {

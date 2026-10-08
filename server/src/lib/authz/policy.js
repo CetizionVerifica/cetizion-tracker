@@ -110,6 +110,7 @@ export const RESTRICTIONS = {
   'api-token-scope': 'Limited to what the presented API token\'s role and person allow, and to reads unless the token may write.',
   'settings-override': 'Admin-only unless a named setting opens it to everybody.',
   'hr-travel-only': 'For the HR role, limited to the rows on trips and travel vendor invoices.',
+  'travel-desk-only': 'The handler allows the administrator and the HR role only: paying a travel agency is the travel desk\'s work, and the three access levels cannot say "admin and HR but not sales" on their own.',
 };
 
 const mustBeAdmin = 'admin';
@@ -529,8 +530,12 @@ export const routes = [
   // vendor-invoice ones are closed on the generic form by `protectedFields`
   // and move only through the routes here.
   {
-    method: 'POST', path: '/api/vendor-invoices/:id/pay', access: signedIn,
-    note: 'Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id.',
+    method: 'POST', path: '/api/vendor-invoices/:id/pay', access: signedIn, restrictions: ['travel-desk-only'],
+    note: 'Paying a travel agency: the travel desk\'s work and the administrator\'s, so the handler allows admin and HR and refuses sales (#214). Until then the gate was open to every signed-in role, which let a sales user pay an agency — not a decision anybody took, just an open door. The figure is still the absolute total settled and the route writes the difference as a row in travel_vendor_payments; amount_paid and payment_date are derived from those rows and move only through here, never through PATCH /api/vendor-invoices/:id.',
+  },
+  {
+    method: 'POST', path: '/api/vendor-invoices/:id/pay/correct', access: mustBeAdmin,
+    why: 'The only route that can take a vendor payment back off an invoice, or move its cash and TDS legs against each other, so it is the one place a figure already booked against an agency bill can be reduced (#214). It refuses to run without a reason, appends a row rather than editing the ledger — the original payment and the bank advice attached to it are never touched — and records the before and after in the same transaction. Paying is the travel desk\'s; deciding that what the travel desk recorded was wrong is not, for the same reason /api/expense-claims/:id/correct is the administrator\'s: this is the correction path for money, not a tidy-up.',
   },
   {
     method: 'POST', path: '/api/travel-logs/:travelId/billed-stage', access: signedIn,
@@ -656,7 +661,7 @@ export const resourceAccess = {
     read: 'any', write: 'any', delete: 'any', hr: HR_ALL,
     why: 'Sales enter vendor invoices as ordinary work.',
     protectedFields: ['amount_paid', 'payment_date'],
-    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85).',
+    protectedBecause: 'A payment is recorded through POST /api/vendor-invoices/:id/pay, which is the route that audits it. Letting an ordinary PATCH set amount_paid means a vendor invoice can be marked paid with no payment behind it (#85). Since #214 both columns are also *derived*: they are kept by a trigger from the travel_vendor_payments ledger, so a figure written here by hand would be silently undone by the next payment anyway.',
   },
   'expense-claims': {
     read: 'any', write: 'any', delete: 'any',

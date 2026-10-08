@@ -53,6 +53,10 @@ export const ACTIONS = {
   // what makes a trip's cost recoverable, so it moves through its own
   // route and leaves the account that moved it behind.
   TRIP_BILLED_STAGE_SET: 'travel_log.billed_stage_set',
+  // A vendor payment taken back off the invoice (#214). Payments are a
+  // ledger, so a correction is a row rather than a rewrite — but the row
+  // alone does not say who decided it or why, which is what this is for.
+  VENDOR_INVOICE_PAY_CORRECTED: 'vendor_invoice.payment_corrected',
   // A quotation read from the PDF we emailed, checked against it by a person
   // (docs/email-enquiries-plan.md §3.9.6).
   QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',
