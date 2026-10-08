@@ -575,3 +575,31 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.getByRole('button', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
 });
+
+/**
+ * Settings, Client emails: every kind of email that goes to a client, and
+ * the admin's hold on them. Holding one kind and then everything changes
+ * what the page says; both are released at the end so the flows above are
+ * unaffected on a rerun.
+ */
+test('an admin sees every client email and can hold them', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/settings/client-emails');
+  await expect(page.getByRole('heading', { name: 'Client emails' })).toBeVisible();
+  const table = page.getByRole('table', { name: 'Kinds of client email' });
+  await expect(table.getByText('Overdue payment reminder')).toBeVisible();
+  await expect(table.getByText('Reply from the Inbox')).toBeVisible();
+
+  const quotation = table.getByRole('row').filter({ hasText: 'Someone sends a quotation with "email" ticked.' });
+  await quotation.getByRole('button', { name: 'Hold' }).click();
+  await expect(quotation.getByText('Held', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Hold all client emails' }).click();
+  await expect(page.getByText(/Each one is logged below and none reaches a client/)).toBeVisible();
+  await expect(page.getByText('Every kind is held while all client emails are held.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Release client emails' }).click();
+  await expect(page.getByRole('button', { name: 'Hold all client emails' })).toBeVisible();
+  await quotation.getByRole('button', { name: 'Release' }).click();
+  await expect(quotation.getByText('Goes out', { exact: true })).toBeVisible();
+});

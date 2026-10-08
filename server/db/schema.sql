@@ -3838,3 +3838,11 @@ INSERT INTO settings (key, value, notes) VALUES
   ('portal_notify_new_invoice', 'true', 'Email a client''s portal contacts when an invoice is recorded for them, with the portal''s address. Only for clients with the portal and its Invoices section on.'),
   ('portal_link_in_reminders', 'true', 'End payment reminders with the client portal''s address, when the client can sign in to it.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- An admin's hold on the emails that go to clients (094).
+-- ---------------------------------------------------------------------
+INSERT INTO settings (key, value, notes) VALUES
+  ('client_emails_hold_all', 'false', 'Hold every email that would go to a client: logged, never sent. Set under Settings, Client emails.'),
+  ('client_emails_held', '[]', 'The kinds of client email held one by one, as a JSON list. Set under Settings, Client emails.')
+ON CONFLICT (key) DO NOTHING;

@@ -32,6 +32,8 @@ export const ACTIONS = {
   COMPANY_MERGED: 'company.merged',
   JOB_RUN: 'job.run',
   EMAIL_TEST_SENT: 'email.test_sent',
+  // An admin held or released the emails that go to clients (lib/clientEmails.js).
+  CLIENT_EMAILS_CHANGED: 'client_emails.changed',
   // Who a record belongs to, and what it is measured against (#18).
   OWNERSHIP_ASSIGNED: 'ownership.assigned',
   OWNERSHIP_REASSIGNED: 'ownership.reassigned',
