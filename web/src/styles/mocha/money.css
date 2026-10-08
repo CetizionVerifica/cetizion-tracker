@@ -241,3 +241,14 @@
 .app-hfilters .mg-input, .app-hfilters .mg-select { height: 40px; width: auto; min-width: 150px; }
 @media (max-width: 479px) { .app-hfilters > .mg-field { flex: 1 1 140px; } .app-hfilters .mg-input, .app-hfilters .mg-select { width: 100% !important; min-width: 0; } }
 .mg-table tfoot tr.app-total td { font-weight: 700; border-top: 1px solid var(--line); background: var(--track); }
+
+/* Accounting. */
+.app-form4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.app-period { flex-direction: row; flex-wrap: wrap; gap: 16px 24px; padding: 18px 22px; align-items: center; }
+.app-period__dates { display: flex; flex-direction: column; gap: 10px; }
+.app-period__dates .mg-input { width: 170px; }
+.app-period__note { flex: 1 1 320px; }
+.app-gst { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px 22px; padding: 16px 22px 20px; }
+.app-gst > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12.5px; color: var(--text2); }
+.app-gst b { font-size: 18px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+@media (max-width: 479px) { .app-period__dates .mg-input { width: 100%; } .app-period__dates .mg-field { flex: 1 1 140px; } }
