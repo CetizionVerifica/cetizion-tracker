@@ -235,3 +235,7 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 .app-irow.is-known { box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait-soft) 55%, transparent); }
 .app-irow.is-out { opacity: .5; }
 .mg-count.app-count--late { background: var(--late); color: var(--on-late, #fff); margin-left: 6px; }
+
+/* Wave 6 records: four figures in a row, or two by two, never three and one. */
+.app-rec:has(.app-w6) .app-rec__stats:has(> :nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1099px) { .app-rec:has(.app-w6) .app-rec__stats:has(> :nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
