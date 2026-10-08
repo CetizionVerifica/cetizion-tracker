@@ -116,7 +116,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await signIn(page);
   const client = `E2E Client ${stamp}`;
   await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
-  await page.getByRole('button', { name: '+ Quotation' }).click();
+  await page.getByRole('main').getByRole('button', { name: 'New deal', exact: true }).click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
@@ -134,7 +134,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   // the rail and the deal is in the list it shares with orders.
   await expect(page.getByText('People')).toBeVisible();
   await expect(page.getByText('Test Contact').first()).toBeVisible();
-  await expect(page.getByText('Deals and orders')).toBeVisible();
+  await expect(page.getByRole('tab', { name: /Deals and orders/ })).toBeVisible();
   await expect(page.getByText('EcoVadis').first()).toBeVisible();
 });
 
@@ -521,7 +521,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   const { data: invite } = await (await page.request.post(`/api/portal-admin/contacts/${contactId}/invite`)).json();
 
   // Staff see the client's view from the company page.
-  await page.goto(`/companies/${companyId}`);
+  await page.goto(`/companies/${companyId}?tab=preview`);
   await page.getByRole('button', { name: 'Show the client\'s view' }).click();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
   await expect(page.getByText('Taxable').first()).toBeVisible();

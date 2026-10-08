@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ExternalLink, Plus } from 'lucide-react';
 import { Field, FileDrop, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
 import { ListTable, Panel, PanelSkeleton, PhoneRow, StateCard } from './daily.jsx';
+import { Sec } from './sales.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
@@ -29,7 +30,7 @@ const renewal = (r) => (r.engagement_status ? `${r.engagement_status.replace('_'
  * head; `filtered` says whether any are set, so an empty list can say
  * "nothing matches" rather than "nothing recorded", and `onClear` resets them.
  */
-export function DeliverablesTable({ params, preset = {}, title = 'Certificates and deliverables', hint, compact = false, filters, filtered = false, onClear }) {
+export function DeliverablesTable({ params, preset = {}, title = 'Certificates and deliverables', hint, compact = false, filters, filtered = false, onClear, flat = false }) {
   const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null)).toString();
   const { data, loading, error, refetch } = useFetch(() => api.raw(`/deliverables${qs ? `?${qs}` : ''}`), [qs]);
   const [dialog, setDialog] = useState(null);   // { mode: 'new'|'edit'|'supersede'|'withdraw', row }
@@ -57,8 +58,10 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
     )) },
   ].filter(Boolean);
 
+  // `flat`: a section of a record's tab panel, which is already glass.
+  const Wrap = flat ? FlatPanel : Panel;
   return (
-    <Panel id={`dl-${compact ? 'c' : 'r'}`} title={title} hint={hint}
+    <Wrap id={`dl-${compact ? 'c' : 'r'}`} title={title} hint={hint}
       tools={<button type="button" className="mg-btn mg-btn--sm mg-btn--primary" onClick={() => setDialog({ mode: 'new' })}><Plus className="size-4" aria-hidden="true" />Issue a deliverable</button>}>
       {filters && <div className="mg-filterbar px-[22px] pt-1 pb-3.5">{filters}</div>}
       {error ? (
@@ -93,7 +96,16 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
       )}
       {dialog?.mode === 'withdraw' && <WithdrawDialog row={dialog.row} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
       {dialog && dialog.mode !== 'withdraw' && <DeliverableDialog mode={dialog.mode} row={dialog.row} preset={preset} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
-    </Panel>
+    </Wrap>
+  );
+}
+
+/** The register as a section inside a panel: its head, then the table in a bordered box. */
+function FlatPanel({ id, title, hint, tools, children }) {
+  return (
+    <Sec id={id} title={title} hint={hint} tools={tools}>
+      <div className="app-box app-box--flush">{children}</div>
+    </Sec>
   );
 }
 
