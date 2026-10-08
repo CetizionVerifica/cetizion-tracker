@@ -34,7 +34,7 @@ export function SummaryStrip({ report, scope }) {
     { key: 'n', label: 'New customers', figure: number(report.customers.tiles.new_customers), foot: 'first-ever PO in the period', to: drillLink('purchase-orders', scope, { customer: 'new' }) },
   ];
   return (
-    <section className="mg-glass mg-strip rp-strip2" data-a="rise" aria-label="The period at a glance">
+    <section className="mg-glass mg-strip rp-strip2" data-a="rise" aria-label="These figures at a glance">
       {tiles.map((t) => (
         <Link key={t.key} className="rp-tile" to={t.to}>
           <span className="mg-label">{t.label}</span>
