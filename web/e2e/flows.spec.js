@@ -180,7 +180,7 @@ test('every report chart has a table twin, and its rows link into the list', asy
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
   // These charts sit under More analysis, below the six questions, folded until opened.
-  await page.getByText('More analysis: pipeline, ageing, cash, win rate').click();
+  await page.getByRole('button', { name: /^More analysis/ }).click();
 
   // Before the toggle is touched: the chart is hidden from the tree and the
   // twin is there in text. A band with nothing in it still has a row.
