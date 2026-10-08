@@ -14,7 +14,7 @@ BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices, v_travel_invoice_lines, v_travel_segments,
-  v_employee_expense_claims, v_company_document_profiles, v_questionnaire_responses CASCADE;
+  v_employee_expense_claims, v_company_document_profiles, v_questionnaire_responses, v_trip_billing CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
 -- breaks a view the way a broken cell reference would.
@@ -615,6 +615,91 @@ SELECT
   tl.cancelled AS trip_cancelled
 FROM travel_segments s
 JOIN travel_logs tl ON tl.travel_id = s.travel_id;
+
+
+-- ---------------------------------------------------------------------
+-- Trip billing — what the client was charged for a trip, read through
+--   One row per trip (#214 §5.1). Nothing here is stored: the invoice,
+--   what has been received against it and whether it is late are all read
+--   live from the payment stage, so an invoice corrected or a receipt
+--   added anywhere else changes a trip's billing by itself. That is the
+--   rule PROJECT-CONTEXT.md states and the reason this is a view.
+--
+--   The travel invoice is a payment stage of kind 'travel' (097), so the
+--   whole of the status model — Paid, Partially Paid, Due, Overdue, the
+--   days late — is v_payment_stages' and is not recomputed here.
+--
+--   `billing_status` is the one derived word this view adds, because the
+--   question a trip asks is not quite the question a stage answers:
+--
+--     not_chargeable  nobody is going to be billed for this trip
+--     not_billed      chargeable, and on no travel invoice yet
+--     paid            its invoice is settled
+--     partly_paid     something has been received against it
+--     overdue         past its due date and not settled
+--     due             raised, within terms
+--
+--   A cancelled trip keeps whatever its invoice says: cancelling a trip
+--   does not unbill it, and an invoice already raised still has to be
+--   collected. `cancelled` is a column here so a caller can say so.
+--
+--   ## Trips billed before travel invoices existed
+--
+--   `billed_stage_id` could once name any payment stage, and some trips
+--   name an ordinary share of a PO (097 refuses new links of that shape
+--   but keeps the old ones). Such a trip is **not** billed on a travel
+--   invoice, so it reads `not_billed` and carries no invoice figures —
+--   nothing downstream may mistake it for billed. `billed_on_po_stage`
+--   says the link is there to be looked at, which is what lets a screen
+--   show "billed on a PO stage: check" without this view pretending the
+--   stage is something it is not.
+-- ---------------------------------------------------------------------
+
+CREATE VIEW v_trip_billing AS
+SELECT
+  tl.travel_id,
+  tl.po_number,
+  COALESCE(po.project_id, tl.project_id)                   AS project_id,
+  COALESCE(pr.client_name, tl.client_label)                AS client_name,
+  COALESCE(tt.chargeable, false)                           AS chargeable,
+  tl.cancelled,
+  tr.total_travel_cost,
+  -- Only a travel invoice bills a trip. A legacy link to an ordinary
+  -- stage yields NULL here and raises the flag below instead.
+  ti.id                                                    AS stage_id,
+  ti.invoice_no,
+  ti.invoice_date,
+  ti.stage_amount                                          AS invoice_amount,
+  ti.amount_received,
+  ti.payment_received_date,
+  ti.stage_status,
+  ti.document_id                                           AS invoice_document_id,
+  ti.terms_days,
+  COALESCE(ti.days_overdue, 0)                             AS days_overdue,
+  (tl.billed_stage_id IS NOT NULL AND ti.id IS NULL)       AS billed_on_po_stage,
+  CASE
+    WHEN NOT COALESCE(tt.chargeable, false)       THEN 'not_chargeable'
+    WHEN ti.id IS NULL                            THEN 'not_billed'
+    WHEN ti.stage_status = 'Paid'                 THEN 'paid'
+    WHEN ti.stage_status = 'Overdue'              THEN 'overdue'
+    WHEN ti.stage_status = 'Partially Paid'       THEN 'partly_paid'
+    -- 'Due', and the two a travel invoice cannot reach: it always has an
+    -- invoice number and is always 'Manual', so never To Invoice or Not Due.
+    ELSE 'due'
+  END                                                      AS billing_status
+FROM travel_logs tl
+LEFT JOIN purchase_orders po ON po.po_number  = tl.po_number
+LEFT JOIN projects        pr ON pr.project_id = COALESCE(po.project_id, tl.project_id)
+LEFT JOIN trip_types      tt ON tt.id         = tl.trip_type_id
+-- The travel invoice this trip is billed on, if it is billed on one at all.
+LEFT JOIN v_payment_stages ti
+       ON ti.id = tl.billed_stage_id AND ti.kind = 'travel'
+-- What the trip cost, the same way v_travel_logs works it out, so the two
+-- cannot disagree.
+CROSS JOIN LATERAL (
+  SELECT COALESCE((SELECT SUM(net_cost) FROM v_travel_invoice_lines l WHERE l.travel_id = tl.travel_id), 0)
+       + COALESCE((SELECT SUM(amount_claimed) FROM employee_expense_claims ec WHERE ec.travel_id = tl.travel_id), 0)
+) tr(total_travel_cost);
 
 -- ---------------------------------------------------------------------
 -- Purchase orders — totals its service lines, stages and trips
