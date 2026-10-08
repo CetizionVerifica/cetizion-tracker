@@ -2,7 +2,7 @@
 
 > **Superseded visual rules.** The Mocha Glass redesign replaces this guide's
 > visual rules: palette, fonts, radii, sidebar and page layout (Mocha Glass, see
-> the redesign notes; tokens and classes in `src/styles/mocha/`, primitives in
+> `docs/ui-redesign/README.md`; tokens and classes in `src/styles/mocha/`, primitives in
 > `src/components/ui`, the shell in `src/components/shell`). Where this file and
 > Mocha Glass disagree on how something looks, Mocha Glass wins. Its non-visual
 > rules still apply: copy and wording, accessibility, one pattern per job, the
