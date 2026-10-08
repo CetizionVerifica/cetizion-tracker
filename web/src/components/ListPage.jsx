@@ -340,7 +340,7 @@ export function ListPage({
                 </button>
               )}
               {filtered && <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={clearAll}>Clear</button>}
-              <span className="app-count" aria-live="polite">{loading ? 'Loading…' : `${rows.length} of ${total}`}</span>
+              <span className="app-count" aria-live="polite">{loading ? 'Loading…' : error ? '' : `${rows.length} of ${total}`}</span>
             </div>
             {allOpen && (
               <AllFilters

@@ -110,7 +110,12 @@ function Chooser() {
   const lines = useList('payment-terms-template-lines', { limit: 1000 });
   const onboarding = useList('onboarding-templates', { limit: 200 });
   const off = payment.rows.filter((t) => Math.abs(PAYMENT.total(lines.rows.filter((l) => l.template_id === t.id)) - 100) > 0.01).length;
-  const meta = (n, kind) => (n === undefined || (kind === 'payment' ? payment.loading && !payment.data : onboarding.loading && !onboarding.data) ? '' : `${n} template${n === 1 ? '' : 's'} · `);
+  // A failed count says so: "0 templates" would read as none set up.
+  const meta = (n, kind) => {
+    const list = kind === 'payment' ? payment : onboarding;
+    if (list.error) return 'Couldn’t count them · ';
+    return n === undefined || (list.loading && !list.data) ? '' : `${n} template${n === 1 ? '' : 's'} · `;
+  };
   const kinds = [
     { ...PAYMENT, line: `${meta(payment.total, 'payment')}${PAYMENT.meta}`, badge: off ? `${off} need${off === 1 ? 's' : ''} fixing` : null },
     { ...ONBOARDING, line: `${meta(onboarding.total, 'onboarding')}${ONBOARDING.meta}` },
