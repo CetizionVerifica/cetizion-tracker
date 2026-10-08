@@ -260,3 +260,4 @@
 @media (max-width: 479px) { .set-chart { grid-template-columns: 46px minmax(0, 1fr); gap: 0 8px; } .set-chart__y span { font-size: 10.5px; } .set-chart__x span { font-size: 10.5px; } }
 .set-strip > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .set-strip .mg-tile__figure { overflow-wrap: anywhere; }
+.set-prov ol { list-style: decimal; }
