@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import {
   CircleAlert, CircleCheck, Clock, FileText, Pencil, Plus, Trash2, TriangleAlert,
 } from 'lucide-react';
-import { PageHeader } from '../App.jsx';
 import {
   ConfirmDialog, DocumentLink, Field, Input, Modal, Select, Textarea, useToast,
 } from '../components/ui.jsx';
@@ -14,7 +13,8 @@ import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { AcceptanceLinks, LinkDialog } from '../components/AcceptanceLinks.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
-import { FailedCard, plural } from '../components/daily.jsx';
+import { plural } from '../components/daily.jsx';
+import { RecordState } from '../components/travel.jsx';
 import { RecordTabs, Sec, Tone, useTab } from '../components/sales.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -80,7 +80,7 @@ export default function QuotationDetail() {
   const [busy, setBusy] = useState(false);
   const [linksVersion, setLinksVersion] = useState(0);
 
-  const { data, loading, error, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
+  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
   const q = data?.data;
   const acceptances = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/acceptances`), [key, q?.revision, q?.accepted_at, linksVersion]);
   const links = acceptances.data?.data ?? [];
@@ -105,7 +105,7 @@ export default function QuotationDetail() {
   }
 
   if (error) {
-    return <><PageHeader eyebrow="Deal" title="Deal" /><div className="app-page"><FailedCard title="Couldn't open this deal" text={error} onRetry={refetch}><Link className="mg-btn mg-btn--sm" to="/quotations">Back to Deals</Link></FailedCard></div></>;
+    return <RecordState parent="Deals" parentTo="/quotations" crumb={key} noun="deal" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
   if (loading || !q) {
     return (

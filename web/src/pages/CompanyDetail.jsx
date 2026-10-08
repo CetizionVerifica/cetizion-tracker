@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle, FileText, FolderKanban, MessageSquare, Pencil, Plus, Receipt, UserPlus, Users,
 } from 'lucide-react';
-import { PageHeader } from '../App.jsx';
 import { ConfirmDialog, Field, Modal, Select, useToast } from '../components/ui.jsx';
 import { Chip, initialsOf, RecordMenuItem, RecordPage, RecordRow, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -12,7 +11,8 @@ import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { PortalSettings } from '../components/PortalSettings.jsx';
 import { PortalAnswers } from '../components/PortalAnswers.jsx';
 import { PortalPreview } from '../components/PortalPreview.jsx';
-import { FailedCard, plural } from '../components/daily.jsx';
+import { plural } from '../components/daily.jsx';
+import { RecordState } from '../components/travel.jsx';
 import { RecordTabs, Sec, Tone, useTab } from '../components/sales.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -84,7 +84,7 @@ export default function CompanyDetail() {
   const [into, setInto] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const { data, loading, error, refetch } = useFetch(() => api.raw(`/companies/${id}/full`), [id]);
+  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/companies/${id}/full`), [id]);
   const c = data?.data;
   // The portal switches are an admin's (the route is admin-only).
   const portal = useFetch(() => (isAdmin ? api.raw(`/portal-admin/companies/${id}`) : Promise.resolve(null)), [id, isAdmin]);
@@ -113,7 +113,7 @@ export default function CompanyDetail() {
   }
 
   if (error) {
-    return <><PageHeader eyebrow="Company" title="Company" /><div className="app-page"><FailedCard title="Couldn't open this company" text={error} onRetry={refetch}><Link className="mg-btn mg-btn--sm" to="/companies">Back to Companies</Link></FailedCard></div></>;
+    return <RecordState parent="Companies" parentTo="/companies" crumb={`#${id}`} noun="company" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
   if (loading || !c) {
     return (

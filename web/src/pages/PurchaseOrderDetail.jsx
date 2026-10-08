@@ -11,7 +11,8 @@ import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { ClientSaidBadge, clientWord } from '../components/ClientSaid.jsx';
 import { ControlBar } from '../components/shell/Shell.jsx';
 import { Key, MoneyBanner, MoneyHero, STAGE_TONE, STAGE_WORD, shortDate } from '../components/money.jsx';
-import { FailedCard, plural } from '../components/daily.jsx';
+import { plural } from '../components/daily.jsx';
+import { RecordState } from '../components/travel.jsx';
 import { Tone } from '../components/sales.jsx';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { PO_TONE, PO_WORD, poFormFields } from './PurchaseOrders.jsx';
@@ -116,7 +117,7 @@ export default function PurchaseOrderDetail() {
   const mayDeleteService = mayDeleteResource('po-services', isAdmin);
   const [dialog, setDialog] = useState(null);
 
-  const { data, loading, error, refetch } = useFetch(() => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`), [poNumber]);
+  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`), [poNumber]);
   // The client's confirmations, queries and payment advice on this PO (#198), newest first.
   const portal = useFetch(() => api.raw(`/portal-admin/actions?status=all&po_number=${encodeURIComponent(poNumber)}`).catch(() => ({ data: [] })), [poNumber]);
 
@@ -130,12 +131,7 @@ export default function PurchaseOrderDetail() {
   );
 
   if (error) {
-    return (
-      <div className="app-page app-rec">
-        {crumbs(`PO ${poNumber}`)}
-        <FailedCard title={`Couldn't load PO ${poNumber}`} text={error} onRetry={refetch} />
-      </div>
-    );
+    return <RecordState parent="Orders" parentTo="/purchase-orders" crumb={`PO ${poNumber}`} noun="order" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
   if (loading || !data) {
     return (

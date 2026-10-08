@@ -59,7 +59,7 @@ export default function VendorInvoiceDetail() {
   }
 
   if (error || loading || !invoice) {
-    return <RecordState parent="Vendor invoices" parentTo="/vendor-invoices" crumb={invoice?.vendor_invoice_no || `bill ${id}`} noun="vendor invoice" loading={!error} missing={errorStatus === 404} error={error} onRetry={refetch} />;
+    return <RecordState parent="Vendor invoices" parentTo="/vendor-invoices" crumb={invoice?.vendor_invoice_no || `#${id}`} noun="vendor invoice" loading={!error} missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
 
   const no = invoice.vendor_invoice_no || invoice.vendor_invoice_id;
