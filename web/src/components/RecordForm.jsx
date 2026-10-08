@@ -305,7 +305,9 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
       control = <Combo options={field.options} {...common} />;
       break;
     case 'textarea':
-      control = <Textarea rows={field.rows || 3} {...common} />;
+      control = <Textarea rows={field.rows || 3} maxLength={field.max} {...common} />;
+      // A character count where the server caps the text.
+      if (field.max) hint = `${hint ? `${hint} ` : ''}${String(value ?? '').length} of ${field.max} characters.`;
       break;
     case 'date':
       control = <Input type="date" {...common} />;
