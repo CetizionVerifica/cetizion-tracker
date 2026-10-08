@@ -3,7 +3,7 @@ import { Modal, Field, FileDrop, Input, Select, Textarea, Alert, useToast } from
 import { Button } from '@/components/ui/button.tsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
-import { date, money, today } from '../lib/format.js';
+import { date, fileSize, money, today } from '../lib/format.js';
 import { Banknote, MessageSquareText } from 'lucide-react';
 import { DialogError, MoneyBanner, MoneyFacts } from './money.jsx';
 import { SumBox } from './travel.jsx';
@@ -78,6 +78,12 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
   // A document already on the stage is kept unless somebody chooses otherwise (decision 10).
   const [emailDocument, setEmailDocument] = useState(stage.document_id ? null : prefill?.document_id || null);
   const [document, setDocument] = useState(null);
+  const [docError, setDocError] = useState(null);
+  const maxBytes = useLookups().limits?.document_max_bytes;
+  const pickDocument = (f) => {
+    if (f && maxBytes && f.size > maxBytes) { setDocument(null); setDocError(`This file is ${fileSize(f.size)}: the limit is ${fileSize(maxBytes)}. Pick a smaller one.`); return; }
+    setDocError(null); setDocument(f);
+  };
   const uploadDocument = useDocumentUploads();
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Invoice recorded' });
 
@@ -140,7 +146,7 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
         as="div"
         label="Invoice document (optional)"
         hint={stage.document_id ? 'Leave it empty to keep the current file, or drop one to replace it.' : 'You can add it later.'}
-        error={fieldErrors.document_id}
+        error={docError || fieldErrors.document_id}
       >
         {stage.document_id && !document && (
           <div className="app-mfacts">
@@ -149,7 +155,7 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
             </span>
           </div>
         )}
-        <FileDrop label="Invoice document" text={stage.document_id ? 'Drop a file here to replace the current one' : 'Drop a PDF or image here'} error={fieldErrors.document_id} onFile={setDocument} />
+        <FileDrop label="Invoice document" text={stage.document_id ? 'Drop a file here to replace the current one' : 'Drop a PDF or image here'} error={docError || fieldErrors.document_id} onFile={pickDocument} />
         {emailDocument && !document && (
           <div className="text-[12.5px] text-secondary-text">
             <a className="app-link" href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The invoice from the email</a> will be attached
