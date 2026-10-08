@@ -22,12 +22,16 @@
 .app-rail__avatar:focus-visible, .mg-rail__btn:focus-visible, .mg-rail__theme:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
 .app-shell__rail .mg-tip { position: absolute; z-index: 40; }
 /* A short window: tighter buttons before the nav has to scroll. */
-@media (min-width: 720px) and (max-height: 860px) {
+@media (min-width: 720px) and (max-height: 940px) {
   .app-shell__rail .mg-rail { gap: 4px; padding: 14px 0 12px; }
   .app-shell__rail .mg-rail__nav { gap: 4px; }
   .app-shell__rail .mg-rail__btn { width: 44px; height: 44px; }
   .app-shell__rail .mg-rail__foot { gap: 8px; }
   .app-shell__rail .mg-rail__theme { width: 44px; height: 44px; }
+}
+@media (min-width: 720px) and (max-height: 820px) {
+  .app-shell__rail .mg-rail__btn { width: 42px; height: 42px; }
+  .app-shell__rail .mg-rail__logo { margin-bottom: 2px; }
 }
 
 /* Dock: bottom centre, over the page. Labels go below 900px (bundle.css). */
