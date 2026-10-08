@@ -208,7 +208,11 @@ html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: tra
 
 /* ── Progress and hatching (hatch = expected / not yet ready money) ── */
 .mg-progress { position: relative; display: flex; height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; }
-.mg-progress__done { background: var(--figure); border-radius: 999px; transform-origin: left; }
+.mg-progress__done { background: var(--figure); transform-origin: left; }
+/* Segments meet flush; the track rounds the two outer ends. A bar with only its
+   filled part keeps a rounded leading edge. */
+.mg-progress > * { border-radius: 0; }
+.mg-progress > :last-child:not(:first-child), .mg-progress > :only-child { border-radius: 0 999px 999px 0; }
 .mg-progress__expected { background: var(--mg-hatch); transform-origin: left; }
 .mg-hero .mg-progress { background: rgba(255,240,225,.12); }
 .mg-hero .mg-progress__done { background: var(--on-hero); }
