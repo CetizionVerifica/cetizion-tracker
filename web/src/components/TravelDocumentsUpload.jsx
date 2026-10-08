@@ -4,6 +4,7 @@ import { cn } from 'cn';
 import { Modal } from './ui.jsx';
 import { MoneyBanner } from './money.jsx';
 import { api } from '../lib/api.js';
+import { sentence as asSentence } from '../lib/format.js';
 
 /**
  * Many travel files at once, each filed by its name (#196 §5.4): an agency
@@ -67,7 +68,7 @@ export function TravelDocumentsUpload({ batchId, onDone, label = 'Upload documen
           )}
         >
           <MoneyBanner tone="late" role="alert" title="The upload didn't finish.">
-            {result.error} Nothing was filed, so you can upload the same files again.
+            {asSentence(result.error)} Nothing was filed, so you can upload the same files again.
           </MoneyBanner>
         </Modal>
       ) : (

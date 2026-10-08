@@ -7,7 +7,7 @@ import { MoneyBanner } from '../components/money.jsx';
 import { Tone } from '../components/sales.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
-import { ago, number } from '../lib/format.js';
+import { ago, number, sentence } from '../lib/format.js';
 import { useFetch } from '../lib/hooks.js';
 
 /**
@@ -98,7 +98,7 @@ export default function BulkImport() {
           {error && (
             <MoneyBanner tone="late" role="alert" title={`Couldn’t read “${error.file}”.`}
               action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => input.current?.click()}>Choose another file</button>}>
-              {' '}{error.message} Nothing was saved.
+              {' '}{sentence(error.message)} Nothing was saved.
             </MoneyBanner>
           )}
 

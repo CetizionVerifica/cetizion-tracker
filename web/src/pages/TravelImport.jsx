@@ -9,7 +9,7 @@ import { count } from '../components/travel.jsx';
 import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
-import { ago, number } from '../lib/format.js';
+import { ago, number, sentence } from '../lib/format.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 
 /**
@@ -92,7 +92,7 @@ export default function TravelImport() {
           {error && (
             <MoneyBanner tone="late" role="alert" title={`${error.file} couldn't be read.`}
               action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => input.current?.click()}>Choose another file</button>}>
-              {error.message} Nothing was saved.
+              {sentence(error.message)} Nothing was saved.
             </MoneyBanner>
           )}
 

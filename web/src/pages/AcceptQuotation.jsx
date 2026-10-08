@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, CircleAlert, CircleCheckBig, Clock, Download, Link2, Lock, MessageSquare } from 'lucide-react';
 import { ClientHeader, ClientPage, useEnter } from '../components/client.jsx';
+import { sentence } from '../lib/format.js';
 
 /**
  * The page a client opens from an acceptance link (#53, C18).
@@ -58,7 +59,7 @@ export default function AcceptQuotation({ token }) {
       setState({ data: await call(token) });
       setMode(null);
     } catch (err) {
-      if (err.status === 409) setError({ banner: 'This quotation has already been answered', text: `${err.message} Reload the page to see the answer.` });
+      if (err.status === 409) setError({ banner: 'This quotation has already been answered', text: `${sentence(err.message)} Reload the page to see the answer.` });
       else if (err.fields?.comment) setError({ field: 'comment', text: mode === 'changes' ? 'Please tell us what should change.' : err.fields.comment });
       else if (err.fields?.name) setError({ field: 'name', text: err.fields.name });
       else if (err.fields?.email) setError({ field: 'email', text: err.fields.email });

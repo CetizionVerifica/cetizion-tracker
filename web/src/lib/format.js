@@ -24,6 +24,12 @@ export function number(value) {
   return new Intl.NumberFormat('en-IN').format(Number(value));
 }
 
+/** A server message as a sentence, so text can follow it: "…limit" becomes "…limit.". */
+export function sentence(text) {
+  const t = String(text ?? '').trim();
+  return !t || /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
 export function fileSize(bytes) {
   if (bytes === null || bytes === undefined || bytes === '') return '—';
   const n = Number(bytes);

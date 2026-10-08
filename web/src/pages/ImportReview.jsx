@@ -10,7 +10,7 @@ import { Tone } from '../components/sales.jsx';
 import { SetStrip } from '../components/settings.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, date, number } from '../lib/format.js';
+import { money, date, number, sentence } from '../lib/format.js';
 
 /**
  * Step-by-step review of one import batch (`/import/:id`), Wave 8. Each
@@ -184,7 +184,7 @@ export default function ImportReview() {
       <>
         <Head title={`Import #${id}`} />
         <div className="app-page">
-        <StateCard tone="late" role="alert" title="Couldn’t load this import" text={`${error} Nothing has changed; the draft is still there.`}>
+        <StateCard tone="late" role="alert" title="Couldn’t load this import" text={`${sentence(error)} Nothing has changed; the draft is still there.`}>
           <button type="button" className="mg-btn mg-btn--sm" onClick={refetch}>Try again</button>
         </StateCard>
         </div>

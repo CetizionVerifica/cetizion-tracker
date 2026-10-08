@@ -14,6 +14,7 @@ import { Profile } from './Profile.jsx';
 import { Notifications } from './Notifications.jsx';
 import { WaysIn } from './WaysIn.jsx';
 import { Devices } from './Devices.jsx';
+import { sentence } from '../../lib/format.js';
 
 /**
  * My account (C20), Wave 8: the Settings shape. Who you are and the four
@@ -97,7 +98,7 @@ export default function Account() {
     return (
       <div className="app-page set-page">
         {head()}
-        <FailedCard title="Couldn’t load your account" text={`${error} Nothing has changed. Try again in a moment.`} onRetry={refetch} />
+        <FailedCard title="Couldn’t load your account" text={`${sentence(error)} Nothing has changed. Try again in a moment.`} onRetry={refetch} />
       </div>
     );
   }

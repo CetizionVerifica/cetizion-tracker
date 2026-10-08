@@ -12,7 +12,7 @@ import { count } from '../components/travel.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money } from '../lib/format.js';
+import { money, sentence } from '../lib/format.js';
 
 const OVERDUE = 'Invoice OVERDUE from vendor';
 const MODE = { flight: ['Flights', Plane], hotel: ['Hotels', BedDouble], train: ['Trains', TrainFront], cab: ['Cabs', Car], bus: ['Buses', Bus], other: ['Other', Plane], 'no leg named': ['No leg named', CircleHelp] };
@@ -63,7 +63,7 @@ export default function TravelDashboard() {
     return (
       <>
         {header("The figures didn't load.")}
-        <div className="app-page"><FailedCard title="Couldn't load the travel dashboard" text={`${error} Nothing has changed; try again.`} onRetry={refetch} /></div>
+        <div className="app-page"><FailedCard title="Couldn't load the travel dashboard" text={`${sentence(error)} Nothing has changed; try again.`} onRetry={refetch} /></div>
       </>
     );
   }
