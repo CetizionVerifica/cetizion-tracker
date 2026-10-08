@@ -83,10 +83,10 @@ const GROUP = [
   '[&_[cmdk-group-heading]]:px-3',
   '[&_[cmdk-group-heading]]:pt-4',
   '[&_[cmdk-group-heading]]:pb-1.5',
-  '[&_[cmdk-group-heading]]:text-[10.5px]',
-  '[&_[cmdk-group-heading]]:font-semibold',
+  '[&_[cmdk-group-heading]]:text-[11px]',
+  '[&_[cmdk-group-heading]]:font-bold',
   '[&_[cmdk-group-heading]]:uppercase',
-  '[&_[cmdk-group-heading]]:tracking-[0.1em]',
+  '[&_[cmdk-group-heading]]:tracking-[0.12em]',
   '[&_[cmdk-group-heading]]:text-muted-foreground',
 ].join(' ');
 

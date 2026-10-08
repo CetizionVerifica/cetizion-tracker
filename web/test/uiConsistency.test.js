@@ -74,6 +74,14 @@ test('corners come from the radius scale (6, 8, 12, 16, or 2 and 4 for tiny mark
   assert.deepEqual(hits, [], `Use rounded-sm (6), rounded-md (8), rounded-lg (12) or rounded-xl (16) (web/CLAUDE.md §1):\n${hits.join('\n')}`);
 });
 
+test('the stylesheet keeps to the same radius scale', () => {
+  const css = readFileSync(join(SRC, 'styles/globals.css'), 'utf8');
+  const bad = [...css.matchAll(/border-radius:\s*([^;]+);/g)]
+    .map((m) => m[1].trim())
+    .filter((v) => !v.split(/\s+/).every((part) => /^(0|2px|4px|6px|8px|12px|16px|999px|50%|var\(--[\w-]+\))$/.test(part)));
+  assert.deepEqual(bad, []);
+});
+
 test('records that move through a process show it with the shared rail (web/CLAUDE.md §4)', () => {
   for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
     const text = readFileSync(join(SRC, 'pages', page), 'utf8');
@@ -139,6 +147,45 @@ for (const [name, theme] of [['light', LIGHT], ['dark', DARK]]) {
     assert.deepEqual(fails, []);
   });
 }
+
+test('every CSS variable a component reads is defined in globals.css', () => {
+  const defined = new Set([...CSS.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  // Set by Tailwind or Radix at runtime, not by us.
+  const runtime = /^--(spacing|radix-[\w-]+|tw-[\w-]+)$/;
+  const hits = [];
+  for (const path of [...files(SRC), join(SRC, 'styles/globals.css')]) {
+    for (const { line, n } of codeLines(path)) {
+      for (const m of line.matchAll(/var\((--[\w-]+)/g)) {
+        if (!defined.has(m[1]) && !runtime.test(m[1])) hits.push(`${relative(SRC, path)}:${n} ${m[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, [], `An undefined variable draws nothing; use a token from globals.css:\n${hits.join('\n')}`);
+});
+
+test('every sidebar entry opens a page with the same name (web/CLAUDE.md §3)', () => {
+  const app = readFileSync(join(SRC, 'App.jsx'), 'utf8');
+  const imports = Object.fromEntries([
+    ...app.matchAll(/^import (\w+) from '\.\/pages\/([\w/]+\.jsx)';/gm),
+    ...app.matchAll(/^const (\w+) = lazy\(\(\) => import\('\.\/pages\/([\w/]+\.jsx)'\)\);/gm),
+  ].map((m) => [m[1], m[2]]));
+  // The page is the innermost component on the route (inside AdminOnly or Suspense).
+  const routes = Object.fromEntries([...app.matchAll(/<Route path="([^"]+)" element=\{(.*)\} \/>/g)]
+    .map((m) => [m[1], [...m[2].matchAll(/<([A-Z]\w+) \/>/g)].pop()?.[1]]));
+  const entries = [...app.matchAll(/\{ to: '([^']+)', icon: \w+, label: '([^']+)'/g)].map((m) => ({ to: m[1], label: m[2] }));
+  assert.ok(entries.length > 15, 'sidebar entries not found');
+  // Today greets the person and Inbox draws its own header (§3).
+  const own = new Set(['/', '/inbox']);
+  const wrong = [];
+  for (const { to, label } of entries) {
+    if (own.has(to)) continue;
+    const page = imports[routes[to]];
+    assert.ok(page, `no page found for ${to}`);
+    const text = readFileSync(join(SRC, 'pages', page), 'utf8');
+    if (!text.includes(`title="${label}"`)) wrong.push(`${label} (${to}) -> pages/${page}`);
+  }
+  assert.deepEqual(wrong, [], 'The page title should be the sidebar name');
+});
 
 // ---------------------------------------------------------------- branding
 

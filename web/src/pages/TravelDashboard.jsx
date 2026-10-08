@@ -10,7 +10,7 @@ export default function TravelDashboard() {
   if (error) {
     return (
       <>
-        <PageHeader title="Travel spend" />
+        <PageHeader title="Travel dashboard" />
         <div className="page"><ErrorState message={error} onRetry={refetch} /></div>
       </>
     );

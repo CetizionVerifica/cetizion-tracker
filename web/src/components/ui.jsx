@@ -78,7 +78,7 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
   );
   const inner = (
     <>
-      <div className="text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">{label}</div>
+      <div className="eyebrow">{label}</div>
       <div className={cn('num font-display text-2xl font-bold', accent || 'text-foreground')}>{value}</div>
       {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
     </>
@@ -161,7 +161,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
             <CardContent className="px-3 py-3">
             {labelled.map((col, index) => (
               <div key={col.key} className={cn('flex gap-3 py-1', index > 0 && 'border-t border-border/60 pt-2')}>
-                <span className="w-[38%] shrink-0 text-[11px] font-bold tracking-[0.12em] text-muted-foreground uppercase">
+                <span className="eyebrow w-[38%] shrink-0">
                   {col.header}
                 </span>
                 <span className={cn('min-w-0 flex-1 wrap-anywhere text-[13px]', col.align === 'right' && 'num')}>
@@ -490,7 +490,7 @@ export function KeyValues({ items }) {
     <dl className="auto-grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
       {items.filter(Boolean).map((item) => (
         <div key={item.label} className="min-w-0">
-          <dt className="text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">{item.label}</dt>
+          <dt className="eyebrow">{item.label}</dt>
           <dd className="mt-0.5 ml-0 text-[13px] text-foreground">{item.value ?? <span className="text-muted-foreground">—</span>}</dd>
         </div>
       ))}

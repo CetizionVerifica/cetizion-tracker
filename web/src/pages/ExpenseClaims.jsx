@@ -67,7 +67,7 @@ export default function ExpenseClaims() {
     <>
       <ListPage
         refreshToken={version}
-        title="Employee expense claims"
+        title="Expense claims"
         subtitle="Out-of-pocket costs claimed against a trip"
         resource="expense-claims"
         columns={columns}

@@ -63,7 +63,7 @@ from `components/ui.jsx`; do not hand-roll chips.
 | Table cells, meta | Inter | 13px / 400 | `text-[13px]` |
 | Label, button | Inter | 13–14px / 600 | `font-semibold` |
 | Key figure | Inter | 24–28px / 600, tabular | `text-2xl font-semibold num` |
-| Eyebrow | Inter | 11–12px / 700, uppercase, 0.12em | `text-[11px] font-bold uppercase tracking-[0.12em]` |
+| Eyebrow | Inter | 11px / 700, uppercase, 0.12em | `eyebrow` (class in globals.css) |
 
 - Sentence case everywhere ("Raise invoice", not "Raise Invoice" or "RAISE INVOICE").
 - Every number is tabular (`.num`). Money: ₹ with Indian grouping (₹5,90,000) via
@@ -95,8 +95,10 @@ from `components/ui.jsx`; do not hand-roll chips.
    when the project has a delivery date"). Never a bare disabled button.
 3. **Never offer to type a derived value.** Status, outstanding, due date and stage
    amount are computed by the server. Show them; do not make them fields.
-4. **Filters live in the URL**, so a link carries them. Lists use `ListPage` and
-   `SavedViews`; do not build a new list shell.
+4. **Filters live in the URL**, so a link carries them: `ListPage` reads them from the
+   address and writes them back as they change. Lists use `ListPage` and `SavedViews`;
+   do not build a new list shell. A list shows search and its three most-used filters;
+   the rest sit behind "More filters", which opens by itself when one of them is set.
 5. **Every figure and chart opens the records behind it**, and every chart has a table twin.
 6. **The next action sits on the row** (a won deal shows "Register").
 7. **Empty, loading and error states** exist on every screen: an empty state says what
@@ -121,7 +123,9 @@ from `components/ui.jsx`; do not hand-roll chips.
   belong only where they are data (the quotation PDF, Company profile).
 - Settings, My account, theme and sign out stay in the menu beside the person's name.
   ⌘K ("Search or do anything") is always one key away.
-- Every page uses `PageHeader` (title, one-sentence subtitle, actions). Do not draw a
+- A page's title is its sidebar name ("Deals", "Orders", "Invoicing"), so where you
+  clicked and where you landed read the same. Breadcrumbs use the same name.
+- Every page uses `PageHeader` (optional eyebrow, title, one-sentence subtitle, actions). Do not draw a
   custom header except where the screen genuinely needs one (Inbox).
 - Adding a page: add its route in `App.jsx`, its sidebar entry in the right group (or
   none, if it is reached from a record), and a ⌘K entry in `lib/commands.js` if it has a verb.
@@ -184,7 +188,8 @@ Button variants: `default` (primary, once per view), `outline` (secondary), `gho
 
 `test/uiConsistency.test.js` checks the parts of this file a machine can: no hex or
 Tailwind palette colours in components, every token defined in both themes, the
-contrast of every text/ground pair, radii on the scale, the process rail on the Deal,
+contrast of every text/ground pair, every CSS variable defined, radii on the scale,
+page titles matching their sidebar names, the process rail on the Deal,
 Order and Project pages (and the Deal's nine steps), and no company name in the app. If it fails,
 fix the screen or the token; add to its exceptions only for something that is
 deliberately not themed (a third-party logo, an email body, the PDF preview).

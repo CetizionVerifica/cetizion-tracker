@@ -170,7 +170,7 @@ export function CompanyProfile() {
       </div>
 
       <div className="flex flex-col gap-3">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">PDF header, live</div>
+        <div className="eyebrow">PDF header, live</div>
         <PdfHeader values={values} />
         <p className="text-[11.5px]/[1.6] text-muted-foreground">
           The numbering series — <span className="mono">CTZ/QT/2026/…</span>, <span className="mono">PRJ-2026-…</span>,

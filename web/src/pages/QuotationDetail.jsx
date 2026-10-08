@@ -43,7 +43,7 @@ import { quotationFields } from './Quotations.jsx';
 
 const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
-const FACT_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const FACT_LABEL = 'eyebrow';
 
 const trim = (n) => String(Math.round(Number(n) * 100) / 100);
 

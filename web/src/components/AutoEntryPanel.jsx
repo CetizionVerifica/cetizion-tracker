@@ -66,7 +66,7 @@ export function AutoEntryPanel() {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse text-[12.5px] text-secondary-text">
           <thead>
-            <tr className="border-b border-border text-[11.5px] uppercase tracking-wide text-muted-foreground">
+            <tr className="border-b border-border eyebrow">
               <th className="px-2 py-1.5 text-left font-medium">Day</th>
               <th className="px-2 py-1.5 text-right font-medium">Emails decided</th>
               <th className="px-2 py-1.5 text-right font-medium">Entered</th>

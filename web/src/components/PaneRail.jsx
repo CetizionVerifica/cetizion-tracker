@@ -21,7 +21,7 @@ export function PaneRail({ base, groups }) {
         {groups.map((group, i) => (
           <div key={group.label ?? i} className="contents lg:block lg:pb-3">
             {group.label && (
-              <div className="hidden px-2.5 pt-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.1em] text-muted-foreground uppercase lg:block">
+              <div className="hidden px-2.5 pt-3 pb-1.5 eyebrow lg:block">
                 {group.label}
               </div>
             )}

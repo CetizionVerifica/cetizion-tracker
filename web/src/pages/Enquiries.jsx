@@ -45,7 +45,7 @@ export default function Enquiries() {
     { key: 'estimated_value', header: 'Estimate', align: 'right', render: (r) => (r.estimated_value ? money(r.estimated_value, r.currency) : <span className="muted">—</span>) },
     { key: 'sales_person', header: 'Owner', render: (r) => r.sales_person ?? <span className="muted">—</span> },
     { key: 'status', header: 'Status', render: (r) => <><Badge tone={r.status === 'Unqualified' ? 'danger' : r.status === CONVERTED ? 'success' : r.status === 'New' ? 'warning' : 'info'}>{r.status}</Badge>{r.status === 'Unqualified' && r.unqualified_reason_id && <div className="small muted">{lookups.lost_reasons.find((x) => x.id === r.unqualified_reason_id)?.name}</div>}</> },
-    { key: 'next_follow_up_at', header: 'Next follow-up', render: (r) => r.next_follow_up_at ? <span style={{ color: r.next_follow_up_at <= today() && OPEN.includes(r.status) ? 'var(--danger-fg)' : undefined }}>{date(r.next_follow_up_at)}</span> : <span className="muted">—</span> },
+    { key: 'next_follow_up_at', header: 'Next follow-up', render: (r) => r.next_follow_up_at ? <span style={{ color: r.next_follow_up_at <= today() && OPEN.includes(r.status) ? 'var(--late)' : undefined }}>{date(r.next_follow_up_at)}</span> : <span className="muted">—</span> },
     { key: 'expected_decision_date', header: 'Decision by', render: (r) => date(r.expected_decision_date) },
     {
       key: 'quotation_no', header: 'Quotation',

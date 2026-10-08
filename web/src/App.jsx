@@ -743,7 +743,7 @@ export function PageHeader({ title, subtitle, actions, eyebrow }) {
         <PanelLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
       </Button>
       <div className="min-w-0 flex-1">
-        {eyebrow && <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{eyebrow}</div>}
+        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
         <h1 className="truncate font-display text-2xl font-bold text-foreground">{title}</h1>
         {subtitle && <div className="measure mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>}
       </div>

@@ -32,7 +32,7 @@ export default function Cashflow() {
   return (
     <>
       <PageHeader
-        title="Cash-flow forecast"
+        title="Cash flow"
         subtitle="Money expected in from invoices, the payment schedule and the weighted pipeline; money out for vendor bills and expense claims. INR only."
         actions={<Select value={months} placeholder={null} options={horizons.map((m) => ({ value: m, label: `${m} months` }))} onChange={(e) => setMonths(e.target.value)} />}
       />
@@ -59,7 +59,7 @@ export default function Cashflow() {
                   <div className="cashflow__nums">
                     <span>in {money(m.inflow)}{m.pipeline > 0 && <span className="muted"> +{money(m.pipeline)}</span>}</span>
                     <span>out {money(m.outflow)}</span>
-                    <span className={m.net < 0 ? 'strong' : 'strong'} style={{ color: m.net < 0 ? 'var(--danger-fg)' : 'var(--ok-fg)' }}>net {money(m.net)}</span>
+                    <span className={m.net < 0 ? 'strong' : 'strong'} style={{ color: m.net < 0 ? 'var(--late)' : 'var(--settled)' }}>net {money(m.net)}</span>
                   </div>
                 </div>
               ))}

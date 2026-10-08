@@ -136,7 +136,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await signIn(page);
   const client = `E2E Client ${stamp}`;
   await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
-  await page.getByRole('button', { name: '+ Quotation' }).click();
+  await page.getByRole('button', { name: 'New quotation' }).first().click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');

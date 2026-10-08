@@ -32,7 +32,7 @@ import { date, money, number, percent, today } from '../lib/format.js';
 
 const MS_PER_DAY = 86_400_000;
 const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
-const LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const LABEL = 'eyebrow';
 
 function addDays(iso, days) {
   if (!iso || !days) return iso || null;

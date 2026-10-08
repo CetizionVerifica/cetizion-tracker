@@ -108,7 +108,7 @@ export default function VendorInvoices() {
       {tab === 'invoices' ? (
         <ListPage
           refreshToken={version}
-          title="Travel vendor invoices"
+          title="Vendor invoices"
           subtitle="HR records the bill; finance pays by the following month-end. One bill can cover several trips."
           resource="vendor-invoices"
           columns={columns}

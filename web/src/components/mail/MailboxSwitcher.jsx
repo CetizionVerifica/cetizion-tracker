@@ -90,7 +90,7 @@ export function MailboxSwitcher({ mailboxes = [], value, onChange, className }) 
           return (
             <div key={b.id}>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="truncate text-[11.5px] font-semibold uppercase tracking-[0.05em] text-muted-foreground" title={b.email}>
+              <DropdownMenuLabel className="eyebrow truncate" title={b.email}>
                 {mailboxLabel(b)}
               </DropdownMenuLabel>
               {!folders.length && (

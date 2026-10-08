@@ -17,7 +17,7 @@ export default function Deliverables() {
   return (
     <>
       <PageHeader
-        title="Certificates & deliverables"
+        title="Certificates"
         subtitle="What each client holds from us, with its dates and file. Expiry dates drive renewals and reminders."
         actions={<>
           <Input placeholder="Search client, reference, scope…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && put('q', q.trim())} onBlur={() => put('q', q.trim())} style={{ width: 240 }} />

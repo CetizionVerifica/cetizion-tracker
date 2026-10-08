@@ -198,7 +198,7 @@ function Fact({ label, value, tone }) {
 function RailCard({ title, children }) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{title}</div>
+      <div className="eyebrow">{title}</div>
       {children}
     </div>
   );

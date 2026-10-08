@@ -56,7 +56,7 @@ function TodaySkeleton() {
     </div>
   );
 }
-const EYEBROW = 'text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground';
+const EYEBROW = 'eyebrow';
 const SECTION = 'font-display text-base font-bold text-foreground';
 
 /** "Tuesday 7 October", the eyebrow over the greeting. */

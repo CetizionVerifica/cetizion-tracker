@@ -45,7 +45,7 @@ const ROLES = [
 ];
 
 const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 
 /** Server-side field errors, shown against the field that caused them. */
 const fieldErrors = (err) => err?.fields ?? {};

@@ -66,7 +66,7 @@ export function RecordStat({ label, value, detail, tone }) {
   return (
     <Card className={PANEL}>
       <CardContent className="px-5 py-4">
-        <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
+        <div className="eyebrow">{label}</div>
         <div className={cn(
           'num mt-2 text-2xl font-semibold tracking-[-0.02em]',
           tone === 'late' ? 'text-late' : tone === 'waiting' ? 'text-waiting' : tone === 'settled' ? 'text-settled' : 'text-foreground'

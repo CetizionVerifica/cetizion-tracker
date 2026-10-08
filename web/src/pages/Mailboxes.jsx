@@ -41,7 +41,7 @@ import { useAuth } from '../lib/auth.jsx';
  * shyam@cetizionverifica.com wrapped mid-word in the first column.
  */
 const GRID = '@3xl:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
 const VIS = [
