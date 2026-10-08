@@ -1,7 +1,6 @@
 import { forwardRef } from 'react';
 import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import { cn } from 'cn';
-import { Button } from '@/components/ui/button.tsx';
 import { StateMarks } from './MessageView.jsx';
 
 /** How long ago, the way a mail list writes it: minutes today, then the time, then the day, then the date. */
@@ -21,100 +20,80 @@ export const initials = (name) => {
   return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 };
 
+/** Enter and Space open a row; the list's own handler does the arrows. */
+export const openOnKey = (onOpen) => (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    onOpen();
+  }
+};
+
 /**
- * One conversation in a folder (docs/inbox-outlook-plan.md §3.3), as
- * Outlook lists it: unread in bold with a dot, the flag, a paperclip,
- * importance, who it is from — or who it went to, in Sent Items — the
- * subject, the first words of the newest message, and when.
- *
- * `outbound` tells the row to lead with the recipient: a Sent Items row
- * that said "Bea Sales" on every line said nothing.
+ * One conversation in a folder, as Outlook lists it: unread with a dot,
+ * importance and the flag, a paperclip, who it is from — or who it went
+ * to, in Sent Items ("To: —" when nobody is listed) — the subject, the
+ * first words of the newest message, and the company and record it
+ * matched. The option's name says unread and the attachment, so a screen
+ * reader hears them too.
  */
 export const MessageRow = forwardRef(function MessageRow({ row, selected, outbound, onSelect }, ref) {
   const lead = outbound
     ? (row.to_emails?.length ? `To: ${row.to_emails.join(', ')}` : 'To: —')
     : (row.from_name || row.from_email || '—');
+  const when = since(row.sent_at);
+  const aria = [row.unread && 'Unread', lead, row.subject || '(no subject)', row.has_attachments && 'has an attachment', when].filter(Boolean).join(', ');
+  const tag = [row.company_name, row.entity_id].filter(Boolean).join(' · ');
   return (
     <div
       ref={ref}
       role="option"
       aria-selected={selected}
+      aria-label={aria}
       tabIndex={selected ? 0 : -1}
       onClick={() => onSelect(row)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onSelect(row);
-        }
-      }}
-      className={cn(
-        'flex w-full cursor-pointer gap-3 border-b border-border px-5 py-3 text-left transition-colors duration-150',
-        selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
-      )}
+      onKeyDown={openOnKey(() => onSelect(row))}
+      className={cn('app-ib__row', row.unread && 'is-unread')}
     >
-      <span className={cn(
-        'grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-semibold',
-        row.company_name ? 'text-primary' : 'text-muted-foreground'
-      )}>
+      <span className={cn('mg-avatar', !row.company_name && 'is-unmatched')} aria-hidden="true">
         {initials(outbound ? (row.to_emails?.[0] || '') : (row.from_name || row.company_name || row.from_email))}
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
-            {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
-          </span>
-          <span
-            className={cn('min-w-0 flex-1 truncate text-[13px] text-foreground', row.unread ? 'font-semibold' : 'font-medium')}
-            title={[row.company_name, lead].filter(Boolean).join(' · ')}
-          >
-            {lead}
-            {row.in_folder > 1 && <span className="num ml-1.5 font-normal text-muted-foreground">{row.in_folder}</span>}
-          </span>
-          <StateMarks m={{ importance: row.high ? 'high' : row.importance, flag_status: row.flagged ? 'flagged' : row.flag_status }} className="shrink-0 self-center" />
-          {row.has_attachments && (
-            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
-          )}
-          <span className="shrink-0 text-[11.5px] text-muted-foreground">{since(row.sent_at)}</span>
-        </span>
-        <span className={cn('mt-0.5 block truncate text-[12.5px]', row.unread ? 'font-medium text-foreground' : 'text-secondary-text')} title={row.subject || '(no subject)'}>
-          {row.subject || '(no subject)'}
-        </span>
-        {row.snippet && (
-          <span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{row.snippet}</span>
-        )}
-        {(row.company_name || row.entity_id) && (
-          <span className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            {row.company_name && <span className="truncate">{row.company_name}</span>}
-            {row.entity_id && <span className="num">{row.entity_id}</span>}
-          </span>
-        )}
+      <span className="app-ib__name">
+        {row.unread && <span className="app-ib__dot" aria-hidden="true" />}
+        <span className="app-ib__lead" title={[row.company_name, lead].filter(Boolean).join(' · ')}>{lead}</span>
+        {row.in_folder > 1 && <span className="app-ib__n mg-num">{row.in_folder}</span>}
       </span>
+      <span className="app-ib__time">
+        <StateMarks m={{ importance: row.high ? 'high' : row.importance, flag_status: row.flagged ? 'flagged' : row.flag_status }} />
+        {row.has_attachments && <Paperclip strokeWidth={1.8} aria-hidden="true" />}
+        <span>{when}</span>
+      </span>
+      <span className="app-ib__subj" title={row.subject || '(no subject)'}>{row.subject || '(no subject)'}</span>
+      {row.snippet && <span className="app-ib__snip is-one">{row.snippet}</span>}
+      {tag && <span className="app-ib__chips"><span className="mg-badge mg-badge--plain">{tag}</span></span>}
     </div>
   );
 });
 
 /**
- * Which conversations are on show, and the way to the others.
- *
- * Under the list rather than over it, where a mail client keeps it: the
- * list is read top down and the pager is what you reach at the bottom.
+ * Which conversations are on show, and the way to the others. Under the
+ * list, where a mail client keeps it. A single page shows only the count.
  */
-export function Pager({ page, pages, total, pageSize, onPage }) {
+export function Pager({ page, pages, total, pageSize, onPage, noun = 'conversation' }) {
+  if (pages <= 1) {
+    return <p className="app-ib__countline" aria-live="polite">{total} {noun}{total === 1 ? '' : 's'}</p>;
+  }
   const first = (page - 1) * pageSize + 1;
   const last = Math.min(total, page * pageSize);
   return (
-    <nav aria-label="Pages of conversations" className="flex items-center gap-2 border-t border-border px-5 py-2.5">
-      <span className="num text-[12px] text-muted-foreground" aria-live="polite">
-        {first}–{last} of {total}
-      </span>
-      <div className="flex-1" />
-      <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Newer conversations">
-        <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" /> Newer
-      </Button>
-      <span className="num text-[12px] text-secondary-text">{page} / {pages}</span>
-      <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Older conversations">
-        Older <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
-      </Button>
+    <nav aria-label="Pages of conversations" className="app-ib__pager">
+      <span aria-live="polite">{first}–{last} of {total}</span>
+      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Newer conversations">
+        <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />Newer
+      </button>
+      <span className="mg-num">{page} / {pages}</span>
+      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label="Older conversations">
+        Older<ChevronRight className="size-4" strokeWidth={2} aria-hidden="true" />
+      </button>
     </nav>
   );
 }

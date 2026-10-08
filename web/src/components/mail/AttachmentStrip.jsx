@@ -1,4 +1,4 @@
-import { Download, ExternalLink, FileText, Image as ImageIcon, Paperclip } from 'lucide-react';
+import { Download, ExternalLink, FileText, Image as ImageIcon, Lock, Paperclip } from 'lucide-react';
 import { cn } from 'cn';
 import { fileSize } from '../../lib/format.js';
 
@@ -16,6 +16,8 @@ import { fileSize } from '../../lib/format.js';
  */
 export const previewable = (type) => /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|svg\+xml))$/i.test(String(type || ''));
 
+const typeLabel = (type) => (/pdf/i.test(type || '') ? 'PDF' : /^image\//i.test(type || '') ? 'Image' : /sheet|excel|csv/i.test(type || '') ? 'Spreadsheet' : /word|document/i.test(type || '') ? 'Document' : null);
+
 const iconFor = (type) => (/^image\//i.test(type || '') ? ImageIcon : /pdf/i.test(type || '') ? FileText : Paperclip);
 
 export function AttachmentStrip({ attachments = [], bodyHtml = '', className }) {
@@ -24,42 +26,26 @@ export function AttachmentStrip({ attachments = [], bodyHtml = '', className }) 
   const shown = attachments.filter((a) => !(a.is_inline && a.content_id && drawn.has(String(a.content_id).replace(/^<|>$/g, '').toLowerCase())));
   if (!shown.length) return null;
   return (
-    <ul className={cn('flex flex-wrap gap-1.5', className)} aria-label="Attachments">
+    <ul className={cn('app-atts', className)} aria-label="Attachments">
       {shown.map((a) => {
-        const Icon = iconFor(a.content_type);
         const name = a.name || 'Attachment';
         const locked = !a.url;
+        const Icon = locked ? Lock : iconFor(a.content_type);
         return (
-          <li
-            key={a.id}
-            className={cn(
-              'inline-flex max-w-full items-center gap-1.5 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px]',
-              locked && 'opacity-70'
-            )}
-            title={locked ? 'Only the mailbox owner can open this attachment' : name}
-          >
-            <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-            <span className="min-w-0 truncate font-medium text-foreground">{name}</span>
-            {a.size_bytes != null && <span className="num shrink-0 text-muted-foreground">{fileSize(a.size_bytes)}</span>}
+          <li key={a.id} className={cn('app-att', locked && 'is-locked')} title={name}>
+            <span className="app-att__icon" aria-hidden="true"><Icon strokeWidth={1.8} /></span>
+            <span className="app-att__text">
+              <span>{name}</span>
+              <span>{locked ? 'Only the mailbox owner can open this' : [typeLabel(a.content_type), a.size_bytes != null ? fileSize(a.size_bytes) : null].filter(Boolean).join(' · ')}</span>
+            </span>
             {!locked && previewable(a.content_type) && (
-              <a
-                href={`${a.url}?inline=1`}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Open ${name} in a new tab`}
-                className="ml-0.5 inline-flex rounded-[4px] p-0.5 text-muted-foreground hover:bg-card hover:text-foreground"
-              >
-                <ExternalLink className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+              <a href={`${a.url}?inline=1`} target="_blank" rel="noopener noreferrer" className="mg-iconbtn" aria-label={`Open ${name} in a new tab`} title="Open in a new tab">
+                <ExternalLink className="size-4" strokeWidth={1.8} aria-hidden="true" />
               </a>
             )}
             {!locked && (
-              <a
-                href={a.url}
-                download={name}
-                aria-label={`Download ${name}`}
-                className="inline-flex rounded-[4px] p-0.5 text-muted-foreground hover:bg-card hover:text-foreground"
-              >
-                <Download className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+              <a href={a.url} download={name} className="mg-iconbtn" aria-label={`Download ${name}`} title="Download">
+                <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />
               </a>
             )}
           </li>

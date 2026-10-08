@@ -265,7 +265,7 @@ function LegacyRedirect({ to }) {
  * the mark, the word and the bell share a row above the title, and the
  * actions go under the title rather than beside it.
  */
-export function PageHeader({ title, subtitle, actions, eyebrow, nav, titleClassName = 'mg-display' }) {
+export function PageHeader({ title, subtitle, actions, eyebrow, nav, titleClassName = 'mg-display', titleAside }) {
   const shell = useShell();
   const word = eyebrow ?? shell.eyebrow;
   return (
@@ -279,7 +279,12 @@ export function PageHeader({ title, subtitle, actions, eyebrow, nav, titleClassN
       </div>
       <div className="mg-header__text">
         {word && <span className="mg-eyebrow page-header__eyebrow">{word}</span>}
-        <h1 className={titleClassName}>{title}</h1>
+        {titleAside ? (
+          <div className="page-header__title">
+            <h1 className={titleClassName}>{title}</h1>
+            {titleAside}
+          </div>
+        ) : <h1 className={titleClassName}>{title}</h1>}
         {subtitle && <div className="mg-header__sub measure">{subtitle}</div>}
         {nav}
       </div>
