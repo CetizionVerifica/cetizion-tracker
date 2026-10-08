@@ -569,3 +569,55 @@ ${htmlSections}
 <p style="font-size:12px;color:#64748b">PDF attached.</p>`);
   return { subject, text, html };
 }
+
+// ------------------------------------------------------------ service questionnaires (#208)
+
+const button = (url, label) => `<p style="margin:16px 0"><a href="${esc(url)}" style="display:inline-block;padding:10px 16px;border-radius:8px;background:#0f766e;color:#fff;text-decoration:none">${esc(label)}</a></p>`;
+
+/**
+ * The client's questionnaire link, or a reminder of it. `message` is the
+ * salesperson's own note, printed as text.
+ */
+export function questionnaireInvite({ contactName, company, questionnaire, url, expiresAt, from, message = '', reminder = false }) {
+  const subject = reminder
+    ? `Reminder: ${questionnaire} for ${company}`
+    : `${questionnaire} for ${company}: a few questions before we quote`;
+  const opening = reminder
+    ? `A reminder about the ${questionnaire}: we need your answers before we can prepare your quotation.`
+    : `To prepare an accurate quotation, please answer a few questions about ${company} in our ${questionnaire}.`;
+  const how = `It takes a few minutes and works on a phone. Your answers are saved as you go, so you can stop and come back with the same link. The link works until ${date(expiresAt)}.`;
+  const text = `Dear ${contactName || company},
+
+${opening}
+${message ? `\n${message}\n` : ''}
+Open the questionnaire: ${url}
+
+${how}
+
+Thank you,
+${from || 'Cetizion Verifica'}`;
+  const html = layout(reminder ? 'A reminder about your questionnaire' : questionnaire, `
+<p>Dear ${esc(contactName || company)},</p>
+<p>${esc(opening)}</p>
+${message ? `<p style="white-space:pre-wrap;border-left:3px solid #e2e8f0;padding-left:12px;color:#334155">${esc(message)}</p>` : ''}
+${button(url, 'Open the questionnaire')}
+<p style="color:#475569">${esc(how)}</p>
+<p>Thank you,<br>${esc(from || 'Cetizion Verifica')}</p>`);
+  return { subject, text, html };
+}
+
+/** To the enquiry's owner: the client has submitted, the answers are on the enquiry. */
+export function questionnaireSubmitted({ ownerName, company, questionnaire, enquiryNo, submittedBy, link }) {
+  const subject = `${company} submitted the ${questionnaire}`;
+  const text = `Hello ${ownerName || ''},
+
+${submittedBy || 'The client'} submitted the ${questionnaire} for ${company} (enquiry ${enquiryNo || '—'}). The answers are on the enquiry${link ? `: ${link}` : ''}.
+
+Cetizion Tracker`;
+  const html = layout(subject, `
+<p>Hello ${esc(ownerName || '')},</p>
+<p>${esc(submittedBy || 'The client')} submitted the ${esc(questionnaire)} for ${esc(company)} (enquiry ${esc(enquiryNo || '—')}). The answers are on the enquiry.</p>
+${link ? button(link, 'See the answers') : ''}
+<p>Cetizion Tracker</p>`);
+  return { subject, text, html };
+}

@@ -5,6 +5,7 @@ import { Alert, Badge, useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 
@@ -27,6 +28,9 @@ export default function Enquiries() {
   const enquiryNo = params.get('q') || '';
   const [touching, setTouching] = useState(false);
   const [logged, setLogged] = useState(0);
+  // The service questionnaire for one enquiry (#208). A "submitted" notification links here with ?questionnaire=.
+  const [questionnaire, setQuestionnaire] = useState(() => (enquiryNo && params.get('questionnaire') ? { enquiry_no: enquiryNo } : null));
+  const [questionnaireVersion, setQuestionnaireVersion] = useState(0);
   useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
@@ -47,6 +51,14 @@ export default function Enquiries() {
     { key: 'status', header: 'Status', render: (r) => <><Badge tone={r.status === 'Unqualified' ? 'danger' : r.status === CONVERTED ? 'success' : r.status === 'New' ? 'warning' : 'info'}>{r.status}</Badge>{r.status === 'Unqualified' && r.unqualified_reason_id && <div className="small muted">{lookups.lost_reasons.find((x) => x.id === r.unqualified_reason_id)?.name}</div>}</> },
     { key: 'next_follow_up_at', header: 'Next follow-up', render: (r) => r.next_follow_up_at ? <span style={{ color: r.next_follow_up_at <= today() && OPEN.includes(r.status) ? 'var(--late)' : undefined }}>{date(r.next_follow_up_at)}</span> : <span className="muted">—</span> },
     { key: 'expected_decision_date', header: 'Decision by', render: (r) => date(r.expected_decision_date) },
+    {
+      key: 'questionnaire_status', header: 'Questionnaire',
+      render: (r) => (
+        <button type="button" className="btn btn--sm btn--ghost" onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
+          {r.questionnaire_status ? <QuestionnaireBadge status={r.questionnaire_status} /> : 'Send'}
+        </button>
+      ),
+    },
     {
       key: 'quotation_no', header: 'Quotation',
       render: (r) => r.quotation_no ? <Link className="mono" to={`/quotations/${encodeURIComponent(r.quotation_no)}`}>{r.quotation_no}</Link> : <span className="muted">—</span>,
@@ -106,6 +118,7 @@ export default function Enquiries() {
       initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
       dateFilterLabel="Enquiry date"
+      refreshToken={questionnaireVersion}
       onSaved={(saved) => {
         invalidateLookups();
         if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
@@ -140,6 +153,7 @@ export default function Enquiries() {
       </>; }}
     />
     {touching && <TouchDialog entity="enquiry" id={enquiryNo} start={{ channel: 'call', contact_id: null }} onClose={() => setTouching(false)} onSaved={() => { setTouching(false); setLogged((n) => n + 1); }} />}
+    {questionnaire && <QuestionnaireCard enquiry={questionnaire} onClose={() => setQuestionnaire(null)} onChanged={() => setQuestionnaireVersion((n) => n + 1)} />}
     </>
   );
 }

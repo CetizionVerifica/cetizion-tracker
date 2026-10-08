@@ -14,7 +14,7 @@ BEGIN;
 
 DROP VIEW IF EXISTS v_project_profitability, v_companies, v_quotations, v_enquiries, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_vendor_invoice_ageing, v_travel_vendor_invoices, v_travel_invoice_lines, v_travel_segments,
-  v_employee_expense_claims, v_company_document_profiles CASCADE;
+  v_employee_expense_claims, v_company_document_profiles, v_questionnaire_responses CASCADE;
 
 -- A numeric setting with a fallback, so a missing/blank row never
 -- breaks a view the way a broken cell reference would.
@@ -1082,9 +1082,50 @@ CREATE VIEW v_enquiries AS
 SELECT
   e.*,
   ct.email AS contact_email,
-  ct.phone AS contact_phone
+  ct.phone AS contact_phone,
+  -- The latest questionnaire sent for it (#208), for the list's column.
+  qr.id AS questionnaire_response_id,
+  qr.status AS questionnaire_status
 FROM enquiries e
-LEFT JOIN contacts ct ON ct.id = e.contact_id;
+LEFT JOIN contacts ct ON ct.id = e.contact_id
+LEFT JOIN LATERAL (
+  SELECT r.id, r.status FROM questionnaire_responses r
+   WHERE r.enquiry_id = e.id AND r.status <> 'withdrawn'
+   ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+) qr ON true;
+
+-- A questionnaire response with its form and the state of its links
+-- (#208): whether a link is open, opened, expired or revoked is worked
+-- out here from the links, never stored.
+CREATE VIEW v_questionnaire_responses AS
+SELECT
+  r.*,
+  q.id AS questionnaire_id, q.name AS questionnaire_name, s.id AS service_id, s.name AS service_name,
+  v.version, jsonb_array_length(COALESCE(v.definition->'steps', '[]'::jsonb)) AS step_count,
+  e.enquiry_no, COALESCE(co.name, e.client_name) AS client_name,
+  ls.open_links, ls.expires_at, ls.first_opened_at, ls.last_opened_at, ls.last_sent_at, ls.last_sent_to, ls.reminders,
+  CASE WHEN ls.link_count = 0 THEN 'none'
+       WHEN ls.open_links > 0 AND ls.first_opened_at IS NOT NULL THEN 'opened'
+       WHEN ls.open_links > 0 THEN 'sent'
+       WHEN ls.revoked_links = ls.link_count THEN 'revoked'
+       ELSE 'expired' END AS link_state
+FROM questionnaire_responses r
+JOIN questionnaire_versions v ON v.id = r.version_id
+JOIN questionnaires q ON q.id = v.questionnaire_id
+JOIN services s ON s.id = q.service_id
+LEFT JOIN enquiries e ON e.id = r.enquiry_id
+LEFT JOIN companies co ON co.id = COALESCE(r.company_id, e.company_id)
+CROSS JOIN LATERAL (
+  SELECT count(*) AS link_count,
+         count(*) FILTER (WHERE l.revoked_at IS NULL AND l.expires_at > now()) AS open_links,
+         count(*) FILTER (WHERE l.revoked_at IS NOT NULL) AS revoked_links,
+         max(l.expires_at) FILTER (WHERE l.revoked_at IS NULL) AS expires_at,
+         min(l.first_opened_at) AS first_opened_at, max(l.last_opened_at) AS last_opened_at,
+         max(l.created_at) FILTER (WHERE l.sent_to IS NOT NULL) AS last_sent_at,
+         (array_agg(l.sent_to ORDER BY l.created_at DESC) FILTER (WHERE l.sent_to IS NOT NULL))[1] AS last_sent_to,
+         COALESCE(max(l.reminder_count), 0) AS reminders
+    FROM questionnaire_links l WHERE l.response_id = r.id
+) ls;
 
 -- Client document notes with the client's name, for Settings (081).
 CREATE VIEW v_company_document_profiles AS
