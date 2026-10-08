@@ -5,11 +5,13 @@ import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, ErrorState, useToast } from '../components/ui.jsx';
 import { Chip, flowSteps, RecordFlow, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { PayVendorDialog } from '../components/vendorPayments.jsx';
 import { Button } from '../components/ui/button';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
+import { agencyInvoiceChip, agencyTripChip, mayRecordVendorPayment } from '../lib/vendorPayments.js';
 import { tripFields } from './TravelLogs.jsx';
 
 /** A leg's mark, by how it travelled (#196). */
@@ -57,14 +59,6 @@ const legFields = [
  * counted against the project.
  */
 
-/** The shape of a vendor bill's state, for the chip beside it. */
-function billTone(status) {
-  if (/overdue/i.test(status)) return 'late';
-  if (/enter (amount|date)|to pay|partial/i.test(status)) return 'waiting';
-  if (/paid/i.test(status)) return 'settled';
-  return 'plain';
-}
-
 function claimTone(status) {
   if (/rejected/i.test(status)) return 'late';
   if (/pending|submitted|to reimburse|partly/i.test(status)) return 'waiting';
@@ -76,7 +70,8 @@ export default function TripDetail() {
   const { travelId } = useParams();
   const toast = useToast();
   const lookups = useLookups();
-  const { isHr } = useAuth();
+  const { isAdmin, isHr } = useAuth();
+  const mayPay = mayRecordVendorPayment({ isAdmin, isHr });
   const [busy, setBusy] = useState(false);
   const [amounts, setAmounts] = useState({});
   const [dialog, setDialog] = useState(null);
@@ -193,6 +188,13 @@ export default function TripDetail() {
         <span key="id" className="num text-[12px]">{trip.travel_id}</span>,
         trip.trip_type && <Chip key="type" tone={trip.chargeable ? 'waiting' : 'plain'}>{trip.trip_type}</Chip>,
         trip.cancelled && <Chip key="cancelled" tone="late">Cancelled</Chip>,
+        // Whether *we* have paid the agency, from the trip view's own
+        // `vendor_invoice_status` (#214). Not what the client owes us, and
+        // not a second calculation: the string comes from the view.
+        (() => {
+          const chip = agencyTripChip(trip.vendor_invoice_status);
+          return chip && <Chip key="agency" tone={chip.tone}>{chip.label}</Chip>;
+        })(),
         when,
         trip.origin && trip.destination && `${trip.origin} → ${trip.destination}`,
         trip.purpose,
@@ -317,34 +319,50 @@ export default function TripDetail() {
       <RecordSection title="Vendor bills" hint="what the travel agent charged us; a bill can cover several trips">
         {bills.length === 0 ? (
           <p className="px-5 py-4 text-[12.5px] text-muted-foreground">No bill has been recorded against this trip.</p>
-        ) : bills.map((bill, i) => (
-          <RecordRow
-            key={bill.id}
-            icon={Receipt}
-            to={`/vendor-invoices/${bill.id}`}
-            last={i === bills.length - 1}
-            title={<>
-              {bill.travel_vendor || 'Vendor not named'}{bill.vendor_invoice_no && <span className="num text-[12px] text-secondary-text"> · {bill.vendor_invoice_no}</span>}
-              {bill.trip_count > 1 && <span className="block text-[12px] text-muted-foreground">
-                This trip&apos;s share {money(lines.filter((l) => l.vendor_invoice_id === bill.id).reduce((n, l) => n + Number(l.net_cost || 0), 0))} of a bill covering {bill.trip_count} trips
-              </span>}
-              {credits.filter((c) => c.against_invoice_id === bill.id).map((c) => (
-                <span key={c.id} className="block text-[12px] text-muted-foreground">
-                  {c.kind === 'cancellation_note' ? 'Cancellation note' : 'Credit note'} <span className="num">{c.credit_note_no}</span>: {money(c.refund_amount)} back{c.cancellation_charges ? `, ${money(c.cancellation_charges)} charged` : ''}
-                </span>
-              ))}
-            </>}
-            amount={bill.invoice_amount === null ? '—' : money(bill.invoice_amount)}
-            chip={
-              <Chip
-                tone={billTone(bill.payment_status || '')}
-                icon={/overdue/i.test(bill.payment_status || '') ? AlertTriangle : /enter/i.test(bill.payment_status || '') ? Clock : undefined}
-              >
-                {bill.payment_status}
-              </Chip>
-            }
-          />
-        ))}
+        ) : bills.map((bill, i) => {
+          const chip = agencyInvoiceChip(bill.payment_status);
+          // Each bill is settled on its own: its own status, its own history
+          // on its own page, its own payment. Nothing here allocates one
+          // payment across the bills on a trip.
+          return (
+            <RecordRow
+              key={bill.id}
+              icon={Receipt}
+              to={`/vendor-invoices/${bill.id}`}
+              last={i === bills.length - 1}
+              title={<>
+                {bill.travel_vendor || 'Vendor not named'}{bill.vendor_invoice_no && <span className="num text-[12px] text-secondary-text"> · {bill.vendor_invoice_no}</span>}
+                {bill.trip_count > 1 && <span className="block text-[12px] text-muted-foreground">
+                  This trip&apos;s share {money(lines.filter((l) => l.vendor_invoice_id === bill.id).reduce((n, l) => n + Number(l.net_cost || 0), 0))} of a bill covering {bill.trip_count} trips — paying it settles the whole bill, not this trip
+                </span>}
+                {credits.filter((c) => c.against_invoice_id === bill.id).map((c) => (
+                  <span key={c.id} className="block text-[12px] text-muted-foreground">
+                    {c.kind === 'cancellation_note' ? 'Cancellation note' : 'Credit note'} <span className="num">{c.credit_note_no}</span>: {money(c.refund_amount)} back{c.cancellation_charges ? `, ${money(c.cancellation_charges)} charged` : ''}
+                  </span>
+                ))}
+              </>}
+              amount={bill.invoice_amount === null ? '—' : money(bill.invoice_amount)}
+              chip={chip && (
+                <Chip
+                  tone={chip.tone}
+                  icon={chip.tone === 'late' ? AlertTriangle : /needed|awaited/.test(chip.label) ? Clock : undefined}
+                >
+                  {chip.label}
+                </Chip>
+              )}
+              action={mayPay && bill.payment_status !== 'Paid' && bill.invoice_amount !== null && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-3 text-[12.5px]"
+                  onClick={() => setDialog({ type: 'pay', row: bill })}
+                >
+                  Record payment
+                </Button>
+              )}
+            />
+          );
+        })}
       </RecordSection>
 
       <RecordSection title="Employee claims" hint="what the traveller paid and wants back">
@@ -418,6 +436,9 @@ export default function TripDetail() {
       )}
       {dialog?.type === 'leg' && (
         <RecordForm title={dialog.row.id ? 'Edit leg' : 'Add a leg'} resource="travel-segments" record={dialog.row} fields={[{ name: 'travel_id', label: 'Trip', type: 'hidden' }, ...legFields]} onClose={close} onSaved={changed} />
+      )}
+      {dialog?.type === 'pay' && (
+        <PayVendorDialog invoice={dialog.row} onClose={close} onDone={changed} />
       )}
       {dialog?.type === 'delete' && (
         <ConfirmDialog title={dialog.title} message="This cannot be undone." confirmLabel="Remove" busy={busy} onConfirm={remove} onClose={close} />

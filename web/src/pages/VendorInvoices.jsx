@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
 import { Badge, Tabs } from '../components/ui.jsx';
-import { PayVendorDialog } from '../components/actions.jsx';
+import { Chip } from '../components/record.jsx';
+import { PayVendorDialog } from '../components/vendorPayments.jsx';
+import { useAuth } from '../lib/auth.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
+import { agencyInvoiceChip, mayRecordVendorPayment } from '../lib/vendorPayments.js';
 
 const vendorOptions = (lookups) => lookups.travel_vendor_list.map((v) => ({ value: String(v.id), label: v.name }));
 
@@ -47,6 +50,11 @@ export function creditNoteFields(lookups, { invoices = [], legs = [] } = {}) {
 export default function VendorInvoices() {
   const lookups = useLookups();
   const navigate = useNavigate();
+  const { isAdmin, isHr } = useAuth();
+  // Paying an agency is the travel desk's and an administrator's (#214).
+  // Sales may still read the bill; the Pay button is not theirs, and the
+  // server refuses the request regardless of what is drawn.
+  const mayPay = mayRecordVendorPayment({ isAdmin, isHr });
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') === 'credit-notes' ? 'credit-notes' : 'invoices';
   const [paying, setPaying] = useState(null);
@@ -62,10 +70,17 @@ export default function VendorInvoices() {
     { key: 'invoice_amount', header: 'Amount', align: 'right', render: (r) => (r.invoice_amount === null ? <Badge tone="warning">not entered</Badge> : <>{money(r.invoice_amount)}{Number(r.credited) > 0 && <div className="small muted">{money(r.net_payable)} after credit notes</div>}</>) },
     { key: 'amount_paid', header: 'Paid', align: 'right', render: (r) => money(r.amount_paid) },
     { key: 'pay_by', header: 'Pay by', render: (r) => date(r.pay_by) },
-    { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
+    {
+      key: 'payment_status',
+      header: 'Agency status',
+      render: (r) => {
+        const chip = agencyInvoiceChip(r.payment_status);
+        return chip ? <Chip tone={chip.tone}>{chip.label}</Chip> : <Badge>{r.payment_status}</Badge>;
+      },
+    },
     { key: 'document_id', header: 'PDF', className: 'small', render: (r) => (r.document_id ? '✓' : <span className="muted">—</span>) },
     { key: 'finance_action', header: 'Finance action', className: 'wrap small' },
-    {
+    ...(mayPay ? [{
       key: 'act',
       header: '',
       align: 'right',
@@ -84,7 +99,7 @@ export default function VendorInvoices() {
             </button>
           </div>
         ),
-    },
+    }] : []),
   ];
 
   const creditColumns = [
