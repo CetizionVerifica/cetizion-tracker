@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Alert, ConfirmDialog, DataTable, Field, Input, useToast } from '../components/ui.jsx';
-import { Chip } from '../components/record.jsx';
-import { Button } from '../components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { ArrowLeft, CircleAlert, Clock, ExternalLink, Eye, FileText, Info, Lock, Mail, RefreshCw, Send, TriangleAlert, X } from 'lucide-react';
+import { ConfirmDialog, useToast } from '../components/ui.jsx';
+import { useEntrance } from '../components/daily.jsx';
 import { PageHeader } from '../App.jsx';
 import { api } from '../lib/api.js';
-import { useFetch } from '../lib/hooks.js';
+import { useAuth } from '../lib/auth.jsx';
+import { useFetch, useMediaQuery } from '../lib/hooks.js';
 import { ago, date } from '../lib/format.js';
 import { recipientLists } from '../lib/addresses.js';
 import PersonalMisCard from '../components/PersonalMisPreview.jsx';
@@ -18,9 +18,10 @@ import PersonalMisCard from '../components/PersonalMisPreview.jsx';
  *
  * Two cards, one per report: the on/off switch, a preview of the figures
  * and the email as of any date, the PDF, and Send now. Below them the
- * settings both share (recipients, the Overdue threshold), the Sender
- * (mis-report-sender-plan.md §A2), and the run history with each PDF and
- * Resend. Admin only; the routes are behind requireAdmin on the server.
+ * settings both share (recipients, the Overdue threshold and the sender,
+ * mis-report-sender-plan.md §A2, saved together), Finance's debtors list,
+ * and the run history with each PDF and Resend. Admin only; the routes are
+ * behind requireAdmin on the server, and anybody else is told so.
  */
 
 const KINDS = [
@@ -40,6 +41,11 @@ const howSent = (r) => {
 };
 // To and Cc as the server sends them: each address once, nobody copied who is already in To (#195).
 const recipientsIn = (list) => recipientLists(setting(list, 'mis_to'), setting(list, 'mis_cc'));
+const errText = (err) => (err.fields ? Object.values(err.fields)[0] : err.message);
+
+function Icon({ as: I, size = 16 }) {
+  return <I className="shrink-0" style={{ width: size, height: size }} strokeWidth={1.8} aria-hidden="true" />;
+}
 
 function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }) {
   const toast = useToast();
@@ -51,130 +57,112 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
   const [busy, setBusy] = useState(null);
   const [sending, setSending] = useState(false);
   const q = asOf ? `?date=${asOf}` : '';
+  const people = recipientsIn(settings);
+  const nobody = !people.to.length;
+  const id = `rep-${kind}`;
 
   async function act(what, fn, ok) {
     setBusy(what);
-    try { const r = await fn(); if (ok) toast(ok(r), 'success'); onChanged(); }
+    try { const r = await fn(); if (ok) { const [msg, tone] = ok(r); toast(msg, tone); } onChanged(); }
     catch (err) { toast(err.message, 'danger'); }
     finally { setBusy(null); }
   }
   const load = () => act('preview', async () => { const r = await api.raw(`/mis-reports/${kind}/preview${q}`); setPreview(r.data); });
-  const toggle = () => act('switch', () => api.update('settings', settingKey, { value: enabled ? 'false' : 'true' }), () => (enabled ? `${title} switched off` : `${title} switched on`));
+  const toggle = () => act('switch', () => api.update('settings', settingKey, { value: enabled ? 'false' : 'true' }), () => [enabled ? `${title} switched off` : `${title} switched on`, 'success']);
   const send = () => act('send', () => api.action(`/mis-reports/${kind}/send`, asOf ? { date: asOf } : {}), (r) => {
     const run = r.data;
-    if (run.status !== 'sent') return `Not sent: ${run.error}`;
-    return run.sent_via === 'log' ? `Logged only (${run.suppressed || 'delivery is off'}); nothing left the server` : `Sent to ${run.recipients.join(', ')} ${howSent(run)}${run.error ? ` (${run.error})` : ''}`;
+    if (run.status !== 'sent') return [`Not sent: ${run.error}`, 'danger'];
+    return run.sent_via === 'log'
+      ? [`Logged only (${run.suppressed || 'delivery is off'}); nothing left the server`, 'info']
+      : [`Sent to ${run.recipients.join(', ')} ${howSent(run)}${run.error ? ` (${run.error})` : ''}`, 'success'];
   });
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
-            {title}
-            <Chip tone={enabled ? 'settled' : undefined}>{enabled ? 'On' : 'Off'}</Chip>
-          </div>
-          <div className="text-[12px] text-muted-foreground">{when}</div>
-          <p className="mt-1 text-[12.5px]/[1.6] text-secondary-text">{what}</p>
-        </div>
-        <Button variant={enabled ? 'secondary' : 'default'} size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
-          {enabled ? 'Switch off' : 'Switch on'}
-        </Button>
+    <section className="mg-glass mg-panel rp-card" data-a="rise" aria-labelledby={id}>
+      <div className="mg-panel__head">
+        <h2 className="mg-panel__title" id={id}>{title}</h2>
+        <span className={`mg-badge ${enabled ? 'mg-badge--ok' : ''}`}>{enabled ? 'On' : 'Off'}</span>
+        <label className="mg-switch" style={{ marginLeft: 'auto' }}>
+          <input type="checkbox" role="switch" aria-label={`Send the ${title} on schedule`} checked={enabled} disabled={busy === 'switch'} onChange={toggle} />
+          <span className="rp-ctl">Sends on schedule</span>
+        </label>
       </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label="As of" hint="Run it as if this were today">
-          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-8 text-[12.5px]" />
-        </Field>
-        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'preview'} onClick={load}>{busy === 'preview' ? 'Building…' : 'Preview figures and email'}</Button>
-        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" asChild>
-          <a href={`/api/mis-reports/${kind}/preview.pdf${q}`} target="_blank" rel="noreferrer">Open the PDF</a>
-        </Button>
-        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'send'} onClick={() => setSending(true)}>{busy === 'send' ? 'Sending…' : 'Send now'}</Button>
+      <div className="rp-when"><Icon as={Clock} />{when}</div>
+      <p className="rp-what">{what}</p>
+      <label className="mg-field">
+        <span className="mg-field__label">As of</span>
+        <input className="mg-input" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+        <span className="mg-field__hint">Leave blank for today. Pick a date to run it as if it were that day.</span>
+      </label>
+      <div className="rp-btnrow">
+        <button type="button" className="mg-btn mg-btn--sm" disabled={busy === 'preview'} onClick={load}>
+          <Icon as={Eye} />{busy === 'preview' ? 'Building…' : 'Preview figures and email'}
+        </button>
+        <a className="mg-btn mg-btn--ghost mg-btn--sm" href={`/api/mis-reports/${kind}/preview.pdf${q}`} target="_blank" rel="noreferrer"><Icon as={ExternalLink} />Open the PDF</a>
+        <button type="button" className="mg-btn mg-btn--primary mg-btn--sm rp-end" disabled={busy === 'send' || nobody} aria-describedby={nobody ? `${id}-why` : undefined} onClick={() => setSending(true)}>
+          <Icon as={Send} />{busy === 'send' ? 'Sending…' : 'Send now'}
+        </button>
       </div>
+      {nobody && <p className="rp-note" id={`${id}-why`} style={{ textAlign: 'right', marginTop: -6 }}>Set the recipients below before sending.</p>}
       {preview && (
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <div className="text-[12.5px] text-secondary-text">
-            Period <strong>{date(preview.period.from)}{preview.period.to !== preview.period.from ? ` – ${date(preview.period.to)}` : ''}</strong>
-            {' · '}attachment <code className="mono">{preview.file_name}</code>
-            {' · '}to: {preview.settings.to.length ? preview.settings.to.join(', ') : <em>nobody yet — set the recipients below</em>}
+        <div className="rp-preview" role="region" aria-label={`Preview of the ${title}`}>
+          <div className="rp-preview__meta">
+            <span className="mg-badge mg-badge--info">Preview</span>
+            <span>Period {date(preview.period.from)}{preview.period.to !== preview.period.from ? ` – ${date(preview.period.to)}` : ''}</span>
+            <span><FileText className="mr-1 inline size-3.5 align-[-2px]" strokeWidth={1.8} aria-hidden="true" />{preview.file_name}</span>
+            <span>to: {preview.settings.to.length ? preview.settings.to.join(', ') : <em>nobody yet — set the recipients below</em>}</span>
+            <button type="button" className="mg-iconbtn" aria-label="Close the preview" onClick={() => setPreview(null)} style={{ marginLeft: 'auto', width: 36, height: 36 }}><X className="size-4" strokeWidth={1.8} aria-hidden="true" /></button>
           </div>
-          <div className="text-[13px] font-medium text-foreground">{preview.email.subject}</div>
-          <pre className="max-h-[420px] overflow-auto rounded-[8px] bg-secondary p-3 text-[12px]/[1.5] whitespace-pre-wrap text-secondary-text">{preview.email.text}</pre>
+          <strong style={{ fontSize: 14 }}>{preview.email.subject}</strong>
+          <pre className="rp-pre"><span>{preview.email.text}</span></pre>
         </div>
       )}
       {sending && (
         <ConfirmDialog
           tone="normal"
           title={`Send the ${title} now?`}
-          message={`It goes to ${recipientsIn(settings).to.join(', ') || 'nobody — set the recipients first'}${recipientsIn(settings).cc.length ? `, copying ${recipientsIn(settings).cc.join(', ')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
+          message={`It goes to ${people.to.join(', ') || 'nobody — set the recipients first'}${people.cc.length ? `, copying ${people.cc.join(', ')}` : ''}, with the PDF attached, for ${asOf ? `the period as of ${date(asOf)}` : kind === 'daily_briefing' ? 'yesterday' : 'last week'}. A period already sent is sent again.`}
           confirmLabel="Send"
+          busyLabel="Sending…"
           busy={busy === 'send'}
           onClose={() => setSending(false)}
           onConfirm={() => { setSending(false); send(); }}
         />
       )}
-    </div>
-  );
-}
-
-function SharedSettings({ settings, onChanged }) {
-  const toast = useToast();
-  const [to, setTo] = useState(recipientsIn(settings).to.join(', '));
-  const [cc, setCc] = useState(recipientsIn(settings).cc.join(', '));
-  const [overdue, setOverdue] = useState(setting(settings, 'mis_overdue_days') || '7');
-  const [busy, setBusy] = useState(false);
-
-  // A setting cannot be saved blank, so an emptied list is saved as "none",
-  // which the reports read as no addresses.
-  const save = async (key, value) => api.update('settings', key, { value: value.trim() || 'none' });
-  async function saveAll() {
-    setBusy(true);
-    try {
-      // Saved cleaned (#195): each address once, and Cc without anybody already in To.
-      const clean = recipientLists(to, cc);
-      await save('mis_to', clean.to.join(', ')); await save('mis_cc', clean.cc.join(', '));
-      setTo(clean.to.join(', ')); setCc(clean.cc.join(', '));
-      await save('mis_overdue_days', String(Math.max(1, Number(overdue) || 7)));
-      toast('Saved', 'success'); onChanged();
-    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[14px] font-semibold text-foreground">Recipients</div>
-      <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go to the same people.</p>
-      <div className="grid gap-3 @3xl:grid-cols-2">
-        <Field label="To" hint="Comma-separated"><Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="md@company.com, sales-head@company.com" /></Field>
-        <Field label="Cc" hint="Comma-separated, or blank"><Input value={cc} onChange={(e) => setCc(e.target.value)} /></Field>
-        <Field label="Mark Overdue after" hint="Days a pending item has waited">
-          <Input type="number" min="1" max="90" value={overdue} onChange={(e) => setOverdue(e.target.value)} />
-        </Field>
-      </div>
-      <div><Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy} onClick={saveAll}>{busy ? 'Saving…' : 'Save'}</Button></div>
-    </div>
+    </section>
   );
 }
 
 const STATE = { active: '', needs_reconnect: ' — needs reconnecting', disconnected: ' — disconnected', missing: ' — no longer connected' };
 
 /**
- * Who both reports go from (mis-report-sender-plan.md §A2): the mailbox
- * they go through, an optional Send As address and display name, a line
- * saying what the next report will go from, and a test to the admin's own
- * address. The fallback is fixed: SMTP, and admins are told.
+ * Who both reports go to and from, saved with one Save: To, Cc, the Overdue
+ * threshold, the mailbox they go through (mis-report-sender-plan.md §A2), an
+ * optional Send As address and display name. A line says what the next
+ * report will go from, and a test goes to the admin's own address. Edits
+ * not yet saved stay put while something else on the page is saved.
  */
-function SenderCard({ settings, mailboxes, onChanged }) {
+function RecipientsCard({ settings, mailboxes, onChanged }) {
   const toast = useToast();
   const described = useFetch(() => api.raw('/mis-reports/sender'), []);
   const info = described.data?.data;
-  // A non-numeric value ('none', blank) is the SMTP sender.
-  const saved = setting(settings, 'mis_sender_account_id');
-  const sender = /^\d+$/.test(saved) ? saved : 'smtp';
-  const [sendAs, setSendAs] = useState(optional(settings, 'mis_sender_address'));
-  const [name, setName] = useState(optional(settings, 'mis_sender_name'));
+  const savedSender = setting(settings, 'mis_sender_account_id');
+  const initial = () => ({
+    to: recipientsIn(settings).to.join(', '),
+    cc: recipientsIn(settings).cc.join(', '),
+    overdue: setting(settings, 'mis_overdue_days') || '7',
+    // A non-numeric value ('none', blank) is the SMTP sender.
+    sender: /^\d+$/.test(savedSender) ? savedSender : 'smtp',
+    sendAs: optional(settings, 'mis_sender_address'),
+    name: optional(settings, 'mis_sender_name'),
+  });
+  const [saved, setSaved] = useState(initial);
+  const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(null);
   const [test, setTest] = useState(null);
+  const set = (k) => (e) => setV((s) => ({ ...s, [k]: e.target.value }));
+  const dirty = Object.keys(v).some((k) => v[k] !== saved[k]);
+
   // Shared mailboxes, and personal ones whose owner allowed it (§A3). One
   // that needs reconnecting stays listed, marked, so the saved choice never
   // shows blank.
@@ -182,22 +170,26 @@ function SenderCard({ settings, mailboxes, onChanged }) {
   const shared = live.filter((m) => m.is_shared);
   const personal = live.filter((m) => !m.is_shared && m.may_send_reports);
   const listed = new Set([...shared, ...personal].map((m) => String(m.id)));
-  const orphan = sender !== 'smtp' && !listed.has(sender) ? (info?.through ?? { id: Number(sender), email: `Mailbox ${sender}`, status: 'missing' }) : null;
+  const orphan = v.sender !== 'smtp' && !listed.has(v.sender) ? (info?.through ?? { id: Number(v.sender), email: `Mailbox ${v.sender}`, status: 'missing' }) : null;
   const label = (m) => `${m.email || `Mailbox ${m.id}`}${STATE[m.status] ?? ` — ${m.status}`}`;
 
-  async function choose(v) {
-    setBusy('choose');
-    try { await api.update('settings', 'mis_sender_account_id', { value: v === 'smtp' ? 'none' : v }); toast('Saved', 'success'); onChanged(); described.refetch(); }
-    catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
-    finally { setBusy(null); }
-  }
   async function save() {
     setBusy('save');
+    const put = (key, value) => api.update('settings', key, { value: value.trim() || 'none' });
     try {
-      await api.update('settings', 'mis_sender_address', { value: sendAs.trim() || 'none' });
-      await api.update('settings', 'mis_sender_name', { value: name.trim() || 'none' });
-      toast('Saved', 'success'); onChanged(); described.refetch();
-    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
+      // Saved cleaned (#195): each address once, and Cc without anybody already in To.
+      const clean = recipientLists(v.to, v.cc);
+      const overdue = String(Math.min(90, Math.max(1, Number(v.overdue) || 7)));
+      await put('mis_to', clean.to.join(', '));
+      await put('mis_cc', clean.cc.join(', '));
+      await put('mis_overdue_days', overdue);
+      await put('mis_sender_account_id', v.sender === 'smtp' ? '' : v.sender);
+      await put('mis_sender_address', v.sendAs);
+      await put('mis_sender_name', v.name);
+      const next = { ...v, to: clean.to.join(', '), cc: clean.cc.join(', '), overdue };
+      setV(next); setSaved(next);
+      toast('Recipients and sender saved', 'success'); onChanged(); described.refetch();
+    } catch (err) { toast(errText(err), 'danger'); }
     finally { setBusy(null); }
   }
   async function sendTest() {
@@ -209,49 +201,78 @@ function SenderCard({ settings, mailboxes, onChanged }) {
 
   const from = info ? `${info.name ? `${info.name} <${info.from}>` : info.from}` : null;
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[14px] font-semibold text-foreground">Sender</div>
-      <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go from here. Through a mailbox, they land in its Sent Items. If the mailbox cannot send, the report goes by the server's SMTP sender instead and admins are told.</p>
-      <div className="grid gap-3 @3xl:grid-cols-3">
-        <Field label="Send through" hint="A shared mailbox, or a personal one whose owner allowed it">
-          <Select value={sender} onValueChange={choose} disabled={busy === 'choose'}>
-            <SelectTrigger className="w-full text-[13px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="smtp" className="text-[13px]">The server's SMTP sender</SelectItem>
-              {orphan && <SelectItem value={String(orphan.id)} className="text-[13px]">{label(orphan)}</SelectItem>}
-              {shared.map((m) => <SelectItem key={m.id} value={String(m.id)} className="text-[13px]">{label(m)} · shared</SelectItem>)}
-              {personal.map((m) => <SelectItem key={m.id} value={String(m.id)} className="text-[13px]">{label(m)} · {m.owner?.name || 'personal'}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Send as" hint="Optional. Needs Send As on it in Microsoft 365">
-          <Input value={sendAs} onChange={(e) => setSendAs(e.target.value)} placeholder="mis@company.com" />
-        </Field>
-        <Field label="Display name" hint="Optional. The name beside the address">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cetizion MIS" />
-        </Field>
-      </div>
-      {info && (
-        info.problem
-          ? <Alert tone="danger"><span><strong>{info.problem}.</strong> Until it is fixed, the reports go {info.smtp_configured ? <>by SMTP from <strong>{info.smtp_from}</strong></> : <>nowhere: no SMTP sender is set up on the server</>}.{info.through?.status === 'needs_reconnect' && <> <Link to="/settings/mailboxes">Reconnect it</Link>.</>}</span></Alert>
-          : <p className="text-[12.5px] text-secondary-text">
-              The next report goes {info.via === 'mailbox'
-                ? <>from <strong>{from}</strong>{info.through?.email && info.from !== info.through.email ? <> through {info.through.email}</> : null}</>
-                : info.from ? <>by SMTP from <strong>{from}</strong>{info.send_as && info.send_as !== info.from ? <> (the SMTP sender cannot send as {info.send_as})</> : null}</> : <>nowhere: no SMTP sender is set up on the server</>}.
-            </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'save'} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</Button>
-        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'test'} onClick={sendTest}>{busy === 'test' ? 'Sending…' : 'Send a test to me'}</Button>
-        {test && (
-          <span className={`text-[12.5px] ${test.status === 'sent' ? 'text-settled' : test.status === 'failed' ? 'text-late' : 'text-secondary-text'}`}>
-            {test.status === 'sent'
-              ? `Sent to ${test.to} ${test.via === 'graph' ? `from ${test.from}` : `by SMTP from ${test.from}`}.${test.error ? ` The mailbox could not send: ${test.error}` : ''}`
-              : test.status === 'failed' ? `Not sent: ${test.error}` : `Logged only (${test.suppressed || 'delivery is off'}); nothing left the server.`}
+    <section className="mg-glass mg-panel rp-card" data-a="rise" aria-labelledby="rcp-t">
+      <div className="mg-panel__head"><h2 className="mg-panel__title" id="rcp-t">Recipients and sender</h2></div>
+      <p className="rp-what">Both reports go to the same people, from the mailbox chosen here, so they land in its Sent Items. If that mailbox cannot send, the report goes by the server's SMTP sender instead and admins are told.</p>
+      <div className="rp-form">
+        <label className="mg-field rp-span">
+          <span className="mg-field__label">To</span>
+          <input className="mg-input" value={v.to} onChange={set('to')} placeholder="md@company.com, sales-head@company.com" />
+          <span className="mg-field__hint">Comma-separated. Each address is kept once.</span>
+        </label>
+        <label className="mg-field rp-span">
+          <span className="mg-field__label">Cc</span>
+          <input className="mg-input" value={v.cc} onChange={set('cc')} />
+          <span className="mg-field__hint">Comma-separated, or blank. Anyone already in To is left out.</span>
+        </label>
+        <label className="mg-field">
+          <span className="mg-field__label">Mark Overdue after</span>
+          <span className="rp-days"><input className="mg-input" type="number" min="1" max="90" value={v.overdue} onChange={set('overdue')} /><span className="rp-ctl">days</span></span>
+          <span className="mg-field__hint">How long a pending item has waited, 1 to 90.</span>
+        </label>
+        <label className="mg-field">
+          <span className="mg-field__label">Send from</span>
+          <span className="mg-select-wrap">
+            <select className="mg-select" value={v.sender} onChange={set('sender')}>
+              <option value="smtp">The server's SMTP sender</option>
+              {orphan && <option value={String(orphan.id)}>{label(orphan)}</option>}
+              {shared.map((m) => <option key={m.id} value={String(m.id)}>{label(m)} · shared</option>)}
+              {personal.map((m) => <option key={m.id} value={String(m.id)}>{label(m)} · {m.owner?.name || 'personal'}</option>)}
+            </select>
           </span>
-        )}
+          <span className="mg-field__hint">A shared mailbox, or a personal one whose owner allowed it.</span>
+        </label>
+        <label className="mg-field">
+          <span className="mg-field__label">Send as</span>
+          <input className="mg-input" value={v.sendAs} onChange={set('sendAs')} placeholder="mis@company.com" />
+          <span className="mg-field__hint">Optional. Needs Send As on it in Microsoft 365.</span>
+        </label>
+        <label className="mg-field">
+          <span className="mg-field__label">Display name</span>
+          <input className="mg-input" value={v.name} onChange={set('name')} placeholder="Cetizion MIS" />
+          <span className="mg-field__hint">Optional. The name beside the address.</span>
+        </label>
       </div>
-    </div>
+      {info && (info.problem ? (
+        <div className="mg-banner mg-banner--late" role="status">
+          <TriangleAlert aria-hidden="true" />
+          <div className="mg-banner__body">
+            <strong>{info.problem}.</strong>
+            Until it is fixed, the reports go {info.smtp_configured ? <>by SMTP from <strong>{info.smtp_from}</strong></> : <>nowhere: no SMTP sender is set up on the server</>}.
+            {info.through?.status === 'needs_reconnect' && <> <Link className="rp-link" to="/settings/mailboxes">Reconnect it</Link>.</>}
+          </div>
+        </div>
+      ) : (
+        <p className="rp-note" style={{ fontSize: 12.5, color: 'var(--text2)' }}>
+          The next report goes {info.via === 'mailbox'
+            ? <>from <strong>{from}</strong>{info.through?.email && info.from !== info.through.email ? <> through {info.through.email}</> : null}</>
+            : info.from ? <>by SMTP from <strong>{from}</strong>{info.send_as && info.send_as !== info.from ? <> (the SMTP sender cannot send as {info.send_as})</> : null}</> : <>nowhere: no SMTP sender is set up on the server</>}
+          {dirty ? ', as last saved.' : '.'}
+        </p>
+      ))}
+      <div className="rp-saverow">
+        {dirty && <><span className="mg-badge mg-badge--wait">Unsaved changes</span><span className="rp-note">Kept until you save, even when something else on this page is saved.</span></>}
+        <button type="button" className="mg-btn mg-btn--sm" disabled={busy === 'test'} onClick={sendTest}><Icon as={Mail} />{busy === 'test' ? 'Sending…' : 'Send a test to me'}</button>
+        <button type="button" className="mg-btn mg-btn--primary mg-btn--sm" disabled={busy === 'save'} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
+      </div>
+      {test && (
+        <p className={`rp-note ${test.status === 'sent' ? 'text-ok' : test.status === 'failed' ? 'is-late-text' : ''}`} role="status" style={{ fontSize: 12.5 }}>
+          {test.status === 'sent'
+            ? `Sent to ${test.to} ${test.via === 'graph' ? `from ${test.from}` : `by SMTP from ${test.from}`}.${test.error ? ` The mailbox could not send: ${test.error}` : ''}`
+            : test.status === 'failed' ? `Not sent: ${test.error}` : `Logged only (${test.suppressed || 'delivery is off'}); nothing left the server.`}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -268,26 +289,40 @@ function DebtorsList({ settings, onChanged }) {
       // A setting cannot be saved blank: no senders is "none", anyone at our own domains.
       await api.update('settings', 'receivables_list_phrases', { value: phrases.trim() || 'sundry debtors' });
       await api.update('settings', 'receivables_list_senders', { value: senders.trim() || 'none' });
-      toast('Saved', 'success'); onChanged();
-    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
+      toast('Debtors list settings saved', 'success'); onChanged();
+    } catch (err) { toast(errText(err), 'danger'); }
     finally { setBusy(false); }
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[14px] font-semibold text-foreground">Finance's debtors list</div>
-      <p className="text-[12.5px]/[1.6] text-secondary-text">The daily briefing reconciles the receivables with the newest Sundry Debtors list Finance emailed to a shared mailbox in the last 14 days, as an Excel file or a PDF. Each list is read once. One whose rows do not add up to its grand total is not used, and the briefing says so.</p>
-      <div className="grid gap-3 @3xl:grid-cols-2">
-        <Field label="Subject or file name has" hint="Any of these words, comma-separated"><Input value={phrases} onChange={(e) => setPhrases(e.target.value)} /></Field>
-        <Field label="Sent by" hint="Comma-separated, or blank for anyone at our own email domains"><Input value={senders} onChange={(e) => setSenders(e.target.value)} placeholder="accounts@company.com" /></Field>
-      </div>
-      <div><Button size="sm" className="h-8 px-4 text-[13px]" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</Button></div>
-    </div>
+    <section className="mg-glass mg-panel rp-card" data-a="rise" aria-labelledby="debt-t">
+      <div className="mg-panel__head"><h2 className="mg-panel__title" id="debt-t">Finance's debtors list</h2></div>
+      <p className="rp-what">The daily briefing reconciles the receivables with the newest Sundry Debtors list Finance emailed to a shared mailbox in the last 14 days, as an Excel file or a PDF. Each list is read once. One whose rows do not add up to its grand total is not used, and the briefing says so.</p>
+      <label className="mg-field">
+        <span className="mg-field__label">Subject or file name has</span>
+        <input className="mg-input" value={phrases} onChange={(e) => setPhrases(e.target.value)} />
+        <span className="mg-field__hint">Any of these words, comma-separated</span>
+      </label>
+      <label className="mg-field">
+        <span className="mg-field__label">Sent by</span>
+        <input className="mg-input" value={senders} onChange={(e) => setSenders(e.target.value)} placeholder="accounts@company.com" />
+        <span className="mg-field__hint">Comma-separated, or blank for anyone at our own email domains</span>
+      </label>
+      <div className="rp-saverow"><button type="button" className="mg-btn mg-btn--primary mg-btn--sm" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></div>
+    </section>
   );
 }
 
-function Runs({ runs, onChanged }) {
+function RunStatus({ r }) {
+  if (r.status === 'sent') return <span className="mg-badge mg-badge--ok">sent · {howSent(r)}</span>;
+  if (r.status === 'failed') return <span className="mg-badge mg-badge--late">failed</span>;
+  if (r.sent_via === 'log') return <span className="mg-badge mg-badge--wait">logged only</span>;
+  return <span className="mg-badge">{r.status}</span>;
+}
+
+function Runs({ runs, loading, error, onRetry, onChanged }) {
   const toast = useToast();
+  const wide = useMediaQuery('(min-width: 768px)');
   const [resending, setResending] = useState(null);
   const [busy, setBusy] = useState(false);
   async function resend(run) {
@@ -303,81 +338,158 @@ function Runs({ runs, onChanged }) {
     finally { setBusy(false); setResending(null); }
   }
   const period = (r) => (r.period_from === r.period_to ? date(r.period_from) : `${date(r.period_from)} – ${date(r.period_to)}`);
+  const name = (r) => (r.person ? `${TITLE[r.kind]} · ${r.person}` : TITLE[r.kind]);
+  const note = (r) => r.error || (r.kind === 'personal_daily' ? 'Written by AI' : r.ai_used ? 'With AI commentary' : '');
+  const canResend = (r) => r.kind !== 'personal_daily' || r.user_id;
+  const actions = (r, big) => (
+    <>
+      {r.document_id && <a className="mg-btn mg-btn--ghost mg-btn--sm" style={big ? { flex: 1 } : undefined} href={`/api/mis-reports/runs/${r.id}/pdf`} target="_blank" rel="noreferrer" aria-label={`Open the PDF of the ${name(r)} for ${period(r)}`}>PDF</a>}
+      {canResend(r) && <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" style={big ? { flex: 1 } : undefined} onClick={() => setResending(r)} aria-label={`Resend the ${name(r)} for ${period(r)}`}>Resend</button>}
+    </>
+  );
+
   return (
-    <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-      <div className="px-5 pt-4 text-[14px] font-semibold text-foreground">Sent so far</div>
-      <DataTable
-        rows={runs}
-        empty="Nothing has been sent yet."
-        columns={[
-          { key: 'kind', header: 'Report', render: (r) => (r.person ? `${TITLE[r.kind]} · ${r.person}` : TITLE[r.kind]) },
-          { key: 'period', header: 'Period', render: period },
-          { key: 'status', header: 'Status', render: (r) => (r.status === 'sent' ? <Chip tone="settled">{`sent · ${howSent(r)}`}</Chip> : r.status === 'failed' ? <Chip tone="late">failed</Chip> : r.sent_via === 'log' ? <Chip tone="waiting">logged only</Chip> : <Chip>{r.status}</Chip>) },
-          { key: 'recipients', header: 'To', className: 'wrap', render: (r) => (r.recipients || []).join(', ') || '—' },
-          { key: 'created_at', header: 'When', render: (r) => `${ago(r.created_at)} · ${r.triggered_by}` },
-          { key: 'error', header: 'Note', className: 'wrap small', render: (r) => r.error || (r.kind === 'personal_daily' ? 'Written by AI' : r.ai_used ? 'AI commentary' : '') },
-          {
-            key: 'actions', header: '', render: (r) => (
-              <span className="flex gap-1">
-                {r.document_id && <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" asChild><a href={`/api/mis-reports/runs/${r.id}/pdf`} target="_blank" rel="noreferrer">PDF</a></Button>}
-                {(r.kind !== 'personal_daily' || r.user_id) && <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px]" onClick={() => setResending(r)}>Resend</Button>}
+    <section className="mg-glass mg-panel rp-card rp-runs rp-full" data-a="rise" aria-labelledby="runs-t" style={{ paddingBottom: runs.length && wide ? 0 : undefined }}>
+      <div className="mg-panel__head"><h2 className="mg-panel__title" id="runs-t">Sent so far</h2><span className="mg-panel__hint">Newest first. Resend rebuilds a report from the records as they are now.</span></div>
+      {error ? (
+        <div className="mg-banner mg-banner--late" role="alert"><CircleAlert aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't load what was sent</strong>{error}</div><button type="button" className="mg-btn mg-btn--sm" onClick={onRetry}>Try again</button></div>
+      ) : loading && !runs.length ? (
+        [0, 1, 2].map((i) => <div key={i} className="mg-skel" style={{ height: 44 }} />)
+      ) : !runs.length ? (
+        <div className="mg-empty" style={{ padding: '28px 24px 34px' }}>
+          <span className="mg-empty__mark"><Mail className="size-6" strokeWidth={1.8} aria-hidden="true" /></span>
+          <h3 className="mg-empty__title">Nothing has been sent yet</h3>
+          <p className="mg-empty__text">The first Daily Sales Briefing goes out at 08:56 IST, once someone is in To.</p>
+        </div>
+      ) : wide ? (
+        <div className="mg-tablewrap" style={{ margin: '0 -24px', borderRadius: '0 0 26px 26px' }}>
+          <table className="mg-table">
+            <caption className="sr-only">Reports sent so far</caption>
+            <thead><tr><th scope="col" style={{ paddingLeft: 24 }}>Report</th><th scope="col">Status</th><th scope="col">To</th><th scope="col">When</th><th scope="col">Note</th><th scope="col" aria-label="Actions" /></tr></thead>
+            <tbody>
+              {runs.map((r) => (
+                <tr key={r.id}>
+                  <td className="strong" style={{ paddingLeft: 24 }}>{name(r)}<span className="sub">for {period(r)}</span></td>
+                  <td><RunStatus r={r} /></td>
+                  <td className="rp-wrap">{(r.recipients || []).join(', ') || '—'}</td>
+                  <td className="mg-num" style={{ color: 'var(--text2)' }}>{ago(r.created_at)} · {r.triggered_by}</td>
+                  <td className="rp-wrap">{note(r)}</td>
+                  <td style={{ paddingRight: 16 }}><span className="flex justify-end gap-1">{actions(r)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="mg-rows">
+          {runs.map((r) => (
+            <div key={r.id} className="mg-row">
+              <span className="mg-row__title">{name(r)}</span>
+              <span className="mg-row__state"><RunStatus r={r} /></span>
+              <span className="mg-row__meta" style={{ gridColumn: '1 / -1' }}>
+                for {period(r)} · {ago(r.created_at)} · {r.triggered_by}{(r.recipients || []).length ? ` · to ${r.recipients.join(', ')}` : ''}
+                {note(r) && <><br />{note(r)}</>}
               </span>
-            ),
-          },
-        ]}
-      />
+              <span style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, marginTop: 8 }}>{actions(r, true)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {resending && (
         <ConfirmDialog
           tone="normal"
           title={`Send the ${TITLE[resending.kind]}${resending.person ? ` for ${resending.person}` : ''} for ${period(resending)} again?`}
           message="It is rebuilt from the records as they are now, so figures may differ from the first send, and goes to the current recipients."
           confirmLabel="Resend"
+          busyLabel="Sending…"
           busy={busy}
           onClose={() => setResending(null)}
           onConfirm={() => resend(resending)}
         />
       )}
-    </div>
+    </section>
   );
 }
 
 export default function ScheduledReports() {
+  const { isAdmin } = useAuth();
+  return (
+    <>
+      <PageHeader
+        eyebrow="Reports"
+        title="Scheduled reports"
+        subtitle="The Daily Sales Briefing and the Weekly Sales MIS, built from the tracker's records and emailed from the chosen sender with the PDF attached."
+        actions={<Link className="mg-btn" to="/reports"><ArrowLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />Back to Reports</Link>}
+      />
+      {isAdmin ? <Admin /> : (
+        <div className="app-page">
+          <section className="mg-glass mg-empty" style={{ padding: '72px 24px' }}>
+            <span className="mg-empty__mark" style={{ width: 64, height: 64 }}><Lock className="size-[26px]" strokeWidth={1.8} aria-hidden="true" /></span>
+            <h2 className="mg-empty__title" style={{ fontSize: 18 }}>Scheduled reports are for admins</h2>
+            <p className="mg-empty__text">Admins choose who gets the Daily Sales Briefing and the Weekly Sales MIS. Ask an admin to add you, or to change what they cover.</p>
+            <Link className="mg-btn mg-btn--primary" to="/reports" style={{ marginTop: 8 }}><ArrowLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />Back to Reports</Link>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Admin() {
   const settings = useFetch(() => api.raw('/settings'), []);
   const mailboxes = useFetch(() => api.raw('/mailboxes'), []);
   const runs = useFetch(() => api.raw('/mis-reports/runs'), []);
   const refetch = () => { settings.refetch(); runs.refetch(); };
   const list = settings.data?.data;
-  // What was last saved, so a card re-reads it after a save or a reload.
-  const saved = (list || []).map((s) => `${s.key}=${s.value}`).join('|');
+  const ref = useEntrance(Boolean(list));
   const emailsOn = setting(list, 'emails_enabled') !== 'false';
-  return (
-    <>
-      <PageHeader
-        title="Scheduled reports"
-        subtitle="The Daily Sales Briefing and the Weekly Sales MIS, built from the tracker's records and emailed from the chosen sender with the PDF attached."
-        actions={<Link className="btn" to="/reports">Back to Reports</Link>}
-      />
-      <div className="page stack @container">
-        {!emailsOn && (
-          <Alert tone="warning"><span>Automatic email is switched off under Settings → Emails &amp; jobs, so a report is composed and logged but not sent.</span></Alert>
-        )}
-        <Alert tone="info">
-          <span>The figures come from the same definitions as the Reports page, in ₹ at the rate on each record's date. Each period is sent once by the schedule; Send now and Resend always send.</span>
-        </Alert>
-        {list && (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} onChanged={refetch} />)}
-          </div>
-        )}
-        {/* Each card is rebuilt from what was saved, under a key of its own. When the
-            two shared one, React drew the recipients card twice, and the copy on
-            screen stopped taking what was typed. */}
-        {list && <SharedSettings key={`recipients:${saved}`} settings={list} onChanged={refetch} />}
-        {list && <SenderCard key={`sender:${saved}`} settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />}
-        {list && <DebtorsList key={`debtors:${saved}`} settings={list} onChanged={refetch} />}
-        {list && <PersonalMisCard enabled={setting(list, 'personal_mis_enabled') === 'true'} recipients={recipientsIn(list)} onChanged={refetch} />}
-        <Runs runs={runs.data?.data ?? []} onChanged={refetch} />
+
+  if (settings.error && !list) {
+    return (
+      <div className="app-page">
+        <section className="mg-glass mg-empty" role="alert" style={{ padding: '64px 24px' }}>
+          <span className="mg-empty__mark" style={{ color: 'var(--late)', background: 'var(--late-soft)' }}><CircleAlert className="size-6" strokeWidth={1.8} aria-hidden="true" /></span>
+          <h2 className="mg-empty__title">Couldn't load the report settings</h2>
+          <p className="mg-empty__text">{settings.error} The schedules, recipients and sent list aren't shown. Nothing was changed and the schedule still runs.</p>
+          <button type="button" className="mg-btn mg-btn--sm" onClick={refetch}><RefreshCw className="size-4" strokeWidth={1.8} aria-hidden="true" />Try again</button>
+        </section>
       </div>
-    </>
+    );
+  }
+  if (!list) {
+    return (
+      <div className="app-page">
+        <div className="rp-grid" aria-busy="true" aria-label="Loading the report settings">
+          {[0, 1, 2, 3].map((i) => (
+            <section key={i} className="mg-glass mg-panel rp-card">
+              <div className="mg-skel" style={{ height: 16, width: '46%' }} /><div className="mg-skel" style={{ height: 12, width: '70%' }} />
+              <div className="mg-skel" style={{ height: 44 }} /><div className="mg-skel" style={{ height: 36, width: '60%' }} />
+            </section>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="app-page" ref={ref}>
+      {!emailsOn && (
+        <div className="mg-banner mg-banner--wait mg-glass" role="note" data-a="rise">
+          <TriangleAlert aria-hidden="true" />
+          <div className="mg-banner__body"><strong>Automatic email is switched off</strong>A report is still composed and logged, but nothing is sent until it is switched on in Settings › Emails &amp; jobs.</div>
+          <Link className="mg-btn mg-btn--sm" to="/settings/emails">Open Emails &amp; jobs</Link>
+        </div>
+      )}
+      <div className="mg-banner mg-glass" role="note" data-a="rise">
+        <Info aria-hidden="true" />
+        <div className="mg-banner__body">The figures come from the same definitions as the Reports page, in ₹ at the rate on each record's date. The schedule sends each period once; Send now and Resend always send.</div>
+      </div>
+      <div className="rp-grid">
+        {KINDS.map((k) => <ReportCard key={k.kind} {...k} settings={list} onChanged={refetch} />)}
+        <RecipientsCard settings={list} mailboxes={mailboxes.data?.data} onChanged={refetch} />
+        <DebtorsList settings={list} onChanged={refetch} />
+        <PersonalMisCard enabled={setting(list, 'personal_mis_enabled') === 'true'} recipients={recipientsIn(list)} onChanged={refetch} />
+        <Runs runs={runs.data?.data ?? []} loading={runs.loading} error={runs.error} onRetry={runs.refetch} onChanged={refetch} />
+      </div>
+    </div>
   );
 }

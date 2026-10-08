@@ -210,7 +210,7 @@ export default function App() {
           <Route path="/account/*" element={<Account />} />
           <Route path="/reports" element={<Lazy><Reports /></Lazy>} />
           <Route path="/insights" element={<Lazy><Insights /></Lazy>} />
-          <Route path="/reports/scheduled" element={<AdminOnly><Lazy><ScheduledReports /></Lazy></AdminOnly>} />
+          <Route path="/reports/scheduled" element={<Lazy><ScheduledReports /></Lazy>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />
