@@ -47,6 +47,10 @@ export const ACTIONS = {
   CLAIM_REIMBURSED: 'claim.reimbursed',
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
+  // Which client invoice a trip's cost was billed on (#214). The link is
+  // what makes a trip's cost recoverable, so it moves through its own
+  // route and leaves the account that moved it behind.
+  TRIP_BILLED_STAGE_SET: 'travel_log.billed_stage_set',
   // A quotation read from the PDF we emailed, checked against it by a person
   // (docs/email-enquiries-plan.md §3.9.6).
   QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',

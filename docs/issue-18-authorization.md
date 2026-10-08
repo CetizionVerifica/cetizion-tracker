@@ -421,6 +421,7 @@ session is **401**, before any of these is considered.
 | **/api/timeline** | | |
 | `GET /api/timeline` | any | The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own. |
 | **/api/travel-logs** | | |
+| `POST /api/travel-logs/:travelId/billed-stage` | any | Which client invoice recovered a trip's cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk's call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it. |
 | `GET /api/travel-logs/:travelId/full` | any |  |
 | **/api/users** | | |
 | `GET /api/users` | **admin** | The account list, including roles and who is switched off. |
@@ -534,7 +535,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `sector-aliases` | any | **admin** | **admin** | Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
-| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk's own record too (#196). |
+| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk's own record too (#196). Protected fields: `billed_stage_id`. |
 | `travel-segments` | any | any | any | A trip's legs, kept with it: open as travel-logs is. |
 | `travel-vendors` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. HR owns the agency list (#196), so an administrator and HR change it (hrWrites). |
 | `trip-types` | any | **admin** | **admin** | A Settings catalogue (#196): a type's chargeable flag decides which trips may be billed to a client. Kept by an administrator and the travel desk (hrWrites). |

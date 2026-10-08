@@ -544,6 +544,20 @@ export const resources = {
   },
 
   'travel-logs': {
+    // Which client invoice carried a trip's cost is a billing decision, not a
+    // detail of the trip, and the people who make it are not the people who
+    // enter the trip: HR runs the travel desk and has full write access here
+    // (#196 §3), while the invoice belongs to the PO's sales side. The Trip
+    // screen has always hidden the selector from HR — but the field stayed on
+    // the generic resource, so the hiding was the only thing stopping an HR
+    // caller (or any other) from PATCHing it straight through the API (#214).
+    //
+    // It moves only through POST /api/travel-logs/:travelId/billed-stage now,
+    // which is closed to HR by the policy and writes an audit row naming the
+    // account. Listed here rather than filtered in the route handler because
+    // validate() is the one place every generic write passes — PATCH, POST and
+    // the MCP record import, which reaches crud.js without going near a route.
+    protectedFields: ['billed_stage_id'],
     table: 'travel_logs',
     view: 'v_travel_logs',
     label: 'Trip',
