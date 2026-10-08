@@ -17,7 +17,13 @@ removed, shared-mailbox readers allowed (`rules.js` `mayViewAttachments`),
 each view in the activity log (`mail.attachment_viewed`), the viewer
 (`web/src/components/mail/AttachmentViewer.jsx`: PDF through pdf.js,
 pictures, spreadsheets and CSV as a grid, text), and file names in both
-Inbox lists. Steps 2 and 3 follow.
+Inbox lists (merged in #224). **Step 2 is built** on the same branch:
+Word documents as cleaned HTML (`mammoth`), emails forwarded as
+attachments read from Graph as the message they are, OneDrive/SharePoint
+links listed and explained (migration `095`: `email_attachments.kind`,
+and messages listed with no attachments read again), and the viewer in
+the email dialog on records. Step 3 (PowerPoint, old Office files)
+follows.
 
 ---
 

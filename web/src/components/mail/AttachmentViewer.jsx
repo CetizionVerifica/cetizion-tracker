@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, FileWarning, Minus, Plus } fro
 import { cn } from 'cn';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog.tsx';
 import { fileSize } from '../../lib/format.js';
+import { frameDoc } from '../../lib/mailFrame.js';
 
 /**
  * An email's attachments, opened in the tracker (docs/inbox-attachments-plan.md,
@@ -12,7 +13,9 @@ import { fileSize } from '../../lib/format.js';
  * is drawn by the page itself: a PDF by pdf.js onto canvases (its own
  * scripts never run, and the browser's PDF toolbar with its Save button
  * never appears), a picture as an <img>, a spreadsheet or a text file from
- * the data the server turned it into. Nothing is kept once it closes.
+ * the data the server turned it into, a Word document or a forwarded
+ * email as cleaned HTML in the same script-free frame a mail body uses.
+ * Nothing is kept once it closes.
  *
  * This does not make a file impossible to copy: whoever can see it can
  * photograph the screen, and the mailbox owner has it in Outlook. It
@@ -93,12 +96,16 @@ function useAttachment(att) {
 
 function Viewer({ att, webLink }) {
   const { loading, error, data } = useAttachment(att);
-  if (!att.view) return <NotViewable webLink={webLink} text="This kind of file can't be shown in the tracker yet." />;
+  if (!att.view) {
+    return <NotViewable webLink={webLink} text={att.kind === 'reference' ? 'This is a link to a file in OneDrive or SharePoint. Open the message in Outlook to reach it.' : "This kind of file can't be shown in the tracker yet."} />;
+  }
   if (loading) return <div className="p-6"><div className="skeleton mx-auto h-[60vh] max-w-[800px]" /></div>;
   if (error) return <NotViewable webLink={webLink} text={error} />;
   if (att.view === 'pdf') return <PdfView bytes={data} />;
   if (att.view === 'image') return <ImageView bytes={data} type={att.content_type} name={att.name} />;
   if (att.view === 'sheet') return <SheetView sheets={data.sheets} />;
+  if (att.view === 'word') return <div className="p-4"><HtmlView html={data.html} title={att.name} /></div>;
+  if (att.view === 'email') return <EmailView email={data} />;
   return <TextView text={data.text} truncated={data.truncated} />;
 }
 
@@ -314,6 +321,50 @@ function TextView({ text, truncated }) {
     <div className="p-4">
       <pre className="whitespace-pre-wrap break-words rounded-md bg-card p-4 font-mono text-[12.5px] text-foreground">{text}</pre>
       {truncated && <p className="mt-2 text-[12px] text-muted-foreground">Only the first part of this file is shown here.</p>}
+    </div>
+  );
+}
+
+/**
+ * HTML the server cleaned (a Word document, a forwarded email), drawn the
+ * way a mail body is: on white paper, in a frame that runs no script and
+ * loads no remote picture. It is sized to its content once loaded.
+ */
+function HtmlView({ html, title }) {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(240);
+  const onLoad = () => {
+    const body = ref.current?.contentDocument?.body;
+    if (body) setHeight(Math.max(body.scrollHeight + 24, 120));
+  };
+  return (
+    <iframe
+      ref={ref}
+      title={title || 'Attachment'}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      referrerPolicy="no-referrer"
+      onLoad={onLoad}
+      srcDoc={frameDoc(html, false)}
+      style={{ height }}
+      className="mail__body mx-auto block w-full max-w-[860px] rounded-md shadow-sm"
+    />
+  );
+}
+
+const person = (p) => (p ? (p.name ? `${p.name} <${p.email}>` : p.email) : '');
+
+/** An email forwarded as an attachment: who, when, and its body. */
+function EmailView({ email }) {
+  return (
+    <div className="mx-auto max-w-[860px] p-4">
+      <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-md border border-border bg-card px-3 py-2 text-[12.5px]">
+        <dt className="text-muted-foreground">Subject</dt><dd className="wrap-anywhere font-medium text-foreground">{email.subject || '(no subject)'}</dd>
+        <dt className="text-muted-foreground">From</dt><dd className="wrap-anywhere text-foreground">{person(email.from) || '—'}</dd>
+        <dt className="text-muted-foreground">To</dt><dd className="wrap-anywhere text-foreground">{email.to?.map(person).join(', ') || '—'}</dd>
+        {email.cc?.length > 0 && <><dt className="text-muted-foreground">Cc</dt><dd className="wrap-anywhere text-foreground">{email.cc.map(person).join(', ')}</dd></>}
+        {email.sent_at && <><dt className="text-muted-foreground">Sent</dt><dd className="text-foreground">{new Date(email.sent_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</dd></>}
+      </dl>
+      <HtmlView html={email.html || '<p></p>'} title={email.subject} />
     </div>
   );
 }
