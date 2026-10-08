@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import {
   ArrowLeftRight, Briefcase, Building2, CalendarDays, ChartPie, Clock, FileSpreadsheet, FileText, KeyRound, LogIn,
-  Mail, Percent, Plane, ScanText, Tag, Upload, Users, Wallet, Webhook,
+  Mail, MailCheck, Percent, Plane, ScanText, Tag, Upload, Users, Wallet, Webhook,
 } from 'lucide-react';
 import { SettingsContext, SettingsIndex, SettingsNav, SettingsPane } from '../components/settings.jsx';
 import { initialsOf } from '../components/record.jsx';
@@ -19,6 +19,7 @@ import Mailboxes from './Mailboxes.jsx';
 import Webhooks from './Webhooks.jsx';
 import Templates from './Templates.jsx';
 import Emails from './Emails.jsx';
+import ClientEmails from './ClientEmails.jsx';
 import BulkImport from './BulkImport.jsx';
 import TravelImport from './TravelImport.jsx';
 import ReportCategories from './ReportCategories.jsx';
@@ -95,6 +96,7 @@ const GROUPS = [
       { to: 'import', icon: Upload, label: 'Import', element: <BulkImport />, adminOnly: true },
       { to: 'import-travel', icon: FileSpreadsheet, label: 'Import travel', element: <TravelImport />, adminOnly: true, hr: true },
       { to: 'emails', icon: Clock, label: 'Emails & jobs', element: <Emails />, adminOnly: true },
+      { to: 'client-emails', icon: MailCheck, label: 'Client emails', element: <ClientEmails /> },
     ],
   },
 ];

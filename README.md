@@ -354,6 +354,7 @@ The schedule lives in `server/src/jobs.js`, in the business time zone:
 | `deliverables.daily` | 07:50 daily | Marks expired certificates; reminds owners before expiry |
 | `notifications.daily` | 08:00 daily | Raises notifications for tasks, follow-ups, approvals, overdue invoices, renewals |
 | `quotations.expire` | 08:15 daily | Marks quotations past their validity as lost |
+| `questionnaires.remind` | 10:30 daily | Reminds clients who have not submitted a service questionnaire, after the days in Settings, at most twice, never after the link expires (#208) |
 | `notifications.digest` | 08:30 weekdays | Each person's digest of what is waiting for them |
 | `renewals.daily` | 08:45 daily | Opens renewal quotations inside the lead time |
 | `reminders.payment` | 09:00 weekdays | One email per client with overdue invoices, at most once per `reminder_interval_days` |

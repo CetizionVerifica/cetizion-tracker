@@ -10,12 +10,15 @@
  *
  * The emails_enabled setting is the kill switch an admin flips from the app;
  * it stops delivery (rows are still logged as suppressed) without a deploy.
+ * Emails to clients have their own switches on top (lib/clientEmails.js),
+ * so the team's mail can go live while clients get nothing.
  * SMTP details come from the environment only, never the database.
  */
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 import { isStaging } from './ops/environment.js';
 import { query } from '../db.js';
+import { clientEmailHold } from './clientEmails.js';
 
 let transport = null;
 /** Replaceable in tests: an SMTP transport (nodemailer's jsonTransport) instead of the configured server. */
@@ -146,7 +149,10 @@ export async function sendMail({ to: rawTo, cc: rawCc = null, subject, text, htm
   const cc = lists.cc.join(', ') || null;
   const bcc = lists.bcc.join(', ') || undefined;
   const enabled = await emailsEnabled(db);
-  const decision = decideDelivery({ to, enabled, optedOut });
+  // An email to a client an admin has held (lib/clientEmails.js) is logged
+  // and goes no further, whatever the mode.
+  const held = await clientEmailHold(db, template);
+  const decision = held ? { deliver: false, reason: held } : decideDelivery({ to, enabled, optedOut });
   // The client gets the real message; the log keeps a copy with any secret
   // in it masked. An acceptance link is a bearer token and the log is
   // readable inside the tracker: stored in clear, anyone who can list

@@ -6,12 +6,12 @@ import { enter } from '../styles/mocha/motion.js';
 /**
  * Wave 9: what every client page shares (the portal, its sign-in and the
  * quotation acceptance page). No staff shell: a calm glass header with the
- * bean and "Cetizion Verifica", what this page is under it, the client's
+ * bean and "Sales Tracker", what this page is under it, the client's
  * name when signed in, pause motion, the theme switch with its shockwave,
  * and Sign out. Light by default; the client's own choice is remembered
  * apart from staff's (main.jsx gives client pages their own storage key).
  */
-export const PROVIDER = 'Cetizion Verifica';
+export const PROVIDER = 'Sales Tracker';
 
 export const initials = (name) => String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
 

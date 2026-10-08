@@ -109,7 +109,7 @@ function RailLink({ item, onTip, onUntip }) {
 
 function Rail() {
   const s = useShell();
-  const { top, records } = navFor(s.isHr);
+  const { top, records } = navFor(s.isHr, s.isAdmin);
   const wrapRef = useRef(null);
   const navRef = useRef(null);
   const location = useLocation();
@@ -550,7 +550,7 @@ function SheetFrame({ open, onOpenChange, label, description, children }) {
 
 function MoreSheet({ open, onOpenChange }) {
   const s = useShell();
-  const { top, records } = navFor(s.isHr);
+  const { top, records } = navFor(s.isHr, s.isAdmin);
   const { resolved, change } = useThemeSwitch();
   const close = () => onOpenChange(false);
   return (

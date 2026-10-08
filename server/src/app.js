@@ -28,6 +28,7 @@ import { activityRouter } from './routes/activity.js';
 import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
+import { clientEmailRouter } from './routes/clientEmails.js';
 import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
 import { registerRouter } from './routes/register.js';
@@ -52,6 +53,8 @@ import { visitsRouter } from './routes/visits.js';
 import { incomingHooksRouter, webhooksRouter } from './routes/webhooks.js';
 import { portalAdminRouter, portalRouter } from './routes/portal.js';
 import { portalActionsRouter } from './routes/portalActions.js';
+import { publicQuestionnaireRouter } from './routes/publicQuestionnaire.js';
+import { questionnaireResponseRouter, questionnaireRouter, questionnaireVersionRouter } from './routes/questionnaires.js';
 import { accountingRouter } from './routes/accounting.js';
 import { apiTokenRouter, mcpRouter } from './routes/mcp.js';
 import { clientErrorRouter, healthHandler, metricsRouter } from './routes/ops.js';
@@ -128,6 +131,8 @@ app.use('/api/auth', authRouter);
 // Public by design: a client opens their own quotation with a single-use
 // token (#53). The router rate-limits itself and shows nothing else.
 app.use('/api/public/accept', publicAcceptanceRouter);
+// A client filling in a service questionnaire from their link (#208): the token is the credential.
+app.use('/api/public/questionnaire', publicQuestionnaireRouter);
 // Microsoft Graph posts mail notifications here; each is checked against its subscription's secret.
 app.use('/api/mail', mailWebhookRouter);
 // Signed incoming events (#49), off unless switched on in Settings.
@@ -163,6 +168,7 @@ app.use('/api/activity', activityRouter);
 // two-segment paths (/:id/full, /:id/convert) are matched first.
 app.use('/api/companies', companyRouter);
 app.use('/api/emails', emailRouter);
+app.use('/api/client-emails', clientEmailRouter);
 app.use('/api/pipeline', pipelineRouter);
 app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
@@ -189,6 +195,10 @@ app.use('/api/webhooks', webhooksRouter);
 // What clients said in the portal (#198): staff who can open the PO, so ahead of the admin-only router.
 app.use('/api/portal-admin/actions', portalActionsRouter);
 app.use('/api/portal-admin', portalAdminRouter);
+// Service questionnaires (#208): the forms (admins write), and the responses sent from enquiries.
+app.use('/api/questionnaires', questionnaireRouter);
+app.use('/api/questionnaire-versions', questionnaireVersionRouter);
+app.use('/api/questionnaire-responses', questionnaireResponseRouter);
 app.use('/api/accounting', accountingRouter);
 app.use('/api/api-tokens', apiTokenRouter);
 app.use('/api/client-errors', clientErrorRouter);

@@ -22,6 +22,9 @@ export const NAV_RECORDS = [
   { to: '/purchase-orders', icon: ClipboardList, label: 'Orders' },
   { to: '/payment-stages', icon: IndianRupee, label: 'Payment stages' },
   { to: '/travel', icon: Plane, label: 'Trips' },
+  // The agency's bills (#214 decision 8): HR keeps them and an administrator
+  // settles them, so an admin gets the door too. Not a salesperson's.
+  { to: '/vendor-invoices', icon: Receipt, label: 'Vendor invoices', adminOnly: true },
 ];
 export const NAV_HR_TOP = [
   { to: '/travel-dashboard', icon: Gauge, label: 'Travel dashboard', end: true },
@@ -32,9 +35,9 @@ export const NAV_HR_RECORDS = [
   { to: '/payables', icon: IndianRupee, label: 'Payables' },
 ];
 
-export const navFor = (isHr) => ({
+export const navFor = (isHr, isAdmin = false) => ({
   top: isHr ? NAV_HR_TOP : NAV_TOP,
-  records: isHr ? NAV_HR_RECORDS : NAV_RECORDS,
+  records: isHr ? NAV_HR_RECORDS : NAV_RECORDS.filter((n) => !n.adminOnly || isAdmin),
 });
 
 /**

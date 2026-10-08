@@ -59,6 +59,8 @@ async function palette(page, type) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
+  // The product is "Sales Tracker"; the app carries no company name (web/CLAUDE.md §3).
+  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
   // Six record types, not thirty screens.
   await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
 });
@@ -557,4 +559,156 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.goto('/portal');
   await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
+});
+
+/**
+ * Settings, Client emails: every kind of email that goes to a client, and
+ * the admin's hold on them. Holding one kind and then everything changes
+ * what the page says; both are released at the end so the flows above are
+ * unaffected on a rerun.
+ */
+test('an admin sees every client email and can hold them', async ({ page }) => {
+  await signIn(page);
+  await page.goto('/settings/client-emails');
+  await expect(page.getByRole('heading', { name: 'Client emails' })).toBeVisible();
+  const table = page.getByRole('table', { name: 'Kinds of client email' });
+  await expect(table.getByText('Overdue payment reminder')).toBeVisible();
+  await expect(table.getByText('Reply from the Inbox')).toBeVisible();
+
+  const quotation = table.getByRole('row').filter({ hasText: 'Someone sends a quotation with "email" ticked.' });
+  await quotation.getByRole('button', { name: 'Hold' }).click();
+  await expect(quotation.getByText('Held', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Hold all client emails' }).click();
+  await expect(page.getByText(/Each one is logged below and none reaches a client/)).toBeVisible();
+  await expect(page.getByText('Every kind is held while all client emails are held.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Release client emails' }).click();
+  await expect(page.getByRole('button', { name: 'Hold all client emails' })).toBeVisible();
+  await quotation.getByRole('button', { name: 'Release' }).click();
+  await expect(quotation.getByText('Goes out', { exact: true })).toBeVisible();
+});
+
+/**
+ * An email's attachments are viewed in the Inbox and nowhere else
+ * (docs/inbox-attachments-plan.md, steps 1 and 2): a PDF drawn by pdf.js
+ * inside the page, a CSV as a table, a Word document as HTML, and no
+ * download anywhere — the file's own
+ * address, opened as a link, is refused.
+ */
+test('an attachment opens in the Inbox viewer, and cannot be downloaded', async ({ page }) => {
+  await signIn(page);
+  const crashes = [];
+  page.on('pageerror', (err) => crashes.push(String(err)));
+
+  // A one-page PDF, with its cross-reference table counted out.
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    '<< /Length 44 >>\nstream\nBT /F1 18 Tf 40 100 Td (Quotation) Tj ET\nendstream',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((body, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const bytes = (s) => [...Buffer.from(s)];
+
+  const box = (await (await page.request.post('/api/mailboxes/test', { data: { email: `viewer-${stamp}@cetizionverifica.com`, shared: true } })).json()).data;
+  // Subjects and file names stored, so the list can name the files.
+  expect((await page.request.patch(`/api/mailboxes/${box.id}`, { data: { visibility: 'subject' } })).ok()).toBeTruthy();
+  const subject = `Quotation ${stamp}`;
+  await page.request.post(`/api/mailboxes/${box.id}/test-messages`, { data: { messages: [{
+    conversation_id: `conv-${stamp}`, internet_message_id: `<${stamp}@client>`, subject, body_html: '<p>Please find attached.</p>',
+    from: { email: `buyer-${stamp}@acme-steel.co.in`, name: 'Ravi' }, to: [{ email: box.email }], has_attachments: true,
+    attachments: [
+      { provider_id: 'att-pdf', name: 'quote.pdf', contentType: 'application/pdf', content: bytes(pdf) },
+      { provider_id: 'att-csv', name: 'rates.csv', contentType: 'text/csv', content: bytes('Item,Rate\nAudit,1200\n') },
+      { provider_id: 'att-doc', name: 'scope.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        content: [...readFileSync(join(here, '..', '..', 'server', 'test', 'fixtures', 'attachments', 'letter.docx'))] },
+    ],
+  }] } });
+  expect((await page.request.post(`/api/mailboxes/${box.id}/sync`)).ok()).toBeTruthy();
+
+  await page.goto(`/inbox?mb=${box.id}&f=inbox`);
+  const row = page.getByRole('option').filter({ hasText: subject });
+  // The list names the files before anything is opened.
+  await expect(row.getByText('quote.pdf')).toBeVisible();
+  await row.click();
+
+  await page.getByRole('button', { name: 'View quote.pdf' }).click();
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByText('1 page')).toBeVisible();
+  await expect(viewer.getByLabel('Page 1')).toBeVisible();
+  // The page is drawn: some of the canvas is no longer blank.
+  await expect.poll(() => viewer.getByLabel('Page 1').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true;
+    return false;
+  })).toBe(true);
+  await expect(page.locator('a[download]')).toHaveCount(0);
+  await expect(page.getByText(/download/i)).toHaveCount(0);
+
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.getByRole('cell', { name: 'Audit' })).toBeVisible();
+  // A Word document, as cleaned HTML in the script-free frame.
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.frameLocator('iframe[title="scope.docx"]').getByRole('heading', { name: 'Scope of audit' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+
+  // The viewer's address, opened the way a link or a pasted URL opens it.
+  const message = (await (await page.request.get(`/api/mail/folders/${box.id}/inbox/messages?q=${encodeURIComponent(subject)}`)).json()).data[0];
+  const detail = (await (await page.request.get(`/api/mail/messages/${message.message_id}`)).json()).data;
+  expect((await page.request.get(detail.attachments[0].view_url)).status()).toBe(403);
+  expect(crashes).toEqual([]);
+});
+
+test('a service questionnaire: sent from an enquiry, filled in on a phone, and the answers back on the enquiry', async ({ page }) => {
+  await signIn(page);
+  // The link is built on the public address; here, the address the tests run on.
+  await page.request.patch('/api/settings/public_app_url', { data: { value: new URL(page.url()).origin } });
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Certification ${stamp}` } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E questionnaire' } })).json();
+  await page.request.patch(`/api/questionnaire-versions/${form.versions[0].id}`, { data: { definition: { steps: [
+    { key: 'organisation', title: 'Your organisation', questions: [{ key: 'employee_count', type: 'number', label: 'Employees in scope', required: true, integer: true, min: 1 }] },
+    { key: 'scope', title: 'Scope', questions: [
+      { key: 'certified', type: 'yesno', label: 'Certified before?', required: true },
+      { key: 'body', type: 'text', label: 'Which body?', required: true, show_if: { key: 'certified', op: 'eq', value: true } },
+    ] },
+  ] } } });
+  expect((await page.request.post(`/api/questionnaire-versions/${form.versions[0].id}/publish`)).status()).toBe(200);
+  const { data: enquiry } = await (await page.request.post('/api/enquiries', { data: { client_name: `E2E Questionnaire Client ${stamp}`, service: svc.name, status: 'New' } })).json();
+
+  // Staff make a link from the enquiry list.
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Send', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Make a link only' }).click();
+  const link = await page.locator('.mono.small').filter({ hasText: '/q/' }).first().innerText();
+  await page.keyboard.press('Escape');
+
+  // The client, on a phone: a required answer is asked for, a conditional one appears.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(new URL(link).pathname);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByText('Required', { exact: true })).toBeVisible();
+  await page.getByLabel('Employees in scope').fill('45');
+  await page.getByRole('button', { name: 'Next' }).click();
+  await expect(page.getByLabel('Which body?')).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Yes' }).check();
+  await page.getByLabel('Which body?').fill('Example Body');
+  await page.getByRole('button', { name: 'Review' }).click();
+  await page.getByLabel('Your name').fill('Asha Example');
+  await page.getByLabel('Your email').fill(`asha-${stamp}@example.com`);
+  await page.getByRole('button', { name: 'Submit answers' }).click();
+  await expect(page.getByText('Thank you', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  // Back on the enquiry: submitted, with the answers.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Submitted' }).first().click();
+  await expect(page.getByText('Example Body')).toBeVisible();
 });

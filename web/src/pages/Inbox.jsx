@@ -25,6 +25,7 @@ import { ReadingPane } from '../components/mail/ReadingPane.jsx';
 import { PaneLoading, PaneState } from '../components/mail/PaneState.jsx';
 import { ConvertDialog, SnoozeDialog } from './inbox/dialogs.jsx';
 import { InboxSetup } from './inbox/InboxSetup.jsx';
+import { AttachmentNames } from '../components/mail/AttachmentStrip.jsx';
 
 /**
  * The shared sales inbox (#30): who owns each email, what is waiting on
@@ -138,6 +139,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
       <span className="app-ib__subj" title={row.subject || '(no subject)'}>{row.subject || '(no subject)'}</span>
       {/* A mailbox set to metadata-only stores no snippet; the band does not appear rather than show a blank line. */}
       {row.snippet && <span className="app-ib__snip"><span>{row.snippet}</span></span>}
+      <AttachmentNames names={row.attachment_names} />
       <span className="app-ib__chips">
         {due && <span className={cn('mg-badge', due[1])}>{due[0]}</span>}
         {tag && <span className={cn('mg-badge mg-num', tag[1])}>{tag[0]}</span>}

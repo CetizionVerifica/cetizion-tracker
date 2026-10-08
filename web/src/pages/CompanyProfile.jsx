@@ -35,7 +35,7 @@ const FIELDS = [
 
 /** The PDF header, as quotationPdf.js lays it out, drawn from the tokens. */
 function PdfHeader({ values, number }) {
-  const name = values.company_name || 'Cetizion Verifica';
+  const name = values.company_name || 'Your company name';
   const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   return (
     <div className="set-preview">

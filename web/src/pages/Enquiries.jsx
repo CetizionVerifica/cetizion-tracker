@@ -7,6 +7,7 @@ import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { SalesViews, SummaryStrip, Tone, daysFrom, useRows, useTotal } from '../components/sales.jsx';
+import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
 import { plural } from '../components/daily.jsx';
@@ -35,6 +36,8 @@ export default function Enquiries() {
   const [touching, setTouching] = useState(false);
   const [logged, setLogged] = useState(0);
   const [version, setVersion] = useState(0);
+  // The service questionnaire for one enquiry (#208). A "submitted" notification links here with ?questionnaire=.
+  const [questionnaire, setQuestionnaire] = useState(() => (enquiryNo && params.get('questionnaire') ? { enquiry_no: enquiryNo } : null));
   useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
@@ -68,6 +71,14 @@ export default function Enquiries() {
     { key: 'sales_person', header: 'Owner', className: 'nowrap', render: (r) => r.sales_person ?? <span className="text-muted-foreground">—</span> },
     { key: 'status', header: 'Status', render: (r) => <><Tone tone={enquiryTone(r.status)}>{r.status}</Tone>{r.status === 'Unqualified' && r.unqualified_reason_id && <span className="app-sub">{lookups.lost_reasons.find((x) => x.id === r.unqualified_reason_id)?.name}</span>}</> },
     { key: 'next_follow_up_at', header: 'Next follow-up', render: nextFollowUp },
+    {
+      key: 'questionnaire_status', header: 'Questionnaire',
+      render: (r) => (
+        <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
+          {r.questionnaire_status ? <QuestionnaireBadge status={r.questionnaire_status} /> : 'Send'}
+        </button>
+      ),
+    },
     {
       key: 'quotation_no', header: 'Quotation',
       render: (r) => r.quotation_no ? <Link className="app-ref" to={`/quotations/${encodeURIComponent(r.quotation_no)}`}>{r.quotation_no}</Link> : <span className="text-muted-foreground">—</span>,
@@ -207,6 +218,7 @@ export default function Enquiries() {
       </>}
     />
     {touching && <TouchDialog entity="enquiry" id={enquiryNo} start={{ channel: 'call', contact_id: null }} onClose={() => setTouching(false)} onSaved={() => { setTouching(false); setLogged((n) => n + 1); }} />}
+    {questionnaire && <QuestionnaireCard enquiry={questionnaire} onClose={() => setQuestionnaire(null)} onChanged={() => setVersion((n) => n + 1)} />}
     </>
   );
 }

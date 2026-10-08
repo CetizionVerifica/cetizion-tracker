@@ -73,7 +73,7 @@ function linkProblem(e) {
 const NOTICE = {
   invalid: ['mg-banner--late', 'alert', Link2, 'This link is not valid', 'It may be cut short in the email. Ask for a new one below.'],
   expired: ['mg-banner--wait', 'alert', Clock, 'This sign-in link has expired or was already used', 'Each link works once, for 20 minutes. Enter your email and we will send a fresh one.'],
-  withdrawn: ['mg-banner--late', 'alert', CircleAlert, 'Portal access is not available for this address any more', `If you think this is a mistake, reply to the last email from your contact at ${PROVIDER}.`],
+  withdrawn: ['mg-banner--late', 'alert', CircleAlert, 'Portal access is not available for this address any more', `If you think this is a mistake, reply to the last email from your contact.`],
   ended: ['', 'status', Clock, 'You were signed out', 'Sessions last 8 hours, and end when your portal access changes. Ask for a new link to carry on.'],
   ratelimit: ['mg-banner--late', 'alert', Clock, 'Too many requests', 'Please wait a few minutes, then ask for a link again.'],
   other: ['mg-banner--late', 'alert', CircleAlert, 'That did not work', ''],
@@ -145,7 +145,7 @@ function SignIn({ notice: first }) {
       <div className="cl-stage">
         <section className="cl-intro" data-a="rise" aria-labelledby="intro-h">
           <h2 className="mg-display" id="intro-h">Your work with us, <span className="cl-em">in one place.</span></h2>
-          <p className="cl-text2" style={{ maxWidth: '46ch', fontSize: 14 }}>The client portal of {PROVIDER}. See where each project stands and what you owe, and answer us without hunting through email.</p>
+          <p className="cl-text2" style={{ maxWidth: '46ch', fontSize: 14 }}>Your client portal. See where each project stands and what you owe, and answer us without hunting through email.</p>
           <div className="mg-glass mg-panel cl-wide" style={{ gap: 16, maxWidth: 520 }}>
             {[[Briefcase, 'Projects and orders', 'Where each project stands, and what is billed, received and still to bill on every PO.'],
               [Receipt, 'Invoices with GST', "Confirm an invoice, raise a query or tell us you've paid."],
@@ -183,7 +183,7 @@ function SignIn({ notice: first }) {
             </form>
           )}
           <p className="cl-lockline"><Lock strokeWidth={1.8} aria-hidden="true" />No password to remember. Each link works once, for 20 minutes, and a session lasts 8 hours.</p>
-          <p className="cl-rule">No email from us? Check your spam folder, or ask your contact at {PROVIDER} to add your address.</p>
+          <p className="cl-rule">No email from us? Check your spam folder, or ask your contact to add your address.</p>
         </main>
       </div>
     </ClientPage>
@@ -236,7 +236,7 @@ function Home({ me, onOut, onEnded }) {
         <div className="cl-title__main">
           <span className="mg-eyebrow">Your client portal</span>
           <h1 className="mg-display">{me.company_name}</h1>
-          <p className="cl-title__lead">Signed in as {me.contact_name}. Your projects, orders, invoices, documents and certificates with {PROVIDER}, kept up to date by our team.</p>
+          <p className="cl-title__lead">Signed in as {me.contact_name}. Your projects, orders, invoices, documents and certificates, kept up to date by our team.</p>
         </div>
         <p className="cl-private cl-wide"><ShieldCheck strokeWidth={1.8} aria-hidden="true" />Private to {me.company_name}. Only people we have added can sign in.</p>
       </section>
@@ -251,7 +251,7 @@ function Home({ me, onOut, onEnded }) {
         <section className="mg-glass mg-empty" data-a="rise" style={{ padding: '56px 24px' }}>
           <span className="mg-empty__mark"><Folder size={24} strokeWidth={1.8} aria-hidden="true" /></span>
           <h2 className="mg-empty__title" style={{ fontSize: 18 }}>Nothing is shared here yet</h2>
-          <p className="mg-empty__text">{PROVIDER} has not switched on any part of your portal yet. Reply to the email that brought you here and we will set it up.</p>
+          <p className="mg-empty__text">We have not switched on any part of your portal yet. Reply to the email that brought you here and we will set it up.</p>
         </section>
       ) : (
         <>
@@ -276,7 +276,7 @@ function Home({ me, onOut, onEnded }) {
               onSignedOut={() => setEnded(true)} onUnpaid={setUnpaid} />
           </div>
           <footer className="cl-foot">
-            <span>Private to {me.company_name} and {PROVIDER}.</span>
+            <span>Private to {me.company_name} and us.</span>
             <span>Sessions last 8 hours. Sign out when you use a shared computer.</span>
           </footer>
         </>
@@ -587,7 +587,7 @@ function Documents({ ctx }) {
     <div className="cl-panel" ref={ref}>
       <section className={ctx.cardStrong} data-a="rise" aria-labelledby="from-us" style={{ paddingBottom: rows.length ? 10 : undefined }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <h2 className="mg-panel__title" id="from-us">From {PROVIDER}</h2>
+          <h2 className="mg-panel__title" id="from-us">From us</h2>
           <span className="mg-panel__hint">{rows.length ? 'Quotations, orders, invoices, reports and files our team shared, newest first' : 'What our team sends you'}</span>
         </div>
         {rows.length ? (
@@ -1223,7 +1223,7 @@ function ContactForm({ ctx }) {
                   <div key={m.id} className="cl-rowline cl-rowline--top">
                     <span className={`mg-avatar${you ? '' : ' cl-msg-us'}`} aria-hidden="true">{you ? initials(ctx.contact) : 'CV'}</span>
                     <div className="cl-rowline__body">
-                      <span style={{ fontSize: 12.5 }}><strong>{you ? 'You' : PROVIDER}</strong> <span className="cl-meta">· {whenTime(m.sent_at)}</span></span>
+                      <span style={{ fontSize: 12.5 }}><strong>{you ? 'You' : 'Us'}</strong> <span className="cl-meta">· {whenTime(m.sent_at)}</span></span>
                       <span style={{ fontSize: 13, color: 'var(--text2)', overflowWrap: 'anywhere' }}>{m.snippet}</span>
                     </div>
                   </div>

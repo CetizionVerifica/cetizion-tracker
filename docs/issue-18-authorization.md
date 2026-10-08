@@ -110,6 +110,7 @@ arrangement exists to prevent.
 | `GET /api/auth/oauth/:provider/callback` | **yes** | The provider redirects back with a code and a state. The state must equal the one in the signed, ten-minute cetizion_oauth handshake cookie, the PKCE verifier from that cookie is sent with the code exchange, and the resulting identity is matched to a users row before any session is issued. |
 | `POST /api/portal/login` | **yes** | A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session. |
 | `POST /api/portal/logout`<br>`GET /api/portal/me`<br>`GET /api/portal/projects`<br>`GET /api/portal/documents`<br>`GET /api/portal/invoices`<br>`GET /api/portal/invoices/statement.pdf`<br>`GET /api/portal/certificates`<br>`GET /api/portal/files/document/:id`<br>`GET /api/portal/files/quotation/:no`<br>`GET /api/portal/files/invoice/:id`<br>`GET /api/portal/files/po/:no`<br>`GET /api/portal/messages`<br>`POST /api/portal/messages`<br>`GET /api/portal/actions`<br>`POST /api/portal/actions`<br>`POST /api/portal/documents`<br>`DELETE /api/portal/documents/:id` | **yes** | The signed cetizion_portal cookie (a key derived from SESSION_SECRET, distinct from the staff one) resolved to a live portal_sessions row, with the company still portal-enabled and the contact still permitted. |
+| `GET /api/public/questionnaire/:token`<br>`PUT /api/public/questionnaire/:token/answers`<br>`POST /api/public/questionnaire/:token/files`<br>`POST /api/public/questionnaire/:token/submit` | **yes** | A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use. |
 | `POST /api/auth/login` | **yes** | A username or email and password, checked against the environment (shared mode) or the users table (database mode). |
 | `GET /api/auth/me` | **yes** | The signed cetizion_session cookie, re-read against the users row on every request. |
 | `GET /{*splat}` | no | The built single-page app: HTML, CSS and JavaScript with no data in it. Everything it displays it fetches from /api, which is gated. |
@@ -172,6 +173,9 @@ session is **401**, before any of these is considered.
 | `GET /api/auth/providers` | **admin** | Which sign-in methods are configured, and how. It reports the provider set-up of the deployment, not the caller's own identities — those are on GET /api/auth/account. Carries its own requireAuth and requireAdmin because it is mounted before the /api gate. |
 | **/api/cashflow** | | |
 | `GET /api/cashflow` | any |  |
+| **/api/client-emails** | | |
+| `GET /api/client-emails` | any | An admin sees every client email and whose record it is on; a sales user only the client emails on records they own. HR is refused. |
+| `PUT /api/client-emails` | **admin** | Holding or releasing client email decides whether clients hear from the company at all. |
 | **/api/client-errors** | | |
 | `POST /api/client-errors` | any | Mounted after requireAuth: browser errors are reported by signed-in people only. |
 | **/api/collections** | | |
@@ -207,8 +211,8 @@ session is **401**, before any of these is considered.
 | `POST /api/documents` | any |  |
 | `GET /api/documents/:id` | any |  |
 | **/api/emails** | | |
-| `GET /api/emails` | any |  |
-| `GET /api/emails/:id` | any |  |
+| `GET /api/emails` | any | A sales user sees only the client emails on records they own; an admin sees every email. |
+| `GET /api/emails/:id` | any | An email that is not a client email on one of the caller's records is a 404 for a sales user. |
 | `POST /api/emails/test` | **admin** | It sends real mail to an address the caller names — an effect outside the application. |
 | **/api/expense-claims** | | |
 | `POST /api/expense-claims/:id/correct` | **admin** | The only route that can move a recorded reimbursement total back down, so it is the one place a figure already booked against a claim can be changed (#85). It refuses to run without a reason, caps the figure at what was claimed, and records the before and after in the same transaction as the change. Reimbursing adds; correcting rewrites — and because amount_reimbursed is a single column rather than a ledger, the activity row is the only surviving trace of the larger figure. An administrator is the answer for the same reason /decide is: this is the correction path for money, not a tidy-up. |
@@ -284,7 +288,7 @@ session is **401**, before any of these is considered.
 | `GET /api/mail/folders/:accountId/:folderId/messages` | any | Scoped: mailbox-owner, mailbox-delegate. |
 | `GET /api/mail/mailboxes` | any | The caller's own mailboxes and the shared ones they are named on, with their folders; an admin sees every mailbox's folder list. |
 | `GET /api/mail/messages/:id` | any | What is stored, under the mailbox's visibility. The owner of a personal mailbox that stores less reads the body live from the provider; nothing is stored. |
-| `GET /api/mail/messages/:id/attachments/:attId` | any | Streamed from the provider with nosniff and a 25 MB cap; from a mailbox that stores metadata or subjects only, the owner alone. |
+| `GET /api/mail/messages/:id/attachments/:attId/view` | any | For the Inbox's viewer only (X-Tracker-View), never a download: a PDF or picture streamed inline from the provider with nosniff and a 25 MB cap, a sheet or text file as data. From a personal mailbox that stores metadata or subjects only, the owner alone; a shared mailbox's attachments to whoever reads its mail. Each view is logged. |
 | `GET /api/mail/messages/:id/inline/:contentId` | any | A cid: image of the message, images only, under the same rule as attachments. |
 | `POST /api/mail/notifications` | public | graph-client-state — Microsoft Graph posts here and has no session. A notification whose clientState does not match the stored subscription secret is ignored. |
 | `GET /api/mail/origin` | any | Scoped: mailbox-owner, mailbox-delegate. |
@@ -385,6 +389,10 @@ session is **401**, before any of these is considered.
 | `POST /api/public/accept/:token/accept` | public | acceptance-link-token — The client accepts the quotation the token is bound to. |
 | `POST /api/public/accept/:token/changes` | public | acceptance-link-token — The client asks for changes to the quotation the token is bound to. |
 | `GET /api/public/accept/:token/pdf` | public | acceptance-link-token — The same quotation as a PDF. |
+| `GET /api/public/questionnaire/:token` | public | questionnaire-link-token — A client opens the questionnaire sent to them (#208) without an account; only the questions, answers and file names of that response go out. |
+| `PUT /api/public/questionnaire/:token/answers` | public | questionnaire-link-token — The answers of the client, saved as they go; checked against the questions, refused once submitted. |
+| `POST /api/public/questionnaire/:token/files` | public | questionnaire-link-token — A file for a file question: PDF, image, Word or Excel, within the document size cap, held on that response only. |
+| `POST /api/public/questionnaire/:token/submit` | public | questionnaire-link-token — The client submits; every required answer checked, then read-only and the owner of the enquiry told. |
 | **/api/purchase-orders** | | |
 | `POST /api/purchase-orders/:poNumber/email-read-checked` | any | Scoped: parent-owner. |
 | `GET /api/purchase-orders/:poNumber/full` | any |  |
@@ -393,6 +401,27 @@ session is **401**, before any of these is considered.
 | `GET /api/purchase-orders/review` | any | A salesperson sees the items whose suggested quotation is theirs; an admin sees all. |
 | `POST /api/purchase-orders/review/:id/dismiss` | any | Scoped: record-owner. |
 | `POST /api/purchase-orders/review/:id/register` | any | Reads the PO again for the Register PO dialog; saves nothing but an unattached upload. |
+| **/api/questionnaire-responses** | | |
+| `GET /api/questionnaire-responses` | any | The questionnaires sent from one enquiry (#208), when the caller can open it. |
+| `POST /api/questionnaire-responses` | any | Sends a questionnaire from an enquiry (#208): only on an enquiry the caller can open. |
+| `GET /api/questionnaire-responses/:id` | any | The answers a client gave (#208): the owner of the enquiry, and admins. |
+| `PATCH /api/questionnaire-responses/:id` | any | Staff filling in a questionnaire for the client, on an enquiry they own (#208). |
+| `POST /api/questionnaire-responses/:id/files` | any | A file for a file question, by staff filling in (#208). |
+| `POST /api/questionnaire-responses/:id/link` | any | A new link to the questionnaire, to copy or email (#208). |
+| `POST /api/questionnaire-responses/:id/remind` | any | Emails the client a reminder with a new link (#208). |
+| `POST /api/questionnaire-responses/:id/reopen` | any | A submitted questionnaire is open to changes again (#208). |
+| `POST /api/questionnaire-responses/:id/revoke` | any | Every open link to the questionnaire stops working (#208). |
+| `POST /api/questionnaire-responses/:id/submit` | any | Staff submitting what they filled in for the client (#208). |
+| **/api/questionnaire-versions** | | |
+| `DELETE /api/questionnaire-versions/:id` | **admin** | Discards a draft questionnaire version (#208). |
+| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire (#208). |
+| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once it passes every check; the previous version is retired. |
+| **/api/questionnaires** | | |
+| `GET /api/questionnaires` | any | The service questionnaires, to choose one to send (#208). Templates, not client data: every signed-in user reads them; only admins write. |
+| `POST /api/questionnaires` | **admin** | Builds a service questionnaire (#208): what clients are asked before a quotation. Admin › Templates. |
+| `GET /api/questionnaires/:id` | any | One questionnaire and its versions (#208), as above. |
+| `PATCH /api/questionnaires/:id` | **admin** | Renames a questionnaire or switches it off (#208). |
+| `POST /api/questionnaires/:id/versions` | **admin** | A new draft of a questionnaire (#208); published versions are frozen. |
 | **/api/quotations** | | |
 | `POST /api/quotations/:id/convert` | any |  |
 | `POST /api/quotations/:key/accept` | any |  |
@@ -430,6 +459,7 @@ session is **401**, before any of these is considered.
 | **/api/timeline** | | |
 | `GET /api/timeline` | any | The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own. |
 | **/api/travel-logs** | | |
+| `POST /api/travel-logs/:travelId/billed-stage` | any | Which client invoice recovered a trip's cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk's call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it. |
 | `GET /api/travel-logs/:travelId/full` | any |  |
 | **/api/users** | | |
 | `GET /api/users` | **admin** | The account list, including roles and who is switched off. |
@@ -438,7 +468,8 @@ session is **401**, before any of these is considered.
 | `POST /api/users/:id/password` | **admin** | Setting somebody's password. |
 | **/api/vendor-invoices** | | |
 | `GET /api/vendor-invoices/:id/full` | any | A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is. |
-| `POST /api/vendor-invoices/:id/pay` | any | Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id. |
+| `POST /api/vendor-invoices/:id/pay` | any | Paying a travel agency: the travel desk's work and the administrator's, so the handler allows admin and HR and refuses sales (#214). Until then the gate was open to every signed-in role, which let a sales user pay an agency — not a decision anybody took, just an open door. The figure is still the absolute total settled and the route writes the difference as a row in travel_vendor_payments; amount_paid and payment_date are derived from those rows and move only through here, never through PATCH /api/vendor-invoices/:id. |
+| `POST /api/vendor-invoices/:id/pay/correct` | **admin** | The only route that can take a vendor payment back off an invoice, or move its cash and TDS legs against each other, so it is the one place a figure already booked against an agency bill can be reduced (#214). It refuses to run without a reason, appends a row rather than editing the ledger — the original payment and the bank advice attached to it are never touched — and records the before and after in the same transaction. Paying is the travel desk's; deciding that what the travel desk recorded was wrong is not, for the same reason /api/expense-claims/:id/correct is the administrator's: this is the correction path for money, not a tidy-up. |
 | **/api/views** | | |
 | `GET /api/views` | any | Scoped: record-owner. |
 | `POST /api/views` | any | Scoped: record-owner. |
@@ -543,7 +574,7 @@ Each of these is one generic CRUD router with five routes: `GET /api/<name>`,
 | `sector-aliases` | any | **admin** | **admin** | Which spellings the Reports section counts under each headline sector; one edit moves POs between sectors in every report. |
 | `services` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. |
 | `tasks` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). |
-| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk's own record too (#196). |
+| `travel-logs` | any | any | any | A salesperson's own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk's own record too (#196). Protected fields: `billed_stage_id`. |
 | `travel-segments` | any | any | any | A trip's legs, kept with it: open as travel-logs is. |
 | `travel-vendors` | any | **admin** | **admin** | A Settings catalogue: one edit re-labels every record that used the old value. HR owns the agency list (#196), so an administrator and HR change it (hrWrites). |
 | `trip-types` | any | **admin** | **admin** | A Settings catalogue (#196): a type's chargeable flag decides which trips may be billed to a client. Kept by an administrator and the travel desk (hrWrites). |

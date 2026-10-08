@@ -170,7 +170,18 @@
 /* Attachments. */
 .app-atts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .app-att { flex: 0 1 300px; display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; padding: 6px 6px 6px 8px; border: 1px solid var(--line); border-radius: 14px; }
+.app-atts__item { flex: 0 1 300px; min-width: 0; max-width: 100%; display: flex; }
+.app-atts__item > .app-att { flex: 1; }
+button.app-att { font: inherit; color: inherit; text-align: left; background: transparent; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+button.app-att:hover:not(:disabled) { border-color: var(--caramel); background: var(--track); }
+button.app-att:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
+button.app-att:disabled { cursor: not-allowed; }
 .app-att.is-locked { opacity: .72; }
+.app-attnames { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; margin-top: 4px; grid-column: 2 / -1; }
+.app-attnames__one { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 60%; }
+.app-attnames__one svg { width: 12px; height: 12px; flex: none; }
+.app-attnames__one > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-attnames__more { align-self: center; font-size: 11px; color: var(--muted); }
 .app-att__icon { width: 32px; height: 32px; flex: none; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
 .app-att__icon svg { width: 16px; height: 16px; }
 .app-att__text { flex: 1; min-width: 0; padding-right: 4px; }

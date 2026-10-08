@@ -25,7 +25,7 @@ export default function Deliverables() {
   return (
     <>
       <PageHeader
-        title="Certificates & deliverables"
+        title="Certificates"
         subtitle="What each client holds from us, with its dates and file. Expiry dates drive renewals and reminders."
       />
       <div className="app-page" ref={ref}>

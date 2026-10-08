@@ -10,7 +10,8 @@ DROP VIEW IF EXISTS v_quotations, v_projects, v_purchase_orders,
   v_payment_stages, v_travel_logs, v_travel_vendor_invoices, v_enquiries,
   v_employee_expense_claims CASCADE;
 
-DROP TABLE IF EXISTS travel_vendor_credit_notes, travel_vendor_invoice_lines, travel_segments, trip_types,
+DROP TABLE IF EXISTS questionnaire_response_files, questionnaire_links, questionnaire_responses, questionnaire_versions, questionnaires,
+  travel_vendor_credit_notes, travel_vendor_invoice_lines, travel_segments, trip_types,
   ai_usage_daily, email_triage, document_profile_corrections, company_document_profiles, receivable_list_lines, receivable_lists,
   portal_client_action_stages, portal_client_actions, email_attachments, mail_folder_list, report_runs, email_ai_calls, mailbox_invoice_backfills, email_invoice_decisions, mailbox_po_backfills, email_po_decisions, mailbox_enquiry_backfills, email_enquiry_decisions, sector_aliases, follow_up_cycles, sales_targets, ownership_history, holidays, user_sessions, auth_identities, saved_views, activity_log, users, backup_runs, auth_events, api_token_log, api_tokens, accounting_log, reconciliation_items, books_entries, accounting_mappings, portal_audit, portal_sessions, portal_links, webhook_deliveries, webhook_events, webhook_endpoints, visit_assignees, visits, staff_leave, staff, project_costs, canned_responses, inbox_conversations, inboxes, email_blocklist, email_messages, email_threads, mail_folders, connected_accounts, deliverables, quotation_acceptances, communications, notifications, engagements, collection_log, payments, attachments, notes, tasks, quotation_revisions, quotation_lines, email_log, job_runs, import_items, import_batches, employee_expense_claims, travel_vendor_invoices,
   travel_logs, onboarding_tasks, payment_stages, po_services,
@@ -3838,3 +3839,289 @@ INSERT INTO settings (key, value, notes) VALUES
   ('portal_notify_new_invoice', 'true', 'Email a client''s portal contacts when an invoice is recorded for them, with the portal''s address. Only for clients with the portal and its Invoices section on.'),
   ('portal_link_in_reminders', 'true', 'End payment reminders with the client portal''s address, when the client can sign in to it.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- An admin's hold on the emails that go to clients (094).
+-- ---------------------------------------------------------------------
+INSERT INTO settings (key, value, notes) VALUES
+  ('client_emails_hold_all', 'false', 'Hold every email that would go to a client: logged, never sent. Set under Settings, Client emails.'),
+  ('client_emails_held', '[]', 'The kinds of client email held one by one, as a JSON list. Set under Settings, Client emails.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- What kind of thing an email attachment is: a file, an Outlook item
+-- (a forwarded email), or a OneDrive/SharePoint link (096).
+-- ---------------------------------------------------------------------
+ALTER TABLE email_attachments ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'file';
+ALTER TABLE email_attachments DROP CONSTRAINT IF EXISTS email_attachments_kind_check;
+ALTER TABLE email_attachments ADD CONSTRAINT email_attachments_kind_check CHECK (kind IN ('file','item','reference'));
+
+-- ---------------------------------------------------------------------
+-- Service questionnaires (089, #208 phase 1), as the migration applies them.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS questionnaires (
+  id          serial PRIMARY KEY,
+  service_id  int  NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (service_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS questionnaire_versions (
+  id               serial PRIMARY KEY,
+  questionnaire_id int  NOT NULL REFERENCES questionnaires(id) ON DELETE CASCADE,
+  version          int  NOT NULL,
+  status           text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','retired')),
+  definition       jsonb NOT NULL DEFAULT '{"steps":[]}',
+  pricing          jsonb NOT NULL DEFAULT '{"lines":[]}',
+  published_at     timestamptz,
+  published_by     text,
+  created_by       text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (questionnaire_id, version)
+);
+-- At most one published version per questionnaire.
+CREATE UNIQUE INDEX IF NOT EXISTS questionnaire_versions_one_published
+  ON questionnaire_versions (questionnaire_id) WHERE status = 'published';
+
+-- A version that has left draft is frozen: its questions and pricing never
+-- change under the answers given to them. Only its status moves on.
+CREATE OR REPLACE FUNCTION questionnaire_version_frozen() RETURNS trigger AS $$
+BEGIN
+  IF OLD.status <> 'draft' AND (NEW.definition IS DISTINCT FROM OLD.definition OR NEW.pricing IS DISTINCT FROM OLD.pricing) THEN
+    RAISE EXCEPTION 'questionnaire version % is %; make a new version to change it', OLD.id, OLD.status
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF OLD.status = 'retired' AND NEW.status <> 'retired' THEN
+    RAISE EXCEPTION 'a retired questionnaire version stays retired' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS questionnaire_versions_frozen ON questionnaire_versions;
+CREATE TRIGGER questionnaire_versions_frozen BEFORE UPDATE ON questionnaire_versions
+  FOR EACH ROW EXECUTE FUNCTION questionnaire_version_frozen();
+
+CREATE TABLE IF NOT EXISTS questionnaire_responses (
+  id                 serial PRIMARY KEY,
+  version_id         int  NOT NULL REFERENCES questionnaire_versions(id),
+  enquiry_id         int  REFERENCES enquiries(id) ON DELETE SET NULL,
+  company_id         int  REFERENCES companies(id) ON DELETE SET NULL,
+  contact_id         int  REFERENCES contacts(id) ON DELETE SET NULL,
+  answers            jsonb NOT NULL DEFAULT '{}',
+  current_step       int  NOT NULL DEFAULT 0,
+  status             text NOT NULL DEFAULT 'not_started'
+                       CHECK (status IN ('not_started','in_progress','submitted','reopened','withdrawn')),
+  filled_by          text NOT NULL DEFAULT 'client' CHECK (filled_by IN ('client','staff','portal')),
+  submitted_at       timestamptz,
+  submitted_by_name  text,
+  submitted_by_email text,
+  -- Who sent it. Its reach follows its enquiry's owner; this is only for a
+  -- response with no enquiry. Not named owner_user_id: that marks the three
+  -- sales tables that carry their own owner (018).
+  requested_by_user_id int REFERENCES users(id) ON DELETE SET NULL,
+  created_by         text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
+  CHECK (status <> 'submitted' OR submitted_at IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS questionnaire_responses_enquiry ON questionnaire_responses (enquiry_id);
+CREATE INDEX IF NOT EXISTS questionnaire_responses_company ON questionnaire_responses (company_id);
+
+CREATE TABLE IF NOT EXISTS questionnaire_links (
+  id              serial PRIMARY KEY,
+  response_id     int  NOT NULL REFERENCES questionnaire_responses(id) ON DELETE CASCADE,
+  token_hash      text NOT NULL UNIQUE,
+  sent_to         text,
+  expires_at      timestamptz NOT NULL,
+  revoked_at      timestamptz,
+  first_opened_at timestamptz,
+  last_opened_at  timestamptz,
+  open_count      int  NOT NULL DEFAULT 0,
+  reminded_at     timestamptz,
+  reminder_count  int  NOT NULL DEFAULT 0,
+  created_by      text,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS questionnaire_links_response ON questionnaire_links (response_id);
+
+CREATE TABLE IF NOT EXISTS questionnaire_response_files (
+  id            serial PRIMARY KEY,
+  response_id   int  NOT NULL REFERENCES questionnaire_responses(id) ON DELETE CASCADE,
+  question_key  text NOT NULL,
+  document_id   int  NOT NULL UNIQUE REFERENCES documents(id),
+  uploaded_by   text NOT NULL DEFAULT 'client',
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS questionnaire_response_files_response ON questionnaire_response_files (response_id);
+
+DROP TRIGGER IF EXISTS questionnaires_set_updated_at ON questionnaires;
+CREATE TRIGGER questionnaires_set_updated_at BEFORE UPDATE ON questionnaires FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS questionnaire_versions_set_updated_at ON questionnaire_versions;
+CREATE TRIGGER questionnaire_versions_set_updated_at BEFORE UPDATE ON questionnaire_versions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS questionnaire_responses_set_updated_at ON questionnaire_responses;
+CREATE TRIGGER questionnaire_responses_set_updated_at BEFORE UPDATE ON questionnaire_responses FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO settings (key, value, notes) VALUES
+  ('questionnaire_link_days', '30', 'How long a questionnaire link sent to a client stays open.'),
+  ('questionnaire_reminder_days', '3', 'Days after sending (and between reminders) before a client who has not submitted a questionnaire is reminded; at most two reminders. 0: never.')
+ON CONFLICT (key) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- What the company has paid a travel agency, as a ledger (096, #214).
+--
+-- Payments are rows, as a client's receipts are rows in `payments`; the
+-- invoice's amount_paid and payment_date stay as the cache the trigger
+-- below keeps, so every existing reader of them is untouched. Settlement
+-- credit is amount + tds_amount. Legacy figures are carried over exactly
+-- as they were recorded — see the migration for why nothing is tidied.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS travel_vendor_payments (
+  id                 serial PRIMARY KEY,
+  vendor_invoice_id  int NOT NULL REFERENCES travel_vendor_invoices(id) ON DELETE CASCADE,
+  -- A payment is positive. A correction — a figure typed too high, or a
+  -- cash/TDS split recorded the wrong way round — is a negative row, so the
+  -- ledger still adds up to the figure on the invoice. Writing the figure
+  -- by hand instead left the correction to be undone by the next payment.
+  amount             numeric(16,2) NOT NULL,
+  -- Tax deducted at source and owed to the government: it settles the
+  -- agency's bill without money reaching the agency. Negative only on a
+  -- correction, which is what the constraint below allows and nothing else.
+  tds_amount         numeric(16,2) NOT NULL DEFAULT 0,
+  -- Nullable on purpose, exactly as payments.received_on is: a legacy
+  -- figure with no recorded date keeps having no date rather than acquiring
+  -- the day of the deploy.
+  paid_on            date,
+  mode               text NOT NULL DEFAULT 'bank_transfer'
+                       CHECK (mode IN ('bank_transfer', 'upi', 'cheque', 'cash', 'card', 'other')),
+  -- The UTR, cheque number or whatever the bank calls it.
+  reference          text,
+  -- The bank advice or screenshot that evidences this transfer. On the
+  -- payment and not on the invoice, so that on a bill settled in three
+  -- transfers it is still possible to say which advice proves which one.
+  document_id        int REFERENCES documents(id) ON DELETE SET NULL,
+  remarks            text,
+  -- Required on any row that takes money back off the invoice; the
+  -- constraint below is what makes "a correction says why" a fact about the
+  -- data rather than a rule one route happens to apply.
+  correction_reason  text,
+  recorded_by        text,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT travel_vendor_payments_signed_rows_need_reason
+    CHECK ((amount >= 0 AND tds_amount >= 0)
+           OR NULLIF(btrim(correction_reason), '') IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS travel_vendor_payments_invoice_idx
+  ON travel_vendor_payments (vendor_invoice_id, paid_on);
+
+-- ---------------------------------------------------------------------
+-- The backfill, before the trigger exists
+-- ---------------------------------------------------------------------
+--
+-- Deliberately ordered: the trigger is created *after* this, so the
+-- backfill cannot recompute the very figures it is reading. The cache keeps
+-- the value it had, the ledger is built to equal it, and the assertion
+-- below holds the two against each other before anything else can run.
+
+-- What is actually there, reported rather than assumed: this is the
+-- measurement that could not be taken in advance.
+DO $$
+DECLARE n_total int; n_paid int; n_neg int; n_nodate int; n_future int;
+        n_over int; n_noamount int; n_datezero int;
+BEGIN
+  SELECT count(*),
+         count(*) FILTER (WHERE amount_paid > 0),
+         count(*) FILTER (WHERE amount_paid < 0),
+         count(*) FILTER (WHERE amount_paid <> 0 AND payment_date IS NULL),
+         count(*) FILTER (WHERE amount_paid <> 0 AND payment_date > CURRENT_DATE),
+         count(*) FILTER (WHERE invoice_amount IS NOT NULL AND amount_paid > invoice_amount),
+         count(*) FILTER (WHERE amount_paid <> 0 AND invoice_amount IS NULL),
+         count(*) FILTER (WHERE amount_paid = 0 AND payment_date IS NOT NULL)
+    INTO n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero
+    FROM travel_vendor_invoices;
+
+  RAISE NOTICE 'Vendor payments (096): % invoices; % with a figure to carry over, % negative, % with no date, % dated ahead of today, % over the invoice, % with no invoice amount, % dated but unpaid.',
+    n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero;
+END $$;
+
+-- One opening row per invoice that carries a figure, in either direction.
+-- Nothing is invented: no reference, no proof, no TDS split (0 keeps the
+-- settlement exactly equal to what was recorded), and the method is
+-- 'other' because the real one was never captured — the same word
+-- payments_opening() uses on the client side for the same reason.
+INSERT INTO travel_vendor_payments
+  (vendor_invoice_id, amount, tds_amount, paid_on, mode, remarks, correction_reason)
+SELECT vi.id,
+       vi.amount_paid,
+       0,
+       vi.payment_date,
+       'other',
+       'Opening balance from the invoice',
+       -- A negative legacy figure is carried as it stands. The reason is
+       -- its provenance, not somebody's correction: the constraint asks
+       -- every row that reduces the invoice to say why it does, and for
+       -- these the honest answer is that this is how it was recorded.
+       CASE WHEN vi.amount_paid < 0
+            THEN 'Legacy opening balance migrated from travel_vendor_invoices (096)' END
+  FROM travel_vendor_invoices vi
+ WHERE vi.amount_paid <> 0
+   AND NOT EXISTS (SELECT 1 FROM travel_vendor_payments p WHERE p.vendor_invoice_id = vi.id);
+
+-- The ledger must add up to what the invoice already said, for every
+-- invoice, before the cache is ever recomputed from it. A row that cannot
+-- be represented without losing its figure stops the migration and names
+-- itself; nothing is clamped, dropped or rounded to make this pass.
+DO $$
+DECLARE bad record; n int := 0;
+BEGIN
+  FOR bad IN
+    SELECT vi.id, vi.vendor_invoice_id, vi.amount_paid,
+           COALESCE((SELECT SUM(p.amount + p.tds_amount) FROM travel_vendor_payments p
+                      WHERE p.vendor_invoice_id = vi.id), 0) AS ledger
+      FROM travel_vendor_invoices vi
+     WHERE vi.amount_paid <> COALESCE((SELECT SUM(p.amount + p.tds_amount) FROM travel_vendor_payments p
+                                        WHERE p.vendor_invoice_id = vi.id), 0)
+  LOOP
+    n := n + 1;
+    RAISE WARNING 'Vendor payments (096): invoice % (%) recorded % but its ledger adds to %',
+      bad.id, bad.vendor_invoice_id, bad.amount_paid, bad.ledger;
+  END LOOP;
+  IF n > 0 THEN
+    RAISE EXCEPTION 'Vendor payments (096): % invoice(s) could not be carried over without changing the figure recorded against them. Nothing has been migrated.', n;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- The cache the existing readers use, kept by the ledger
+-- ---------------------------------------------------------------------
+--
+-- amount_paid is the settlement total — cash plus TDS — because that is
+-- what every status in views.sql compares against the bill, and a bill
+-- settled partly by deduction is still settled. payment_date is the latest
+-- date on the ledger, which is what the ageing and the "paid on" column
+-- have always meant.
+--
+-- An invoice with no ledger rows is never touched by this trigger, so an
+-- unpaid invoice that happens to carry a date keeps it.
+CREATE OR REPLACE FUNCTION travel_vendor_payments_changed() RETURNS trigger AS $$
+DECLARE vid int;
+BEGIN
+  vid := COALESCE(NEW.vendor_invoice_id, OLD.vendor_invoice_id);
+  UPDATE travel_vendor_invoices vi
+     SET amount_paid = COALESCE((SELECT SUM(amount + tds_amount) FROM travel_vendor_payments
+                                  WHERE vendor_invoice_id = vid), 0),
+         payment_date = (SELECT MAX(paid_on) FROM travel_vendor_payments
+                          WHERE vendor_invoice_id = vid)
+   WHERE vi.id = vid;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS travel_vendor_payments_changed ON travel_vendor_payments;
+CREATE TRIGGER travel_vendor_payments_changed
+  AFTER INSERT OR UPDATE OR DELETE ON travel_vendor_payments
+  FOR EACH ROW EXECUTE FUNCTION travel_vendor_payments_changed();

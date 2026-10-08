@@ -273,3 +273,6 @@
 .acc-item--here + .acc-item { border-top-color: transparent; }
 .acc-who__inner .mg-avatar { font-size: 15px; }
 .set-olist li { flex-wrap: wrap; } .set-olist__t { flex: 1 1 140px; } .set-olist li > .mg-badge { flex: none; }
+
+/* Settings › Client emails (#208 sync) */
+.ce-status { display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; white-space: nowrap; }

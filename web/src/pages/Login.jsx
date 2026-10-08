@@ -124,7 +124,6 @@ export default function Login() {
           <BrandMark size={38} />
           <div>
             <div className="text-[21px] leading-[1.1] tracking-[-0.01em]" style={{ fontFamily: 'var(--font-display)' }}>Sales Tracker</div>
-            <div className="text-[12px] text-muted-foreground">Cetizion Verifica</div>
           </div>
         </div>
 

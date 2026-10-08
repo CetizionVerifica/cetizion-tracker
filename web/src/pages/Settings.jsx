@@ -350,6 +350,10 @@ const LEFT = [
     { key: 'reminder_interval_days', label: 'Then repeat every', unit: 'days' },
     { key: 'no_contact_days', label: 'Call a deal untouched after', unit: 'days' },
   ] },
+  { id: 'sq', title: 'Service questionnaires', hint: 'The form a client fills in before we quote.', items: [
+    { key: 'questionnaire_link_days', label: 'A questionnaire link stays open for', unit: 'days' },
+    { key: 'questionnaire_reminder_days', label: 'Remind a client who has not submitted after', unit: 'days' },
+  ] },
   { id: 'cp', title: 'Client portal', hint: 'Emails to clients who have the portal switched on.', foot: 'These apply to every client. Each client’s own portal switches are on its company page.', items: [
     { key: 'portal_notify_new_invoice', label: 'Email portal contacts when an invoice is recorded', type: 'bool' },
     { key: 'portal_link_in_reminders', label: 'Add the portal address to payment reminders', type: 'bool' },

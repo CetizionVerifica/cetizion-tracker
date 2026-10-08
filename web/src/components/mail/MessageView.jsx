@@ -240,7 +240,7 @@ export function Message({ m, openByDefault }) {
                   {snippet || liveData?.live_error || (m.can_read_live ? 'The message could not be read from the mailbox just now. It is tried again on the next sync.' : 'The mailbox owner shares only who and when.')}
                 </p>
               )}
-          <AttachmentStrip attachments={attachments} bodyHtml={body} />
+          <AttachmentStrip attachments={attachments} bodyHtml={body} webLink={m.web_link} />
         </div>
       )}
     </article>

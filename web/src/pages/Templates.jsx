@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, Navigate, Route, Routes } from 'react-router-dom';
-import { AlignLeft, ChevronLeft, ChevronRight, IndianRupee, ListChecks, Plus } from 'lucide-react';
+import { AlignLeft, ChevronLeft, ChevronRight, ClipboardList, IndianRupee, ListChecks, Plus } from 'lucide-react';
 import { cn } from 'cn';
 import { ConfirmDialog, useToast } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -8,6 +8,7 @@ import { FailedCard, ListTable, LoadingPanel, PhoneRow, StateCard } from '../com
 import { MoneyBanner } from '../components/money.jsx';
 import { Tone } from '../components/sales.jsx';
 import { RowActions } from '../components/settings.jsx';
+import { QuestionnaireBuilder } from '../components/QuestionnaireBuilder.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch, useList } from '../lib/hooks.js';
