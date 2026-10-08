@@ -237,6 +237,14 @@
 .acc-switchrow b { display: block; font-weight: 600; font-size: 13.5px; }
 .acc-switchrow small { display: block; font-size: 12.5px; color: var(--text2); }
 .acc-switchrow .mg-switch { margin-left: auto; }
+/* A row with a channel choice: the pills keep their size and drop under the label when the
+   row is too narrow for both; on a phone they share the full width evenly. */
+.acc-switchrow > div:has(> .mg-seg) { flex: 0 1 auto; }
+@media (max-width: 520px) {
+  .acc-switchrow > div:has(> .mg-seg) { flex: 1 1 100%; }
+  .acc-switchrow .mg-seg { display: flex; width: 100%; }
+  .acc-switchrow .mg-seg button { flex: 1 1 0; width: auto !important; min-width: 0; padding: 0 6px; }
+}
 
 /* Exchange rates: the chart, drawn from the tokens; points are buttons. */
 .set-chart { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 0 12px; padding-top: 34px; }
