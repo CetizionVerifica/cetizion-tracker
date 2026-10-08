@@ -139,7 +139,7 @@ html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: tra
 /* ── Segmented control and tabs ── */
 .mg-seg { position: relative; display: inline-flex; padding: 3px; border-radius: 999px; background: var(--track); }
 .mg-seg__thumb { position: absolute; top: 3px; left: 3px; height: 36px; border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--glass-edge); box-shadow: 0 6px 14px -8px var(--shade); transition: transform 640ms var(--mg-spring), width 640ms var(--mg-spring); }
-.mg-seg button { position: relative; min-width: 78px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: color 260ms; }
+.mg-seg button { position: relative; min-width: 78px; height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: color 260ms; }
 .mg-seg button[aria-selected="true"], .mg-seg button[aria-checked="true"] { color: var(--text); }
 .mg-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .mg-tabs button { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border: 0; background: transparent; color: var(--text2); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }

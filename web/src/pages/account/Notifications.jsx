@@ -49,7 +49,7 @@ export function Notifications() {
                 <Seg
                   label={`${g.label}: how`}
                   value={notify.kinds?.[g.key] || 'in_app'}
-                  width={84}
+                  width={96}
                   options={channels.map((c) => ({ value: c, label: CHANNEL[c] || c }))}
                   onChange={async (v) => { if (await save({ kinds: { [g.key]: v } }, `Saved: ${g.label.toLowerCase()} now reach you ${SAID[v] || v}.`)) setSaved((s) => new Set(s).add(g.key)); }}
                 />
