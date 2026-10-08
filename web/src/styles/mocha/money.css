@@ -126,3 +126,45 @@
 .app-pobar { height: 8px; margin: 2px 0 6px; max-width: 220px; }
 .mg-table a.mg-iconbtn { width: 36px; height: 36px; }
 .mg-table a.mg-iconbtn svg { width: 16px; height: 16px; }
+
+/* The order page. */
+.app-po__head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 18px; }
+.app-po__titles { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.app-po__titles h1 { margin: 0; overflow-wrap: anywhere; }
+.app-po__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.app-po__facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; }
+.app-po__facts > div { min-width: 0; }
+.app-po__facts dt { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); }
+.app-po__facts dd { margin: 2px 0 0; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-flow__badge { margin-left: auto; }
+.app-mrow > .app-flow { flex: 1.35 1 520px; min-width: 0; }
+.app-verdict-late { color: var(--late); font-weight: 700; }
+.app-verdict-sub { display: block; margin-top: 2px; font-size: 13px; color: var(--text2); font-weight: 500; }
+
+/* Payment stage rungs. */
+.app-rung { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 4px 14px; padding: 18px 22px; border-top: 1px solid var(--line); }
+.app-rung.is-bill { background: var(--wait-soft); }
+.app-rung__disc { grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; background: var(--track); color: var(--text2); }
+.app-rung__disc.is-late { background: var(--late); color: var(--on-late, #fff); }
+.app-rung__disc.is-wait { background: var(--caramel); color: var(--on-btn); }
+.app-rung__disc.is-ok { background: var(--ok); color: #fff; }
+.app-rung__title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; font-size: 14.5px; font-weight: 700; }
+.app-rung__amount { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.app-rung__body { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.app-rung__meta { font-size: 12.5px; color: var(--muted); }
+.app-rung__say { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text2); max-width: 70ch; }
+.app-rung__say.is-late { color: var(--late); font-weight: 600; } .app-rung__say.is-wait { color: var(--caramel-text); font-weight: 600; }
+.app-rung__btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.app-rung.is-dim .app-rung__title, .app-rung.is-dim .app-rung__amount { color: var(--text2); }
+@media (max-width: 719px) { .app-rung { padding: 16px; } }
+.app-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border-top: 1px solid var(--line); }
+.app-figs > div { display: flex; flex-direction: column; gap: 3px; padding: 14px 20px; border-left: 1px solid var(--line); min-width: 0; }
+.app-figs > div:first-child { border-left: 0; }
+.app-figs .mg-tile__figure { font-size: 22px; }
+.app-figs .mg-tile__foot { font-size: 12px; }
+@media (max-width: 719px) { .app-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .app-figs > div:nth-child(odd) { border-left: 0; } .app-figs > div:nth-child(n+3) { border-top: 1px solid var(--line); } .app-figs > div { padding: 12px 16px; } }
+.app-railcard { border-radius: 22px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.app-railcard h2 { margin: 0 0 2px; font-size: 14.5px; font-weight: 700; }
+.app-fact { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text2); }
+.app-fact > b { min-width: 0; text-align: right; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+.app-fact > b.is-wait { color: var(--caramel-text); }

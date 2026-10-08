@@ -228,7 +228,7 @@ export function flowSteps(reached) {
  * the header's menu, which is the point of the shape. `note` is the small
  * print: what the primary button will actually do, and what is in the menu.
  */
-export function RecordFlow({ steps = [], verdict, actions, note, banner, title = 'Where it stands' }) {
+export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, title = 'Where it stands' }) {
   const at = steps.findIndex((s) => s.state === 'current' || s.state === 'blocked');
   const next = at >= 0 ? steps[at] : null;
   return (
@@ -237,8 +237,9 @@ export function RecordFlow({ steps = [], verdict, actions, note, banner, title =
       <div className="app-flow__head">
         <h2>{title}</h2>
         {steps.length > 0 && (
-          <span>{next ? `step ${at + 1} of ${steps.length} · next: ${next.label}` : steps.every((s) => s.state === 'done') ? 'every step done' : `${steps.length} steps`}</span>
+          <span className={badge ? 'sr-only' : undefined}>{next ? `step ${at + 1} of ${steps.length} · next: ${next.label}` : steps.every((s) => s.state === 'done') ? 'every step done' : `${steps.length} steps`}</span>
         )}
+        {badge && <div className="app-flow__badge">{badge}</div>}
       </div>
       {steps.length > 0 && (
         <ol className="mg-ladder">
