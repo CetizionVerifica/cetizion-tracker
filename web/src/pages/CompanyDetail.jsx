@@ -10,6 +10,7 @@ import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { PortalSettings } from '../components/PortalSettings.jsx';
+import { PortalAnswers } from '../components/PortalAnswers.jsx';
 import { PortalPreview } from '../components/PortalPreview.jsx';
 import { FailedCard, plural } from '../components/daily.jsx';
 import { RecordTabs, Sec, Tone, useTab } from '../components/sales.jsx';
@@ -333,6 +334,7 @@ export default function CompanyDetail() {
             {/* The one place activity lives: the full timeline from #22 —
                 notes, tasks, files, logged calls — not a second read-only copy. */}
             {tab === 'activity' && <Timeline entity="company" id={id} flat />}
+            {tab === 'portal' && isAdmin && <PortalAnswers companyId={c.id} />}
             {tab === 'portal' && isAdmin && <PortalSettings companyId={c.id} companyName={c.name} portal={portal} />}
             {tab === 'preview' && isAdmin && <PortalPreview companyId={c.id} companyName={c.name} enabled={portal.data?.data?.portal_sections} />}
           </div>

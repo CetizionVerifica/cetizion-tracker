@@ -120,5 +120,57 @@ export function shortDate(iso) {
   const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
   if (Number.isNaN(d.getTime())) return '—';
   const sameYear = d.getFullYear() === new Date().getFullYear();
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
+  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return `${d.getDate()} ${m}${sameYear ? '' : ` ${d.getFullYear()}`}`;
+}
+
+/**
+ * Tabs that sit under a page's title (All POs · To review), each a real tab
+ * whose choice lives in the address bar; `count` is a caramel badge.
+ */
+export function HeaderTabs({ tabs, active, onChange, label }) {
+  return (
+    <div className="mg-tabs app-htabs" role="tablist" aria-label={label}>
+      {tabs.map((t) => (
+        <button key={t.key} type="button" role="tab" aria-selected={active === t.key} onClick={() => onChange(t.key)}>
+          {t.label}
+          {t.count ? <span className="mg-count">{t.count}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** "on PO registration", "on delivery", … in the stage line. */
+export const TRIGGER_SHORT = {
+  'On PO Registration': 'on PO registration',
+  'On Delivery': 'on delivery',
+  'On Milestone': 'on milestone',
+  Manual: 'raised by hand',
+};
+
+/** A stage status in the system's tones and in sentence case. */
+export const STAGE_TONE = { Overdue: 'late', 'To Invoice': 'wait', 'Partially Paid': 'wait', Due: 'info', Paid: 'ok', 'Not Due': 'plain' };
+export const STAGE_WORD = { Overdue: 'Overdue', 'To Invoice': 'To invoice', 'Partially Paid': 'Partly paid', Due: 'Due', Paid: 'Paid', 'Not Due': 'Not due' };
+
+/**
+ * The next step on a stage, in one sentence-case line (the view's
+ * follow-up text said in words), with its tone.
+ */
+export function stageNext(s) {
+  const name = String(s.stage_name || '').replace(/\s*\(\d+(\.\d+)?%\)\s*$/, '').toLowerCase();
+  const due = daysTo(s.invoice_due_date);
+  switch (s.stage_status) {
+    case 'To Invoice': return { tone: 'wait', text: `Raise the ${name} invoice` };
+    case 'Overdue': return { tone: 'late', text: Number(s.amount_received) > 0 ? `Chase the balance: ${s.days_overdue} days overdue` : `Follow up: ${s.days_overdue} days overdue` };
+    case 'Partially Paid': return { tone: 'wait', text: s.invoice_due_date ? `Balance due ${shortDate(s.invoice_due_date)}` : 'Chase the balance' };
+    case 'Due': return { tone: 'plain', text: due == null ? 'Invoiced, waiting to be paid' : due === 0 ? 'Payment due today' : `Payment due in ${due} day${due === 1 ? '' : 's'}` };
+    case 'Paid': return { tone: 'plain', text: s.payment_received_date ? `Paid ${shortDate(s.payment_received_date)}` : 'Paid' };
+    case 'Not Due':
+      if (s.trigger_event === 'On Delivery') return { tone: 'plain', text: 'Waits for the delivery date' };
+      if (s.trigger_event === 'On Milestone') return { tone: 'plain', text: s.milestone_name ? `Waits for ${s.milestone_name}` : 'Waits for its milestone' };
+      if (s.trigger_event === 'On PO Registration') return { tone: 'plain', text: 'Waits for the PO date' };
+      return { tone: 'plain', text: 'Raised by hand when it is due' };
+    default: return { tone: 'plain', text: '' };
+  }
 }

@@ -101,3 +101,25 @@
 .app-hist .mg-table td { height: 44px; }
 .app-hist .mg-table tfoot td { font-weight: 700; border-top: 1px solid var(--line); }
 .app-hist + .app-hist { margin-top: 16px; }
+.app-portal-card--flat { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.app-portal-card--flat .app-portal-card__head { padding-top: 4px; }
+
+/* Tabs under a page title. */
+.app-htabs { margin-top: 10px; border-bottom: 0; }
+
+/* Lists: a cell's lead line and its sub lines. */
+.app-lead { font-weight: 700; color: var(--text); }
+.app-doc { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--muted); }
+.app-doc svg { width: 15px; height: 15px; }
+.app-doc:hover { color: var(--caramel-text); }
+.app-next { font-size: 12.5px; font-weight: 600; }
+.app-next.is-late { color: var(--late); } .app-next.is-wait { color: var(--caramel-text); } .app-next.is-plain { color: var(--text2); font-weight: 500; }
+.app-statecell { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 230px; white-space: normal; }
+.app-statecell > .app-badges { flex-wrap: wrap; }
+.app-quiet { font-size: 12px; color: var(--muted); white-space: normal; text-align: right; display: inline-block; max-width: 110px; }
+
+/* Split dialog table. */
+.app-split td { height: auto; padding-top: 6px; padding-bottom: 6px; }
+.app-split .mg-input, .app-split .mg-select { height: 40px; }
+.app-splitwrap { border: 1px solid var(--line); border-radius: 16px; }
+.app-strip .mg-btn { max-width: 100%; white-space: normal; height: auto; min-height: 36px; text-align: left; }

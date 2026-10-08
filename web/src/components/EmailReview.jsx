@@ -326,7 +326,8 @@ export function InvoiceReviewList() {
   const acts = (r, phone) => (
     <>
       <OpenEmail threadId={r.thread_id} phone={phone} />
-      {r.split_suggestion && <button type="button" className={phone ? 'mg-btn' : 'mg-btn mg-btn--sm'} disabled={busy === r.id} onClick={() => split(r)}>Split {r.split_suggestion.percent}% and record</button>}
+      {r.split_suggestion && <button type="button" className={phone ? 'mg-btn' : 'mg-btn mg-btn--sm'} disabled={busy === r.id} onClick={() => split(r)} title={`The invoice covers ${r.split_suggestion.percent}% of a PO with one 100% stage: this splits that stage in two, then records the invoice against the ${r.split_suggestion.percent}% share`}>Split {r.split_suggestion.percent}% and record</button>}
+      {r.split_suggestion && <span className="basis-full text-[12px] text-muted-foreground" style={{ whiteSpace: 'normal' }}>Splits the PO's one 100% stage into {r.split_suggestion.percent}% (this invoice) and {100 - Number(r.split_suggestion.percent)}% still to bill.</span>}
       <button type="button" className={phone ? 'mg-btn mg-btn--primary' : 'mg-btn mg-btn--primary mg-btn--sm'} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</button>
       <button type="button" className={phone ? 'mg-btn mg-btn--ghost' : 'mg-btn mg-btn--ghost mg-btn--sm'} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</button>
     </>

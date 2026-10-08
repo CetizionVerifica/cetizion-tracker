@@ -63,10 +63,10 @@ export function PortalAnswers({ onPaid, companyId, version = 0 }) {
   const waiting = rows.length;
 
   return (
-    <section ref={ref} id="portal" className="mg-glass mg-glass--strong app-portal-card" data-a="rise" aria-labelledby="portal-t">
+    <section ref={ref} id={companyId ? undefined : 'portal'} className={companyId ? 'app-portal-card app-portal-card--flat' : 'mg-glass mg-glass--strong app-portal-card'} data-a={companyId ? undefined : 'rise'} aria-labelledby="portal-t">
       <div className="app-portal-card__head">
         <span className="app-portal-card__mark" aria-hidden="true"><MessageSquareText strokeWidth={1.8} /></span>
-        <h2 className="mg-panel__title" id="portal-t">From the client portal</h2>
+        <h2 className="mg-panel__title" id="portal-t">{companyId ? 'What this client told us' : 'From the client portal'}</h2>
         {!error && <Tone tone={waiting ? 'info' : 'ok'}>{waiting ? `${waiting} waiting on a person` : 'All settled'}</Tone>}
       </div>
       <p className="mg-panel__hint">
