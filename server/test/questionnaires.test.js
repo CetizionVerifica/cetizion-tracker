@@ -157,6 +157,23 @@ describe('service questionnaires', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is n
     assert.equal(enq.questionnaire_status, 'not_started');
   });
 
+  test('an admin\'s hold on client emails holds the questionnaire email, and the owner sees it in their log', async () => {
+    await pool.query(`INSERT INTO settings (key, value) VALUES ('client_emails_hold_all', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'`);
+    try {
+      const sent = await as(sam).post('/api/questionnaire-responses', { enquiry_no: 'ENQ-A', questionnaire_id: formId }).expect(201);
+      assert.equal(sent.body.data.email.status, 'suppressed');
+      const { rows: [mail] } = await pool.query(`SELECT id, status, reason FROM email_log WHERE template = 'questionnaire_invite' ORDER BY id DESC LIMIT 1`);
+      assert.equal(mail.status, 'suppressed');
+      assert.match(mail.reason, /held by an admin/);
+      const mine = await as(sam).get('/api/emails?entity=enquiry&entity_id=ENQ-A').expect(200);
+      assert.ok(mine.body.data.some((e) => e.id === mail.id), 'the enquiry\'s owner sees it');
+      const theirs = await as(bea).get('/api/emails?entity=enquiry&entity_id=ENQ-A').expect(200);
+      assert.ok(!theirs.body.data.some((e) => e.id === mail.id), 'nobody else does');
+    } finally {
+      await pool.query(`UPDATE settings SET value = 'false' WHERE key = 'client_emails_hold_all'`);
+    }
+  });
+
   test('the client fills it in from the link, saving as they go, and submits once; the owner is told', async () => {
     const sent = await as(sam).post('/api/questionnaire-responses', { enquiry_no: 'ENQ-A', questionnaire_id: formId, send_email: false }).expect(201);
     const t = tokenOf(sent.body.data.url);
