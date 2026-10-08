@@ -113,7 +113,7 @@ export default function QuotationDetail() {
   }
 
   if (error) return <><PageHeader title="Quotation" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton" style={{ height: 240 }} /></div></>;
+  if (loading || !q) return <><PageHeader title="Quotation" /><div className="page"><div className="skeleton h-[240px]" /></div></>;
 
   const cur = q.currency;
   const open = ['Draft', 'Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);

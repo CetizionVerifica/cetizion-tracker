@@ -86,7 +86,7 @@ export function RecordSection({ title, hint, action, children, className }) {
       <CardHeader className="flex h-11 flex-row items-center gap-3 space-y-0 border-b border-border px-5 [.border-b]:pb-0">
         {/* The title never shrinks: letting it wrap broke the 44px header
             and pushed it into the hint beside it. The hint truncates instead. */}
-        <CardTitle className="shrink-0 font-display text-[15px] font-bold text-foreground">{title}</CardTitle>
+        <CardTitle className="shrink-0 font-display text-base font-bold text-foreground">{title}</CardTitle>
         {hint && <span className="min-w-0 truncate text-[12.5px] font-normal text-muted-foreground">{hint}</span>}
         {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
       </CardHeader>

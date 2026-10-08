@@ -29,7 +29,7 @@ export function EmailThreadDialog({ threadId, onClose, onReplied, footerExtra })
   return (
     <Modal size="lg" title={t ? (t.subject || 'Email thread') : 'Loading…'} subtitle={t && `${t.company_name || 'Unmatched sender'}${t.contact_name ? ` · ${t.contact_name}` : ''} · ${t.mailbox}`} onClose={onClose}
       footer={<>{footerExtra}<button type="button" className="btn" onClick={onClose}>Close</button>{t?.mailbox_status === 'active' && <button type="button" className="btn btn--primary" disabled={busy || !reply.trim()} onClick={send}>{busy ? 'Sending…' : 'Send reply'}</button>}</>}>
-      {!t ? <div className="skeleton" style={{ height: 160 }} /> : (
+      {!t ? <div className="skeleton h-[160px]" /> : (
         <div className="stack">
           {t.visibility !== 'share_everything' && <div className="small muted">The mailbox owner shares {t.visibility === 'subject' ? 'subjects only' : 'only who and when'}.</div>}
           {t.messages.map((m) => (

@@ -16,7 +16,7 @@ export function PortalSettings({ companyId }) {
     try { const r = await fn(); if (ok) toast(typeof ok === 'function' ? ok(r) : ok, 'success'); refetch(); } catch (err) { toast(err.message, 'danger'); }
   }
   const patch = (body, ok) => run(() => api.raw(`/portal-admin/companies/${companyId}`, { method: 'PATCH', body }), ok);
-  if (!p) return <Card title="Client portal"><div className="skeleton" style={{ height: 80 }} /></Card>;
+  if (!p) return <Card title="Client portal"><div className="skeleton h-[80px]" /></Card>;
   return (
     <>
       <Card title="Client portal" hint="Contacts of this client sign in with a link sent to their email and see only this company."

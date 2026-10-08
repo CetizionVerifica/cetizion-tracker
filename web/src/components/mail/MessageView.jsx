@@ -278,7 +278,7 @@ export function Message({ m, openByDefault }) {
           ) : body
             ? <MailBody id={m.id} html={body} />
             : live.loading && m.can_read_live
-              ? <div className="skeleton" style={{ height: 80 }} />
+              ? <div className="skeleton h-[80px]" />
               : (
                 <div className="rounded-md bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">
                   {snippet || (liveData?.live_error || (m.can_read_live ? 'The message could not be read from the mailbox just now.' : 'The mailbox owner shares only who and when.'))}

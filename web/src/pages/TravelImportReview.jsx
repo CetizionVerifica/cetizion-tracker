@@ -154,7 +154,7 @@ export default function TravelImportReview() {
 
   const bySeq = useMemo(() => new Map((batch?.items || []).map((it) => [it.seq, it])), [batch]);
   if (error) return <><PageHeader title="Travel import" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (!batch) return <><PageHeader title="Travel import" /><div className="page"><div className="skeleton" style={{ height: 120 }} /></div></>;
+  if (!batch) return <><PageHeader title="Travel import" /><div className="page"><div className="skeleton h-[120px]" /></div></>;
 
   const done = batch.status === 'committed';
   const steps = (step) => batch.items.filter((it) => it.step === step);

@@ -675,9 +675,9 @@ export default function App() {
           <Route path="/collections" element={<Collections />} />
           <Route path="/cashflow" element={<Cashflow />} />
           <Route path="/account/*" element={<Account />} />
-          <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Reports /></Suspense>} />
-          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><Insights /></Suspense>} />
-          <Route path="/reports/scheduled" element={<AdminOnly><Suspense fallback={<div className="page"><div className="skeleton" style={{ height: 320 }} /></div>}><ScheduledReports /></Suspense></AdminOnly>} />
+          <Route path="/reports" element={<Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><Reports /></Suspense>} />
+          <Route path="/insights" element={<Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><Insights /></Suspense>} />
+          <Route path="/reports/scheduled" element={<AdminOnly><Suspense fallback={<div className="page"><div className="skeleton h-[320px]" /></div>}><ScheduledReports /></Suspense></AdminOnly>} />
           <Route path="/profitability" element={<Profitability />} />
           <Route path="/accounting" element={<AdminOnly><Accounting /></AdminOnly>} />
           <Route path="/notifications" element={<Notifications />} />

@@ -40,7 +40,7 @@ export function SignInMethods() {
   const { data, loading, error, refetch } = useFetch(() => api.raw('/auth/providers'), []);
 
   if (error) return <SettingsPane title="Sign-in methods"><ErrorState message={error} onRetry={refetch} /></SettingsPane>;
-  if (loading || !data) return <SettingsPane title="Sign-in methods"><div className="skeleton" style={{ height: 200 }} /></SettingsPane>;
+  if (loading || !data) return <SettingsPane title="Sign-in methods"><div className="skeleton h-[200px]" /></SettingsPane>;
 
   const { mode, providers } = data.data;
 

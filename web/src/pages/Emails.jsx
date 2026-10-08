@@ -215,7 +215,7 @@ function EmailBody({ id, onClose }) {
       footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
     >
       {loading || !e
-        ? <div className="skeleton" style={{ height: 120 }} />
+        ? <div className="skeleton h-[120px]" />
         : <pre className="m-0 font-[inherit] whitespace-pre-wrap">{e.body_text}</pre>}
     </Modal>
   );

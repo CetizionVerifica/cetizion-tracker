@@ -68,7 +68,7 @@ function Section({ n, question, answer, children, wide = false, scope, csv = [] 
     <section className={wide ? '@3xl:col-span-2 flex flex-col gap-3' : 'flex flex-col gap-3'} aria-labelledby={`q${n}`}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
         <div className="min-w-0 flex-1">
-          <h2 id={`q${n}`} className="text-[15px] font-semibold text-foreground">{n}. {question}</h2>
+          <h2 id={`q${n}`} className="font-display text-base font-bold text-foreground">{n}. {question}</h2>
           {answer && <p className="mt-0.5 text-[13px] text-muted-foreground">{answer}</p>}
         </div>
         {csv.map(([name, label]) => (

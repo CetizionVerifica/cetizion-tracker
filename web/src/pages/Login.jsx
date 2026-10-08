@@ -126,7 +126,7 @@ export default function Login() {
           </div>
 
           <div>
-            <h1 className="text-[24px]/[1.25] font-semibold tracking-[-0.022em] text-foreground">Sign in</h1>
+            <h1 className="font-display text-2xl/[1.25] font-bold text-foreground">Sign in</h1>
             <p className="mt-1.5 text-[13px]/[1.6] text-secondary-text">
               {providers.length
                 ? 'Use the work account you read email with. Sessions last 12 hours.'

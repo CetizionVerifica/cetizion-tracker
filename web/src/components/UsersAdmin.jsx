@@ -101,7 +101,7 @@ export function UsersAdmin() {
             </div>
 
             {loading && !users.length ? (
-              <div className="skeleton" style={{ height: 120, margin: 18 }} />
+              <div className="skeleton m-[18px] h-[120px]" />
             ) : users.length === 0 ? (
               <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
                 Nobody yet. Add the first one, then switch AUTH_MODE to database.

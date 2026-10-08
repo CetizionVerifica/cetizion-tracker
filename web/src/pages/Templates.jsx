@@ -180,7 +180,7 @@ function DefaultTerms() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 180 }} />;
+  if (loading && !data) return <div className="skeleton h-[180px]" />;
 
   return (
     <RecordSection title="Default terms" hint="printed on every quotation that does not set its own">

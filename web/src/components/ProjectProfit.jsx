@@ -38,7 +38,7 @@ export function ProjectProfit({ projectId, onChanged }) {
   const [form, setForm] = useState(null);
   const [removing, setRemoving] = useState(null);
   const p = data?.data;
-  if (!p) return <Card title="Margin"><div className="skeleton" style={{ height: 80 }} /></Card>;
+  if (!p) return <Card title="Margin"><div className="skeleton h-[80px]" /></Card>;
 
   const fields = [
     { name: 'project_id', type: 'hidden', default: projectId },

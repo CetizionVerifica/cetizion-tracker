@@ -443,7 +443,7 @@ export function Assumptions() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+  if (loading && !data) return <div className="skeleton h-[240px]" />;
 
   return (
     <SettingsPane

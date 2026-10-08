@@ -30,7 +30,7 @@ export function ReadingPane({ threadId, refreshKey = 0, onBack }) {
       </div>
     );
   }
-  if (!t) return <div className="p-6"><div className="skeleton" style={{ height: 200 }} /></div>;
+  if (!t) return <div className="p-6"><div className="skeleton h-[200px]" /></div>;
   const newest = [...t.messages].reverse().find((m) => m.web_link) || null;
   const stored = t.messages.filter((m) => !m.removed_at);
   return (
@@ -44,7 +44,7 @@ export function ReadingPane({ threadId, refreshKey = 0, onBack }) {
           ← All conversations
         </button>
         <div className="flex items-start gap-4">
-          <h2 className="min-w-0 flex-1 text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{t.subject || '(no subject)'}</h2>
+          <h2 className="min-w-0 flex-1 font-display text-lg/[1.3] font-bold text-foreground">{t.subject || '(no subject)'}</h2>
           {newest?.web_link && (
             <a
               href={newest.web_link}

@@ -235,7 +235,7 @@ export default function PurchaseOrderDetail() {
     return (
       <>
         <PageHeader title={poNumber} />
-        <div className="page"><div className="skeleton" style={{ height: 200 }} /></div>
+        <div className="page"><div className="skeleton h-[200px]" /></div>
       </>
     );
   }

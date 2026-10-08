@@ -17,7 +17,7 @@ export function Pane({ title, description, actions, children }) {
       <CardContent className="px-5 py-5 sm:px-6 sm:py-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
+            <h2 className="font-display text-base font-bold text-foreground">{title}</h2>
             {description && (
               <p className="mt-1 max-w-[62ch] text-[12.5px]/[1.6] text-secondary-text">{description}</p>
             )}

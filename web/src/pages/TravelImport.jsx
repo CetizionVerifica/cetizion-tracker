@@ -111,7 +111,7 @@ export default function TravelImport() {
 
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           {loading && !batches.length ? (
-            <div className="skeleton" style={{ height: 88, margin: 18 }} />
+            <div className="skeleton m-[18px] h-[88px]" />
           ) : batches.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">No travel imports yet. Drop a workbook above to start one.</p>
           ) : batches.map((batch, i) => {

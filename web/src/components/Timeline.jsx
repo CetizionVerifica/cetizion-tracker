@@ -69,7 +69,7 @@ export function Timeline({ entity, id, title = 'Activity' }) {
     >
       <FollowUpBanner className="px-4 pt-3" entity={entity} id={id} version={logged} onLog={() => setTouch({ channel: 'call', contact_id: null })} />
       <ContactBar entity={entity} id={id} onLog={setTouch} />
-      {loading && !data ? <div className="skeleton" style={{ height: 80, margin: 18 }} /> : items.length === 0 ? (
+      {loading && !data ? <div className="skeleton m-[18px] h-[80px]" /> : items.length === 0 ? (
         <Empty title="Nothing here yet" text="Add a note, a task or a file. Emails sent about this record and its milestones appear here on their own." />
       ) : (
         <ul className="timeline">
