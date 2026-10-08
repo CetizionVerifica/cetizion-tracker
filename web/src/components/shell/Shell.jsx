@@ -652,12 +652,20 @@ function TabBar() {
     const icon = on?.querySelector('.app-tab__icon') || on;
     if (!on || !icon) { setDrop(null); return; }
     // Centred on the tab's icon (not the tab's top edge), so it never slips onto the label.
-    const b = bar.getBoundingClientRect(), r = icon.getBoundingClientRect();
-    const x = r.left - b.left + r.width / 2 - 20 - bar.clientLeft;
-    const y = r.top - b.top + r.height / 2 - 16 - bar.clientTop;
+    // Left-right from the tab's own box (no press or entrance animation moves it);
+    // up-down from the icon's centre within its tab.
+    const tr = on.getBoundingClientRect(), r = icon.getBoundingClientRect();
+    const sy = tr.height ? on.offsetHeight / tr.height : 1;
+    const x = on.offsetLeft + on.offsetWidth / 2 - 20;
+    const y = on.offsetTop + ((r.top + r.height / 2) - tr.top) * sy - 16;
     setDrop((prev) => ({ x, y, snap: !prev }));
   }, []);
-  useLayoutEffect(measureDrop, [measureDrop, location.pathname, sheet, s.isHr]);
+  useLayoutEffect(() => {
+    measureDrop();
+    // Again once a tap's bounce and the bar's entrance have settled.
+    const t = setTimeout(measureDrop, 650);
+    return () => clearTimeout(t);
+  }, [measureDrop, location.pathname, sheet, s.isHr]);
   useEffect(() => {
     window.addEventListener('resize', measureDrop);
     return () => window.removeEventListener('resize', measureDrop);
