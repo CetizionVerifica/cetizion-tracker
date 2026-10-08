@@ -174,6 +174,12 @@ export default function TripDetail() {
             <Link className="app-line__title" to={`/vendor-invoices/${bill.id}`}>{bill.travel_vendor || 'Vendor not named'}{bill.vendor_invoice_no && ` · ${bill.vendor_invoice_no}`}</Link>
             <span className="app-line__meta">{[bill.invoice_date ? `Dated ${shortDate(bill.invoice_date)}` : 'No date yet', bill.pay_by && `pay by ${shortDate(bill.pay_by)}`, bill.document_id ? 'PDF on file' : 'no PDF on file yet'].filter(Boolean).join(' · ')}</span>
           </span>
+          {Number(bill.line_count) > 1 ? (
+            <>
+              <span className="app-blocked__amt text-[12.5px] text-secondary-text">This bill has {bill.line_count} lines: its total follows the lines, so the amount is entered on them.</span>
+              <Link className="mg-btn mg-btn--primary" to={`/vendor-invoices/${bill.id}`}>Open the bill</Link>
+            </>
+          ) : (<>
           <label className="mg-field app-blocked__amt">
             <span className="mg-field__label">Amount on the bill</span>
             <input
@@ -185,6 +191,7 @@ export default function TripDetail() {
             />
           </label>
           <button type="submit" className="mg-btn mg-btn--primary" disabled={busy || !amounts[bill.id]}>Save the amount</button>
+          </>)}
         </form>
       ))}
     </section>

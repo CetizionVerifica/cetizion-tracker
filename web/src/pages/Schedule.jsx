@@ -435,7 +435,7 @@ export function ProjectVisits({ projectId, flat = false }) {
             { key: 'team', header: 'Team', className: 'app-wrap--sm', render: (r) => r.assignees.map((a) => a.name).join(', ') || '—' },
             { key: 'status', header: 'Status', render: (r) => <span className={`mg-badge ${BADGE[r.status]}`}>{statusLabel(r.status)}</span> },
           ]}
-          phone={(r) => <PhoneRow onClick={() => setDialog({ visit: r })} title={r.title} amount={<span className="text-[12.5px]">{date(dayOf(r.starts_at))}</span>} meta={r.assignees.map((a) => a.name).join(', ') || 'Nobody yet'} state={<span className={`mg-badge ${BADGE[r.status]}`}>{statusLabel(r.status)}</span>} />}
+          phone={(r) => <PhoneRow wraps onClick={() => setDialog({ visit: r })} title={r.title} amount={<span className="text-[12.5px]">{date(dayOf(r.starts_at))}</span>} meta={r.assignees.map((a) => a.name).join(', ') || 'Nobody yet'} state={<span className={`mg-badge ${BADGE[r.status]}`}>{statusLabel(r.status)}</span>} />}
         />
       ) : <p className="app-panel__note">No visits planned. Plan one and the team sees it in Schedule.</p>}
       {dialog?.visit && <VisitSheet visit={dialog.visit} onClose={() => setDialog(null)} onChanged={refetch} />}

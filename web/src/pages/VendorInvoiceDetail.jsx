@@ -125,7 +125,7 @@ export default function VendorInvoiceDetail() {
           <>
             <RecordMenuItem onSelect={() => setDialog({ type: 'line', row: { vendor_invoice_id: invoice.id } })}>Add a line</RecordMenuItem>
             <RecordMenuItem onSelect={newNote}>Add a credit or cancellation note</RecordMenuItem>
-            <RecordMenuItem danger onSelect={() => setDialog({ type: 'delete', resource: 'vendor-invoices', row: invoice, title: `Delete ${no}?`, text: `${invoice.travel_vendor || 'Vendor'} · ${noAmount ? 'no amount' : money(invoice.invoice_amount)}. This cannot be undone. Its ${count(lines.length, 'line')} go with it, and ${trips.length > 1 ? `its ${trips.length} trips no longer count` : 'its trip no longer counts'} this cost.${Number(invoice.amount_paid) > 0 ? ` ${money(invoice.amount_paid)} was paid on it.` : ''}`, confirm: 'Delete bill', done: 'Bill deleted.' })}>Delete this bill</RecordMenuItem>
+            <RecordMenuItem danger onSelect={() => setDialog({ type: 'delete', resource: 'vendor-invoices', row: invoice, title: `Delete ${no}?`, text: `${invoice.travel_vendor || 'Vendor'} · ${noAmount ? 'no amount' : money(invoice.invoice_amount)}. This cannot be undone. ${lines.length === 1 ? 'Its line goes' : `Its ${lines.length} lines go`} with it, and ${trips.length > 1 ? `its ${trips.length} trips no longer count` : 'its trip no longer counts'} this cost.${Number(invoice.amount_paid) > 0 ? ` ${money(invoice.amount_paid)} was paid on it.` : ''}`, confirm: 'Delete bill', done: 'Bill deleted.' })}>Delete this bill</RecordMenuItem>
           </>
         )}
         factsGrid={[
@@ -158,7 +158,7 @@ export default function VendorInvoiceDetail() {
                   <span className="mg-progress__expected" style={{ width: `${100 - paidShare}%` }} />
                 </span>
               )}
-              <span className="mg-tile__foot"><span>{noAmount ? 'Known once the amount is in' : `${money(invoice.amount_paid)} paid of ${money(invoice.net_payable)}`}</span></span>
+              <span className="mg-tile__foot"><span>{noAmount ? 'Known once the amount is in' : invoice.payment_status === 'Paid' ? `Paid in full${invoice.payment_date ? ` on ${shortDate(invoice.payment_date)}` : ''}: ${money(invoice.amount_paid)}` : `${money(invoice.amount_paid)} paid of ${money(invoice.net_payable)}`}</span></span>
             </div>
           </>
         )}

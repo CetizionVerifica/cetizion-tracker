@@ -42,9 +42,9 @@ const FLAG_WORD = { red: 'Must be fixed before the commit', amber: 'Worth a look
 const MODES = ['flight', 'train', 'bus', 'cab', 'hotel', 'other'];
 const STATUSES = ['booked', 'cancelled', 'partly_refunded'];
 /** What a commit wrote, in the words the page uses. */
-const WRITTEN = [['trip', 'trips'], ['segment', 'legs'], ['vendor_invoice', 'agency invoices'], ['invoice_line', 'invoice lines'],
-  ['credit_note', 'credit notes'], ['traveller', 'new staff']];
-const writtenText = (w = {}) => WRITTEN.map(([k, label]) => `${number(w[k] ?? 0)} ${label}`).join(', ');
+const WRITTEN = [['trip', 'trip'], ['segment', 'leg'], ['vendor_invoice', 'agency invoice'], ['invoice_line', 'invoice line'],
+  ['credit_note', 'credit note'], ['traveller', 'new staff member', 'new staff']];
+const writtenText = (w = {}) => WRITTEN.map(([k, one, many]) => count(w[k] ?? 0, one, many)).join(', ');
 /** The review tab each kind of item is shown on. */
 const STEP_TAB = { traveller: 'travellers', trip: 'trips', segment: 'trips', vendor_invoice: 'invoices', invoice_line: 'invoices', credit_note: 'credits' };
 const opts = (list) => list.map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1).replace(/_/g, ' ') }));
