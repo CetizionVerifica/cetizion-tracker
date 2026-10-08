@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn } from 'cn';
 import { ListPage } from '../components/ListPage.jsx';
-import { ChevronDown, ChevronUp, Merge, X } from 'lucide-react';
-import { Alert, Badge, Modal, useToast } from '../components/ui.jsx';
-import { Button } from '../components/ui/button';
-import { Checkbox } from '../components/ui/checkbox.tsx';
+import { ChevronDown, ChevronUp, Copy, ExternalLink, Merge, TriangleAlert, X } from 'lucide-react';
+import { Modal, useToast } from '../components/ui.jsx';
+import { Tone } from '../components/sales.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -93,20 +92,20 @@ export default function Companies() {
   const losing = review ? review.members.filter((m) => m.id !== keepId && chosen.has(m.id)) : [];
 
   const columns = [
-    { key: 'name', header: 'Company', className: 'strong', render: (r) => <>{r.name}{r.city && <div className="small muted">{r.city}</div>}</> },
-    { key: 'sector', header: 'Sector', render: (r) => r.sector || <span className="muted">—</span> },
+    { key: 'name', header: 'Company', className: 'strong', render: (r) => <><Link className="font-bold text-foreground no-underline" to={`/companies/${r.id}`}>{r.name}</Link>{r.city && <span className="app-sub font-normal">{r.city}</span>}</> },
+    { key: 'sector', header: 'Sector', render: (r) => r.sector || <span className="text-muted-foreground">—</span> },
     { key: 'contacts', header: 'Contacts', align: 'right' },
     { key: 'enquiries', header: 'Enquiries', align: 'right' },
-    { key: 'quotations', header: 'Quotations', align: 'right', render: (r) => <>{r.quotations}{r.won_quotations > 0 && <span className="small muted"> · {r.won_quotations} won</span>}</> },
+    { key: 'quotations', header: 'Quotations', align: 'right', render: (r) => <>{r.quotations}<span className="text-[12px] text-muted-foreground"> · {r.won_quotations || 0} won</span></> },
     { key: 'projects', header: 'Projects', align: 'right' },
-    { key: 'po_value_inr', header: 'PO value (INR)', align: 'right', render: (r) => money(r.po_value_inr) },
-    { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => (r.outstanding > 0 ? <Badge tone="warning">{money(r.outstanding)}</Badge> : <span className="muted">—</span>) },
-    { key: 'last_activity', header: 'Last activity', render: (r) => date(r.last_activity) },
+    { key: 'po_value_inr', header: 'PO value', align: 'right', className: 'strong', render: (r) => money(r.po_value_inr) },
+    { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => (r.outstanding > 0 ? <Tone tone="wait">{money(r.outstanding)}</Tone> : <span className="text-muted-foreground">—</span>) },
+    { key: 'last_activity', header: 'Last activity', render: (r) => (r.last_activity ? date(r.last_activity) : <span className="text-muted-foreground">—</span>) },
   ];
 
   const fields = [
     { name: 'name', label: 'Company name', required: true, span: 2, hint: 'Renaming here renames the client on every record' },
-    { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors },
+    { name: 'sector', label: 'Sector', type: 'combo', options: lookups.sectors, hint: 'Pick from the list, or type a new sector' },
     { name: 'city', label: 'City' },
     { name: 'gstin', label: 'GSTIN' },
     { name: 'website', label: 'Website' },
@@ -114,185 +113,162 @@ export default function Companies() {
     { name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
   ];
 
+  // Possible duplicates: a glass panel over the list, or one quiet line
+  // when hidden (hidden, not gone).
+  const dupes = groups.length === 0 ? null : hidden ? (
+    <p className="m-0 flex items-center gap-2 px-1 text-[12.5px] text-muted-foreground">
+      {groups.length} possible duplicate group{groups.length === 1 ? '' : 's'} hidden
+      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => hide(false)}>Show them</button>
+    </p>
+  ) : (
+    <section className="mg-glass app-dupes" aria-labelledby="dupes-title" data-a="rise">
+      <div className="app-dupes__head">
+        <span className="app-sq app-sq--sm bg-wait-soft text-caramel-text"><Copy aria-hidden="true" /></span>
+        <div className="min-w-0 flex-1">
+          <h2 id="dupes-title" className="mg-panel__title">{groups.length} group{groups.length === 1 ? '' : 's'} may be one client spelt more than once</h2>
+          <p className="mg-panel__hint m-0">Open one to choose which spellings are really the same, and which to keep.{!isAdmin && ' An admin does the merging.'}</p>
+        </div>
+        <button type="button" className="mg-iconbtn app-iconbtn" aria-label="Hide duplicate suggestions" title="Hide" onClick={() => hide(true)}>
+          <X aria-hidden="true" />
+        </button>
+      </div>
+      {listed.map((g) => (
+        <div key={g.members[0].id} className="app-dupes__row">
+          <span className="app-dupes__name">
+            <Link to={`/companies/${g.members[0].id}`}>{g.members[0].name}</Link>
+            <span> +{g.size - 1} more spelling{g.size - 1 === 1 ? '' : 's'}</span>
+          </span>
+          <span className="app-dupes__count">{g.records} record{g.records === 1 ? '' : 's'}</span>
+          <Tone tone={g.certain ? 'wait' : 'plain'}>{g.confidence}</Tone>
+          <button type="button" className="mg-btn mg-btn--sm" onClick={() => openGroup(g)}>Review</button>
+        </div>
+      ))}
+      {groups.length > SHOWN && (
+        <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm self-start" onClick={() => setExpanded(!expanded)}>
+          {expanded ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}
+          {expanded ? `Show the first ${SHOWN}` : `Show all ${groups.length}`}
+        </button>
+      )}
+    </section>
+  );
+
   return (
     <>
       <ListPage
+        eyebrow="Records"
         title="Companies"
-        subtitle="Every client once: contacts, sector and everything the tracker holds for them"
+        noun="companies"
+        subtitle="Every client once: contacts, sector and everything the tracker holds for them."
+        summary={dupes}
         resource="companies"
         columns={columns}
         fields={fields}
         newLabel="Company"
         formTitle="company"
-        searchPlaceholder="Search company, sector, city, GSTIN…"
+        searchPlaceholder="Search company, sector, city, GSTIN"
+        quick={['sector', 'contacts']}
+        phone={(r) => ({
+          title: r.name,
+          amount: money(r.po_value_inr),
+          meta: <>{[r.sector, r.city].filter(Boolean).join(' · ') || 'No sector yet'} · {r.contacts} contact{r.contacts === 1 ? '' : 's'} · {r.quotations} quotation{r.quotations === 1 ? '' : 's'}{r.last_activity && <> · {date(r.last_activity)}</>}</>,
+          state: r.outstanding > 0 ? <Tone tone="wait">{money(r.outstanding)} owed</Tone> : null,
+          to: `/companies/${r.id}`,
+        })}
+        deleteTitle={(r) => `Delete ${r.name}?`}
+        deleteText={(r) => `${r.name} and its contacts leave the tracker. Records that name it keep the name. This cannot be undone.`}
         onRowClick={(row) => navigate(`/companies/${row.id}`)}
         refreshToken={refresh}
         onSaved={() => { invalidateLookups(); setRefresh((n) => n + 1); }}
         filters={[
           { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...lookups.sectors] },
-          { name: 'contacts', label: 'Contacts', options: [{ value: '0', label: 'None' }] },
+          { name: 'contacts', label: 'Contacts', options: [{ value: '0', label: 'None yet' }] },
         ]}
-        banner={groups.length > 0 && (hidden ? (
-          // Hidden, not gone. Something that can never be found again is not
-          // a preference, it is a trapdoor.
-          <div className="mb-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
-            <span>{groups.length} possible duplicate{groups.length === 1 ? '' : 's'}</span>
-            <Button variant="link" size="xs" className="h-auto p-0" onClick={() => hide(false)}>Show</Button>
-          </div>
-        ) : (
-          <Alert tone="warning">
-            <div className="w-full">
-              <div className="flex items-start gap-3">
-                <p className="measure flex-1">
-                  <strong>{groups.length} group{groups.length === 1 ? '' : 's'} of companies may be one client spelt more than once.</strong>{' '}
-                  Open one to choose which spellings are really the same, and which to keep.
-                </p>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="-mr-1 -mt-0.5 shrink-0 text-current/70 hover:text-current"
-                  aria-label="Hide duplicate suggestions"
-                  onClick={() => hide(true)}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </div>
-
-              <ul className="mt-2.5 divide-y divide-current/10 border-t border-current/10">
-                {listed.map((g) => (
-                  <li key={g.members[0].id} className="flex items-center gap-3 py-1.5">
-                    <span className="min-w-0 flex-1 truncate text-[12.5px]">
-                      <Link to={`/companies/${g.members[0].id}`} className="font-medium underline-offset-2 hover:underline">
-                        {g.members[0].name}
-                      </Link>
-                      <span className="text-current/70"> +{g.size - 1} more</span>
-                    </span>
-                    <span className="hidden shrink-0 tabular-nums text-[12px] text-current/70 sm:inline">
-                      {g.records} record{g.records === 1 ? '' : 's'}
-                    </span>
-                    <Badge tone={g.certain ? 'warning' : 'neutral'} className="hidden shrink-0 md:inline-flex">{g.confidence}</Badge>
-                    <Button variant="outline" size="xs" className="shrink-0" onClick={() => openGroup(g)}>Review</Button>
-                  </li>
-                ))}
-              </ul>
-
-              {groups.length > SHOWN && (
-                <Button variant="link" size="xs" className="mt-1.5 h-auto p-0" onClick={() => setExpanded(!expanded)}>
-                  {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-                  {expanded ? `Show first ${SHOWN}` : `Show all ${groups.length}`}
-                </Button>
-              )}
-            </div>
-          </Alert>
-        ))}
       />
       {review && (
         <Modal
           size="lg"
           title={review.certain ? 'The same name, spelt differently' : 'Which of these are the same client?'}
-          subtitle={review.certain
-            ? 'These differ only by punctuation, so there is nothing to weigh up.'
-            : 'These share a brand. That does not make them one company \u2014 a plant, a unit or a subsidiary is its own client. Tick only the ones that are genuinely the same.'}
+          subtitle={!isAdmin
+            ? 'You can see the spellings and what each holds. Merging them is an admin’s job.'
+            : review.certain
+              ? 'These differ only by punctuation, so there is nothing to weigh up.'
+              : 'These share a brand. That does not make them one company: a plant, a unit or a subsidiary is its own client. Tick only the ones that are genuinely the same.'}
           onClose={() => setReview(null)}
           footer={(
-            <div className="flex w-full items-center justify-between gap-3">
-              <p className="text-[12px] text-muted-foreground">
-                {losing.length
-                  ? `${losing.length} of ${review.size} fold in \u00b7 ${losing.reduce((n, m) => n + m.records, 0)} record${losing.reduce((n, m) => n + m.records, 0) === 1 ? '' : 's'} move`
-                  : 'Nothing ticked yet'}
+            <>
+              <p className="mr-auto text-[12.5px] text-muted-foreground max-sm:w-full">
+                {!isAdmin
+                  ? `${review.size} spellings · ${review.records} records`
+                  : losing.length
+                    ? `${losing.length} of ${review.size} fold in · ${losing.reduce((n, m) => n + m.records, 0)} record${losing.reduce((n, m) => n + m.records, 0) === 1 ? '' : 's'} move`
+                    : 'Nothing ticked yet'}
               </p>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
-                {/* Spotting duplicates is everybody's; folding two clients into one
-                    is not (#85). POST /companies/:id/merge is requireAdmin, so this
-                    only spares a sales user a button that answers 403. The list and
-                    this review stay open — seeing the duplicates is ordinary work. */}
-                {isAdmin && (
-                  <Button variant="destructive" disabled={busy || !losing.length} onClick={merge}>
-                    <Merge aria-hidden="true" />
-                    {busy ? 'Merging\u2026' : losing.length ? `Merge into ${keep?.name}` : 'Merge'}
-                  </Button>
-                )}
-              </div>
-            </div>
+              <button type="button" className="mg-btn mg-btn--ghost" onClick={() => setReview(null)}>{isAdmin ? 'Cancel' : 'Close'}</button>
+              {/* Spotting duplicates is everybody's; folding two clients into one
+                  is not (#85). POST /companies/:id/merge is requireAdmin, so this
+                  only spares a sales user a button that answers 403. The list and
+                  this review stay open — seeing the duplicates is ordinary work. */}
+              {isAdmin && (
+                <button type="button" className="mg-btn mg-btn--danger" disabled={busy || !losing.length} onClick={merge}>
+                  <Merge className="size-4" aria-hidden="true" />
+                  {busy ? 'Merging…' : losing.length ? `Merge into ${keep?.name}` : 'Merge'}
+                </button>
+              )}
+            </>
           )}
         >
-          <ul className="space-y-1.5">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {review.members.map((m) => {
               const keeping = m.id === keepId;
               const ticked = chosen.has(m.id);
+              const facts = [m.sector, `${m.records} record${m.records === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
               return (
-                <li
-                  key={m.id}
-                  className={cn(
-                    'flex items-center gap-3 rounded-[10px] border px-3 py-2.5 transition-colors',
-                    keeping
-                      ? 'border-l-[3px] border-primary/40 border-l-primary bg-primary/5'
-                      : ticked
-                        ? 'border-late/40 bg-late/5'
-                        : 'border-border hover:border-muted-foreground/40 hover:bg-accent/40'
-                  )}
-                >
+                <li key={m.id} className={cn('app-member', keeping && 'is-keep', ticked && !keeping && 'is-ticked')}>
                   {keeping ? (
-                    <Badge tone="success" className="shrink-0">Keeping</Badge>
-                  ) : (
-                    // The whole label is the hit target, not the 16px box.
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                      <Checkbox
-                        className="size-[18px] border-muted-foreground/60"
+                    <>
+                      <Tone tone="ok">Keeping</Tone>
+                      <span className="app-member__text"><b>{m.name}</b><span>{facts}</span></span>
+                    </>
+                  ) : isAdmin ? (
+                    // The whole label is the hit target, not the 20px box.
+                    <label className="mg-check app-member__text" style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
                         checked={ticked}
-                        onCheckedChange={() => toggle(m.id)}
+                        onChange={() => toggle(m.id)}
                         aria-label={`Fold ${m.name} into ${keep?.name ?? 'the one kept'}`}
                       />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-medium">{m.name}</span>
-                        <span className="block text-[12px] text-muted-foreground">
-                          {[m.sector, `${m.records} record${m.records === 1 ? '' : 's'}`].filter(Boolean).join(' \u00b7 ')}
-                        </span>
-                      </span>
+                      <span className="flex min-w-0 flex-col"><b>{m.name}</b><span className="text-[12px] text-muted-foreground">{facts}</span></span>
                     </label>
+                  ) : (
+                    <span className="app-member__text"><b>{m.name}</b><span>{facts}</span></span>
                   )}
-
-                  {keeping && (
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold">{m.name}</span>
-                      <span className="block text-[12px] text-muted-foreground">
-                        {[m.sector, `${m.records} record${m.records === 1 ? '' : 's'}`].filter(Boolean).join(' \u00b7 ')}
-                      </span>
-                    </span>
-                  )}
-
-                  <Link
-                    to={`/companies/${m.id}`}
-                    className="shrink-0 text-[12px] text-muted-foreground underline-offset-2 hover:underline"
-                  >
-                    Open
-                  </Link>
-                  {!keeping && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="shrink-0"
+                  <a href={`/companies/${m.id}`} target="_blank" rel="noopener noreferrer" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Open ${m.name} in a new tab`}>
+                    Open<ExternalLink className="size-3.5" aria-hidden="true" />
+                  </a>
+                  {!keeping && isAdmin && (
+                    <button
+                      type="button"
+                      className="mg-btn mg-btn--sm"
                       onClick={() => { setKeepId(m.id); setChosen((prev) => { const n = new Set(prev); n.delete(m.id); return n; }); }}
                     >
                       Keep this one
-                    </Button>
+                    </button>
                   )}
                 </li>
               );
             })}
           </ul>
 
-          {losing.length > 0 && (
-            <div className="mt-4">
-              <Alert tone="danger">
-                <span className="measure">
-                  Every enquiry, quotation, project and contact under{' '}
-                  <strong>{losing.map((m) => m.name).join(', ')}</strong> moves to{' '}
-                  <strong>{keep?.name}</strong> and takes that name.{' '}
-                  {losing.length === 1 ? 'That company is' : 'Those companies are'} then deleted. This cannot be undone.
-                </span>
-              </Alert>
+          {isAdmin && losing.length > 0 && (
+            <div className="mg-banner mg-banner--late mt-4" role="note">
+              <TriangleAlert aria-hidden="true" />
+              <div className="mg-banner__body">
+                Every enquiry, quotation, project and contact under{' '}
+                <b>{losing.map((m) => m.name).join(', ')}</b> moves to{' '}
+                <b>{keep?.name}</b> and takes that name.{' '}
+                {losing.length === 1 ? 'That company is' : 'Those companies are'} then deleted. This cannot be undone.
+              </div>
             </div>
           )}
         </Modal>
