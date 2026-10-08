@@ -46,7 +46,7 @@ export default function Quotations() {
   const [version, setVersion] = useState(0);
 
   const columns = [
-    { key: 'quotation_no', header: 'Quotation', className: 'mono', render: (r) => <>{r.quotation_no}{r.revision > 0 && <span className="small muted"> R{r.revision}</span>}<div className="small muted">{date(r.quotation_date)}{r.expired && <> · <span style={{ color: 'var(--danger-fg)' }}>expired</span></>}</div></> },
+    { key: 'quotation_no', header: 'Quotation', className: 'mono', render: (r) => <>{r.quotation_no}{r.revision > 0 && <span className="small muted"> R{r.revision}</span>}<div className="small muted">{date(r.quotation_date)}{r.expired && <> · <span style={{ color: 'var(--late)' }}>expired</span></>}</div></> },
     { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.client_name}{r.contact_person && <div className="small muted">{r.contact_person}</div>}</> },
     { key: 'sector', header: 'Sector' },
     { key: 'service_quoted', header: 'Service', className: 'wrap' },
@@ -60,7 +60,7 @@ export default function Quotations() {
         r.project_id ? (
           <Link className="mono" to={`/projects/${r.project_id}`}>{r.project_id}</Link>
         ) : r.status === 'Won - PO Received' ? (
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => setConverting(r)}>
+          <button type="button" className="btn btn--sm" onClick={() => setConverting(r)}>
             Register
           </button>
         ) : (
@@ -78,7 +78,7 @@ export default function Quotations() {
     <>
       <ListPage
         refreshToken={version}
-        title="Quotations"
+        title="Deals"
         subtitle="Every enquiry quoted, and what happened to it"
         resource="quotations"
         columns={columns}

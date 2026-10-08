@@ -234,11 +234,11 @@ function RateHistoryChart({ rows, currencies }) {
         <p className="small muted">No {currency} rates yet. Add one to see how it has moved.</p>
       ) : (
       <svg viewBox={`0 0 ${width} ${height}`} role="img" className="rate-chart__svg">
-        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--ink-200)" />
-        <path d={path} fill="none" stroke="var(--brand-600)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} stroke="var(--border)" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} stroke="var(--border)" />
+        <path d={path} fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((point, index) => (
-          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--white)" stroke="var(--brand-600)" strokeWidth="2">
+          <circle key={point.id} cx={x(index)} cy={y(Number(point.rate))} r="3.5" fill="var(--card)" stroke="var(--primary)" strokeWidth="2">
             <title>{`${point.from_currency}: ₹${point.rate} from ${point.effective_from}`}</title>
           </circle>
         ))}
@@ -443,7 +443,7 @@ export function Assumptions() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 240 }} />;
+  if (loading && !data) return <div className="skeleton h-[240px]" />;
 
   return (
     <SettingsPane

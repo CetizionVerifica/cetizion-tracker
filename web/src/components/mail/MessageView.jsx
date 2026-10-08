@@ -101,7 +101,7 @@ export function MailBody({ id, html }) {
   return (
     <>
       {blocked && (
-        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-[8px] border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 rounded-md border border-waiting/25 bg-waiting/[0.07] px-3 py-2">
           <span className="text-[12.5px] text-secondary-text">
             Images are not loaded. Loading them tells the sender you opened this.
           </span>
@@ -125,7 +125,7 @@ export function MailBody({ id, html }) {
           type="button"
           onClick={() => setShowQuoted((v) => !v)}
           aria-expanded={showQuoted}
-          className="mt-1.5 inline-flex items-center gap-1.5 rounded-[6px] border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
+          className="mt-1.5 inline-flex items-center gap-1.5 rounded-sm border border-border bg-secondary px-2 py-1 text-[12px] text-secondary-text transition-colors duration-150 hover:text-foreground"
         >
           <MoreHorizontal className="size-3.5" strokeWidth={2} aria-hidden="true" />
           {showQuoted ? 'Hide the earlier replies' : 'Show the earlier replies'}
@@ -200,7 +200,7 @@ export function Message({ m, openByDefault }) {
   return (
     <article
       className={cn(
-        'overflow-hidden rounded-[10px] border border-border bg-card',
+        'overflow-hidden rounded-lg border border-border bg-card',
         outbound && 'border-l-[3px] border-l-primary',
         removed && 'opacity-80'
       )}
@@ -274,13 +274,13 @@ export function Message({ m, openByDefault }) {
             )}
           </div>
           {removed ? (
-            <div className="rounded-[7px] bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</div>
+            <div className="rounded-md bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</div>
           ) : body
             ? <MailBody id={m.id} html={body} />
             : live.loading && m.can_read_live
-              ? <div className="skeleton" style={{ height: 80 }} />
+              ? <div className="skeleton h-[80px]" />
               : (
-                <div className="rounded-[7px] bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">
+                <div className="rounded-md bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">
                   {snippet || (liveData?.live_error || (m.can_read_live ? 'The message could not be read from the mailbox just now.' : 'The mailbox owner shares only who and when.'))}
                 </div>
               )}

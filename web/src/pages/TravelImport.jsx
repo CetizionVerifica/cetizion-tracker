@@ -96,7 +96,7 @@ export default function TravelImport() {
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); send(e.dataTransfer.files?.[0]); }}
           className={cn(
-            'block cursor-pointer rounded-[10px] border border-dashed bg-card px-5 py-7 text-center transition-colors',
+            'block cursor-pointer rounded-lg border border-dashed bg-card px-5 py-7 text-center transition-colors',
             dragging ? 'border-primary bg-primary/[0.04]' : 'border-border-strong hover:border-muted-foreground',
             busy && 'pointer-events-none opacity-60'
           )}
@@ -109,9 +109,9 @@ export default function TravelImport() {
         </label>
         <input id="travel-import-file" type="file" accept={ACCEPT} className="sr-only" disabled={busy} onChange={(e) => send(e.target.files?.[0])} />
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           {loading && !batches.length ? (
-            <div className="skeleton" style={{ height: 88, margin: 18 }} />
+            <div className="skeleton m-[18px] h-[88px]" />
           ) : batches.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">No travel imports yet. Drop a workbook above to start one.</p>
           ) : batches.map((batch, i) => {

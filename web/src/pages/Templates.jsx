@@ -138,7 +138,7 @@ export default function Templates() {
           open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />
         ) : (
           <>
-            <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+            <div className="overflow-hidden rounded-lg border border-border bg-card">
               {KINDS.map((kind, i) => (
                 <KindRow key={kind.key} kind={kind} count={counts[kind.key]} last={i === KINDS.length - 1} onOpen={() => setOpen(kind)} />
               ))}
@@ -180,7 +180,7 @@ function DefaultTerms() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton" style={{ height: 180 }} />;
+  if (loading && !data) return <div className="skeleton h-[180px]" />;
 
   return (
     <RecordSection title="Default terms" hint="printed on every quotation that does not set its own">

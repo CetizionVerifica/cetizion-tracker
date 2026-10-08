@@ -53,7 +53,7 @@ function Tag({ tone = 'plain', mono = false, children }) {
   };
   return (
     <span className={cn(
-      'inline-flex h-5 items-center rounded-[6px] border px-2 text-[11px] font-semibold',
+      'inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-semibold',
       mono && 'num font-medium', tones[tone]
     )}>
       {children}
@@ -326,7 +326,7 @@ export default function Inbox() {
       aria-pressed={on}
       onClick={() => putMany({ [key]: on ? null : '1', p: null })}
       className={cn(
-        'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+        'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
         on ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
       )}
     >
@@ -343,7 +343,7 @@ export default function Inbox() {
           'flex min-w-0 flex-col border-r border-border',
           selected && 'hidden lg:flex'
         )}>
-          <div className="flex items-center gap-2 px-5 pt-6 pb-3">
+          <div className="flex flex-wrap items-center gap-2 px-5 pt-6 pb-3">
             {/* This screen draws its own header instead of using PageHeader,
                 and PageHeader is where the burger lives. Without this the
                 inbox is a dead end on a phone: you can reach it and then
@@ -372,8 +372,9 @@ export default function Inbox() {
             <span aria-live="polite" className="shrink-0 whitespace-nowrap text-[13px] text-secondary-text">
               {folderView ? (currentFolder?.unread_count ? `${currentFolder.unread_count} unread` : '') : (s ? `${s.open} open` : '')}
             </span>
-            <div className="flex-1" />
-            <div className="flex shrink-0 items-center gap-1">
+            {/* The views sit on their own line: beside the title in a 400px
+                pane they squeezed the mailbox name down to nothing. */}
+            <div className="flex w-full items-center gap-1">
               {folderView ? (
                 <>
                   {filterButton('Unread', 'unread', unreadOnly)}
@@ -385,7 +386,7 @@ export default function Inbox() {
                   type="button"
                   onClick={() => { const n = new URLSearchParams(); n.set('view', v.key); setParams(n, { replace: true }); }}
                   className={cn(
-                    'whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
                     view === v.key ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -402,7 +403,7 @@ export default function Inbox() {
                   onClick={() => { const n = new URLSearchParams(); n.set('view', 'setup'); setParams(n, { replace: true }); }}
                   aria-label="Set up inboxes and canned responses"
                   className={cn(
-                    'ml-auto whitespace-nowrap rounded-[6px] px-2 py-1 text-[12.5px] font-medium transition-colors duration-150',
+                    'ml-auto whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-semibold transition-colors duration-150',
                     view === 'setup' ? 'bg-primary/12 text-primary' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -428,7 +429,7 @@ export default function Inbox() {
             className="min-h-0 flex-1 overflow-y-auto focus:outline-none"
           >
             {list.loading && !list.data ? (
-              <div className="p-5"><div className="skeleton" style={{ height: 120 }} /></div>
+              <div className="p-5"><div className="skeleton h-[120px]" /></div>
             ) : list.error ? (
               <Empty title="Not available" text={list.error} />
             ) : rows.length === 0 ? (
@@ -546,7 +547,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
     catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); }
     finally { setBusy(false); }
   }
-  if (!c) return <div className="p-6"><div className="skeleton" style={{ height: 200 }} /></div>;
+  if (!c) return <div className="p-6"><div className="skeleton h-[200px]" /></div>;
   const t = thread.data?.data;
 
   return (
@@ -560,7 +561,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
           ← All conversations
         </button>
         <div className="flex items-start gap-4">
-          <h2 className="min-w-0 flex-1 text-[18px]/[1.3] font-semibold tracking-[-0.015em] text-foreground">{c.subject || '(no subject)'}</h2>
+          <h2 className="min-w-0 flex-1 font-display text-lg/[1.3] font-bold text-foreground">{c.subject || '(no subject)'}</h2>
           {/* The three things done to a conversation, on the line the
               subject is on. They were a third row under the metadata, which
               put 96px of chrome above every message on a pane whose whole
@@ -631,7 +632,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
       )}
 
       <div className="flex flex-col gap-2.5 px-6 py-4">
-        {!t ? <div className="skeleton" style={{ height: 120 }} /> : t.messages.map((m, i) => (
+        {!t ? <div className="skeleton h-[120px]" /> : t.messages.map((m, i) => (
           <Message key={m.id} m={m} openByDefault={i >= t.messages.length - 1 || t.messages.length <= 2} />
         ))}
 
@@ -645,7 +646,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border p-4">
+          <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-[12.5px] font-medium text-foreground">Reply from the shared address</span>
               <div className="flex-1" />
@@ -777,7 +778,7 @@ function InboxSetup() {
   return (
     <>
       <Card flush title="Inboxes" hint={<>A shared mailbox connected under <Link to="/mailboxes">Mailboxes</Link> becomes an inbox here.</>}
-        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>+ Inbox</button>}>
+        actions={<button type="button" className="btn btn--sm btn--primary" disabled={!avail.length} title={avail.length ? '' : 'Connect a shared mailbox first'} onClick={() => setForm({ name: 'Sales', account_id: String(avail[0].id), default_assignment: 'owner_of_company', members: '', first_response_hours: '', signature: '' })}>New inbox</button>}>
         <DataTable rows={rows} empty={<Empty title="No inbox yet" text="Connect the shared sales mailbox under Mailboxes, then add it here." />} columns={[
           { key: 'name', header: 'Inbox', className: 'strong', render: (r) => <>{r.name}<div className="small muted">{r.email}</div></> },
           { key: 'default_assignment', header: 'New email goes to', render: (r) => ({ owner_of_company: 'The client\'s owner, else round robin', round_robin: 'Round robin', unassigned: 'Unassigned queue' }[r.default_assignment]) },
@@ -794,7 +795,7 @@ function InboxSetup() {
           },
         ]} />
       </Card>
-      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>+ Response</button>}>
+      <Card flush title="Canned responses" hint="Use {{contact_name}}, {{company_name}} and {{my_name}}." actions={<button type="button" className="btn btn--sm" onClick={() => setCannedForm({ name: '', body: '' })}>New response</button>}>
         <DataTable rows={canned.data?.data ?? []} columns={[
           { key: 'name', header: 'Name', className: 'strong' },
           { key: 'body', header: 'Text', className: 'wrap small', render: (r) => r.body.slice(0, 160) },

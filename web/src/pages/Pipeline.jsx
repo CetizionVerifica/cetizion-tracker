@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
-import { Badge, Card, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Badge, ErrorState, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { initialsOf } from '../components/record.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
@@ -65,37 +66,57 @@ export default function Pipeline() {
   }
   const cardsFor = (s) => (board?.cards ?? []).filter((c) => c.stage_id === s.id);
 
+  const open = board ? board.stages.filter((s) => s.type === 'open') : [];
+  const gross = open.reduce((n, s) => n + s.value, 0);
+  const weighted = open.reduce((n, s) => n + s.weighted, 0);
+  const stale = board ? board.cards.filter((c) => c.stale).length : 0;
+  const peak = board ? Math.max(1, ...board.forecast.map((f) => Number(f.weighted) || 0)) : 1;
+
   return (
     <>
       <PageHeader
         title="Pipeline"
-        subtitle="Every open quotation by stage. Drag a card to move it; the weighted value is what each stage is worth at its probability."
-        actions={<Select value={person} placeholder="Owner: all" options={lookups.sales_people} onChange={(e) => setPerson(e.target.value)} />}
+        subtitle="Open deals by stage. Drag a card to move it, or use its Move to list; moving to Lost asks why."
+        actions={<Select value={person} placeholder="Owner: everyone" options={lookups.sales_people} onChange={(e) => setPerson(e.target.value)} />}
       />
       <div className="page stack">
-        {error && <Card><span style={{ color: 'var(--danger-fg)' }}>{error}</span></Card>}
+        {error && <ErrorState message={error} onRetry={refetch} />}
         {board && (
-          <div className="auto-grid grid--3">
-            <Card title="Open pipeline" hint="Open stages, every currency converted to INR at the rate on the quotation's date; drafts not weighted">
-              <div className="stat__value">{money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.value, 0))}</div>
-              <div className="small muted">weighted {money(board.stages.filter((s) => s.type === 'open').reduce((n, s) => n + s.weighted, 0))} · {board.cards.filter((c) => c.stale).length} stale</div>
-              {board.without_rate > 0 && <div className="small" style={{ color: 'var(--warn-fg)', marginTop: 4 }}>{board.without_rate} quotation{board.without_rate === 1 ? '' : 's'} left out: no exchange rate for {board.without_rate === 1 ? 'its' : 'their'} currency on {board.without_rate === 1 ? 'its' : 'their'} date (Settings → Exchange rates)</div>}
-            </Card>
-            <Card title="Forecast by expected close" hint="Weighted value in INR, drafts left out; undated quotations at the end">
+          <section aria-label="Forecast" className="grid gap-4 rounded-lg border border-border bg-card p-5 lg:grid-cols-[auto_auto_minmax(0,1fr)_auto] lg:items-end lg:gap-8">
+            <div>
+              <div className="eyebrow">Open, gross</div>
+              <div className="num mt-1 font-display text-2xl font-bold text-foreground">{money(gross)}</div>
+            </div>
+            <div>
+              <div className="eyebrow">Weighted</div>
+              <div className="num mt-1 font-display text-2xl font-bold text-primary">{money(weighted)}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="eyebrow">Weighted, by expected close month</div>
               {board.forecast.length ? (
-                <table className="table" style={{ fontSize: 12 }}>
-                  <tbody>{board.forecast.map((f) => <tr key={f.month}><td>{f.month === 'undated' ? 'No date' : monthLabel(f.month)}</td><td className="num">{f.count}</td><td className="num">{money(f.weighted)}</td></tr>)}</tbody>
-                </table>
-              ) : <span className="muted">Nothing open with a value</span>}
-            </Card>
-            <Card title="Closed in the last 90 days" hint="Won and lost, with the reasons given">
-              {board.closed_90_days.length ? (
-                <table className="table" style={{ fontSize: 12 }}>
-                  <tbody>{board.closed_90_days.map((r, i) => <tr key={i}><td>{r.stage}{r.lost_reason && <span className="muted"> · {r.lost_reason}</span>}</td><td className="num">{r.n}</td><td className="num">{money(r.value_inr)}</td></tr>)}</tbody>
-                </table>
-              ) : <span className="muted">Nothing closed yet</span>}
-            </Card>
-          </div>
+                <div className="mt-2 flex h-24 items-end gap-2 overflow-x-auto" role="table" aria-label="Weighted value by expected close month">
+                  {board.forecast.map((f) => (
+                    <div key={f.month} role="row" className="flex min-w-14 flex-1 flex-col items-center gap-1" title={`${f.count} deals · ${money(f.weighted)}`}>
+                      <span role="cell" className="num text-[11px] text-muted-foreground">{money(f.weighted, 'INR', { compact: true })}</span>
+                      <span aria-hidden="true" className="w-full rounded-t-sm bg-forecast" style={{ height: `${Math.max(4, Math.round((Number(f.weighted) / peak) * 44))}px` }} />
+                      <span role="cell" className="text-[11px] font-semibold text-secondary-text">{f.month === 'undated' ? 'No date' : monthLabel(f.month)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="mt-2 text-[13px] text-muted-foreground">Nothing open with a value yet.</p>}
+            </div>
+            <div className="flex flex-col gap-1 text-[12.5px] text-secondary-text lg:text-right">
+              {stale > 0 && <span><span className="num font-semibold text-late">{stale}</span> stale, no move in a while</span>}
+              {board.closed_90_days.map((r, i) => (
+                <span key={i}>{r.stage} in 90 days: <span className="num font-semibold text-foreground">{r.n}</span> · <span className="num">{money(r.value_inr, 'INR', { compact: true })}</span></span>
+              ))}
+            </div>
+            {board.without_rate > 0 && (
+              <p className="text-[12.5px] text-waiting lg:col-span-4">
+                {board.without_rate} quotation{board.without_rate === 1 ? ' is' : 's are'} left out: no exchange rate for {board.without_rate === 1 ? 'its' : 'their'} currency on {board.without_rate === 1 ? 'its' : 'their'} date. Add it under Settings, Exchange rates.
+              </p>
+            )}
+          </section>
         )}
 
         <div className="kanban">
@@ -107,12 +128,19 @@ export default function Pipeline() {
               onDragLeave={() => setOver(null)}
               onDrop={() => drop(s)}
             >
-              <div className="kanban__head" style={{ borderTopColor: s.color || 'var(--ink-300)' }}>
-                <div className="strong">{s.name} <span className="muted">· {s.probability}%</span></div>
-                <div className="small muted">{s.count} · {money(s.value)}{s.type === 'open' && <> · weighted {money(s.weighted)}</>}{s.stale > 0 && <> · <span style={{ color: 'var(--danger-fg)' }}>{s.stale} stale</span></>}</div>
+              <div className="kanban__head" style={{ borderTopColor: s.color || 'var(--border-strong)' }}>
+                <div className="flex items-center gap-2">
+                  <span className="font-display text-[14px] font-bold text-foreground">{s.name}</span>
+                  <span className="num rounded-full bg-secondary px-2 text-[11px] font-semibold text-secondary-text">{s.count}</span>
+                  <span className="ml-auto text-[11px] text-muted-foreground">{s.probability}%</span>
+                </div>
+                <div className="num mt-1 text-[12px] text-muted-foreground">
+                  {money(s.value, 'INR', { compact: true })}{s.type === 'open' && <> · weighted {money(s.weighted, 'INR', { compact: true })}</>}
+                  {s.stale > 0 && <> · <span className="text-late">{s.stale} stale</span></>}
+                </div>
               </div>
               <div className="kanban__cards">
-                {s.type === 'lost' && cardsFor(s).length === 0 && <div className="small muted" style={{ padding: 12 }}>Drop a card here to mark it lost</div>}
+                {s.type === 'lost' && cardsFor(s).length === 0 && <div className="p-3 text-[12.5px] text-muted-foreground">Drop a card here to mark it lost</div>}
                 {cardsFor(s).map((c) => (
                   <div
                     key={c.id}
@@ -126,18 +154,26 @@ export default function Pipeline() {
                     onDragEnd={() => { setDragging(null); setOver(null); }}
                     onClick={() => navigate(`/quotations/${encodeURIComponent(c.quotation_no)}`)}
                   >
-                    <div className="strong" style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>{c.client_name}</span><span>{money(c.quotation_value, c.currency)}</span></div>
-                    <div className="small muted" style={{ marginTop: 2 }}>{c.service_quoted || 'no subject'}</div>
-                    <div className="small muted" style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <span className="mono">{c.quotation_no}</span>
-                      {c.sales_person && <span>· {c.sales_person}</span>}
-                      {c.expected_close_date && <span>· close {date(c.expected_close_date)}</span>}
-                      <span>· {c.days_in_stage}d</span>
-                      {c.stale && <Badge tone="danger">stale</Badge>}
-                      {c.expired && <Badge tone="warning">expired</Badge>}
-                      {c.accepted_at && <Badge tone="success">accepted</Badge>}
+                    <div className="flex items-start gap-2">
+                      <span className="min-w-0 flex-1 text-[13px] font-semibold text-foreground">{c.client_name}</span>
+                      {c.sales_person && (
+                        <span title={c.sales_person} className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-[10px] font-bold text-primary">{initialsOf(c.sales_person)}</span>
+                      )}
                     </div>
-                    {c.next_step && <div className="small" style={{ marginTop: 6 }}>→ {c.next_step}</div>}
+                    <div className="mt-0.5 text-[12.5px] text-secondary-text">{c.service_quoted || 'No service named'}</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="num text-[13px] font-semibold text-foreground">{money(c.quotation_value, c.currency)}</span>
+                      <span className={`num ml-auto text-[11.5px] ${c.stale ? 'font-semibold text-late' : 'text-muted-foreground'}`}>{c.days_in_stage}d here</span>
+                    </div>
+                    {(c.stale || c.expired || c.accepted_at || c.expected_close_date) && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">
+                        {c.stale && <Badge tone="danger">Stale</Badge>}
+                        {c.expired && <Badge tone="warning">Expired</Badge>}
+                        {c.accepted_at && <Badge tone="success">Accepted</Badge>}
+                        {c.expected_close_date && <span>Closes {date(c.expected_close_date)}</span>}
+                      </div>
+                    )}
+                    {c.next_step && <div className="mt-1.5 text-[12px] text-secondary-text">Next: {c.next_step}</div>}
                     {/* The keyboard's (and anybody's) way to move a card: any stage, Lost included (#25). */}
                     <select
                       className="kanban__move"
@@ -155,9 +191,9 @@ export default function Pipeline() {
               </div>
             </div>
           ))}
-          {loading && !board && <div className="skeleton" style={{ height: 300, width: '100%' }} />}
+          {loading && !board && <div className="skeleton h-[300px] w-full" />}
         </div>
-        <div className="small muted">Won quotations leave the board when their project or PO is registered. Lost ones leave it too; open a lost quotation from the Quotations list and revise it to reopen it.</div>
+        <p className="text-[12.5px] text-muted-foreground">Won deals leave the board when their project or PO is registered. Lost ones leave it too; open a lost deal from Deals and revise it to reopen it.</p>
       </div>
 
       {losing && (

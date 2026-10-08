@@ -38,7 +38,7 @@ export default function ExpenseClaims() {
       render: (r) => (
         <div className="table__actions">
           {isAdmin && r.status === 'Pending approval' && (
-            <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'decide', row: r })}>Review</button>
+            <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'decide', row: r })}>Review</button>
           )}
           {isAdmin && (r.status === 'Approved - to reimburse' || r.status === 'Partly reimbursed') && (
             <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'reimburse', row: r })}>Reimburse</button>
@@ -67,7 +67,7 @@ export default function ExpenseClaims() {
     <>
       <ListPage
         refreshToken={version}
-        title="Employee expense claims"
+        title="Expense claims"
         subtitle="Out-of-pocket costs claimed against a trip"
         resource="expense-claims"
         columns={columns}

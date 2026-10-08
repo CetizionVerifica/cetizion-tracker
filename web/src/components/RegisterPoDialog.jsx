@@ -116,7 +116,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
           <Field label="PO value" error={errors.po_value} hint="Blank: the quotation total"><Input type="number" step="0.01" min="0" value={v.po_value} onChange={(e) => set('po_value', e.target.value)} /></Field>
           <Field label="Currency">
             <Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} />
-            {currencyWarning && <span className="field__hint" role="status" style={{ color: 'var(--warn-fg)' }}>{currencyWarning}</span>}
+            {currencyWarning && <span className="field__hint text-waiting" role="status">{currencyWarning}</span>}
           </Field>
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
           <Field label="PO document" hint={emailDocument ? 'The PDF from the email is attached; choose a file only to replace it' : 'The client\'s PO, if you have the file'}>

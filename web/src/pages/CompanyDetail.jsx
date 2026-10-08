@@ -94,7 +94,7 @@ export default function CompanyDetail() {
   }
 
   if (error) return <><PageHeader title="Company" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !c) return <><PageHeader title="Company" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !c) return <><PageHeader title="Company" /><div className="page"><div className="skeleton h-[200px]" /></div></>;
 
   const contactFields = [
     { name: 'company_id', type: 'hidden', default: c.id },

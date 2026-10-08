@@ -41,7 +41,7 @@ import { useAuth } from '../lib/auth.jsx';
  * shyam@cetizionverifica.com wrapped mid-word in the first column.
  */
 const GRID = '@3xl:grid-cols-[minmax(0,1.8fr)_96px_180px_120px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
 const VIS = [
@@ -249,7 +249,7 @@ export default function Mailboxes() {
           </Alert>
         )}
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
             <span>Mailbox</span><span>Status</span><span>{isAdmin ? 'Team sees' : 'The tracker stores'}</span><span>Synced</span><span />
           </div>
@@ -421,7 +421,7 @@ export default function Mailboxes() {
         <AutoEntryPanel />
 
         {isAdmin && <div className="grid gap-4 @3xl:grid-cols-2">
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
             <p className="text-[12.5px]/[1.6] text-secondary-text">
               Addresses or whole domains — newsletters, personal contacts. Robots like no-reply@ are always skipped.
@@ -448,7 +448,7 @@ export default function Mailboxes() {
             ) : (
               <div className="flex flex-wrap gap-2">
                 {blocked.map((b) => (
-                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-[6px] border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
+                  <span key={b.id} className="mono inline-flex h-7 items-center gap-2 rounded-sm border border-border-strong bg-secondary px-2.5 text-[12.5px] text-secondary-text">
                     {b.pattern}
                     <button
                       type="button"
@@ -464,7 +464,7 @@ export default function Mailboxes() {
             )}
           </div>
 
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Server setup</div>
             <Ready label="Microsoft Entra app" ok={Boolean(cfg?.microsoft)} okLabel="Registered" missing="Not registered" />
             <Ready label="Token encryption key" ok={Boolean(cfg?.token_key)} />
@@ -780,7 +780,7 @@ function AutoEnquiries() {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[14px] font-semibold text-foreground">Automatic enquiries, POs and invoices</div>
@@ -807,7 +807,7 @@ function AutoEnquiries() {
         </div>
       </div>
       {s.review_only && (
-        <div className="flex flex-col gap-2 rounded-[8px] border border-border p-3">
+        <div className="flex flex-col gap-2 rounded-md border border-border p-3">
           <p className="text-[12.5px]/[1.6] text-secondary-text">
             Review only: every PO and invoice the readers would register waits in review, saying what they would have done, so the new prompts can be checked against what you enter by hand.
             Turn automatic registration back on client by client here, then switch review only off.

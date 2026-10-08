@@ -43,8 +43,8 @@ async function signIn(page) {
   await page.getByLabel(label, { exact: true }).fill(who);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 }
 
 /**
@@ -59,8 +59,28 @@ async function palette(page, type) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  // Six record types, not thirty screens.
   await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
+});
+
+/**
+ * The sidebar is grouped by the process (web/CLAUDE.md §3): every group is
+ * there in order, a folded group stays folded after a reload, and the app
+ * carries no company name.
+ */
+test('the sidebar groups follow the process and remember being folded', async ({ page }) => {
+  await signIn(page);
+  const nav = page.locator('nav');
+  const groups = nav.getByRole('button', { name: /^(Sell|Deliver|Money|Travel|Insights)$/ });
+  await expect(groups).toHaveText(['Sell', 'Deliver', 'Money', 'Travel', 'Insights']);
+  await expect(page.getByText('Sales Tracker', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
+
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeHidden();
+  await page.reload();
+  await expect(nav.getByRole('button', { name: 'Sell' })).toHaveAttribute('aria-expanded', 'false');
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeVisible();
 });
 
 test('the palette finds a record by half its client name', async ({ page }) => {
@@ -89,8 +109,8 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
   await expect(page.getByText('Invoice date is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -107,7 +127,7 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click();
   // A real alert, announced, not a div with a class on it.
   await expect(page.getByRole('alert')).toContainText(/do not match/);
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toHaveCount(0);
   // And the password box is cleared rather than left holding a wrong one.
   await expect(page.getByLabel('Password')).toHaveValue('');
 });
@@ -116,7 +136,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await signIn(page);
   const client = `E2E Client ${stamp}`;
   await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
-  await page.getByRole('button', { name: '+ Quotation' }).click();
+  await page.getByRole('button', { name: 'New quotation' }).first().click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
@@ -221,7 +241,7 @@ test('Insights answers five questions, and a bar opens the list it counted', asy
   await card.getByRole('button', { name: 'Open as table' }).click();
   await card.getByRole('link', { name: band.label }).click();
   await expect(page).toHaveURL(new RegExp(`/quotations\\?follow_up=overdue&overdue_days=${band.key.replace('+', '%2B')}`));
-  await expect(page.getByText(`${band.count} of ${band.count}`)).toBeVisible();
+  await expect(page.getByText(`${band.count} record${band.count === 1 ? '' : 's'}`, { exact: true })).toBeVisible();
 });
 
 /**
@@ -336,24 +356,25 @@ test('the settings menu opens, with every item on it', async ({ page }) => {
 });
 
 /**
- * Light mode, end to end: choose it, and the document says so.
+ * Dark mode, end to end: light is the default (web/CLAUDE.md §1); choose
+ * dark, and the document says so.
  *
  * The class on <html> is the whole mechanism — every token in globals.css
  * hangs off `.dark` being present or absent — so this is the one assertion
  * that cannot pass while the theme is broken.
  */
-test('choosing light mode takes the dark class off the document', async ({ page }) => {
+test('choosing dark mode puts the dark class on the document', async ({ page }) => {
   await signIn(page);
-  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
 
   await page.getByRole('button', { name: 'Settings and sign out' }).click();
-  await page.getByRole('menuitemradio', { name: 'Light' }).click();
+  await page.getByRole('menuitemradio', { name: 'Dark' }).click();
 
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
   // And it survives a reload, which is what the pre-paint script in
   // index.html exists for.
   await page.reload();
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
 /**

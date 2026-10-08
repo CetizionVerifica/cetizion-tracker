@@ -7,25 +7,19 @@
 @import "tw-animate-css";
 
 /**
- * Cetizion, from the v2 redesign (design project "Cetizion Tracker UI Mockups").
+ * The tracker's tokens. The rules that use them are in web/CLAUDE.md, which
+ * is the one place to read before changing anything a user sees.
  *
- * The design is drawn dark, and dark is the default. Light is not an
- * inversion of it — inverting a palette built on layered near-blacks gives
- * you five greys nobody can tell apart. It is derived from the one light
- * surface the design does specify: the quotation PDF header in C21, which
- * fixes the ink (#151517), the body (#3d3d45), the meta (#5d5d66), the rule
- * (#e2e2de) and the brand on paper (#0f7a66). The four state colours are
- * re-picked for a white ground at 4.5:1 or better, because the dark ones
- * are pastels chosen to glow on near-black and wash out on white.
+ * Light is the default: slate neutrals, one blue for every action, emerald /
+ * amber / rose / blue for the four states, and a navy sidebar in both themes.
+ * Dark keeps the same roles on a deep slate ground.
  *
- * Its own rules, kept here because they are the thing that makes the screens
- * look like one product:
- *
- *   Radius   6px chips and inputs · 10px cards · 14px overlays. Three values.
- *   Heights  32 control · 36 table row · 44 touch. Three values.
- *   Spacing  a 4px grid; gaps are 8, 12, 16, 24, 32 — never 7, 9, 11.
- *   Type     24/600 page title · 15/600 section · 13/400 body and cells.
- *   Money    mono and tabular, always.
+ *   Radius   6px chips · 8px buttons and inputs · 12px cards · 16px overlays.
+ *   Heights  32 control · 36 table row · 44 touch.
+ *   Spacing  a 4px grid; gaps are 8, 12, 16, 24, 32.
+ *   Type     Plus Jakarta Sans for headings, Inter for everything else;
+ *            24/700 page title · 16/700 section · 14 body · 13 cells.
+ *   Money    tabular, always.
  *   Status   never hue alone; every state carries a word or an icon too.
  *   Motion   120-180ms, and nothing at all under prefers-reduced-motion.
  */
@@ -89,12 +83,16 @@
 
   /* Three radii, the design's own. --radius is the card. */
   --radius-sm: 6px;
-  --radius-md: 6px;
+  --radius-md: 8px;
   --radius-lg: var(--radius);
-  --radius-xl: 14px;
+  --radius-xl: 16px;
 
-  --font-sans: "Geist", "Instrument Sans", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-primary-hover: var(--primary-hover);
+  --color-sidebar-muted: var(--sidebar-muted);
 
   /* Three heights, the design's own. */
   --spacing-control: 32px;
@@ -103,126 +101,123 @@
 }
 
 :root {
-  --radius: 10px;
+  --radius: 12px;
   color-scheme: light;
 
-  --background: #f4f4f6;         /* ground */
-  --foreground: #151517;         /* ink, the design's own on paper */
+  /* Light is the default (web/CLAUDE.md §1): slate neutrals, one blue for
+     every action, and a navy sidebar. Each text token is 4.5:1 or better on
+     the card and on the ground. */
+  --background: #f8fafc;         /* ground */
+  --foreground: #0f172a;         /* ink */
   --card: #ffffff;
-  --card-foreground: #151517;
+  --card-foreground: #0f172a;
   --popover: #ffffff;
-  --popover-foreground: #151517;
+  --popover-foreground: #0f172a;
 
-  /* #2ee0b8 is a mint chosen to glow on near-black; on white it reads at
-     1.6:1 and cannot carry text or an edge. The design already picked the
-     brand's paper form for the PDF header, so this is that. */
-  --primary: #0f7a66;
+  --primary: #1d5fa8;            /* the one action colour, 6.4:1 on white */
+  --primary-hover: #174c87;
   --primary-foreground: #ffffff;
 
-  --secondary: #e9e9ed;
-  --secondary-foreground: #151517;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
 
-  --muted: #eeeef1;              /* canvas, one step back from the card */
-  --muted-foreground: #5d5d66;   /* meta, 6.6:1 — never load-bearing */
+  --muted: #f1f5f9;              /* sunken wells, one step back from the card */
+  --muted-foreground: #475569;   /* meta, 7.6:1 — never load-bearing */
 
-  --accent: #e3e3e8;             /* hover surface, not the brand accent */
-  --accent-foreground: #151517;
+  --accent: #eef2f7;             /* hover surface, not a brand accent */
+  --accent-foreground: #0f172a;
 
-  --destructive: #c2334d;
+  --destructive: #be123c;
   --destructive-foreground: #ffffff;
 
-  --border: #e2e2de;             /* rule */
-  --input: #d7d7dc;
-  --ring: #0f7a66;
+  --border: #e2e8f0;             /* rule */
+  --input: #7c889a;              /* control border, 3.6:1 on white */
+  --ring: #1d5fa8;
 
-  /* The four states, re-picked for a white ground. Each is 4.5:1 or better
-     as text, so a chip still says its word when the colour is taken away. */
-  --late: #c2334d;
+  /* The four states. Each is 4.5:1 or better as text on white, so a chip
+     still says its word when the colour is taken away. */
+  --late: #be123c;
   --late-foreground: #ffffff;
-  --waiting: #8a5300;
+  --waiting: #b45309;
   --waiting-foreground: #ffffff;
-  --settled: #0f7a66;
+  --settled: #047857;
   --settled-foreground: #ffffff;
-  --info: #1f5fd0;
+  --info: #1d5fa8;
   --info-foreground: #ffffff;
 
-  /* Same intent as the dark forecast band: the quietest thing that is still
-     a thing, held at 3:1 against the card it sits on. */
-  --forecast: #9a9aa6;
-  --forecast-foreground: #151517;
+  /* Money not yet certain: the quietest thing that is still a thing. */
+  --forecast: #94a3b8;
+  --forecast-foreground: #0f172a;
 
-  /* Body text: #3d3d45 at 10.3:1. Not muted — muted is the meta line. */
-  --secondary-text: #3d3d45;
+  --secondary-text: #334155;     /* body copy that is not the main line */
+  --border-strong: #cbd5e1;
 
-  --border-strong: #c9c9d0;
-
-  --sidebar: #eeeef1;
-  --sidebar-foreground: #3d3d45;
-  --sidebar-primary: #0f7a66;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e3e3e8;
-  --sidebar-accent-foreground: #151517;
-  --sidebar-border: #e2e2de;
-  --sidebar-ring: #0f7a66;
+  /* The sidebar is navy in both themes. */
+  --sidebar: #0b1f33;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-muted: #8193a8;
+  --sidebar-primary: #60a5fa;
+  --sidebar-primary-foreground: #0b1f33;
+  --sidebar-accent: #1e3a5a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1e3a5a;
+  --sidebar-ring: #60a5fa;
 }
 
 .dark {
   color-scheme: dark;
 
-  --background: #050506;         /* ground */
-  --foreground: #f4f4f6;
-  --card: #141417;               /* card */
-  --card-foreground: #f4f4f6;
-  --popover: #141417;
-  --popover-foreground: #f4f4f6;
+  --background: #0b1220;         /* ground */
+  --foreground: #e2e8f0;
+  --card: #111a2b;
+  --card-foreground: #e2e8f0;
+  --popover: #111a2b;
+  --popover-foreground: #e2e8f0;
 
-  --primary: #2ee0b8;            /* accent */
-  --primary-foreground: #06120f; /* ink, for text on the accent */
+  --primary: #60a5fa;
+  --primary-hover: #93c5fd;
+  --primary-foreground: #0b1220;
 
-  --secondary: #191920;
-  --secondary-foreground: #f4f4f6;
+  --secondary: #1a2436;
+  --secondary-foreground: #e2e8f0;
 
-  --muted: #0e0e10;              /* canvas */
-  --muted-foreground: #8e8e99;   /* meta, 5.4:1 — never load-bearing */
+  --muted: #0f1726;
+  --muted-foreground: #94a3b8;   /* meta, 6.9:1 on the card */
 
-  --accent: #1d1d21;             /* hover surface, not the brand accent */
-  --accent-foreground: #f4f4f6;
+  --accent: #1e293b;
+  --accent-foreground: #e2e8f0;
 
-  --destructive: #ff8095;
-  --destructive-foreground: #06120f;
+  --destructive: #fb7185;
+  --destructive-foreground: #0b1220;
 
-  --border: #26262b;             /* line */
-  --input: #26262b;
-  --ring: #2ee0b8;
+  --border: #1e293b;
+  --input: #64748b;              /* control border, 3.6:1 on the card */
+  --ring: #60a5fa;
 
-  --late: #ff8095;
-  --late-foreground: #06120f;
-  --waiting: #f0b45e;
-  --waiting-foreground: #06120f;
-  --settled: #4fd8b6;
-  --settled-foreground: #06120f;
-  --info: #7db6ff;
-  --info-foreground: #06120f;
+  --late: #fb7185;
+  --late-foreground: #0b1220;
+  --waiting: #fbbf24;
+  --waiting-foreground: #0b1220;
+  --settled: #34d399;
+  --settled-foreground: #0b1220;
+  --info: #60a5fa;
+  --info-foreground: #0b1220;
 
-  /* A forecast band on a chart: the quietest thing that is still a thing.
-     The design names #2a2a32, which is a step and a half above the card and
-     disappears at a glance; this is the same intent at 3:1 against it, so a
-     bar you are asked to compare can actually be seen. */
-  --forecast: #4c4c58;
-  --forecast-foreground: #f4f4f6;
+  --forecast: #475569;
+  --forecast-foreground: #e2e8f0;
 
-  /* Secondary text: #b9b9c2 at 9.8:1. Not muted — muted is the meta line. */
-  --secondary-text: #b9b9c2;
+  --secondary-text: #cbd5e1;
 
-  --sidebar: #0e0e10;
-  --sidebar-foreground: #b9b9c2;
-  --sidebar-primary: #2ee0b8;
-  --sidebar-primary-foreground: #06120f;
-  --sidebar-accent: #1d1d21;
-  --sidebar-accent-foreground: #f4f4f6;
-  --sidebar-border: #26262b;
-  --sidebar-ring: #2ee0b8;
-  --border-strong: #33333a;
+  --sidebar: #08172a;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-muted: #8193a8;
+  --sidebar-primary: #60a5fa;
+  --sidebar-primary-foreground: #08172a;
+  --sidebar-accent: #1e3a5a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1a3150;
+  --sidebar-ring: #60a5fa;
+  --border-strong: #334155;
 }
 
 
@@ -247,17 +242,22 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
-    font-feature-settings: "ss01", "cv01";
+    font-feature-settings: "cv11", "ss01";
     font-variant-numeric: tabular-nums;
   }
 
-  /* A reference number or an amount is read by its shape, so it is mono and
+  /* Headings are set in the display face (web/CLAUDE.md §1). */
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* A reference number or an amount is read by its shape, so it is
      tabular wherever it appears. */
   .num {
-    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
@@ -318,7 +318,8 @@
   .muted { color: var(--muted-foreground); }
   .small { font-size: 12px; }
   .strong { font-weight: 600; color: var(--foreground); }
-  .num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
   /* Four button kinds, the design's own: primary, secondary, ghost,
      destructive. Height 32, radius 6, and a focus ring that is visible. */
@@ -330,7 +331,7 @@
     height: 32px;
     padding: 0 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--secondary);
     color: var(--secondary-foreground);
     font: 500 13px/1 var(--font-sans);
@@ -350,7 +351,7 @@
     color: var(--primary-foreground);
     font-weight: 600;
   }
-  .btn--primary:hover:not(:disabled) { background: #4fd8b6; border-color: #4fd8b6; }
+  .btn--primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
   .btn--ghost { background: transparent; border-color: transparent; color: var(--secondary-text); }
   .btn--ghost:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
   .btn--danger {
@@ -366,7 +367,7 @@
     height: 32px;
     padding: 0 10px;
     border: 1px solid var(--input);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--secondary);
     color: var(--foreground);
     font: 400 13px/1 var(--font-sans);
@@ -424,7 +425,9 @@
   .table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
   .table tbody tr:hover { background: var(--accent); }
 
-  .kv__k { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+  /* The small uppercase label over a figure or a section (web/CLAUDE.md §1). */
+  .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-foreground); }
+  .kv__k { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-foreground); }
   .kv__v { font-size: 13px; color: var(--foreground); }
 
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -448,13 +451,15 @@
   /* The client-facing acceptance page: its own light-touch rules, on the
      same tokens so it reads as the same product. */
   .accept { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; display: flex; flex-direction: column; gap: 16px; }
-  .accept__card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 20px; }
+  .accept__card { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 24px; }
+  .accept h1 { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1.25; color: var(--foreground); }
+  .accept h2 { font-family: var(--font-display); font-weight: 700; color: var(--foreground); }
   .accept__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
-  .accept__seller { font-size: 12px; color: var(--muted-foreground); }
-  .accept__muted { color: var(--muted-foreground); font-size: 12.5px; }
+  .accept__seller { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-foreground); }
+  .accept__muted { color: var(--muted-foreground); font-size: 13px; }
   .accept__form { display: flex; flex-direction: column; gap: 12px; }
   .accept__actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .accept__done { border-radius: 10px; border: 1px solid var(--border); padding: 20px; text-align: center; }
+  .accept__done { border-radius: 12px; border: 1px solid var(--border); padding: 20px; text-align: center; }
   .accept__done--ok { border-color: color-mix(in oklab, var(--settled) 40%, transparent); color: var(--settled); }
   .accept__error { color: var(--late); }
 }
@@ -523,7 +528,7 @@
     gap: 16px;
     padding: 28px;
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 16px;
     background: var(--card);
   }
   .auth__brand { display: flex; align-items: center; gap: 12px; }
@@ -533,7 +538,7 @@
     height: 36px;
     display: grid;
     place-items: center;
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--primary);
     color: var(--primary-foreground);
     font-size: 16px;
@@ -554,7 +559,7 @@
     max-width: 100%;
     min-height: 200px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--muted);
   }
   .kanban__col.is-over { border-color: var(--primary); background: color-mix(in oklab, var(--primary) 8%, var(--muted)); }
@@ -562,14 +567,14 @@
   .kanban__head {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border);
-    border-radius: 10px 10px 0 0;
+    border-radius: 12px 12px 0 0;
     background: var(--card);
   }
   .kanban__cards { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
   .kanban__card {
     padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--card);
     cursor: grab;
     transition: border-color 140ms ease;
@@ -645,7 +650,7 @@
   .inbox__list tr.is-selected { background: color-mix(in oklab, var(--primary) 10%, transparent); }
   @media (max-width: 1000px) { .inbox { grid-template-columns: minmax(0, 1fr); } }
 
-  .mail { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .mail { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .mail--outbound { border-left: 3px solid var(--primary); }
   .mail__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: var(--muted); }
   .mail__when { margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
@@ -655,7 +660,7 @@
      stays white and reads as a quoted document. The height here is only the
      starting point — MailBody measures the document and sets the real one,
      so a one-line email is one line tall. */
-  .mail__body { display: block; width: 100%; height: 120px; border: 0; border-radius: 7px; background: #fbfbf9; }
+  .mail__body { display: block; width: 100%; height: 120px; border: 0; border-radius: 8px; background: #fbfbf9; }
 
   /* -------------------------------------------- visit schedule (#42) */
 
@@ -718,18 +723,21 @@
     all: unset;
     cursor: pointer;
     padding: 6px 12px;
-    border-radius: 999px;
+    border-radius: 8px;
     font-size: 13px;
+    font-weight: 500;
     color: var(--secondary-text);
   }
   .portal__tab:hover { background: var(--accent); }
+  /* `all: unset` took the focus ring with it; a tab must still show where the keyboard is. */
+  .portal__tab:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; }
   .portal__tab.is-on { background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
-  .portal__item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .portal__item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; }
   /* #198: a PO inside its project, its figures and its schedule. Wide tables
      scroll inside the card, never the page. */
   .portal__po { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); }
   .portal__figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px 16px; margin: 4px 0 0; }
-  .portal__figures dt { font-size: 11.5px; color: var(--muted-foreground); }
+  .portal__figures dt { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-foreground); }
   .portal__figures dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
   .portal__schedule { display: flex; flex-direction: column; margin: 4px 0 0; padding: 0; list-style: none; }
   .portal__schedule li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; padding: 6px 0; border-top: 1px solid var(--border); }
@@ -743,7 +751,7 @@
   .portal__strong { font-weight: 700; }
   .portal__item--total { background: var(--secondary); }
   /* #198 phase 2: the client answers, and files both ways. */
-  .portal__section { margin: 18px 0 8px; font-size: 14px; font-weight: 600; }
+  .portal__section { margin: 20px 0 8px; font-size: 16px; }
   .portal__answer { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding: 12px; border-radius: 8px; background: var(--secondary); }
   .portal__answer label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
   .portal__answer textarea, .portal__answer select, .portal__answer input:not([type=checkbox]):not([type=file]) { width: 100%; }
@@ -781,7 +789,7 @@
 
   .accept__totals { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .accept__totals > div { display: flex; justify-content: space-between; gap: 24px; min-width: 240px; }
-  .accept__total { padding-top: 4px; border-top: 1px solid var(--border); font-size: 16px; font-weight: 700; }
+  .accept__total { padding-top: 4px; border-top: 1px solid var(--border); font-family: var(--font-display); font-size: 18px; font-weight: 700; }
   .accept__terms summary { cursor: pointer; font-weight: 600; }
   .accept__tick { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 400; }
   .accept__foot { padding-top: 12px; border-top: 1px solid var(--border); }
@@ -819,7 +827,7 @@
 
   /* The search box on a list page: the icon sits inside the field. */
   .search { position: relative; flex: 0 1 320px; min-width: 180px; }
-  .search .input { padding-left: 30px; }
+  .search .input, .toolbar .search .input { width: 100%; padding-left: 32px; }
   .search__icon {
     position: absolute;
     left: 10px;

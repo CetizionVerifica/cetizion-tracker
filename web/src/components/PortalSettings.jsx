@@ -16,7 +16,7 @@ export function PortalSettings({ companyId }) {
     try { const r = await fn(); if (ok) toast(typeof ok === 'function' ? ok(r) : ok, 'success'); refetch(); } catch (err) { toast(err.message, 'danger'); }
   }
   const patch = (body, ok) => run(() => api.raw(`/portal-admin/companies/${companyId}`, { method: 'PATCH', body }), ok);
-  if (!p) return <Card title="Client portal"><div className="skeleton" style={{ height: 80 }} /></Card>;
+  if (!p) return <Card title="Client portal"><div className="skeleton h-[80px]" /></Card>;
   return (
     <>
       <Card title="Client portal" hint="Contacts of this client sign in with a link sent to their email and see only this company."
@@ -47,7 +47,7 @@ export function PortalSettings({ companyId }) {
         ]} />
       </Card>
       <Card flush title="Portal activity" hint="Every sign-in, view, download and message.">
-        <DataTable rows={p.audit} empty={<div className="small muted" style={{ padding: '12px 18px' }}>Nothing yet.</div>} columns={[
+        <DataTable rows={p.audit} empty={<div className="small muted px-[18px] py-3">Nothing yet.</div>} columns={[
           { key: 'created_at', header: 'When', className: 'small', render: (r) => new Date(r.created_at).toLocaleString() },
           { key: 'name', header: 'Who' },
           { key: 'action', header: 'What', render: (r) => <Badge>{r.action.replace('_', ' ')}</Badge> },

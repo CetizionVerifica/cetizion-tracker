@@ -66,7 +66,7 @@ function Differences({ onChanged, provider }) {
         {
           key: 'act', header: '', align: 'right', render: (r) => r.status !== 'resolved' && r.status !== 'matched' && (
             <div className="table__actions">
-              {(r.differences.some((d) => ['invoice_date', 'due_date', 'received_on', 'tds_amount', 'payment'].includes(d.field))) && <button type="button" className="btn btn--sm btn--primary" onClick={() => run(() => api.action(`/accounting/items/${r.id}/accept`), 'Books value applied')}>Take books value</button>}
+              {(r.differences.some((d) => ['invoice_date', 'due_date', 'received_on', 'tds_amount', 'payment'].includes(d.field))) && <button type="button" className="btn btn--sm" onClick={() => run(() => api.action(`/accounting/items/${r.id}/accept`), 'Books value applied')}>Take books value</button>}
               <button type="button" className="btn btn--sm btn--ghost" onClick={() => setResolving(r)}>Resolve</button>
             </div>
           ),
@@ -197,7 +197,7 @@ function Mappings() {
       </Card>
       {data?.unmatched?.length > 0 && <Alert tone="warning"><span>Customers in the books with no matching client: {data.unmatched.map((u) => u.customer_name).join(', ')}.</span></Alert>}
       <Card flush title="Mappings">
-        <DataTable rows={data?.data ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>None yet. Clients are matched by GSTIN or name until mapped.</div>} columns={[
+        <DataTable rows={data?.data ?? []} empty={<div className="small muted px-[18px] py-3">None yet. Clients are matched by GSTIN or name until mapped.</div>} columns={[
           { key: 'kind', header: 'Kind', render: (r) => <Badge>{r.kind}</Badge> },
           { key: 'tracker_name', header: 'In the tracker', className: 'strong' },
           { key: 'books_ref', header: 'Id in the books', className: 'mono' },
@@ -224,7 +224,7 @@ function Reports() {
         <>
           <Card flush title="TDS deducted by clients" hint="From payments recorded with TDS, by client and financial-year quarter."
             actions={<a className="btn btn--sm" href={`/api/accounting/reports/tds.csv?from=${from}&to=${to}`}>Download CSV</a>}>
-            <DataTable rows={d.tds.by_client} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No TDS in this period.</div>} columns={[
+            <DataTable rows={d.tds.by_client} empty={<div className="small muted px-[18px] py-3">No TDS in this period.</div>} columns={[
               { key: 'quarter', header: 'Quarter' }, { key: 'client', header: 'Client', className: 'strong' }, { key: 'pan', header: 'PAN', className: 'mono' },
               { key: 'payments', header: 'Payments', align: 'right' }, { key: 'received', header: 'Received', align: 'right', render: (r) => money(r.received) },
               { key: 'tds', header: 'TDS', align: 'right', render: (r) => money(r.tds) },

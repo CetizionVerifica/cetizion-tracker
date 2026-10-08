@@ -154,7 +154,7 @@ export default function TravelImportReview() {
 
   const bySeq = useMemo(() => new Map((batch?.items || []).map((it) => [it.seq, it])), [batch]);
   if (error) return <><PageHeader title="Travel import" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (!batch) return <><PageHeader title="Travel import" /><div className="page"><div className="skeleton" style={{ height: 120 }} /></div></>;
+  if (!batch) return <><PageHeader title="Travel import" /><div className="page"><div className="skeleton h-[120px]" /></div></>;
 
   const done = batch.status === 'committed';
   const steps = (step) => batch.items.filter((it) => it.step === step);
@@ -308,7 +308,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'columns' && (batch.mapping?.tabs || []).map((t) => (
-          <div key={t.name} className="rounded-[10px] border border-border bg-card">
+          <div key={t.name} className="rounded-lg border border-border bg-card">
             <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5">
               <label className="flex items-center gap-2 text-[13px] font-medium">
                 <input type="checkbox" checked={t.included} disabled={busy || done} onChange={(e) => {
@@ -331,7 +331,7 @@ export default function TravelImportReview() {
         ))}
 
         {tab === 'travellers' && (
-          <div className="rounded-[10px] border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card">
             {!steps('traveller').some(matches) && none}
             {steps('traveller').filter(matches).map((it) => (
               <div key={it.id} className={rowClass(it)}>
@@ -349,7 +349,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'trips' && (
-          <div className="rounded-[10px] border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card">
             {!steps('trip').some((t) => shown(t, legsOf(t))) && none}
             {steps('trip').filter((t) => shown(t, legsOf(t))).map((trip) => {
               const p = trip.payload;
@@ -402,7 +402,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'invoices' && (
-          <div className="rounded-[10px] border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card">
             {!steps('vendor_invoice').some((i) => shown(i, linesOf(i))) && none}
             {steps('vendor_invoice').filter((i) => shown(i, linesOf(i))).map((inv) => {
               const lines = linesOf(inv);
@@ -449,7 +449,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'credits' && (
-          <div className="rounded-[10px] border border-border bg-card">
+          <div className="rounded-lg border border-border bg-card">
             {steps('credit_note').length === 0 ? <p className="px-4 py-5 text-[13px] text-muted-foreground">No credit or cancellation notes in this workbook.</p>
               : !steps('credit_note').some(matches) && none}
             {steps('credit_note').filter(matches).map((n) => (
@@ -472,7 +472,7 @@ export default function TravelImportReview() {
 
         {tab === 'summary' && (
           <div className="stack">
-            <div className="overflow-x-auto rounded-[10px] border border-border bg-card">
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full min-w-[560px] text-[13px]">
                 <thead>
                   <tr className="text-[12px] text-muted-foreground">

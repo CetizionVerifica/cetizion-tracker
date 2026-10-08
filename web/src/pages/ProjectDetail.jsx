@@ -65,7 +65,7 @@ export default function ProjectDetail() {
     return (
       <>
         <PageHeader title={projectId} />
-        <div className="page"><div className="skeleton" style={{ height: 200 }} /></div>
+        <div className="page"><div className="skeleton h-[200px]" /></div>
       </>
     );
   }

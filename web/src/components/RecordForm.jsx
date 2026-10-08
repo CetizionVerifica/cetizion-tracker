@@ -319,7 +319,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
     <Field label={field.label} required={field.required} hint={hint} error={error}>
       {control}
       {warning && !error && (
-        <span className="field__hint" role="status" style={{ color: 'var(--warn-fg)' }}>{warning}</span>
+        <span className="field__hint text-waiting" role="status">{warning}</span>
       )}
     </Field>
   );

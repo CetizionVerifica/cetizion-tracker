@@ -25,7 +25,7 @@ export default function PurchaseOrders() {
   if (tab === 'review') {
     return (
       <>
-        <PageHeader title="Purchase orders" subtitle="POs read from client email that were not registered automatically" />
+        <PageHeader title="Orders" subtitle="POs read from client email that were not registered automatically" />
         <div className="page stack">
           {tabs}
           <PoReviewList />
@@ -105,7 +105,7 @@ export default function PurchaseOrders() {
 
   return (
     <ListPage
-      title="Purchase orders"
+      title="Orders"
       subtitle="One row per PO — a project can hold several"
       resource="purchase-orders"
       columns={columns}

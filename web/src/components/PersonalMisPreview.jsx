@@ -31,7 +31,7 @@ const SECTION = { actions: 'Actions taken', highlights: 'Highlights', commitment
 const label = (s) => String(s || '').replace(/[._]/g, ' ');
 
 function Heading({ children }) {
-  return <div className="mt-3 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase first:mt-0">{children}</div>;
+  return <div className="mt-3 eyebrow first:mt-0">{children}</div>;
 }
 
 function Lines({ items, render, empty = 'None' }) {
@@ -176,7 +176,7 @@ export default function PersonalMisCard({ enabled = false, recipients = { to: []
 
   const pdfQuery = asOf ? `?date=${asOf}` : '';
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">

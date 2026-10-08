@@ -34,7 +34,7 @@ export default function Renewals() {
       <PageHeader
         title="Renewals"
         subtitle="Recurring services and when they come round again. A renewal quotation opens ahead of the due date, with a task for the owner."
-        actions={<><button type="button" className="btn" disabled={busy} onClick={() => run('/renewals/discover', {}, (r) => `${r.length} new engagement${r.length === 1 ? '' : 's'} found`)}>Find delivered work</button><button type="button" className="btn btn--primary" onClick={() => setAdding(true)}>+ Engagement</button></>}
+        actions={<><button type="button" className="btn" disabled={busy} onClick={() => run('/renewals/discover', {}, (r) => `${r.length} new engagement${r.length === 1 ? '' : 's'} found`)}>Find delivered work</button><button type="button" className="btn btn--primary" onClick={() => setAdding(true)}>Add an engagement</button></>}
       />
       <div className="page stack">
         {error && <Alert tone="danger"><span>{error}</span></Alert>}
@@ -60,13 +60,13 @@ export default function Renewals() {
               { key: 'client', header: 'Client', className: 'strong', render: (r) => (r.company_id ? <Link to={`/companies/${r.company_id}`}>{r.company_name || r.client_name}</Link> : r.client_name) },
               { key: 'service_name', header: 'Service', className: 'wrap', render: (r) => <>{r.service_name}<div className="small muted">cycle {r.cycle}{r.renewal_interval_months ? ` · every ${r.renewal_interval_months} months` : ''}</div></> },
               { key: 'from', header: 'From', className: 'mono small', render: (r) => <>{r.po_number && <Link to={`/purchase-orders/${encodeURIComponent(r.po_number)}`}>{r.po_number}</Link>}{r.original_quotation_no && <div><Link to={`/quotations/${encodeURIComponent(r.original_quotation_no)}`}>{r.original_quotation_no}</Link></div>}</> },
-              { key: 'next_due_on', header: 'Due', render: (r) => <>{date(r.next_due_on)}<div className="small" style={{ color: r.days_to_due < 0 ? 'var(--danger-fg)' : r.days_to_due <= 30 ? 'var(--warn-fg)' : undefined }}>{r.days_to_due < 0 ? `${-r.days_to_due} days ago` : `in ${r.days_to_due} days`}</div></> },
+              { key: 'next_due_on', header: 'Due', render: (r) => <>{date(r.next_due_on)}<div className="small" style={{ color: r.days_to_due < 0 ? 'var(--late)' : r.days_to_due <= 30 ? 'var(--waiting)' : undefined }}>{r.days_to_due < 0 ? `${-r.days_to_due} days ago` : `in ${r.days_to_due} days`}</div></> },
               { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status === 'renewed' ? 'success' : r.status === 'renewal_open' ? 'info' : r.status === 'lapsed' ? 'danger' : r.status === 'cancelled' ? 'neutral' : 'warning'}>{r.status.replace('_', ' ')}</Badge> },
               { key: 'renewal', header: 'Renewal quotation', render: (r) => (r.renewal_quotation_no ? <><Link className="mono" to={`/quotations/${encodeURIComponent(r.renewal_quotation_no)}`}>{r.renewal_quotation_no}</Link><div className="small muted">{r.renewal_status}{r.renewal_value ? ` · ${money(r.renewal_value, r.renewal_currency)}` : ''}</div></> : <span className="muted">—</span>) },
               { key: 'owner', header: 'Owner', render: (r) => r.owner || <span className="muted">—</span> },
-              { key: 'act', header: '', align: 'right', render: (r) => <div className="table__actions">{r.status === 'active' && <button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => run(`/renewals/${r.id}/open`, {}, (x) => `Renewal quotation ${x.quotation_no} drafted`)}>Open renewal</button>}{(r.status === 'active' || r.status === 'renewal_open') && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setCancelling(r)}>Cancel</button>}</div> },
+              { key: 'act', header: '', align: 'right', render: (r) => <div className="table__actions">{r.status === 'active' && <button type="button" className="btn btn--sm" disabled={busy} onClick={() => run(`/renewals/${r.id}/open`, {}, (x) => `Renewal quotation ${x.quotation_no} drafted`)}>Open renewal</button>}{(r.status === 'active' || r.status === 'renewal_open') && <button type="button" className="btn btn--sm btn--ghost" onClick={() => setCancelling(r)}>Cancel</button>}</div> },
             ]}
-            empty={<Empty title="No engagements yet" text="Set a renewal interval on the services in the catalogue, then press Find delivered work; or add a client's current certificate or rating by hand." action={<button type="button" className="btn btn--primary" onClick={() => setAdding(true)}>+ Engagement</button>} />}
+            empty={<Empty title="No engagements yet" text="Set a renewal interval on the services in the catalogue, then press Find delivered work; or add a client's current certificate or rating by hand." action={<button type="button" className="btn btn--primary" onClick={() => setAdding(true)}>Add an engagement</button>} />}
           />
         </Card>
       </div>

@@ -45,7 +45,7 @@ const ROLES = [
 ];
 
 const GRID = '@3xl:grid-cols-[minmax(0,1.5fr)_140px_100px_130px_88px]';
-const COL_LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const COL_LABEL = 'eyebrow';
 
 /** Server-side field errors, shown against the field that caused them. */
 const fieldErrors = (err) => err?.fields ?? {};
@@ -95,13 +95,13 @@ export function UsersAdmin() {
         {error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
-          <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
               <span>Person</span><span>Role</span><span>Signs in</span><span>Last seen</span><span />
             </div>
 
             {loading && !users.length ? (
-              <div className="skeleton" style={{ height: 120, margin: 18 }} />
+              <div className="skeleton m-[18px] h-[120px]" />
             ) : users.length === 0 ? (
               <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
                 Nobody yet. Add the first one, then switch AUTH_MODE to database.

@@ -39,7 +39,7 @@ export function ApiTokens() {
       actions={<Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setForm({ name: '', role: 'sales', person: '', can_write: false })}>Create a token</Button>}
     >
       <Card flush>
-      <DataTable rows={data?.data ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No tokens yet.</div>} columns={[
+      <DataTable rows={data?.data ?? []} empty={<div className="small muted px-[18px] py-3">No tokens yet.</div>} columns={[
         { key: 'name', header: 'Token', className: 'strong', render: (r) => <>{r.name}<div className="small muted mono">{r.token_prefix}…</div></> },
         { key: 'role', header: 'Sees', render: (r) => (r.role === 'admin' ? 'Everything' : `${r.person}'s records`) },
         { key: 'can_write', header: 'May', render: (r) => (r.can_write ? 'Read and write' : 'Read only') },
@@ -51,7 +51,7 @@ export function ApiTokens() {
       </Card>
 
       <Card flush title="Recent calls" hint="The last hundred tool calls across every token, newest first. A failed call keeps the reason the assistant was not given.">
-        <DataTable rows={data?.log ?? []} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No calls yet.</div>} columns={[
+        <DataTable rows={data?.log ?? []} empty={<div className="small muted px-[18px] py-3">No calls yet.</div>} columns={[
           { key: 'created_at', header: 'When', className: 'small', render: (r) => ago(r.created_at) },
           { key: 'name', header: 'Token' },
           { key: 'tool', header: 'Tool', className: 'small mono' },

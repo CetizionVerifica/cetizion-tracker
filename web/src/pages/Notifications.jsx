@@ -47,7 +47,7 @@ export default function Notifications() {
       />
       <div className="page stack">
         <Card flush>
-          {loading && !data ? <div className="skeleton" style={{ height: 120 }} /> : !rows.length ? (
+          {loading && !data ? <div className="skeleton h-[120px]" /> : !rows.length ? (
             <Empty icon="◔" title={show === 'unread' ? 'All caught up' : 'No notifications yet'} text="New ones appear when the daily check runs, or press Check now." />
           ) : (
             <div className="table-wrap">

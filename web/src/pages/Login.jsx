@@ -113,20 +113,20 @@ export default function Login() {
 
   return (
     <div className="grid min-h-dvh place-items-center bg-background px-4 py-10">
-      <Card className="w-full max-w-[480px] gap-0 rounded-[14px] py-0">
+      <Card className="w-full max-w-[480px] gap-0 rounded-xl py-0">
         <CardContent className="flex flex-col justify-center gap-7 px-6 py-10 sm:px-10 sm:py-12">
           <div className="flex items-center gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-primary">
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary">
               <Check className="size-[18px] text-primary-foreground" strokeWidth={3.4} aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <div className="text-[16px] font-semibold tracking-[-0.01em] text-foreground">Cetizion Tracker</div>
-              <div className="text-[12px] text-muted-foreground">Cetizion Verifica</div>
+              <div className="font-display text-[16px] font-bold tracking-[-0.01em] text-foreground">Sales Tracker</div>
+              <div className="text-[12px] text-muted-foreground">Sales, projects and expenses</div>
             </div>
           </div>
 
           <div>
-            <h1 className="text-[24px]/[1.25] font-semibold tracking-[-0.022em] text-foreground">Sign in</h1>
+            <h1 className="font-display text-2xl/[1.25] font-bold text-foreground">Sign in</h1>
             <p className="mt-1.5 text-[13px]/[1.6] text-secondary-text">
               {providers.length
                 ? 'Use the work account you read email with. Sessions last 12 hours.'
@@ -236,7 +236,7 @@ export default function Login() {
               it inconveniences most is usually not the one who typed the
               wrong password — a shared address can be locked by somebody
               else entirely. The count appears only once it is nearly up. */}
-          <div className="flex items-start gap-2.5 rounded-[10px] border border-border bg-secondary px-3.5 py-3">
+          <div className="flex items-start gap-2.5 rounded-lg border border-border bg-secondary px-3.5 py-3">
             <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-waiting" strokeWidth={2.2} aria-hidden="true" />
             <p className="text-[12.5px]/[1.6] text-secondary-text">
               Ten wrong attempts in fifteen minutes lock sign-in for everyone until the window passes.

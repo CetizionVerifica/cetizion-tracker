@@ -32,7 +32,7 @@ import { date, money, number, percent, today } from '../lib/format.js';
 
 const MS_PER_DAY = 86_400_000;
 const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
-const LABEL = 'text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground';
+const LABEL = 'eyebrow';
 
 function addDays(iso, days) {
   if (!iso || !days) return iso || null;
@@ -60,7 +60,7 @@ function RunHeader({ line, children }) {
   return (
     <header className="flex flex-wrap items-center gap-4 px-4 pt-6 sm:px-8">
       <div className="min-w-0 flex-1">
-        <h1 className="text-[20px] font-semibold tracking-[-0.018em] text-foreground">Raising invoices</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground">Raising invoices</h1>
         {line && <p className="mt-1.5 text-[12.5px] text-secondary-text">{line}</p>}
       </div>
       {children}
@@ -144,7 +144,7 @@ export default function InvoiceRun() {
     return <><RunHeader /><div className="px-4 pt-6 sm:px-8"><ErrorState message={error} onRetry={refetch} /></div></>;
   }
   if (loading || !data) {
-    return <><RunHeader /><div className="px-4 pt-6 sm:px-8"><div className="skeleton" style={{ height: 240 }} /></div></>;
+    return <><RunHeader /><div className="px-4 pt-6 sm:px-8"><div className="skeleton h-[240px]" /></div></>;
   }
 
   const total = (data.data ?? []).length;
@@ -238,9 +238,9 @@ export default function InvoiceRun() {
 
       <div className="grid items-start gap-6 px-4 pt-6 pb-8 sm:px-8 xl:grid-cols-[minmax(0,1fr)_400px]">
         <div className="flex min-w-0 flex-col gap-4">
-          <div className="rounded-[10px] border border-border bg-card p-6">
+          <div className="rounded-lg border border-border bg-card p-6">
             <div className="flex flex-wrap items-baseline gap-3">
-              <span className="text-[18px] font-semibold text-foreground">{stage.client_name}</span>
+              <span className="font-display text-lg font-bold text-foreground">{stage.client_name}</span>
               <Link to={`/purchase-orders/${encodeURIComponent(stage.po_number)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">
                 {stage.po_number}
               </Link>
@@ -249,7 +249,7 @@ export default function InvoiceRun() {
                   {stage.project_id}
                 </Link>
               )}
-              <span className="mono ml-auto text-[24px] font-semibold tracking-[-0.02em] text-foreground">
+              <span className="num ml-auto font-display text-2xl font-bold text-foreground">
                 {money(stage.stage_amount, stage.currency)}
               </span>
             </div>
@@ -309,9 +309,9 @@ export default function InvoiceRun() {
           )}
         </div>
 
-        <div className="overflow-hidden rounded-[10px] border border-border-strong bg-card">
+        <div className="overflow-hidden rounded-lg border border-border-strong bg-card">
           <div className="border-b border-border px-6 py-5">
-            <div className="text-[15px] font-semibold text-foreground">Raise the invoice</div>
+            <div className="font-display text-base font-bold text-foreground">Raise the invoice</div>
             <p className="mt-1 text-[12.5px] text-secondary-text">
               {nextInSeries ? 'Two fields. Everything else is computed.' : 'The number and the date. Everything else is computed.'}
             </p>
@@ -358,7 +358,7 @@ export default function InvoiceRun() {
               </Label>
               <label
                 htmlFor="invoice-pdf"
-                className="block cursor-pointer rounded-[6px] border border-dashed border-border-strong p-4 text-center text-[12.5px] text-muted-foreground hover:border-primary hover:text-secondary-text"
+                className="block cursor-pointer rounded-sm border border-dashed border-border-strong p-4 text-center text-[12.5px] text-muted-foreground hover:border-primary hover:text-secondary-text"
               >
                 {file ? file.name : 'Drop a file, or browse'}
               </label>
@@ -374,7 +374,7 @@ export default function InvoiceRun() {
                 the figures come out of views.sql, and nobody should have to
                 read it to believe them. Only what is arithmetic is promised
                 here — the recomputed statuses are left to the server. */}
-            <div className="flex flex-col gap-2.5 rounded-[6px] border border-border bg-background p-4">
+            <div className="flex flex-col gap-2.5 rounded-sm border border-border bg-background p-4">
               <div className={LABEL}>What this will change</div>
               <Change label="Stage">To invoice → <strong className="font-semibold">Due</strong></Change>
               <Change label="Due date"><span className="mono">{dueDate ? date(dueDate) : '—'}</span></Change>

@@ -718,7 +718,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           <tfoot>
             <tr>
               <td colSpan={2}>Total</td>
-              <td className="num" style={{ color: off ? 'var(--danger-fg)' : undefined }}>
+              <td className="num" style={{ color: off ? 'var(--late)' : undefined }}>
                 {total}%{locked > 0 && <span className="small muted"> of {allocatable}%</span>}
               </td>
               <td className="num">{money((Number(po.po_value) * total) / 100, po.currency)}</td>
@@ -741,7 +741,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           </button>
         )}
         {off && (
-          <span className="small" style={{ color: 'var(--danger-fg)' }}>
+          <span className="small text-late">
             Stages must total {allocatable}%{locked > 0 ? ` — the other ${locked}% is already invoiced or paid` : ''}
           </span>
         )}

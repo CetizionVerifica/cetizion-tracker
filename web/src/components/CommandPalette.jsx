@@ -49,7 +49,7 @@ const PLURAL = {
   project: 'Projects', order: 'Purchase orders', stage: 'Payment stages', trip: 'Trips',
 };
 
-const ROW = 'group flex h-11 cursor-pointer items-center gap-3 rounded-[6px] border border-transparent px-3 text-[14px] ' +
+const ROW = 'group flex h-11 cursor-pointer items-center gap-3 rounded-sm border border-transparent px-3 text-[14px] ' +
   'data-[selected=true]:border-primary/30 data-[selected=true]:bg-primary/12';
 
 /**
@@ -83,10 +83,10 @@ const GROUP = [
   '[&_[cmdk-group-heading]]:px-3',
   '[&_[cmdk-group-heading]]:pt-4',
   '[&_[cmdk-group-heading]]:pb-1.5',
-  '[&_[cmdk-group-heading]]:text-[10.5px]',
-  '[&_[cmdk-group-heading]]:font-semibold',
+  '[&_[cmdk-group-heading]]:text-[11px]',
+  '[&_[cmdk-group-heading]]:font-bold',
   '[&_[cmdk-group-heading]]:uppercase',
-  '[&_[cmdk-group-heading]]:tracking-[0.1em]',
+  '[&_[cmdk-group-heading]]:tracking-[0.12em]',
   '[&_[cmdk-group-heading]]:text-muted-foreground',
 ].join(' ');
 
@@ -99,7 +99,7 @@ function StateChip({ state }) {
     : waiting ? 'border-waiting/30 bg-waiting/10 text-waiting'
     : 'border-border bg-secondary text-secondary-text';
   return (
-    <span className={`inline-flex h-[22px] shrink-0 items-center rounded-[6px] border px-2.5 text-[11.5px] font-semibold ${tone}`}>
+    <span className={`inline-flex h-[22px] shrink-0 items-center rounded-sm border px-2.5 text-[11.5px] font-semibold ${tone}`}>
       {state}
     </span>
   );
@@ -280,7 +280,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[14px] border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
+        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-xl border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
       >
         <DialogTitle className="sr-only">Search or do anything</DialogTitle>
         <DialogDescription className="sr-only">

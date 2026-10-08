@@ -141,7 +141,7 @@ function ActionStrip({ d, loading, owner }) {
   if (loading) {
     return (
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} style={{ height: 84 }} />)}
+        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-[84px]" />)}
       </div>
     );
   }

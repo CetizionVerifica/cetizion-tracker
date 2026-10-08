@@ -60,7 +60,7 @@ export default function PaymentStages() {
       render: (r) => (
         <div className="table__actions">
           {r.stage_status === 'To Invoice' ? (
-            <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>
+            <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'invoice', row: r })}>Invoice</button>
           ) : r.stage_status === 'Not Due' ? (
             <span className="muted small nowrap">waiting on trigger</span>
           ) : r.stage_status === 'Paid' ? (
@@ -104,7 +104,7 @@ export default function PaymentStages() {
   if (tab === 'invoice-review') {
     return (
       <>
-        <PageHeader title="Payment schedule" subtitle="Invoices we emailed that were not recorded automatically" />
+        <PageHeader title="Invoicing" subtitle="Invoices we emailed that were not recorded automatically" />
         <div className="page stack">
           {tabs}
           <InvoiceReviewList />
@@ -117,7 +117,7 @@ export default function PaymentStages() {
     <>
       <ListPage
         refreshToken={version}
-        title="Payment schedule"
+        title="Invoicing"
         subtitle="Every stage on every PO — status is computed, never typed"
         resource="payment-stages"
         columns={columns}

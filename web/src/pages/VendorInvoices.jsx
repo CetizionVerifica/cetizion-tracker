@@ -76,7 +76,7 @@ export default function VendorInvoices() {
           <div className="table__actions">
             <button
               type="button"
-              className={`btn btn--sm ${r.payment_status === 'Overdue' ? 'btn--primary' : ''}`}
+              className="btn btn--sm"
               onClick={(e) => { e.stopPropagation(); setPaying(r); }}
               disabled={r.invoice_amount === null}
             >
@@ -108,7 +108,7 @@ export default function VendorInvoices() {
       {tab === 'invoices' ? (
         <ListPage
           refreshToken={version}
-          title="Travel vendor invoices"
+          title="Vendor invoices"
           subtitle="HR records the bill; finance pays by the following month-end. One bill can cover several trips."
           resource="vendor-invoices"
           columns={columns}

@@ -47,7 +47,7 @@ export function ChartCard({ title, meta, columns, rows, footnote, children, heig
           {/* `flex-1` so a long second line shrinks instead of shoving the
               toggle onto a row of its own in one card and not the others. */}
           <div className="min-w-0 flex-1">
-            <CardTitle className="text-[15px]">{title}</CardTitle>
+            <CardTitle className="font-display text-base font-bold">{title}</CardTitle>
             {meta && <CardDescription className="mt-0.5">{meta}</CardDescription>}
           </div>
           {actions}

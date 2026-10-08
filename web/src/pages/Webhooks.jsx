@@ -85,7 +85,7 @@ export default function Webhooks() {
         </>}
       >
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
           : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">
@@ -108,7 +108,7 @@ export default function Webhooks() {
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {row.events.map((event) => (
-                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-[6px] border border-border-strong bg-secondary px-2 text-[11px] font-medium text-secondary-text">
+                    <span key={event} className="mono inline-flex h-[22px] items-center rounded-sm border border-border-strong bg-secondary px-2 text-[11px] font-medium text-secondary-text">
                       {event}
                     </span>
                   ))}

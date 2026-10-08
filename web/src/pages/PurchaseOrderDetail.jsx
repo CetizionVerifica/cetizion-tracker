@@ -4,7 +4,7 @@ import { Clock } from 'lucide-react';
 import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
-import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection, RecordStat } from '../components/record.jsx';
 import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -197,8 +197,8 @@ function Fact({ label, value, tone }) {
 /** A card in the rail: a small caps label over a short list. */
 function RailCard({ title, children }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{title}</div>
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
+      <div className="eyebrow">{title}</div>
       {children}
     </div>
   );
@@ -235,7 +235,7 @@ export default function PurchaseOrderDetail() {
     return (
       <>
         <PageHeader title={poNumber} />
-        <div className="page"><div className="skeleton" style={{ height: 200 }} /></div>
+        <div className="page"><div className="skeleton h-[200px]" /></div>
       </>
     );
   }
@@ -359,7 +359,7 @@ export default function PurchaseOrderDetail() {
           <span className="mono text-[12.5px] text-foreground">{amount(po.po_value)}</span>,
           `${po.payment_terms_days}-day terms`,
           po.quotation_no && (
-            <Link to={`/quotations?q=${encodeURIComponent(po.quotation_no)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.quotation_no}</Link>
+            <Link to={`/quotations/${encodeURIComponent(po.quotation_no)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.quotation_no}</Link>
           ),
           <Chip tone={poTone(po.payment_status)} icon={/overdue|to invoice/i.test(po.payment_status) ? Clock : undefined}>
             {po.payment_status}
@@ -385,6 +385,32 @@ export default function PurchaseOrderDetail() {
             actions={primary()}
           />
         }
+        stats={(
+          <>
+            {/* The order's money in four figures (web/CLAUDE.md §4), each
+                computed by the server: what is owed now, what can be billed
+                now, what has been billed, and what has come in. */}
+            <RecordStat
+              label="Due now"
+              value={amount(po.balance_due_now)}
+              detail={toChase?.stage_status === 'Overdue' ? `Invoice ${toChase.invoice_no} is overdue` : 'Invoiced and not yet paid'}
+              tone={toChase?.stage_status === 'Overdue' ? 'late' : undefined}
+            />
+            <RecordStat
+              label="To bill now"
+              value={amount(po.balance_to_bill)}
+              detail={toRaise ? `Stage ${toRaise.stage_no} is ready to invoice` : 'Nothing billable yet'}
+              tone={Number(po.balance_to_bill) > 0 ? 'waiting' : undefined}
+            />
+            <RecordStat label="Billed" value={amount(po.total_invoiced)} detail={`of ${amount(po.po_value)} ordered`} />
+            <RecordStat
+              label="Received"
+              value={amount(po.total_received)}
+              detail={`${amount(Number(po.po_value) - Number(po.total_received))} still to come`}
+              tone={Number(po.total_received) >= Number(po.po_value) - 0.5 && Number(po.po_value) > 0 ? 'settled' : undefined}
+            />
+          </>
+        )}
         rail={
           <>
             <RailCard title="Order facts">
@@ -462,7 +488,7 @@ export default function PurchaseOrderDetail() {
           hint={stages.length
             ? `${stages.map((s) => Math.round(Number(s.stage_percent) * 100)).join(' / ')} — totals ${percent(po.stages_percent_total)}`
             : 'none set'}
-          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newStage' })}>+ Stage</Button>}
+          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newStage' })}>Add a stage</Button>}
         >
           {stages.length === 0 ? (
             <p className="px-5 py-4 text-[12.5px] text-muted-foreground">
