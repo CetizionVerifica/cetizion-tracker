@@ -67,7 +67,7 @@ function SignIn({ error }) {
   }
   return (
     <div className="accept">
-      <form className="accept__card accept__form" onSubmit={go} style={{ maxWidth: 440 }}>
+      <form className="accept__card accept__form mx-auto w-full max-w-[440px]" onSubmit={go}>
         <h1>Client portal</h1>
         <p className="accept__muted">Enter the email address we have for you. We will send a link that signs you in.</p>
         {sent ? <div className="accept__done accept__done--ok">{sent}</div> : <>
