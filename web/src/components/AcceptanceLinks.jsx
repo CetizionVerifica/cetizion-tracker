@@ -29,7 +29,7 @@ export function AcceptanceLinks({ quotation, canSend, onChanged }) {
       actions={canSend && <button type="button" className="btn btn--sm" onClick={() => setOpen(true)}>Send acceptance link</button>}
     >
       {rows.length === 0 ? (
-        <div className="small muted" style={{ padding: '12px 18px' }}>No link sent yet.</div>
+        <div className="small muted px-[18px] py-3">No link sent yet.</div>
       ) : (
         <DataTable rows={rows} columns={[
           { key: 'created_at', header: 'Sent', render: (r) => new Date(r.created_at).toLocaleString() },

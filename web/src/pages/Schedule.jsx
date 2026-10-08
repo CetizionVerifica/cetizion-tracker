@@ -92,7 +92,7 @@ function MonthGrid({ month, visits, onOpen, onNew }) {
           </div>
         ))}
       </div>
-      <div className="small muted" style={{ padding: '8px 14px' }}>Double-click a day to plan a visit on it.</div>
+      <div className="small muted px-3.5 py-2">Double-click a day to plan a visit on it.</div>
     </Card>
   );
 }
@@ -188,7 +188,7 @@ export function ProjectVisits({ projectId }) {
   const rows = data?.data ?? [];
   return (
     <Card flush title="Visits" hint="Audits and site visits for this project." actions={<button type="button" className="btn btn--sm" onClick={() => setDialog({ preset: { project_id: projectId, day: today() } })}>Schedule a visit</button>}>
-      <DataTable rows={rows} onRowClick={(r) => setDialog({ visit: r })} empty={<div className="small muted" style={{ padding: '12px 18px' }}>No visits planned.</div>} columns={[
+      <DataTable rows={rows} onRowClick={(r) => setDialog({ visit: r })} empty={<div className="small muted px-[18px] py-3">No visits planned.</div>} columns={[
         { key: 'when', header: 'When', render: (r) => <>{date(dayOf(r.starts_at))}{dayOf(r.ends_at) !== dayOf(r.starts_at) && ` – ${date(dayOf(r.ends_at))}`}</> },
         { key: 'title', header: 'Visit', className: 'wrap strong' },
         { key: 'team', header: 'Team', className: 'wrap', render: (r) => r.assignees.map((a) => a.name).join(', ') || '—' },

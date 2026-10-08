@@ -741,7 +741,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           </button>
         )}
         {off && (
-          <span className="small" style={{ color: 'var(--late)' }}>
+          <span className="small text-late">
             Stages must total {allocatable}%{locked > 0 ? ` — the other ${locked}% is already invoiced or paid` : ''}
           </span>
         )}
