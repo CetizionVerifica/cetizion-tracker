@@ -38,8 +38,8 @@ export function Panel({ id, title, hint, tools, label, className, children }) {
  *
  * columns: { key, header, num, className, width, render(row) }
  */
-export function ListTable({ columns, rows, rowKey = (r, i) => r.id ?? i, phone, label, onRowClick, rowClassName, bordered = true }) {
-  const wide = useMediaQuery('(min-width: 768px)');
+export function ListTable({ columns, rows, rowKey = (r, i) => r.id ?? i, phone, label, onRowClick, rowClassName, bordered = true, phoneBelow = 768 }) {
+  const wide = useMediaQuery(`(min-width: ${phoneBelow}px)`);
   if (!wide && phone) {
     return <div className={cn(bordered && 'app-panel__body')}><div className="mg-rows">{rows.map((r, i) => <PhoneRowSlot key={rowKey(r, i)}>{phone(r)}</PhoneRowSlot>)}</div></div>;
   }

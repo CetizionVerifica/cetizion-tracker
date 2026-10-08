@@ -265,3 +265,13 @@
 @keyframes set-indet { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 .mg-paused .set-indet { animation: none; width: 100%; opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .set-indet { animation: none; width: 100%; opacity: .5; } }
+
+/* Import review: step tabs wrap on wide screens, scroll on phones. */
+.set-steps-tabs { flex-wrap: wrap; }
+.set-steps-tabs > button { gap: 6px; }
+.mg-count.is-late { background: var(--late); color: var(--on-late); }
+.set-tab-dup { font-size: 11px; font-weight: 700; color: var(--caramel-text); white-space: nowrap; }
+@media (max-width: 719px) { .set-steps-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } }
+.set-flag { border-radius: 10px; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; white-space: normal; text-align: left; max-width: 100%; }
+.mg-row.tr--dup { background: color-mix(in oklab, var(--waiting) 10%, transparent); }
+.app-panel__head > .mg-banner, .app-panel__head > .mg-field { flex-basis: 100%; }

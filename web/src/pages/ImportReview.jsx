@@ -1,27 +1,33 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
-import {
-  Card, DataTable, Badge, Empty, Alert, ErrorState, Modal, Field, Input, Select, Tabs, Textarea, ConfirmDialog, useToast,
-} from '../components/ui.jsx';
+import { ConfirmDialog, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { ListTable, PhoneRow, StateCard } from '../components/daily.jsx';
+import { DialogError, MoneyBanner } from '../components/money.jsx';
+import { Tone } from '../components/sales.jsx';
+import { SetStrip } from '../components/settings.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { money, date } from '../lib/format.js';
-import { Button } from '../components/ui/button';
-import { Checkbox } from '../components/ui/checkbox.tsx';
-import { Label } from '../components/ui/label.tsx';
-import { Skeleton } from '../components/ui/skeleton.tsx';
+import { money, date, number } from '../lib/format.js';
 
 /**
- * Step-by-step review of one import batch. Each step is one record type,
- * in the order the site itself creates them. Nothing is written until
- * "Complete and commit" on the last step.
+ * Step-by-step review of one import batch (`/import/:id`), Wave 8. Each
+ * step is one record type, in the order the site itself creates them.
+ * Nothing is written until "Complete and commit" on the last step.
  *
- * A yellow row is a duplicate: the record is already on the site. Each one
- * carries a choice, keep the original or update it from the sheet (the
- * default for a deal recognised for certain that changed in the sheet).
- * Choosing on a PO carries to everything under it. Either way, a deal's new
- * remarks, follow-ups and next follow-up date are added to its history.
+ * A Duplicate row is a record already on the site. Each one carries a
+ * choice, keep the original or update it from the sheet (the default for a
+ * deal recognised for certain that changed in the sheet). Choosing on a PO
+ * carries to everything under it. Either way, a deal's new remarks,
+ * follow-ups and next follow-up date are added to its history.
+ *
+ * Wave 8: one strip of four numbers instead of stacked alerts, a Duplicate
+ * badge on phones too, the include box and the choice on each phone row,
+ * the edit dialog stays open with the server's reason on a failed save,
+ * the commit is a primary button (off while errors remain) that says
+ * "Committing N records…", and loading or failing keeps the title.
  */
 const STEPS = [
   { key: 'quotation', label: 'Quotations' },
@@ -35,15 +41,14 @@ const STEPS = [
 const DUP_CHOICES = [{ value: 'skip', label: 'Keep original' }, { value: 'update', label: 'Update from sheet' }];
 // Only for a quotation matched by client and service alone: it may be a different deal.
 const NEW_CHOICE = { value: 'create', label: 'Import as new' };
+const STATUSES = ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'];
+const STATUS_TONE = { 'Won - PO Received': 'ok', Lost: 'late', 'Under Negotiation': 'wait', 'On Hold': 'plain', Submitted: 'info' };
+const NOUN = { quotation: 'quotation', project: 'project', purchase_order: 'purchase order', service: 'service line', stage: 'payment stage', invoice: 'invoice', receipt: 'receipt' };
 
 /**
  * How the batch was planned, in words rather than the model id the server
- * stored. Which model read the sheet is an internal detail — it means
- * nothing to whoever is importing, and it changes whenever the importer is
- * retuned. The id stays on the batch row for the record.
- *
- * Without a key the server writes "no AI key: rules only"; anything else is
- * a model that was actually used.
+ * stored. Without a key the server writes "no AI key: rules only"; anything
+ * else is a model that was actually used.
  */
 const plannedWith = (aiModel) =>
   aiModel && !aiModel.startsWith('no AI key') ? 'AI-assisted' : 'rules only';
@@ -59,7 +64,7 @@ const FIELDS = {
     { name: 'sales_person', label: 'Sales person' },
     { name: 'quotation_value', label: 'Quotation value', type: 'number' },
     { name: 'currency', label: 'Currency', type: 'select', options: ['INR', 'EUR', 'USD', 'GBP', 'AED', 'SGD'] },
-    { name: 'status', label: 'Status', type: 'select', options: ['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold'] },
+    { name: 'status', label: 'Status', type: 'select', options: STATUSES },
     { name: 'remarks', label: 'Remarks', type: 'textarea', span: 'all' },
   ],
   project: [
@@ -96,6 +101,19 @@ const FIELDS = {
   ],
 };
 
+/** The header every state wears: crumbs back to Settings › Data › Import. */
+function Head({ title, subtitle }) {
+  return (
+    <PageHeader
+      eyebrow=""
+      title={title}
+      subtitle={subtitle}
+      lead={<nav className="mg-crumbs set-crumbs" aria-label="Breadcrumb"><Link to="/settings">Settings</Link><span aria-hidden="true">›</span><span>Data</span><span aria-hidden="true">›</span><Link to="/settings/import">Import</Link></nav>}
+      actions={<Link to="/settings/import" className="mg-btn">All imports</Link>}
+    />
+  );
+}
+
 export default function ImportReview() {
   const { id } = useParams();
   const toast = useToast();
@@ -112,12 +130,14 @@ export default function ImportReview() {
   const bySeq = useMemo(() => new Map(items.map((it) => [it.seq, it])), [items]);
   const committed = batch?.status === 'committed';
 
-  async function patch(item, body) {
+  async function patch(item, body, quiet = false) {
     try {
       await api.update('import/items', item.id, body);
       refetch();
+      return null;
     } catch (err) {
-      toast(err.message, 'danger');
+      if (!quiet) toast(err.message, 'danger');
+      return err.message;
     }
   }
 
@@ -159,23 +179,48 @@ export default function ImportReview() {
     }
   }
 
-  if (error) return <><PageHeader title="Bulk import" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !batch) return <><PageHeader title="Bulk import" /><div className="page"><Skeleton className="h-[200px] w-full" /></div></>;
+  if (error) {
+    return (
+      <>
+        <Head title={`Import #${id}`} />
+        <div className="app-page">
+        <StateCard tone="late" role="alert" title="Couldn’t load this import" text={`${error} Nothing has changed; the draft is still there.`}>
+          <button type="button" className="mg-btn mg-btn--sm" onClick={refetch}>Try again</button>
+        </StateCard>
+        </div>
+      </>
+    );
+  }
+  if (loading || !batch) {
+    return (
+      <>
+        <Head title={`Import #${id}`} subtitle="Loading the review…" />
+        <div className="app-page" aria-busy="true">
+        <section className="mg-glass mg-strip set-strip" aria-label="Loading">{[0, 1, 2, 3].map((i) => <div key={i}><span className="mg-skel" style={{ height: 10, width: '50%' }} /><span className="mg-skel" style={{ height: 26, width: '40%' }} /></div>)}</section>
+        <section className="mg-glass mg-panel" aria-label="Loading">{[0, 1, 2, 3].map((i) => <div key={i} className="mg-skel" style={{ height: 44 }} />)}</section>
+        </div>
+      </>
+    );
+  }
 
   const current = STEPS[step];
   const stepItems = (key) => items.filter((it) => (key === 'money' ? it.step === 'invoice' || it.step === 'receipt' : it.step === key));
   const counts = Object.fromEntries(STEPS.map((s) => [s.key, s.key === 'summary' ? undefined : stepItems(s.key).length]));
   const dupCounts = Object.fromEntries(STEPS.map((s) => [s.key, s.key === 'summary' ? 0 : stepItems(s.key).filter((it) => it.existing_ref).length]));
   const effectiveIncluded = (it) => it.included && it.parent_included;
-  const hasErrors = items.some((it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error'));
+  const isError = (it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error');
+  const errorCounts = Object.fromEntries(STEPS.map((s) => [s.key, s.key === 'summary' ? 0 : [...stepItems(s.key), ...(s.key === 'purchase_order' ? stepItems('service') : [])].filter(isError).length]));
+  const errors = items.filter(isError);
+  const hasErrors = errors.length > 0;
   const totalDuplicates = items.filter((it) => it.existing_ref).length;
   const toCreate = items.filter((it) => effectiveIncluded(it) && it.action === 'create').length;
   const toReplace = items.filter((it) => effectiveIncluded(it) && it.action === 'update').length;
   const toKeep = items.filter((it) => effectiveIncluded(it) && it.action === 'skip').length;
+  const skipped = batch.summary?.skipped ?? 0;
 
   /** From the summary to the first step with a row in error, showing only those. */
   const showErrors = () => {
-    const first = items.find((it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error'));
+    const first = errors[0];
     const at = first ? STEPS.findIndex((s) => (s.key === 'money' ? ['invoice', 'receipt'].includes(first.step) : s.key === first.step || (s.key === 'purchase_order' && first.step === 'service'))) : -1;
     setFilters({ status: '', flagged: false, action: 'errors' });
     if (at >= 0) setStep(at);
@@ -193,78 +238,112 @@ export default function ImportReview() {
 
   return (
     <>
-      <PageHeader
+      <Head
         title={`Import #${batch.id} · ${batch.filename}`}
-        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${plannedWith(batch.ai_model)}${committed ? ' · committed ' + new Date(batch.committed_at).toLocaleString() : ''}`}
-        actions={<Button variant="secondary" asChild><Link to="/import">All imports</Link></Button>}
+        subtitle={`${batch.row_count} rows on sheet "${batch.sheet_name}" · ${plannedWith(batch.ai_model)}${committed ? ` · committed ${new Date(batch.committed_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}`}
       />
-      <div className="page stack">
-        {committed && <Alert tone="success">This batch has been committed. Everything below is read-only; the "Written as" column shows what was created.</Alert>}
-        {batch.error && !committed && <Alert tone="danger">{batch.error}</Alert>}
-        {commitError && <Alert tone="danger">{commitError}</Alert>}
-        {batch.mapping?.ai_errors?.length > 0 && <Alert tone="warning">AI review partly unavailable: {batch.mapping.ai_errors.join('; ')}. Rule-based flags still apply.</Alert>}
-        {!committed && batch.summary?.skipped > 0 && current.key !== 'summary' && (
-          <Alert tone="info">
-            <span>
-              {batch.summary.skipped} of {batch.row_count} rows were left out.{' '}
-              <button type="button" className="font-medium underline underline-offset-2" onClick={() => setStep(STEPS.length - 1)}>See why on the Summary step</button>,
-              where you can also change how any deal stage in the sheet is read.
-            </span>
-          </Alert>
-        )}
-        {totalDuplicates > 0 && !committed && (
-          <Alert tone="warning">
-            {totalDuplicates} record{totalDuplicates === 1 ? ' is' : 's are'} already on the site and shown in yellow. A deal recognised for certain whose stage, value or dates changed in the sheet is updated from it; any other keeps the original. You can change either on each row. A choice made on a purchase order carries to its stages, invoice and receipt. New remarks and follow-ups go to each deal's timeline either way.
-          </Alert>
-        )}
+      <div className="app-page">
 
-        <Tabs
-          active={String(step)}
-          onChange={(k) => setStep(Number(k))}
-          tabs={STEPS.map((s, i) => ({
-            key: String(i),
-            label: `${i + 1}. ${s.label}`,
-            count: counts[s.key],
-            warning: dupCounts[s.key] > 0 ? `${dupCounts[s.key]} on site` : null,
-            warningTitle: 'Records already on the site (duplicates)',
-          }))}
-        />
+      <SetStrip
+        label="This batch"
+        cells={committed ? [
+          { label: 'Written new', figure: number(toCreate), foot: 'quotations, projects, POs and more' },
+          { label: 'Updated from the sheet', figure: number(toReplace), foot: 'stage, value or dates changed' },
+          { label: 'Kept as they were', figure: number(toKeep), foot: 'duplicates left alone' },
+          { label: 'Left out', figure: number(skipped), foot: 'see why on Summary' },
+        ] : [
+          { label: 'New records', figure: number(toCreate), foot: 'ticked and ready to write' },
+          { label: 'Already on the site', figure: number(totalDuplicates), foot: 'shown as Duplicate', tone: totalDuplicates ? 'wait' : undefined },
+          { label: 'Left out', figure: number(skipped), foot: 'see why on Summary' },
+          { label: 'Need fixing', figure: number(errors.length), foot: errors.length ? 'commit waits for these' : 'nothing in the way', tone: errors.length ? 'late' : undefined },
+        ]}
+      />
 
-        {current.key === 'summary' ? (
-          <Summary batch={batch} items={items} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} onShowErrors={showErrors} />
-        ) : (
-          <>
-            <StepTable {...tableProps(current.key)} />
-            {current.key === 'purchase_order' && <StepTable {...tableProps('service')} />}
-          </>
-        )}
+      {committed && <MoneyBanner tone="ok" className="alert" title="This batch has been committed.">{' '}Everything below is read-only; Written as shows what each row became.</MoneyBanner>}
+      {batch.error && !committed && (
+        <MoneyBanner tone="late" role="alert" title="This batch couldn’t be read." action={<Link to="/settings/import" className="mg-btn mg-btn--sm">Upload a corrected sheet</Link>}>{' '}{batch.error}</MoneyBanner>
+      )}
+      {commitError && (
+        <MoneyBanner tone="late" role="alert" title="The commit failed, so nothing was written." action={!hasErrors && <button type="button" className="mg-btn mg-btn--sm" onClick={() => setConfirm(true)}>Try the commit again</button>}>{' '}{commitError}</MoneyBanner>
+      )}
+      {batch.mapping?.ai_errors?.length > 0 && <MoneyBanner title="AI review partly unavailable.">{' '}{batch.mapping.ai_errors.join('; ')}. The rule-based checks still apply to every row.</MoneyBanner>}
+      {!committed && skipped > 0 && current.key !== 'summary' && (
+        <MoneyBanner action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => setStep(STEPS.length - 1)}>See why</button>} title={`${skipped} of ${batch.row_count} rows were left out.`}>
+          {' '}The Summary step says why, and lets you change how any deal stage in the sheet is read.
+        </MoneyBanner>
+      )}
+      {totalDuplicates > 0 && !committed && current.key !== 'summary' && (
+        <MoneyBanner tone="wait" title={`${totalDuplicates} record${totalDuplicates === 1 ? ' is' : 's are'} already on the site.`}>
+          {' '}A deal recognised for certain whose stage, value or dates changed is updated from the sheet; any other keeps the original. Change either on its row. A choice on a PO carries to its stages, invoice and receipt. New remarks and follow-ups go to each deal’s timeline either way.
+        </MoneyBanner>
+      )}
 
-        {current.key !== 'summary' && (
-          <div className="flex flex-wrap justify-between gap-3">
-            <Button variant="secondary" disabled={step === 0} onClick={() => setStep(step - 1)}>← Back</Button>
-            <Button onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label} →</Button>
-          </div>
-        )}
+      <div className="mg-tabs set-steps-tabs" role="tablist" aria-label="Steps" data-a="rise">
+        {STEPS.map((s, i) => (
+          <button key={s.key} type="button" role="tab" aria-selected={step === i} onClick={() => setStep(i)} title={dupCounts[s.key] ? `${dupCounts[s.key]} already on the site` : undefined}>
+            <span>{`${i + 1}. ${s.label}`}</span>
+            {counts[s.key] != null && <span className="mg-count">{counts[s.key]}</span>}
+            {errorCounts[s.key] > 0 && !committed && <span className="mg-count is-late" aria-label={`${errorCounts[s.key]} to fix`}>{errorCounts[s.key]}</span>}
+            {dupCounts[s.key] > 0 && !committed && <span className="set-tab-dup">{dupCounts[s.key]} on site</span>}
+          </button>
+        ))}
       </div>
 
+      {current.key === 'summary' ? (
+        <Summary batch={batch} items={items} errors={errors} effectiveIncluded={effectiveIncluded} hasErrors={hasErrors} committed={committed} onCommit={() => setConfirm(true)} onBack={() => setStep(0)} onReplan={replan} onShowErrors={showErrors} />
+      ) : (
+        <>
+          <StepTable {...tableProps(current.key)} />
+          {current.key === 'purchase_order' && <StepTable {...tableProps('service')} />}
+          <nav className="flex flex-wrap justify-between gap-3" aria-label="Step" data-a="rise">
+            <button type="button" className="mg-btn" disabled={step === 0} onClick={() => setStep(step - 1)}><ArrowLeft className="size-4" aria-hidden="true" />Back</button>
+            <button type="button" className="mg-btn mg-btn--primary" onClick={() => setStep(step + 1)}>Next: {STEPS[step + 1].label}<ArrowRight className="size-4" aria-hidden="true" /></button>
+          </nav>
+        </>
+      )}
+
       {editing && (
-        <EditItem item={editing} fields={FIELDS[editing.step]} onClose={() => setEditing(null)} onSave={async (payload) => { await patch(editing, { payload }); setEditing(null); }} />
+        <EditItem
+          item={editing}
+          fields={FIELDS[editing.step]}
+          onClose={() => setEditing(null)}
+          onSave={async (payload) => { const err = await patch(editing, { payload }, true); if (!err) setEditing(null); return err; }}
+        />
       )}
       {confirm && (
         <ConfirmDialog
           title="Commit this import?"
-          message={`${toCreate} new record${toCreate === 1 ? '' : 's'} will be written${toReplace ? `, ${toReplace} existing record${toReplace === 1 ? '' : 's'} updated from the sheet` : ''}${toKeep ? `, ${toKeep} duplicate${toKeep === 1 ? '' : 's'} kept as ${toKeep === 1 ? 'it is' : 'they are'}` : ''}. One transaction: if any one fails, nothing is written.`}
-          confirmLabel={busy ? 'Committing…' : 'Complete and commit'}
+          subtitle={`Import #${batch.id} · ${batch.filename}`}
+          message={`${toCreate} new record${toCreate === 1 ? '' : 's'} will be written${toReplace ? `, ${toReplace} existing record${toReplace === 1 ? '' : 's'} updated from the sheet` : ''}${toKeep ? `, ${toKeep} duplicate${toKeep === 1 ? '' : 's'} kept as ${toKeep === 1 ? 'it is' : 'they are'}` : ''}. It’s one transaction: if any part fails, nothing is written.`}
+          tone="neutral"
+          confirmLabel="Complete and commit"
+          cancelLabel="Not yet"
           busy={busy}
+          busyLabel={`Committing ${number(toCreate + toReplace)} records…`}
           onConfirm={commit}
           onClose={() => setConfirm(false)}
         />
       )}
+      </div>
     </>
   );
 }
 
 /* ------------------------------------------------------------ table */
+
+function Flags({ flags }) {
+  if (!flags.length) return <span className="text-muted-foreground">—</span>;
+  // A flag is a sentence: it wraps inside a bounded column.
+  return (
+    <span className="flex flex-wrap gap-1" style={{ minWidth: 200, maxWidth: 300 }}>
+      {flags.map((f, i) => (
+        <span key={i} className={cn('mg-badge set-flag', f.level === 'error' ? 'mg-badge--late' : f.level === 'warn' ? 'mg-badge--wait' : 'mg-badge--info')} title={f.by === 'ai' ? 'Raised by the AI reader' : 'Raised by the rules'}>
+          {f.by === 'ai' ? '✦ ' : ''}{f.message}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onToggle, onDecide, onDecideAll, onEdit }) {
   const rows = items.filter((it) => {
@@ -276,194 +355,233 @@ function StepTable({ stepKey, items, bySeq, filters, setFilters, committed, onTo
     return true;
   });
   const dups = items.filter((it) => it.existing_ref).length;
+  const filtered = filters.status || filters.flagged || filters.action;
 
   const parentOf = (it) => (it.parent_seq ? bySeq.get(it.parent_seq) : null);
   const clientOf = (it) => it.source_client || it.payload.client_name || '';
   const dupFlag = (it) => it.flags.find((f) => f.code === 'duplicate');
+  const title = stepKey === 'service' ? 'Service lines' : STEPS.find((s) => s.key === stepKey).label;
+
+  const include = (it) => (
+    <label className="mg-check" title={!it.parent_included ? 'Its parent is unticked' : 'Include in the commit'}>
+      <input type="checkbox" checked={it.included} disabled={committed || !it.parent_included} aria-label={`Include S.No ${it.source_row} in the commit`} onChange={() => onToggle(it)} />
+    </label>
+  );
+  const dupCell = (it) => {
+    const f = dupFlag(it);
+    if (!f) return <span className="text-muted-foreground">—</span>;
+    return (
+      <span className="flex flex-col items-start gap-0.5">
+        <Tone tone="wait">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Tone>
+        <span className="set-sub">on site as <b className="text-foreground">{it.existing_ref}</b> · matched by {f.match}</span>
+        {f.certain === false && <span className="set-sub font-semibold text-wait">Not certain: confirm it’s the same deal</span>}
+      </span>
+    );
+  };
+  const actionCell = (it) => {
+    if (!it.existing_ref) return <Tone tone="info">New</Tone>;
+    if (committed) {
+      if (it.action === 'create') return <span className="text-secondary-text">imported as new</span>;
+      return <span className="text-secondary-text">{it.action === 'update' ? 'updated from sheet' : 'kept original'}</span>;
+    }
+    // A project follows its quotation's choice.
+    if (it.action === 'create' && it.step !== 'quotation') return <Tone tone="info">New, with its quotation</Tone>;
+    const uncertain = it.step === 'quotation' && dupFlag(it)?.certain === false;
+    return (
+      <span className="mg-select-wrap block min-w-[170px]">
+        <select className="mg-select" aria-label={`What to do with ${it.existing_ref}`} value={it.action} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)}>
+          {(uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </span>
+    );
+  };
 
   const base = [
-    {
-      key: 'inc', header: '', width: 36,
-      render: (it) => (
-        <Checkbox
-          checked={it.included}
-          disabled={committed || !it.parent_included}
-          aria-label={`Include S.No ${it.source_row} in the commit`}
-          title={!it.parent_included ? 'Its parent is unticked' : 'Include in the commit'}
-          onCheckedChange={() => onToggle(it)}
-        />
-      ),
-    },
-    { key: 'source_row', header: 'S.No', width: 60, className: 'num text-[12px] text-muted-foreground' },
+    { key: 'inc', header: '', aria: 'Include', width: '44px', render: include },
+    { key: 'source_row', header: 'S.No', num: true, width: '56px', render: (it) => <span className="text-muted-foreground">{it.source_row}</span> },
   ];
   const tail = [
-    {
-      key: 'dup', header: 'Duplicate', className: 'wrap',
-      render: (it) => {
-        const f = dupFlag(it);
-        if (!f) return <span className="text-muted-foreground">—</span>;
-        return (
-          <div className="flex flex-col items-start gap-0.5 text-[12px]">
-            <Badge tone="warning">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Badge>
-            <div className="mt-0.5 text-secondary-text">on site as <span className="num text-foreground">{it.existing_ref}</span></div>
-            <div className="text-muted-foreground">matched by {f.match}</div>
-            {f.certain === false && <div className="text-waiting">Not certain: confirm it is the same deal</div>}
-          </div>
-        );
-      },
-    },
-    { key: 'flags', header: 'Flags', className: 'wrap', render: (it) => <Flags flags={it.flags.filter((f) => f.code !== 'duplicate')} /> },
-    { key: 'assumptions', header: 'Assumed', className: 'wrap text-[12px] text-muted-foreground', render: (it) => it.assumptions.length ? it.assumptions.join(' · ') : '' },
-    {
-      key: 'action', header: 'Action',
-      render: (it) => {
-        if (!it.existing_ref) return <Badge tone="success">new</Badge>;
-        if (committed) {
-          if (it.action === 'create') return <Badge tone="success">imported as new</Badge>;
-          return <Badge tone={it.action === 'update' ? 'warning' : 'info'}>{it.action === 'update' ? 'updated from sheet' : 'kept original'}</Badge>;
-        }
-        // A project follows its quotation's choice.
-        if (it.action === 'create' && it.step !== 'quotation') return <Badge tone="success">new, with its quotation</Badge>;
-        const uncertain = it.step === 'quotation' && dupFlag(it)?.certain === false;
-        return <Select aria-label={`What to do with ${it.existing_ref}`} className="min-w-[170px]" value={it.action} placeholder={null} options={uncertain ? [...DUP_CHOICES, NEW_CHOICE] : DUP_CHOICES} disabled={!it.parent_included} onChange={(e) => onDecide(it, e.target.value)} />;
-      },
-    },
+    { key: 'dup', header: 'Duplicate', className: 'app-wrap--sm', render: dupCell },
+    { key: 'flags', header: 'Flags', render: (it) => <Flags flags={it.flags.filter((f) => f.code !== 'duplicate')} /> },
+    { key: 'assumptions', header: 'Assumed', className: 'app-say', render: (it) => (it.assumptions.length ? it.assumptions.join(' · ') : '') },
+    { key: 'action', header: 'Action', width: '180px', render: actionCell },
     committed
-      ? { key: 'committed_ref', header: 'Written as', className: 'wrap text-[12px] text-secondary-text' }
-      : { key: 'edit', header: '', align: 'right', render: (it) => <Button variant="ghost" size="sm" onClick={() => onEdit(it)}>Edit</Button> },
+      ? { key: 'committed_ref', header: 'Written as', className: 'app-say', render: (it) => it.committed_ref }
+      : { key: 'edit', header: '', className: 'actions', render: (it) => <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Edit S.No ${it.source_row}`} onClick={() => onEdit(it)}>Edit</button> },
   ];
 
   const middle = {
     quotation: [
-      { key: 'no', header: 'Number', className: 'num', render: (it) => it.payload.quotation_no },
-      { key: 'date', header: 'Date', render: (it) => date(it.payload.quotation_date) },
-      { key: 'client', header: 'Client', className: 'font-medium text-foreground', render: (it) => <>{it.payload.client_name}<div className="text-[12px] font-normal text-muted-foreground">{it.payload.contact_person}</div></> },
-      { key: 'service', header: 'Service', className: 'wrap', render: (it) => it.payload.service_quoted },
-      { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.quotation_value, it.payload.currency) },
-      { key: 'status', header: 'Status', render: (it) => <Badge>{it.payload.status}</Badge> },
+      { key: 'no', header: 'Quotation', render: (it) => <><b className="whitespace-nowrap">{it.payload.quotation_no}</b><span className="set-sub whitespace-nowrap">{date(it.payload.quotation_date)}</span></> },
+      { key: 'client', header: 'Client and service', className: 'app-wrap', render: (it) => <><b>{it.payload.client_name}</b><span className="set-sub">{[it.payload.contact_person, it.payload.service_quoted].filter(Boolean).join(' · ')}</span></> },
+      { key: 'value', header: 'Value', num: true, render: (it) => <b className="whitespace-nowrap">{money(it.payload.quotation_value, it.payload.currency)}</b> },
+      { key: 'status', header: 'Status', render: (it) => <Tone tone={STATUS_TONE[it.payload.status] || 'plain'}>{it.payload.status}</Tone> },
     ],
     project: [
-      { key: 'pid', header: 'Project ID', className: 'num', render: (it) => it.payload.project_id },
-      { key: 'client', header: 'Client', className: 'font-medium text-foreground', render: clientOf },
-      { key: 'service', header: 'Primary service', className: 'wrap', render: (it) => it.payload.primary_service },
-      { key: 'from', header: 'From quotation', className: 'num text-[12px] text-secondary-text', render: (it) => parentOf(it)?.payload.quotation_no },
-      { key: 'chk', header: 'Checklist', render: (it) => (it.payload.apply_onboarding_template ? '11 steps' : 'none') },
+      { key: 'pid', header: 'Project ID', render: (it) => <b>{it.payload.project_id}</b> },
+      { key: 'client', header: 'Client', render: clientOf },
+      { key: 'service', header: 'Primary service', className: 'app-wrap--sm', render: (it) => it.payload.primary_service },
+      { key: 'from', header: 'From quotation', render: (it) => <span className="text-secondary-text">{parentOf(it)?.payload.quotation_no}</span> },
+      { key: 'chk', header: 'Checklist', render: (it) => (it.payload.apply_onboarding_template ? '11 steps' : 'None') },
     ],
     purchase_order: [
-      { key: 'po', header: 'PO number', className: 'num font-medium text-foreground', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', render: (it) => <b>{it.payload.po_number}</b> },
       { key: 'client', header: 'Client', render: clientOf },
-      { key: 'pid', header: 'Project', className: 'num text-[12px] text-secondary-text', render: (it) => it.payload.project_id },
-      { key: 'date', header: 'PO date', render: (it) => date(it.payload.po_date) },
-      { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.po_value, it.payload.currency) },
-      { key: 'terms', header: 'Terms', align: 'right', render: (it) => `${it.payload.payment_terms_days} d` },
-      { key: 'deliv', header: 'Delivery', render: (it) => date(it.payload.actual_delivery_date) },
+      { key: 'pid', header: 'Project', render: (it) => <span className="text-secondary-text">{it.payload.project_id}</span> },
+      { key: 'date', header: 'PO date', num: true, render: (it) => <span className="whitespace-nowrap">{date(it.payload.po_date)}</span> },
+      { key: 'value', header: 'Value', num: true, render: (it) => <b className="whitespace-nowrap">{money(it.payload.po_value, it.payload.currency)}</b> },
+      { key: 'terms', header: 'Terms', num: true, render: (it) => `${it.payload.payment_terms_days} days` },
+      { key: 'deliv', header: 'Delivery', render: (it) => <span className="whitespace-nowrap">{date(it.payload.actual_delivery_date)}</span> },
     ],
     service: [
-      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
-      { key: 'service', header: 'Service line', className: 'wrap', render: (it) => it.payload.service },
-      { key: 'value', header: 'Value', align: 'right', render: (it) => money(it.payload.service_value) },
+      { key: 'po', header: 'PO number', render: (it) => <b>{it.payload.po_number}</b> },
+      { key: 'service', header: 'Service line', className: 'app-wrap', render: (it) => it.payload.service },
+      { key: 'value', header: 'Value', num: true, render: (it) => money(it.payload.service_value) },
     ],
     stage: [
-      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
+      { key: 'po', header: 'PO number', render: (it) => <b>{it.payload.po_number}</b> },
       { key: 'client', header: 'Client', render: clientOf },
-      { key: 'n', header: '#', align: 'right', render: (it) => it.payload.stage_no },
+      { key: 'n', header: '#', num: true, render: (it) => it.payload.stage_no },
       { key: 'name', header: 'Stage', render: (it) => it.payload.stage_name },
       { key: 'trig', header: 'Trigger', render: (it) => it.payload.trigger_event },
-      { key: 'pct', header: '%', align: 'right', render: (it) => `${Math.round(it.payload.stage_percent * 100)}%` },
-      { key: 'amt', header: 'Amount', align: 'right', render: (it) => { const po = parentOf(it); return po ? money(po.payload.po_value * it.payload.stage_percent, po.payload.currency) : '—'; } },
+      { key: 'pct', header: '%', num: true, render: (it) => `${Math.round(it.payload.stage_percent * 100)}%` },
+      { key: 'amt', header: 'Amount', num: true, render: (it) => { const po = parentOf(it); return po ? money(po.payload.po_value * it.payload.stage_percent, po.payload.currency) : '—'; } },
     ],
     money: [
-      { key: 'kind', header: 'Type', render: (it) => <Badge tone={it.step === 'invoice' ? 'info' : 'success'}>{it.step}</Badge> },
-      { key: 'po', header: 'PO number', className: 'num', render: (it) => it.payload.po_number },
+      { key: 'kind', header: 'Type', render: (it) => <Tone tone={it.step === 'invoice' ? 'info' : 'ok'}>{it.step === 'invoice' ? 'Invoice' : 'Receipt'}</Tone> },
+      { key: 'po', header: 'PO number', render: (it) => <b>{it.payload.po_number}</b> },
       { key: 'client', header: 'Client', render: clientOf },
       { key: 'stage', header: 'Stage', render: (it) => parentOf(it)?.payload.stage_name || `stage ${it.payload.stage_no}` },
-      { key: 'detail', header: 'Detail', className: 'num', render: (it) => (it.step === 'invoice' ? it.payload.invoice_no : money(it.payload.amount_received)) },
-      { key: 'date', header: 'Date', render: (it) => date(it.step === 'invoice' ? it.payload.invoice_date : it.payload.payment_received_date) },
+      { key: 'detail', header: 'Detail', render: (it) => (it.step === 'invoice' ? it.payload.invoice_no : money(it.payload.amount_received)) },
+      { key: 'date', header: 'Date', num: true, render: (it) => <span className="whitespace-nowrap">{date(it.step === 'invoice' ? it.payload.invoice_date : it.payload.payment_received_date)}</span> },
     ],
   }[stepKey];
 
+  /** The phone row: what it is, its figure, the duplicate badge, and the controls. */
+  const phone = (it) => {
+    const p = it.payload;
+    const f = dupFlag(it);
+    const [t, amount, meta] = {
+      quotation: [p.client_name, money(p.quotation_value, p.currency), [p.quotation_no, p.service_quoted, p.status].filter(Boolean).join(' · ')],
+      project: [clientOf(it), '', [p.project_id, p.primary_service].filter(Boolean).join(' · ')],
+      purchase_order: [p.po_number, money(p.po_value, p.currency), [clientOf(it), date(p.po_date)].filter(Boolean).join(' · ')],
+      service: [p.service, money(p.service_value), p.po_number],
+      stage: [`${p.po_number} · ${p.stage_name}`, `${Math.round(p.stage_percent * 100)}%`, [clientOf(it), p.trigger_event].filter(Boolean).join(' · ')],
+      money: [`${it.step === 'invoice' ? 'Invoice' : 'Receipt'} · ${p.po_number}`, it.step === 'invoice' ? '' : money(p.amount_received), [clientOf(it), it.step === 'invoice' ? p.invoice_no : '', date(it.step === 'invoice' ? p.invoice_date : p.payment_received_date)].filter(Boolean).join(' · ')],
+    }[stepKey] || [clientOf(it), '', ''];
+    const errs = it.flags.filter((x) => x.code !== 'duplicate');
+    return (
+      <PhoneRow
+        title={t || `S.No ${it.source_row}`}
+        amount={amount}
+        meta={[`S.No ${it.source_row}`, meta, f && `on site as ${it.existing_ref}`, !it.included && 'not ticked'].filter(Boolean).join(' · ')}
+        state={f ? <Tone tone="wait">{f.certain === false ? 'Possible duplicate' : 'Duplicate'}</Tone> : <Tone tone="info">New</Tone>}
+        className={it.existing_ref ? 'tr--dup' : undefined}
+        wraps
+      >
+        {f?.certain === false && <span className="mg-row__meta font-semibold text-wait" style={{ gridColumn: '1 / -1' }}>Not certain: confirm it’s the same deal</span>}
+        {errs.length > 0 && <span style={{ gridColumn: '1 / -1' }}><Flags flags={errs} /></span>}
+        <span className="set-rowacts items-center">
+          <label className="mg-check text-[13px]">
+            <input type="checkbox" checked={it.included} disabled={committed || !it.parent_included} aria-label={`Include S.No ${it.source_row} in the commit`} onChange={() => onToggle(it)} />
+            Include
+          </label>
+          {it.existing_ref && !committed && !(it.action === 'create' && it.step !== 'quotation') ? actionCell(it) : committed && it.committed_ref ? <span className="text-[12.5px] text-secondary-text">Written as {it.committed_ref}</span> : null}
+          {!committed && <button type="button" className="mg-btn mg-btn--sm" aria-label={`Edit S.No ${it.source_row}`} onClick={() => onEdit(it)}>Edit</button>}
+        </span>
+      </PhoneRow>
+    );
+  };
+
   const possible = items.filter((it) => it.existing_ref && dupFlag(it)?.certain === false).length;
   return (
-    <Card
-      flush
-      title={stepKey === 'service' ? 'Service lines' : STEPS.find((s) => s.key === stepKey).label}
-      hint={hint(stepKey)}
-      actions={
-        <div className="card__actions">
-          {stepKey === 'quotation' && (
-            <Select value={filters.status} placeholder="Status: all" options={['Submitted', 'Under Negotiation', 'Won - PO Received', 'Lost', 'On Hold']} onChange={(e) => setFilters({ ...filters, status: e.target.value })} />
-          )}
-          <Select value={filters.action} placeholder="Show: all" options={[{ value: 'create', label: 'New only' }, { value: 'dup', label: 'Duplicates only' }, { value: 'errors', label: 'Errors only' }]} onChange={(e) => setFilters({ ...filters, action: e.target.value })} />
-          <div className="flex items-center gap-2">
-            <Checkbox id={`flagged-${stepKey}`} checked={filters.flagged} onCheckedChange={(on) => setFilters({ ...filters, flagged: on === true })} />
-            <Label htmlFor={`flagged-${stepKey}`} className="text-[13px] font-normal text-secondary-text">Flagged only</Label>
+    <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby={`ir-${stepKey}`}>
+      <div className="app-panel__head">
+        <div className="app-panel__titles"><h2 className="mg-panel__title" id={`ir-${stepKey}`}>{title}</h2><span className="mg-panel__hint">{hint(stepKey)}</span></div>
+        {stepKey !== 'service' && (
+          <div className="mg-filterbar set-tools" role="group" aria-label="Filters for this step">
+            {stepKey === 'quotation' && (
+              <span className="mg-select-wrap">
+                <select className="mg-select" aria-label="Status in the sheet" value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}>
+                  <option value="">Any status</option>
+                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </span>
+            )}
+            <span className="mg-select-wrap">
+              <select className="mg-select" aria-label="Show" value={filters.action} onChange={(e) => setFilters({ ...filters, action: e.target.value })}>
+                <option value="">Show all</option><option value="create">New only</option><option value="dup">Duplicates only</option><option value="errors">Errors only</option>
+              </select>
+            </span>
+            <label className="mg-check text-[13px]"><input type="checkbox" checked={filters.flagged} onChange={(e) => setFilters({ ...filters, flagged: e.target.checked })} />Flagged only</label>
+            <span className="text-[12.5px] text-muted-foreground tabular-nums">{rows.length} of {items.length}{dups ? ` · ${dups} duplicate${dups === 1 ? '' : 's'}` : ''}</span>
+            {dups > 0 && !committed && (
+              <>
+                <button type="button" className="mg-btn mg-btn--sm" title="Every duplicate in this step keeps the site’s record" onClick={() => onDecideAll('skip')}>Keep all originals</button>
+                <button type="button" className="mg-btn mg-btn--sm" title="Every duplicate in this step takes the sheet’s values" onClick={() => onDecideAll('update')}>Update all from sheet</button>
+              </>
+            )}
           </div>
-          {dups > 0 && !committed && (
-            <>
-              <Button variant="secondary" size="sm" onClick={() => onDecideAll('skip')} title="Every duplicate in this step keeps the site's record">Keep all originals</Button>
-              <Button variant="secondary" size="sm" onClick={() => onDecideAll('update')} title="Every duplicate in this step takes the sheet's values">Update all from sheet</Button>
-            </>
-          )}
-          <span className="num text-[12px] text-muted-foreground">{rows.length} of {items.length}{dups ? ` · ${dups} duplicate${dups === 1 ? '' : 's'}` : ''}</span>
-        </div>
-      }
-    >
-      {possible > 0 && (
-        <div className="px-4 pt-3">
-          <Alert tone="warning">
-            {possible} possible duplicate{possible === 1 ? ' was' : 's were'} matched only by client name and service
-            (and the proposal date, when the sheet has one). This is how Lost, Under Negotiation and On Hold deals are
-            matched, because they have no PO number; a quotation number in the sheet makes the match exact. The match
-            may be wrong: a client can have two proposals for the same service. Check each one before keeping the
-            original: if it is a different deal, choose "Import as new" and it is added with the next quotation number.
-          </Alert>
-        </div>
+        )}
+        {possible > 0 && (
+          <MoneyBanner tone="wait" className="basis-full" title={`${possible} possible duplicate${possible === 1 ? ' was' : 's were'} matched only by client name and service.`}>
+            {' '}(And the proposal date, when the sheet has one.) This is how Lost, Under Negotiation and On Hold deals are matched, because they have no PO number; a quotation number in the sheet makes the match exact. A client can have two proposals for the same service, so check each one: if it’s a different deal, choose Import as new and it’s added with the next quotation number.
+          </MoneyBanner>
+        )}
+      </div>
+      {rows.length === 0 ? (
+        <StateCard inPanel tone="plain" title="Nothing in this step" text={items.length ? 'Nothing matches the filters.' : 'The sheet produced no records of this kind.'}>
+          {items.length > 0 && filtered && <button type="button" className="mg-btn mg-btn--sm" onClick={() => setFilters({ status: '', flagged: false, action: '' })}>Clear filters</button>}
+        </StateCard>
+      ) : (
+        <ListTable
+          label={title}
+          rows={rows}
+          // A column nothing in this step fills only widens the table.
+          columns={[...base, ...middle, ...tail].filter((c) => c.key !== 'assumptions' || items.some((it) => it.assumptions.length))}
+          rowClassName={(it) => (it.existing_ref ? 'tr--dup' : '')}
+          phone={phone}
+          phoneBelow={1180}
+        />
       )}
-      <DataTable
-        rows={rows}
-        // A column nothing in this step fills only widens the table.
-        columns={[...base, ...middle, ...tail].filter((c) => c.key !== 'assumptions' || items.some((it) => it.assumptions.length))}
-        rowClassName={(it) => (it.existing_ref ? 'tr--dup' : '')}
-        empty={<Empty title="Nothing in this step" text={items.length ? 'Nothing matches the filters.' : 'The sheet produced no records of this kind.'} />}
-      />
-    </Card>
+    </section>
   );
 }
 
 function hint(stepKey) {
   return {
-    quotation: 'One per sheet row. Yellow rows are already on the site, matched by PO number or quotation number; "possible" duplicates matched by client, service and date. Keeping the original only fills its blank fields.',
-    project: 'One per won deal with a PO. Registered from its quotation, with the next free project ID. Yellow: the quotation or PO already has a project.',
-    purchase_order: 'The PO for each won deal. Dates marked as assumed follow the agreed rules. Yellow: the PO number is already on the site; your choice here carries to its stages, invoice and receipt.',
+    quotation: 'One per sheet row. Duplicates are already on the site, matched by PO number or quotation number; possible duplicates by client, service and date. Keeping the original only fills its blank fields.',
+    project: 'One per won deal with a PO. Registered from its quotation, with the next free project ID. A duplicate here means the quotation or PO already has a project.',
+    purchase_order: 'The PO for each won deal. Dates marked assumed follow the agreed rules. A duplicate means the PO number is already on the site; your choice carries to its stages, invoice and receipt.',
     service: 'One line per PO saying what it covers, at the PO value.',
-    stage: 'The payment split per PO. Read from the remarks where stated, 50/50 otherwise, 100% on delivery where the terms say so. Yellow: that stage number already exists on the PO.',
-    money: 'Invoices and receipts the sheet shows, recorded on the advance stage. Yellow: the stage already carries an invoice or a receipt.',
+    stage: 'The payment split per PO: read from the remarks where stated, 50/50 otherwise, 100% on delivery where the terms say so. A duplicate means that stage number already exists on the PO.',
+    money: 'Invoices and receipts the sheet shows, recorded on the advance stage. A duplicate means the stage already carries an invoice or a receipt.',
   }[stepKey];
-}
-
-function Flags({ flags }) {
-  if (!flags.length) return <span className="text-muted-foreground">—</span>;
-  // A flag is a sentence: it wraps inside a bounded column, so a long one
-  // neither widens the table past the screen nor squeezes the action box.
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 260, maxWidth: 440 }}>
-      {flags.map((f, i) => (
-        <span key={i} title={`${f.message}${f.by === 'ai' ? ' (AI)' : ''}`} style={{ maxWidth: '100%' }}>
-          <Badge className="h-auto max-w-full justify-start whitespace-normal text-left" tone={f.level === 'error' ? 'danger' : f.level === 'warn' ? 'warning' : 'info'}>{f.by === 'ai' ? '✦ ' : ''}{f.message}</Badge>
-        </span>
-      ))}
-    </div>
-  );
 }
 
 /* ------------------------------------------------------------ summary */
 
-function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan, onShowErrors }) {
+function ListCard({ id, title, hint: h, items, empty = 'None' }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, 6);
+  return (
+    <section className="mg-glass mg-glass--strong mg-panel" data-a="rise" aria-labelledby={id} style={{ gap: 10 }}>
+      <div className="flex flex-col gap-0.5"><h2 className="mg-panel__title" id={id}>{title}</h2>{h && <span className="mg-panel__hint">{h}</span>}</div>
+      {items.length === 0 ? <p className="m-0 text-[13px] text-muted-foreground">{empty}</p> : (
+        <ul className="m-0 flex list-none flex-col p-0">
+          {shown.map((it, i) => <li key={i} className="set-kv text-[13px]">{it.k && <b className="whitespace-nowrap">{it.k}</b>}<span className="min-w-0 flex-[1_1_200px] text-secondary-text">{it.v}</span></li>)}
+        </ul>
+      )}
+      {items.length > 6 && <div><button type="button" className="mg-btn mg-btn--sm mg-btn--ghost" onClick={() => setAll((v) => !v)}>{all ? 'Show fewer' : `Show all ${items.length}`}</button></div>}
+    </section>
+  );
+}
+
+function Summary({ batch, items, errors, effectiveIncluded, hasErrors, committed, onCommit, onBack, onReplan, onShowErrors }) {
   const steps = STEPS.filter((s) => s.key !== 'summary' && s.key !== 'money').map((s) => s.key).concat(['service', 'invoice', 'receipt']);
   const count = (key, pred) => items.filter((it) => it.step === key && pred(it)).length;
-  const assumptions = items.filter(effectiveIncluded).flatMap((it) => it.assumptions.map((a) => `S.No ${it.source_row}: ${a}`));
+  const assumptions = items.filter(effectiveIncluded).flatMap((it) => it.assumptions.map((a) => ({ k: `S.No ${it.source_row}`, v: a })));
   const skipped = batch.summary?.skipped_rows || [];
-  const errors = items.filter((it) => effectiveIncluded(it) && it.flags.some((f) => f.level === 'error'));
   const replacing = items.filter((it) => effectiveIncluded(it) && it.action === 'update');
   const tracked = items.filter((it) => it.step === 'quotation' && effectiveIncluded(it) && it.payload?.tracking).map((it) => it.payload.tracking);
   const history = {
@@ -475,98 +593,73 @@ function Summary({ batch, items, effectiveIncluded, hasErrors, committed, onComm
   };
   const label = { quotation: 'Quotations', project: 'Projects', purchase_order: 'Purchase orders', service: 'Service lines', stage: 'Payment stages', invoice: 'Invoices', receipt: 'Receipts' };
   const stepLabel = { quotation: 'quotation', project: 'project', purchase_order: 'PO', service: 'service line', stage: 'stage', invoice: 'invoice', receipt: 'receipt' };
-  const n = (x) => <span className="num">{x}</span>;
-  const list = 'm-0 list-disc space-y-1 pl-5 text-[13px] text-secondary-text';
+  const historyItems = [
+    history.notes > 0 && { v: `${history.notes} note${history.notes === 1 ? '' : 's'} on ${history.deals} deal timeline${history.deals === 1 ? '' : 's'} (remarks and follow-up comments)` },
+    history.reminders > 0 && { v: `${history.reminders} follow-up reminder${history.reminders === 1 ? '' : 's'} for the salespeople, from the next follow-up dates` },
+    history.contacts > 0 && { v: `${history.contacts} deal${history.contacts === 1 ? '' : 's'} with a newer last-contact date, from the last follow-up dates` },
+    history.closed > 0 && { v: `${history.closed} reminder${history.closed === 1 ? '' : 's'} closed because the deal was lost` },
+  ].filter(Boolean);
+  const rows = steps.map((k) => ({ id: k, k }));
+  const cnt = (r, pred) => count(r.k, pred);
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {hasErrors && !committed && (
-        <Alert tone="danger">
-          <div className="flex flex-col gap-2">
-            <span>
-              Commit is off until {errors.length === 1 ? 'this row is' : `these ${errors.length} rows are`} fixed with Edit or unticked:
-            </span>
-            <ul className="m-0 list-disc space-y-1 pl-5">
-              {errors.slice(0, 5).map((it) => (
-                <li key={it.id}>
-                  S.No {it.source_row}, {it.step.replace('_', ' ')}{it.payload.client_name ? ` for ${it.payload.client_name}` : ''}: {it.flags.filter((f) => f.level === 'error').map((f) => f.message).join('; ')}
-                </li>
-              ))}
-              {errors.length > 5 && <li>and {errors.length - 5} more</li>}
-            </ul>
-            <div><Button variant="secondary" size="sm" onClick={onShowErrors}>Show {errors.length === 1 ? 'it' : 'them'}</Button></div>
-          </div>
-        </Alert>
-      )}
-      <Card flush title="What will be written" hint={committed ? 'What was written' : 'Only ticked items whose parents are also ticked. Duplicates keep the original unless set to update from the sheet.'}>
-        <DataTable
-          label="What will be written"
-          rows={steps.map((k) => ({ id: k, k }))}
-          columns={[
-            { key: 'record', header: 'Record', className: 'font-medium', render: (r) => label[r.k] },
-            { key: 'new', header: 'New', align: 'right', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'create')) },
-            { key: 'keep', header: 'Keep original', align: 'right', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'skip')) },
-            { key: 'update', header: 'Update from sheet', align: 'right', className: 'text-waiting', render: (r) => n(count(r.k, (it) => effectiveIncluded(it) && it.action === 'update')) },
-            { key: 'off', header: 'Unticked', align: 'right', className: 'text-muted-foreground', render: (r) => n(count(r.k, (it) => !effectiveIncluded(it))) },
-          ]}
-        />
-      </Card>
-
-      {replacing.length > 0 && !committed && (
-        <Card title={`Existing records updated from the sheet · ${replacing.length}`} hint="The sheet's values replace the tracker's; fields the sheet leaves blank are not touched. Remarks written in the tracker itself are kept on the deal's timeline.">
-          <ul className={list}>
-            {replacing.map((it) => {
-              const changed = it.flags.find((f) => f.code === 'sheet_changes');
-              return <li key={it.id}>S.No {it.source_row}: {stepLabel[it.step]} <span className="num text-foreground">{it.existing_ref}</span>{changed ? ` · ${changed.message.replace(/^Updated from the sheet: /, '')}` : ''}</li>;
-            })}
+        <MoneyBanner tone="late" role="alert" title={`Commit is off until ${errors.length === 1 ? 'this row is' : `these ${errors.length} rows are`} fixed with Edit, or unticked.`}
+          action={<button type="button" className="mg-btn mg-btn--sm" onClick={onShowErrors}>Show {errors.length === 1 ? 'it' : 'them'}</button>}>
+          <ul className="mt-1.5 mb-0 list-disc pl-5">
+            {errors.slice(0, 5).map((it) => (
+              <li key={it.id}>S.No {it.source_row}, {NOUN[it.step]}{it.payload.client_name ? ` for ${it.payload.client_name}` : ''}: {it.flags.filter((f) => f.level === 'error').map((f) => f.message).join('; ')}</li>
+            ))}
+            {errors.length > 5 && <li>and {errors.length - 5} more</li>}
           </ul>
-        </Card>
+        </MoneyBanner>
       )}
-
-      {history.notes + history.reminders + history.contacts + history.closed > 0 && (
-        <Card title="Added to the deals' history" hint={committed ? 'What the sheet added' : "From the sheet's remarks and follow-up columns. Text already on a deal is not added again."}>
-          <ul className={list}>
-            {history.notes > 0 && <li>{history.notes} note{history.notes === 1 ? '' : 's'} on {history.deals} deal timeline{history.deals === 1 ? '' : 's'} (remarks and follow-up comments)</li>}
-            {history.reminders > 0 && <li>{history.reminders} follow-up reminder{history.reminders === 1 ? '' : 's'} for the salespeople, from the next follow-up dates</li>}
-            {history.contacts > 0 && <li>{history.contacts} deal{history.contacts === 1 ? '' : 's'} with a newer last-contact date, from the last follow-up dates</li>}
-            {history.closed > 0 && <li>{history.closed} reminder{history.closed === 1 ? '' : 's'} closed because the deal was lost</li>}
-          </ul>
-        </Card>
-      )}
-
-      <SheetReading
-        key={JSON.stringify([batch.sheet_name, batch.rules?.stage_map, batch.rules?.won_requires_po, batch.rules?.exclude_iso, batch.rules?.update_from_sheet, batch.summary?.stage_values])}
-        batch={batch}
-        committed={committed}
-        onReplan={onReplan}
-      />
-
-      <Card flush title={`Rows left out · ${skipped.length}`} hint="These never became records. Change a stage reading or a rule above to bring any of them in.">
-        <DataTable
-          label="Rows left out"
-          rows={skipped.map((s, i) => ({ ...s, id: i }))}
-          empty={<p className="px-4 py-3 text-[13px] text-muted-foreground">None</p>}
-          columns={[
-            { key: 'sno', header: 'S.No', className: 'num whitespace-nowrap text-[12px] text-muted-foreground', render: (s) => s.ref || s.sno },
-            { key: 'client', header: 'Client', className: 'font-medium', render: (s) => s.client },
-            { key: 'stage', header: 'Deal stage in the sheet', className: 'wrap text-[12px] text-secondary-text', render: (s) => s.stage },
-            { key: 'reason', header: 'Reason', className: 'wrap text-[12px] text-secondary-text', render: (s) => s.reason },
-          ]}
+      <div className="set-two">
+        <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby="ir-ww">
+          <div className="app-panel__head"><div className="app-panel__titles"><h2 className="mg-panel__title" id="ir-ww">{committed ? 'What was written' : 'What will be written'}</h2><span className="mg-panel__hint">{committed ? 'Counts as they were committed.' : 'Only ticked items whose parents are ticked too. Duplicates keep the original unless set to update from the sheet.'}</span></div></div>
+          <ListTable
+            label="What will be written"
+            rows={rows}
+            columns={[
+              { key: 'record', header: 'Record', render: (r) => <b>{label[r.k]}</b> },
+              { key: 'new', header: 'New', num: true, render: (r) => <b>{cnt(r, (it) => effectiveIncluded(it) && it.action === 'create')}</b> },
+              { key: 'keep', header: 'Keep original', num: true, render: (r) => cnt(r, (it) => effectiveIncluded(it) && it.action === 'skip') },
+              { key: 'update', header: 'Update from sheet', num: true, render: (r) => cnt(r, (it) => effectiveIncluded(it) && it.action === 'update') },
+              { key: 'off', header: 'Unticked', num: true, render: (r) => <span className="text-muted-foreground">{cnt(r, (it) => !effectiveIncluded(it))}</span> },
+            ]}
+            phone={(r) => <PhoneRow title={label[r.k]} amount={`${cnt(r, (it) => effectiveIncluded(it) && it.action === 'create')} new`} meta={`${cnt(r, (it) => effectiveIncluded(it) && it.action === 'skip')} kept · ${cnt(r, (it) => effectiveIncluded(it) && it.action === 'update')} updated · ${cnt(r, (it) => !effectiveIncluded(it))} unticked`} />}
+          />
+        </section>
+        <SheetReading
+          key={JSON.stringify([batch.sheet_name, batch.rules?.stage_map, batch.rules?.won_requires_po, batch.rules?.exclude_iso, batch.rules?.update_from_sheet, batch.summary?.stage_values])}
+          batch={batch}
+          committed={committed}
+          onReplan={onReplan}
         />
-      </Card>
+      </div>
 
-      <Card title={`Assumptions · ${assumptions.length}`} hint="Every assumed value is also written into the record's Remarks.">
-        {assumptions.length ? <ul className={list}>{assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul> : <p className="text-[13px] text-muted-foreground">None</p>}
-      </Card>
+      <div className="set-two">
+        {replacing.length > 0 && (
+          <ListCard id="ir-up" title={`Existing records updated from the sheet · ${replacing.length}`} hint="The sheet’s values replace the tracker’s; fields it leaves blank aren’t touched. Remarks written in the tracker stay on the deal’s timeline."
+            items={replacing.map((it) => { const changed = it.flags.find((f) => f.code === 'sheet_changes'); return { k: it.existing_ref, v: `S.No ${it.source_row}, ${stepLabel[it.step]}${changed ? `: ${changed.message.replace(/^Updated from the sheet: /, '')}` : ''}` }; })} />
+        )}
+        {historyItems.length > 0 && (
+          <ListCard id="ir-hi" title={committed ? 'What the sheet added' : 'Added to the deals’ history'} hint="From the remarks and follow-up columns. Text already on a deal isn’t added again." items={historyItems} />
+        )}
+        <ListCard id="ir-lo" title={`Rows left out · ${skipped.length}`} hint="Not written. Change a stage reading or a rule above to bring any of them in."
+          items={skipped.map((s) => ({ k: s.ref ? String(s.ref) : `S.No ${s.sno}`, v: [s.client || '(no client)', s.stage && `“${s.stage}”`, s.reason].filter(Boolean).join(' · ') }))} />
+        <ListCard id="ir-am" title={`Assumptions · ${assumptions.length}`} hint="Every assumed value is also written into the record’s remarks." items={assumptions} />
+      </div>
 
       {!committed && (
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          {hasErrors && <span className="text-[13px] text-late">Fix or untick the {errors.length === 1 ? 'row' : `${errors.length} rows`} with an error to commit</span>}
-          <Button variant="secondary" onClick={onBack}>Back to review</Button>
-          <Button disabled={hasErrors} onClick={onCommit}>Complete and commit</Button>
+        <div className="flex flex-wrap items-center justify-end gap-3" data-a="rise">
+          {hasErrors && <span className="text-[13px] font-semibold text-late">Fix or untick the {errors.length === 1 ? 'row' : `${errors.length} rows`} with an error to commit</span>}
+          <button type="button" className="mg-btn" onClick={onBack}>Back to review</button>
+          <button type="button" className="mg-btn mg-btn--primary" disabled={hasErrors} onClick={onCommit}>Complete and commit</button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -587,8 +680,8 @@ const isChoice = (v) => STAGE_CHOICES.some((c) => c.value === v);
 
 /**
  * Every deal-stage wording in the sheet, what it was read as, and a way to
- * read it differently — plus the two agreed rules that leave rows out, as
- * switches. "Read again" re-plans the same upload with the choices.
+ * read it differently — plus the agreed rules that leave rows out, as
+ * switches. "Apply and read again" re-plans the same upload with the choices.
  */
 function SheetReading({ batch, committed, onReplan }) {
   const values = batch.summary?.stage_values || [];
@@ -618,91 +711,84 @@ function SheetReading({ batch, committed, onReplan }) {
   }
 
   const readingLabel = (v) => (v.reading === 'unknown' ? 'Not understood' : STAGE_CHOICES.find((c) => c.value === v.reading)?.label || v.reading);
+  const readAs = (v) => (committed ? readingLabel(v) : (
+    <span className="mg-select-wrap block min-w-[200px]">
+      <select className="mg-select" aria-label={`Read "${v.value}" as`} value={choice[v.key] || ''} onChange={(e) => setChoice((s) => ({ ...s, [v.key]: e.target.value }))}>
+        <option value="">Not understood: choose</option>
+        {STAGE_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+      </select>
+    </span>
+  ));
 
   return (
-    <Card
-      title={`How the sheet's deal stages were read · ${values.length}`}
-      hint={committed ? 'How the sheet was read when it was committed.' : 'Every wording in the deal-stage column. Change any reading and read the sheet again; nothing is written until you commit.'}
-    >
-      <div className="flex flex-col gap-4">
-        {unread > 0 && !committed && <Alert tone="warning">{unread} wording{unread === 1 ? ' was' : 's were'} not understood. Choose a reading for {unread === 1 ? 'it' : 'each'}, or its rows stay out.</Alert>}
-        {byAi > 0 && !committed && <Alert tone="info">{byAi} wording{byAi === 1 ? ' was' : 's were'} read by the AI (marked ✦), because the rules were unsure of {byAi === 1 ? 'it' : 'them'}. Check {byAi === 1 ? 'it' : 'them'} before you commit.</Alert>}
-        {dropped.length > 0 && <Alert tone="info">Left out of the upload entirely, because they hold sign-in details: {dropped.join(', ')}. They were not stored or sent anywhere.</Alert>}
+    <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby="ir-read">
+      <div className="app-panel__head">
+        <div className="app-panel__titles"><h2 className="mg-panel__title" id="ir-read">How the sheet’s deal stages were read · {values.length}</h2><span className="mg-panel__hint">{committed ? 'How the sheet was read when it was committed.' : 'Every wording in the deal-stage column. Change any reading and read the sheet again; nothing is written until you commit.'}</span></div>
+        {unread > 0 && !committed && <MoneyBanner tone="wait" className="basis-full" title={`${unread} wording${unread === 1 ? ' was' : 's were'} not understood.`}>{' '}Choose a reading for {unread === 1 ? 'it' : 'each'}, or its rows stay out.</MoneyBanner>}
+        {byAi > 0 && !committed && <MoneyBanner className="basis-full" title={`${byAi} wording${byAi === 1 ? ' was' : 's were'} read by the AI (marked ✦).`}>{' '}The rules were unsure of {byAi === 1 ? 'it' : 'them'}. Check {byAi === 1 ? 'it' : 'them'} before you commit.</MoneyBanner>}
+        {dropped.length > 0 && <MoneyBanner className="basis-full" title="Left out of the upload entirely, because they hold sign-in details:">{' '}{dropped.join(', ')}. They weren’t stored or sent anywhere.</MoneyBanner>}
         {sheets.length > 1 && (
-          <div className="flex flex-wrap items-center gap-2 text-[13px]">
-            <Label htmlFor="sheet-tab" className="font-normal text-secondary-text">Read from the tab</Label>
-            <div className="min-w-[220px]">
-              <Select id="sheet-tab" value={sheet} placeholder={null} options={sheets} disabled={committed} onChange={(e) => setSheet(e.target.value)} />
-            </div>
-            <span className="text-[12px] text-muted-foreground">The tab whose headers look most like a sales sheet was chosen.</span>
-          </div>
+          <label className="mg-field basis-full">
+            <span className="mg-field__label">Read from the tab</span>
+            <span className="mg-select-wrap max-w-[320px]">
+              <select className="mg-select" value={sheet} disabled={committed} onChange={(e) => setSheet(e.target.value)}>
+                {sheets.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </span>
+            <span className="mg-field__hint">The tab whose headers look most like a sales sheet was chosen.</span>
+          </label>
         )}
-        <div className="-mx-4 border-y border-border">
-          <DataTable
-            label="Deal stage readings"
-            rows={values.map((v) => ({ ...v, id: v.key }))}
-            columns={[
-              {
-                key: 'value', header: 'In the sheet', className: 'wrap',
-                render: (v) => (
-                  <>
-                    {v.value}
-                    {v.by === 'admin' && <span className="text-[12px] text-muted-foreground"> · your reading</span>}
-                    {v.by === 'ai' && <span className="text-[12px] text-muted-foreground"> · ✦ read by the AI</span>}
-                  </>
-                ),
-              },
-              { key: 'rows', header: 'Rows', align: 'right', render: (v) => <span className="num">{v.rows}</span> },
-              {
-                key: 'reading', header: 'Read as',
-                render: (v) => (committed ? readingLabel(v) : (
-                  <Select
-                    className="min-w-[220px]"
-                    aria-label={`Read "${v.value}" as`}
-                    value={choice[v.key] || ''}
-                    placeholder="Not understood: choose"
-                    options={STAGE_CHOICES}
-                    onChange={(e) => setChoice((s) => ({ ...s, [v.key]: e.target.value }))}
-                  />
-                )),
-              },
-            ]}
-          />
-        </div>
-        <div className="flex flex-col gap-3">
-          {[
-            ['rule-won-po', wonNeedsPo, setWonNeedsPo, 'A won deal needs a PO number to be imported (the rule agreed with the sales lead)'],
-            ['rule-iso', excludeIso, setExcludeIso, 'Leave out ISO proposals'],
-            ['rule-update', updateFromSheet, setUpdateFromSheet, 'Deals already in the tracker take what changed in the sheet (stage, value, dates), when they are recognised for certain. A won deal is never moved back.'],
-          ].map(([id, on, set, text]) => (
-            <div key={id} className="flex items-start gap-3">
-              <Checkbox id={id} checked={on} disabled={committed} onCheckedChange={(v) => set(v === true)} className="mt-0.5" />
-              <Label htmlFor={id} className="text-[13px]/[1.5] font-normal text-secondary-text">{text}</Label>
-            </div>
-          ))}
-        </div>
+      </div>
+      <ListTable
+        label="Deal stage readings"
+        rows={values.map((v) => ({ ...v, id: v.key }))}
+        columns={[
+          { key: 'value', header: 'In the sheet', className: 'app-wrap--sm', render: (v) => <><b>“{v.value}”</b>{v.by === 'admin' && <span className="set-sub">Your reading</span>}{v.by === 'ai' && <span className="set-sub">✦ Read by the AI</span>}</> },
+          { key: 'rows', header: 'Rows', num: true, render: (v) => v.rows },
+          { key: 'reading', header: 'Read as', render: readAs },
+        ]}
+        phone={(v) => (
+          <PhoneRow title={`“${v.value}”`} amount={`${v.rows} rows`} meta={v.by === 'ai' ? '✦ Read by the AI' : v.by === 'admin' ? 'Your reading' : null} wraps>
+            <span className="set-rowacts">{readAs(v)}</span>
+          </PhoneRow>
+        )}
+      />
+      <div className="flex flex-col gap-3 border-t border-line px-[22px] py-4">
+        {[
+          ['rule-won-po', wonNeedsPo, setWonNeedsPo, 'A won deal needs a PO number to be imported (the rule agreed with the sales lead)'],
+          ['rule-iso', excludeIso, setExcludeIso, 'Leave out ISO proposals'],
+          ['rule-update', updateFromSheet, setUpdateFromSheet, 'Deals already in the tracker take what changed in the sheet (stage, value, dates), when they’re recognised for certain. A won deal is never moved back.'],
+        ].map(([id, on, set, text]) => (
+          <label key={id} className="mg-switch items-start text-[13px]/[1.5] text-secondary-text">
+            <input id={id} type="checkbox" role="switch" checked={on} disabled={committed} onChange={(e) => set(e.target.checked)} className="flex-none" />
+            <span>{text}</span>
+          </label>
+        ))}
         {!committed && (
           <div className="flex justify-end">
-            <Button disabled={busy || (!changed.length && !rulesChanged && !sheetChanged)} onClick={apply}>
+            <button type="button" className="mg-btn mg-btn--primary" disabled={busy || (!changed.length && !rulesChanged && !sheetChanged)} onClick={apply}>
               {busy ? 'Reading again…' : `Apply and read again${changed.length ? ` (${changed.length} change${changed.length === 1 ? '' : 's'})` : ''}`}
-            </Button>
+            </button>
           </div>
         )}
       </div>
-    </Card>
+    </section>
   );
 }
 
 /* ------------------------------------------------------------ edit */
 
+/** Edit one row, with that step's own fields; a refused save keeps the dialog open with the reason. */
 function EditItem({ item, fields, onClose, onSave }) {
   const [values, setValues] = useState(() => Object.fromEntries(fields.map((f) => [f.name, item.payload[f.name] ?? ''])));
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState(null);
   const set = (name, v) => setValues((s) => ({ ...s, [name]: v }));
 
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
+    setFailure(null);
     const payload = {};
     for (const f of fields) {
       let v = values[f.name];
@@ -711,18 +797,21 @@ function EditItem({ item, fields, onClose, onSave }) {
       else if (f.type === 'select' && (v === 'true' || v === 'false')) v = v === 'true';
       payload[f.name] = v;
     }
-    await onSave(payload);
+    const err = await onSave(payload);
+    if (err) setFailure(err);
     setBusy(false);
   }
 
+  const who = item.payload.client_name || item.source_client;
   return (
     <Modal
-      title={`Edit ${item.step.replace('_', ' ')}`}
-      subtitle={`S.No ${item.source_row}${item.existing_ref ? ' · duplicate of ' + item.existing_ref : ''}${item.assumptions.length ? ' · assumed: ' + item.assumptions.join('; ') : ''}`}
+      title={`Edit ${NOUN[item.step] || item.step.replace('_', ' ')}`}
+      subtitle={[`S.No ${item.source_row}`, who, item.existing_ref && `duplicate of ${item.existing_ref}`, item.assumptions.length && `assumed: ${item.assumptions.join('; ')}`].filter(Boolean).join(' · ')}
       onClose={onClose}
-      footer={<><Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button><Button type="submit" form="edit-item" disabled={busy}>Save</Button></>}
+      footer={<><button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="edit-item" className="mg-btn mg-btn--primary" disabled={busy}>{busy ? 'Saving…' : failure ? 'Try again' : 'Save'}</button></>}
     >
       <form id="edit-item" onSubmit={submit} className="form-grid">
+        {failure && <div className="span-all"><DialogError error={`${failure} Your other changes are kept.`} what="this row" /></div>}
         {fields.map((f) => (
           <div key={f.name} className={f.span === 'all' ? 'span-all' : f.span === 2 ? 'span-2' : ''}>
             <Field label={f.label}>
