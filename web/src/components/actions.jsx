@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Modal, Field, FileDrop, Input, Select, Alert, useToast } from './ui.jsx';
+import { Modal, Field, FileDrop, Input, Select, Textarea, Alert, useToast } from './ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
@@ -369,11 +369,14 @@ export function ClaimDecisionDialog({ claim, onClose, onDone }) {
       error={error}
       submitLabel="Save decision"
     >
-      <dl className="mg-facts">
-        {claim.expense_category && <div><dt>Category</dt><dd>{claim.expense_category}</dd></div>}
-        {claim.claim_month && <div><dt>Month</dt><dd>{claim.claim_month}</dd></div>}
-        <div><dt>Claimed</dt><dd className="mg-num">{money(claim.amount_claimed)}</dd></div>
-      </dl>
+      <SumBox
+        rows={[
+          ['Trip', [claim.travel_id, claim.client_name].filter(Boolean).join(' · ') || '—'],
+          ['Category', [claim.expense_category || 'Uncategorised', claim.claim_month].filter(Boolean).join(' · ')],
+          ['Claimed', money(claim.amount_claimed), null, true],
+        ]}
+        foot={claim.approval_status === 'On Hold' ? 'On hold: decide it once what was asked for is in.' : 'Your name is recorded as the one who decided.'}
+      />
       <fieldset className="m-0 flex flex-col gap-2.5 border-0 p-0">
         <legend className="mg-field__label mb-2.5 p-0">Decision<span className="req" aria-hidden="true">*</span></legend>
         {[['Approved', 'Approved'], ['Rejected', 'Rejected'], ['On Hold', 'On hold'], ['Submitted', 'Submitted (undo an earlier decision)']].map(([value, label]) => (
@@ -428,6 +431,65 @@ export function ReimburseClaimDialog({ claim, onClose, onDone }) {
           <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
         </Field>
       </div>
+    </ActionModal>
+  );
+}
+
+/**
+ * Put a decided or reimbursed claim's figures right (POST /expense-claims/:id/correct,
+ * admin only): the reimbursement in all, its date, the decision, and why.
+ * Recorded with the admin's name and the reason.
+ */
+export function CorrectClaimDialog({ claim, onClose, onDone }) {
+  const [amount, setAmount] = useState(String(Number(claim.amount_reimbursed || 0)));
+  const [paidOn, setPaidOn] = useState(claim.reimbursement_date ? String(claim.reimbursement_date).slice(0, 10) : '');
+  const [status, setStatus] = useState(claim.approval_status || 'Approved');
+  const [reason, setReason] = useState('');
+  const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Claim corrected' });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const ok = await run(() =>
+      api.action(`/expense-claims/${claim.id}/correct`, {
+        amount_reimbursed: amount === '' ? null : Number(amount),
+        reimbursement_date: paidOn || null,
+        approval_status: status,
+        reason,
+      })
+    );
+    if (ok) onClose();
+  };
+
+  return (
+    <ActionModal
+      title={`Correct claim ${claim.claim_id}`}
+      subtitle={[claim.employee_name, money(claim.amount_claimed), Number(claim.amount_reimbursed) > 0 && `${money(claim.amount_reimbursed)} reimbursed`].filter(Boolean).join(' · ')}
+      onClose={onClose}
+      onSubmit={submit}
+      busy={busy}
+      error={error}
+      fieldErrors={fieldErrors}
+      what="the correction"
+      submitLabel="Save correction"
+    >
+      <MoneyBanner tone="wait" title={Number(claim.amount_reimbursed) > 0 ? 'This claim is already reimbursed.' : 'This claim is already decided.'}>
+        A correction is recorded with your name and the reason, and the trip's cost updates. Money already paid stays as it is unless you change the figure.
+      </MoneyBanner>
+      <div className="mg-grid2">
+        <Field label="Reimbursed in all" error={fieldErrors.amount_reimbursed} hint={`Up to the ${money(claim.amount_claimed)} claimed`}>
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="mg-input--money" />
+        </Field>
+        <Field label="Reimbursed on" error={fieldErrors.reimbursement_date}>
+          <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </Field>
+        <Field label="Decision" error={fieldErrors.approval_status}>
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} placeholder={null}
+            options={[{ value: 'Approved', label: 'Approved' }, { value: 'Rejected', label: 'Rejected' }, { value: 'On Hold', label: 'On hold' }, { value: 'Submitted', label: 'Waiting for a decision' }]} />
+        </Field>
+      </div>
+      <Field label="Why" required error={fieldErrors.reason}>
+        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. The receipt was for ₹1,020" required error={fieldErrors.reason} />
+      </Field>
     </ActionModal>
   );
 }
