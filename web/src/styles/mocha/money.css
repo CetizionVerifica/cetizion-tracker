@@ -123,3 +123,6 @@
 .app-split .mg-input, .app-split .mg-select { height: 40px; }
 .app-splitwrap { border: 1px solid var(--line); border-radius: 16px; }
 .app-strip .mg-btn { max-width: 100%; white-space: normal; height: auto; min-height: 36px; text-align: left; }
+.app-pobar { height: 8px; margin: 2px 0 6px; max-width: 220px; }
+.mg-table a.mg-iconbtn { width: 36px; height: 36px; }
+.mg-table a.mg-iconbtn svg { width: 16px; height: 16px; }
