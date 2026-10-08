@@ -7,8 +7,10 @@ import { api } from '../lib/api.js';
 import { useDocumentUploads } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
 import {
-  VENDOR_PAYMENT_MODES, correctionBody, correctionEffect, correctionShape, isCorrection,
-  payBody, paymentTotals, settlementState, settlesOf, todayIso, validateCorrection, validatePayment,
+  VENDOR_PAYMENT_MODES, allocationDefaults, allocationRow, bulkPayBody, bulkResultSummary, bulkTotals,
+  correctionBody, correctionEffect, correctionShape, isCorrection,
+  payBody, paymentTotals, settlementState, settlesOf, todayIso, validateBulkPayment, validateCorrection,
+  validatePayment,
 } from '../lib/vendorPayments.js';
 
 /**
@@ -171,6 +173,233 @@ export function PayVendorDialog({ invoice, onClose, onDone }) {
       <Field label="Remarks" error={errors.remarks}>
         <Textarea rows={2} maxLength={1000} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
       </Field>
+    </ActionModal>
+  );
+}
+
+/* ------------------------------------------------ one transfer, many bills */
+
+/**
+ * Settle several of one agency's bills with one transfer (#214 §2.6).
+ *
+ * An agency is paid monthly, so this is the ordinary way the business pays
+ * one: one bank transfer, one UTR, one advice, a dozen bills closed. Each
+ * bill still receives its own ledger row with its own amount and its own
+ * TDS — the transfer's date, method, reference and proof are simply shared
+ * by all of them, which is what the shared fields above the table mean.
+ *
+ * ## What it does not do
+ *
+ * It does not spread a lump sum across the bills by any rule of its own
+ * (#214 §20). Each row starts at that bill's balance and every figure is
+ * visible and editable before the button is pressed, because the person
+ * recording the transfer is the one who knows how the bank split it.
+ *
+ * It does not correct anything. Every figure here is non-negative; taking
+ * money back off a bill is an administrator's correction with a reason, one
+ * bill at a time.
+ *
+ * ## All of it or none of it
+ *
+ * The server writes the batch in one transaction. A refusal means no bill
+ * moved, so this keeps what was typed and shows the server's own message
+ * rather than reporting a partial success that did not happen.
+ */
+export function BulkPayVendorDialog({ invoices = [], onClose, onDone }) {
+  const [rows, setRows] = useState(() =>
+    Object.fromEntries(invoices.map((invoice) => [invoice.id, allocationDefaults(invoice)])));
+  const [paidOn, setPaidOn] = useState(todayIso());
+  const [paymentMode, setPaymentMode] = useState('bank_transfer');
+  const [reference, setReference] = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [proof, setProof] = useState(null);
+  const [local, setLocal] = useState({ form: {}, rows: {} });
+  // Bills going past their payable amount are confirmed before the transfer
+  // is sent, not explained after it.
+  const [armed, setArmed] = useState(false);
+  const uploadDocument = useDocumentUploads();
+  const toast = useToast();
+  const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: null });
+
+  const vendor = invoices[0]?.travel_vendor || 'the agency';
+  const allocations = invoices.map((invoice) => allocationRow({ invoice, ...rows[invoice.id] }));
+  const totals = bulkTotals(allocations);
+  const outstanding = allocations.reduce((sum, row) => sum + Number(row.outstanding || 0), 0);
+
+  const setRow = (id, field, value) => {
+    setRows((current) => ({ ...current, [id]: { ...current[id], [field]: value } }));
+    setArmed(false);
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const found = validateBulkPayment({ allocations, paidOn });
+    setLocal(found);
+    if (!found.ok) return;
+    if (totals.overpaid > 0 && !armed) {
+      setArmed(true);
+      return;
+    }
+
+    let reply = null;
+    const ok = await run(async () => {
+      // One upload for one transfer: the advice proves the transfer, and
+      // every row written points at the same document rather than the file
+      // being uploaded once per bill.
+      const documentId = proof ? await uploadDocument(proof, PROOF_OWNER) : null;
+      reply = await api.action('/vendor-payments/batch', bulkPayBody({
+        allocations, paidOn, paymentMode, reference, remarks, documentId,
+      }));
+      return reply;
+    });
+    if (!ok) return;
+
+    // The server's figures, not the form's: it had the ledger and the credit
+    // notes as they stood after the write.
+    const summary = bulkResultSummary(reply?.meta, money);
+    if (summary) {
+      toast(
+        summary.overpaid > 0
+          ? `${summary.line}. ${summary.overpaid} ${summary.overpaid === 1 ? 'bill now settles' : 'bills now settle'} ${money(summary.overBy)} more than payable.`
+          : summary.line,
+        summary.overpaid > 0 ? 'warning' : 'success'
+      );
+    }
+    onClose();
+  };
+
+  const errors = { ...local.form, ...fieldErrors };
+
+  return (
+    <ActionModal
+      title="Record one transfer to the agency"
+      subtitle={`${vendor} · ${invoices.length} ${invoices.length === 1 ? 'bill' : 'bills'} · ${money(outstanding)} outstanding`}
+      onClose={onClose}
+      onSubmit={submit}
+      busy={busy}
+      error={error}
+      size="lg"
+      submitLabel={totals.overpaid > 0 && armed
+        ? `Yes, record ${money(totals.transferred)} anyway`
+        : `Record transfer of ${money(totals.transferred)}`}
+    >
+      <Alert>
+        One bank transfer, shared below, and <strong>one entry per bill</strong> with its own amount and tax deducted.
+        Either the whole transfer is recorded or none of it is — a problem with any one bill leaves every bill untouched.
+      </Alert>
+
+      <div className="form-grid">
+        <Field label="Paid on" error={errors.payment_date}>
+          {/* A payment is something that happened, so today is the latest the
+              picker offers and the server refuses a later one regardless. */}
+          <Input type="date" max={todayIso()} value={paidOn} onChange={(e) => { setPaidOn(e.target.value); setArmed(false); }} />
+        </Field>
+        <Field label="How it was paid" error={errors.payment_mode}>
+          <Select value={paymentMode} placeholder={null} options={VENDOR_PAYMENT_MODES} onChange={(e) => setPaymentMode(e.target.value)} />
+        </Field>
+        <div className="span-all">
+          <Field label="Reference" hint="The one UTR, cheque number or transaction id — every bill below gets it" error={errors.reference}>
+            <Input value={reference} maxLength={120} onChange={(e) => setReference(e.target.value)} autoFocus />
+          </Field>
+        </div>
+      </div>
+
+      <Field label="Payment proof" hint={`${PROOF_HINT}. One advice for the transfer, shared by every bill`} error={errors.document_id}>
+        <Input type="file" onChange={(e) => setProof(e.target.files?.[0] || null)} />
+      </Field>
+
+      <Field label="Remarks" error={errors.remarks}>
+        <Textarea rows={2} maxLength={1000} value={remarks} onChange={(e) => setRemarks(e.target.value)} />
+      </Field>
+
+      {errors.allocations && <Alert tone="danger">{errors.allocations}</Alert>}
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-[12.5px] text-secondary-text">
+          <thead>
+            <tr className="border-b border-border eyebrow">
+              <th className="py-2 pr-2 text-left font-medium">Bill</th>
+              <th className="px-2 py-2 text-right font-medium">Payable</th>
+              <th className="px-2 py-2 text-right font-medium">Settled</th>
+              <th className="px-2 py-2 text-right font-medium">Balance</th>
+              <th className="px-2 py-2 text-right font-medium">Transfer</th>
+              <th className="px-2 py-2 text-right font-medium">TDS</th>
+              <th className="px-2 py-2 text-right font-medium">Will settle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allocations.map((row) => {
+              const rowErrors = local.rows[row.invoice.id] || {};
+              return (
+                <tr key={row.invoice.id} className="border-b border-border/60 align-top">
+                  <td className="py-2 pr-2">
+                    <span className="num">{row.invoice.vendor_invoice_no || row.invoice.vendor_invoice_id}</span>
+                    <span className="block text-[12px] text-muted-foreground">
+                      {row.invoice.invoice_date ? date(row.invoice.invoice_date) : 'no date'}
+                      {row.invoice.trip_count > 1 ? ` · ${row.invoice.trip_count} trips` : ''}
+                    </span>
+                  </td>
+                  <td className="num px-2 py-2 text-right">{money(row.netPayable)}</td>
+                  <td className="num px-2 py-2 text-right">{money(row.settledBefore)}</td>
+                  <td className="num px-2 py-2 text-right">{money(row.outstanding)}</td>
+                  <td className="px-2 py-2 text-right">
+                    <Input
+                      type="number" min="0" step="0.01" inputMode="decimal"
+                      aria-label={`Amount transferred to ${row.invoice.vendor_invoice_no || row.invoice.vendor_invoice_id}`}
+                      value={row.transferred}
+                      onChange={(e) => setRow(row.invoice.id, 'transferred', e.target.value)}
+                    />
+                    {rowErrors.amount_paid && <span className="block pt-1 text-[12px] text-late">{rowErrors.amount_paid}</span>}
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <Input
+                      type="number" min="0" step="0.01" inputMode="decimal"
+                      aria-label={`Tax deducted on ${row.invoice.vendor_invoice_no || row.invoice.vendor_invoice_id}`}
+                      value={row.tds}
+                      onChange={(e) => setRow(row.invoice.id, 'tds', e.target.value)}
+                    />
+                    {rowErrors.tds_amount && <span className="block pt-1 text-[12px] text-late">{rowErrors.tds_amount}</span>}
+                  </td>
+                  <td className="num px-2 py-2 text-right font-semibold text-foreground">
+                    {money(row.settles)}
+                    {row.overBy > 0 && (
+                      <span className="block pt-1 text-[12px] font-normal text-late">
+                        {money(row.overBy)} over payable
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="font-semibold text-foreground">
+              <td className="py-2 pr-2" colSpan={4}>Transfer</td>
+              <td className="num px-2 py-2 text-right">{money(totals.transferred)}</td>
+              <td className="num px-2 py-2 text-right">{money(totals.tds)}</td>
+              <td className="num px-2 py-2 text-right">{money(totals.settled)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <Alert tone="info">
+        Transferred <strong>{money(totals.transferred)}</strong> · TDS {money(totals.tds)} · settles{' '}
+        <strong>{money(totals.settled)}</strong> across {invoices.length} {invoices.length === 1 ? 'bill' : 'bills'}.
+        Only the transferred figure leaves the bank; tax deducted settles the bill without reaching the agency.
+      </Alert>
+
+      {/* Allowed, and said plainly before the button is pressed. Nothing here
+          blocks it or quietly reduces a figure. */}
+      {totals.overpaid > 0 && (
+        <Alert tone="warning">
+          <strong>
+            {totals.overpaid} {totals.overpaid === 1 ? 'bill' : 'bills'} will be paid {money(totals.overBy)} above
+            {totals.overpaid === 1 ? ' its' : ' their'} current payable amount.
+          </strong>
+          {armed
+            ? ' Press the button again to record this transfer anyway.'
+            : ' Record it anyway if that is right — an advance, a rounding or a currency difference — otherwise check the figures.'}
+        </Alert>
+      )}
     </ActionModal>
   );
 }

@@ -242,6 +242,226 @@ export function correctionEffect({ amount, tds, settled, netPayable } = {}) {
   };
 }
 
+/* ------------------------------------------------- one transfer, many bills */
+
+/**
+ * Paying a travel agency monthly: one transfer, several of its bills (#214 §2.6).
+ *
+ * The agency sends a bill per trip and is paid once a month, so the bulk case
+ * is the ordinary one and the single payment is the exception. What makes it
+ * safe is that nothing new is invented: each bill still gets its own ledger
+ * row with its own amount and its own TDS, and the transfer's date, method,
+ * reference and advice are simply shared by all of them.
+ *
+ * Two rules are worth stating because they are the ones a reader will look
+ * for:
+ *
+ *   - **One agency per transfer.** The server proves it against the locked
+ *     rows; everything here exists so that a mixed selection cannot be made
+ *     in the first place, and says why rather than failing at submit.
+ *   - **No bulk correction.** Every figure below is non-negative. Taking
+ *     money back off a bill is an administrator's correction with a reason,
+ *     one bill at a time.
+ */
+
+/**
+ * How many bills one transfer may settle, matching MAX_BATCH_ALLOCATIONS on
+ * the server. The dialog refuses past this so the limit is a sentence before
+ * the request rather than a 422 after it.
+ */
+export const MAX_BULK_VENDOR_INVOICES = 50;
+
+/**
+ * Who may record one transfer over several bills.
+ *
+ * The same two roles as a single payment, and for the same reason: paying the
+ * agency is the travel desk's work and the administrator's. Sales may read a
+ * bill and may not pay it, in bulk no more than singly. The server checks the
+ * role again, so the absent checkbox is a courtesy and never the boundary.
+ */
+export const mayBulkPayVendorInvoices = ({ isAdmin, isHr } = {}) => Boolean(isAdmin || isHr);
+
+/** The agency a bill belongs to, as the batch route proves sameness by. */
+export const vendorKeyOf = (invoice) =>
+  invoice?.vendor_id === null || invoice?.vendor_id === undefined ? null : Number(invoice.vendor_id);
+
+/** What still has to be paid on a bill, or null while it has no amount. */
+export function outstandingOf(invoice) {
+  const payable = invoice?.net_payable ?? invoice?.invoice_amount ?? null;
+  if (payable === null || payable === undefined) return null;
+  return Math.max(num(payable) - num(invoice?.amount_paid), 0);
+}
+
+/**
+ * Why a bill cannot join the selection as it stands, or null when it can.
+ *
+ * `selection` is what is already picked: `{ vendorId, vendorName, count }`.
+ * A bill already in the selection is never refused — the reason is for rows
+ * being offered, and a selected row can always be unticked.
+ *
+ * Said as a sentence rather than a code, because it is shown next to the
+ * disabled checkbox. Discovering the one-vendor rule only after submit is
+ * exactly what this avoids.
+ */
+export function bulkBlockedReason(invoice, selection = {}) {
+  const vendorId = vendorKeyOf(invoice);
+  if (vendorId === null) {
+    return 'This bill has no agency on it, so it cannot be proved to belong to the same one.';
+  }
+  if (invoice?.invoice_amount === null || invoice?.invoice_amount === undefined) {
+    return 'This bill has no amount yet. Enter the amount on the invoice first.';
+  }
+  if (invoice?.payment_status === 'Paid') {
+    return 'This bill is already settled.';
+  }
+  if (selection.vendorId !== null && selection.vendorId !== undefined && selection.vendorId !== vendorId) {
+    return `Bulk payments can contain invoices from one vendor only — this transfer is for ${selection.vendorName || 'another agency'}.`;
+  }
+  if (Number(selection.count) >= MAX_BULK_VENDOR_INVOICES) {
+    return `One transfer may settle at most ${MAX_BULK_VENDOR_INVOICES} bills. Record the rest as a second transfer.`;
+  }
+  return null;
+}
+
+/** May this bill be ticked right now? */
+export const mayJoinBulk = (invoice, selection) => bulkBlockedReason(invoice, selection) === null;
+
+/**
+ * What a set of ticked bills amounts to.
+ *
+ * `ids` is whatever the page is holding; `rows` is the bills themselves. The
+ * vendor is read off the selection rather than asked for, which is what makes
+ * the first tick decide it and every later row be measured against it.
+ */
+export function bulkSelection(rows = [], ids) {
+  const picked = new Set([...(ids || [])].map(Number));
+  const invoices = rows.filter((row) => picked.has(Number(row?.id)));
+  const first = invoices[0];
+  const outstanding = invoices.reduce((sum, row) => sum + num(outstandingOf(row)), 0);
+  return {
+    invoices,
+    count: invoices.length,
+    vendorId: first ? vendorKeyOf(first) : null,
+    vendorName: first?.travel_vendor ?? null,
+    outstanding,
+    atLimit: invoices.length >= MAX_BULK_VENDOR_INVOICES,
+  };
+}
+
+/**
+ * What a row of the allocation table starts at.
+ *
+ * The balance, because that is what paying a bill means and it is the figure
+ * the person would otherwise copy across by hand; TDS blank, because a
+ * deduction is something they know and not something to guess. Nothing
+ * spreads a lump sum across the bills by a rule nobody asked for (#214 §20):
+ * every allocation is visible and editable before the transfer is recorded.
+ */
+export function allocationDefaults(invoice) {
+  const outstanding = outstandingOf(invoice);
+  return { transferred: outstanding === null ? '' : String(outstanding), tds: '' };
+}
+
+/** One row of the allocation table, with what it would do to its bill. */
+export function allocationRow({ invoice, transferred, tds } = {}) {
+  const state = settlementState({
+    netPayable: invoice?.net_payable ?? invoice?.invoice_amount ?? null,
+    settled: invoice?.amount_paid,
+    transferred,
+    tds,
+  });
+  return { invoice, transferred, tds, ...state };
+}
+
+/** The three figures the dialog shows, and how many bills go over. */
+export function bulkTotals(allocations = []) {
+  return allocations.reduce(
+    (totals, row) => {
+      const state = row.settles === undefined ? allocationRow(row) : row;
+      return {
+        transferred: totals.transferred + num(state.transferred),
+        tds: totals.tds + num(state.tds),
+        settled: totals.settled + num(state.settles),
+        overpaid: totals.overpaid + (state.overBy > 0 ? 1 : 0),
+        overBy: totals.overBy + num(state.overBy),
+      };
+    },
+    { transferred: 0, tds: 0, settled: 0, overpaid: 0, overBy: 0 }
+  );
+}
+
+/**
+ * What is wrong with the transfer, as the dialog shows it.
+ *
+ * `form` is the shared half; `rows` is keyed by the bill's id, so a mistake
+ * lands beside the field it is in rather than at the top of a table of
+ * twelve. The server refuses the same things, including the date.
+ */
+export function validateBulkPayment({ allocations = [], paidOn, today = todayIso() } = {}) {
+  const form = {};
+  const rows = {};
+
+  if (allocations.length === 0) form.allocations = 'Choose at least one bill for this transfer to settle';
+  if (allocations.length > MAX_BULK_VENDOR_INVOICES) {
+    form.allocations = `One transfer may settle at most ${MAX_BULK_VENDOR_INVOICES} bills. Record the rest as a second transfer.`;
+  }
+  const vendors = new Set(allocations.map(({ invoice }) => vendorKeyOf(invoice)));
+  if (vendors.size > 1) form.allocations = 'Bulk payments can contain invoices from one vendor only';
+  if (paidOn && paidOn > today) form.payment_date = 'A payment cannot be dated in the future';
+
+  for (const { invoice, transferred, tds } of allocations) {
+    const found = validatePayment({ transferred, tds, paidOn: null, today });
+    // The shared date is checked once, above; a per-row date does not exist.
+    delete found.payment_date;
+    if (Object.keys(found).length) rows[invoice.id] = found;
+  }
+
+  return { form, rows, ok: Object.keys(form).length === 0 && Object.keys(rows).length === 0 };
+}
+
+/**
+ * The body for POST /vendor-payments/batch.
+ *
+ * `amount` is the cash that left the bank for that bill and `tds_amount` is
+ * what was deducted — the two ledger columns, as the batch route takes them.
+ * It is not the settlement total: that is `/vendor-invoices/:id/pay`'s older
+ * shape, kept there because its callers predate the ledger.
+ */
+export function bulkPayBody({ allocations = [], paidOn, paymentMode, reference, remarks, documentId } = {}) {
+  return {
+    ...(paidOn ? { payment_date: paidOn } : {}),
+    ...(paymentMode ? { payment_mode: paymentMode } : {}),
+    ...(reference?.trim() ? { reference: reference.trim() } : {}),
+    ...(remarks?.trim() ? { remarks: remarks.trim() } : {}),
+    ...(documentId ? { document_id: documentId } : {}),
+    allocations: allocations.map(({ invoice, transferred, tds }) => {
+      const deducted = num(tds);
+      return {
+        vendor_invoice_id: Number(invoice.id),
+        amount: num(transferred),
+        ...(deducted > 0 ? { tds_amount: deducted } : {}),
+      };
+    }),
+  };
+}
+
+/**
+ * The success line, from the server's own totals.
+ *
+ * `meta` is what POST /vendor-payments/batch returned. Nothing is recomputed
+ * from the form: the server had the ledger and the credit notes as they stood
+ * after the write, and the screen should say what was actually recorded.
+ */
+export function bulkResultSummary(meta, format = (n) => String(n)) {
+  if (!meta) return null;
+  const count = Number(meta.count) || 0;
+  return {
+    line: `${count} vendor ${count === 1 ? 'invoice' : 'invoices'} updated · ${format(meta.transferred)} transferred · ${format(meta.tds)} TDS`,
+    overpaid: Number(meta.overpaid) || 0,
+    overBy: Number(meta.over_payable) || 0,
+  };
+}
+
 /* ------------------------------------------------------- agency status */
 
 /**

@@ -39,6 +39,16 @@ export function ListPage({
   rowActions = true,
   canDelete,
   banner,
+  /**
+   * Picking rows, for a page that can do something with several at once.
+   *
+   * `{ ids, label, blockedReason, onToggle, onToggleAll, onVisible }`. This
+   * owns the column and the select-all box; the page owns what is picked and
+   * which rows may be. The split is deliberate — the rule about *why* a row
+   * cannot join a selection belongs with the feature that has the rule, not
+   * in the list screen every page shares.
+   */
+  selection,
 }) {
   const toast = useToast();
   const [urlParams, setUrlParams] = useSearchParams();
@@ -171,13 +181,68 @@ export function ListPage({
    * than sorting by something the reader cannot see. A page can still say
    * `sortBy` explicitly when the visible column and the field differ.
    */
+  /**
+   * A pick that is no longer on the list stops being a pick.
+   *
+   * Filters and the search change what the list holds, and a selection the
+   * reader can no longer see is a selection they cannot check before acting
+   * on it. Skipped while loading, where `rows` is empty for a moment and
+   * would otherwise clear everything on every refetch.
+   */
+  const visibleIds = rows.map((row) => row.id).join(',');
+  useEffect(() => {
+    if (!selection?.onVisible || loading) return;
+    selection.onVisible(rows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleIds, loading]);
+
   const sortable = columns.map((col) => ({
     ...col,
     sortBy: col.sortBy ?? (rows[0] && Object.hasOwn(rows[0], col.key) ? col.key : undefined),
   }));
 
+  /**
+   * The tick box, and the one in the header that takes the lot.
+   *
+   * A row the page has blocked is drawn disabled with the reason on it, so
+   * the rule is readable where the reader is, rather than discovered after
+   * they press the button. A row already picked is never disabled: unticking
+   * has to stay possible however the rule changed under it.
+   */
+  const selectColumn = selection && {
+    key: '__select',
+    identifies: false,
+    width: 40,
+    header: (
+      <SelectAllBox
+        rows={rows}
+        selection={selection}
+        label={`Select all ${title.toLowerCase()}`}
+      />
+    ),
+    render: (row) => {
+      const picked = selection.ids.has(row.id);
+      const blocked = picked ? null : selection.blockedReason?.(row);
+      return (
+        <input
+          type="checkbox"
+          className="size-4 accent-[var(--primary)] align-middle"
+          checked={picked}
+          disabled={Boolean(blocked)}
+          title={blocked || undefined}
+          aria-label={`${selection.label || 'Select'} ${row[sortable[0]?.key] ?? row.id}${blocked ? ` — ${blocked}` : ''}`}
+          onClick={(e) => e.stopPropagation()}
+          onChange={() => selection.onToggle(row)}
+        />
+      );
+    },
+  };
+
+  const picking = selectColumn ? [selectColumn] : [];
+
   const tableColumns = rowActions
     ? [
+        ...picking,
         ...sortable,
         {
           key: '__actions',
@@ -198,7 +263,7 @@ export function ListPage({
           ),
         },
       ]
-    : sortable;
+    : [...picking, ...sortable];
 
   return (
     <>
@@ -378,6 +443,36 @@ export function ListPage({
         />
       )}
     </>
+  );
+}
+
+/**
+ * The header tick box: every row that may be picked, or none of them.
+ *
+ * "Mixed" is a DOM property rather than an attribute, so it is set through a
+ * ref — without it a part-selected list reads as not selected at all, which
+ * is the one state a reader most needs to see.
+ */
+function SelectAllBox({ rows, selection, label }) {
+  const box = useRef(null);
+  const offered = rows.filter((row) => selection.ids.has(row.id) || !selection.blockedReason?.(row));
+  const picked = offered.filter((row) => selection.ids.has(row.id)).length;
+  const all = offered.length > 0 && picked === offered.length;
+
+  useEffect(() => {
+    if (box.current) box.current.indeterminate = picked > 0 && !all;
+  }, [picked, all]);
+
+  return (
+    <input
+      ref={box}
+      type="checkbox"
+      className="size-4 accent-[var(--primary)] align-middle"
+      checked={all}
+      disabled={offered.length === 0}
+      aria-label={label}
+      onChange={() => selection.onToggleAll(rows)}
+    />
   );
 }
 

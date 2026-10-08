@@ -538,6 +538,10 @@ export const routes = [
     why: 'The only route that can take a vendor payment back off an invoice, or move its cash and TDS legs against each other, so it is the one place a figure already booked against an agency bill can be reduced (#214). It refuses to run without a reason, appends a row rather than editing the ledger — the original payment and the bank advice attached to it are never touched — and records the before and after in the same transaction. Paying is the travel desk\'s; deciding that what the travel desk recorded was wrong is not, for the same reason /api/expense-claims/:id/correct is the administrator\'s: this is the correction path for money, not a tidy-up.',
   },
   {
+    method: 'POST', path: '/api/vendor-payments/batch', access: signedIn, restrictions: ['travel-desk-only'],
+    note: 'One bank transfer settling several of one agency\'s bills (#214 \u00a72.6): the travel desk\'s and the administrator\'s, the same two roles as POST /api/vendor-invoices/:id/pay and gated the same way in the handler. Its own mount because the request is the transfer rather than one invoice. Every bill in it must belong to the same vendor_id, proved against the locked rows before a single insert, and the whole batch is one transaction \u2014 one bad allocation and nothing is recorded. Each allocation becomes an ordinary travel_vendor_payments row carrying the transfer\'s shared date, mode, reference and proof, so amount_paid and payment_date move only through the ledger as they do for a single payment. Nothing here may be negative: taking money back off a bill is POST /api/vendor-invoices/:id/pay/correct, which is an administrator\'s and asks why, and there is no bulk correction.',
+  },
+  {
     method: 'POST', path: '/api/travel-logs/:travelId/billed-stage', access: signedIn,
     note: 'Which client invoice recovered a trip\'s cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk\'s call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it.',
   },
@@ -747,6 +751,10 @@ export const HR_ROUTES = [
   'POST /api/documents', 'GET /api/documents/:id',
   'GET /api/dashboard/travel', 'GET /api/dashboard/payables', 'GET /api/export/payables.csv',
   'GET /api/travel-logs/:travelId/full', 'GET /api/vendor-invoices/:id/full', 'POST /api/vendor-invoices/:id/pay',
+  // One transfer across several of an agency's bills (#214 §2.6). The travel
+  // desk pays the agency monthly, which is what makes the bulk case the
+  // normal one rather than the exception.
+  'POST /api/vendor-payments/batch',
   // The travel importer (#196 §5).
   'GET /api/import/travel/template.xlsx', 'POST /api/import/travel', 'GET /api/import/travel',
   'GET /api/import/travel/:id', 'PATCH /api/import/travel/:id', 'DELETE /api/import/travel/:id',

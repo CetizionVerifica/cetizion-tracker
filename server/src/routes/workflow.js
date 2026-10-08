@@ -20,6 +20,10 @@ export const poRouter = Router();
 export const quotationRouter = Router();
 export const stageRouter = Router();
 export const vendorInvoiceRouter = Router();
+// One transfer across several of an agency's bills (#214 §2.6). Its own
+// mount because a batch belongs to no single invoice: /api/vendor-invoices/:id
+// is one bill, and this request is a bank transfer that closed several.
+export const vendorPaymentRouter = Router();
 export const claimRouter = Router();
 export const travelRouter = Router();
 
@@ -854,6 +858,285 @@ vendorInvoiceRouter.post('/:id/pay/correct', requireAdmin, async (req, res) => {
   });
 
   res.json(vendorPaymentReply(await vendorInvoiceView(id), settledAfter));
+});
+
+// ---------------------------------------------------------------------
+// One transfer, several agency bills (#214 §2.6)
+// ---------------------------------------------------------------------
+
+/**
+ * How many bills one transfer may settle in one request.
+ *
+ * The agency is usually paid monthly, so a month's bills from one agency is
+ * the real shape of this: tens, not thousands. The repo has no batch limit
+ * to copy — this is its first batch write — so the figure is chosen rather
+ * than inherited, and chosen to be the largest number a person could
+ * plausibly have checked by eye before pressing the button. Past that, the
+ * honest answer is that the allocations were not reviewed, and a second
+ * transfer is the right way to record them.
+ *
+ * It is also what bounds the work this route does: every allocation takes a
+ * row lock and an insert inside one transaction, and an unbounded array
+ * would hold locks on every bill a vendor has ever raised.
+ *
+ * The dialog enforces the same number, from the same constant on the web
+ * side, so the limit is a message before the request rather than after it.
+ */
+export const MAX_BATCH_ALLOCATIONS = 50;
+
+/**
+ * The body of a bulk transfer.
+ *
+ * ## The figures, and how they differ from /pay
+ *
+ * An allocation's `amount` is **the cash that left the bank for that bill**
+ * and `tds_amount` is what was deducted, which is exactly what the two
+ * ledger columns hold. Settlement is their sum, as everywhere else.
+ *
+ * `POST /api/vendor-invoices/:id/pay` is the odd one out, and deliberately
+ * so: its `amount_paid` is the absolute *settlement total* because that is
+ * what its callers were already sending before #214 made payments a ledger,
+ * and changing the meaning of a field under existing callers is how figures
+ * get counted twice. A new route has no such history, so it takes the two
+ * things a person actually knows and adds them itself. The Pay dialog has
+ * always asked for those same two things and converted; the bulk dialog
+ * sends them as they are.
+ *
+ * Nothing here may be negative. Taking money back off a bill is a
+ * correction, corrections are an administrator's with a reason recorded, and
+ * there is no bulk correction (#214 §8) — so a batch cannot become one by
+ * carrying a negative allocation.
+ */
+const vendorBatchSchema = z.object({
+  // Shared by every row the transfer writes: one bank transfer, one date,
+  // one method, one UTR, one advice.
+  payment_date: dateStr,
+  payment_mode: z.preprocess(blank, z.enum(VENDOR_PAYMENT_MODES).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
+  document_id: z.preprocess(blank, z.coerce.number().int().positive().optional()),
+  remarks: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
+  allocations: z.array(z.object({
+    // The invoice's row id, as POST /vendor-invoices/:id/pay takes it and as
+    // travel_vendor_payments.vendor_invoice_id stores it. The agency's own
+    // printed number is not unique across agencies and is not an id.
+    vendor_invoice_id: z.preprocess(toNumber, z.number({ error: 'Which bill this settles' }).int().positive()),
+    amount: money,
+    tds_amount: money,
+  }))
+    .min(1, 'Choose at least one bill for this transfer to settle')
+    .max(MAX_BATCH_ALLOCATIONS, `One transfer may settle at most ${MAX_BATCH_ALLOCATIONS} bills. Record the rest as a second transfer.`),
+}).superRefine((v, ctx) => {
+  notFuture('payment_date')(v.payment_date, ctx);
+  const seen = new Set();
+  v.allocations.forEach((a, i) => {
+    if (seen.has(a.vendor_invoice_id)) {
+      ctx.addIssue({ code: 'custom', message: 'This bill is in the transfer twice', path: ['allocations', i, 'vendor_invoice_id'] });
+    }
+    seen.add(a.vendor_invoice_id);
+    // A row that settles nothing is not an allocation. Writing it would put
+    // a payment that never happened on the bill's history.
+    if (Number(a.amount || 0) + Number(a.tds_amount || 0) <= 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Give what was transferred to this bill, or the tax deducted',
+        path: ['allocations', i, 'amount'],
+      });
+    }
+  });
+});
+
+/**
+ * Settle several of one agency's bills with one transfer (#214 §2.6).
+ *
+ * An agency is paid monthly: one transfer, one UTR, one bank advice, and a
+ * dozen bills closed by it. Recorded one bill at a time that becomes a dozen
+ * payments that only look related, each needing the reference typed again.
+ * So the transfer is the request, and the allocations are what it settles.
+ *
+ * ## Still one ledger row per bill
+ *
+ * Nothing new is stored. Each allocation becomes an ordinary
+ * `travel_vendor_payments` row on its own invoice, carrying the transfer's
+ * shared date, method, reference and advice, and the trigger brings each
+ * invoice's `amount_paid` and `payment_date` cache along with it. Every
+ * reader of those columns — Payables, the ageing, the travel dashboard, the
+ * per-trip agency status — sees a batch exactly as it sees a dozen separate
+ * payments, because that is what it is.
+ *
+ * There is no batch row and no batch id. The shared reference is what ties
+ * the rows together for a person reading the history, and it is the thing
+ * the bank statement will also say.
+ *
+ * ## One agency, proved here
+ *
+ * Every bill in the request must belong to the same `vendor_id`. The dialog
+ * stops a mixed selection being made, but a request is not a dialog: the
+ * rule is checked against the locked rows, before a single insert, because
+ * a transfer that paid two agencies at once would be a reference that
+ * reconciles against nothing and an overpayment nobody can trace.
+ *
+ * ## All of it or none of it
+ *
+ * One transaction, and every invoice locked before any figure is validated.
+ * A bad allocation anywhere — a bill that does not exist, another agency's,
+ * a negative figure, a date in the future — throws, and the transaction
+ * takes back the rows already inserted along with the cache updates their
+ * triggers made. There is no partial batch to explain to anybody.
+ *
+ * ## Overpayment
+ *
+ * Allowed, per bill, and never clamped — an advance, a rounding, a currency
+ * difference. It is computed against what the ledger settles *under the
+ * lock*, so a single payment landing on one of these bills at the same
+ * moment cannot leave the figure stale, and reported back per allocation so
+ * the screen can say which bills went past their payable amount.
+ */
+vendorPaymentRouter.post('/batch', requireRole('admin', 'hr'), async (req, res) => {
+  const body = parse(vendorBatchSchema, req.body || {});
+  // Ascending, so two batches that overlap take their locks in the same
+  // order and wait for each other instead of deadlocking. `ORDER BY id`
+  // below says the same thing to the planner; this says it to the array.
+  const ids = [...new Set(body.allocations.map((a) => a.vendor_invoice_id))].sort((a, b) => a - b);
+
+  const settled = await transaction(async (client) => {
+    // The lock comes first and covers every bill in the request. Nothing is
+    // validated against a figure that another request could still be moving.
+    const { rows: locked } = await client.query(
+      `SELECT id, vendor_invoice_id, vendor_id
+         FROM travel_vendor_invoices
+        WHERE id = ANY($1::int[])
+        ORDER BY id
+          FOR UPDATE`,
+      [ids]
+    );
+
+    const found = new Map(locked.map((row) => [row.id, row]));
+    const missing = ids.filter((id) => !found.has(id));
+    if (missing.length) {
+      throw new ApiError(404, `No vendor invoice with id ${missing.join(', ')}. Nothing has been recorded.`);
+    }
+
+    const vendors = [...new Set(locked.map((row) => row.vendor_id))];
+    if (vendors.length > 1) {
+      const { rows: names } = await client.query(
+        'SELECT id, name FROM travel_vendors WHERE id = ANY($1::int[]) ORDER BY name',
+        [vendors]
+      );
+      const listed = names.map((v) => v.name).filter(Boolean).join(' and ');
+      throw new ApiError(422, `One transfer settles one agency's bills. These belong to ${listed || `${vendors.length} different agencies`} — record a transfer for each. Nothing has been recorded.`);
+    }
+
+    // Read through the view, under the lock, so `net_payable` already has the
+    // credit notes in it and the overpayment figure is the one the screens
+    // will show.
+    const before = new Map((await client.query(
+      `SELECT id, vendor_invoice_id, vendor_invoice_no, travel_vendor, invoice_amount, net_payable, amount_paid
+         FROM v_travel_vendor_invoices WHERE id = ANY($1::int[])`,
+      [ids]
+    )).rows.map((row) => [row.id, row]));
+
+    const allocations = [];
+    for (const [index, allocation] of body.allocations.entries()) {
+      const invoice = found.get(allocation.vendor_invoice_id);
+      const view = before.get(allocation.vendor_invoice_id);
+      const amount = Number(allocation.amount || 0);
+      const tds = Number(allocation.tds_amount || 0);
+      const settles = amount + tds;
+      // The ledger is the record; the cached column is derived from it. Both
+      // agree under this lock, and the ledger is what is read.
+      const settledBefore = Number((await client.query(
+        'SELECT COALESCE(SUM(amount + tds_amount), 0) AS settled FROM travel_vendor_payments WHERE vendor_invoice_id = $1',
+        [allocation.vendor_invoice_id]
+      )).rows[0].settled);
+      const payable = view?.net_payable === null || view?.net_payable === undefined ? null : Number(view.net_payable);
+
+      const { rows: [payment] } = await client.query(
+        `INSERT INTO travel_vendor_payments
+           (vendor_invoice_id, amount, tds_amount, paid_on, mode, reference, document_id, remarks, recorded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING id, amount, tds_amount, paid_on, mode`,
+        [allocation.vendor_invoice_id, amount, tds, body.payment_date ?? null, body.payment_mode || 'bank_transfer',
+          body.reference ?? null, body.document_id ?? null, body.remarks ?? null, req.user?.username || null]
+      );
+
+      // Per invoice, under the same action as a single payment, because for
+      // the bill being paid that is exactly what happened. `batch` says the
+      // transfer it was part of, so the dozen rows one UTR settled can be
+      // read back together without a batch table to join.
+      await logActivity(client, {
+        actor: actorFrom(req.user),
+        action: ACTIONS.VENDOR_INVOICE_PAID,
+        entityType: 'vendor_invoice',
+        entityId: invoice.vendor_invoice_id ?? String(invoice.id),
+        metadata: {
+          payment_id: payment.id,
+          amount: Number(payment.amount),
+          tds_amount: Number(payment.tds_amount),
+          settles,
+          paid_on: payment.paid_on,
+          mode: payment.mode,
+          reference: body.reference ?? null,
+          // The file itself is never logged, only that there is one.
+          has_proof: Boolean(body.document_id),
+          amount_paid_before: settledBefore,
+          amount_paid_after: settledBefore + settles,
+          batch: { size: body.allocations.length, index, reference: body.reference ?? null },
+        },
+      });
+
+      allocations.push({
+        vendor_invoice_id: invoice.id,
+        invoice_ref: invoice.vendor_invoice_id,
+        vendor_invoice_no: view?.vendor_invoice_no ?? null,
+        payment_id: payment.id,
+        amount,
+        tds_amount: tds,
+        settles,
+        settled_before: settledBefore,
+        settled_after: settledBefore + settles,
+        net_payable: payable,
+        // Allowed and reported, never refused and never clamped — the same
+        // figure `/pay` returns, per bill.
+        over_payable: payable === null ? null : Math.max(settledBefore + settles - payable, 0),
+      });
+    }
+
+    // After the inserts, so each invoice reads as the screens will read it:
+    // the trigger has already brought amount_paid and payment_date along.
+    const { rows: invoices } = await client.query(
+      'SELECT * FROM v_travel_vendor_invoices WHERE id = ANY($1::int[]) ORDER BY id',
+      [ids]
+    );
+
+    return { vendorId: vendors[0], allocations, invoices };
+  });
+
+  const totals = settled.allocations.reduce(
+    (sum, a) => ({
+      transferred: sum.transferred + a.amount,
+      tds: sum.tds + a.tds_amount,
+      settled: sum.settled + a.settles,
+      overpaid: sum.overpaid + (Number(a.over_payable) > 0 ? 1 : 0),
+      over_payable: sum.over_payable + Math.max(Number(a.over_payable) || 0, 0),
+    }),
+    { transferred: 0, tds: 0, settled: 0, overpaid: 0, over_payable: 0 }
+  );
+
+  res.json({
+    data: {
+      vendor_id: settled.vendorId,
+      vendor: settled.invoices[0]?.travel_vendor ?? null,
+      payment_date: body.payment_date ?? null,
+      payment_mode: body.payment_mode || 'bank_transfer',
+      reference: body.reference ?? null,
+      document_id: body.document_id ?? null,
+      allocations: settled.allocations,
+      invoices: settled.invoices,
+    },
+    // What the success line quotes. Worked out here, from the rows actually
+    // written, so the screen never recomputes a financial total of its own.
+    meta: { count: settled.allocations.length, ...totals },
+  });
 });
 
 // ---------------------------------------------------------------------

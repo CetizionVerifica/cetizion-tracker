@@ -23,7 +23,11 @@ export function useAction({ onDone, successMessage }) {
     setFieldErrors({});
     try {
       const result = await fn();
-      toast(typeof successMessage === 'function' ? successMessage(result?.data) : successMessage, 'success');
+      // No message means the caller words its own from the reply — a bulk
+      // transfer quotes the server's totals (#214 §2.6), which are not known
+      // when this hook is set up. An empty toast is worse than none.
+      const message = typeof successMessage === 'function' ? successMessage(result?.data) : successMessage;
+      if (message) toast(message, 'success');
       onDone?.(result?.data);
       return true;
     } catch (err) {

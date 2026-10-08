@@ -785,6 +785,45 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       );
     });
 
+    /**
+     * The bulk route is gated exactly as the single one is, and the sweeps
+     * above cannot say so: `travel-desk-only` means the policy says "any
+     * signed-in user" and the handler says admin and HR, so the route is
+     * excluded from both blanket passes and proved here instead.
+     */
+    test('one transfer across several bills is the travel desk\'s and the administrator\'s too', async () => {
+      const transfer = (amount) => ({
+        payment_date: '2026-02-09',
+        allocations: [{ vendor_invoice_id: invoiceId, amount }],
+      });
+
+      const byAdmin = await as(admin)('post', '/api/vendor-payments/batch').send(transfer(1000));
+      assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+
+      const byHr = await as(hr)('post', '/api/vendor-payments/batch').send(transfer(2000));
+      assert.equal(byHr.status, 200, `the travel desk pays the agency monthly: ${JSON.stringify(byHr.body)}`);
+
+      const bySales = await as(salesA)('post', '/api/vendor-payments/batch').send(transfer(3000));
+      assert.equal(
+        bySales.status, 403,
+        `a sales user got ${bySales.status} paying travel agencies in bulk. requireRole('admin', 'hr') on `
+        + 'POST /api/vendor-payments/batch is the same #214 decision as the single route; a bulk door left open '
+        + 'gives back exactly what closing the single one withdrew.'
+      );
+    });
+
+    test('there is no bulk correction: a negative allocation is refused even for an administrator', async () => {
+      const res = await as(admin)('post', '/api/vendor-payments/batch').send({
+        payment_date: '2026-02-09',
+        allocations: [{ vendor_invoice_id: invoiceId, amount: -500 }],
+      });
+      assert.equal(
+        res.status, 422,
+        'POST /api/vendor-payments/batch must not become a correction route. Taking a figure back off an '
+        + 'agency bill is POST /api/vendor-invoices/:id/pay/correct, which asks why and records who.'
+      );
+    });
+
     test('correcting a vendor payment is the administrator\'s alone', async () => {
       for (const who of [hr, salesA]) {
         const res = await as(who)('post', `/api/vendor-invoices/${invoiceId}/pay/correct`)
