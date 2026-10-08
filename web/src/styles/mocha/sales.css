@@ -156,7 +156,7 @@
 .app-recrow { display: flex; align-items: center; gap: 12px; padding: 12px 6px; border-top: 1px solid var(--line); color: inherit; text-decoration: none; min-width: 0; }
 .app-recrow:first-child { border-top: 0; }
 a.app-recrow:hover { background: var(--track); }
-.app-recrow__icon { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 11px; background: var(--track); color: var(--text2); }
+.app-recrow__icon { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--track); color: var(--text2); }
 .app-recrow__icon svg { width: 16px; height: 16px; }
 .app-recrow__text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .app-recrow__text b { font-size: 13.5px; font-weight: 700; overflow-wrap: anywhere; }

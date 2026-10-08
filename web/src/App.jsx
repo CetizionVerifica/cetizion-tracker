@@ -23,9 +23,9 @@ import PaymentStages from './pages/PaymentStages.jsx';
 import Collections from './pages/Collections.jsx';
 import Cashflow from './pages/Cashflow.jsx';
 import Account from './pages/account/index.jsx';
-// Reports is the only page that draws charts, and Recharts is a third of
-// the bundle. Loaded when someone asks for it, so every other page is not
-// paying for it on first visit.
+// Reports draws the most charts and is the heaviest page. Loaded when
+// someone asks for it, so every other page is not paying for it on first
+// visit.
 const Reports = lazy(() => import('./pages/Reports.jsx'));
 // Insights draws charts too, so it is loaded the same way.
 const Insights = lazy(() => import('./pages/Insights.jsx'));

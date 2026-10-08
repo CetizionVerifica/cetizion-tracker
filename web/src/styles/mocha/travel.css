@@ -18,7 +18,7 @@
 .app-raillink { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 9px 18px; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
 .app-raillink:first-of-type { border-top: 0; }
 a.app-raillink:hover { background: var(--track); }
-.app-raillink__mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-raillink__mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
 .app-raillink__mark svg { width: 16px; height: 16px; }
 .app-raillink__title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 .app-raillink__sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -75,7 +75,7 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 .app-step__box { justify-self: center; }
 .app-step__disc { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--line); color: var(--muted); }
 .app-step__disc svg { width: 12px; height: 12px; }
-.app-step__disc.is-done { border: 0; background: var(--ok); color: var(--on-pill, #fff); }
+.app-step__disc.is-done { border: 0; background: var(--ok); color: var(--on-pill); }
 .app-step__disc.is-moving { border: 0; background: var(--wait-soft); color: var(--wait); }
 .app-step__text { min-width: 0; }
 .app-step__title { font-size: 13.5px; font-weight: 600; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
@@ -105,7 +105,7 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 /* Quick filters at the top of a list panel (Trips, Claims). */
 .app-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 18px 0; }
 .app-quick .mg-chip .mg-count { margin-left: 2px; }
-.app-quick .mg-chip.is-late .mg-count { background: var(--late); color: var(--on-late, #fff); }
+.app-quick .mg-chip.is-late .mg-count { background: var(--late); color: var(--on-late); }
 @media (max-width: 719px) { .app-quick { padding: 12px 14px 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .app-quick > * { flex: none; } }
 
 /* The trip's "waiting on an amount" panel: the bill and the field that fixes it. */
@@ -145,7 +145,7 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 .app-paybar { height: 8px; margin: 10px 0 2px; }
 .app-pdf { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; align-items: center; padding: 4px 18px 18px; }
 .app-pdf b { display: block; font-size: 13.5px; overflow-wrap: anywhere; }
-.app-pdf__page { width: 64px; height: 80px; border-radius: 10px; background: var(--card, #fff); background: color-mix(in srgb, var(--surface, #fff) 92%, transparent); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(60, 30, 10, .12); display: flex; flex-direction: column; gap: 6px; padding: 12px 10px; }
+.app-pdf__page { width: 64px; height: 80px; border-radius: 10px; background: var(--glass-strong); border: 1px solid var(--line); box-shadow: 0 6px 18px -8px var(--shade); display: flex; flex-direction: column; gap: 6px; padding: 12px 10px; }
 .app-pdf__page i { display: block; height: 4px; border-radius: 4px; background: var(--line); }
 .app-pdf__page i:first-child { width: 60%; height: 6px; background: var(--caramel); }
 .app-pdf__page i:last-child { width: 40%; margin-top: auto; background: var(--text2); }
@@ -234,7 +234,7 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 .app-irow:last-child { border-bottom: 0; }
 .app-irow.is-known { box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait-soft) 55%, transparent); }
 .app-irow.is-out { opacity: .5; }
-.mg-count.app-count--late { background: var(--late); color: var(--on-late, #fff); margin-left: 6px; }
+.mg-count.app-count--late { background: var(--late); color: var(--on-late); margin-left: 6px; }
 
 /* Wave 6 records: four figures in a row, or two by two, never three and one. */
 .app-rec:has(.app-w6) .app-rec__stats:has(> :nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }

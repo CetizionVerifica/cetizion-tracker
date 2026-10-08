@@ -186,7 +186,7 @@ export default function Mailboxes() {
         )}
         <MoreMenu
           label={`More actions for ${row.email}`}
-          size="sm"
+          size={phone ? 'md' : 'sm'}
           className={phone ? 'ml-auto' : undefined}
           items={[
             { label: 'What this mailbox syncs…', icon: Settings2, onSelect: () => setTuning(row) },

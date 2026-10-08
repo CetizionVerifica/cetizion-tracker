@@ -144,9 +144,9 @@
 .app-rung { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 4px 14px; padding: 18px 22px; border-top: 1px solid var(--line); }
 .app-rung.is-bill { background: var(--wait-soft); }
 .app-rung__disc { grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; background: var(--track); color: var(--text2); }
-.app-rung__disc.is-late { background: var(--late); color: var(--on-late, #fff); }
+.app-rung__disc.is-late { background: var(--late); color: var(--on-late); }
 .app-rung__disc.is-wait { background: var(--caramel); color: var(--on-btn); }
-.app-rung__disc.is-ok { background: var(--ok); color: #fff; }
+.app-rung__disc.is-ok { background: var(--ok); color: var(--on-late); }
 .app-rung__title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; font-size: 14.5px; font-weight: 700; }
 .app-rung__amount { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .app-rung__body { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
