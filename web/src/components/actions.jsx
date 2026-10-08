@@ -6,6 +6,7 @@ import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.
 import { date, money, today } from '../lib/format.js';
 import { Banknote, MessageSquareText } from 'lucide-react';
 import { DialogError, MoneyBanner, MoneyFacts } from './money.jsx';
+import { SumBox } from './travel.jsx';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
 function useAction({ onDone, successMessage }) {
@@ -311,22 +312,26 @@ export function PayVendorDialog({ invoice, onClose, onDone }) {
       error={error}
       fieldErrors={fieldErrors}
       submitLabel="Record payment"
+      submitDisabled={invoice.invoice_amount === null}
     >
       {invoice.invoice_amount === null ? (
-        <Alert tone="warning"><span>
-          This invoice has no amount yet. Edit the invoice and enter the amount before paying it.
-        </span></Alert>
+        <MoneyBanner tone="wait" title="This bill has no amount yet.">
+          Enter the amount from {invoice.travel_vendor || 'the vendor'}'s bill before paying it.
+        </MoneyBanner>
       ) : (
-        <Alert tone={invoice.payment_status === 'Overdue' ? 'danger' : 'info'}>
-          <span>
-            Invoiced {money(invoice.invoice_amount)} · paid {money(invoice.amount_paid)} · outstanding{' '}
-            <strong>{money(outstanding)}</strong>
-            {invoice.pay_by && <> · {invoice.payment_status === 'Overdue' ? 'was due' : 'due'} by <strong>{date(invoice.pay_by)}</strong></>}
-          </span>
-        </Alert>
+        <SumBox
+          rows={[
+            ['Invoiced', money(invoice.invoice_amount), invoice.line_count > 1 ? `${invoice.line_count} lines` : invoice.travel_id],
+            ['Credit notes', Number(invoice.credited) > 0 ? `− ${money(invoice.credited)}` : 'None'],
+            ['Paid so far', Number(invoice.amount_paid) > 0 ? `− ${money(invoice.amount_paid)}` : money(0), invoice.payment_date ? date(invoice.payment_date) : null],
+            ['Outstanding', money(outstanding), null, true],
+          ]}
+          foot={invoice.pay_by ? `Pay by ${date(invoice.pay_by)}${invoice.payment_status === 'Overdue' && invoice.days_overdue ? ` · ${invoice.days_overdue} days overdue` : ''}` : 'No pay-by date yet: the bill has no date'}
+          footTone={invoice.payment_status === 'Overdue' ? 'late' : undefined}
+        />
       )}
       <div className="mg-grid2">
-        <Field label="Amount paid now" required error={fieldErrors.amount_paid} hint={invoice.invoice_amount === null ? undefined : `Up to ${money(outstanding)}, the amount still owed.`}>
+        <Field label="Amount paid now" required error={fieldErrors.amount_paid} hint={invoice.invoice_amount === null ? undefined : `This payment only. Paying ${money(outstanding)} clears the bill.`}>
           <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />
         </Field>
         <Field label="Paid on" error={fieldErrors.payment_date}>
@@ -408,10 +413,13 @@ export function ReimburseClaimDialog({ claim, onClose, onDone }) {
       error={error}
       submitLabel="Record reimbursement"
     >
-      <Alert><span>
-        Claimed {money(claim.amount_claimed)} · reimbursed {money(claim.amount_reimbursed)} · outstanding{' '}
-        <strong>{money(outstanding)}</strong>
-      </span></Alert>
+      <SumBox
+        rows={[
+          ['Claimed', money(claim.amount_claimed), claim.submission_date ? `submitted ${date(claim.submission_date)}` : null],
+          ['Reimbursed so far', Number(claim.amount_reimbursed) > 0 ? `− ${money(claim.amount_reimbursed)}` : money(0)],
+          ['Still to reimburse', money(outstanding), null, true],
+        ]}
+      />
       <div className="mg-grid2">
         <Field label="Amount reimbursed now" required>
           <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />

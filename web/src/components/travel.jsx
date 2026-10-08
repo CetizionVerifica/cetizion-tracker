@@ -169,3 +169,24 @@ export function typeLine(t) {
   const name = t.trip_type || 'Type not set';
   return t.chargeable && !/chargeable/i.test(name) ? `${name} · chargeable` : name;
 }
+
+/**
+ * The figures a pay or reimburse dialog opens with: a row per figure, the
+ * last one the total, then a line in its tone ("Pay by 30 Sep · 7 days
+ * overdue"). rows: [label, value, note, isTotal]
+ */
+export function SumBox({ rows, foot, footTone }) {
+  return (
+    <div className="app-sum">
+      <dl>
+        {rows.filter(Boolean).map(([k, v, note, total]) => (
+          <div key={k} className={total ? 'is-total' : undefined}>
+            <dt>{k}{note && <span> · {note}</span>}</dt>
+            <dd className="mg-num">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {foot && <p className={footTone ? `is-${footTone}` : undefined}>{foot}</p>}
+    </div>
+  );
+}
