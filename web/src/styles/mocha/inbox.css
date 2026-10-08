@@ -314,4 +314,5 @@ button.app-att:disabled { cursor: not-allowed; }
 .app-av__mailhead dt { color: var(--muted); }
 .app-av__mailhead dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
 .app-av__mailhead dd.is-strong { font-weight: 700; }
-@media (max-width: 719px) { .app-av__head { padding: 6px 56px 10px 16px; } }
+.app-av > .mg-sheet__grab { display: none; }
+@media (max-width: 719px) { .app-av__head { padding: 14px 56px 12px 16px; } .app-av__nav .mg-iconbtn { width: 40px; height: 40px; } }
