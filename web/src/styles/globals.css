@@ -19,6 +19,7 @@
 @import "./mocha/travel.css";
 @import "./mocha/reports.css";
 @import "./mocha/settings.css";
+@import "./mocha/client.css";
 
 /**
  * Cetizion in Mocha Glass ("Mocha mix · Glass 2", approved 7 Oct 2026).

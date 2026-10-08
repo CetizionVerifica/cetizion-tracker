@@ -66,7 +66,7 @@ export function useThemeSwitch() {
 /* ------------------------------------------------------------ pause */
 
 /** One pause state for every control bar on screen (the phone and wide headers both draw one). */
-function usePaused() {
+export function usePaused() {
   const [paused, setPaused] = useState(isPaused);
   useEffect(() => {
     const sync = () => setPaused(isPaused());
