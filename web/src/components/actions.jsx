@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
+import { Modal, Field, FileDrop, Input, Select, Alert, useToast } from './ui.jsx';
+import { Button } from '@/components/ui/button.tsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
@@ -40,14 +41,14 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLa
       size={size}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" form="action-form" className="btn btn--primary" disabled={busy || submitDisabled}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy} className="max-sm:w-full">Cancel</Button>
+          <Button type="submit" form="action-form" disabled={busy || submitDisabled} aria-busy={busy || undefined} className="max-sm:w-full">
             {busy ? 'Saving…' : submitLabel}
-          </button>
+          </Button>
         </>
       }
     >
-      <form id="action-form" onSubmit={onSubmit} className="stack">
+      <form id="action-form" onSubmit={onSubmit} className="flex flex-col gap-4">
         {error && <Alert tone="danger">{error}</Alert>}
         {children}
       </form>
@@ -101,38 +102,40 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
       submitLabel="Save invoice"
     >
       {prefill && (
-        <Alert tone="warning">
+        <Alert tone="warning"><span>
           <strong>Read from the invoice we emailed: check the number and date before you save.</strong>
           {prefill.total_value != null && Math.abs(Number(prefill.total_value) - Number(stage.stage_amount)) > Math.max(1, 0.005 * Number(prefill.total_value))
             && <> The invoice is for {money(prefill.total_value, prefill.currency)}, not this stage's {money(stage.stage_amount, stage.currency)}.</>}
-        </Alert>
+        </span></Alert>
       )}
-      <Alert>
+      <Alert><span>
         Billing <strong>{money(stage.stage_amount, stage.currency)}</strong> to {stage.client_name}
         {stage.terms_days ? ` on ${stage.terms_days}-day terms` : ''}.
-        {dueDate && <> Payment will be due <strong>{dueDate}</strong>.</>}
-      </Alert>
-      <Field label="Invoice number" required error={fieldErrors.invoice_no}>
-        <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="CTZ/INV/2026/001" autoFocus />
-      </Field>
-      <Field label="Invoice date" required error={fieldErrors.invoice_date}>
-        <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
-      </Field>
+        {dueDate && <> Payment will be due <strong>{date(dueDate)}</strong>.</>}
+      </span></Alert>
+      <div className="mg-grid2">
+        <Field label="Invoice number" required error={fieldErrors.invoice_no}>
+          <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="CTZ/INV/2026/001" autoFocus />
+        </Field>
+        <Field label="Invoice date" required error={fieldErrors.invoice_date}>
+          <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+        </Field>
+      </div>
       <Field
         label="Invoice document"
-        hint={stage.document_id ? 'Choose a file to replace the current one, or leave empty to keep it' : 'Optional: PDF or image'}
+        hint={stage.document_id ? 'Optional. Leave it empty to keep the current file, or choose one to replace it.' : 'Optional. You can add it later.'}
         error={fieldErrors.document_id}
       >
-        <Input type="file" onChange={(e) => setDocument(e.target.files?.[0] || null)} />
+        <FileDrop label="Invoice document" text={stage.document_id ? 'Drop a file here to replace the current one' : 'Drop a PDF or image here'} error={fieldErrors.document_id} onFile={setDocument} />
         {emailDocument && !document && (
-          <div className="small muted">
+          <div className="text-[12.5px] text-secondary-text">
             <a href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The invoice from the email</a> will be attached
             {' · '}<button type="button" className="underline" onClick={() => setEmailDocument(null)}>don't attach it</button>
           </div>
         )}
         {stage.document_id && (
-          <div className="small muted">
-            Current:{' '}
+          <div className="text-[12.5px] text-secondary-text">
+            Current file:{' '}
             <a href={api.documentUrl(stage.document_id)} target="_blank" rel="noopener noreferrer">
               {stage.document_name || 'view document'}
             </a>
@@ -188,35 +191,33 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
       submitLabel="Save payment"
     >
       {advice && (
-        <Alert tone="info">
+        <Alert tone="info"><span>
           {advice.company_name} reported {money(advice.amount, stage.currency)}{Number(advice.tds_amount) > 0 ? ` + TDS ${money(advice.tds_amount, stage.currency)}` : ''} paid on {date(advice.paid_on)}
           {advice.invoices.length > 1 ? `, across ${advice.invoices.map((i) => i.invoice_no).join(', ')}` : ''}. Check it against the bank before saving.
-        </Alert>
+        </span></Alert>
       )}
-      <Alert>
+      <Alert><span>
         Stage value {money(stage.stage_amount, stage.currency)} · already received{' '}
         {money(stage.amount_received, stage.currency)} · outstanding{' '}
         <strong>{money(outstanding, stage.currency)}</strong>
-      </Alert>
-      <Field label="Amount received now" required error={fieldErrors.amount_received}>
-        <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
-      </Field>
-      <Field label="Received on" error={fieldErrors.payment_received_date}>
-        <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-      </Field>
-      <div className="form-grid">
-        <Field label="TDS deducted" hint="Counts as settled">
+      </span></Alert>
+      <div className="mg-grid2">
+        <Field label="Amount received now" required error={fieldErrors.amount_received}>
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />
+        </Field>
+        <Field label="Received on" error={fieldErrors.payment_received_date}>
+          <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </Field>
+        <Field label="TDS deducted" hint="Counts as settled.">
           <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} />
         </Field>
         <Field label="Mode">
           <Select value={mode} placeholder={null} options={[{ value: 'bank_transfer', label: 'Bank transfer' }, { value: 'cheque', label: 'Cheque' }, { value: 'upi', label: 'UPI' }, { value: 'cash', label: 'Cash' }, { value: 'other', label: 'Other' }]} onChange={(e) => setMode(e.target.value)} />
         </Field>
-        <div className="span-all">
-          <Field label="Reference" hint="UTR, cheque number">
-            <Input value={reference} onChange={(e) => setReference(e.target.value)} />
-          </Field>
-        </div>
       </div>
+      <Field label="Reference" hint="UTR, cheque number.">
+        <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR or cheque number" />
+      </Field>
     </ActionModal>
   );
 }
@@ -252,22 +253,26 @@ export function PayVendorDialog({ invoice, onClose, onDone }) {
       submitLabel="Record payment"
     >
       {invoice.invoice_amount === null ? (
-        <Alert tone="warning">
+        <Alert tone="warning"><span>
           This invoice has no amount yet. Edit the invoice and enter the amount before paying it.
-        </Alert>
+        </span></Alert>
       ) : (
-        <Alert>
-          Invoiced {money(invoice.invoice_amount)} · paid {money(invoice.amount_paid)} · outstanding{' '}
-          <strong>{money(outstanding)}</strong>
-          {invoice.pay_by && <> · due by {invoice.pay_by}</>}
+        <Alert tone={invoice.payment_status === 'Overdue' ? 'danger' : 'info'}>
+          <span>
+            Invoiced {money(invoice.invoice_amount)} · paid {money(invoice.amount_paid)} · outstanding{' '}
+            <strong>{money(outstanding)}</strong>
+            {invoice.pay_by && <> · {invoice.payment_status === 'Overdue' ? 'was due' : 'due'} by <strong>{date(invoice.pay_by)}</strong></>}
+          </span>
         </Alert>
       )}
-      <Field label="Amount paid now" required error={fieldErrors.amount_paid}>
-        <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
-      </Field>
-      <Field label="Paid on" error={fieldErrors.payment_date}>
-        <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-      </Field>
+      <div className="mg-grid2">
+        <Field label="Amount paid now" required error={fieldErrors.amount_paid} hint={invoice.invoice_amount === null ? undefined : `Up to ${money(outstanding)}, the amount still owed.`}>
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />
+        </Field>
+        <Field label="Paid on" error={fieldErrors.payment_date}>
+          <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </Field>
+      </div>
     </ActionModal>
   );
 }
@@ -299,14 +304,19 @@ export function ClaimDecisionDialog({ claim, onClose, onDone }) {
       error={error}
       submitLabel="Save decision"
     >
-      <Field label="Decision" required>
-        <Select
-          value={status}
-          placeholder={null}
-          options={['Approved', 'Rejected', 'On Hold', 'Submitted']}
-          onChange={(e) => setStatus(e.target.value)}
-        />
-      </Field>
+      <dl className="mg-facts">
+        {claim.expense_category && <div><dt>Category</dt><dd>{claim.expense_category}</dd></div>}
+        {claim.claim_month && <div><dt>Month</dt><dd>{claim.claim_month}</dd></div>}
+        <div><dt>Claimed</dt><dd className="mg-num">{money(claim.amount_claimed)}</dd></div>
+      </dl>
+      <fieldset className="m-0 flex flex-col gap-2.5 border-0 p-0">
+        <legend className="mg-field__label mb-2.5 p-0">Decision<span className="req" aria-hidden="true">*</span></legend>
+        {[['Approved', 'Approved'], ['Rejected', 'Rejected'], ['On Hold', 'On hold'], ['Submitted', 'Submitted (undo an earlier decision)']].map(([value, label]) => (
+          <label key={value} className="mg-check">
+            <input type="radio" name="claim-decision" value={value} checked={status === value} onChange={() => setStatus(value)} />{label}
+          </label>
+        ))}
+      </fieldset>
     </ActionModal>
   );
 }
@@ -331,23 +341,25 @@ export function ReimburseClaimDialog({ claim, onClose, onDone }) {
   return (
     <ActionModal
       title="Reimburse the employee"
-      subtitle={`${claim.claim_id} · ${claim.employee_name}`}
+      subtitle={[claim.claim_id, claim.employee_name, claim.expense_category, claim.claim_month].filter(Boolean).join(' · ')}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
       error={error}
       submitLabel="Record reimbursement"
     >
-      <Alert>
+      <Alert><span>
         Claimed {money(claim.amount_claimed)} · reimbursed {money(claim.amount_reimbursed)} · outstanding{' '}
         <strong>{money(outstanding)}</strong>
-      </Alert>
-      <Field label="Amount reimbursed now" required>
-        <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
-      </Field>
-      <Field label="Paid on">
-        <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-      </Field>
+      </span></Alert>
+      <div className="mg-grid2">
+        <Field label="Amount reimbursed now" required>
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />
+        </Field>
+        <Field label="Paid on">
+          <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </Field>
+      </div>
     </ActionModal>
   );
 }
@@ -428,7 +440,7 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
   return (
     <ActionModal
       title="Register the project"
-      subtitle={`${quotation.quotation_no} · ${quotation.client_name}`}
+      subtitle={[quotation.quotation_no, quotation.client_name, quotation.quotation_value != null ? money(quotation.quotation_value, quotation.currency) : null].filter(Boolean).join(' · ')}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
@@ -437,67 +449,49 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
       submitDisabled={mode === 'existing' && (noSameClientProjects || !selectedProjectId)}
       size=""
     >
-      <Alert>
+      <Alert><span>
         The quotation is marked won and linked to this project. Register the PO next so finance
         can raise the advance invoice.
-      </Alert>
+      </span></Alert>
 
       {/* Mode toggle */}
-      <div className="row" style={{ gap: 20 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="convert-mode"
-            value="new"
-            checked={mode === 'new'}
-            onChange={() => handleModeChange('new')}
-          />
-          Create new project
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="convert-mode"
-            value="existing"
-            checked={mode === 'existing'}
-            onChange={() => handleModeChange('existing')}
-          />
-          Add to existing project
-        </label>
+      <div className="mg-seg flex" role="radiogroup" aria-label="Project">
+        <span className="mg-seg__thumb" aria-hidden="true" style={{ width: 'calc(50% - 3px)', transform: mode === 'existing' ? 'translateX(100%)' : 'none' }} />
+        <button type="button" role="radio" aria-checked={mode === 'new'} className="flex-1" onClick={() => handleModeChange('new')}>Create new project</button>
+        <button type="button" role="radio" aria-checked={mode === 'existing'} className="flex-1" onClick={() => handleModeChange('existing')}>Add to existing project</button>
       </div>
 
       {/* ---- Add to existing project ---- */}
       {mode === 'existing' && (
         noSameClientProjects ? (
-          <p className="small muted">
-            No existing projects found for <strong>{quotation.client_name}</strong>.
-            Create a new project first or choose &ldquo;Create new project&rdquo;.
-          </p>
+          <Alert tone="warning">
+            <span>No existing projects found for <strong>{quotation.client_name}</strong>. Choose &ldquo;Create new project&rdquo; instead.</span>
+          </Alert>
         ) : (
           <Field
             label="Existing project"
-            hint={`Showing ${sameClientProjects.length} project(s) for ${quotation.client_name}`}
+            required
+            hint={`Showing ${sameClientProjects.length === 1 ? '1 project' : `${sameClientProjects.length} projects`} for ${quotation.client_name}. None fits? Choose Create new project.`}
             error={fieldErrors.project_id}
           >
-            <select
-              className="select"
+            <Select
               value={selectedProjectId}
+              placeholder="Select a project"
               onChange={(e) => setSelectedProjectId(e.target.value)}
             >
-              <option value="">— select a project —</option>
               {sameClientProjects.map((p) => (
                 <option key={p.project_id} value={p.project_id}>
-                  {p.project_id} — {p.client_name}
+                  {p.project_id} · {p.client_name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         )
       )}
 
       {/* ---- Create new project ---- */}
       {mode === 'new' && (
-        <div className="form-grid">
+        <div className="mg-grid2">
           <Field label="Project ID" hint="Assigned automatically when you save">
             <Input
               value=""
@@ -634,10 +628,10 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
       submitDisabled={nothingToSplit || off}
       size=""
     >
-      <Alert>
+      <Alert><span>
         Stages triggered <strong>On PO Registration</strong> become invoiceable immediately.
         Ones triggered <strong>On Delivery</strong> wait until the PO's delivery date is recorded.
-      </Alert>
+      </span></Alert>
 
       {nothingToSplit ? (
         <Alert tone="warning">
