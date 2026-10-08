@@ -404,8 +404,20 @@ async function storeAttachmentList(account, message, provider) {
   // One provider call per message, after the message's own transaction:
   // not while a thread row is locked. A call that fails (throttled, timed
   // out) leaves attachments_listed_at empty, and the sync tries again later.
+  //
+  // It is logged rather than swallowed. Retrying for ever is right for a
+  // throttle and wrong for a request the provider will refuse every time,
+  // and the two are indistinguishable from the outside: a malformed
+  // $select rejected every list call here for as long as the feature had
+  // existed, and because nothing was written down, the only visible
+  // symptom was attachments that never appeared.
   let list;
-  try { list = await provider.attachmentList(message.provider_id); } catch { return false; }
+  try {
+    list = await provider.attachmentList(message.provider_id);
+  } catch (err) {
+    console.warn('[mail] could not list the attachments of message %s: %s', message.provider_id, err.message);
+    return false;
+  }
   await transaction(async (db) => {
     for (const a of list || []) {
       await db.query(

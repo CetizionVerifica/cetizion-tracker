@@ -225,9 +225,26 @@ export function microsoftProvider(account, tokens) {
      * in OneDrive or SharePoint, which Graph v1.0 does not describe further).
      */
     async attachmentList(providerId) {
-      const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size,isInline,contentId`);
+      // Only the six properties of the base `attachment` type may be
+      // selected here. This collection is polymorphic — a message's
+      // attachments can be fileAttachment, itemAttachment or
+      // referenceAttachment — so Graph types it as the base, and the base
+      // has exactly contentType, id, isInline, lastModifiedDateTime, name
+      // and size. `contentId` belongs to fileAttachment alone, and asking
+      // for it rejected the whole request, every time, for every message.
+      //
+      // Dropping $select instead is not the fix: without it Graph returns
+      // contentBytes as well, which is the entire file base64-encoded, for
+      // every attachment of every message the sync walks.
+      const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size,isInline`);
       return (j.value || []).map((a) => ({
-        provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: a.contentId || null,
+        provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline),
+        // Not listed, for the reason above. An inline image therefore has
+        // no cid to match on and stays unresolved in the body, exactly as
+        // it was before this call started working at all; reading it back
+        // per attachment is a follow-up, not a thing to do while fixing
+        // the listing itself.
+        content_id: null,
         kind: ATTACHMENT_KINDS[a['@odata.type']] || 'file',
       }));
     },
