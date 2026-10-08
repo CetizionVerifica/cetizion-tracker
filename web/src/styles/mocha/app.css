@@ -43,3 +43,9 @@
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
   border-radius: 999px; background: var(--btn); color: var(--on-btn); font-weight: 700; height: 32px; padding: 0 14px;
 }
+
+/* Number fields: no browser spinner (it draws as a white OS widget on the dark theme and
+   isn't in the design). Arrow keys still step the value. */
+.mg input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.mg input[type="number"]::-webkit-inner-spin-button,
+.mg input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
