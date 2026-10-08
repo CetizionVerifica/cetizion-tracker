@@ -279,7 +279,9 @@ export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode 
     setChoices([]); setListing('idle'); setValues({}); setError(''); setBusy(false);
   }, []);
 
-  useEffect(() => { if (!open) reset(); }, [open, reset]);
+  // Cleared as it opens, not as it closes: clearing on close showed the step
+  // list for a frame while the palette faded out.
+  useEffect(() => { if (open) reset(); }, [open, reset]);
 
   // Search runs a beat behind the typing, so a fast typist makes one
   // request rather than one per keystroke. The travel desk's search is

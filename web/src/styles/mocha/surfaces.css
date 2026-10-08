@@ -39,3 +39,8 @@
 /* Sticky table headers: rows scroll under them inside their panel. No blur of
    their own (never glass inside glass): the near-opaque fill hides the rows. */
 .mg-table th { background: var(--glass-float); }
+
+/* Closing: the surface softens out of focus as it fades and sinks a little, so its
+   text never sits legibly over the page while the glass turns clear. */
+@keyframes mg-dialog-out { to { opacity: 0; transform: translateY(10px) scale(.97); filter: blur(8px); } }
+@media (max-width: 719px) { @keyframes mg-dialog-out { to { opacity: 0; transform: translateY(24px); filter: blur(8px); } } }
