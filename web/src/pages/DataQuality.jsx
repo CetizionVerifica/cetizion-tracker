@@ -58,11 +58,11 @@ export default function DataQuality() {
             {gaps.length > 0 && (
               <section aria-labelledby="gaps-t" className="flex flex-col gap-3">
                 <h2 id="gaps-t" className="mg-label m-0" data-a="rise">{gaps.length === 1 ? '1 check needs fixing' : `${gaps.length} checks need fixing, biggest first`}</h2>
-                <div className="flex flex-wrap gap-4">
+                <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(max(150px,calc(25%-12px)),1fr))]">
                   {gaps.map((c) => {
                     const [, area, Icon] = areaOf(c.link);
                     return (
-                      <Link key={c.key} to={c.link} className="mg-glass mg-tile min-w-[150px] max-w-[440px] flex-[1_1_calc(25%-12px)] text-foreground no-underline" data-a="rise" aria-label={`${c.label}: ${c.count}. Open the list to fix`}>
+                      <Link key={c.key} to={c.link} className="mg-glass mg-tile min-w-0 text-foreground no-underline" data-a="rise" aria-label={`${c.label}: ${c.count}. Open the list to fix`}>
                         <span className="flex items-center gap-2.5">
                           <span className="app-sq app-sq--sm bg-wait-soft text-wait"><Icon aria-hidden="true" /></span>
                           <span className="mg-label">{area}</span>
@@ -79,7 +79,7 @@ export default function DataQuality() {
 
             {gaps.length > 0 && complete.length > 0 && (
               <section className="mg-glass mg-panel" data-a="rise" aria-labelledby="done-t">
-                <div className="mg-panel__head"><h2 id="done-t" className="mg-panel__title">All complete</h2><span className="mg-badge mg-badge--ok">{complete.length}</span></div>
+                <div className="mg-panel__head"><h2 id="done-t" className="mg-panel__title">All complete</h2><span className="mg-badge mg-badge--ok">{complete.length} of {checks.length}</span></div>
                 <ul className="m-0 flex list-none flex-wrap gap-x-6 gap-y-2 p-0">
                   {complete.map((c) => (
                     <li key={c.key} className="flex min-w-0 flex-[1_1_300px] items-center gap-2.5 text-[13px] text-secondary-text">
