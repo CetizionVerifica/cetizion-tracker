@@ -142,7 +142,7 @@ function MoreAnalysis({ from, to, owner }) {
   const [open, setOpen] = useState(false);
   return (
     <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary className="cursor-pointer py-2 text-[15px] font-semibold text-foreground">
+      <summary className="cursor-pointer py-2 font-display text-base font-bold text-foreground">
         More analysis: pipeline, ageing, cash, win rate
       </summary>
       {open && <AnalysisCharts />}

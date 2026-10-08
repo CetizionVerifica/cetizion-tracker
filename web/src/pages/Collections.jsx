@@ -138,7 +138,8 @@ export default function Collections() {
  * a tone that darkens with age, and each band a link that narrows the list
  * below to it (the same ?bucket= the Reports chart links with).
  */
-const AGE_TONE = { 'not-due': 'bg-info', '1-30': 'bg-waiting/60', '31-60': 'bg-waiting', '61-90': 'bg-late/70', '90+': 'bg-late' };
+// The same colours as the ageing chart in Reports (components/charts.jsx AGE_COLOUR).
+const AGE_TONE = { 'not-due': 'bg-forecast', '1-30': 'bg-waiting', '31-60': 'bg-waiting', '61-90': 'bg-late', '90+': 'bg-late' };
 
 function Ageing({ buckets, totals, active }) {
   const sum = buckets.reduce((n, b) => n + Number(totals.buckets[b.key] || 0), 0);
