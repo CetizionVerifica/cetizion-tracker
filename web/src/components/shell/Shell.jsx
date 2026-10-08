@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from 'cn';
 import { api } from '../../lib/api.js';
-import { isPaused, pause as pauseMotion, switchTheme } from '../../styles/mocha/motion.js';
+import { arrive, isPaused, pause as pauseMotion, switchTheme } from '../../styles/mocha/motion.js';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
@@ -90,7 +90,7 @@ function RailLink({ item, onTip, onUntip }) {
       className="mg-rail__btn"
       aria-label={aria}
       onMouseEnter={(e) => onTip(e.currentTarget, item.label, count)}
-      onFocus={(e) => onTip(e.currentTarget, item.label, count)}
+      onFocus={(e) => onTip(e.currentTarget, item.label, count, true)}
       onBlur={onUntip}
     >
       {({ isActive }) => (
@@ -131,13 +131,30 @@ function Rail() {
     return () => window.removeEventListener('resize', measure);
   }, [measure]);
 
-  const showTip = (el, label, count) => {
+  // The tip waits a moment of intent (250ms) before it shows, then glides from
+  // icon to icon while the pointer moves along the rail; leaving hides it after
+  // a short grace, so passing between icons never flashes it off and on.
+  const tipTimer = useRef(0);
+  const tipOn = useRef(false);
+  const tipGone = useRef(0);
+  useEffect(() => () => clearTimeout(tipTimer.current), []);
+  const showTip = (el, label, count, now = false) => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const y = el.getBoundingClientRect().top - wrap.getBoundingClientRect().top + (el.offsetHeight - 28) / 2;
-    setTip({ on: true, label, count, y });
+    clearTimeout(tipTimer.current);
+    const warm = tipOn.current || performance.now() - tipGone.current < 400;
+    const go = () => { tipOn.current = true; setTip({ on: true, label, count, y, snap: !warm }); };
+    if (warm || now) go(); else tipTimer.current = setTimeout(go, 250);
   };
-  const hideTip = () => setTip((t) => ({ ...t, on: false }));
+  const hideTip = () => {
+    clearTimeout(tipTimer.current);
+    tipTimer.current = setTimeout(() => {
+      if (tipOn.current) tipGone.current = performance.now();
+      tipOn.current = false;
+      setTip((t) => ({ ...t, on: false }));
+    }, 90);
+  };
   const lateViews = (s.pinned || []).filter((v) => v.tone === 'late').reduce((n, v) => n + (Number(v.count) || 0), 0);
 
   return (
@@ -192,7 +209,7 @@ function Rail() {
           <AccountMenu side="right" align="end" />
         </div>
       </aside>
-      <span className={cn('mg-tip', tip.on && 'is-on')} aria-hidden="true" style={{ left: 90, top: 0, transform: `translateY(${tip.y}px) translateX(${tip.on ? 0 : -6}px)` }}>
+      <span className={cn('mg-tip', tip.on && 'is-on', tip.snap && 'is-snap')} aria-hidden="true" style={{ left: 90, top: 0, transform: `translateY(${tip.y}px) translateX(${tip.on ? 0 : -6}px)` }}>
         {tip.label}
         {tip.count > 0 && <span className="mg-count">{tip.count}</span>}
       </span>
@@ -670,10 +687,16 @@ function TabBar() {
 
 /** The rail (720px and up), the dock, the phone tab bar, around the page. */
 export function ShellFrame({ children }) {
+  // Every page arrives the same way on each route change: its sections rise in,
+  // its first rows fade up, its figures count (motion.js arrive). Query changes
+  // (filters, sorting) do not count as a new page.
+  const mainRef = useRef(null);
+  const { pathname } = useLocation();
+  useEffect(() => { arrive(mainRef.current); }, [pathname]);
   return (
     <div className="app-shell">
       <Rail />
-      <main className="app-shell__main">{children}</main>
+      <main className="app-shell__main" ref={mainRef}>{children}</main>
       <Dock />
       <TabBar />
     </div>
