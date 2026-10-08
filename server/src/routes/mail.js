@@ -31,7 +31,7 @@ import { converterConfigured, toPdf } from '../lib/mailbox/officeConvert.js';
 import { liveAttachmentList, providerFailed, withLiveNames } from '../lib/mailbox/liveAttachments.js';
 import { canReadLive, cleanHtml, isOwner, mayReadContent, mayViewAttachments, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
-import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
+import { listAttachmentsNow, providerFor, saveTokens } from '../lib/mailbox/sync.js';
 
 export const mailRouter = Router();
 
@@ -249,6 +249,8 @@ mailRouter.get('/messages/:id', async (req, res) => {
           : 'The mailbox could not be read just now';
     }
   }
+  // Files the sync has not listed yet are listed now, so they show on opening.
+  await listAttachmentsNow(m.account_id, [m]);
   const stored = await attachmentsOf(m.id);
   const attachments = needsLiveNames(req, m, account) ? withLiveNames(stored, await liveAttachmentList(m)) : stored;
   res.json({ data: publicMessage(m, { attachments, live, canView }) });
