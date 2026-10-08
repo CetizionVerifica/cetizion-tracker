@@ -117,7 +117,7 @@ export default function PaymentStages() {
     <>
       <ListPage
         refreshToken={version}
-        title="Payment schedule"
+        title="Invoicing"
         subtitle="Every stage on every PO — status is computed, never typed"
         resource="payment-stages"
         columns={columns}

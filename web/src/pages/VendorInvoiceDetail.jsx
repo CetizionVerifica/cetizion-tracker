@@ -50,7 +50,7 @@ export default function VendorInvoiceDetail() {
   }
 
   if (error) return <><PageHeader title="Vendor invoice" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !invoice) return <><PageHeader title="Vendor invoice" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !invoice) return <><PageHeader title="Vendor invoice" /><div className="page"><div className="skeleton h-[200px]" /></div></>;
 
   const lineFields = [
     { name: 'vendor_invoice_id', label: 'Invoice', type: 'hidden' },

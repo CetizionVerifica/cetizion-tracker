@@ -66,9 +66,12 @@ export function Card({ title, hint, actions, children, flush = false, className 
 /* ------------------------------------------------------------------ stat */
 
 export function Stat({ label, value, meta, tone = '', to, onClick }) {
+  // `warn` and `ok` are older names some pages still pass. `ok` stays plain:
+  // a zero is not news, and colouring it green says it is.
   const accent = {
     danger: 'text-late',
     warning: 'text-waiting',
+    warn: 'text-waiting',
     success: 'text-settled',
     info: 'text-info',
   }[tone];

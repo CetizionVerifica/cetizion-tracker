@@ -105,7 +105,7 @@ export default function PurchaseOrders() {
 
   return (
     <ListPage
-      title="Purchase orders"
+      title="Orders"
       subtitle="One row per PO — a project can hold several"
       resource="purchase-orders"
       columns={columns}

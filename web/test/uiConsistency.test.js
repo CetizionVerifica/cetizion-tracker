@@ -83,7 +83,7 @@ test('the stylesheet keeps to the same radius scale', () => {
 });
 
 test('records that move through a process show it with the shared rail (web/CLAUDE.md §4)', () => {
-  for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
+  for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx', 'TripDetail.jsx']) {
     const text = readFileSync(join(SRC, 'pages', page), 'utf8');
     assert.match(text, /<RecordFlow\b/, `${page} has no process rail`);
     assert.match(text, /flowSteps\(/, `${page} works out its rail by hand instead of with flowSteps`);
@@ -176,13 +176,17 @@ test('every sidebar entry opens a page with the same name (web/CLAUDE.md §3)', 
   assert.ok(entries.length > 15, 'sidebar entries not found');
   // Today greets the person and Inbox draws its own header (§3).
   const own = new Set(['/', '/inbox']);
+  // A tab that is a different list under the same sidebar entry.
+  const tabs = new Set(['Credit and cancellation notes']);
   const wrong = [];
   for (const { to, label } of entries) {
     if (own.has(to)) continue;
     const page = imports[routes[to]];
     assert.ok(page, `no page found for ${to}`);
     const text = readFileSync(join(SRC, 'pages', page), 'utf8');
-    if (!text.includes(`title="${label}"`)) wrong.push(`${label} (${to}) -> pages/${page}`);
+    // Every header the page draws (its error and loading states included).
+    const titles = [...text.matchAll(/<(?:PageHeader|ListPage)\s[^>]*?\btitle="([^"]+)"/g)].map((m) => m[1]);
+    if (!titles.length || titles.some((t) => t !== label && !tabs.has(t))) wrong.push(`${label} (${to}) -> pages/${page}: ${titles.join(', ') || 'no title'}`);
   }
   assert.deepEqual(wrong, [], 'The page title should be the sidebar name');
 });

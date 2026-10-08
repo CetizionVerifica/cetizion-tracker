@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { AlertTriangle, BedDouble, Bus, Car, Clock, FileText, FolderKanban, Plane, Receipt, TrainFront, Wallet } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
 import { Alert, ConfirmDialog, ErrorState, useToast } from '../components/ui.jsx';
-import { Chip, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
+import { Chip, flowSteps, RecordFlow, RecordPage, RecordRow, RecordSection, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Button } from '../components/ui/button';
 import { api } from '../lib/api.js';
@@ -92,6 +92,13 @@ export default function TripDetail() {
   const files = data?.data?.documents ?? [];
   const close = () => setDialog(null);
   const changed = () => { close(); refetch(); };
+  // Whether the client has paid the invoice that carried this trip. Stages
+  // are sales records, so the travel desk's rail stops at the invoice.
+  const billedStage = useFetch(
+    () => (trip?.billed_stage_id && trip?.po_number && !isHr ? api.list('payment-stages', { po_number: trip.po_number }) : null),
+    [trip?.billed_stage_id, trip?.po_number, isHr]
+  );
+  const clientPaid = (billedStage.data?.data ?? []).find((st) => st.id === trip?.billed_stage_id)?.stage_status === 'Paid';
 
   /** A file for this trip: stored, then filed against it with its kind. */
   async function attach(event) {
@@ -145,7 +152,29 @@ export default function TripDetail() {
   }
 
   if (error) return <><PageHeader title="Trip" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !trip) return <><PageHeader title="Trip" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !trip) return <><PageHeader title="Trip" /><div className="page"><div className="skeleton h-[200px]" /></div></>;
+
+  // The travel flow of web/CLAUDE.md §4. A trip the client does not pay for
+  // ends when the agency is paid, so it has no client steps to leave hollow.
+  const billedBills = bills.length > 0 && blocked.length === 0;
+  const agencyPaid = billedBills && Number(trip.vendor_paid) >= Number(trip.vendor_cost) - 0.5;
+  const steps = flowSteps([
+    { label: 'Trip', done: !trip.cancelled },
+    { label: 'Agency bill', done: billedBills },
+    { label: 'Agency paid', done: agencyPaid },
+    ...(trip.chargeable ? [
+      { label: 'Client invoice', done: Boolean(trip.billed_stage_id) },
+      { label: 'Client paid', done: clientPaid },
+    ] : []),
+  ]);
+  const verdict = trip.cancelled ? 'This trip was cancelled. Any bills on it still need settling with the agency.'
+    : blocked.length ? `${blocked.length === 1 ? 'One agency bill has' : `${blocked.length} agency bills have`} no amount, so the trip's cost is not known yet. Enter it below.`
+    : !bills.length ? 'No agency bill has been recorded for this trip yet.'
+    : !agencyPaid ? `${money(Number(trip.vendor_cost) - Number(trip.vendor_paid))} is still owed to the agency.`
+    : !trip.chargeable ? 'The agency is paid. This trip is not charged to a client, so nothing else is owed.'
+    : !trip.billed_stage_id ? 'The agency is paid. The client should be charged for this trip, and it is not on an invoice yet.'
+    : clientPaid ? 'Settled both ways: the agency is paid and so is the client invoice that carried it.'
+    : `Billed to the client on ${trip.billed_invoice_no || 'an invoice'}, and waiting on their payment.`;
 
   const when = !trip.travel_end_date || trip.travel_start_date === trip.travel_end_date
     ? date(trip.travel_start_date)
@@ -158,6 +187,7 @@ export default function TripDetail() {
       title={`${trip.employee_name || 'Somebody'} → ${trip.destination || 'somewhere'}`}
       mark={<Plane className="size-5" strokeWidth={1.75} aria-hidden="true" />}
       markTone={blocked.length ? 'late' : undefined}
+      flow={<RecordFlow steps={steps} verdict={verdict} />}
       action={<Button size="sm" variant="outline" className="h-8 px-4 text-[13px]" onClick={() => setDialog({ type: 'trip' })}>Edit trip</Button>}
       facts={[
         <span key="id" className="num text-[12px]">{trip.travel_id}</span>,

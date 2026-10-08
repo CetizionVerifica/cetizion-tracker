@@ -76,7 +76,7 @@ export default function VendorInvoices() {
           <div className="table__actions">
             <button
               type="button"
-              className={`btn btn--sm ${r.payment_status === 'Overdue' ? 'btn--primary' : ''}`}
+              className="btn btn--sm"
               onClick={(e) => { e.stopPropagation(); setPaying(r); }}
               disabled={r.invoice_amount === null}
             >
