@@ -203,3 +203,34 @@
 @media (max-width: 1099px) { .app-run__left { display: contents; } .app-run > .app-raise { order: 1; } .app-run__left > .app-panel { order: 2; } }
 @media (min-width: 1100px) { .app-raise { position: sticky; top: 16px; } }
 @media (max-width: 719px) { .app-runcard__top > .text-right { text-align: left; } }
+
+/* A segmented switch without a sliding thumb: the chosen one is glass. */
+.mg-seg button.app-seg-on { background: var(--glass-strong); box-shadow: 0 6px 14px -8px var(--shade); border: 1px solid var(--glass-edge); }
+.app-horizon { display: inline-flex; align-items: center; gap: 10px; }
+@media (max-width: 479px) { .app-horizon .mg-seg button { min-width: 0; padding: 0 10px; } }
+
+/* Four figures in a 2 × 2 panel beside a hero. */
+.app-quad { border-radius: 26px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; }
+.app-quad > div { display: flex; flex-direction: column; gap: 4px; padding: 18px 22px; min-width: 0; }
+.app-quad > div:nth-child(even) { border-left: 1px solid var(--line); }
+.app-quad > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+.app-quad .mg-tile__figure { font-size: 24px; overflow-wrap: anywhere; }
+.app-quad .mg-tile__foot { font-size: 12px; color: var(--text2); }
+@media (max-width: 479px) { .app-quad > div { padding: 14px 14px; } .app-quad .mg-tile__figure { font-size: 19px; } }
+
+/* Cash flow by month. */
+.app-cf { position: relative; display: flex; gap: 6px; padding: 16px 18px 18px 64px; overflow-x: auto; }
+.app-cf__col { flex: 1 0 74px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 4px; border: 0; border-radius: 16px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.app-cf__col:hover { background: var(--track); }
+.app-cf__col[aria-pressed="true"] { background: var(--wait-soft); }
+.app-cf__col:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-cf__month { font-size: 12px; font-weight: 700; color: var(--text2); text-align: center; white-space: nowrap; }
+.app-cf__plot { height: 150px; display: flex; align-items: flex-end; justify-content: center; gap: 4px; border-bottom: 1px solid var(--line); }
+.app-cf__stack { width: 26px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.app-cf__in { display: block; background: var(--figure); border-radius: 6px 6px 2px 2px; min-height: 0; }
+.app-cf__pipe { display: block; border-radius: 6px 6px 0 0; }
+.app-cf__out { width: 12px; display: block; background: var(--latte); border-radius: 4px 4px 2px 2px; }
+.app-cf__nums { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11.5px; color: var(--text2); }
+.app-cf__nums b { font-weight: 700; color: var(--text); }
+.app-cf__key { position: absolute; left: 18px; bottom: 26px; display: flex; flex-direction: column; gap: 1px; font-size: 11px; font-weight: 700; color: var(--muted); }
+@media (max-width: 719px) { .app-cf { padding-left: 16px; } .app-cf__key { display: none; } }
