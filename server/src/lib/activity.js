@@ -49,6 +49,10 @@ export const ACTIONS = {
   CLAIM_REIMBURSED: 'claim.reimbursed',
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
+  // A vendor payment taken back off the invoice (#214). Payments are a
+  // ledger, so a correction is a row rather than a rewrite — but the row
+  // alone does not say who decided it or why, which is what this is for.
+  VENDOR_INVOICE_PAY_CORRECTED: 'vendor_invoice.payment_corrected',
   // A quotation read from the PDF we emailed, checked against it by a person
   // (docs/email-enquiries-plan.md §3.9.6).
   QUOTATION_EMAIL_READ_CHECKED: 'quotation.email_read_checked',

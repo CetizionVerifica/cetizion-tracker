@@ -210,7 +210,12 @@ function travelDocumentClause(alias) {
        EXISTS (SELECT 1 FROM attachments tat
                 WHERE tat.document_id = ${alias}.id AND tat.entity IN ('travel_log','travel_vendor_invoice'))
     OR EXISTS (SELECT 1 FROM travel_vendor_invoices tvi WHERE tvi.document_id = ${alias}.id)
-    OR EXISTS (SELECT 1 FROM travel_vendor_credit_notes tcn WHERE tcn.document_id = ${alias}.id))`;
+    OR EXISTS (SELECT 1 FROM travel_vendor_credit_notes tcn WHERE tcn.document_id = ${alias}.id)
+    -- The bank advice behind a payment to the agency (#214). Without this
+    -- clause HR uploads the proof and is then refused its own file: the
+    -- document hangs off the payment row, which none of the clauses above
+    -- reach.
+    OR EXISTS (SELECT 1 FROM travel_vendor_payments tvp WHERE tvp.document_id = ${alias}.id))`;
 }
 
 export function documentClause(scope, params, { alias = 'd' } = {}) {

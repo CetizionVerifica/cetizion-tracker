@@ -7,7 +7,7 @@ import { emailNewInvoice } from '../lib/portalNotices.js';
 import { settleInvoiceReview } from './invoiceReview.js';
 import { claimNextId } from '../lib/sequences.js';
 import { ApiError } from '../middleware/error.js';
-import { requireAdmin } from '../auth/middleware.js';
+import { requireAdmin, requireRole } from '../auth/middleware.js';
 import { ownerClause, parentClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { actAs, logCreated, logInvoiceRaised, logPaymentRecorded, logStageMoves } from '../lib/recordActs.js';
@@ -603,58 +603,257 @@ stageRouter.post('/:id/payment', async (req, res) => {
 // Travel finance actions
 // ---------------------------------------------------------------------
 
+const VENDOR_PAYMENT_MODES = ['bank_transfer', 'upi', 'cheque', 'cash', 'card', 'other'];
+
+/** A payment is something that happened; a date ahead of today is a plan. */
+const notFuture = (field) => (value, ctx) => {
+  if (value && value > new Date().toISOString().slice(0, 10)) {
+    ctx.addIssue({ code: 'custom', message: 'A payment cannot be dated in the future', path: [field] });
+  }
+};
+
 const vendorPaySchema = z.object({
+  // Still the absolute total settled, as every caller before this change
+  // sent it. `mode` switches that, exactly as the stage receipt route does.
   amount_paid: requiredMoney,
   payment_date: dateStr,
-});
+  mode: z.enum(['set', 'add']).optional().default('set'),
+  tds_amount: z.preprocess(blank, z.coerce.number().min(0).optional()),
+  payment_mode: z.preprocess(blank, z.enum(VENDOR_PAYMENT_MODES).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
+  document_id: z.preprocess(blank, z.coerce.number().int().positive().optional()),
+  remarks: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
+}).superRefine((v, ctx) => notFuture('payment_date')(v.payment_date, ctx));
+
+const vendorCorrectSchema = z.object({
+  // Signed on purpose: this is the one route that may take money back off
+  // an invoice, and it may move either leg of the settlement.
+  amount: z.preprocess(blank, z.coerce.number().optional()),
+  tds_amount: z.preprocess(blank, z.coerce.number().optional()),
+  reason: z.string().trim().min(1, 'Say why this is being corrected').max(1000),
+  paid_on: dateStr,
+  payment_mode: z.preprocess(blank, z.enum(VENDOR_PAYMENT_MODES).optional()),
+  reference: z.preprocess(blank, z.string().trim().max(120).nullable().optional()),
+  document_id: z.preprocess(blank, z.coerce.number().int().positive().optional()),
+}).superRefine((v, ctx) => notFuture('paid_on')(v.paid_on, ctx));
 
 /**
- * Record what a travel vendor has been paid.
+ * The invoice, locked, with what its ledger already settles.
  *
- * Open to both roles, deliberately: arranging travel and settling the
- * vendor's invoice is ordinary work, and there is no finance role for it to
- * belong to. What changed in #85 is not who may do it but what is left
- * behind — the figure now arrives with the account that recorded it, in the
- * same transaction, and the two columns are no longer reachable through the
- * ordinary edit form (see protectedFields on the resource).
- *
- * The total is set, not added to, exactly as before.
+ * The total is read from the ledger rather than from the cached column,
+ * because the ledger is the record and the column is derived from it. The
+ * lock is on the invoice row, so two payments on one bill cannot each
+ * compute their delta from the same starting figure.
  */
-vendorInvoiceRouter.post('/:id/pay', async (req, res) => {
+async function lockVendorInvoice(client, id) {
+  const { rows: [invoice] } = await client.query(
+    'SELECT id, vendor_invoice_id, invoice_amount, amount_paid FROM travel_vendor_invoices WHERE id = $1 FOR UPDATE',
+    [id]
+  );
+  if (!invoice) throw new ApiError(404, 'Vendor invoice not found');
+  const { rows: [sum] } = await client.query(
+    `SELECT COALESCE(SUM(amount + tds_amount), 0) AS settled, COALESCE(SUM(amount), 0) AS cash,
+            COALESCE(SUM(tds_amount), 0) AS tds
+       FROM travel_vendor_payments WHERE vendor_invoice_id = $1`,
+    [id]
+  );
+  return { invoice, settled: Number(sum.settled), cash: Number(sum.cash), tds: Number(sum.tds) };
+}
+
+/** What the invoice owes after its credit notes, for the overpayment figure. */
+async function vendorInvoiceView(id) {
+  const { rows: [row] } = await query('SELECT * FROM v_travel_vendor_invoices WHERE id = $1', [id]);
+  return row;
+}
+
+/**
+ * The reply every vendor payment route sends: the invoice as the screens
+ * read it, plus what the ledger now settles.
+ *
+ * `over_payable` is the figure a warning would quote. Paying more than the
+ * bill is allowed — an advance, a rounding, a currency difference — so the
+ * number is reported rather than refused, and nothing here clamps it.
+ */
+function vendorPaymentReply(row, settled) {
+  const payable = row?.net_payable === null || row?.net_payable === undefined ? null : Number(row.net_payable);
+  return {
+    data: row,
+    meta: {
+      settled,
+      net_payable: payable,
+      over_payable: payable === null ? null : Math.max(settled - payable, 0),
+    },
+  };
+}
+
+/**
+ * Record what a travel agency has been paid (#85, re-made as a ledger in #214).
+ *
+ * ## Who
+ *
+ * The travel desk and an administrator. Until #214 this route was open to
+ * every signed-in role, so a sales user could pay an agency — not a decision
+ * anybody took, just the consequence of an open gate. Paying the agency is
+ * the travel desk's work, so HR and admin keep it and sales is refused here,
+ * in the handler, because the policy's three levels cannot say "admin and HR
+ * but not sales" on their own.
+ *
+ * ## What the figure means
+ *
+ * `amount_paid` is still the **absolute total settled**, which is what both
+ * existing callers send: the Pay dialog adds what is already paid before
+ * posting, and the ⌘K command asks for the total. So the row written here is
+ * the difference, and `mode: 'add'` is available for a caller that would
+ * rather send the transfer itself — the same switch, with the same default,
+ * as the stage receipt route.
+ *
+ * Settlement is `amount + tds_amount`: tax deducted at source settles the
+ * bill without the money reaching the agency, so a 100,000 bill paid by a
+ * 90,000 transfer with 10,000 deducted is paid in full, and 90,000 is what
+ * left the bank.
+ *
+ * ## What it refuses
+ *
+ * A total *lower* than the ledger already settles. That is a correction, and
+ * corrections are an administrator's with a reason recorded (/pay/correct).
+ * Letting this route quietly write the negative row instead would hand HR the
+ * correction it is not supposed to have, with no reason and under the wrong
+ * audit action — so the refusal names the route to use instead.
+ */
+vendorInvoiceRouter.post('/:id/pay', requireRole('admin', 'hr'), async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Vendor invoice not found');
   const body = parse(vendorPaySchema, req.body || {});
   const id = Number(req.params.id);
+  const tds = Number(body.tds_amount || 0);
 
-  const paid = await transaction(async (client) => {
-    const { rows: [before] } = await client.query(
-      'SELECT id, vendor_invoice_id, amount_paid, payment_date FROM travel_vendor_invoices WHERE id = $1 FOR UPDATE',
-      [id]
-    );
-    if (!before) throw new ApiError(404, 'Vendor invoice not found');
+  const settledAfter = await transaction(async (client) => {
+    const { invoice, settled } = await lockVendorInvoice(client, id);
+    const delta = body.mode === 'set' ? Number(body.amount_paid) - settled : Number(body.amount_paid);
 
-    const { rows: [after] } = await client.query(
-      `UPDATE travel_vendor_invoices
-          SET amount_paid = $1, payment_date = COALESCE($2, CURRENT_DATE)
-        WHERE id = $3 RETURNING id, amount_paid, payment_date`,
-      [body.amount_paid, body.payment_date ?? null, id]
+    // Asking for the total it already is, with nothing else to record: the
+    // honest answer is that there is nothing to do. Writing a zero row would
+    // put a payment in the history that never happened.
+    if (delta === 0 && tds === 0) return settled;
+
+    if (delta < 0) {
+      throw new ApiError(422, `This invoice has already been paid ${settled}. Lowering that is a correction: use POST /api/vendor-invoices/${id}/pay/correct, which records who did it and why.`);
+    }
+    if (tds > delta) {
+      throw new ApiError(422, 'Please check the highlighted fields', {
+        fields: { tds_amount: `The tax deducted cannot be more than the ${delta} this payment settles` },
+      });
+    }
+    // delta === 0 with TDS would mean moving the cash and TDS legs against
+    // each other without changing the total, which is a re-statement of a
+    // payment already recorded rather than a new one.
+    if (delta === 0) {
+      throw new ApiError(422, `This invoice already settles ${settled}. Changing how that splits between cash and tax deducted is a correction: use POST /api/vendor-invoices/${id}/pay/correct.`);
+    }
+
+    const { rows: [payment] } = await client.query(
+      `INSERT INTO travel_vendor_payments
+         (vendor_invoice_id, amount, tds_amount, paid_on, mode, reference, document_id, remarks, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, amount, tds_amount, paid_on, mode`,
+      [id, delta - tds, tds, body.payment_date ?? null, body.payment_mode || 'bank_transfer',
+        body.reference ?? null, body.document_id ?? null, body.remarks ?? null, req.user?.username || null]
     );
 
     await logActivity(client, {
       actor: actorFrom(req.user),
       action: ACTIONS.VENDOR_INVOICE_PAID,
       entityType: 'vendor_invoice',
-      entityId: before.vendor_invoice_id ?? String(before.id),
+      entityId: invoice.vendor_invoice_id ?? String(invoice.id),
       metadata: {
-        amount_paid_before: Number(before.amount_paid),
-        amount_paid_after: Number(after.amount_paid),
-        payment_date: after.payment_date,
+        payment_id: payment.id,
+        amount: Number(payment.amount),
+        tds_amount: Number(payment.tds_amount),
+        paid_on: payment.paid_on,
+        mode: payment.mode,
+        reference: body.reference ?? null,
+        has_proof: Boolean(body.document_id),
+        // The figures the old audit row carried, so the trail reads the same
+        // way either side of this change.
+        amount_paid_before: settled,
+        amount_paid_after: settled + delta,
       },
     });
-    return after;
+    return settled + delta;
   });
 
-  const { rows: full } = await query('SELECT * FROM v_travel_vendor_invoices WHERE id = $1', [paid.id]);
-  res.json({ data: full[0] });
+  res.json(vendorPaymentReply(await vendorInvoiceView(id), settledAfter));
+});
+
+/**
+ * Take a vendor payment back off the invoice, or put its split right (#214).
+ *
+ * The administrator's, as the expense-claim correction is and for the same
+ * reason: this is the one route that can move a figure already booked
+ * against a bill *down*. The travel desk may pay an agency; deciding that a
+ * payment it recorded was wrong is a different act, and it is recorded as
+ * one — a row of its own, a reason that cannot be left out, and the account
+ * that made it.
+ *
+ * Nothing historical is touched. The original row and the bank advice
+ * attached to it stay exactly as they were: the ledger is appended to, so
+ * what the invoice settles changes while the record of what was actually
+ * sent does not.
+ *
+ * Either leg may move, and they may move in opposite directions — correcting
+ * a 90,000 + 10,000 payment to 92,000 + 8,000 is `amount: 2000,
+ * tds_amount: -2000`, which leaves the total alone and puts the split right.
+ */
+vendorInvoiceRouter.post('/:id/pay/correct', requireAdmin, async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) throw new ApiError(404, 'Vendor invoice not found');
+  const body = parse(vendorCorrectSchema, req.body || {});
+  const id = Number(req.params.id);
+  const amount = Number(body.amount || 0);
+  const tds = Number(body.tds_amount || 0);
+
+  if (amount === 0 && tds === 0) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { amount: 'Give the amount, the tax deducted, or both to correct' },
+    });
+  }
+
+  const settledAfter = await transaction(async (client) => {
+    const { invoice, settled, cash, tds: tdsSoFar } = await lockVendorInvoice(client, id);
+
+    const { rows: [correction] } = await client.query(
+      `INSERT INTO travel_vendor_payments
+         (vendor_invoice_id, amount, tds_amount, paid_on, mode, reference, document_id, correction_reason, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, amount, tds_amount, paid_on`,
+      [id, amount, tds, body.paid_on ?? null, body.payment_mode || 'other',
+        body.reference ?? null, body.document_id ?? null, body.reason, req.user?.username || null]
+    );
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.VENDOR_INVOICE_PAY_CORRECTED,
+      entityType: 'vendor_invoice',
+      entityId: invoice.vendor_invoice_id ?? String(invoice.id),
+      metadata: {
+        payment_id: correction.id,
+        reason: body.reason,
+        amount: Number(correction.amount),
+        tds_amount: Number(correction.tds_amount),
+        paid_on: correction.paid_on,
+        settled_before: settled,
+        settled_after: settled + amount + tds,
+        cash_before: cash,
+        cash_after: cash + amount,
+        tds_before: tdsSoFar,
+        tds_after: tdsSoFar + tds,
+        // Greppable, as the expense-claim correction's own flag is: this is
+        // the case where a figure the business had booked goes down.
+        lowers_recorded_total: amount + tds < 0,
+      },
+    });
+    return settled + amount + tds;
+  });
+
+  res.json(vendorPaymentReply(await vendorInvoiceView(id), settledAfter));
 });
 
 // ---------------------------------------------------------------------
@@ -972,5 +1171,31 @@ vendorInvoiceRouter.get('/:id/full', async (req, res) => {
     query(`SELECT a.*, d.file_name, d.content_type, d.size_bytes FROM attachments a JOIN documents d ON d.id = a.document_id
             WHERE a.entity = 'travel_vendor_invoice' AND a.entity_id = $1 ORDER BY a.created_at DESC`, [String(id)]),
   ]);
-  res.json({ data: { invoice, lines: lines.rows, credit_notes: credits.rows, documents: files.rows } });
+  // The agency's payment history, for the roles that settle the agency
+  // (#214). This route is open to sales as the invoice itself is, so the
+  // ledger is gated here rather than by the route: how the business paid a
+  // vendor — the UTR, the method, the bank advice, any correction — is the
+  // travel desk's and the administrator's, and a sales user reading the
+  // invoice has no business in it. Scoped to this one invoice; there is no
+  // route that lists the ledger across invoices.
+  const maySeePayments = ['admin', 'hr'].includes(req.user?.role);
+  const payments = maySeePayments
+    ? (await query(
+      `SELECT p.id, p.amount, p.tds_amount, p.amount + p.tds_amount AS settles, p.paid_on, p.mode,
+              p.reference, p.remarks, p.correction_reason, p.recorded_by, p.created_at,
+              p.document_id, d.file_name AS document_name
+         FROM travel_vendor_payments p
+         LEFT JOIN documents d ON d.id = p.document_id
+        WHERE p.vendor_invoice_id = $1
+        ORDER BY p.paid_on NULLS FIRST, p.id`,
+      [id]
+    )).rows
+    : undefined;
+
+  res.json({
+    data: {
+      invoice, lines: lines.rows, credit_notes: credits.rows, documents: files.rows,
+      ...(payments ? { payments } : {}),
+    },
+  });
 });
