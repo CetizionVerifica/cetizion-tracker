@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { TriangleAlert } from 'lucide-react';
+import { ChevronRight, Send, TriangleAlert } from 'lucide-react';
 import { ListPage } from '../components/ListPage.jsx';
 import { useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
@@ -74,9 +74,15 @@ export default function Enquiries() {
     {
       key: 'questionnaire_status', header: 'Questionnaire',
       render: (r) => (
-        <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
-          {r.questionnaire_status ? <QuestionnaireBadge status={r.questionnaire_status} /> : 'Send'}
-        </button>
+        r.questionnaire_status ? (
+          <button type="button" className="qn-cell" title={`Questionnaire for ${r.enquiry_no}: open it`} onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
+            <QuestionnaireBadge status={r.questionnaire_status} /><ChevronRight aria-hidden="true" />
+          </button>
+        ) : (
+          <button type="button" className="mg-btn mg-btn--sm" title={`Send the questionnaire for ${r.enquiry_no}`} onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
+            <Send aria-hidden="true" />Send
+          </button>
+        )
       ),
     },
     {

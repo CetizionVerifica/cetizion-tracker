@@ -1,9 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Paperclip, Plus, Trash2 } from 'lucide-react';
-import { Button } from './ui/button.tsx';
-import { Input } from './ui/input.tsx';
-import { Label } from './ui/label.tsx';
-import { Textarea } from './ui/textarea.tsx';
+import { ArrowLeft, ArrowRight, CircleAlert, CircleCheck, Paperclip, Pencil, Plus, Upload } from 'lucide-react';
 
 /**
  * A service questionnaire, filled in step by step (#208 phase 1, §3.1).
@@ -15,6 +11,10 @@ import { Textarea } from './ui/textarea.tsx';
  * every answer again (lib/questionnaireDefinition.js); what it refuses
  * comes back as `fields` and is shown next to the question.
  *
+ * Wave 9 (Mocha Glass): step bars, pill radios, rows as cards, the review
+ * as a two-column list, and on a phone the primary button full width on top.
+ * Classes in styles/mocha/questionnaire.css (`qn-*`).
+ *
  *   definition      { intro?, steps: [{ key, title, description?, questions }] }
  *   onSave(step, answers)          save as you go (omitted in a preview)
  *   onUpload(questionKey, file)    → { document_id, file_name }
@@ -22,7 +22,7 @@ import { Textarea } from './ui/textarea.tsx';
  *   askContact      the client gives their name and email on the review page
  *   readOnly        the review page only, without edits (a submitted response)
  */
-const CHOICE = new Set(['select', 'radio', 'multiselect', 'checkbox']);
+const GROUPED = new Set(['radio', 'yesno', 'multiselect', 'checkbox', 'table']);
 const blank = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
 
 /** The question's show-if rule, as the server reads it. */
@@ -62,39 +62,46 @@ export function answerText(q, v, fileNames = {}) {
   }
 }
 
-const field = 'h-9 w-full rounded-md border border-input bg-transparent px-3 text-base md:text-sm dark:bg-input/30 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive';
+/** A table's rows in words, one line each. */
+export function rowsText(q, rows) {
+  return rows.map((r) => q.columns.filter((c) => !blank(r?.[c.key])).map((c) => `${c.label}: ${answerText(c, r[c.key])}`).join(' · ') || '—');
+}
 
 /** One question's input. */
-function Control({ q, value, onChange, error, onUpload, fileNames, disabled }) {
+function Control({ q, value, onChange, error, onUpload, fileNames, disabled, describedBy }) {
   const id = `q-${q.key}`;
-  const invalid = error ? true : undefined;
+  const own = { id, disabled, 'aria-invalid': error ? true : undefined, 'aria-describedby': describedBy };
   switch (q.type) {
     case 'textarea':
-      return <Textarea id={id} rows={4} value={value ?? ''} placeholder={q.placeholder} onChange={(e) => onChange(e.target.value)} aria-invalid={invalid} disabled={disabled} />;
-    case 'number': case 'money':
+      return <textarea className="mg-textarea" rows={4} value={value ?? ''} placeholder={q.placeholder} onChange={(e) => onChange(e.target.value)} {...own} />;
+    case 'number':
+      return <input className="mg-input qn-short" type="number" inputMode="decimal" step={q.integer ? 1 : 'any'} min={q.min} max={q.max} value={value ?? ''} placeholder={q.placeholder} onChange={(e) => onChange(e.target.value)} {...own} />;
+    case 'money':
       return (
-        <div className="flex items-center gap-2">
-          {q.type === 'money' && <span className="text-[13px] text-muted-foreground">{q.currency || 'INR'}</span>}
-          <Input id={id} type="number" inputMode="decimal" step={q.integer ? 1 : 'any'} min={q.min} max={q.max} value={value ?? ''} placeholder={q.placeholder}
-            onChange={(e) => onChange(e.target.value)} aria-invalid={invalid} disabled={disabled} className="max-w-[240px]" />
-        </div>
+        <span className="qn-money">
+          <span className="qn-money__cur" aria-hidden="true">{q.currency || 'INR'}</span>
+          <input className="mg-input mg-input--money" type="number" inputMode="decimal" step={q.integer ? 1 : 'any'} min={q.min} max={q.max} value={value ?? ''} placeholder={q.placeholder}
+            onChange={(e) => onChange(e.target.value)} {...own} />
+        </span>
       );
     case 'date':
-      return <Input id={id} type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-invalid={invalid} disabled={disabled} className="max-w-[220px]" />;
+      return <input className="mg-input qn-date" type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} {...own} />;
     case 'select':
       return (
-        <select id={id} className={field} value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} aria-invalid={invalid} disabled={disabled}>
-          <option value="">Choose…</option>
-          {q.options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-        </select>
+        <span className="mg-select-wrap qn-sel">
+          <select className="mg-select" value={value ?? ''} onChange={(e) => onChange(e.target.value || undefined)} {...own}>
+            <option value="">Choose…</option>
+            {q.options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </span>
       );
     case 'radio': case 'yesno': {
       const options = q.type === 'yesno' ? [{ key: true, label: 'Yes' }, { key: false, label: 'No' }] : q.options;
       return (
-        <div role="radiogroup" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-x-5 gap-y-2">
+        <div role="radiogroup" aria-labelledby={`${id}-label`} aria-describedby={describedBy} aria-invalid={own['aria-invalid']} className="qn-opts">
           {options.map((o) => (
-            <label key={String(o.key)} className="flex items-center gap-2 text-[14px]">
-              <input type="radio" name={id} checked={value === o.key} onChange={() => onChange(o.key)} disabled={disabled} className="size-4 accent-[var(--primary)]" />
+            <label key={String(o.key)} className={`qn-opt${value === o.key ? ' is-on' : ''}`}>
+              <span className="mg-check"><input type="radio" name={id} checked={value === o.key} onChange={() => onChange(o.key)} disabled={disabled} /></span>
               {o.label}
             </label>
           ))}
@@ -104,12 +111,12 @@ function Control({ q, value, onChange, error, onUpload, fileNames, disabled }) {
     case 'multiselect': case 'checkbox': {
       const list = Array.isArray(value) ? value : [];
       return (
-        <div className="flex flex-col gap-2">
+        <div className="qn-list" role="group" aria-labelledby={`${id}-label`} aria-describedby={describedBy}>
           {q.options.map((o) => (
-            <label key={o.key} className="flex items-center gap-2 text-[14px]">
-              <input type="checkbox" checked={list.includes(o.key)} disabled={disabled} className="size-4 accent-[var(--primary)]"
+            <label key={o.key} className="mg-check">
+              <input type="checkbox" checked={list.includes(o.key)} disabled={disabled}
                 onChange={(e) => onChange(e.target.checked ? [...list, o.key] : list.filter((x) => x !== o.key))} />
-              {o.label}
+              <span>{o.label}</span>
             </label>
           ))}
         </div>
@@ -120,12 +127,12 @@ function Control({ q, value, onChange, error, onUpload, fileNames, disabled }) {
     case 'table':
       return <TableControl q={q} value={value} onChange={onChange} error={error} disabled={disabled} />;
     default:
-      return <Input id={id} value={value ?? ''} placeholder={q.placeholder} onChange={(e) => onChange(e.target.value)} aria-invalid={invalid} disabled={disabled} />;
+      return <input className="mg-input" value={value ?? ''} placeholder={q.placeholder} onChange={(e) => onChange(e.target.value)} {...own} />;
   }
 }
 
 function FileControl({ q, value, onChange, onUpload, fileNames, disabled }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
   const input = useRef(null);
   const list = Array.isArray(value) ? value : [];
@@ -133,32 +140,34 @@ function FileControl({ q, value, onChange, onUpload, fileNames, disabled }) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !onUpload) return;
-    setBusy(true); setErr(null);
+    setBusy(file.name); setErr(null);
     try {
       const up = await onUpload(q.key, file);
       fileNames[up.document_id] = up.file_name;
       onChange(q.multiple ? [...list, up.document_id] : [up.document_id]);
-    } catch (ex) { setErr(ex.fields?.file || ex.message); } finally { setBusy(false); }
+    } catch (ex) { setErr(ex.fields?.file || ex.message); } finally { setBusy(null); }
   }
   return (
-    <div className="flex flex-col gap-2">
+    <div className="qn-files" aria-labelledby={`q-${q.key}-label`} role="group">
       {list.map((id) => (
-        <div key={id} className="flex items-center gap-2 text-[13.5px]">
-          <Paperclip className="size-3.5 text-muted-foreground" aria-hidden="true" />
-          <span className="min-w-0 truncate">{fileNames[id] || 'File'}</span>
-          {!disabled && <Button type="button" variant="ghost" size="xs" onClick={() => onChange(list.filter((x) => x !== id))}>Remove</Button>}
+        <div key={id} className="qn-file">
+          <Paperclip aria-hidden="true" />
+          <span className="qn-file__name">{fileNames[id] || 'File'}</span>
+          {!disabled && <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Remove ${fileNames[id] || 'the file'}`} onClick={() => onChange(list.filter((x) => x !== id))}>Remove</button>}
         </div>
       ))}
+      {busy && <div className="qn-file is-busy" role="status"><Upload aria-hidden="true" /><span className="qn-file__name">Uploading {busy}…</span></div>}
       {!disabled && (q.multiple || !list.length) && (
-        <div>
-          <input ref={input} type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx" onChange={pick} tabIndex={-1} />
-          <Button type="button" variant="outline" size="sm" disabled={busy || !onUpload} onClick={() => input.current?.click()}>
-            <Paperclip aria-hidden="true" />{busy ? 'Uploading…' : list.length ? 'Add another file' : 'Choose a file'}
-          </Button>
-          <div className="mt-1 text-[12px] text-muted-foreground">PDF, image, Word or Excel.</div>
+        <div className="qn-file__pick">
+          <input ref={input} type="file" className="sr-only" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx" onChange={pick} tabIndex={-1} aria-hidden="true" />
+          <button type="button" className="mg-btn mg-btn--sm" disabled={Boolean(busy) || !onUpload} aria-busy={busy ? true : undefined} onClick={() => input.current?.click()}>
+            <Upload aria-hidden="true" />{busy ? 'Uploading…' : list.length ? 'Add another file' : 'Choose a file'}
+          </button>
+          <span className="qn-meta">{onUpload ? 'PDF, image, Word or Excel.' : 'Files are added on the client’s page.'}</span>
         </div>
       )}
-      {err && <div className="text-[12.5px] text-destructive">{err}</div>}
+      {!list.length && disabled && <span className="qn-meta">No file added.</span>}
+      {err && <span className="mg-field__error" role="alert">{err}</span>}
     </div>
   );
 }
@@ -168,50 +177,53 @@ function TableControl({ q, value, onChange, error, disabled }) {
   const rows = Array.isArray(value) && value.length ? value : [{}];
   const set = (ri, key, v) => onChange(rows.map((r, i) => (i === ri ? { ...r, [key]: v } : r)));
   const max = q.max_rows ?? 200;
+  const one = q.label.replace(/s$/, '');
   return (
-    <div className="flex flex-col gap-3">
+    <div className="qn-rows">
       {rows.map((row, ri) => (
-        <div key={ri} className="rounded-md border border-border p-3">
-          <div className="mb-2 flex items-center justify-between text-[12px] text-muted-foreground">
-            <span>{q.label.replace(/s$/, '')} {ri + 1}</span>
-            {!disabled && rows.length > 1 && <Button type="button" variant="ghost" size="xs" onClick={() => onChange(rows.filter((_, i) => i !== ri))}><Trash2 aria-hidden="true" />Remove</Button>}
+        <div key={ri} className="qn-trow">
+          <div className="qn-trow__head">
+            <strong>{one} {ri + 1}</strong>
+            {!disabled && rows.length > 1 && <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm qn-danger" aria-label={`Remove ${one.toLowerCase()} ${ri + 1}`} onClick={() => onChange(rows.filter((_, i) => i !== ri))}>Remove</button>}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {q.columns.map((c) => {
-              const cellError = error?.[`${q.key}.${ri}.${c.key}`];
-              return (
-                <div key={c.key} className="flex min-w-0 flex-col gap-1.5">
-                  <Label htmlFor={`q-${q.key}-${ri}-${c.key}`} className="text-[12.5px]">{c.label}{c.required && <span className="text-destructive"> *</span>}</Label>
-                  <Control q={{ ...c, key: `${q.key}-${ri}-${c.key}` }} value={row[c.key]} onChange={(v) => set(ri, c.key, v)} error={cellError} disabled={disabled} />
-                  {cellError && <div className="text-[12px] text-destructive">{cellError}</div>}
-                </div>
-              );
-            })}
+          <div className="mg-grid2">
+            {q.columns.map((c) => (
+              <Ask key={c.key} q={{ ...c, key: `${q.key}-${ri}-${c.key}` }} value={row[c.key]} onChange={(v) => set(ri, c.key, v)} error={error?.[`${q.key}.${ri}.${c.key}`]} disabled={disabled} small />
+            ))}
           </div>
         </div>
       ))}
       {!disabled && rows.length < max && (
-        <div><Button type="button" variant="outline" size="sm" onClick={() => onChange([...rows, {}])}><Plus aria-hidden="true" />Add {q.label.toLowerCase().replace(/s$/, '')}</Button></div>
+        <div><button type="button" className="mg-btn mg-btn--sm" onClick={() => onChange([...rows, {}])}><Plus aria-hidden="true" />Add {one.toLowerCase()}</button></div>
       )}
     </div>
   );
 }
 
-function Question({ q, value, onChange, errors, onUpload, fileNames, disabled }) {
-  if (q.type === 'info') return <p className="text-[14px]/[1.6] text-secondary-text">{q.label}</p>;
-  const error = q.type === 'table' ? errors : errors[q.key];
-  const own = errors[q.key];
-  const labelled = !['radio', 'yesno', 'multiselect', 'checkbox', 'table', 'file'].includes(q.type);
-  return (
-    <div className="flex flex-col gap-1.5">
-      {labelled
-        ? <Label htmlFor={`q-${q.key}`} className="text-[14px] font-medium">{q.label}{q.required && <span className="text-destructive"> *</span>}</Label>
-        : <div id={`q-${q.key}-label`} className="text-[14px] font-medium">{q.label}{q.required && <span className="text-destructive"> *</span>}</div>}
-      {q.help && <div className="text-[12.5px]/[1.5] text-muted-foreground">{q.help}</div>}
-      <Control q={q} value={value} onChange={onChange} error={error} onUpload={onUpload} fileNames={fileNames} disabled={disabled} />
-      {own && <div className="text-[12.5px] text-destructive" role="alert">{own}</div>}
-    </div>
+/** A label, its hint, the control and its error: one question, or one cell of a table row. */
+function Ask({ q, value, onChange, error, own = error, onUpload, fileNames, disabled, small = false }) {
+  const id = `q-${q.key}`;
+  const grouped = GROUPED.has(q.type);
+  const Tag = grouped ? 'fieldset' : 'div';
+  const Label = grouped ? 'legend' : q.type === 'file' ? 'span' : 'label';
+  const label = (
+    <Label className="mg-field__label" id={`${id}-label`} htmlFor={Label === 'label' ? id : undefined}>
+      {q.label}{q.required && <span className="req" aria-hidden="true">*</span>}
+    </Label>
   );
+  return (
+    <Tag className={`mg-field qn-q${small ? ' qn-q--cell' : ''}${own ? ' is-error' : ''}`}>
+      {label}
+      {q.help && <span className="mg-field__hint" id={`${id}-hint`}>{q.help}</span>}
+      <Control q={q} value={value} onChange={onChange} error={error} onUpload={onUpload} fileNames={fileNames} disabled={disabled} describedBy={q.help ? `${id}-hint` : undefined} />
+      {own && typeof own === 'string' && <span className="mg-field__error" role="alert">{own}</span>}
+    </Tag>
+  );
+}
+
+function Question({ q, value, onChange, errors, onUpload, fileNames, disabled }) {
+  if (q.type === 'info') return <p className="qn-info">{q.label}</p>;
+  return <Ask q={q} value={value} onChange={onChange} error={q.type === 'table' ? errors : errors[q.key]} own={errors[q.key]} onUpload={onUpload} fileNames={fileNames} disabled={disabled} />;
 }
 
 /** Required questions of one step, answered? The server checks types; this keeps the client from moving on with a gap. */
@@ -238,6 +250,15 @@ function tidy(answers, def) {
     if (q.type === 'table' && Array.isArray(out[q.key])) out[q.key] = out[q.key].filter((r) => Object.values(r || {}).some((x) => !blank(x)));
   }
   return out;
+}
+
+/** Step bars: one per step and one for the review. */
+function Bars({ count, at }) {
+  return (
+    <div className="mg-steps" aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => <span key={i} className={i < at ? 'is-done' : i === at ? 'is-on' : ''} />)}
+    </div>
+  );
 }
 
 export function QuestionnaireForm({
@@ -290,33 +311,50 @@ export function QuestionnaireForm({
     } finally { setBusy(false); }
   }
 
-  if (!steps.length) return <p className="text-[14px] text-muted-foreground">This questionnaire has no questions yet.</p>;
+  if (!steps.length) {
+    return (
+      <div className="mg-empty qn-none">
+        <span className="mg-empty__mark" aria-hidden="true"><Pencil size={22} strokeWidth={1.8} /></span>
+        <strong>Nothing to answer yet</strong>
+        <p className="mg-empty__text">This questionnaire has no questions yet.</p>
+      </div>
+    );
+  }
 
   const banner = note && (
-    <div role="status" className={`rounded-md border px-3 py-2 text-[13px] ${note.tone === 'error' ? 'border-destructive/40 text-destructive' : 'border-border text-secondary-text'}`}>{note.text}</div>
+    <div className={`mg-banner ${note.tone === 'error' ? 'mg-banner--late' : 'mg-banner--ok'}`} role={note.tone === 'error' ? 'alert' : 'status'}>
+      {note.tone === 'error' ? <CircleAlert aria-hidden="true" /> : <CircleCheck aria-hidden="true" />}
+      <div className="mg-banner__body">{note.text}</div>
+    </div>
   );
 
   if (onReview) {
     return (
-      <form ref={top} onSubmit={submit} className="flex flex-col gap-6">
-        {!readOnly && <div className="text-[12.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Check your answers</div>}
+      <form ref={top} onSubmit={submit} className="qn-form">
+        {!readOnly && (
+          <div className="qn-progress">
+            <span className="mg-label">Check your answers</span>
+            <Bars count={steps.length + 1} at={steps.length} />
+          </div>
+        )}
         {steps.map((s, si) => {
           const shown = s.questions.filter((q) => q.type !== 'info' && visible(q, answers, byKey));
+          if (!shown.length) return null;
           return (
-            <section key={s.key} className="flex flex-col gap-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <h3 className="text-[15px] font-semibold text-foreground">{s.title}</h3>
-                {!readOnly && <Button type="button" variant="link" size="xs" onClick={() => { setStep(si); scrollUp(); }}>Edit</Button>}
+            <section key={s.key} className="qn-group" aria-label={s.title}>
+              <div className="qn-group__head">
+                <h3>{s.title}</h3>
+                {!readOnly && <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`Edit ${s.title}`} onClick={() => { setStep(si); scrollUp(); }}><Pencil aria-hidden="true" />Edit</button>}
               </div>
-              <dl className="flex flex-col divide-y divide-border rounded-md border border-border">
+              <dl className="qn-dl">
                 {shown.map((q) => (
-                  <div key={q.key} className="grid gap-1 px-3 py-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:gap-4">
-                    <dt className="text-[13px] text-muted-foreground">{q.label}</dt>
-                    <dd className="min-w-0 text-[13.5px] text-foreground [overflow-wrap:anywhere]">
+                  <div key={q.key} className={errors[q.key] ? 'is-error' : undefined}>
+                    <dt>{q.label}</dt>
+                    <dd>
                       {q.type === 'table' && Array.isArray(answers[q.key]) && answers[q.key].length
-                        ? <ul className="flex flex-col gap-1">{answers[q.key].map((r, ri) => <li key={ri}>{q.columns.filter((c) => !blank(r[c.key])).map((c) => `${c.label}: ${answerText(c, r[c.key])}`).join(' · ') || '—'}</li>)}</ul>
+                        ? <ul className="qn-lines">{rowsText(q, answers[q.key]).map((t, ri) => <li key={ri}>{t}</li>)}</ul>
                         : answerText(q, answers[q.key], fileNames)}
-                      {errors[q.key] && <div className="text-[12px] text-destructive">{errors[q.key]}</div>}
+                      {errors[q.key] && <span className="mg-field__error" role="alert">{errors[q.key]}</span>}
                     </dd>
                   </div>
                 ))}
@@ -327,15 +365,23 @@ export function QuestionnaireForm({
         {!readOnly && (
           <>
             {askContact && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5"><Label htmlFor="q-contact-name">Your name</Label><Input id="q-contact-name" required value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} autoComplete="name" /></div>
-                <div className="flex flex-col gap-1.5"><Label htmlFor="q-contact-email">Your email</Label><Input id="q-contact-email" type="email" required value={contact.email} onChange={(e) => setContact({ ...contact, email: e.target.value })} autoComplete="email" /></div>
+              <div className="mg-grid2 qn-contact">
+                <div className={`mg-field${errors.name ? ' is-error' : ''}`}>
+                  <label className="mg-field__label" htmlFor="q-contact-name">Your name</label>
+                  <input className="mg-input" id="q-contact-name" required value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} autoComplete="name" readOnly={busy} aria-invalid={errors.name ? true : undefined} />
+                  {errors.name && <span className="mg-field__error">{errors.name}</span>}
+                </div>
+                <div className={`mg-field${errors.email ? ' is-error' : ''}`}>
+                  <label className="mg-field__label" htmlFor="q-contact-email">Your email</label>
+                  <input className="mg-input" id="q-contact-email" type="email" required value={contact.email} onChange={(e) => setContact({ ...contact, email: e.target.value })} autoComplete="email" readOnly={busy} aria-invalid={errors.email ? true : undefined} />
+                  {errors.email && <span className="mg-field__error">{errors.email}</span>}
+                </div>
               </div>
             )}
             {banner}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => { setStep(steps.length - 1); scrollUp(); }} disabled={busy}><ArrowLeft aria-hidden="true" />Back</Button>
-              <Button type="submit" disabled={busy}>{busy ? 'Sending…' : submitLabel}</Button>
+            <div className="qn-btns">
+              <button type="button" className="mg-btn" onClick={() => { setStep(steps.length - 1); scrollUp(); }} disabled={busy}><ArrowLeft aria-hidden="true" />Back</button>
+              <button type="submit" className="mg-btn mg-btn--primary qn-next" disabled={busy} aria-busy={busy || undefined}>{busy ? 'Sending…' : submitLabel}</button>
             </div>
           </>
         )}
@@ -345,24 +391,24 @@ export function QuestionnaireForm({
 
   const s = steps[step];
   return (
-    <div ref={top} className="flex flex-col gap-6">
-      <div>
-        <div className="text-[12.5px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Step {step + 1} of {steps.length}</div>
-        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-secondary" aria-hidden="true">
-          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${((step + 1) / (steps.length + 1)) * 100}%` }} />
-        </div>
-        <h2 className="mt-4 text-[18px] font-semibold text-foreground">{s.title}</h2>
-        {s.description && <p className="mt-1 text-[13.5px]/[1.6] text-secondary-text">{s.description}</p>}
-        {step === 0 && definition.intro && <p className="mt-2 text-[13.5px]/[1.6] text-secondary-text">{definition.intro}</p>}
+    <div ref={top} className="qn-form">
+      <div className="qn-progress">
+        <span className="mg-label">Step {step + 1} of {steps.length}</span>
+        <Bars count={steps.length + 1} at={step} />
       </div>
+      <div className="qn-step">
+        <h2>{s.title}</h2>
+        {s.description && <p>{s.description}</p>}
+      </div>
+      {step === 0 && definition.intro && <blockquote className="qn-intro">{definition.intro}</blockquote>}
+      {banner}
       {s.questions.filter((q) => visible(q, answers, byKey)).map((q) => (
         <Question key={q.key} q={q} value={answers[q.key]} onChange={(v) => set(q.key, v)} errors={errors} onUpload={preview ? null : onUpload} fileNames={fileNames} disabled={busy} />
       ))}
-      {banner}
-      <div className="flex flex-wrap items-center gap-2">
-        {step > 0 && <Button type="button" variant="outline" onClick={() => go(step - 1)} disabled={busy}><ArrowLeft aria-hidden="true" />Back</Button>}
-        {!preview && onSave && <Button type="button" variant="ghost" onClick={later} disabled={busy}>Save and finish later</Button>}
-        <Button type="button" className="ml-auto" onClick={() => go(step + 1)} disabled={busy}>{step === steps.length - 1 ? 'Review' : 'Next'}<ArrowRight aria-hidden="true" /></Button>
+      <div className="qn-btns">
+        {step > 0 && <button type="button" className="mg-btn" onClick={() => go(step - 1)} disabled={busy}><ArrowLeft aria-hidden="true" />Back</button>}
+        {!preview && onSave && <button type="button" className="mg-btn mg-btn--ghost" onClick={later} disabled={busy}>Save and finish later</button>}
+        <button type="button" className="mg-btn mg-btn--primary qn-next" onClick={() => go(step + 1)} disabled={busy}>{step === steps.length - 1 ? 'Review' : 'Next'}<ArrowRight aria-hidden="true" /></button>
       </div>
     </div>
   );

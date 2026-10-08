@@ -570,7 +570,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
 test('an admin sees every client email and can hold them', async ({ page }) => {
   await signIn(page);
   await page.goto('/settings/client-emails');
-  await expect(page.getByRole('heading', { name: 'Client emails' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Client emails', exact: true })).toBeVisible();
   const table = page.getByRole('table', { name: 'Kinds of client email' });
   await expect(table.getByText('Overdue payment reminder')).toBeVisible();
   await expect(table.getByText('Reply from the Inbox')).toBeVisible();
@@ -686,7 +686,7 @@ test('a service questionnaire: sent from an enquiry, filled in on a phone, and t
   await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
   await page.getByRole('button', { name: 'Send', exact: true }).first().click();
   await page.getByRole('button', { name: 'Make a link only' }).click();
-  const link = await page.locator('.mono.small').filter({ hasText: '/q/' }).first().innerText();
+  const link = await page.getByTestId('questionnaire-link').first().innerText();
   await page.keyboard.press('Escape');
 
   // The client, on a phone: a required answer is asked for, a conditional one appears.

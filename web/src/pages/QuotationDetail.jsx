@@ -12,6 +12,7 @@ import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { AcceptanceLinks, LinkDialog } from '../components/AcceptanceLinks.jsx';
+import { QuestionnaireTab } from '../components/QuestionnaireCard.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { plural } from '../components/daily.jsx';
 import { RecordState } from '../components/travel.jsx';
@@ -85,7 +86,7 @@ export default function QuotationDetail() {
   const acceptances = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/acceptances`), [key, q?.revision, q?.accepted_at, linksVersion]);
   const links = acceptances.data?.data ?? [];
 
-  const tabKeys = ['lines', 'details', 'acceptance', ...(q?.revisions?.length ? ['revisions'] : []), 'activity'];
+  const tabKeys = ['lines', 'details', 'acceptance', ...(q?.revisions?.length ? ['revisions'] : []), ...(q?.enquiry?.enquiry_no ? ['questionnaire'] : []), 'activity'];
   const [tab, setTab] = useTab(tabKeys);
 
   async function act(path, body, okMessage) {
@@ -396,6 +397,7 @@ export default function QuotationDetail() {
     { key: 'details', label: 'Details' },
     { key: 'acceptance', label: 'Client acceptance', count: links.length || undefined },
     ...(q.revisions.length ? [{ key: 'revisions', label: 'Revisions', count: q.revisions.length }] : []),
+    ...(q.enquiry?.enquiry_no ? [{ key: 'questionnaire', label: 'Questionnaire' }] : []),
     { key: 'activity', label: 'Activity' },
   ];
 
@@ -461,6 +463,7 @@ export default function QuotationDetail() {
               <AcceptanceLinks quotation={q} rows={links} loading={acceptances.loading && !acceptances.data} failed={acceptances.error} onRetry={acceptances.refetch} canSend={open && !approvalBlocked && !q.accepted_at} onSend={() => setLinking(true)} onChanged={() => { setLinksVersion((n) => n + 1); refetch(); }} />
             )}
             {tab === 'revisions' && revisionsTab}
+            {tab === 'questionnaire' && q.enquiry?.enquiry_no && <QuestionnaireTab enquiryNo={q.enquiry.enquiry_no} />}
             {tab === 'activity' && <Timeline entity="quotation" id={q.quotation_no} flat />}
           </div>
         </section>
