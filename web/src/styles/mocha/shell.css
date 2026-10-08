@@ -3,8 +3,9 @@
    own classes (mg-rail, mg-drop, mg-tip, mg-dock, mg-header, mg-controlbar); this file is
    only the layout glue and the few rows the canvas draws inline. */
 
-.app-shell { position: relative; display: flex; align-items: flex-start; min-height: 100dvh; padding: 18px 0 112px 18px; }
-.app-shell__main { flex: 1 1 0; min-width: 0; }
+/* The dock's clearance sits on the main column, not the shell, so the sticky rail keeps its place to the very end of a long page. */
+.app-shell { position: relative; display: flex; align-items: flex-start; min-height: 100dvh; padding: 18px 0 18px 18px; }
+.app-shell__main { flex: 1 1 0; min-width: 0; padding-bottom: 94px; }
 
 /* Rail: sticky beside the page, never taller than the window; the nav scrolls if it must. */
 .app-shell__rail { position: sticky; top: 18px; z-index: 30; flex: 0 0 84px; }
@@ -49,6 +50,7 @@
 
 @media (max-width: 719px) {
   .app-shell { display: block; padding: 0 0 108px; }
+  .app-shell__main { padding-bottom: 0; }
   .app-shell__rail, .app-shell__dock { display: none; }
   .app-shell__tabbar { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 60; height: 72px; border-radius: 28px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; padding: 0 6px; }
   .page { padding: 16px; }
