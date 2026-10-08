@@ -6,7 +6,7 @@
 .set-page { padding-top: 8px; }
 .set-body { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 20px; align-items: start; min-width: 0; }
 .set-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.set-main > .page-header, .set-main > .set-header { padding: 0; }
+.set-main > .page-header, .set-main > .set-header, .set-page > .set-header { padding: 0; }
 .set-header .mg-header__sub { max-width: 78ch; }
 
 /* The crumbs on wide screens, the back link on a phone. */
