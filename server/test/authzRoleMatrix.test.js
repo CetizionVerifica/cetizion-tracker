@@ -826,9 +826,12 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
     before(async () => {
       await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-MX-214', 'Matrix 214 Ltd')`);
       await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_value) VALUES ('PO-MX-214', 'PRJ-MX-214', 100000)`);
+      // A travel invoice, not a share of the PO: since 097 (#214) a trip may
+      // only be billed on `kind = 'travel'`. The subject here is still who
+      // may write the link, not what the link may say.
       ({ rows: [{ id: stageId }] } = await db.query(
-        `INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no)
-              VALUES ('PO-MX-214', 1, 'Advance', 1, 'CVPL/MX/214') RETURNING id`));
+        `INSERT INTO payment_stages (kind, po_number, stage_name, trigger_event, amount, invoice_no, invoice_date)
+              VALUES ('travel', 'PO-MX-214', 'Travel invoice', 'Manual', 25000, 'CVPL/MX/214', CURRENT_DATE) RETURNING id`));
       const { rows: [type] } = await db.query(
         `INSERT INTO trip_types (name, chargeable, sort_order) VALUES ('Chargeable (matrix 214)', true, 99)
          ON CONFLICT (name) DO UPDATE SET chargeable = true RETURNING id`);

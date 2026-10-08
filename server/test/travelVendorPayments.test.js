@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
@@ -46,6 +46,14 @@ function schemaBefore() {
   assert.ok(at > 0, 'the 096 section should be marked in schema.sql');
   // Cut back to the comment banner that opens the section.
   return full.slice(0, full.lastIndexOf('-- ---------------------------------------------------------------------', at));
+}
+
+/** Every migration that sorts after `name`, in order. */
+async function applyMigrationsAfter(db, name) {
+  const later = readdirSync(join(DB_DIR, 'migrations'))
+    .filter((file) => file.endsWith('.sql') && file > name)
+    .sort();
+  for (const file of later) await db.query(readFileSync(join(DB_DIR, 'migrations', file), 'utf8'));
 }
 
 describe('travel vendor payments (#214)', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
@@ -98,6 +106,12 @@ describe('travel vendor payments (#214)', { skip: !ADMIN_URL && 'set TEST_DATABA
       }
       // The subject under test.
       await db.query(readFileSync(join(DB_DIR, 'migrations', '096_travel_vendor_payments.sql'), 'utf8'));
+      // Then every migration after it, because views.sql is always the
+      // current one: a view that reads a column a later migration added
+      // cannot be built on a table this test deliberately rewound. Without
+      // this the next schema change to touch a view breaks here instead of
+      // where it was made.
+      await applyMigrationsAfter(db, '096_travel_vendor_payments.sql');
       await db.query(readFileSync(join(DB_DIR, 'views.sql'), 'utf8'));
     });
 

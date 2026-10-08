@@ -39,7 +39,7 @@ const PASSWORD = 'a-good-long-test-password';
 
 describe('which invoice billed a trip (#214)', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   let db; let app; let admin; let sales; let hr;
-  let stage; let otherStage; let chargeable; let internal;
+  let stage; let otherStage; let poStage; let chargeable; let internal;
 
   before(async () => {
     const root = new pg.Client({ connectionString: ADMIN_URL });
@@ -71,16 +71,25 @@ describe('which invoice billed a trip (#214)', { skip: !ADMIN_URL && 'set TEST_D
     sales = await signIn('sam@example.com');
     hr = await signIn('hema@example.com');
 
-    // A PO with two invoiced stages, a chargeable trip on it, and an internal
-    // trip on nothing — the trip the database's own rule refuses to bill.
+    // A PO with its own split, two travel invoices on it, a chargeable trip
+    // on it, and an internal trip on nothing — the trip the database's own
+    // rule refuses to bill.
+    //
+    // The stages a trip is billed on are travel invoices since 097 (#214):
+    // `billed_stage_id` may only name a `kind = 'travel'` stage, and an
+    // ordinary share of the PO is refused. The split is kept here as
+    // `poStage` because that refusal is now worth asserting.
     await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-BS-1', 'Billed Stage Ltd')`);
     await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_value) VALUES ('PO-BS-1', 'PRJ-BS-1', 200000)`);
+    ({ rows: [{ id: poStage }] } = await db.query(
+      `INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no)
+            VALUES ('PO-BS-1', 1, 'Advance', 1.0, 'CVPL/BS/PO') RETURNING id`));
     ({ rows: [stage] } = await db.query(
-      `INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no)
-            VALUES ('PO-BS-1', 1, 'Advance', 0.5, 'CVPL/BS/1') RETURNING id`));
+      `INSERT INTO payment_stages (kind, po_number, stage_name, trigger_event, amount, invoice_no, invoice_date)
+            VALUES ('travel', 'PO-BS-1', 'Travel invoice', 'Manual', 25000, 'CVPL/BS/1', CURRENT_DATE) RETURNING id`));
     ({ rows: [otherStage] } = await db.query(
-      `INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no)
-            VALUES ('PO-BS-1', 2, 'On completion', 0.5, 'CVPL/BS/2') RETURNING id`));
+      `INSERT INTO payment_stages (kind, po_number, stage_name, trigger_event, amount, invoice_no, invoice_date)
+            VALUES ('travel', 'PO-BS-1', 'Travel invoice', 'Manual', 12000, 'CVPL/BS/2', CURRENT_DATE) RETURNING id`));
 
     chargeable = (await admin.post('/api/travel-logs')
       .send({ travel_id: 'TRV-BS-1', employee_name: 'Asha', po_number: 'PO-BS-1', travel_start_date: '2026-08-01' })
@@ -237,8 +246,19 @@ describe('which invoice billed a trip (#214)', { skip: !ADMIN_URL && 'set TEST_D
     test('a stage that is not there is refused, and nothing is written', async () => {
       await setStoredStage(null);
       const res = await admin.post(path()).send({ billed_stage_id: 987654 });
-      assert.equal(res.status, 409, JSON.stringify(res.body));
+      // 404 since 097 (#214): the handler looks the stage up to check it is a
+      // travel invoice, so a missing one is answered as missing rather than
+      // reaching the foreign key and coming back as a conflict.
+      assert.equal(res.status, 404, JSON.stringify(res.body));
       assert.equal(await storedStage(), null);
+    });
+
+    test('an ordinary share of the PO is not a billing target (097, #214)', async () => {
+      await setStoredStage(null);
+      const res = await admin.post(path()).send({ billed_stage_id: poStage });
+      assert.equal(res.status, 422, JSON.stringify(res.body));
+      assert.match(JSON.stringify(res.body), /not on an ordinary PO payment stage/);
+      assert.equal(await storedStage(), null, 'and nothing was written');
     });
 
     test('a body that says nothing, or says nonsense, is a 422', async () => {

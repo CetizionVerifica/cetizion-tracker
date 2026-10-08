@@ -22,6 +22,10 @@ export const stageRouter = Router();
 export const vendorInvoiceRouter = Router();
 export const claimRouter = Router();
 export const travelRouter = Router();
+// The invoice that bills a trip to the client (#214 §5.2). Its own mount
+// because it creates a payment stage and links trips in one act, which
+// neither /api/payment-stages nor /api/travel-logs can express.
+export const travelInvoiceRouter = Router();
 
 const parse = (schema, body) => {
   const result = schema.safeParse(body);
@@ -78,12 +82,20 @@ projectRouter.get('/:projectId/full', async (req, res) => {
   const qParams = [id];
   const qMine = ownerClause(scope, qParams, { alias: 'q' });
 
-  const [pos, services, stages, onboarding, travel, quotations, milestones] = await Promise.all([
+  const [pos, services, stages, travelInvoices, onboarding, travel, quotations, milestones] = await Promise.all([
     query('SELECT * FROM v_purchase_orders WHERE project_id = $1 ORDER BY po_date NULLS LAST, po_number', [id]),
     query(`SELECT s.* FROM po_services s
              JOIN purchase_orders p ON p.po_number = s.po_number
             WHERE p.project_id = $1 ORDER BY s.po_number, s.id`, [id]),
-    query('SELECT * FROM v_payment_stages WHERE project_id = $1 ORDER BY po_number, stage_no', [id]),
+    // The payment splits of this project's POs, and only those: the
+    // onboarding checklist and the screen's totals both read them as the
+    // order's own schedule (097, #214).
+    query(`SELECT * FROM v_payment_stages WHERE project_id = $1 AND kind = 'po_stage' ORDER BY po_number, stage_no`, [id]),
+    // Travel billed on this project or on one of its POs, with how many
+    // trips each invoice carries.
+    query(`SELECT s.*, (SELECT count(*)::int FROM travel_logs t WHERE t.billed_stage_id = s.id) AS trip_count
+             FROM v_payment_stages s WHERE s.project_id = $1 AND s.kind = 'travel'
+            ORDER BY s.invoice_date NULLS LAST, s.id`, [id]),
     query('SELECT * FROM onboarding_tasks WHERE project_id = $1 ORDER BY step_no', [id]),
     query('SELECT * FROM v_travel_logs WHERE project_id = $1 ORDER BY travel_start_date NULLS LAST', [id]),
     query(`SELECT q.* FROM v_quotations q WHERE q.project_id = $1 ${qMine ? `AND ${qMine}` : ''}
@@ -116,6 +128,7 @@ projectRouter.get('/:projectId/full', async (req, res) => {
       purchase_orders: pos.rows,
       services: services.rows,
       payment_stages: stages.rows,
+      travel_invoices: travelInvoices.rows,
       onboarding: checklist,
       onboarding_progress: onboardingProgress(checklist),
       travel: travel.rows,
@@ -350,9 +363,15 @@ poRouter.get('/:poNumber/full', async (req, res) => {
   );
   if (!header.rows.length) throw new ApiError(404, 'Purchase order not found');
 
-  const [services, stages, travel] = await Promise.all([
+  const [services, stages, travelInvoices, travel] = await Promise.all([
     query('SELECT * FROM po_services WHERE po_number = $1 ORDER BY id', [po]),
-    query('SELECT * FROM v_payment_stages WHERE po_number = $1 ORDER BY stage_no', [po]),
+    // The PO's own split, and only that (097, #214). The screen totals these
+    // against 100% and calls the order fully paid when every one of them is
+    // paid, neither of which a travel invoice belongs in.
+    query(`SELECT * FROM v_payment_stages WHERE po_number = $1 AND kind = 'po_stage' ORDER BY stage_no`, [po]),
+    query(`SELECT s.*, (SELECT count(*)::int FROM travel_logs t WHERE t.billed_stage_id = s.id) AS trip_count
+             FROM v_payment_stages s WHERE s.po_number = $1 AND s.kind = 'travel'
+            ORDER BY s.invoice_date NULLS LAST, s.id`, [po]),
     query('SELECT * FROM v_travel_logs WHERE po_number = $1 ORDER BY travel_start_date NULLS LAST', [po]),
   ]);
 
@@ -364,6 +383,9 @@ poRouter.get('/:poNumber/full', async (req, res) => {
       from_email: await poFromEmail(po),
       services: services.rows,
       payment_stages: stages.rows,
+      // Travel billed on this order, listed separately because it is not a
+      // share of it (#214 §5.4).
+      travel_invoices: travelInvoices.rows,
       travel: travel.rows,
     },
   });
@@ -407,8 +429,13 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     let removedDocuments = [];
     if (body.replace) {
       const { rows: removed } = await client.query(
+        // kind, because "reset the payment stages" means the PO's own
+        // split (097, #214). A travel invoice raised against this PO
+        // bills travel, not a share of the order, and resetting the
+        // split must not take it — and with it its invoice number and
+        // its PDF — away.
         `DELETE FROM payment_stages
-          WHERE po_number = $1 AND invoice_no IS NULL AND amount_received = 0
+          WHERE po_number = $1 AND kind = 'po_stage' AND invoice_no IS NULL AND amount_received = 0
           RETURNING document_id`,
         [po]
       );
@@ -419,10 +446,14 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     // still accounts for part of the PO. Checking only the incoming stages let
     // a 50/50 split land beside a paid 50% stage and schedule 150% of the PO.
     const { rows: [kept] } = await client.query(
+      // Only the split counts towards 100% of the PO (097, #214): a
+      // travel invoice carries no stage_percent, so it adds nothing to
+      // either figure, and saying so keeps the "already invoiced"
+      // message about the split rather than about travel.
       `SELECT COALESCE(SUM(stage_percent), 0)::float8 AS percent,
               COALESCE(SUM(stage_percent) FILTER (
                 WHERE invoice_no IS NOT NULL OR amount_received > 0), 0)::float8 AS billed
-         FROM payment_stages WHERE po_number = $1`,
+         FROM payment_stages WHERE po_number = $1 AND kind = 'po_stage'`,
       [po]
     );
     const remaining = 1 - kept.percent;
@@ -437,7 +468,10 @@ poRouter.post('/:poNumber/stages', async (req, res) => {
     }
 
     const start = await client.query(
-      'SELECT COALESCE(MAX(stage_no), 0) AS max FROM payment_stages WHERE po_number = $1',
+      // The next number in the PO's own split. A travel invoice has no
+      // stage_no at all (097, #214), so it can never take one the split
+      // needs.
+      'SELECT COALESCE(MAX(stage_no), 0) AS max FROM payment_stages WHERE po_number = $1 AND kind = \'po_stage\'',
       [po]
     );
     let n = Number(start.rows[0].max);
@@ -541,7 +575,7 @@ stageRouter.post('/:id/payment', async (req, res) => {
   // cannot reach is indistinguishable from one that does not exist, and
   // nothing is ever written against it.
   const params = [req.params.id];
-  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+  const mine = parentClause(scopeOf(req), params, { kind: 'via_po_or_project', alias: 'ps' });
   const { rows: [stage] } = await query(
     `SELECT ps.id, ps.amount_received, ps.po_number, ps.stage_no, ps.invoice_no FROM payment_stages ps
       WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''}`,
@@ -1165,11 +1199,12 @@ travelRouter.get('/:travelId/full', async (req, res) => {
 // that own the PO side of a trip. HR is not one of them: the route is absent
 // from HR_ROUTES, so hrGate answers 403 before the handler is reached.
 //
-// What it deliberately does not do yet: check that the stage belongs to the
-// trip's own PO, project or client. The database's rule — only a chargeable
-// trip may name a billing stage — is unchanged, and the rest of that
-// validation belongs with the travel-invoice work this is a prerequisite for.
-// This change is about who may write the link, not what the link may say.
+// Since 097 (#214) it also checks what the link may say, which #221 left to
+// the travel-invoice work it was a prerequisite for: the stage has to be a
+// travel invoice, and one raised for this trip's own project. The database
+// enforces both in travel_log_rules(); the handler checks them first so the
+// answer is a sentence naming the problem rather than the generic message a
+// check-constraint violation translates to.
 // ---------------------------------------------------------------------
 
 const billedStageSchema = z.object({
@@ -1189,6 +1224,45 @@ travelRouter.post('/:travelId/billed-stage', async (req, res) => {
       [travelId]
     );
     if (!before) throw new ApiError(404, 'Trip not found');
+
+    // Only a travel invoice, and only one raised for this trip's project
+    // (097, #214). travel_log_rules() is the rule; this is the message.
+    if (body.billed_stage_id !== null) {
+      const { rows: [stage] } = await client.query(
+        `SELECT s.id, s.kind, s.invoice_no,
+                COALESCE(s.project_id, spo.project_id) AS project_id
+           FROM payment_stages s
+           LEFT JOIN purchase_orders spo ON spo.po_number = s.po_number
+          WHERE s.id = $1`,
+        [body.billed_stage_id]
+      );
+      if (!stage) throw new ApiError(404, 'Payment stage not found');
+      if (stage.kind !== 'travel') {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: {
+            billed_stage_id: 'A trip is billed on a travel invoice, not on an ordinary PO payment stage. '
+              + 'Raise a travel invoice on the project or the PO first.',
+          },
+        });
+      }
+      // Resolved the way the trigger resolves it: the trip's own project,
+      // or the project of the PO it is on.
+      const { rows: [trip] } = await client.query(
+        `SELECT COALESCE(t.project_id, tpo.project_id) AS project_id
+           FROM travel_logs t
+           LEFT JOIN purchase_orders tpo ON tpo.po_number = t.po_number
+          WHERE t.id = $1`,
+        [before.id]
+      );
+      if (!trip.project_id || trip.project_id !== stage.project_id) {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: {
+            billed_stage_id: `Travel invoice ${stage.invoice_no || stage.id} was raised for project `
+              + `${stage.project_id || '(none)'}, and this trip is on ${trip.project_id || 'no project'}.`,
+          },
+        });
+      }
+    }
 
     // The trigger travel_log_rules() refuses a billing stage on a trip that
     // is not chargeable, and the foreign key refuses a stage that is not
@@ -1213,6 +1287,205 @@ travelRouter.post('/:travelId/billed-stage', async (req, res) => {
 
   const { rows: [trip] } = await query('SELECT * FROM v_travel_logs WHERE id = $1', [after.id]);
   res.json({ data: trip });
+});
+
+// ---------------------------------------------------------------------
+// Raising the invoice that bills a trip to the client (#214 §5.2)
+// ---------------------------------------------------------------------
+
+/**
+ * A travel invoice is a payment stage of kind 'travel' (097), so it needs
+ * no finance code of its own: receipts, the Paid/Due/Overdue status,
+ * reminders, collections, the portal and the one GST invoice-number series
+ * all already work on a stage. What it does need is this route, because
+ * creating the invoice and saying which trips it carries is one act and
+ * has to be one transaction.
+ *
+ * ## Why not the generic payment-stages form
+ *
+ * Because that form cannot say "and these four trips are now billed".
+ * Setting `billed_stage_id` is a protected field reachable only through
+ * POST /api/travel-logs/:travelId/billed-stage (#221), and a travel
+ * invoice raised without its trips would leave somebody to link them one
+ * at a time, which is exactly the gap that made `billed_stage_id` get set
+ * so rarely.
+ *
+ * ## Who
+ *
+ * Admin and sales, who own the PO side of a trip. HR runs the travel desk
+ * and may not raise a client invoice (#214 §9.3): the route is absent from
+ * HR_ROUTES, so hrGate answers 403 before this handler is reached — the
+ * same way the billed-stage route is closed to them. No generic
+ * payment-stage right is granted to HR by any of this.
+ *
+ * ## The amount
+ *
+ * Typed, not derived. A travel invoice's total is what is printed on it,
+ * and it has nothing to do with the PO's value: a ₹37,500 travel invoice
+ * against a ₹10,00,000 PO is ₹37,500, and the PO's own 50/50 split is
+ * untouched by it.
+ */
+const travelInvoiceSchema = z.object({
+  // The project the invoice is raised on. Required even when a PO is
+  // given, so the request says which project it means rather than leaving
+  // the server to infer it — and the trigger then proves the two agree.
+  project_id: z.string().trim().min(1, 'Choose the project this invoice is raised on').max(60),
+  po_number: z.preprocess(blank, z.string().trim().max(60).nullable().optional()),
+  invoice_no: z.string().trim().min(1, 'Give the invoice number').max(60),
+  invoice_date: z.preprocess(blank, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')),
+  // Its own printed total, and it has to be a figure: a zero travel
+  // invoice is not an invoice.
+  amount: z.preprocess(toNumber, z.number({ error: 'Enter the invoice amount' }).positive('The invoice amount has to be more than zero')),
+  credit_days: z.preprocess(blank, z.coerce.number().int().min(0).optional()),
+  document_id: z.preprocess(blank, z.coerce.number().int().positive().optional()),
+  remarks: z.preprocess(blank, z.string().trim().max(1000).nullable().optional()),
+  // Which trips this invoice carries. May be empty: an invoice can be
+  // raised first and a trip added to it later from the trip page, which is
+  // the other half of #214 §5.2.
+  travel_ids: z.array(z.string().trim().min(1)).max(200).optional().default([]),
+});
+
+/** The name a travel invoice goes by in the stage list. */
+const TRAVEL_STAGE_NAME = 'Travel invoice';
+
+travelInvoiceRouter.post('/', async (req, res) => {
+  const body = parse(travelInvoiceSchema, req.body || {});
+  const scope = scopeOf(req);
+  const travelIds = [...new Set(body.travel_ids)];
+
+  const stageId = await transaction(async (client) => {
+    await actAs(client, req.user);
+
+    // The project first, and scoped: a salesperson raises invoices on
+    // their own projects. 404 rather than 403, as every other
+    // owner-scoped lookup answers, so an id nobody owns reads the same as
+    // one that does not exist.
+    const projectParams = [body.project_id];
+    const mine = ownerClause(scope, projectParams, { alias: 'p' });
+    const { rows: [project] } = await client.query(
+      `SELECT p.project_id FROM projects p WHERE p.project_id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,
+      projectParams
+    );
+    if (!project) throw new ApiError(404, 'Project not found');
+
+    // The PO, when there is one, and it has to be this project's. The
+    // trigger checks the same thing; checking here too means the caller
+    // gets a sentence naming both instead of a constraint violation.
+    if (body.po_number) {
+      const { rows: [po] } = await client.query(
+        'SELECT po_number, project_id FROM purchase_orders WHERE po_number = $1',
+        [body.po_number]
+      );
+      if (!po) throw new ApiError(404, 'Purchase order not found');
+      if (po.project_id !== body.project_id) {
+        throw new ApiError(422, 'Please check the highlighted fields', {
+          fields: { po_number: `PO ${po.po_number} belongs to project ${po.project_id}, not ${body.project_id}` },
+        });
+      }
+    }
+
+    // Every trip, locked, before anything is written. All of them are
+    // validated and only then is the invoice created, so a bad trip means
+    // no invoice at all rather than an invoice carrying some of what was
+    // asked for.
+    const trips = [];
+    if (travelIds.length) {
+      const { rows } = await client.query(
+        `SELECT t.id, t.travel_id, t.po_number, t.project_id, t.cancelled, t.billed_stage_id,
+                tt.chargeable, po.project_id AS po_project
+           FROM travel_logs t
+           LEFT JOIN trip_types      tt ON tt.id = t.trip_type_id
+           LEFT JOIN purchase_orders po ON po.po_number = t.po_number
+          WHERE t.travel_id = ANY($1::text[])
+          ORDER BY t.id
+            FOR UPDATE OF t`,
+        [travelIds]
+      );
+      const found = new Map(rows.map((r) => [r.travel_id, r]));
+      const missing = travelIds.filter((id) => !found.has(id));
+      if (missing.length) {
+        throw new ApiError(404, `No trip with id ${missing.join(', ')}. Nothing has been recorded.`);
+      }
+
+      const refuse = (travelId, why) => {
+        throw new ApiError(422, `Trip ${travelId} cannot go on this invoice: ${why}. Nothing has been recorded.`);
+      };
+      for (const id of travelIds) {
+        const trip = found.get(id);
+        // The trip's project, resolved the way the database resolves it:
+        // its own, or the project of the PO it is on.
+        const tripProject = trip.project_id ?? trip.po_project ?? null;
+        if (!trip.chargeable) refuse(id, 'it is not a chargeable trip, so there is nothing to bill');
+        if (trip.cancelled) refuse(id, 'it is cancelled');
+        if (tripProject === null) refuse(id, 'it is on no project or PO, so it cannot be traced to this invoice');
+        if (tripProject !== body.project_id) refuse(id, `it belongs to project ${tripProject}`);
+        // Never silently taken off an invoice it is already on. Moving a
+        // trip from one invoice to another is a decision, and the trip
+        // page is where it is made.
+        if (trip.billed_stage_id !== null) {
+          refuse(id, 'it is already billed on another invoice — clear that first from the trip');
+        }
+        trips.push(trip);
+      }
+    }
+
+    // `kind` and `trigger_event` are this route's, not the caller's: a
+    // travel invoice is 'travel' and 'Manual' by definition, and the shape
+    // constraint refuses anything else.
+    const { rows: [stage] } = await client.query(
+      `INSERT INTO payment_stages
+         (kind, project_id, po_number, stage_name, trigger_event, amount,
+          invoice_no, invoice_date, credit_days, document_id, remarks)
+       VALUES ('travel', $1, $2, $3, 'Manual', $4, $5, $6, $7, $8, $9)
+       RETURNING id, po_number, project_id, stage_no, stage_name, invoice_no, invoice_date, amount`,
+      [body.project_id, body.po_number ?? null, TRAVEL_STAGE_NAME, body.amount,
+        body.invoice_no, body.invoice_date, body.credit_days ?? null,
+        body.document_id ?? null, body.remarks ?? null]
+    );
+
+    for (const trip of trips) {
+      await client.query('UPDATE travel_logs SET billed_stage_id = $1 WHERE id = $2', [stage.id, trip.id]);
+      // The same action the trip page writes, because for the trip that is
+      // exactly what happened: it is now billed on this invoice.
+      await logActivity(client, {
+        actor: actorFrom(req.user),
+        action: ACTIONS.TRIP_BILLED_STAGE_SET,
+        entityType: 'travel_log',
+        entityId: trip.travel_id,
+        metadata: {
+          billed_stage_id_before: null,
+          billed_stage_id_after: stage.id,
+          invoice_no: stage.invoice_no,
+          raised_with_invoice: true,
+        },
+      });
+    }
+
+    // The invoice itself, under the action every raised invoice uses.
+    await logInvoiceRaised(client, req.user, stage);
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.INVOICE_RAISED,
+      entityType: 'payment_stage',
+      entityId: String(stage.id),
+      metadata: {
+        kind: 'travel',
+        project_id: stage.project_id,
+        po_number: stage.po_number,
+        invoice_no: stage.invoice_no,
+        invoice_date: stage.invoice_date,
+        amount: Number(stage.amount),
+        travel_ids: trips.map((t) => t.travel_id),
+      },
+    });
+
+    return stage.id;
+  });
+
+  const { rows: [stage] } = await query('SELECT * FROM v_payment_stages WHERE id = $1', [stageId]);
+  const { rows: billed } = await query(
+    'SELECT travel_id FROM travel_logs WHERE billed_stage_id = $1 ORDER BY travel_id', [stageId]);
+  res.status(201).json({ data: stage, meta: { travel_ids: billed.map((r) => r.travel_id) } });
 });
 
 // ---------------------------------------------------------------------

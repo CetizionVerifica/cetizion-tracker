@@ -106,10 +106,14 @@ describe('the travel desk (#196)', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL 
     assert.equal(clash.status, 422, JSON.stringify(clash.body));
     await hr.post('/api/travel-logs').send({ travel_id: 'TRV-TD-3', employee_name: 'Meera', po_number: 'PO-TD-1' }).expect(201);
 
-    // Billing names a payment stage, and only for a chargeable trip. It is
+    // Billing names a travel invoice, and only for a chargeable trip. It is
     // set through the trip's own billing route, never the edit form: the
-    // field is protected there (#214).
-    const { rows: [stage] } = await db.query(`INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no) VALUES ('PO-TD-1', 1, 'Advance', 1, 'CVPL/TD/1') RETURNING id`);
+    // field is protected there (#214). Since 097 the stage it names has to
+    // be a travel invoice — a share of the PO is not something a trip is
+    // billed on — so that is what is raised here.
+    const { rows: [stage] } = await db.query(
+      `INSERT INTO payment_stages (kind, po_number, stage_name, trigger_event, amount, invoice_no, invoice_date)
+            VALUES ('travel', 'PO-TD-1', 'Travel invoice', 'Manual', 25000, 'CVPL/TD/1', CURRENT_DATE) RETURNING id`);
     const notChargeable = await admin.post(`/api/travel-logs/${internal.travel_id}/billed-stage`).send({ billed_stage_id: stage.id });
     assert.equal(notChargeable.status, 422, JSON.stringify(notChargeable.body));
     await admin.post('/api/travel-logs/TRV-TD-3/billed-stage').send({ billed_stage_id: stage.id }).expect(200);

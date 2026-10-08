@@ -136,7 +136,7 @@ collectionsRouter.post('/stages/:id/hold', requireAdmin, async (req, res) => {
 // whole; see the note at the top of this file.
 collectionsRouter.get('/stages/:id/payments', async (req, res) => {
   const params = [Number(req.params.id)];
-  const mine = parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+  const mine = parentClause(scopeOf(req), params, { kind: 'via_po_or_project', alias: 'ps' });
   const { rows } = await query(
     `SELECT p.* FROM payments p JOIN payment_stages ps ON ps.id = p.stage_id
       WHERE p.stage_id = $1 ${mine ? `AND ${mine}` : ''}

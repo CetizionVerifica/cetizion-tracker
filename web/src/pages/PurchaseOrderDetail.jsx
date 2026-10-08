@@ -4,7 +4,9 @@ import { FileText, MailCheck, MoreHorizontal, Pencil, Plus, X } from 'lucide-rea
 import { cn } from 'cn';
 import { ConfirmDialog, useToast } from '../components/ui.jsx';
 import { flowSteps, RecordFlow } from '../components/record.jsx';
-import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
+import { RaiseTravelInvoiceDialog, RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
+import { TravelInvoicesSection } from '../components/travelInvoices.jsx';
+import { mayRaiseTravelInvoice } from '../lib/travelInvoices.js';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
@@ -113,7 +115,7 @@ export default function PurchaseOrderDetail() {
   // A service line is what the PO value is checked against and what the
   // invoicing figures are computed from, so po-services is adminOnlyDeletes
   // on the server (#85). Entering and correcting one stays open.
-  const { isAdmin } = useAuth();
+  const { isAdmin, isHr } = useAuth();
   const mayDeleteService = mayDeleteResource('po-services', isAdmin);
   const [dialog, setDialog] = useState(null);
 
@@ -147,7 +149,10 @@ export default function PurchaseOrderDetail() {
     );
   }
 
-  const { purchase_order: po, services, payment_stages: stages, travel, from_email: fromEmail } = data.data;
+  const { purchase_order: po, services, payment_stages: stages, travel, from_email: fromEmail,
+    travel_invoices: travelInvoices = [] } = data.data;
+  // Admin's and sales' (#214 §9.3); the travel desk never raises a client invoice.
+  const mayRaiseTravel = mayRaiseTravelInvoice({ isAdmin, isHr });
   const close = () => setDialog(null);
   const done = () => { close(); refetch(); portal.refetch(); };
   const markChecked = async () => {
@@ -366,6 +371,19 @@ export default function PurchaseOrderDetail() {
               )}
             </section>
 
+            {/* Beside the split and never inside it: travel billed against
+                this order carries its own printed amount, takes no stage
+                number, and is left out of all four figures above (097,
+                #214 §5.4). */}
+            <TravelInvoicesSection
+              invoices={travelInvoices}
+              action={mayRaiseTravel ? (
+                <button type="button" className="mg-btn mg-btn--sm" onClick={() => setDialog({ type: 'travel-invoice' })}>
+                  <Plus className="size-4" strokeWidth={2} aria-hidden="true" />Travel invoice
+                </button>
+              ) : undefined}
+            />
+
             <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby="covers-t">
               <div className="app-panel__head">
                 <h2 className="mg-panel__title" id="covers-t">What this order covers</h2>
@@ -439,6 +457,14 @@ export default function PurchaseOrderDetail() {
           </aside>
         </div>
       </div>
+
+      {dialog?.type === 'travel-invoice' && (
+        <RaiseTravelInvoiceDialog
+          scope={{ projectId: po.project_id, poNumber: po.po_number, trips: travel }}
+          onClose={close}
+          onDone={done}
+        />
+      )}
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} preselect={dialog.preselect} onClose={close} onDone={done} />}

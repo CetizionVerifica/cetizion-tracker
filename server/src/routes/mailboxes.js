@@ -511,7 +511,7 @@ mailThreadRouter.get('/origin', async (req, res) => {
     const params = [String(id)];
     const mine = entity === 'purchase_order'
       ? purchaseOrderClause(scopeOf(req), params, { alias: 'po' })
-      : parentClause(scopeOf(req), params, { kind: 'via_po', alias: 'ps' });
+      : parentClause(scopeOf(req), params, { kind: 'via_po_or_project', alias: 'ps' });
     const { rows: [record] } = await query(entity === 'purchase_order'
       ? `SELECT 1 FROM purchase_orders po WHERE po.po_number = $1 ${mine ? `AND ${mine}` : ''}`
       : `SELECT 1 FROM payment_stages ps WHERE ps.id::text = $1 ${mine ? `AND ${mine}` : ''}`, params);

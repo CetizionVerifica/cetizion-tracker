@@ -59,7 +59,7 @@ export const ENTITY_RECORDS = {
   quotation: { relation: 'quotations', key: 'quotation_no', parent: 'own', label: 'Quotation' },
   project: { relation: 'projects', key: 'project_id', parent: 'own', label: 'Project' },
   purchase_order: { relation: 'purchase_orders', key: 'po_number', parent: 'purchase_order', label: 'Purchase order' },
-  payment_stage: { relation: 'payment_stages', key: 'id', parent: 'via_po', label: 'Payment stage' },
+  payment_stage: { relation: 'payment_stages', key: 'id', parent: 'via_po_or_project', label: 'Payment stage' },
 };
 
 /**
@@ -335,6 +335,16 @@ function entityCase(alias, n, { sharedAs = 'true' } = {}) {
       return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
                 WHERE ${match} AND ${poOwned('x')})`;
     }
+    // A payment stage may be a travel invoice on a project with no PO
+    // (097, #214), so the join to purchase_orders has to be outer and the
+    // project checked beside it — otherwise a note or a file on one would
+    // be unreachable by the person who owns the project.
+    if (def.parent === 'via_po_or_project') {
+      return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
+                LEFT JOIN purchase_orders epo ON epo.po_number = x.po_number
+               WHERE ${match} AND (${poOwned('epo')}
+                 OR EXISTS (SELECT 1 FROM projects exp WHERE exp.project_id = x.project_id AND exp.${OWNER_COLUMN} = $${n})))`;
+    }
     return `WHEN '${entity}' THEN EXISTS (SELECT 1 FROM ${def.relation} x
               JOIN purchase_orders epo ON epo.po_number = x.po_number
              WHERE ${match} AND ${poOwned('epo')})`;
@@ -366,6 +376,26 @@ export function parentClause(scope, params, { kind, alias }) {
     return `EXISTS (SELECT 1 FROM purchase_orders ppo
                      WHERE ppo.po_number = ${alias}.po_number AND ${poOwned('ppo')})`;
   }
+  /**
+   * A payment stage, which since 097 (#214) may be a travel invoice raised
+   * on a project with no PO at all.
+   *
+   * Its own kind rather than a second branch bolted onto `via_po`, because
+   * `via_po` also serves po_services, and po_services has no `project_id`
+   * for the branch to read — the predicate would be invalid SQL on half its
+   * callers. Both kinds agree wherever both apply: `project_id` is filled
+   * from the PO when there is one.
+   *
+   * Without the project branch the salesperson who raised a project-only
+   * travel invoice could not see it. That fails closed, which is the safe
+   * direction, but it is still the wrong answer.
+   */
+  if (kind === 'via_po_or_project') {
+    return `(EXISTS (SELECT 1 FROM purchase_orders ppo
+                      WHERE ppo.po_number = ${alias}.po_number AND ${poOwned('ppo')})
+          OR EXISTS (SELECT 1 FROM projects psp
+                      WHERE psp.project_id = ${alias}.project_id AND psp.${OWNER_COLUMN} = $${n}))`;
+  }
   // A quotation's own priced lines (#23). quotation_id is a declared foreign
   // key, so there is nothing to infer: the line belongs to whoever owns the
   // quotation it prices, and the rate and discount on it are exactly the
@@ -384,9 +414,15 @@ export function parentClause(scope, params, { kind, alias }) {
   // via_po: a payment hangs off a payment stage, which hangs off the
   // purchase order that carries the ownership.
   if (kind === 'via_stage') {
+    // The same two branches one link further down: a receipt against a
+    // project-only travel invoice belongs to whoever owns the project
+    // (097, #214). An inner join to purchase_orders alone would hide it.
     return `EXISTS (SELECT 1 FROM payment_stages rps
-                      JOIN purchase_orders rpo ON rpo.po_number = rps.po_number
-                     WHERE rps.id = ${alias}.stage_id AND ${poOwned('rpo')})`;
+                     LEFT JOIN purchase_orders rpo ON rpo.po_number = rps.po_number
+                     WHERE rps.id = ${alias}.stage_id
+                       AND (${poOwned('rpo')}
+                         OR EXISTS (SELECT 1 FROM projects rsp
+                                     WHERE rsp.project_id = rps.project_id AND rsp.${OWNER_COLUMN} = $${n})))`;
   }
   // A row that names its parent in text: tasks, notes, attachments.
   if (kind === 'entity') return entityCase(alias, n);
