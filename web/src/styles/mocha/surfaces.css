@@ -51,9 +51,13 @@
    animation's start state only while it runs. */
 [data-slot$="-content"][data-state="open"], [data-slot$="-content"][data-state="delayed-open"],
 [data-slot$="-content"][data-state="instant-open"],
-.mg-pop, .mg-menu, .mg-cal, .mg-list, .mg-tip, .mg-toast, .mg-notice, .mg-palette, .mg-sheet {
+.mg-pop:not([data-state="closed"]), .mg-menu:not([data-state="closed"]), .mg-cal, .mg-list, .mg-tip, .mg-toast:not([data-state="closed"]), .mg-notice,
+.mg-palette:not([data-state="closed"]), .mg-sheet:not([data-state="closed"]) {
   animation-fill-mode: backwards !important;
 }
+/* Closing keeps its end state until the surface is removed: without this a
+   closed pop-up snapped back to full view for a frame before it went (a flash). */
+[data-state="closed"], [data-sonner-toast][data-removed="true"] { animation-fill-mode: forwards !important; }
 
 /* ── Solid glass (Sami, 9 Oct): pop-ups are fully opaque, so nothing behind them
    can ever be read, yet keep the glass look: a sheen falling from the top, a
