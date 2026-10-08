@@ -209,7 +209,7 @@ export default function ProjectDetail() {
             : { label: 'Planned delivery', value: p.planned_delivery_date ? shortDate(p.planned_delivery_date) : null },
           { label: '% complete', value: `${Math.round(Number(p.percent_complete || 0) * 100)}%` },
           { label: 'Service request no.', value: p.service_request_no },
-          { label: 'Manager email', value: p.project_manager_email ? <a href={`mailto:${p.project_manager_email}`}>{p.project_manager_email}</a> : null },
+          { label: 'Manager email', value: p.project_manager_email ? <a href={`mailto:${p.project_manager_email}`}>{p.project_manager_email.split('@')[0]}<wbr />@{p.project_manager_email.split('@').slice(1).join('@')}</a> : null },
         ]}
         /* No button in the header: the one move this page offers is in the
            band below, next to the sentence explaining what it will do. */
