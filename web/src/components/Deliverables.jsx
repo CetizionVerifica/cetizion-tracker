@@ -4,7 +4,7 @@ import { Field, FileDrop, Input, Modal, Select, Textarea, useToast } from './ui.
 import { ListTable, Panel, PanelSkeleton, PhoneRow, StateCard } from './daily.jsx';
 import { Sec } from './sales.jsx';
 import { api } from '../lib/api.js';
-import { useFetch, useLookups } from '../lib/hooks.js';
+import { useFetch, useFileLimit, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
 
 /**
@@ -112,6 +112,7 @@ function FlatPanel({ id, title, hint, tools, children }) {
 function DeliverableDialog({ mode, row, preset, onClose, onDone }) {
   const toast = useToast();
   const lookups = useLookups();
+  const [checkFile, fileError] = useFileLimit();
   const base = mode === 'new' ? { type: 'certificate', status: 'issued', issued_on: today(), ...preset } : row;
   const [v, setV] = useState(() => mode === 'supersede'
     ? { type: row.type, title: row.title, scope: row.scope || '', issuing_body: row.issuing_body || '', reference: '', issued_on: today(), valid_from: '', valid_until: '', notes: '' }
@@ -180,8 +181,8 @@ function DeliverableDialog({ mode, row, preset, onClose, onDone }) {
           {mode !== 'supersede' && <Field label="Owner" hint="Who is reminded."><Input list="deliverable-people" value={v.owner} onChange={set('owner')} placeholder="Who is reminded" /><datalist id="deliverable-people">{lookups.sales_people.map((p) => <option key={p} value={p} />)}</datalist></Field>}
         </div>
         <Field label="Scope" hint="Sites, standards, boundaries."><Textarea rows={2} value={v.scope} onChange={set('scope')} /></Field>
-        <Field label="File" hint={row?.document_id && mode === 'edit' ? 'A file is attached. Leave this empty to keep it, or choose one to replace it.' : undefined}>
-          <FileDrop label="File" text={row?.document_id && mode === 'edit' ? 'Current file kept · drop one here to replace it' : 'Drop the certificate or report here'} onFile={setFile} />
+        <Field label="File" error={fileError} hint={row?.document_id && mode === 'edit' ? 'A file is attached. Leave this empty to keep it, or choose one to replace it.' : undefined}>
+          <FileDrop label="File" text={row?.document_id && mode === 'edit' ? 'Current file kept · drop one here to replace it' : 'Drop the certificate or report here'} error={fileError} onFile={(f) => setFile(checkFile(f))} />
         </Field>
         <Field label="Notes"><Textarea rows={2} value={v.notes} onChange={set('notes')} placeholder="Anything else worth keeping with it" /></Field>
       </form>

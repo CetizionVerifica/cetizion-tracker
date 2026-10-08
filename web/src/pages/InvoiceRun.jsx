@@ -8,7 +8,7 @@ import { DialogError, Key, shortDate } from '../components/money.jsx';
 import { FailedCard, StateCard, plural } from '../components/daily.jsx';
 import { Tone } from '../components/sales.jsx';
 import { api } from '../lib/api.js';
-import { useDocumentUploads, useFetch } from '../lib/hooks.js';
+import { useDocumentUploads, useFetch, useFileLimit } from '../lib/hooks.js';
 import { money, number, percent, today } from '../lib/format.js';
 
 /**
@@ -52,6 +52,7 @@ export default function InvoiceRun() {
   const navigate = useNavigate();
   const toast = useToast();
   const uploadDocument = useDocumentUploads();
+  const [checkFile, fileError] = useFileLimit();
 
   const [index, setIndex] = useState(0);
   const [invoiceNo, setInvoiceNo] = useState('');
@@ -285,8 +286,8 @@ export default function InvoiceRun() {
                 </Field>
               </div>
               {nextInSeries && !invoiceNo && <p className="m-0 -mt-2 text-[12px] text-muted-foreground">Leave the number alone and it is taken as the invoice saves, so the series cannot break. Type over it only to use a different one.</p>}
-              <Field as="div" label="Invoice PDF (optional)" error={fields.document_id}>
-                <FileDrop label="Invoice PDF" text={file ? file.name : 'Drop the PDF here, or choose a file'} onFile={setFile} error={fields.document_id} />
+              <Field as="div" label="Invoice PDF (optional)" error={fileError || fields.document_id}>
+                <FileDrop label="Invoice PDF" text={file ? file.name : 'Drop the PDF here, or choose a file'} onFile={(f) => setFile(checkFile(f))} error={fileError || fields.document_id} />
               </Field>
               {/* Naming each derived value before the click: only what is arithmetic is promised here. */}
               <div className="app-change">

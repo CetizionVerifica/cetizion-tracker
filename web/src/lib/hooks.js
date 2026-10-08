@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { fileSize } from './format.js';
 
 /**
  * Fetch on mount and whenever `deps` change, with a refetch handle so a
@@ -50,6 +51,25 @@ const LOOKUP_DEFAULTS = { services: [], catalogue: [], travel_vendors: [], trave
 
 /** Lookups change rarely; fetch them once per session and share. */
 let lookupCache = null;
+/**
+ * The document size limit, checked as a file is chosen so a file that is too
+ * large is refused under its field instead of failing on save. `check(file)`
+ * returns the file, or null when it is over the limit (and sets `error`).
+ */
+export function useFileLimit() {
+  const maxBytes = useLookups().limits?.document_max_bytes;
+  const [error, setError] = useState(null);
+  const check = useCallback((file) => {
+    if (file && maxBytes && file.size > maxBytes) {
+      setError(`This file is ${fileSize(file.size)}: the limit is ${fileSize(maxBytes)}. Pick a smaller one.`);
+      return null;
+    }
+    setError(null);
+    return file;
+  }, [maxBytes]);
+  return [check, error];
+}
+
 export function useLookups() {
   const [data, setData] = useState(lookupCache);
   useEffect(() => {

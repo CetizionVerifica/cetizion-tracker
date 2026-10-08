@@ -12,7 +12,7 @@ import { MoneyBanner, shortDate } from '../components/money.jsx';
 import { BILL, CLAIM, typeLine, RailCard, RailLink, RecordState, StateBadge, TabsPanel, count, tripWhen } from '../components/travel.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
-import { useFetch, useLookups } from '../lib/hooks.js';
+import { useFetch, useFileLimit, useLookups } from '../lib/hooks.js';
 import { money } from '../lib/format.js';
 import { tripFields } from './TravelLogs.jsx';
 
@@ -80,6 +80,7 @@ export default function TripDetail() {
   const [busy, setBusy] = useState(false);
   const [amounts, setAmounts] = useState({});
   const [dialog, setDialog] = useState(null);
+  const [checkFile, fileError] = useFileLimit();
   const [upload, setUpload] = useState({ file: null, doc_type: 'ticket', label: '', key: 0 });
   const tabKeys = ['legs', 'costs', 'docs', ...(isHr ? [] : ['billing'])];
   const [tab, setTab] = useTab(tabKeys);
@@ -425,7 +426,8 @@ export default function TripDetail() {
                 {files.length === 0 && !missingInvoice && <p className="app-tabnote">Nothing on file yet.</p>}
               </div>
               <form className="app-attach" onSubmit={attach} aria-label="Add a file to this trip">
-                <FileDrop key={upload.key} label="File to add" text={upload.file ? upload.file.name : 'Drop a ticket, boarding pass or bill here'} onFile={(file) => setUpload((u) => ({ ...u, file }))} />
+                <FileDrop key={upload.key} label="File to add" text={upload.file ? upload.file.name : 'Drop a ticket, boarding pass or bill here'} error={fileError} onFile={(file) => { const ok = checkFile(file); setUpload((u) => ({ ...u, file: ok })); }} />
+                {fileError && <span className="text-[12px] text-late" role="alert" style={{ gridColumn: '1 / -1' }}>{fileError}</span>}
                 <label className="mg-field">
                   <span className="mg-field__label">What it is</span>
                   <span className="mg-select-wrap"><select className="mg-select" value={upload.doc_type} onChange={(e) => setUpload((u) => ({ ...u, doc_type: e.target.value }))}>
