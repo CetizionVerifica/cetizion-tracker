@@ -175,6 +175,13 @@ const NAV_GROUPS = [
   { key: 'travel', label: 'Travel', items: [
     { to: '/travel', icon: Plane, label: 'Trips' },
     { to: '/expense-claims', icon: Receipt, label: 'Expense claims' },
+    // The agency's bills. HR keeps them (NAV_HR_GROUPS) and an administrator
+    // settles them, so until now an admin reached the screen only through ⌘K
+    // (#214 decision 8). Not a salesperson's: paying a travel agency is the
+    // travel desk's work with the administrator, so the entry is adminOnly
+    // as Accounting is. The route itself is unchanged — every signed-in role
+    // could already open it; this is the missing door, not new access.
+    { to: '/vendor-invoices', icon: Receipt, label: 'Vendor invoices', adminOnly: true },
   ] },
   { key: 'insights', label: 'Insights', items: [
     // A landing screen, like Reports: the five questions to start a day on.
