@@ -45,7 +45,7 @@ html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: tra
 
 /* Hero: tinted glass, ember glow, cursor spotlight */
 .mg-hero { position: relative; overflow: hidden; border-radius: 28px; padding: 28px 30px; color: var(--on-hero); background: radial-gradient(420px 260px at 100% 0%, var(--hero-glow), transparent 70%), var(--hero-glass); border: 1px solid var(--hero-edge); backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%); box-shadow: inset 0 1px 0 var(--hero-hi), 0 34px 70px -36px var(--glow); }
-.mg-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(320px circle at var(--mx, 70%) var(--my, 30%), rgba(255,240,225,.10), transparent 60%); }
+.mg-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: radial-gradient(380px circle at var(--mx, 80%) var(--my, 10%), rgba(255,210,170,.16), transparent 60%); }
 .mg-hero__label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--on-hero-2); }
 .mg-hero__figure { font-size: 62px; line-height: 1; font-weight: 700; letter-spacing: -.045em; margin: 6px 0 4px; }
 .mg-hero__sub { font-size: 13.5px; color: var(--on-hero-2); }

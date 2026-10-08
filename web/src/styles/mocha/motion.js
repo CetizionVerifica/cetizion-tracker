@@ -94,6 +94,18 @@ export function installMotion() {
     const j = t.closest(JELLY); if (j && !j.disabled) return jelly(j);
     const p = t.closest(PRESS); if (p && !p.disabled) press(p);
   }, true);
+  /* The hero's light follows the cursor (Glass 2): a soft caramel glow under the pointer. */
+  let spotFrame = 0;
+  document.addEventListener('pointermove', (e) => {
+    const hero = e.target && e.target.closest && e.target.closest('.mg-hero');
+    if (!hero || spotFrame) return;
+    spotFrame = requestAnimationFrame(() => {
+      spotFrame = 0;
+      const b = hero.getBoundingClientRect();
+      hero.style.setProperty('--mx', ((e.clientX - b.left) / b.width * 100).toFixed(1) + '%');
+      hero.style.setProperty('--my', ((e.clientY - b.top) / b.height * 100).toFixed(1) + '%');
+    });
+  }, { passive: true });
   window.MochaGlass = Object.assign(window.MochaGlass || {}, {
     springs: { soft: SOFT, brew: BREW }, switchTheme, jelly, press, enter, countUps, pause, isPaused, inr,
   });
