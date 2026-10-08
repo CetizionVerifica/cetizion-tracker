@@ -39,7 +39,10 @@
 [data-sonner-toaster] [data-sonner-toast][data-type="default"] [data-icon] { color: var(--info); }
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
   background: var(--glass-strong); border-color: var(--glass-edge); color: var(--text2);
+  /* Sonner pins it to the top-left corner, which a pill doesn't have: sit it inside, on the right. */
+  left: auto; right: 12px; top: 50%; transform: translateY(-50%);
 }
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-close-button]) { padding-right: 44px; }
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
   border-radius: 999px; background: var(--btn); color: var(--on-btn); font-weight: 700; height: 32px; padding: 0 14px;
 }
