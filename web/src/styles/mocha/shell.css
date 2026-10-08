@@ -139,3 +139,22 @@ body.is-staging .app-shell__rail { top: 18px; }
 @keyframes app-pulse { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.08); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .app-pulse { animation: none; } }
 .mg-paused .app-pulse { animation: none; }
+
+/* Dock, as Glass 2 draws it: the coffee + button, plain-word actions, a hairline,
+   and a search pill ("Search anything" with its Ctrl K key). Below 900px the
+   words give way to icons so it still fits. */
+.app-shell__dock .mg-dock { gap: 4px; padding: 7px; }
+.app-shell__dock .mg-dock__add { width: 46px; height: 46px; }
+.mg-dock__act { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.mg-dock__act:hover { background: var(--track); }
+.mg-dock__icon { display: none; }
+.mg-dock__search { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--track); color: var(--text2); font: inherit; cursor: text; }
+.mg-dock__search:hover { color: var(--text); }
+.mg-dock__ph { width: 140px; text-align: left; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.mg-dock__kbd { padding: 2px 7px; border-radius: 7px; background: var(--glass-strong); border: 1px solid var(--glass-edge); font-size: 10.5px; font-weight: 800; color: var(--text2); }
+.app-shell__dock .mg-dock__sep { height: 24px; }
+@media (max-width: 900px) {
+  .mg-dock__act { width: 44px; padding: 0; justify-content: center; }
+  .mg-dock__icon { display: block; }
+  .mg-dock__search { width: 46px; padding: 0; justify-content: center; }
+}

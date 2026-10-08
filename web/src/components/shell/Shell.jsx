@@ -534,16 +534,16 @@ function Dock() {
           </DropdownMenuContent>
         </DropdownMenu>
         {dock.map((d) => (
-          <button key={d.label} type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={d.label} onClick={() => run(d)}>
-            <d.icon size={16} strokeWidth={1.8} aria-hidden="true" />
+          <button key={d.label} type="button" className="mg-dock__act" aria-label={d.label} onClick={() => run(d)}>
+            <d.icon className="mg-dock__icon" size={17} strokeWidth={1.8} aria-hidden="true" />
             <span className="mg-dock__label">{d.label}</span>
           </button>
         ))}
         <span className="mg-dock__sep" aria-hidden="true" />
-        <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label="Search or do anything, Ctrl K" onClick={() => s.openPalette?.()}>
-          <Search size={16} strokeWidth={1.8} aria-hidden="true" />
-          <span className="mg-dock__label">Search</span>
-          <span className="mg-kbd mg-dock__label">Ctrl K</span>
+        <button type="button" className="mg-dock__search" aria-label="Search anything, Ctrl K" onClick={() => s.openPalette?.()}>
+          <Search size={15} strokeWidth={2.2} aria-hidden="true" />
+          <span className="mg-dock__label mg-dock__ph">Search anything</span>
+          <span className="mg-dock__kbd mg-dock__label">Ctrl K</span>
         </button>
       </nav>
     </div>
