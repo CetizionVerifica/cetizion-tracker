@@ -454,7 +454,7 @@ export function ContactBar({ entity, id, onLog }) {
   );
 }
 
-export function TouchDialog({ entity, id, start, onClose, onSaved }) {
+export function TouchDialog({ entity, id, start, onClose, onSaved, subtitle }) {
   const toast = useToast();
   const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   const [v, setV] = useState({ channel: start.channel, direction: 'outbound', outcome: OUTCOMES[start.channel][0], started_at: now, duration_minutes: '', summary: '', attendees: '', next_title: '', next_due: '' });
@@ -474,7 +474,7 @@ export function TouchDialog({ entity, id, start, onClose, onSaved }) {
     } catch (err) { setFailed(err.fields ? Object.values(err.fields)[0] : err.message); setBusy(false); }
   }
   return (
-    <Modal title="Log a touch" subtitle="What happened, and what comes next. The next step becomes a task." onClose={onClose} footer={<>
+    <Modal title="Log a touch" subtitle={subtitle || 'What happened, and what comes next. The next step becomes a task.'} onClose={onClose} footer={<>
       <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Skip</button>
       <button type="submit" form="touch-form" className="mg-btn mg-btn--primary" disabled={busy}>{busy ? 'Logging…' : failed ? 'Try again' : 'Log it'}</button>
     </>}>
