@@ -104,8 +104,8 @@ export default function PaymentStages() {
   if (tab === 'invoice-review') {
     return (
       <>
-        <PageHeader title="Payment schedule" subtitle="Invoices we emailed that were not recorded automatically" />
-        <div className="page stack">
+        <PageHeader eyebrow="Money" title="Payment schedule" subtitle="Invoices we emailed that were not recorded automatically." />
+        <div className="app-page">
           {tabs}
           <InvoiceReviewList />
         </div>

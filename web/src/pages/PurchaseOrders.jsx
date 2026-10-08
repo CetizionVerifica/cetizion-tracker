@@ -25,8 +25,8 @@ export default function PurchaseOrders() {
   if (tab === 'review') {
     return (
       <>
-        <PageHeader title="Purchase orders" subtitle="POs read from client email that were not registered automatically" />
-        <div className="page stack">
+        <PageHeader eyebrow="Orders" title="Purchase orders" subtitle="POs read from client email that were not registered automatically." />
+        <div className="app-page">
           {tabs}
           <PoReviewList />
         </div>
