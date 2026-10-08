@@ -647,10 +647,15 @@ function TabBar() {
   const barRef = useRef(null);
   const [drop, setDrop] = useState(null);
   const measureDrop = useCallback(() => {
-    const on = barRef.current?.querySelector('.app-tab.is-on');
-    setDrop((prev) => (on
-      ? { x: on.offsetLeft + (on.offsetWidth - 40) / 2, y: on.offsetTop + 2, snap: !prev }
-      : null));
+    const bar = barRef.current;
+    const on = bar?.querySelector('.app-tab.is-on');
+    const icon = on?.querySelector('.app-tab__icon') || on;
+    if (!on || !icon) { setDrop(null); return; }
+    // Centred on the tab's icon (not the tab's top edge), so it never slips onto the label.
+    const b = bar.getBoundingClientRect(), r = icon.getBoundingClientRect();
+    const x = r.left - b.left + r.width / 2 - 20 - bar.clientLeft;
+    const y = r.top - b.top + r.height / 2 - 16 - bar.clientTop;
+    setDrop((prev) => ({ x, y, snap: !prev }));
   }, []);
   useLayoutEffect(measureDrop, [measureDrop, location.pathname, sheet, s.isHr]);
   useEffect(() => {
