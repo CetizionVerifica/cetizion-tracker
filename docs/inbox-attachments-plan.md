@@ -22,8 +22,13 @@ Word documents as cleaned HTML (`mammoth`), emails forwarded as
 attachments read from Graph as the message they are, OneDrive/SharePoint
 links listed and explained (migration `095`: `email_attachments.kind`,
 and messages listed with no attachments read again), and the viewer in
-the email dialog on records. Step 3 (PowerPoint, old Office files)
-follows.
+the email dialog on records (merged in #225). **Step 3 is built**:
+PowerPoint, `.ppt`, `.pps`, `.doc`, `.rtf`, `.odt` and `.odp` are sent to
+a Gotenberg (LibreOffice) container on the private network
+(`DOC_CONVERTER_URL`, set up as in `docs/operations.md`) and shown in the
+PDF viewer; nothing is kept. Old `.xls` files stay with the sheet viewer,
+which already reads them. Until the converter is deployed, those files
+still say "open it in Outlook".
 
 ---
 

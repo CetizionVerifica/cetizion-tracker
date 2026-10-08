@@ -70,8 +70,8 @@ export function AttachmentViewer({ attachments, index, onIndex, onClose, webLink
 }
 
 /**
- * The file, read for the viewer: bytes for a PDF or a picture, the
- * server's data for a sheet or a text file.
+ * The file, read for the viewer: bytes for a PDF, a picture or a
+ * converted Office file, the server's data for a sheet or a text file.
  */
 function useAttachment(att) {
   const [state, setState] = useState({ loading: true, error: null, data: null });
@@ -85,7 +85,7 @@ function useAttachment(att) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error?.message || `The attachment could not be opened (${res.status})`);
       }
-      return att.view === 'pdf' || att.view === 'image' ? new Uint8Array(await res.arrayBuffer()) : (await res.json()).data;
+      return att.view === 'pdf' || att.view === 'image' || att.view === 'office' ? new Uint8Array(await res.arrayBuffer()) : (await res.json()).data;
     })()
       .then((data) => setState({ loading: false, error: null, data }))
       .catch((err) => { if (err.name !== 'AbortError') setState({ loading: false, error: err.message, data: null }); });
@@ -99,9 +99,17 @@ function Viewer({ att, webLink }) {
   if (!att.view) {
     return <NotViewable webLink={webLink} text={att.kind === 'reference' ? 'This is a link to a file in OneDrive or SharePoint. Open the message in Outlook to reach it.' : "This kind of file can't be shown in the tracker yet."} />;
   }
-  if (loading) return <div className="p-6"><div className="skeleton mx-auto h-[60vh] max-w-[800px]" /></div>;
+  if (loading) {
+    return (
+      <div className="p-6">
+        {att.view === 'office' && <p className="mb-3 text-center text-[13px] text-muted-foreground" role="status">Converting the file for viewing…</p>}
+        <div className="skeleton mx-auto h-[60vh] max-w-[800px]" />
+      </div>
+    );
+  }
   if (error) return <NotViewable webLink={webLink} text={error} />;
-  if (att.view === 'pdf') return <PdfView bytes={data} />;
+  // PowerPoint and older Office files arrive converted to a PDF.
+  if (att.view === 'pdf' || att.view === 'office') return <PdfView bytes={data} />;
   if (att.view === 'image') return <ImageView bytes={data} type={att.content_type} name={att.name} />;
   if (att.view === 'sheet') return <SheetView sheets={data.sheets} />;
   if (att.view === 'word') return <div className="p-4"><HtmlView html={data.html} title={att.name} /></div>;
