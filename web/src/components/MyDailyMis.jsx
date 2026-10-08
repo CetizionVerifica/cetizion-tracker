@@ -49,8 +49,8 @@ export function MyDailyMis({ mine }) {
   const data = mine.data?.data;
   if (!data || (!data.notice?.applies && !data.runs.length)) return null;
   return (
-    <section className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-4">
-      <div className="text-[13px] font-semibold text-foreground">My daily MIS</div>
+    <section className="mg-glass mg-panel min-w-0" aria-labelledby="my-mis-t">
+      <h2 className="mg-panel__title" id="my-mis-t">My daily MIS</h2>
       <p className="text-[12px]/[1.6] text-muted-foreground">What management received about your previous working day, exactly as it went.</p>
       {data.runs.length ? (
         <ul className="flex flex-col gap-1 text-[12.5px] text-secondary-text">

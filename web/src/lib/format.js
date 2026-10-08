@@ -24,6 +24,12 @@ export function number(value) {
   return new Intl.NumberFormat('en-IN').format(Number(value));
 }
 
+/** A server message as a sentence, so text can follow it: "…limit" becomes "…limit.". */
+export function sentence(text) {
+  const t = String(text ?? '').trim();
+  return !t || /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
 export function fileSize(bytes) {
   if (bytes === null || bytes === undefined || bytes === '') return '—';
   const n = Number(bytes);
@@ -51,14 +57,6 @@ export function localDate(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
   return date(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString());
-}
-
-/** "14 Sep 2026 – 21 Sep 2026", "From 1 Jan 2026", "Up to 21 Sep 2026", or "All time". */
-export function periodLabel({ from, to } = {}) {
-  if (from && to) return `${date(from)} – ${date(to)}`;
-  if (from) return `From ${date(from)}`;
-  if (to) return `Up to ${date(to)}`;
-  return 'All time';
 }
 
 const MINUTE = 60_000;

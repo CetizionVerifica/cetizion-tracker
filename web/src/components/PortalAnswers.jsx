@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Alert, Badge, Card, DataTable, DocumentLink, Empty, Field, Modal, Tabs, Textarea, useToast } from './ui.jsx';
+import { Check, CircleAlert, FileText, MessageSquareText } from 'lucide-react';
+import { Field, Modal, Textarea, useToast } from './ui.jsx';
+import { Button } from './ui/button.tsx';
 import { RecordPaymentDialog } from './actions.jsx';
 import { EmailThreadDialog } from './EmailThread.jsx';
+import { DialogError } from './money.jsx';
+import { MgTabs } from './daily.jsx';
+import { Tone } from './sales.jsx';
 import { api } from '../lib/api.js';
-import { useFetch } from '../lib/hooks.js';
+import { useFetch, useMediaQuery } from '../lib/hooks.js';
 import { ago, date, money } from '../lib/format.js';
 
 /**
@@ -15,88 +20,161 @@ import { ago, date, money } from '../lib/format.js';
  * resolved. Either can be rejected with a reason the client sees.
  *
  * Out of the way until a client says something, unless a notification
- * linked here (?tab=portal).
+ * linked here (?tab=portal); once shown it stays, so matching the last one
+ * does not make the card vanish. A failed load says so, never "nothing".
+ *
+ * `companyId` narrows it to one client (the company's Client portal tab),
+ * where it always shows.
  */
-export function PortalAnswers({ onPaid }) {
+export function PortalAnswers({ onPaid, companyId, version = 0 }) {
   const toast = useToast();
   const [params] = useSearchParams();
   const linked = params.get('tab') === 'portal';
+  const wide = useMediaQuery('(min-width: 768px)');
   const [tab, setTab] = useState('payment_advice');
   const [match, setMatch] = useState(null);     // { advice, stage }
   const [settle, setSettle] = useState(null);   // { action, status }
   const [thread, setThread] = useState(null);
-  const { data, error, refetch } = useFetch(() => api.raw('/portal-admin/actions?status=open'), []);
-  const rows = data?.data ?? [];
-  // Once shown, it stays while the page is open, so matching the last one does not make it vanish.
+  const { data, error, refetch } = useFetch(() => api.raw('/portal-admin/actions?status=open'), [version]);
+  const rows = (data?.data ?? []).filter((a) => !companyId || String(a.company_id) === String(companyId));
   const [shown, setShown] = useState(false);
   useEffect(() => { if (rows.length) setShown(true); }, [rows.length]);
-  if (!rows.length && !linked && !shown) return null;
+  const ref = useRef(null);
+  // Landing from the bell: bring the card into view once it is there.
+  useEffect(() => { if (linked && ref.current) ref.current.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [linked, Boolean(data)]);
+  if (!companyId && !rows.length && !linked && !shown && !error) return null;
   const of = (kind) => rows.filter((a) => a.kind === kind);
+  const advice = of('payment_advice');
+  const queries = of('query');
+
+  const who = (a) => [a.contact_name, a.contact_email].filter(Boolean).join(' · ');
   const client = (a) => (
-    <><Link to={`/companies/${a.company_id}`}>{a.company_name}</Link>{a.contact_name && <div className="small muted">{a.contact_name}{a.contact_email ? ` · ${a.contact_email}` : ''}</div>}</>
+    <><Link to={`/companies/${a.company_id}`} className="font-bold text-foreground no-underline">{a.company_name}</Link>{who(a) && <span className="app-sub2">{who(a)}</span>}</>
   );
+  const poLink = (po) => <Link className="app-link" to={`/purchase-orders/${encodeURIComponent(po)}`}>PO {po}</Link>;
   const about = (a) => (a.invoices.length
-    ? a.invoices.map((i) => <div key={i.id} className="mono">{i.invoice_no} <span className="small muted">· <Link to={`/purchase-orders/${encodeURIComponent(i.po_number)}`}>{i.po_number}</Link></span></div>)
-    : a.po_number ? <Link className="mono" to={`/purchase-orders/${encodeURIComponent(a.po_number)}`}>PO {a.po_number}</Link> : <span className="muted">—</span>);
-  const when = { key: 'created_at', header: 'Sent', render: (a) => <span title={new Date(a.created_at).toLocaleString()}>{ago(a.created_at)}</span> };
+    ? a.invoices.map((i) => <span key={i.id} className="block mg-num text-[12.5px]">{i.invoice_no} · {poLink(i.po_number)}</span>)
+    : a.po_number ? <span className="block text-[12.5px]">No invoice named · {poLink(a.po_number)}</span> : <span className="mg-muted">—</span>);
+  const sent = (a) => <span title={new Date(a.created_at).toLocaleString()} className="whitespace-nowrap text-secondary-text">{ago(a.created_at)}</span>;
+  const done = (a) => new Set((a.payments || []).map((p) => p.stage_id));
+  const matchButtons = (a, phone) => a.invoices.map((i) => (done(a).has(i.id)
+    ? <Tone key={i.id} tone="ok">{a.invoices.length > 1 ? `${i.invoice_no} matched` : 'Matched'}</Tone>
+    : <button key={i.id} type="button" className={phone ? 'mg-btn mg-btn--primary app-grow' : 'mg-btn mg-btn--primary mg-btn--sm'} onClick={() => setMatch({ advice: a, stage: i })}>{a.invoices.length > 1 ? `Match ${i.invoice_no}` : 'Match'}</button>));
+  const waiting = rows.length;
 
   return (
-    <Card flush title="From the client portal" hint="What clients told us: queries to answer, and payments to check against the bank. Nothing here changes our figures until you record it.">
-      {error && <div className="p-4"><Alert tone="danger"><span>{error}</span></Alert></div>}
-      <div className="px-4 pt-2">
-        <Tabs active={tab} onChange={setTab} tabs={[
-          { key: 'payment_advice', label: 'Payment advice', count: of('payment_advice').length },
-          { key: 'query', label: 'Client queries', count: of('query').length },
-        ]} />
+    <section ref={ref} id={companyId ? undefined : 'portal'} className={companyId ? 'app-portal-card app-portal-card--flat' : 'mg-glass mg-glass--strong app-portal-card'} data-a={companyId ? undefined : 'rise'} aria-labelledby="portal-t">
+      <div className="app-portal-card__head">
+        <span className="app-portal-card__mark" aria-hidden="true"><MessageSquareText strokeWidth={1.8} /></span>
+        <h2 className="mg-panel__title" id="portal-t">{companyId ? 'What this client told us' : 'From the client portal'}</h2>
+        {!error && <Tone tone={waiting ? 'info' : 'ok'}>{waiting ? `${waiting} waiting on a person` : 'All settled'}</Tone>}
       </div>
-      {tab === 'payment_advice' ? (
-        <DataTable
-          rows={of('payment_advice')}
-          empty={<Empty title="No payments reported" text="When a client tells us they paid, it waits here to be checked." />}
-          columns={[
-            { key: 'client', header: 'Client', className: 'strong', render: client },
-            { key: 'invoices', header: 'Invoices', render: about },
-            { key: 'amount', header: 'Reported', align: 'right', render: (a) => <>{money(a.amount, a.invoices[0]?.currency)}{Number(a.tds_amount) > 0 && <div className="small muted">+ TDS {money(a.tds_amount, a.invoices[0]?.currency)}</div>}</> },
-            { key: 'paid_on', header: 'Paid on', render: (a) => <>{date(a.paid_on)}{a.reference && <div className="small muted mono">{a.reference}</div>}</> },
-            { key: 'file', header: 'Advice', render: (a) => (a.document_id ? <DocumentLink id={a.document_id} name="Remittance" /> : <span className="muted">—</span>) },
-            when,
-            {
-              key: 'act', header: '', align: 'right', render: (a) => {
-                const done = new Set((a.payments || []).map((p) => p.stage_id));
-                return (
-                  <div className="table__actions">
-                    {a.invoices.map((i) => (done.has(i.id)
-                      ? <Badge key={i.id} tone="success">{a.invoices.length > 1 ? `${i.invoice_no} matched` : 'Matched'}</Badge>
-                      : <button key={i.id} type="button" className="btn btn--sm" onClick={() => setMatch({ advice: a, stage: i })}>{a.invoices.length > 1 ? `Match ${i.invoice_no}` : 'Match'}</button>))}
-                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
-                  </div>
-                );
-              },
-            },
-          ]}
-        />
+      <p className="mg-panel__hint">
+        {waiting || error
+          ? 'What clients told us: queries to answer, and payments to check against the bank. Nothing here changes our figures until you record it.'
+          : 'Every payment report and query from the portal has been answered. New ones show up here.'}
+      </p>
+      {error ? (
+        <div className="px-4 pt-3.5 pb-5 sm:px-6">
+          <div className="mg-banner mg-banner--late" role="alert">
+            <CircleAlert aria-hidden="true" />
+            <div className="mg-banner__body"><strong>Couldn&apos;t load what clients told us.</strong>Their payment reports and queries are safe in the portal. Try again, and nothing will be matched twice.</div>
+            <button type="button" className="mg-btn mg-btn--sm self-center" onClick={refetch}>Try again</button>
+          </div>
+        </div>
       ) : (
-        <DataTable
-          rows={of('query')}
-          empty={<Empty title="No open queries" />}
-          columns={[
-            { key: 'client', header: 'Client', className: 'strong', render: client },
-            { key: 'about', header: 'About', render: about },
-            { key: 'note', header: 'Query', className: 'wrap', render: (a) => a.note },
-            when,
-            {
-              key: 'act', header: '', align: 'right', render: (a) => (
-                <div className="table__actions">
-                  {a.thread_id
-                    ? <button type="button" className="btn btn--sm" onClick={() => setThread(a.thread_id)}>Reply</button>
-                    : <Link className="btn btn--sm" to={`/companies/${a.company_id}`}>Open company</Link>}
-                  <button type="button" className="btn btn--sm" onClick={() => setSettle({ action: a, status: 'resolved' })}>Resolved</button>
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
+        <>
+          <MgTabs
+            label="From the client portal"
+            active={tab}
+            onChange={setTab}
+            tabs={[
+              { key: 'payment_advice', label: 'Payment advice', count: advice.length },
+              { key: 'query', label: 'Client queries', count: queries.length },
+            ]}
+          />
+          {tab === 'payment_advice' ? (
+            !advice.length ? (
+              <Quiet title="No payments reported" text="When a client tells us they paid, it waits here to be checked." />
+            ) : wide ? (
+              <div className="mg-tablewrap app-panel__body">
+                <table className="mg-table" aria-label="Payments clients report">
+                  <thead><tr><th>Client</th><th>Invoices</th><th className="num">Reported</th><th>Paid on</th><th>Advice</th><th>Sent</th><th aria-label="Actions" /></tr></thead>
+                  <tbody>
+                    {advice.map((a) => (
+                      <tr key={a.id}>
+                        <td className="py-2.5">{client(a)}</td>
+                        <td className="py-2.5">{about(a)}</td>
+                        <td className="num font-bold">{money(a.amount, a.invoices[0]?.currency)}{Number(a.tds_amount) > 0 && <span className="app-sub2">+ TDS {money(a.tds_amount, a.invoices[0]?.currency)}</span>}</td>
+                        <td className="mg-num">{date(a.paid_on)}{a.reference && <span className="app-sub2">{a.reference}</span>}</td>
+                        <td>{a.document_id
+                          ? <a className="app-link inline-flex items-center gap-1.5" href={api.documentUrl(a.document_id)} target="_blank" rel="noopener noreferrer" aria-label={`View the remittance from ${a.company_name}`}><FileText className="size-[15px]" strokeWidth={1.8} aria-hidden="true" />View</a>
+                          : <span className="mg-muted">—</span>}</td>
+                        <td>{sent(a)}</td>
+                        <td><span className="app-acts">{matchButtons(a)}<button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button></span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mg-rows app-panel__body">
+                {advice.map((a) => (
+                  <div key={a.id} className="mg-row">
+                    <span className="mg-row__title">{a.company_name}</span>
+                    <span className="mg-row__amount mg-num">{money(a.amount, a.invoices[0]?.currency)}</span>
+                    <span className="mg-row__meta" style={{ whiteSpace: 'normal' }}>{[a.invoices.map((i) => i.invoice_no).join(', ') || 'No invoice named', `paid ${date(a.paid_on)}`, a.reference].filter(Boolean).join(' · ')}</span>
+                    <span className="mg-row__state"><Tone tone="info">To check</Tone></span>
+                    <span className="app-pinv__btns">{matchButtons(a, true)}<button type="button" className="mg-btn mg-btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button></span>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : !queries.length ? (
+            <Quiet title="No open queries" text="When a client asks something in the portal, it waits here for an answer." />
+          ) : wide ? (
+            <div className="mg-tablewrap app-panel__body">
+              <table className="mg-table" aria-label="Client queries">
+                <thead><tr><th>Client</th><th>About</th><th>Query</th><th>Sent</th><th aria-label="Actions" /></tr></thead>
+                <tbody>
+                  {queries.map((a) => (
+                    <tr key={a.id}>
+                      <td className="py-2.5">{client(a)}</td>
+                      <td className="py-2.5">{about(a)}</td>
+                      <td className="py-2.5 text-secondary-text" style={{ whiteSpace: 'normal' }}><div style={{ minWidth: 240, maxWidth: 420 }}>{a.note}</div></td>
+                      <td>{sent(a)}</td>
+                      <td><span className="app-acts">
+                        {a.thread_id
+                          ? <button type="button" className="mg-btn mg-btn--sm" onClick={() => setThread(a.thread_id)}>Reply</button>
+                          : <Link className="mg-btn mg-btn--sm" to={`/companies/${a.company_id}`}>Open company</Link>}
+                        <button type="button" className="mg-btn mg-btn--primary mg-btn--sm" onClick={() => setSettle({ action: a, status: 'resolved' })}>Mark resolved</button>
+                        <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
+                      </span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="mg-rows app-panel__body">
+              {queries.map((a) => (
+                <div key={a.id} className="mg-row">
+                  <span className="mg-row__title">{a.company_name}</span>
+                  <span className="mg-row__amount text-[12.5px] text-muted-foreground">{ago(a.created_at)}</span>
+                  <span className="mg-row__meta app-pinv__full" style={{ whiteSpace: 'normal', color: 'var(--text2)', fontSize: 13 }}>{a.note}</span>
+                  <span className="mg-row__meta app-pinv__full" style={{ whiteSpace: 'normal' }}>{a.invoices.map((i) => i.invoice_no).join(', ') || (a.po_number ? `PO ${a.po_number}` : '')}</span>
+                  <span className="app-pinv__btns">
+                    <button type="button" className="mg-btn mg-btn--primary" onClick={() => setSettle({ action: a, status: 'resolved' })}>Mark resolved</button>
+                    {a.thread_id
+                      ? <button type="button" className="mg-btn app-grow" onClick={() => setThread(a.thread_id)}>Reply</button>
+                      : <Link className="mg-btn app-grow" to={`/companies/${a.company_id}`}>Open company</Link>}
+                    <button type="button" className="mg-btn mg-btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
+                  </span>
                 </div>
-              ),
-            },
-          ]}
-        />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {match && (
@@ -107,35 +185,58 @@ export function PortalAnswers({ onPaid }) {
           onDone={() => { setMatch(null); refetch(); onPaid?.(); }}
         />
       )}
-      {settle && <SettleDialog target={settle} onClose={() => setSettle(null)} onDone={() => { setSettle(null); refetch(); toast(settle.status === 'resolved' ? 'Marked resolved' : 'Rejected; the client sees why', 'success'); }} />}
+      {settle && <SettleDialog target={settle} onClose={() => setSettle(null)} onDone={() => { const s = settle; setSettle(null); refetch(); onPaid?.(); toast(s.status === 'resolved' ? 'Marked resolved' : 'Rejected; the client sees why', 'success'); }} />}
       {thread && <EmailThreadDialog threadId={thread} onClose={() => setThread(null)} />}
-    </Card>
+    </section>
+  );
+}
+
+function Quiet({ title, text }) {
+  return (
+    <div className="mg-empty app-panel__body" style={{ padding: '28px 24px 30px' }}>
+      <span className="mg-empty__mark bg-ok-soft text-ok"><Check className="size-6" strokeWidth={2} aria-hidden="true" /></span>
+      <h3 className="mg-empty__title">{title}</h3>
+      <p className="mg-empty__text">{text}</p>
+    </div>
   );
 }
 
 /** Resolve a query, or reject a query or an advice. The client reads the reason in the portal. */
 function SettleDialog({ target, onClose, onDone }) {
-  const toast = useToast();
   const [resolution, setResolution] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
   const rejecting = target.status === 'rejected';
   const what = target.action.kind === 'payment_advice' ? 'payment advice' : 'query';
-  async function save() {
-    setBusy(true);
-    try { await api.action(`/portal-admin/actions/${target.action.id}/resolve`, { status: target.status, resolution }); onDone(); }
-    catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); setBusy(false); }
+  const a = target.action;
+  const sub = [a.company_name, a.invoices.map((i) => i.invoice_no).join(', ') || (a.po_number ? `PO ${a.po_number}` : null), a.kind === 'payment_advice' ? `${money(a.amount)} reported` : null].filter(Boolean).join(' · ');
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await api.action(`/portal-admin/actions/${a.id}/resolve`, { status: target.status, resolution }); onDone(); }
+    catch (err) { setError(err.fields ? Object.values(err.fields)[0] : err.message); setBusy(false); }
   }
   return (
     <Modal
       title={rejecting ? `Reject this ${what}` : 'Mark the query resolved'}
-      subtitle={target.action.company_name}
+      subtitle={sub}
       onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn--primary" onClick={save} disabled={busy || (rejecting && !resolution.trim())}>{rejecting ? 'Reject' : 'Resolved'}</button></>}
+      size="sm"
+      footer={<>
+        <Button type="button" variant="ghost" onClick={onClose} disabled={busy} className="max-sm:w-full">Cancel</Button>
+        <Button type="submit" form="settle-form" variant={rejecting ? 'destructive' : 'default'} disabled={busy || (rejecting && !resolution.trim())} className="max-sm:w-full">
+          {busy ? 'Saving…' : error ? 'Try again' : rejecting ? 'Reject' : 'Mark resolved'}
+        </Button>
+      </>}
     >
-      <Field label={rejecting ? 'Why' : 'Note for the client'} required={rejecting} hint="The client sees this in the portal">
-        <Textarea rows={3} value={resolution} onChange={(e) => setResolution(e.target.value)} autoFocus
-          placeholder={rejecting ? (what === 'query' ? 'The rate is right: audits are at 18%.' : 'We have not received this payment; please share the UTR.') : 'Corrected invoice sent on 8 Oct.'} />
-      </Field>
+      <form id="settle-form" onSubmit={save} className="flex flex-col gap-4">
+        <DialogError error={error} what={rejecting ? 'the rejection' : 'it'} />
+        {a.note && <div className="app-mfacts"><MessageSquareText aria-hidden="true" /><span>“{a.note}”</span></div>}
+        <Field label={rejecting ? 'Why' : 'Note for the client'} required={rejecting} hint="The client sees this in the portal.">
+          <Textarea rows={3} value={resolution} onChange={(e) => setResolution(e.target.value)} autoFocus
+            placeholder={rejecting ? (what === 'query' ? 'The rate is right: audits are at 18%.' : 'We have not received this payment; please share the UTR.') : 'Corrected invoice sent on 8 Oct.'} />
+        </Field>
+      </form>
     </Modal>
   );
 }

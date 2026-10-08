@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert } from './ui.jsx';
+import { CalendarClock, Clock, TriangleAlert } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -32,9 +32,10 @@ export function FollowUpBanner({ entity, id, version = 0, onLog, logLabel = 'Log
     if (!next) return null;
     return (
       <div className={className}>
-        <p className="m-0 text-[12.5px] text-muted-foreground">
-          Next follow-up: <span className="font-medium text-foreground">{date(next.due_at)}</span>
-          {next.title && <> · {next.title}</>} <span>(task)</span>
+        <p className="m-0 flex flex-wrap items-center gap-1.5 text-[12.5px] text-muted-foreground">
+          <CalendarClock className="size-4" strokeWidth={1.8} aria-hidden="true" />
+          Next follow-up: <b className="text-foreground">{date(next.due_at)}</b>
+          {next.title && <> · {next.title}</>} <span>(a task)</span>
         </p>
       </div>
     );
@@ -43,21 +44,20 @@ export function FollowUpBanner({ entity, id, version = 0, onLog, logLabel = 'Log
   const escalated = Boolean(c.escalated_at);
   return (
     <div className={className}>
-      <Alert tone={escalated ? 'danger' : 'warning'}>
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <span>
-            <strong>Follow-up due since {date(c.due_on)}.</strong>{' '}
+      <div className={escalated ? 'mg-banner mg-banner--late' : 'mg-banner mg-banner--wait'} role="status">
+        {escalated ? <TriangleAlert aria-hidden="true" /> : <Clock aria-hidden="true" />}
+          <div className="mg-banner__body">
+            <strong>{escalated ? `Follow-up escalated: due since ${date(c.due_on)}` : `Follow-up due since ${date(c.due_on)}`}</strong>
             {c.reminded_at && <>Reminder sent {date(c.reminded_at)}. </>}
           {next && <>Next task: {next.title ? `${next.title}, ` : ''}due {date(next.due_at)}. </>}
             {escalated
               ? (c.reminded_at
                 ? <>Nothing was logged by {date(c.respond_by)}, so it went to management on {date(c.last_escalated_on || c.escalated_at)}.</>
                 : <>It has no owner to remind, so it went to management on {date(c.last_escalated_on || c.escalated_at)}.</>)
-              : <>Log activity by {date(c.respond_by)} or it goes to management.</>}
-          </span>
-          {onLog && <button type="button" className="btn btn--sm" onClick={onLog}>{logLabel}</button>}
-        </span>
-      </Alert>
+              : <>Log something by {date(c.respond_by)} or it goes to management.</>}
+          </div>
+          {onLog && <button type="button" className="mg-btn mg-btn--sm self-center" onClick={onLog}>{logLabel}</button>}
+      </div>
     </div>
   );
 }

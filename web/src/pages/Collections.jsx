@@ -1,176 +1,423 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { ChevronRight, Filter, History } from 'lucide-react';
+import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
-import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
+import { ConfirmDialog, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Button } from '../components/ui/button.tsx';
 import { RecordPaymentDialog } from '../components/actions.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { PortalAnswers } from '../components/PortalAnswers.jsx';
 import { ClientSaidBadge, useClientSaid } from '../components/ClientSaid.jsx';
+import { DialogError, Key, MoneyBanner, MoneyHero, shortDate } from '../components/money.jsx';
+import { FailedCard, StateCard, plural, useEntrance } from '../components/daily.jsx';
+import { SummaryStrip, Tone } from '../components/sales.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
-import { useFetch } from '../lib/hooks.js';
-import { date, money, today } from '../lib/format.js';
+import { useFetch, useMediaQuery } from '../lib/hooks.js';
+import { money, today } from '../lib/format.js';
 
 /**
  * Collections (#27): who owes what and for how long, what was done about
- * it, and the next step. Ageing buckets per client, the chasing log,
+ * it, and the next step. Ageing bands per client, the chasing log,
  * promises to pay, disputes on hold. Since #198, what clients said in the
  * portal: payments they report, and their queries.
+ *
+ * Wave 5 shape: a hero for what is outstanding beside a "By age" chart
+ * whose bands are filters (?bucket=), a four-figure strip, the portal
+ * card, then the clients, each opening its invoices right under its row.
  */
+const CHANNELS = [
+  { value: 'call', label: 'Call' }, { value: 'email', label: 'Email' }, { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'meeting', label: 'Meeting' }, { value: 'note', label: 'Note' },
+];
+const channelWord = (c) => CHANNELS.find((x) => x.value === c)?.label || c;
+const keyOf = (c) => c.company_id ?? c.company;
+
 export default function Collections() {
   const toast = useToast();
+  const { isAdmin } = useAuth();
+  const wide = useMediaQuery('(min-width: 1000px)');
   const [open, setOpen] = useState(null);           // company key expanded
   const [chase, setChase] = useState(null);         // { stage } | { company }
-  const { isAdmin } = useAuth();
   const [hold, setHold] = useState(null);           // stage
-  const [paying, setPaying] = useState(null);       // stage
-  const [logFor, setLogFor] = useState(null);       // stage id
-  const { data, loading, error, refetch } = useFetch(() => api.raw('/collections'), []);
+  const [lift, setLift] = useState(null);           // stage
+  const [paying, setPaying] = useState(null);       // { stage, preselect }
+  const [logFor, setLogFor] = useState(null);       // stage
+  const [version, setVersion] = useState(0);
+  const { data, loading, error, refetch } = useFetch(() => api.raw('/collections'), [version]);
   // What the client last said in the portal about each invoice (#198).
-  const clientSaid = useClientSaid();
-  // Reports links an ageing bar here as ?bucket=31-60. The list narrows to
-  // the clients with money in that band, and says so, rather than opening on
-  // everything owed and leaving the reader to find the nine invoices.
+  const clientSaid = useClientSaid([version]);
+  const refresh = () => { setVersion((v) => v + 1); };
+  // Reports links an ageing bar here as ?bucket=31-60; the chart's bands do
+  // the same. The list narrows to the clients with money in that band, and
+  // the banner says so; the totals and chart keep covering everything.
   const [params, setParams] = useSearchParams();
   const bucket = params.get('bucket');
   const raw = data?.data;
   const band = raw?.buckets.find((b) => b.key === bucket);
-  const d = raw && band
-    ? { ...raw, clients: raw.clients.filter((c) => c.buckets[band.key] > 0).map((c) => ({ ...c, stages: c.stages.filter((s) => s.bucket === band.key) })) }
-    : raw;
+  const shown = raw && band
+    ? raw.clients.filter((c) => c.buckets[band.key] > 0).map((c) => ({ ...c, stages: c.stages.filter((s) => s.bucket === band.key) }))
+    : raw?.clients;
+  const setBucket = (key) => {
+    const next = new URLSearchParams(params);
+    if (!key || key === bucket) next.delete('bucket'); else next.set('bucket', key);
+    setParams(next, { replace: true });
+  };
   // A follow-up email links here as ?stage=<id>&log=1: open that client's
   // invoices, show the follow-up, and open "Log a chase".
   const stageId = params.get('stage');
   const [chased, setChased] = useState(0);
   const target = stageId && raw
-    ? raw.clients.flatMap((c) => c.stages.map((s) => ({ stage: s, key: c.company_id ?? c.company }))).find((x) => String(x.stage.id) === stageId)
+    ? raw.clients.flatMap((c) => c.stages.map((s) => ({ stage: s, key: keyOf(c) }))).find((x) => String(x.stage.id) === stageId)
     : null;
   useEffect(() => { if (target) setOpen(target.key); }, [target?.key]);
   useLogParam(() => setChase({ stage: target.stage }), Boolean(target));
+  const page = useEntrance(Boolean(raw) || Boolean(error));
 
-  async function lift(stage) {
-    try { await api.action(`/collections/stages/${stage.id}/hold`, { on_hold: false }); toast('Hold lifted', 'success'); refetch(); }
+  async function liftHold() {
+    try { await api.action(`/collections/stages/${lift.id}/hold`, { on_hold: false }); toast('Hold lifted', 'success'); setLift(null); refresh(); }
     catch (err) { toast(err.message, 'danger'); }
   }
 
+  const acts = {
+    isAdmin,
+    pay: (s, said) => setPaying({ stage: s, preselect: said?.match ? said.id : undefined }),
+    chase: (s) => setChase({ stage: s }),
+    hold: setHold,
+    lift: setLift,
+    log: setLogFor,
+  };
+
   return (
     <>
-      <PageHeader title="Collections" subtitle="Invoiced and unpaid, by client and by age. Log every chase; a promise to pay pauses reminders until its date, a hold pauses them until lifted." />
-      <div className="page stack">
-        {band && (
-          <Alert tone="info">
-            <span>
-              Showing <strong>{band.label.toLowerCase()}</strong> only — {d.clients.length} client{d.clients.length === 1 ? '' : 's'}. The totals above still cover everything outstanding.{' '}
-              <button type="button" className="btn btn--sm" onClick={() => { const next = new URLSearchParams(params); next.delete('bucket'); setParams(next, { replace: true }); }}>Show all</button>
-            </span>
-          </Alert>
-        )}
-        {error && <Alert tone="danger"><span>{error}</span></Alert>}
-        {stageId && <FollowUpBanner entity="payment_stage" id={stageId} version={chased} logLabel="Log a chase" onLog={target ? () => setChase({ stage: target.stage }) : undefined} />}
-        {d && (
+      <PageHeader title="Collections" subtitle="Invoiced and unpaid, by client and by age. Log every chase: a promise to pay pauses reminders until its date, a hold pauses them until it is lifted." />
+      <div className="app-page" ref={page}>
+        {error && !raw ? (
+          <FailedCard title="Couldn't load collections" text={`The server didn't answer, so no totals are shown. This is not "nothing owed": nothing has changed. (${error})`} onRetry={refetch} />
+        ) : loading && !raw ? (
+          <Loading />
+        ) : (
           <>
-            <div className="auto-grid--stats">
-              <Stat label="Outstanding (INR)" value={money(d.totals.outstanding)} />
-              <Stat label="Overdue" value={money(d.totals.overdue)} tone={d.totals.overdue > 0 ? 'danger' : ''} />
-              <Stat label="Promised" value={money(d.totals.promised)} meta="pay-by dates given" />
-              <Stat label="On hold" value={money(d.totals.on_hold)} meta="disputes" />
-            </div>
-            <Ageing buckets={d.buckets} totals={d.totals} active={bucket} />
-            {d.foreign?.length > 0 && (
-              <Alert tone="warning">
-                <span>
-                  {d.foreign.length} invoice{d.foreign.length === 1 ? ' is' : 's are'} in {[...new Set(d.foreign.map((f) => f.currency))].join(', ')} and left out of these rupee totals. They still show under their client below.
-                </span>
-              </Alert>
+            {band && (
+              <MoneyBanner icon={Filter} title={`Showing ${band.label} only: ${plural(shown.length, 'client')}.`} action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => setBucket(null)}>Show all</button>}>
+                The totals and chart still cover everything outstanding.
+              </MoneyBanner>
+            )}
+            {stageId && <FollowUpBanner entity="payment_stage" id={stageId} version={chased} logLabel="Log a chase" onLog={target ? () => setChase({ stage: target.stage }) : undefined} />}
+            {!raw.clients.length ? (
+              <>
+                <PortalAnswers onPaid={refresh} version={version} />
+                <StateCard title="Nothing outstanding" text="Every invoiced stage is paid. New invoices show up here the day they are raised." />
+              </>
+            ) : (
+              <>
+                <div className="app-mrow">
+                  <Hero d={raw} />
+                  <AgeChart d={raw} bucket={bucket} onPick={setBucket} />
+                </div>
+                <Totals d={raw} />
+                <PortalAnswers onPaid={refresh} version={version} />
+                <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby="clients-t">
+                  <div className="app-panel__head">
+                    <h2 className="mg-panel__title" id="clients-t">By client</h2>
+                    <span className="mg-panel__hint">Oldest overdue first. Open a client for its invoices.</span>
+                    <Tone className="ml-auto">{plural(shown.length, 'client')}</Tone>
+                  </div>
+                  {!shown.length ? (
+                    <StateCard inPanel title="No client in this band" text="Nothing outstanding falls in it right now." tone="plain">
+                      <button type="button" className="mg-btn mg-btn--sm" onClick={() => setBucket(null)}>Show every client</button>
+                    </StateCard>
+                  ) : wide ? (
+                    <ClientTable clients={shown} buckets={raw.buckets} open={open} setOpen={setOpen} said={clientSaid} acts={acts} onChaseClient={(c) => setChase({ company: c })} />
+                  ) : (
+                    <ClientRows clients={shown} open={open} setOpen={setOpen} said={clientSaid} acts={acts} />
+                  )}
+                </section>
+              </>
             )}
           </>
         )}
-        <PortalAnswers onPaid={refetch} />
-        <Card flush title="By client" hint="Click a client for its invoices. Oldest overdue first.">
-          {loading && !d ? <div className="skeleton m-4 h-[120px]" />
-            /* Same reason as Payables: an empty list after a failed load
-               is not the same fact as nothing being owed. */
-            : error ? null : !d?.clients.length ? <Empty title="Nothing outstanding" text="Every invoiced stage is paid." /> : (
-            <DataTable
-              rows={d.clients}
-              onRowClick={(r) => setOpen(open === (r.company_id ?? r.company) ? null : (r.company_id ?? r.company))}
-              rowClassName={(r) => (open === (r.company_id ?? r.company) ? 'is-open' : '')}
-              columns={[
-                { key: 'company', header: 'Client', className: 'strong', render: (r) => <>{r.company_id ? <Link to={`/companies/${r.company_id}`} onClick={(e) => e.stopPropagation()}>{r.company}</Link> : r.company}{r.contact_name && <div className="small muted">{r.contact_name}{r.contact_email ? ` · ${r.contact_email}` : ''}{r.contact_phone ? ` · ${r.contact_phone}` : ''}</div>}</> },
-                { key: 'outstanding', header: 'Outstanding', align: 'right', render: (r) => money(r.outstanding) },
-                { key: 'overdue', header: 'Overdue', align: 'right', render: (r) => (r.overdue > 0 ? <span className="text-late">{money(r.overdue)}</span> : <span className="muted">—</span>) },
-                ...d.buckets.map((b) => ({ key: b.key, header: b.label, align: 'right', render: (r) => (r.buckets[b.key] > 0 ? money(r.buckets[b.key]) : <span className="muted">—</span>) })),
-                { key: 'oldest', header: 'Oldest', align: 'right', render: (r) => (r.oldest_days > 0 ? `${r.oldest_days} d` : '—') },
-                { key: 'chased', header: 'Last chased', render: (r) => (r.last_chased_at ? new Date(r.last_chased_at).toLocaleDateString() : <span className="muted">never</span>) },
-                { key: 'promise', header: 'Promise', render: (r) => (r.promise_to_pay_date ? <Badge tone={r.promise_to_pay_date < today() ? 'danger' : 'info'}>{date(r.promise_to_pay_date)}</Badge> : <span className="muted">—</span>) },
-                { key: 'act', header: '', align: 'right', render: (r) => <button type="button" className="btn btn--sm" onClick={(e) => { e.stopPropagation(); setChase({ company: r }); }}>Log a chase</button> },
-              ]}
-            />
-          )}
-        </Card>
-        {d?.clients.filter((c) => open === (c.company_id ?? c.company)).map((c) => (
-          <Card key={c.company} flush title={`${c.company}: invoices`} hint="Each invoiced stage still open, with what was done about it.">
-            <DataTable
-              rows={c.stages}
-              columns={[
-                { key: 'invoice_no', header: 'Invoice', className: 'mono', render: (s) => <>{s.invoice_no}<div className="small muted">{date(s.invoice_date)} · <Link to={`/purchase-orders/${encodeURIComponent(s.po_number)}`}>{s.po_number}</Link> · {s.stage_name}</div></> },
-                { key: 'outstanding', header: 'Outstanding', align: 'right', render: (s) => <>{money(s.outstanding, s.currency)}<div className="small muted">of {money(s.stage_amount, s.currency)}</div></> },
-                { key: 'due', header: 'Due', render: (s) => <>{date(s.invoice_due_date)}{s.days_overdue > 0 && <div className="small text-late">{s.days_overdue} days overdue · {s.bucket}</div>}</> },
-                { key: 'status', header: 'Status', render: (s) => <><Badge>{s.stage_status}</Badge>{s.on_hold && <div><Badge tone="warning">on hold</Badge> <span className="small muted">{s.hold_reason}</span></div>}{s.promise_to_pay_date && <div className="small">promised {date(s.promise_to_pay_date)}</div>}{s.reminder_level > 0 && <div className="small muted">reminder level {s.reminder_level}{s.reminder_sent_on ? ` on ${date(s.reminder_sent_on)}` : ''}</div>}<ClientSaidBadge said={clientSaid.get(s.id)} /></> },
-                { key: 'last', header: 'Last chase', className: 'wrap small', render: (s) => (s.last_chased_at ? <>{new Date(s.last_chased_at).toLocaleDateString()} · {s.last_channel}<div className="muted">{s.last_summary}</div>{s.next_action_on && <div>next: {date(s.next_action_on)}</div>}</> : <span className="muted">never</span>) },
-                { key: 'act', header: '', align: 'right', render: (s) => <div className="table__actions"><button type="button" className="btn btn--sm" onClick={() => setPaying(s)}>Record payment</button><button type="button" className="btn btn--sm" onClick={() => setChase({ stage: s })}>Chase</button>{isAdmin && (s.on_hold ? <button type="button" className="btn btn--sm btn--ghost" onClick={() => lift(s)}>Lift hold</button> : <button type="button" className="btn btn--sm btn--ghost" onClick={() => setHold(s)}>Hold</button>)}<button type="button" className="btn btn--sm btn--ghost" onClick={() => setLogFor(s)}>Log</button></div> },
-              ]}
-            />
-          </Card>
-        ))}
       </div>
 
-      {chase && <ChaseDialog target={chase} onClose={() => setChase(null)} onSaved={() => { setChase(null); setChased((n) => n + 1); refetch(); }} />}
-      {hold && <HoldDialog stage={hold} onClose={() => setHold(null)} onSaved={() => { setHold(null); refetch(); }} />}
-      {paying && <RecordPaymentDialog stage={paying} onClose={() => setPaying(null)} onDone={() => { setPaying(null); refetch(); }} />}
+      {chase && <ChaseDialog target={chase} onClose={() => setChase(null)} onSaved={() => { setChase(null); setChased((n) => n + 1); refresh(); }} />}
+      {hold && <HoldDialog stage={hold} onClose={() => setHold(null)} onSaved={() => { setHold(null); refresh(); }} />}
+      {lift && (
+        <ConfirmDialog
+          title={`Lift the hold on ${lift.invoice_no}?`}
+          message="Reminders about this invoice start again. The reason for the hold stays in its history."
+          confirmLabel="Lift hold"
+          cancelLabel="Keep it on hold"
+          tone="neutral"
+          onConfirm={liftHold}
+          onClose={() => setLift(null)}
+        >
+          {lift.hold_reason && <p className="m-0 mt-3 text-[12.5px] text-muted-foreground">On hold: {lift.hold_reason}</p>}
+        </ConfirmDialog>
+      )}
+      {paying && <RecordPaymentDialog stage={paying.stage} preselect={paying.preselect} onClose={() => setPaying(null)} onDone={() => { setPaying(null); refresh(); }} />}
       {logFor && <LogDialog stage={logFor} onClose={() => setLogFor(null)} />}
     </>
   );
 }
 
-/**
- * How old the money is, as one bar: each band's share of what is owed, in
- * a tone that darkens with age, and each band a link that narrows the list
- * below to it (the same ?bucket= the Reports chart links with).
- */
-// The same colours as the ageing chart in Reports (components/charts.jsx AGE_COLOUR).
-const AGE_TONE = { 'not-due': 'bg-forecast', '1-30': 'bg-waiting', '31-60': 'bg-waiting', '61-90': 'bg-late', '90+': 'bg-late' };
-
-function Ageing({ buckets, totals, active }) {
-  const sum = buckets.reduce((n, b) => n + Number(totals.buckets[b.key] || 0), 0);
-  if (!sum) return null;
+function Hero({ d }) {
+  const { outstanding, overdue } = d.totals;
+  const notDue = Math.max(outstanding - overdue, 0);
+  const share = (n) => (outstanding > 0 ? (100 * n) / outstanding : 0);
+  const half = overdue === 0 ? 'Nothing is overdue yet.'
+    : overdue >= outstanding - 0.5 ? 'All of it is overdue.'
+    : `${Math.round(share(overdue))}% of it is already overdue.`;
   return (
-    <section aria-label="Ageing" className="rounded-lg border border-border bg-card p-5">
-      <div className="flex items-baseline gap-3">
-        <h2 className="font-display text-base font-bold text-foreground">How old it is</h2>
-        <span className="text-[12.5px] text-muted-foreground">Pick a band to see only those invoices</span>
+    <MoneyHero
+      label="Outstanding (INR)"
+      figure={money(outstanding)}
+      count={outstanding}
+      sub={`Invoiced and unpaid across ${plural(d.clients.length, 'client')}. ${half}`}
+      done={share(overdue)}
+      expected={share(notDue)}
+      aria={`${money(overdue)} overdue, ${money(notDue)} not yet due`}
+      legend={<>
+        <Key swatch={{ background: 'var(--on-hero)' }}>Overdue <strong>{money(overdue)}</strong></Key>
+        <Key swatch="hatch">Not yet due <strong>{money(notDue)}</strong></Key>
+      </>}
+    />
+  );
+}
+
+/** The bands as bars; pressing one narrows the clients to it (and again shows all). */
+function AgeChart({ d, bucket, onPick }) {
+  const amounts = d.buckets.map((b) => d.totals.buckets[b.key] || 0);
+  const max = Math.max(1, ...amounts);
+  return (
+    <section className="mg-glass mg-panel app-mrow__side" data-a="rise" aria-labelledby="age-t">
+      <div className="mg-panel__head flex-wrap">
+        <h2 className="mg-panel__title" id="age-t">By age</h2>
+        <div className="mg-legend">
+          <Key swatch="hatch">Not yet due</Key>
+          <Key swatch={{ background: 'var(--figure)' }}>Overdue</Key>
+          <Key swatch={{ background: 'var(--late)' }}>Over 90 days</Key>
+        </div>
       </div>
-      <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
-        {buckets.map((b) => {
-          const v = Number(totals.buckets[b.key] || 0);
-          return v > 0 ? <span key={b.key} className={AGE_TONE[b.key] || 'bg-forecast'} style={{ width: `${(v / sum) * 100}%` }} /> : null;
+      <div className="app-age" role="group" aria-label="Show one age band">
+        {d.buckets.map((b, i) => {
+          const n = d.clients.filter((c) => c.buckets[b.key] > 0).length;
+          const late = b.key === '90+';
+          return (
+            <button key={b.key} type="button" aria-pressed={bucket === b.key} onClick={() => onPick(b.key)}
+              aria-label={`${b.label}: ${money(amounts[i])}, ${plural(n, 'client')}. ${bucket === b.key ? 'Showing only this band; press again for every band' : 'Show only this band'}`}>
+              <span className={cn('app-age__fig', late && amounts[i] > 0 ? 'is-late-text' : b.key === 'not-due' ? 'is-wait-text' : '')}>{money(amounts[i], 'INR', { compact: true })}</span>
+              <span className="app-age__plot">
+                <span className={cn('app-age__bar', b.key === 'not-due' && 'mg-hatch')} data-a="grow"
+                  style={{ height: `${Math.max(2, (100 * amounts[i]) / max)}%`, background: b.key === 'not-due' ? undefined : late ? 'var(--late)' : 'var(--figure)' }} />
+              </span>
+              <span className="app-age__label">{b.label}</span>
+              <span className="app-age__n">{plural(n, 'client')}</span>
+            </button>
+          );
         })}
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {buckets.map((b) => (
-          <Link
-            key={b.key}
-            to={active === b.key ? '/collections' : `/collections?bucket=${encodeURIComponent(b.key)}`}
-            aria-current={active === b.key ? 'true' : undefined}
-            className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[12.5px] no-underline transition-colors duration-150 ${active === b.key ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-secondary-text hover:bg-secondary'}`}
-          >
-            <span className={`size-2.5 rounded-[2px] ${AGE_TONE[b.key] || 'bg-forecast'}`} aria-hidden="true" />
-            {b.label}
-            <span className="num font-semibold text-foreground">{money(totals.buckets[b.key], 'INR', { compact: true })}</span>
-          </Link>
-        ))}
-      </div>
     </section>
+  );
+}
+
+function Totals({ d }) {
+  const stages = d.clients.flatMap((c) => c.stages);
+  const late = d.clients.filter((c) => c.overdue > 0).length;
+  const promised = stages.filter((s) => s.promise_to_pay_date && s.currency === 'INR').length;
+  const held = stages.filter((s) => s.on_hold && s.currency === 'INR').length;
+  const foreignBy = {};
+  for (const f of d.foreign || []) foreignBy[f.currency] = (foreignBy[f.currency] || 0) + Number(f.amount);
+  return (
+    <SummaryStrip
+      label="Totals"
+      tiles={[
+        { key: 'overdue', label: 'Overdue', figure: money(d.totals.overdue), tone: d.totals.overdue > 0 ? 'late' : undefined, badge: late ? { tone: 'late', text: `${plural(late, 'client')} late` } : undefined, foot: late ? undefined : 'nothing late' },
+        { key: 'promised', label: 'Promised', figure: money(d.totals.promised), tone: 'wait', foot: promised ? `${plural(promised, 'pay-by date')} given` : 'no pay-by dates given' },
+        { key: 'hold', label: 'On hold', figure: money(d.totals.on_hold), foot: held ? `${plural(held, 'dispute')}, no reminders` : 'nothing on hold' },
+        d.foreign?.length > 0 && {
+          key: 'foreign', label: 'Not in these totals', figure: plural(d.foreign.length, 'invoice'),
+          badge: { tone: 'wait', text: 'Left out' },
+          foot: Object.entries(foreignBy).map(([cur, n]) => `${cur} ${Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}`).join(' · '),
+        },
+      ].filter(Boolean)}
+    />
+  );
+}
+
+/** What an invoice's status column says: its badges and lines. */
+function StageState({ s, said, onMatch }) {
+  const lines = [
+    s.promise_to_pay_date && `Promised ${shortDate(s.promise_to_pay_date)}`,
+    s.reminder_level > 0 && `reminder ${s.reminder_level} sent${s.reminder_sent_on ? ` ${shortDate(s.reminder_sent_on)}` : ''}`,
+  ].filter(Boolean).join(' · ');
+  const promiseLate = s.promise_to_pay_date && s.promise_to_pay_date < today();
+  return (
+    <span className="app-stack">
+      <span className="app-badges">
+        <Tone tone={s.days_overdue > 0 ? 'late' : s.stage_status === 'Partially Paid' ? 'wait' : 'info'}>{s.days_overdue > 0 ? 'Overdue' : s.stage_status === 'Partially Paid' ? 'Partly paid' : 'Due'}</Tone>
+        {s.on_hold && <Tone tone="wait">{s.hold_reason ? `On hold: ${s.hold_reason}` : 'On hold'}</Tone>}
+      </span>
+      {lines && <span className={cn('text-[12px]', promiseLate ? 'text-late' : 'text-secondary-text')}>{lines}{promiseLate ? ' (missed)' : ''}</span>}
+      <ClientSaidBadge said={said} onMatch={onMatch} />
+    </span>
+  );
+}
+
+function overdueLine(s, buckets) {
+  if (!(s.days_overdue > 0)) return null;
+  const b = buckets?.find((x) => x.key === s.bucket);
+  return `${plural(s.days_overdue, 'day')} overdue${b ? ` · ${b.label}` : ''}`;
+}
+
+function ClientTable({ clients, buckets, open, setOpen, said, acts, onChaseClient }) {
+  const dash = <span className="mg-muted">—</span>;
+  const cell = (n, cls) => (n > 0 ? <span className={cls}>{money(n)}</span> : dash);
+  return (
+    <div className="mg-tablewrap app-panel__body">
+      <table className="mg-table" aria-label="What each client owes, by age">
+        <thead>
+          <tr>
+            <th>Client</th><th className="num">Outstanding</th><th className="num">Overdue</th>
+            {buckets.map((b) => <th key={b.key} className="num">{b.key === 'not-due' ? 'Not yet due' : b.label.replace(' days', '')}</th>)}
+            <th>Chased</th><th>Promise</th><th aria-label="Actions" />
+          </tr>
+        </thead>
+        <tbody>
+          {clients.map((c) => {
+            const k = keyOf(c);
+            const isOpen = open === k;
+            const toggle = () => setOpen(isOpen ? null : k);
+            return (
+              <Fragment key={k}>
+                <tr className={cn('is-clickable', isOpen && 'app-open')} aria-selected={isOpen} onClick={(e) => { if (!e.target.closest('a, button')) toggle(); }}>
+                  <td className="py-2 pl-2.5">
+                    <span className="app-client">
+                      <button type="button" className="mg-iconbtn app-expand" aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'Show'} ${c.company}'s invoices`} onClick={toggle}>
+                        <ChevronRight className="size-4" strokeWidth={2} aria-hidden="true" />
+                      </button>
+                      <span className="app-client__text">
+                        {c.company_id ? <Link to={`/companies/${c.company_id}`}>{c.company}</Link> : <b>{c.company}</b>}
+                        {c.contact_name && <span className="app-sub2" title={[c.contact_name, c.contact_email, c.contact_phone].filter(Boolean).join(' · ')}>{[c.contact_name, c.contact_email].filter(Boolean).join(' · ')}</span>}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="num font-bold">{money(c.outstanding)}</td>
+                  <td className="num font-bold">{c.overdue > 0 ? <><span className="text-late">{money(c.overdue)}</span><span className="app-sub2">oldest {c.oldest_days} d</span></> : dash}</td>
+                  {buckets.map((b) => <td key={b.key} className="num">{cell(c.buckets[b.key], b.key === 'not-due' ? 'mg-money--expected' : b.key === '90+' ? 'text-late' : '')}</td>)}
+                  <td className={cn('whitespace-nowrap', !c.last_chased_at && 'text-muted-foreground')}>{c.last_chased_at ? shortDate(c.last_chased_at) : 'never'}</td>
+                  <td>{c.promise_to_pay_date ? <Tone tone={c.promise_to_pay_date < today() ? 'late' : 'info'}>{c.promise_to_pay_date < today() ? `Missed ${shortDate(c.promise_to_pay_date)}` : `Pay by ${shortDate(c.promise_to_pay_date)}`}</Tone> : dash}</td>
+                  <td className="pr-4"><button type="button" className="mg-btn mg-btn--sm" onClick={() => onChaseClient(c)}>Log a chase</button></td>
+                </tr>
+                {isOpen && (
+                  <tr>
+                    <td colSpan={buckets.length + 6} className="app-inner">
+                      <div className="app-inner__wrap">
+                        <div className="app-inner__head"><h3>{c.company}: invoices</h3><span className="mg-panel__hint">Each invoiced stage still open, with what was done about it.</span></div>
+                        <table className="mg-table text-[13px]">
+                          <thead><tr><th>Invoice</th><th className="num">Outstanding</th><th>Due</th><th>Status</th><th>Last chase</th><th aria-label="Actions" /></tr></thead>
+                          <tbody>
+                            {c.stages.map((s) => (
+                              <tr key={s.id}>
+                                <td>
+                                  <span className="mg-num font-bold">{s.invoice_no}</span>
+                                  <span className="app-sub2">{shortDate(s.invoice_date)} · <Link className="app-link" to={`/purchase-orders/${encodeURIComponent(s.po_number)}`}>PO {s.po_number}</Link></span>
+                                  <span className="app-sub2">Stage {s.stage_no}, {s.stage_name}</span>
+                                </td>
+                                <td className="num"><strong>{money(s.outstanding, s.currency)}</strong><span className="app-sub2">{Number(s.outstanding) >= Number(s.stage_amount) - 0.5 ? 'the whole stage' : `of ${money(s.stage_amount, s.currency)}`}</span></td>
+                                <td className="whitespace-nowrap">{shortDate(s.invoice_due_date)}{overdueLine(s, buckets) && <span className="app-sub2 is-late">{overdueLine(s, buckets)}</span>}</td>
+                                <td><div style={{ minWidth: 240 }}><StageState s={s} said={said.get(s.id)} onMatch={(w) => acts.pay(s, w)} /></div></td>
+                                <td><div style={{ minWidth: 160 }}>
+                                  {s.last_chased_at ? <>{shortDate(s.last_chased_at)} · {channelWord(s.last_channel)}<span className="app-sub2 is-wrap">{s.last_summary}</span>{s.next_action_on && <span className="app-sub2">Next: {shortDate(s.next_action_on)}</span>}</> : <span className="text-muted-foreground">Never chased</span>}
+                                </div></td>
+                                <td><StageButtons s={s} said={said.get(s.id)} acts={acts} /></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StageButtons({ s, said, acts, phone }) {
+  const matchFirst = said?.match;
+  const sz = phone ? '' : ' mg-btn--sm';
+  return (
+    <span className={phone ? 'app-pinv__btns' : 'app-acts app-acts--w'}>
+      <button type="button" className={`mg-btn mg-btn--primary${sz}`} onClick={() => acts.pay(s, said)}>{matchFirst && phone ? 'Match the payment' : 'Record payment'}</button>
+      {!phone && <span className="app-acts__break" aria-hidden="true" />}
+      <button type="button" className={`mg-btn${sz}${phone ? ' app-grow' : ''}`} onClick={() => acts.chase(s)}>Log a chase</button>
+      {acts.isAdmin && (s.on_hold
+        ? <button type="button" className={`mg-btn mg-btn--ghost${sz}`} onClick={() => acts.lift(s)}>Lift hold</button>
+        : <button type="button" className={`mg-btn mg-btn--ghost${sz}`} onClick={() => acts.hold(s)}>Hold</button>)}
+      {phone
+        ? <button type="button" className="mg-btn mg-btn--ghost" onClick={() => acts.log(s)}>History</button>
+        : <button type="button" className="mg-iconbtn app-iconbtn" aria-label={`History of ${s.invoice_no}`} title="History" onClick={() => acts.log(s)}><History strokeWidth={1.8} aria-hidden="true" /></button>}
+    </span>
+  );
+}
+
+function ClientRows({ clients, open, setOpen, said, acts }) {
+  return (
+    <div className="mg-rows app-panel__body">
+      {clients.map((c) => {
+        const k = keyOf(c);
+        const isOpen = open === k;
+        const meta = [
+          c.overdue > 0 ? `Overdue ${money(c.overdue)}` : 'Not yet due',
+          c.oldest_days > 0 && `oldest ${c.oldest_days} d`,
+          `chased ${c.last_chased_at ? shortDate(c.last_chased_at) : 'never'}`,
+        ].filter(Boolean).join(' · ');
+        return (
+          <Fragment key={k}>
+            <button type="button" className="mg-row app-prow" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : k)}>
+              <span className="mg-row__title" style={{ whiteSpace: 'normal' }}>{c.company}</span>
+              <span className="mg-row__amount mg-num">{money(c.outstanding)}</span>
+              <span className="mg-row__meta" style={{ whiteSpace: 'normal' }}>{meta}</span>
+              <span className="mg-row__state">{c.oldest_days > 0 ? <Tone tone="late">{c.oldest_days} d late</Tone> : <Tone>Not due yet</Tone>}</span>
+            </button>
+            {isOpen && (
+              <div className="app-pinv">
+                {c.stages.map((s) => (
+                  <div key={s.id} className="app-pinv__item">
+                    <span className="mg-num font-bold">{s.invoice_no}</span>
+                    <span className="mg-num text-right font-bold">{money(s.outstanding, s.currency)}</span>
+                    <span className="app-pinv__full text-[12.5px] font-semibold text-late">{overdueLine(s) || <span className="font-normal text-secondary-text">Due {shortDate(s.invoice_due_date)}</span>}</span>
+                    <span className="app-pinv__full mt-1"><StageState s={s} said={said.get(s.id)} /></span>
+                    <StageButtons s={s} said={said.get(s.id)} acts={acts} phone />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function Loading() {
+  return (
+    <div aria-busy="true" aria-label="Loading collections" className="flex flex-col gap-[18px]">
+      <div className="app-mrow">
+        <section className="mg-glass mg-panel" style={{ flex: '1 1 400px', minHeight: 250 }}>
+          <div className="mg-skel" style={{ height: 12, width: '34%' }} /><div className="mg-skel" style={{ height: 56, width: '70%' }} /><div className="mg-skel" style={{ height: 12, width: '60%' }} /><div className="mg-skel" style={{ height: 10, marginTop: 'auto' }} />
+        </section>
+        <section className="mg-glass mg-panel" style={{ flex: '1.35 1 520px', minHeight: 250, flexDirection: 'row', alignItems: 'flex-end', gap: 18 }}>
+          {[150, 80, 60, 40, 70].map((h, i) => <div key={i} className="mg-skel" style={{ flex: 1, height: h }} />)}
+        </section>
+      </div>
+      <section className="mg-glass mg-panel"><div className="mg-skel" style={{ height: 14, width: '24%' }} />{[0, 1, 2].map((i) => <div key={i} className="mg-skel" style={{ height: 44 }} />)}<div className="mg-skel" style={{ height: 44, width: '80%' }} /></section>
+    </div>
   );
 }
 
@@ -178,22 +425,34 @@ function ChaseDialog({ target, onClose, onSaved }) {
   const toast = useToast();
   const [v, setV] = useState({ channel: 'call', summary: '', promise_to_pay_date: '', next_action_on: '' });
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [fields, setFields] = useState({});
   const set = (k, val) => setV((s) => ({ ...s, [k]: val }));
-  const label = target.stage ? `${target.stage.invoice_no} · ${target.stage.client_name}` : target.company.company;
+  const s = target.stage;
+  const label = s
+    ? [s.invoice_no, s.company_name || s.client_name, s.outstanding != null ? `${money(s.outstanding, s.currency)} outstanding` : null].filter(Boolean).join(' · ')
+    : [target.company.company, `${money(target.company.outstanding)} outstanding`].join(' · ');
   async function save(e) {
-    e.preventDefault(); setBusy(true);
+    e.preventDefault(); setBusy(true); setError(null); setFields({});
     try {
-      await api.action('/collections/log', { ...v, stage_id: target.stage?.id, company_id: target.stage ? undefined : target.company.company_id });
+      await api.action('/collections/log', { ...v, stage_id: s?.id, company_id: s ? undefined : target.company.company_id });
       toast('Chase logged', 'success'); onSaved();
-    } catch (err) { toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger'); setBusy(false); }
+    } catch (err) { setFields(err.fields || {}); setError(err.message); setBusy(false); }
   }
+  const fieldFailure = Object.keys(fields).length > 0;
   return (
-    <Modal title="Log a chase" subtitle={label} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="chase-form" className="btn btn--primary" disabled={busy || !v.summary.trim()}>Save</button></>}>
-      <form id="chase-form" onSubmit={save} className="form-grid">
-        <Field label="How"><Select value={v.channel} placeholder={null} options={['call', 'email', 'whatsapp', 'meeting', 'note']} onChange={(e) => set('channel', e.target.value)} /></Field>
-        <Field label="Promised to pay by" hint="Pauses reminders until then"><Input type="date" value={v.promise_to_pay_date} onChange={(e) => set('promise_to_pay_date', e.target.value)} /></Field>
-        <Field label="Next action on"><Input type="date" value={v.next_action_on} onChange={(e) => set('next_action_on', e.target.value)} /></Field>
-        <div className="span-all"><Field label="What happened" required><Textarea rows={3} value={v.summary} onChange={(e) => set('summary', e.target.value)} autoFocus placeholder="Spoke to accounts; payment run is on the 25th" /></Field></div>
+    <Modal title="Log a chase" subtitle={label} onClose={onClose} footer={<>
+      <Button type="button" variant="ghost" onClick={onClose} disabled={busy} className="max-sm:w-full">Cancel</Button>
+      <Button type="submit" form="chase-form" disabled={busy || !v.summary.trim()} className="max-sm:w-full">{busy ? 'Saving…' : error && !fieldFailure ? 'Try again' : 'Log chase'}</Button>
+    </>}>
+      <form id="chase-form" onSubmit={save} className="flex flex-col gap-4">
+        <DialogError error={error} what="the chase" />
+        <div className="mg-grid2">
+          <Field label="How" error={fields.channel}><Select value={v.channel} placeholder={null} options={CHANNELS} onChange={(e) => set('channel', e.target.value)} /></Field>
+          <Field label="Next action on" error={fields.next_action_on}><Input type="date" value={v.next_action_on} onChange={(e) => set('next_action_on', e.target.value)} /></Field>
+        </div>
+        <Field label="Promised to pay by" hint="Pauses reminders until then." error={fields.promise_to_pay_date}><Input type="date" value={v.promise_to_pay_date} onChange={(e) => set('promise_to_pay_date', e.target.value)} /></Field>
+        <Field label="What happened" required error={fields.summary}><Textarea rows={3} value={v.summary} onChange={(e) => set('summary', e.target.value)} autoFocus placeholder="Spoke to accounts; payment run is on the 25th" /></Field>
       </form>
     </Modal>
   );
@@ -203,27 +462,70 @@ function HoldDialog({ stage, onClose, onSaved }) {
   const toast = useToast();
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function save(e) {
+    e.preventDefault(); setBusy(true); setError(null);
+    try { await api.action(`/collections/stages/${stage.id}/hold`, { on_hold: true, hold_reason: reason || null }); toast('On hold', 'success'); onSaved(); }
+    catch (err) { setError(err.fields ? Object.values(err.fields)[0] : err.message); setBusy(false); }
+  }
   return (
-    <Modal title="Put on hold" subtitle={`${stage.invoice_no} · no reminders until the hold is lifted`} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn--primary" disabled={busy} onClick={async () => { setBusy(true); try { await api.action(`/collections/stages/${stage.id}/hold`, { on_hold: true, hold_reason: reason || null }); toast('On hold', 'success'); onSaved(); } catch (err) { toast(err.message, 'danger'); setBusy(false); } }}>Hold</button></>}>
-      <Field label="Why" hint="A dispute, a credit note in progress, a wrong invoice"><Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus /></Field>
+    <Modal title="Put on hold" subtitle={`${stage.invoice_no} · ${stage.company_name || stage.client_name} · no reminders until the hold is lifted`} onClose={onClose} size="sm" footer={<>
+      <Button type="button" variant="ghost" onClick={onClose} disabled={busy} className="max-sm:w-full">Cancel</Button>
+      <Button type="submit" form="hold-form" disabled={busy} className="max-sm:w-full">{busy ? 'Saving…' : error ? 'Try again' : 'Put on hold'}</Button>
+    </>}>
+      <form id="hold-form" onSubmit={save} className="flex flex-col gap-4">
+        <DialogError error={error} what="the hold" />
+        <Field label="Why" hint="A dispute, a credit note in progress, a wrong invoice."><Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus /></Field>
+      </form>
     </Modal>
   );
 }
 
+const MODE = { bank_transfer: 'Bank transfer', cheque: 'Cheque', upi: 'UPI', cash: 'Cash', other: 'Other' };
+
 function LogDialog({ stage, onClose }) {
   const log = useFetch(() => api.raw(`/collections/log?stage_id=${stage.id}`), [stage.id]);
   const pays = useFetch(() => api.raw(`/collections/stages/${stage.id}/payments`), [stage.id]);
+  const receipts = pays.data?.data ?? [];
+  const entries = log.data?.data ?? [];
+  const skel = <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading">{[0, 1].map((i) => <div key={i} className="mg-skel" style={{ height: 36 }} />)}</div>;
+  const failed = (what, retry) => <MoneyBanner tone="late" role="alert" title={`Couldn't load the ${what}.`} action={<button type="button" className="mg-btn mg-btn--sm" onClick={retry}>Try again</button>} />;
   return (
-    <Modal title={`${stage.invoice_no}: history`} subtitle={`${stage.client_name} · ${stage.po_number} · ${stage.stage_name}`} onClose={onClose} size="lg" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
-      <div className="stack">
-        <div>
-          <div className="strong mb-1.5">Receipts</div>
-          {(pays.data?.data ?? []).length ? <table className="table"><tbody>{pays.data.data.map((p) => <tr key={p.id}><td>{date(p.received_on)}</td><td>{p.mode.replace('_', ' ')}{p.reference ? ` · ${p.reference}` : ''}</td><td className="num">{money(p.amount, stage.currency)}{Number(p.tds_amount) > 0 && <div className="small muted">+ TDS {money(p.tds_amount, stage.currency)}</div>}</td></tr>)}</tbody></table> : <span className="muted small">None yet</span>}
-        </div>
-        <div>
-          <div className="strong mb-1.5">Chasing log</div>
-          {(log.data?.data ?? []).length ? <ul className="small m-0 pl-[18px]">{log.data.data.map((l) => <li key={l.id}>{new Date(l.happened_at).toLocaleString()} · {l.channel}{l.by_whom ? ` · ${l.by_whom}` : ''}: {l.summary}{l.promise_to_pay_date ? ` (promised ${date(l.promise_to_pay_date)})` : ''}</li>)}</ul> : <span className="muted small">Nothing logged</span>}
-        </div>
+    <Modal title={`${stage.invoice_no}: history`} subtitle={`${stage.company_name || stage.client_name} · PO ${stage.po_number} · Stage ${stage.stage_no}, ${stage.stage_name}`} onClose={onClose} size="lg" footer={<Button type="button" variant="ghost" onClick={onClose}>Close</Button>}>
+      <div className="app-hist">
+        <h3>Receipts</h3>
+        {pays.loading && !pays.data ? skel : pays.error ? failed('receipts', pays.refetch) : receipts.length ? (
+          <div className="mg-tablewrap">
+            <table className="mg-table">
+              <thead><tr><th>Received</th><th>How</th><th className="num">Amount</th></tr></thead>
+              <tbody>{receipts.map((p) => (
+                <tr key={p.id}>
+                  <td className="mg-num">{shortDate(p.received_on)}</td>
+                  <td>{MODE[p.mode] || p.mode}{p.reference && <span className="app-sub2">{p.reference}</span>}</td>
+                  <td className="num font-bold">{money(p.amount, stage.currency)}<span className="app-sub2">{Number(p.tds_amount) > 0 ? `+ TDS ${money(p.tds_amount, stage.currency)}` : 'no TDS'}</span></td>
+                </tr>
+              ))}</tbody>
+              <tfoot><tr><td colSpan={2}>Received so far</td><td className="num">{money(stage.amount_received, stage.currency)} of {money(stage.stage_amount, stage.currency)}</td></tr></tfoot>
+            </table>
+          </div>
+        ) : <p className="m-0 text-[13px] text-muted-foreground">Nothing received yet.</p>}
+      </div>
+      <div className="app-hist">
+        <h3>Chasing log</h3>
+        {log.loading && !log.data ? skel : log.error ? failed('chasing log', log.refetch) : entries.length ? (
+          <ol className="mg-timeline">
+            {entries.map((l) => (
+              <li key={l.id}>
+                <span className={cn('mg-timeline__dot', l.channel === 'note' ? '' : l.channel === 'email' ? 'mg-timeline__dot--wait' : 'mg-timeline__dot--ok')} aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="mg-timeline__what block">{channelWord(l.channel)}{l.by_whom ? ` · ${l.by_whom}` : ''}</span>
+                  <span className="mg-timeline__meta block">{l.summary}{l.promise_to_pay_date ? ` Promised to pay by ${shortDate(l.promise_to_pay_date)}.` : ''}</span>
+                </span>
+                <span className="mg-timeline__when">{new Date(l.happened_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+              </li>
+            ))}
+          </ol>
+        ) : <p className="m-0 text-[13px] text-muted-foreground">Nothing logged yet.</p>}
       </div>
     </Modal>
   );

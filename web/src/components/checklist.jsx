@@ -1,14 +1,14 @@
+import { Link } from 'react-router-dom';
 import { Check, Lock, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
-import { Button } from './ui/button.tsx';
 import { Checkbox } from './ui/checkbox.tsx';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from './ui/dropdown-menu.tsx';
-import { Chip } from './record.jsx';
+import { Tone } from './sales.jsx';
 
 /**
- * The onboarding checklist (#22 / C15) — the project record's main column.
+ * The onboarding checklist (#22 / C15) — the project record's first tab.
  *
  * Two kinds of row, and the difference is the whole point:
  *
@@ -21,8 +21,11 @@ import { Chip } from './record.jsx';
  *
  * A derived row is deliberately not a disabled checkbox. A disabled
  * checkbox reads as "you may not do this", and the truth is "this is not
- * yours to do" — so it gets a lock, a chip naming the owner, and no
- * control at all.
+ * yours to do" — so it gets a disc, a chip naming the owner, a link to the
+ * record that answers it, and no control at all.
+ *
+ * A step marked N/A says "Not needed", struck through, and its menu offers
+ * "Needed again" (Wave 6).
  */
 
 const OWNER_LABEL = { finance: 'with finance', sales: 'with sales', delivery: 'with delivery' };
@@ -32,85 +35,67 @@ function StepMark({ status }) {
   const done = status === 'Done';
   const moving = status === 'In Progress';
   return (
-    <span
-      className={cn(
-        'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full',
-        done && 'border border-settled/40 bg-settled/15',
-        moving && 'border border-waiting/45 bg-waiting/12',
-        !done && !moving && 'border border-border-strong'
-      )}
-      aria-hidden="true"
-    >
-      {done
-        ? <Check className="size-[10px] text-settled" strokeWidth={3.2} />
-        : moving ? <Lock className="size-[9px] text-waiting" strokeWidth={2.4} /> : null}
+    <span className={cn('app-step__disc', done && 'is-done', moving && 'is-moving')} aria-hidden="true">
+      {done ? <Check strokeWidth={3} /> : moving ? <Lock strokeWidth={2.4} /> : null}
     </span>
   );
 }
 
-function ChecklistRow({ step, onToggle, onEdit, onDelete, last }) {
+function ChecklistRow({ step, onToggle, onEdit, onDelete, onSkip, link }) {
   const status = step.effective_status;
   const done = status === 'Done';
   const skipped = status === 'N/A';
   const label = `Step ${step.step_no}: ${step.step}`;
+  const to = step.derived && link ? link(step) : null;
 
   return (
-    <li className={cn('flex items-start gap-3 px-5 py-3', !last && 'border-b border-border')}>
+    <li className={cn('app-step', skipped && 'is-skipped')}>
       {step.derived
         ? <StepMark status={status} />
-        : (
-          <Checkbox
-            checked={done}
-            disabled={skipped}
-            onCheckedChange={() => onToggle(step)}
-            aria-label={label}
-            className="mt-0.5"
-          />
-        )}
+        : <Checkbox checked={done} disabled={skipped} onCheckedChange={() => onToggle(step)} aria-label={label} className="app-step__box" />}
 
-      <div className="min-w-0 flex-1">
-        <div className={cn(
-          'text-[13px]/[1.5]',
-          done ? 'text-secondary-text' : skipped ? 'text-muted-foreground line-through' : 'text-foreground'
-        )}>
-          {step.step}
+      <div className="app-step__text">
+        <div className={cn('app-step__title', done && 'is-done')}>
+          <span className="app-step__no mg-num">{step.step_no}</span>{step.step}
         </div>
-        {step.detail && <div className="mt-0.5 text-[12px] text-muted-foreground">{step.detail}</div>}
+        {step.detail && <div className="app-step__detail">{skipped && !String(step.detail).startsWith('Not needed') ? `Not needed: ${step.detail}` : step.detail}</div>}
       </div>
 
-      {step.derived && !done && step.owned_by && (
-        <Chip tone={status === 'In Progress' ? 'waiting' : 'plain'}>{OWNER_LABEL[step.owned_by] || step.owned_by}</Chip>
-      )}
-
-      {!step.derived && (onEdit || onDelete) && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`More for step ${step.step_no}`} className="shrink-0 text-muted-foreground">
-              <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-40 rounded-lg p-1.5">
-            {onEdit && <DropdownMenuItem className="text-[13px]" onSelect={() => onEdit(step)}>Edit this step</DropdownMenuItem>}
-            {onDelete && <DropdownMenuItem className="text-[13px]" onSelect={() => onDelete(step)}>Remove it</DropdownMenuItem>}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      <div className="app-step__end">
+        {step.derived && !done && step.owned_by && (
+          <Tone tone={status === 'In Progress' ? 'wait' : 'plain'}>{OWNER_LABEL[step.owned_by] || step.owned_by}</Tone>
+        )}
+        {skipped && <Tone>Not needed</Tone>}
+        {to && <Link className="mg-btn mg-btn--ghost mg-btn--sm" to={to.to} aria-label={`${to.label}: ${step.step}`}>{to.label}</Link>}
+        {!step.derived && (onEdit || onDelete || onSkip) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="mg-iconbtn app-step__more" aria-label={`More for step ${step.step_no}`}>
+                <MoreHorizontal strokeWidth={2.2} aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              {onEdit && <DropdownMenuItem onSelect={() => onEdit(step)}>Edit this step</DropdownMenuItem>}
+              {onSkip && <DropdownMenuItem onSelect={() => onSkip(step)}>{skipped ? 'Needed again' : 'Mark not needed'}</DropdownMenuItem>}
+              {onDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-late" onSelect={() => onDelete(step)}>Remove it</DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
     </li>
   );
 }
 
-export function Checklist({ steps, onToggle, onEdit, onDelete }) {
+export function Checklist({ steps, onToggle, onEdit, onDelete, onSkip, link }) {
   return (
-    <ol className="list-none">
-      {steps.map((step, i) => (
-        <ChecklistRow
-          key={step.id}
-          step={step}
-          onToggle={onToggle}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          last={i === steps.length - 1}
-        />
+    <ol className="app-steps">
+      {steps.map((step) => (
+        <ChecklistRow key={step.id} step={step} onToggle={onToggle} onEdit={onEdit} onDelete={onDelete} onSkip={onSkip} link={link} />
       ))}
     </ol>
   );

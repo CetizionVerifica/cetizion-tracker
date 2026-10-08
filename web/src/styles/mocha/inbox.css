@@ -1,0 +1,318 @@
+/* Inbox (Wave 4): the two panes, conversation rows, message cards, the
+   composer, the mailbox switcher, the Mailboxes and review tables. Only
+   what the system's classes (mg-glass, mg-badge, mg-banner, mg-empty,
+   mg-seg, mg-chip, mg-table…) can't say from inside React. */
+
+.page-header__title { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.page-header__title .mg-display { flex: 0 1 auto; }
+.app-ib-page { min-width: 0; }
+.app-ib-page .page-header > *, .app-ib-page .mg-header__text > * { min-width: 0; }
+@media (max-width: 719px) { .app-ib-page .page-header { flex-wrap: nowrap; } }
+.page-header__title .mg-display { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.page-header__title .mg-iconbtn { flex: none; margin-top: 4px; }
+
+/* Header views: Open · Mine · Done, a radiogroup on the seg track. */
+.app-ib-views .mg-seg__thumb { width: var(--seg-w, 86px); transform: translateX(var(--seg-x, 0)); }
+.app-ib-views button { min-width: 0; width: var(--seg-w, 86px); padding: 0 6px; }
+
+/* The body under the header. */
+.app-ib { display: flex; flex-direction: column; gap: 18px; min-width: 0; padding: 16px 24px 0; }
+@media (max-width: 719px) { .app-ib { padding: 12px 12px 0; } }
+
+/* Two panes from 1000px up (list 392px); below that one at a time. */
+.app-ib__panes { display: flex; gap: 18px; align-items: stretch; min-width: 0; }
+.app-ib__pane { position: relative; display: flex; min-width: 0; }
+.app-ib__glass { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 26px; }
+@media (min-width: 1000px) {
+  .app-ib__panes { height: max(520px, calc(100dvh - var(--ib-top, 220px) - 112px)); }
+  .app-ib__pane--list { flex: 0 1 392px; }
+  .app-ib__pane--thread { flex: 1 1 480px; }
+  .app-ib__back { display: none !important; }
+}
+@media (max-width: 999px) {
+  .app-ib__pane { flex: 1 1 auto; }
+  .app-ib__panes.has-sel .app-ib__pane--list, .app-ib__panes:not(.has-sel) .app-ib__pane--thread { display: none; }
+  .app-ib__rows { max-height: none; overflow: visible; }
+}
+
+/* List tools: the round search, the keys button, folder filters. */
+.app-ib__tools { display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 12px; border-bottom: 1px solid var(--line); }
+.app-ib__toolrow { display: flex; align-items: center; gap: 6px; }
+.app-ib__filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.app-ib__filters .app-ib__count { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+/* Conversation rows: one option each. */
+.app-ib__rows { flex: 1; min-height: 0; overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; outline: none; }
+.app-ib__row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; width: 100%; padding: 12px; border: 0; border-radius: 16px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background 160ms; }
+.app-ib__row:hover { background: var(--track); }
+.app-ib__row[aria-selected="true"] { background: var(--wait-soft); }
+.app-ib__row:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-ib__row .mg-avatar { grid-row: span 4; width: 36px; height: 36px; font-size: 12px; }
+.app-ib__row .mg-avatar.is-unmatched { background: var(--track); color: var(--text2); }
+.app-ib__name { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.app-ib__name > .app-ib__lead { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.app-ib__row.is-unread .app-ib__lead { font-weight: 800; }
+.app-ib__lead small { font-size: inherit; font-weight: 500; color: var(--text2); }
+.app-ib__dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--caramel); }
+.app-ib__n { flex: none; font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.app-ib__time { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; color: var(--muted); }
+.app-ib__time svg { width: 14px; height: 14px; }
+.app-ib__time.is-late { color: var(--late); font-weight: 700; }
+.app-ib__subj { grid-column: 2 / 4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text2); }
+.app-ib__row.is-unread .app-ib__subj { font-weight: 700; color: var(--text); }
+.app-ib__snip { grid-column: 2 / 4; min-width: 0; max-height: calc(1.45em * 2); overflow: hidden; font-size: 12.5px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.app-ib__snip > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.app-ib__snip.is-one { max-height: 1.45em; }
+.app-ib__snip.is-one > span { -webkit-line-clamp: 1; }
+.app-ib__chips { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; min-width: 0; }
+.app-ib__chips .mg-badge, .app-msg .mg-badge.is-sm { height: 22px; padding: 0 9px; font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Pager / count under the list. */
+.app-ib__pager { display: flex; align-items: center; gap: 4px; padding: 8px 10px 8px 16px; border-top: 1px solid var(--line); }
+.app-ib__pager > span:first-child { margin-right: auto; font-size: 12.5px; color: var(--text2); }
+.app-ib__pager .mg-num { font-size: 12.5px; font-weight: 700; color: var(--text2); }
+.app-ib__pager .mg-btn { padding: 0 10px; }
+.app-ib__countline { margin: 0; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text2); }
+
+/* States inside a pane. */
+.app-ib .mg-empty { flex: 1; justify-content: center; }
+.app-ib__skel { flex: 1; padding: 12px 14px; display: flex; flex-direction: column; gap: 16px; }
+.app-ib__skelrow { display: grid; grid-template-columns: 36px 1fr; gap: 8px 12px; }
+.app-ib__skelrow > :first-child { width: 36px; height: 36px; border-radius: 50%; grid-row: span 3; }
+.app-ib__late-mark { color: var(--late); background: var(--late-soft); }
+
+/* The conversation pane. */
+.app-ib__head { display: flex; flex-direction: column; gap: 10px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.app-ib__titlerow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 16px; }
+.app-ib__titles { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.app-ib__titles h1, .app-ib__titles h2 { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
+.app-ib__badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-ib__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.app-ib__meta { margin: 0; font-size: 12.5px; color: var(--text2); display: flex; flex-wrap: wrap; column-gap: 6px; row-gap: 2px; min-width: 0; }
+.app-ib__meta > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-ib__meta > span + span::before { content: "·"; margin-right: 6px; color: var(--muted); }
+.app-ib__meta a { color: var(--caramel-text); font-weight: 700; text-decoration: none; }
+.app-ib__meta a:hover { text-decoration: underline; }
+.app-ib__owner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.app-ib__owner .mg-select-wrap { flex: 0 1 210px; min-width: 150px; }
+.app-ib__owner select { height: 36px; font-size: 13px; }
+.app-ib__owner > span:last-child { font-size: 12px; color: var(--muted); }
+.app-ib__body { flex: 1; min-height: 0; overflow: auto; padding: 16px 22px; display: flex; flex-direction: column; gap: 12px; }
+.app-ib__foot { padding: 12px 22px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.app-ib__foot > p { margin: 0; font-size: 12.5px; color: var(--text2); }
+.app-ib__readonly { margin: 0; padding: 14px 22px 16px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text2); }
+@media (max-width: 999px) {
+  .app-ib__body { overflow: visible; }
+}
+@media (max-width: 719px) {
+  .app-ib__head { padding: 14px 16px 12px; }
+  .app-ib__body { padding: 14px 12px; }
+  .app-ib__foot { padding: 12px 14px 14px; }
+  .app-ib__readonly { padding: 12px 16px 14px; }
+}
+
+/* Composer. */
+.app-ib__prompt { display: flex; align-items: center; gap: 10px; }
+.app-ib__prompt > button:first-child { flex: 1; min-width: 0; height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass-strong); color: var(--muted); font: inherit; font-size: 13.5px; text-align: left; cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-ib__composehead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.app-ib__composehead label { flex: 1 1 200px; min-width: 0; font-size: 12.5px; font-weight: 700; overflow-wrap: anywhere; }
+.app-ib__hint { margin: 0; font-size: 12px; color: var(--muted); }
+.app-ib__sendrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.app-ib__sendrow > :last-child { margin-left: auto; }
+.app-canned { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding-top: 8px; padding-bottom: 8px; height: auto !important; max-width: 340px; }
+.app-canned > span:first-child { font-weight: 700; }
+.app-canned > span:last-child { max-width: 100%; font-size: 12px; font-weight: 500; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-pop-note { margin: 4px 0 0; padding: 8px 10px 4px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); max-width: 340px; }
+
+/* Keyboard shortcuts pop-over. */
+.app-keys { display: flex; flex-direction: column; gap: 2px; }
+.app-keys__row { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; font-size: 13px; }
+.app-keys__row > span:first-child { flex: 1; color: var(--text); }
+.app-keys__row > span:last-child { display: inline-flex; gap: 4px; }
+
+/* Mailbox switcher menu. */
+.app-switch { width: 320px; max-width: calc(100vw - 24px); max-height: min(640px, 70vh); }
+.app-switch__head { padding: 10px 10px 4px; display: flex; flex-direction: column; gap: 1px; }
+.app-switch [role="group"] { margin-top: 4px; border-top: 1px solid var(--line); }
+.app-switch__head { padding: 10px 10px 4px; }
+.app-switch__head > span { display: block; }
+.app-switch__head > span:last-child:not(:first-child) { font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; }
+.app-switch__note { margin: 0; padding: 4px 10px 8px; font-size: 12.5px; color: var(--muted); }
+.app-switch__note.is-warn { color: var(--wait); }
+.app-switch__item[data-on="true"] { background: var(--wait-soft); font-weight: 700; }
+.app-switch__item .app-switch__count { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--caramel-text); }
+.app-switch__item .app-switch__tick { color: var(--caramel-text); }
+
+/* A message card. */
+.app-msg { border: 1px solid var(--line); border-radius: 18px; min-width: 0; }
+.app-msg.is-removed { opacity: .8; }
+.app-msg__top { width: 100%; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 12px 14px; border: 0; border-radius: 18px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.app-msg__top:hover { background: var(--track); }
+.app-msg__top:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-msg__top .mg-avatar { grid-row: span 2; width: 32px; height: 32px; font-size: 11px; background: var(--latte); color: var(--on-caramel); }
+.app-msg.is-out .app-msg__top .mg-avatar { background: var(--btn); color: var(--on-btn); }
+.app-msg__who { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.app-msg__who strong { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-msg__when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.app-msg__line2 { grid-column: 2 / 4; min-width: 0; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-msg__open { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px 58px; min-width: 0; }
+.app-msg__tools { display: flex; flex-wrap: wrap; gap: 6px; margin-left: -10px; }
+.app-msg__facts { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); padding: 12px 14px; border-radius: 14px; background: var(--track); }
+.app-msg__facts dd { font-weight: 600; overflow-wrap: anywhere; }
+.app-msg__paper { max-width: 680px; min-width: 0; border-radius: 14px; border: 1px solid var(--line); background: var(--glass-strong); overflow: hidden; }
+.app-msg__frame { display: block; width: 100%; height: 64px; border: 0; background: transparent; }
+.app-msg__quoted { align-self: flex-start; margin: 0 0 10px 10px; }
+.app-msg__note { margin: 0; padding: 12px 14px; border-radius: 14px; background: var(--track); font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
+.app-msg .mg-banner { flex-wrap: wrap; align-items: center; padding: 10px 12px 10px 14px; }
+.app-msg .mg-banner__body { flex: 1 1 200px; font-size: 12.5px; }
+@media (max-width: 719px) { .app-msg__open { padding: 0 12px 14px; } }
+
+/* Attachments. */
+.app-atts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.app-att { flex: 0 1 300px; display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; padding: 6px 6px 6px 8px; border: 1px solid var(--line); border-radius: 14px; }
+.app-atts__item { flex: 0 1 300px; min-width: 0; max-width: 100%; display: flex; }
+.app-atts__item > .app-att { flex: 1; }
+button.app-att { font: inherit; color: inherit; text-align: left; background: transparent; cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+button.app-att:hover:not(:disabled) { border-color: var(--caramel); background: var(--track); }
+button.app-att:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
+button.app-att:disabled { cursor: not-allowed; }
+.app-att.is-locked { opacity: .72; }
+.app-attnames { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; margin-top: 4px; grid-column: 2 / -1; }
+.app-attnames__one { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 60%; }
+.app-attnames__one svg { width: 12px; height: 12px; flex: none; }
+.app-attnames__one > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-attnames__more { align-self: center; font-size: 11px; color: var(--muted); }
+.app-att__icon { width: 32px; height: 32px; flex: none; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-att__icon svg { width: 16px; height: 16px; }
+.app-att__text { flex: 1; min-width: 0; padding-right: 4px; }
+.app-att__text > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-att__text > span:first-child { font-size: 12.5px; font-weight: 700; }
+.app-att__text > span:last-child { font-size: 11.5px; color: var(--muted); white-space: normal; }
+.app-att .mg-iconbtn { width: 36px; height: 36px; flex: none; }
+@media (max-width: 719px) { .app-att .mg-iconbtn { width: 44px; height: 44px; } }
+
+/* Settings tables (Inbox setup, Mailboxes) and reader lists. */
+.app-ib-panel { border-radius: 26px; display: flex; flex-direction: column; min-width: 0; }
+.app-ib-panel__head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; padding: 20px 22px 16px; }
+.app-ib-panel__titles { flex: 1 1 0; min-width: min(320px, 100%); display: flex; flex-direction: column; gap: 4px; }
+.app-ib-panel__titles p { margin: 0; }
+.app-ib-panel__titles a, .app-ib-panel__foot a, .app-link { color: var(--caramel-text); font-weight: 700; text-decoration: none; }
+.app-ib-panel__titles a:hover, .app-ib-panel__foot a:hover, .app-link:hover { text-decoration: underline; }
+.app-ib-panel__foot { margin: 0; padding: 14px 22px 18px; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 1.55; color: var(--text2); }
+.app-ib-panel > .mg-tablewrap, .app-ib-panel > .mg-rows, .app-ib-panel > .mg-empty { border-top: 1px solid var(--line); border-radius: 0; }
+.app-ib-panel > .mg-tablewrap:last-child, .app-ib-panel > .mg-rows:last-child { border-radius: 0 0 26px 26px; }
+.app-ib-panel .mg-table td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
+.app-ib-panel .mg-table td.app-say { white-space: normal; min-width: 220px; color: var(--text2); line-height: 1.5; }
+.app-ib-panel .mg-table .sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.app-ib-panel .mg-table .sub.is-warn { color: var(--wait); }
+.app-ib-panel .mg-table .sub.is-late { color: var(--late); }
+.app-ib-panel .mg-table .sub.is-info { color: var(--info); }
+.app-ib-panel .mg-table td.num, .app-ib-panel .mg-table td.app-nowrap { white-space: nowrap; }
+.app-ib-panel .mg-table td.actions { white-space: nowrap; }
+.app-ib-panel .mg-table tr.is-broken td { background: var(--late-soft); }
+.app-ib-panel .mg-table tr.is-broken td:first-child { box-shadow: inset 3px 0 0 var(--late); }
+.app-ib-panel .mg-row.is-broken { background: var(--late-soft); }
+.app-ib-panel .mg-row .app-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.app-ib-panel .mg-row .app-acts .mg-btn { --h: 44px; }
+.app-ib-panel .mg-row .app-wide { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+.app-ib-why { display: block; max-width: 560px; margin-top: 6px; font-size: 12.5px; line-height: 1.45; color: var(--text2); white-space: normal; }
+.app-ib-why strong { color: var(--late); }
+.app-ib-why.is-warn strong { color: var(--wait); }
+.app-ib-busy { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12.5px; font-weight: 600; color: var(--text2); white-space: normal; }
+.app-ib-panel .app-vis { display: block; width: 196px; }
+.app-ib-panel .app-vis select { height: 36px; font-size: 13px; }
+
+/* Readers: switches, review-only box, per-mailbox lines. */
+.app-readers { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; }
+.app-readers__switches { display: flex; flex-wrap: wrap; gap: 10px; }
+.app-pill-switch { min-height: 44px; padding: 0 14px 0 10px; border-radius: 999px; border: 1px solid var(--line); }
+.app-pill-switch.is-on { background: var(--ok-soft); }
+.app-pill-switch > span:first-of-type { font-weight: 700; }
+.app-pill-switch > span:last-child { font-size: 12px; font-weight: 700; color: var(--muted); }
+.app-pill-switch.is-on > span:last-child { color: var(--ok); }
+.app-readers__box { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 18px; border: 1px solid var(--line); }
+.app-readers__box p, .app-readers p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text2); }
+.app-readers__box strong { color: var(--text); }
+.app-readers__save { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.app-readers__save .mg-field { flex: 1 1 260px; }
+.app-readers__ai { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px; color: var(--text2); }
+.app-readers__ai .mg-progress { flex: 0 1 240px; }
+.app-perbox { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.app-perbox > li { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 18px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+.app-perbox__text { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; line-height: 1.5; color: var(--text2); overflow-wrap: anywhere; }
+.app-perbox__text > strong { font-size: 13.5px; color: var(--text); }
+.app-perbox__text > strong span { font-weight: 500; color: var(--muted); }
+.app-perbox__err { color: var(--wait); font-weight: 600; }
+.app-perbox__btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-ib-now { margin: 0 22px 14px; padding: 12px 14px; border-radius: 14px; background: var(--track); font-size: 13px; color: var(--text2); }
+.app-ib-now strong { color: var(--text); }
+.app-ib-reasons { display: flex; flex-direction: column; gap: 10px; padding: 16px 22px 20px; border-top: 1px solid var(--line); }
+.app-ib-reasons > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-ib-reasons p { margin: 4px 0 0; font-size: 12px; line-height: 1.55; color: var(--muted); }
+.app-ib-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 18px; }
+.app-ib-server { margin: 0; display: flex; flex-direction: column; }
+.app-ib-server > div { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--line); }
+.app-ib-server dt { flex: 1; font-weight: 600; }
+.app-ib-server dd { margin: 0; }
+.app-ib-small { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted); overflow-wrap: anywhere; }
+.app-ib-block { display: flex; gap: 8px; }
+.app-ib-block .mg-input { flex: 1; min-width: 0; }
+.app-ib-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-ib-chips .mg-chip { padding-right: 4px; cursor: default; }
+.app-ib-chips .mg-chip .mg-iconbtn { width: 26px; height: 26px; }
+.app-ib-option { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--line); }
+.app-ib-option .mg-switch { display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
+.app-ib-facts { display: flex; flex-wrap: wrap; gap: 10px 28px; padding: 12px 16px; border-radius: 16px; background: var(--track); font-size: 13px; }
+.app-ib-facts .mg-label { display: block; margin-bottom: 2px; }
+.app-ib-facts > span { min-width: 0; overflow-wrap: anywhere; }
+.app-ib-tokens { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* Review queues: phone rows. */
+.app-rv { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-bottom: 1px solid var(--line); min-width: 0; }
+.app-rv:last-child { border-bottom: 0; }
+.app-rv__top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.app-rv__top strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.app-rv__top span { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.app-rv__why { font-size: 13px; font-weight: 700; color: var(--wait); }
+.app-rv__detail { font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
+.app-rv__acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.app-ib-panel .mg-table .app-why { font-weight: 700; color: var(--wait); }
+
+/* On a phone the conversation takes the screen: the page header steps aside. */
+@media (max-width: 719px) { .app-ib-page.has-sel > .page-header { display: none; } .app-ib-page.has-sel .app-ib { padding-top: 16px; } }
+/* A long eyebrow ("Inbox · mailbox folder") gives way to the control bar on the phone's top row. */
+.page-header__top > .mg-eyebrow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The attachment viewer (docs/inbox-attachments-plan.md): a big glass dialog, the file on paper. */
+.app-av__head { display: flex; align-items: center; gap: 8px; padding: 14px 64px 12px 22px; border-bottom: 1px solid var(--line); }
+.app-av__head > div:first-child { flex: 1; min-width: 0; }
+.app-av__title { margin: 0; font-family: var(--font-display); font-size: 17px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-av__sub { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+.app-av__nav { display: flex; flex: none; gap: 2px; }
+.app-av__nav .mg-iconbtn { width: 36px; height: 36px; }
+.app-av__body { position: relative; flex: 1; min-height: 0; overflow: auto; user-select: text; background: var(--track); }
+.app-av__note { margin: 0 0 12px; text-align: center; font-size: 13px; color: var(--muted); }
+.app-av__none { height: 100%; justify-content: center; }
+.app-av__none .mg-empty__text { max-width: 40ch; }
+.app-av__tools { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--glass-strong); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); font-size: 12.5px; color: var(--text2); }
+.app-av__sep { width: 1px; height: 16px; background: var(--line); }
+.app-av__zoom { width: 32px; height: 32px; }
+.app-av__zoom:disabled { opacity: .4; cursor: default; background: transparent; }
+.app-av__pct { width: 44px; text-align: center; }
+.app-av__paper { background: #fff; border-radius: 6px; box-shadow: 0 10px 30px -12px rgba(43,29,20,.35); }
+.app-av__sheet { flex: 1; min-height: 0; overflow: auto; background: var(--glass-strong); }
+.app-av__grid { border-collapse: collapse; font-size: 12px; color: var(--text); }
+.app-av__grid th, .app-av__grid td { border: 1px solid var(--line); padding: 4px 8px; }
+.app-av__grid td { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-av__grid thead th { position: sticky; top: 0; z-index: 1; background: var(--track); font-weight: 600; color: var(--muted); backdrop-filter: blur(10px); }
+.app-av__grid tbody th { position: sticky; left: 0; background: var(--track); text-align: right; font-weight: 600; color: var(--muted); backdrop-filter: blur(10px); }
+.app-av__grid th.is-corner { left: 0; z-index: 2; }
+.app-av__sheets { flex: none; padding: 0 8px; border-top: 1px solid var(--line); border-bottom: 0; background: var(--glass-strong); }
+.app-av__text { margin: 0; padding: 16px; border-radius: 14px; background: var(--glass-strong); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; color: var(--text); }
+.app-av__frame { display: block; width: 100%; max-width: 860px; margin: 0 auto; border: 0; border-radius: 10px; background: #fff; box-shadow: 0 10px 30px -12px rgba(43,29,20,.35); }
+.app-av__mailhead { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-strong); font-size: 12.5px; }
+.app-av__mailhead dt { color: var(--muted); }
+.app-av__mailhead dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
+.app-av__mailhead dd.is-strong { font-weight: 700; }
+.app-av > .mg-sheet__grab { display: none; }
+@media (max-width: 719px) { .app-av__head { padding: 14px 56px 12px 16px; } .app-av__nav .mg-iconbtn { width: 40px; height: 40px; } }

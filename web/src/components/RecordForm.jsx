@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
+import { Fragment, useEffect, useState } from 'react';
+import { CircleAlert } from 'lucide-react';
+import { Modal, Field, Input, Select, Textarea, Combo, Alert, FileDrop } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { useDocumentUploads } from '../lib/hooks.js';
 import { fileSize } from '../lib/format.js';
@@ -37,6 +38,8 @@ export function RecordForm({
   onSaved,
   intro,
   submitLabel,
+  size,
+  extraAction,
 }) {
   const toast = useToast();
   const isEdit = Boolean(record?.id);
@@ -58,6 +61,9 @@ export function RecordForm({
 
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
+  // DialogErrors: a refused field says so under itself; any other failure
+  // (network, permission) leaves only the banner, and the button offers again.
+  const [fieldFailure, setFieldFailure] = useState(false);
   const [busy, setBusy] = useState(false);
   // Files chosen in document fields, and what each became once uploaded.
   const [picked, setPicked] = useState({});
@@ -122,6 +128,7 @@ export function RecordForm({
     event.preventDefault();
     setBusy(true);
     setFormError(null);
+    setFieldFailure(false);
     setErrors({});
 
     const payload = {};
@@ -136,6 +143,11 @@ export function RecordForm({
     }
 
     try {
+      // A required field left empty is named here: sent as blank, an edit could
+      // save nothing and still say "Changes saved".
+      const missing = fields.filter((field) => field.required && !field.auto && field.type !== 'document' && field.type !== 'boolean'
+        && (payload[field.name] == null || String(payload[field.name]).trim() === ''));
+      if (missing.length) throw new ApiError('Required', { fields: Object.fromEntries(missing.map((field) => [field.name, 'Required'])) });
       await attachDocuments(payload);
       const saved = isEdit
         ? await api.update(resource, record.id, payload)
@@ -151,9 +163,11 @@ export function RecordForm({
     } catch (err) {
       if (err.fields) {
         setErrors(err.fields);
-        setFormError('Some fields need attention.');
+        const n = Object.keys(err.fields).length;
+        setFormError(`${n === 1 ? 'One field needs' : `${n} fields need`} a look. Nothing was saved.`);
+        setFieldFailure(true);
       } else {
-        setFormError(err.message);
+        setFormError(err.message || 'Nothing was saved.');
       }
       setBusy(false);
     }
@@ -164,22 +178,31 @@ export function RecordForm({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
+      size={size}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" form="record-form" className="btn btn--primary" disabled={busy}>
-            {busy ? 'Saving…' : submitLabel || (isEdit ? 'Save changes' : 'Create')}
+          {extraAction}
+          <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" form="record-form" className="mg-btn mg-btn--primary" disabled={busy} aria-busy={busy || undefined}>
+            {busy ? 'Saving…' : formError && !fieldFailure ? 'Try again' : submitLabel || (isEdit ? 'Save changes' : 'Create')}
           </button>
         </>
       }
     >
-      <form id="record-form" onSubmit={submit} className="stack">
+      <form id="record-form" onSubmit={submit} className="stack" noValidate={false}>
+        {formError && (
+          <div className="mg-banner mg-banner--late" role="alert" tabIndex={-1} ref={(el) => el?.focus()}>
+            <CircleAlert aria-hidden="true" />
+            <div className="mg-banner__body"><strong>Couldn't save {isEdit ? 'the changes' : 'this'}.</strong>{formError}</div>
+          </div>
+        )}
         {intro && <Alert>{intro}</Alert>}
-        {formError && <Alert tone="danger">{formError}</Alert>}
 
-        <div className="form-grid">
-          {fields.map((field) => (
-            <div key={field.name} className={field.span === 'all' ? 'span-all' : field.span === 2 ? 'span-2' : ''}>
+        <div className={size === 'lg' ? 'form-grid app-form3' : 'form-grid'}>
+          {fields.map((field, i) => field.type === 'hidden' ? null : (
+            <Fragment key={field.name}>
+            {field.group && field.group !== fields[i - 1]?.group && <h3 className="app-formgroup">{field.group}</h3>}
+            <div className={field.span === 'all' ? 'span-all' : field.span === 2 ? 'span-2' : ''}>
               <FormField
                 field={resolveOptions(field, values)}
                 value={values[field.name]}
@@ -193,6 +216,7 @@ export function RecordForm({
                 isEdit={isEdit}
               />
             </div>
+            </Fragment>
           ))}
         </div>
       </form>
@@ -224,7 +248,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
         >
           <Input
             type="text"
-            className="input mono"
+            className="mono"
             value={value ?? ''}
             disabled
             readOnly
@@ -247,7 +271,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
       >
         <Input
           type="text"
-          className="input mono"
+          className="mono"
           value={value ?? ''}
           placeholder={preview ?? 'Assigned on save'}
           onChange={(e) => onChange(e.target.value)}
@@ -286,10 +310,15 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
       control = <Combo options={field.options} {...common} />;
       break;
     case 'textarea':
-      control = <Textarea rows={field.rows || 3} {...common} />;
+      control = <Textarea rows={field.rows || 3} maxLength={field.max} {...common} />;
+      // A character count where the server caps the text.
+      if (field.max) hint = `${hint ? `${hint} ` : ''}${String(value ?? '').length} of ${field.max} characters.`;
       break;
     case 'date':
       control = <Input type="date" {...common} />;
+      break;
+    case 'time':
+      control = <Input type="time" {...common} />;
       break;
     case 'number':
     case 'money':
@@ -316,34 +345,38 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
   }
 
   return (
-    <Field label={field.label} required={field.required} hint={hint} error={error}>
+    <Field label={field.label} required={field.required} hint={hint} error={error} as={field.type === 'document' ? 'div' : 'label'}>
       {control}
       {warning && !error && (
-        <span className="field__hint text-waiting" role="status">{warning}</span>
+        <span className="mg-field__hint" role="status" style={{ color: 'var(--wait)' }}>{warning}</span>
       )}
     </Field>
   );
 }
 
-/** A file picker that also shows, and links to, the document already attached. */
+/**
+ * The system's drop zone (FilePicker), which also shows the file chosen and
+ * links to the one already attached (B-11). A file over the limit is refused
+ * before upload and says so under the field.
+ */
 function DocumentInput({ current, file, onFile, error, disabled }) {
   return (
     <>
-      <input
-        type="file"
-        className={`input ${error ? 'has-error' : ''}`}
+      <FileDrop
+        text={file ? `${file.name} · ${fileSize(file.size)}` : current ? 'Drop a new file here to replace it' : 'Drop a file here'}
+        error={error}
         disabled={disabled}
         onChange={(e) => {
           if (!onFile(e.target.files?.[0] || null)) e.target.value = '';
         }}
       />
       {file ? (
-        <span className="field__hint">
-          {file.name} · {fileSize(file.size)}
+        <span className="mg-field__hint">
+          Chosen: {file.name} · {fileSize(file.size)}
           {current && ' · replaces the current document'}
         </span>
       ) : current ? (
-        <span className="field__hint">
+        <span className="mg-field__hint">
           Current:{' '}
           <a href={api.documentUrl(current.id)} target="_blank" rel="noopener noreferrer">
             {current.name || 'view document'}

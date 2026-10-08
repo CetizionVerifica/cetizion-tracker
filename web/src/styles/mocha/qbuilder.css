@@ -1,0 +1,109 @@
+/* Settings › Templates › Questionnaires: the builder (#208, Wave 3 canvas Questionnaires). */
+
+.qb-list { border-radius: 26px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.qb-list .mg-table td { white-space: nowrap; }
+.qb-list .mg-table td.qb-wrap { white-space: normal; }
+.qb-link { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--text); text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.qb-link:hover { text-decoration-color: currentColor; }
+.qb-badges { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+
+/* Icon buttons in rows: a 34–36px target, dimmed when they can't act. */
+.qb-ib { width: 34px; height: 34px; flex: none; }
+.qb-ib svg { width: 15px; height: 15px; }
+.qb-ib--step { width: 36px; height: 36px; }
+.qb-ib--step svg { width: 16px; height: 16px; }
+.qb-ib--quiet { color: var(--muted); }
+.qb-ib:disabled { opacity: .35; cursor: not-allowed; background: transparent; }
+.qb-ib:focus-visible { outline: 2px solid var(--caramel); outline-offset: 1px; }
+.qb-tools { display: inline-flex; flex-wrap: nowrap; gap: 0; }
+
+/* The editor panel. */
+.qb-ed { gap: 16px; min-width: 0; }
+.qb-ed__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.qb-ed__back { margin-left: -8px; }
+.qb-ed__name { flex: 1 1 260px; min-width: 0; }
+.qb-ed__name h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+.qb-ed__name span { display: block; font-size: 12.5px; color: var(--muted); }
+.qb-ed__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.qb-ed__bar .qb-push { margin-left: auto; }
+.qb-ed__state { font-size: 12.5px; color: var(--text2); }
+.qb-ed__state.is-dirty { font-weight: 700; color: var(--caramel-text); }
+
+.qb-problems { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.qb-problems button { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Published and frozen: the outline of what it asks. */
+.qb-outline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.qb-outline > li { min-width: 0; padding: 14px 16px; border-radius: 18px; background: var(--track); }
+.qb-outline b { display: block; margin: 2px 0 6px; font-weight: 700; color: var(--text); }
+.qb-outline ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text2); display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+
+/* A step and its questions. */
+.qb-step { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--track); min-width: 0; }
+.qb-step__head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.qb-step__n { padding-bottom: 12px; }
+.qb-step__title { flex: 1 1 200px; }
+.qb-step__expl { flex: 2 1 240px; }
+.qb-step__tools { padding-bottom: 4px; }
+.qb-step__none { margin: 0; padding: 12px 14px; border-radius: 16px; border: 1px dashed var(--scroll-thumb); font-size: 13px; color: var(--text2); }
+
+.qb-q { display: flex; flex-direction: column; min-width: 0; border-radius: 16px; border: 1px solid var(--line); background: var(--glass-strong); scroll-margin-top: 96px; }
+.qb-q.is-bad { border-color: var(--wait); }
+.qb-q__head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 4px 6px 4px 8px; }
+.qb-q__toggle { flex: 1 1 220px; min-width: 0; min-height: 44px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 0; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.qb-q__toggle:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
+.qb-q__toggle > svg { width: 15px; height: 15px; flex: none; transition: rotate 160ms ease-out; }
+.qb-q__toggle[aria-expanded="true"] > svg { rotate: 90deg; }
+.qb-q__label { flex: 0 1 auto; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.qb-q__label.is-empty { font-weight: 600; color: var(--muted); }
+.qb-q__req { font-size: 11.5px; font-weight: 800; color: var(--late); }
+.qb-q__cond { font-size: 11.5px; font-weight: 700; color: var(--info); }
+.qb-q__meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.qb-q__kind { font-size: 12px; color: var(--text2); }
+.qb-q__key { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.qb-q__body { display: flex; flex-direction: column; gap: 14px; padding: 6px 16px 16px; border-top: 1px solid var(--line); }
+.qb-q--col { background: var(--glass); }
+
+.qb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px 14px; padding-top: 10px; }
+.qb-grid .qb-all { grid-column: 1 / -1; }
+.qb-grid .mg-check { min-height: 44px; align-self: end; }
+.qb-key { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+
+.qb-set { margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 16px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.qb-set.is-bad { border: 1px dashed var(--late); }
+.qb-set > legend { padding: 0 6px; }
+.qb-set__note { margin: 0; font-size: 12px; color: var(--muted); }
+.qb-set__add { align-self: flex-start; margin-left: -8px; }
+.qb-opt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.qb-opt .mg-input { flex: 1 1 180px; min-width: 0; height: 40px; }
+.qb-opt__key { min-width: 70px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+.qb-rule { display: flex; flex-wrap: wrap; gap: 10px 12px; }
+.qb-rule .mg-field__label { font-weight: 600; color: var(--text2); }
+.qb-rule__when { flex: 2 1 260px; }
+.qb-rule__op { flex: 1 1 150px; }
+.qb-rule__val { flex: 1 1 150px; }
+.qb-rule__in { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 0 18px; }
+.qb-rule__in .mg-check { min-height: 40px; }
+
+/* Versions. */
+.qb-versions { border-radius: 26px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.qb-versions__head { padding: 18px 20px 12px; border-bottom: 1px solid var(--line); }
+.qb-versions__head p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+.qb-versions .mg-table td { white-space: nowrap; }
+
+.qb-dlg { display: flex; flex-direction: column; gap: 14px; }
+
+@media (max-width: 719px) {
+  .qb-ed { padding: 16px; }
+  .qb-ed__bar .qb-push { margin-left: 0; }
+  .qb-step { padding: 12px; border-radius: 18px; }
+  .qb-step__n { padding-bottom: 0; flex: 1 1 100%; }
+  .qb-step__tools { margin-left: auto; }
+  .qb-q__head { padding: 4px 4px 6px 8px; }
+  .qb-q__meta { flex: 1 1 auto; }
+  .qb-q__body { padding: 4px 12px 14px; }
+  .qb-set { padding: 12px 10px; }
+  .qb-versions__head { padding: 16px 16px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .qb-q__toggle > svg { transition: none; } }

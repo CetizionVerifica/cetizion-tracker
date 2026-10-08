@@ -1,8 +1,9 @@
+import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
-import { Alert, Field, Input, Modal, Select, useToast } from './ui.jsx';
+import { Alert, Field, FileDrop, Input, Modal, Select, useToast } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
-import { money, today } from '../lib/format.js';
+import { fileSize, money, today } from '../lib/format.js';
 import { poCurrencyWarning } from '../lib/poCurrency.js';
 
 /**
@@ -42,6 +43,12 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
   // The PDF read from the email is already stored; a file chosen here replaces it.
   const [emailDocument, setEmailDocument] = useState(read.document_id || null);
   const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState(null);
+  const maxBytes = lookups.limits?.document_max_bytes;
+  const pickFile = (f) => {
+    if (f && maxBytes && f.size > maxBytes) { setFile(null); setFileError(`This file is ${fileSize(f.size)}: the limit is ${fileSize(maxBytes)}. Pick a smaller one.`); return; }
+    setFileError(null); setFile(f);
+  };
   const [errors, setErrors] = useState({});
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -93,7 +100,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
       subtitle={`${quotation.quotation_no} · ${quotation.client_name} · ${money(quotation.total ?? quotation.quotation_value, quotation.currency)}`}
       onClose={onClose}
       size="lg"
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="register-po" className="btn btn--primary" disabled={busy}>{busy ? 'Registering…' : 'Register PO and project'}</button></>}
+      footer={<><button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="register-po" className="mg-btn mg-btn--primary" disabled={busy}>{busy ? 'Registering…' : 'Register PO and project'}</button></>}
     >
       <form id="register-po" onSubmit={submit} className="stack">
         {prefill ? (
@@ -108,7 +115,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
           <Alert><span>One save: the quotation is marked won, the project is created (or the PO joins the one you pick), the PO is registered with its service lines, the payment stages come from the template, and the checklist is added.</span></Alert>
         )}
         {note && <Alert tone="warning">{note}</Alert>}
-        {error && <Alert tone="danger">{error}</Alert>}
+        {error && <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't register the PO.</strong>{error}</div></div>}
         <div className="form-grid">
           <div className="span-all" style={{ fontWeight: 650 }}>Purchase order</div>
           <Field label="PO number" required error={errors.po_number}><Input value={v.po_number} onChange={(e) => set('po_number', e.target.value)} /></Field>
@@ -116,18 +123,18 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
           <Field label="PO value" error={errors.po_value} hint="Blank: the quotation total"><Input type="number" step="0.01" min="0" value={v.po_value} onChange={(e) => set('po_value', e.target.value)} /></Field>
           <Field label="Currency">
             <Select value={v.currency} placeholder={null} options={lookups.enums?.currency || ['INR']} onChange={(e) => set('currency', e.target.value)} />
-            {currencyWarning && <span className="field__hint text-waiting" role="status">{currencyWarning}</span>}
+            {currencyWarning && <span className="mg-field__hint" role="status" style={{ color: 'var(--wait)' }}>{currencyWarning}</span>}
           </Field>
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
-          <Field label="PO document" hint={emailDocument ? 'The PDF from the email is attached; choose a file only to replace it' : 'The client\'s PO, if you have the file'}>
-            <input type="file" className="input" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <div className="span-all"><Field as="div" label="PO document" error={fileError} hint={file ? `Chosen: ${file.name} · ${fileSize(file.size)}` : emailDocument ? 'The PDF from the email is attached; choose a file only to replace it' : 'The client\'s PO, if you have the file'}>
+            <FileDrop label="PO document" text={file ? `${file.name} · ${fileSize(file.size)}` : 'Drop the PO here'} error={fileError} onFile={pickFile} />
             {emailDocument && !file && (
-              <span className="field__hint">
+              <span className="mg-field__hint">
                 <a href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The PO from the email</a>
                 {' · '}<button type="button" className="underline" onClick={() => setEmailDocument(null)}>don't attach it</button>
               </span>
             )}
-          </Field>
+          </Field></div>
           {differs && (
             <div className="span-all">
               <Alert tone="warning">

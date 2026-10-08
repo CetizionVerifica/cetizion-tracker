@@ -1,0 +1,241 @@
+/* Projects and travel (Wave 6): projects, trips, vendor bills, payables,
+   expense claims, the travel dashboard and the travel import. Only layout
+   the system's own classes (mg-strip, mg-table, mg-rows, mg-tabs…) can't
+   say from React. */
+
+/* Onboarding bar in the projects table. */
+.app-onb { display: flex; align-items: center; gap: 8px; }
+.app-onb .mg-progress { width: 60px; height: 8px; flex: none; }
+.app-onb b { font-size: 12.5px; }
+
+/* Rail cards on the record pages. */
+.app-w6card { border-radius: 22px; display: flex; flex-direction: column; min-width: 0; }
+.app-w6card__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 16px 18px 8px; }
+.app-w6card__head h2 { margin: 0; font-size: 14.5px; font-weight: 700; }
+.app-w6card__head span { margin-left: auto; font-size: 12px; color: var(--muted); }
+.app-w6card__note { margin: 0; padding: 4px 18px 16px; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.app-w6card__text { margin: 0; padding: 0 18px 16px; font-size: 13px; line-height: 1.6; color: var(--text2); }
+.app-raillink { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 9px 18px; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+.app-raillink:first-of-type { border-top: 0; }
+a.app-raillink:hover { background: var(--track); }
+.app-raillink__mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-raillink__mark svg { width: 16px; height: 16px; }
+.app-raillink__title { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.app-raillink__sub { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.app-raillink__end { text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-raillink__end .mg-badge { margin-top: 4px; }
+
+/* Wave 6 record layout: rail at 320px, above the tabs under 1180px. */
+.app-rec__body.has-rail.app-w6 { grid-template-columns: minmax(0, 1fr) 320px; }
+@media (max-width: 1179px) {
+  .app-rec__body.has-rail.app-w6 { grid-template-columns: minmax(0, 1fr); }
+  .app-rec__body.app-w6 .app-rec__rail { order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+}
+
+/* Rows inside a tab: an icon square, the words, the amount and its badge, the row's buttons. */
+.app-line { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 12px 4px; border-top: 1px solid var(--line); min-width: 0; }
+.app-line:first-child { border-top: 0; }
+.app-line__mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-line__mark svg { width: 17px; height: 17px; }
+.app-line__mark.is-late { background: var(--late-soft); color: var(--late); }
+.app-line__mark.is-wait { background: var(--wait-soft); color: var(--wait); }
+.app-line__mark.is-ok { background: var(--ok-soft); color: var(--ok); }
+.app-line__mark.is-gap { background: transparent; border: 1.5px dashed var(--wait); color: var(--wait); }
+.app-line__text { min-width: 0; }
+.app-line__title { font-size: 13.5px; font-weight: 700; overflow-wrap: anywhere; color: var(--text); text-decoration: none; }
+a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.app-line__title small { font-size: 12.5px; font-weight: 500; color: var(--text2); }
+.app-line__meta { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.app-line__meta.is-ok { color: var(--ok); } .app-line__meta.is-text { color: var(--text2); }
+.app-line__end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 8px; }
+.app-line__amount { font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.app-line__amount small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+.app-line.is-dim { opacity: .62; }
+@media (max-width: 559px) { .app-line { grid-template-columns: 38px minmax(0, 1fr); } .app-line__end { grid-column: 2; justify-content: flex-start; } .app-line__amount { text-align: left; } }
+
+/* Facts as a two-column key/value grid inside a tab (margin). */
+.app-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 24px; margin: 0; }
+.app-kv > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.app-kv dt { color: var(--text2); }
+.app-kv dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The project flow beside its verdict (one row from 1180px). */
+@media (min-width: 1180px) {
+  .app-flow.is-row { display: grid; grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr); align-items: center; gap: 4px 28px; }
+  .app-flow.is-row > .app-flow__head { display: none; }
+  .app-flow.is-row > .mg-ladder { grid-column: 1; grid-row: 1 / span 2; }
+  .app-flow.is-row > .app-flow__say { grid-column: 2; border-top: 0; padding-top: 0; padding-left: 28px; border-left: 1px solid var(--line); }
+  .app-flow.is-row > .app-flow__note { grid-column: 2; padding-left: 28px; border-left: 1px solid var(--line); }
+}
+
+/* The onboarding checklist. */
+.app-steps { list-style: none; margin: 0; padding: 0; }
+.app-step { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 4px 14px; padding: 11px 4px; border-top: 1px solid var(--line); }
+.app-step:first-child { border-top: 0; }
+.app-step__box { justify-self: center; }
+.app-step__disc { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--line); color: var(--muted); }
+.app-step__disc svg { width: 12px; height: 12px; }
+.app-step__disc.is-done { border: 0; background: var(--ok); color: var(--on-pill); }
+.app-step__disc.is-moving { border: 0; background: var(--wait-soft); color: var(--wait); }
+.app-step__text { min-width: 0; }
+.app-step__title { font-size: 13.5px; font-weight: 600; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.app-step__title.is-done { color: var(--text2); }
+.app-step.is-skipped .app-step__title { color: var(--muted); text-decoration: line-through; }
+.app-step__no { margin-right: 8px; color: var(--muted); font-weight: 700; }
+.app-step__detail { margin-top: 2px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.app-step__end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.app-step__more { width: 36px; height: 36px; }
+@media (max-width: 559px) { .app-step { grid-template-columns: 22px minmax(0, 1fr); } .app-step__end { grid-column: 2; justify-content: flex-start; } }
+.app-gaprow td { background: var(--wait-soft); } .app-gaprow td:first-child { box-shadow: inset 3px 0 0 var(--wait); }
+.app-tabnote { margin: 0; padding: 4px 2px 6px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+
+/* Upload documents: what was filed, and what was not. */
+.app-filed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.app-filed > li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.app-filed > li:first-child { border-top: 0; }
+.app-filed b { display: block; font-weight: 700; overflow-wrap: anywhere; }
+.app-filed b + span { display: block; color: var(--text2); line-height: 1.5; }
+.app-filed__mark { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; }
+.app-filed__mark svg { width: 15px; height: 15px; }
+.app-filed__mark.is-ok { background: var(--ok-soft); color: var(--ok); }
+.app-filed__mark.is-info { background: var(--info-soft); color: var(--info); }
+.app-filed__mark.is-wait { background: var(--wait-soft); color: var(--wait); }
+.app-filed__head { margin: 14px 0 4px; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--wait); }
+
+/* Quick filters at the top of a list panel (Trips, Claims). */
+.app-quick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 18px 0; }
+.app-quick .mg-chip .mg-count { margin-left: 2px; }
+.app-quick .mg-chip.is-late .mg-count { background: var(--late); color: var(--on-late); }
+@media (max-width: 719px) { .app-quick { padding: 12px 14px 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .app-quick > * { flex: none; } }
+
+/* The trip's "waiting on an amount" panel: the bill and the field that fixes it. */
+.app-blocked { border-radius: 26px; padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; box-shadow: inset 4px 0 0 var(--wait); }
+.app-blocked__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.app-blocked__head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.app-blocked__head span { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+.app-blocked__row { display: grid; grid-template-columns: 38px minmax(0, 1fr) 200px auto; align-items: end; gap: 8px 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.app-blocked__row > :first-child { align-self: center; }
+.app-blocked__row > :nth-child(2) { align-self: center; }
+.app-blocked__amt { margin: 0; }
+@media (max-width: 719px) {
+  .app-blocked { padding: 16px; }
+  .app-blocked__row { grid-template-columns: 38px minmax(0, 1fr); }
+  .app-blocked__amt, .app-blocked__row > .mg-btn { grid-column: 1 / -1; }
+}
+
+/* Add a file, under a record's documents. */
+.app-attach { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.app-attach .mg-field { margin: 0; }
+.app-attach > .mg-file { grid-column: 1 / -1; }
+@media (max-width: 559px) { .app-attach { grid-template-columns: minmax(0, 1fr); } }
+.mg-badge.app-badge-wrap { white-space: normal; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; line-height: 1.3; }
+.app-rec__stats .mg-tile__figure { min-width: 0; white-space: normal; } .app-statword { display: block; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.25; overflow-wrap: anywhere; }
+
+/* The figures a pay / reimburse dialog opens with. */
+.app-sum { padding: 12px 16px; border-radius: 16px; background: var(--track); font-size: 13px; }
+.app-sum dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.app-sum dl > div { display: flex; justify-content: space-between; gap: 12px; color: var(--text2); font-weight: 600; }
+.app-sum dt span { font-weight: 500; color: var(--muted); }
+.app-sum dd { margin: 0; text-align: right; }
+.app-sum dl > div.is-total { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text); font-weight: 800; }
+.app-sum p { margin: 8px 0 0; font-size: 12.5px; font-weight: 600; color: var(--text2); }
+.app-sum p.is-late { color: var(--late); }
+
+/* The bill page: the To pay bar, the PDF card, the lines' total row. */
+.app-paybar { height: 8px; margin: 10px 0 2px; }
+.app-pdf { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px; align-items: center; padding: 4px 18px 18px; }
+.app-pdf b { display: block; font-size: 13.5px; overflow-wrap: anywhere; }
+.app-pdf__page { width: 64px; height: 80px; border-radius: 10px; background: var(--glass-strong); border: 1px solid var(--line); box-shadow: 0 6px 18px -8px var(--shade); display: flex; flex-direction: column; gap: 6px; padding: 12px 10px; }
+.app-pdf__page i { display: block; height: 4px; border-radius: 4px; background: var(--line); }
+.app-pdf__page i:first-child { width: 60%; height: 6px; background: var(--caramel); }
+.app-pdf__page i:last-child { width: 40%; margin-top: auto; background: var(--text2); }
+.app-raillink--total { border-top: 1px solid var(--line); font-weight: 800; }
+.app-linetotal { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 18px; padding: 12px 16px; border-top: 1px solid var(--line); font-weight: 800; font-size: 13.5px; }
+.app-linetotal > span:first-child { margin-right: auto; }
+
+/* Payables: six age bands; a phone row's buttons. */
+.app-age.app-age--6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 559px) { .app-age.app-age--6 { gap: 2px; } .app-age--6 > button { padding: 8px 0 6px; } .app-age--6 .app-age__fig { font-size: 11.5px; } }
+.app-rowbtns { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.app-rowbtns > * { flex: 1 1 120px; }
+
+/* Travel dashboard. */
+.app-todos { flex: 1.35 1 520px; }
+.app-todo-list { list-style: none; margin: 0; padding: 0 22px 10px; }
+.app-todo { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 8px 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.app-todo:first-child { border-top: 0; }
+.app-todo b { display: block; font-size: 13.5px; font-weight: 700; }
+.app-todo b + span { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.5; color: var(--text2); }
+.app-line__mark.is-info { background: var(--info-soft); color: var(--info); }
+@media (max-width: 719px) { .app-todo-list { padding: 0 16px 8px; } .app-todo { grid-template-columns: 38px minmax(0, 1fr); } .app-todo > .mg-btn { grid-column: 2; justify-self: start; } }
+.app-desktiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.app-desktile { border-radius: 22px; color: inherit; text-decoration: none; display: flex; flex-direction: column; gap: 6px; }
+.app-desktile:hover { background: var(--track); }
+.app-desktile .mg-tile__foot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.app-tdstrip > a { padding: 16px 20px; color: inherit; text-decoration: none; transition: background 200ms; }
+.app-tdstrip > a:hover { background: var(--track); }
+.app-tdstrip > a:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-tdstrip .mg-tile__figure.is-late { color: var(--late); }
+.app-tdstrip .mg-tile__figure.is-wait { color: var(--caramel-text); }
+.app-tdcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+@media (max-width: 1199px) { .app-tdcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 759px) { .app-tdcards { grid-template-columns: minmax(0, 1fr); } }
+.app-tdcard { border-radius: 26px; min-width: 0; gap: 12px; }
+.app-tdcard__head { display: flex; flex-direction: column; gap: 2px; }
+.app-tdbars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.app-tdbar { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "mark label amt" "mark track track" ". foot foot"; align-items: center; gap: 2px 10px; padding: 8px 6px; border-radius: 14px; color: inherit; text-decoration: none; }
+.app-tdbar:hover { background: var(--track); }
+.app-tdbar:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-tdbar__mark { grid-area: mark; width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-tdbar__mark svg { width: 15px; height: 15px; }
+.app-tdbar__mark.is-ok { background: var(--ok-soft); color: var(--ok); } .app-tdbar__mark.is-late { background: var(--late-soft); color: var(--late); }
+.app-tdbar__mark.is-wait { background: var(--wait-soft); color: var(--wait); } .app-tdbar__mark.is-info { background: var(--info-soft); color: var(--info); }
+.app-tdbar__label { grid-area: label; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; font-weight: 700; min-width: 0; }
+.app-tdbar__amt { grid-area: amt; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-tdbar__track { grid-area: track; height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.app-tdbar__track > span { display: block; height: 100%; border-radius: 999px; }
+.app-tdbar__foot { grid-area: foot; justify-self: end; font-size: 11.5px; color: var(--muted); }
+.app-tdstack { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--track); gap: 2px; }
+.app-tdstack > span { display: block; height: 100%; }
+.app-tdmonths { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; align-items: end; }
+.app-tdmonth { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border-radius: 12px; color: inherit; text-decoration: none; min-width: 0; }
+.app-tdmonth:hover { background: var(--track); }
+.app-tdmonth__n { font-size: 11px; font-weight: 700; color: var(--text2); white-space: nowrap; }
+.app-tdmonth__plot { width: 100%; height: 120px; display: flex; align-items: flex-end; justify-content: center; }
+.app-tdmonth__bar { display: block; width: min(34px, 80%); border-radius: 8px 8px 3px 3px; background: var(--figure); }
+.app-tdmonth__bar.mg-hatch { background: var(--mg-hatch); }
+.app-tdmonth__label { font-size: 12px; font-weight: 700; }
+.app-tdmonth__amt { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* Import travel: the panel, the drop zone with a real Choose button, the imports, the how-to. */
+.app-import { border-radius: 26px; padding: 22px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.app-import__vendor { max-width: 380px; margin: 0; }
+.app-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 20px; border: 1.5px dashed var(--scroll-thumb, var(--line)); border-radius: 22px; text-align: center; transition: background 200ms, border-color 200ms; }
+.app-drop:focus-within { outline: 3px solid var(--caramel); outline-offset: 3px; }
+.app-drop.is-over { border-color: var(--caramel); background: var(--wait-soft); }
+.app-drop.is-busy { border-color: var(--caramel); background: var(--track); }
+.app-drop__mark { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--track); color: var(--text2); margin-bottom: 4px; }
+.app-drop__mark svg { width: 20px; height: 20px; }
+.app-drop b { font-size: 14px; }
+.app-drop > span:not(.app-drop__mark) { font-size: 12.5px; color: var(--muted); max-width: 52ch; }
+.app-drop__choose { margin-top: 8px; position: relative; }
+.app-import__list { display: flex; flex-direction: column; gap: 6px; }
+.app-batches { list-style: none; margin: 0; padding: 0; }
+.app-howto { border-radius: 18px; background: var(--track); padding: 12px 16px; }
+.app-howto summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.app-howto summary:focus-visible { outline: 2px solid var(--caramel); outline-offset: 3px; border-radius: 6px; }
+.app-howto p { margin: 10px 0 0; max-width: 80ch; font-size: 12.5px; line-height: 1.65; color: var(--text2); }
+@media (max-width: 719px) { .app-import { padding: 16px; } }
+
+/* Travel import review: rows of a step, inside the tab panel. */
+.app-ibox { border: 1px solid var(--line); border-radius: 18px; overflow: hidden; min-width: 0; }
+.app-ibox > .mg-table { min-width: 560px; }
+.app-irow { padding: 12px 16px; border-bottom: 1px solid var(--line); box-shadow: inset 3px 0 0 transparent; }
+.app-irow:last-child { border-bottom: 0; }
+.app-irow.is-known { box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait-soft) 55%, transparent); }
+.app-irow.is-out { opacity: .5; }
+.mg-count.app-count--late { background: var(--late); color: var(--on-late); margin-left: 6px; }
+
+/* Wave 6 records: four figures in a row, or two by two, never three and one. */
+.app-rec:has(.app-w6) .app-rec__stats:has(> :nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1099px) { .app-rec:has(.app-w6) .app-rec__stats:has(> :nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

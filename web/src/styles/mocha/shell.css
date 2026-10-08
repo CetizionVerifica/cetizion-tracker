@@ -1,0 +1,164 @@
+/* The app shell (Wave 1 canvas "Main"): the icon rail, the dock, the phone tab bar and
+   sheets, and the page header, around every signed-in page. Built on the design system's
+   own classes (mg-rail, mg-drop, mg-tip, mg-dock, mg-header, mg-controlbar); this file is
+   only the layout glue and the few rows the canvas draws inline. */
+
+/* The dock's clearance sits on the main column, not the shell, so the sticky rail keeps its place to the very end of a long page. */
+.app-shell { position: relative; display: flex; align-items: flex-start; min-height: 100dvh; padding: 18px 0 18px 18px; }
+.app-shell__main { flex: 1 1 0; min-width: 0; padding-bottom: 94px; }
+
+/* Rail: sticky beside the page, never taller than the window; the nav scrolls if it must. */
+.app-shell__rail { position: sticky; top: 18px; z-index: 30; flex: 0 0 84px; }
+.app-shell__rail .mg-rail { max-height: calc(100dvh - 36px); }
+.app-shell__rail .mg-rail__logo { margin-bottom: 6px; }
+.app-shell__rail .mg-rail__nav { flex: 0 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; width: 84px; padding: 4px 18px; align-items: center; }
+.app-shell__rail .mg-rail__nav::-webkit-scrollbar { display: none; }
+.app-shell__rail .mg-rail__nav .mg-rail__btn { flex: none; }
+.app-shell__rail .mg-drop { left: 0; top: 0; pointer-events: none; transition: transform 700ms var(--mg-brew), opacity 200ms; }
+.app-rail__sep { flex: none; width: 48px; height: 8px; background: linear-gradient(var(--line), var(--line)) center / 28px 1px no-repeat; }
+.app-rail__rule { flex: none; width: 36px; height: 1px; background: var(--line); margin: 4px 0 2px; }
+.app-rail__pin[aria-expanded="true"] { color: var(--text); background: var(--track); }
+.app-rail__avatar { width: 40px; height: 40px; border: 0; cursor: pointer; box-shadow: 0 0 0 3px var(--glass-strong); }
+.app-rail__avatar:focus-visible, .mg-rail__btn:focus-visible, .mg-rail__theme:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
+.app-shell__rail .mg-tip { position: absolute; z-index: 40; }
+/* A short window: tighter buttons before the nav has to scroll. */
+@media (min-width: 720px) and (max-height: 940px) {
+  .app-shell__rail .mg-rail { gap: 4px; padding: 14px 0 12px; }
+  .app-shell__rail .mg-rail__nav { gap: 4px; }
+  .app-shell__rail .mg-rail__btn { width: 44px; height: 44px; }
+  .app-shell__rail .mg-rail__foot { gap: 8px; }
+  .app-shell__rail .mg-rail__theme { width: 44px; height: 44px; }
+}
+@media (min-width: 720px) and (max-height: 820px) {
+  .app-shell__rail .mg-rail__btn { width: 42px; height: 42px; }
+  .app-shell__rail .mg-rail__logo { margin-bottom: 2px; }
+}
+
+/* Dock: bottom centre, over the page. Labels go below 900px (bundle.css). */
+.app-shell__dock { position: fixed; left: 50%; bottom: 24px; z-index: 25; transform: translateX(-50%); max-width: calc(100% - 32px); }
+.app-shell__dock .mg-dock { max-width: 100%; }
+
+/* Phone tab bar and sheets (under 720px the rail and dock go). */
+.app-shell__tabbar { display: none; }
+.app-tab { position: relative; justify-self: center; width: 64px; height: 56px; border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--on-pill-idle); font: inherit; font-size: 10.5px; font-weight: 700; cursor: pointer; text-decoration: none; }
+.app-tab.is-on { color: var(--text); }
+.app-tab__drop { position: absolute; top: 2px; width: 40px; height: 32px; border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; background: var(--pill); box-shadow: 0 10px 18px -10px var(--glow); opacity: 0; transform: scale(.4); transition: transform 600ms var(--mg-brew), opacity 200ms; }
+.app-tab.is-on .app-tab__drop { opacity: 1; transform: none; }
+/* The bar's single drop glides between tabs on the Brew spring (PR 14). */
+.app-tabbar__drop { top: 0; left: 0; z-index: 0; transition: translate 600ms var(--mg-brew), transform 600ms var(--mg-brew), opacity 200ms; }
+.app-tabbar__drop.is-on { opacity: 1; transform: none; }
+.app-tabbar__drop.is-snap { transition: transform 600ms var(--mg-brew), opacity 200ms; }
+.app-tab__icon { position: relative; margin-top: -6px; }
+.app-tab.is-on .app-tab__icon { color: var(--on-pill); }
+.app-tab__label { position: relative; margin-top: 4px; white-space: nowrap; }
+.app-tab__count { position: absolute; top: 2px; right: 8px; background: var(--late); color: var(--on-late); }
+.app-tab__add { justify-self: center; width: 54px; height: 54px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--btn); color: var(--on-btn); box-shadow: 0 12px 22px -10px var(--glow); cursor: pointer; }
+.app-more__page { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px; border-radius: 16px; background: var(--track); color: var(--text); font-size: 12px; font-weight: 700; text-align: center; text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
+.app-more__page[aria-current="page"] { background: var(--pill); color: var(--on-pill); }
+
+@media (max-width: 719px) {
+  .app-shell { display: block; padding: 0 0 108px; }
+  .app-shell__main { padding-bottom: 0; }
+  .app-shell__rail, .app-shell__dock { display: none; }
+  .app-shell__tabbar { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 60; height: 72px; border-radius: 28px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; padding: 0 6px; }
+  .page { padding: 16px; }
+}
+
+/* Pinned views rows (panel and More sheet). */
+.app-pinned__group { padding: 8px 10px 4px; }
+.app-pinned__row { display: flex; align-items: center; gap: 4px; border-radius: 12px; }
+.app-pinned__row:hover, .app-pinned__row.is-on { background: var(--track); }
+.app-pinned__link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 4px 0 10px; color: var(--text); text-decoration: none; font-weight: 600; border-radius: 12px; }
+.app-pinned__row.is-roomy .app-pinned__link { height: 44px; }
+.app-pinned__dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.app-pinned__unpin { width: 32px; height: 32px; color: var(--muted); flex: none; }
+.app-pinned__unpin:hover { color: var(--late); }
+.app-pinned__unpin svg { width: 15px; height: 15px; }
+.app-pinned__row.is-roomy .app-pinned__unpin { width: 44px; height: 44px; }
+.app-pinned__hint { margin: 6px 0 0; padding: 10px 10px 4px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.app-pinned__hint strong { color: var(--text2); }
+
+/* Account menu: the theme as a three-way segment. */
+.app-theme-seg .mg-seg__thumb { width: calc((100% - 6px) / 3); }
+.app-theme-seg__item { position: relative; flex: 1; min-width: 0; height: 36px; display: grid; place-items: center; padding: 0 6px; border-radius: 999px; color: var(--text2); font-size: 12.5px; font-weight: 700; cursor: pointer; outline: none; transition: color 260ms; user-select: none; }
+.app-theme-seg__item[data-highlighted] { color: var(--text); box-shadow: inset 0 0 0 2px var(--wait-soft); }
+.app-theme-seg__item[aria-checked="true"] { color: var(--text); }
+
+/* Bell rows. */
+.app-note { display: grid; grid-template-columns: 10px 1fr auto; gap: 4px 12px; padding: 10px 12px; border: 0; border-radius: 14px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.app-note:hover, .app-note:focus-visible { background: var(--track); outline: none; }
+.app-note__dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: transparent; }
+.app-note.is-unread .app-note__dot { background: var(--caramel); }
+.app-note:not(.is-unread) .font-bold { font-weight: 600; }
+.app-note__all { margin-top: 4px; padding: 12px; border-top: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--caramel-text); text-decoration: none; }
+
+/* Page header: the canvas header, in the page's flow (not a sticky bar). */
+.page-header { position: relative; z-index: 20; padding: 8px 24px 0; }
+.page-header .mg-display { overflow-wrap: anywhere; }
+.page-header__top { display: none; }
+.page-header__actions { margin-left: auto; }
+.page-header .page-actions:empty { display: none; }
+@media (max-width: 719px) {
+  .page-header { padding: 16px 16px 0; flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-header__top { display: flex; align-items: center; gap: 8px; }
+  .page-header__top .mg-controlbar { padding: 4px; }
+  .page-header__eyebrow, .page-header__controls--wide { display: none !important; }
+  .page-header .mg-display { font-size: 28px; }
+  .page-header .mg-header__text { flex-basis: auto; }
+  .page-header__actions { margin-left: 0; }
+}
+@media (min-width: 720px) {
+  .page-header__top { display: none !important; }
+}
+
+/* A small spinner for "searching" lines. */
+.app-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--caramel); animation: app-spin 800ms linear infinite; flex: none; }
+@keyframes app-spin { to { transform: rotate(360deg); } }
+
+/* Toasts: bottom centre, above the dock; on a phone above the tab bar. */
+[data-sonner-toaster][data-y-position="bottom"] { --offset-bottom: 100px !important; --mobile-offset-bottom: 96px !important; }
+@media (max-width: 719px) { [data-sonner-toaster][data-y-position="bottom"] { --offset-bottom: 96px !important; } }
+
+/* Staging band (A1-18): one striped line across the top of every page, sign-in and the
+   client pages included; it clips with an ellipsis rather than wrapping on a phone. */
+.env-banner {
+  position: relative !important; inset: auto !important; z-index: 70 !important;
+  height: 26px !important; display: block; padding: 0 12px;
+  background: repeating-linear-gradient(135deg, var(--wait-soft) 0 10px, transparent 10px 20px), var(--glass-strong) !important;
+  border-bottom: 1px solid var(--line); color: var(--wait) !important;
+  font: 800 11px/26px var(--font-sans) !important; letter-spacing: .1em !important; text-transform: uppercase;
+  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+body.is-staging { padding-top: 0 !important; }
+body.is-staging .app-shell__rail { top: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-tab__drop, .app-shell__rail .mg-drop { transition-duration: 1ms !important; }
+  .app-spin { animation-duration: 2400ms; }
+}
+.mg-paused .app-tab__drop, .mg-paused .app-shell__rail .mg-drop { transition-duration: 1ms !important; }
+
+/* Sign-in "checking" mark: a slow breath. */
+.app-pulse { display: grid; animation: app-pulse 1600ms ease-in-out infinite; }
+@keyframes app-pulse { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.08); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .app-pulse { animation: none; } }
+.mg-paused .app-pulse { animation: none; }
+
+/* Dock, as Glass 2 draws it: the coffee + button, plain-word actions, a hairline,
+   and a search pill ("Search anything" with its Ctrl K key). Below 900px the
+   words give way to icons so it still fits. */
+.app-shell__dock .mg-dock { gap: 4px; padding: 7px; }
+.app-shell__dock .mg-dock__add { width: 46px; height: 46px; }
+.mg-dock__act { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.mg-dock__act:hover { background: var(--track); }
+.mg-dock__icon { display: none; }
+.mg-dock__search { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--track); color: var(--text2); font: inherit; cursor: text; }
+.mg-dock__search:hover { color: var(--text); }
+.mg-dock__ph { width: 140px; text-align: left; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.mg-dock__kbd { padding: 2px 7px; border-radius: 7px; background: var(--glass-strong); border: 1px solid var(--glass-edge); font-size: 10.5px; font-weight: 800; color: var(--text2); }
+.app-shell__dock .mg-dock__sep { height: 24px; }
+@media (max-width: 900px) {
+  .mg-dock__act { width: 44px; padding: 0; justify-content: center; }
+  .mg-dock__icon { display: block; }
+  .mg-dock__search { width: 46px; padding: 0; justify-content: center; }
+}

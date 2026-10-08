@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileSpreadsheet, FileText, Image as ImageIcon, Paperclip, Presentation } from 'lucide-react';
+import { FileSpreadsheet, FileText, Image as ImageIcon, Lock, Paperclip, Presentation } from 'lucide-react';
 import { cn } from 'cn';
 import { fileSize } from '../../lib/format.js';
 import { AttachmentViewer } from './AttachmentViewer.jsx';
@@ -25,6 +25,13 @@ const iconFor = (view, name) => {
   return Paperclip;
 };
 
+const typeLabel = (view, type) => (view === 'pdf' || /pdf/i.test(type || '') ? 'PDF'
+  : view === 'image' ? 'Image'
+  : view === 'sheet' ? 'Spreadsheet'
+  : view === 'word' ? 'Document'
+  : view === 'text' ? 'Text'
+  : view === 'office' ? 'Office file' : null);
+
 export function AttachmentStrip({ attachments = [], bodyHtml = '', webLink = null, className }) {
   const [open, setOpen] = useState(null);
   // An inline image the body actually draws is not listed twice.
@@ -34,27 +41,26 @@ export function AttachmentStrip({ attachments = [], bodyHtml = '', webLink = nul
   const viewable = shown.filter((a) => a.view_url);
   return (
     <>
-      <ul className={cn('flex flex-wrap gap-1.5', className)} aria-label="Attachments">
+      <ul className={cn('app-atts', className)} aria-label="Attachments">
         {shown.map((a) => {
-          const Icon = iconFor(a.view, a.name);
           const name = a.name || 'Attachment';
           const locked = !a.view_url;
+          const Icon = locked ? Lock : iconFor(a.view, a.name);
           return (
-            <li key={a.id} className="max-w-full">
+            <li key={a.id} className="app-atts__item">
               <button
                 type="button"
                 disabled={locked}
                 onClick={() => setOpen(viewable.indexOf(a))}
                 title={locked ? 'Only the mailbox owner can open this attachment' : `View ${name}`}
                 aria-label={locked ? `${name}, only the mailbox owner can open it` : `View ${name}`}
-                className={cn(
-                  'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary px-2 py-1 text-left text-[12px] transition-colors duration-150',
-                  locked ? 'cursor-not-allowed opacity-70' : 'hover:border-border-strong hover:bg-card'
-                )}
+                className={cn('app-att', locked && 'is-locked')}
               >
-                <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-                <span className="min-w-0 truncate font-medium text-foreground">{name}</span>
-                {a.size_bytes != null && <span className="num shrink-0 text-muted-foreground">{fileSize(a.size_bytes)}</span>}
+                <span className="app-att__icon" aria-hidden="true"><Icon strokeWidth={1.8} /></span>
+                <span className="app-att__text">
+                  <span>{name}</span>
+                  <span>{locked ? 'Only the mailbox owner can open this' : [typeLabel(a.view, a.content_type), a.size_bytes != null ? fileSize(a.size_bytes) : null].filter(Boolean).join(' · ')}</span>
+                </span>
               </button>
             </li>
           );
@@ -76,14 +82,14 @@ export function AttachmentNames({ names, className }) {
   if (!names?.length) return null;
   const more = names.length - 2;
   return (
-    <span className={cn('mt-1 flex min-w-0 flex-wrap gap-1', className)} aria-label={`Attachments: ${names.join(', ')}`}>
+    <span className={cn('app-attnames', className)} aria-label={`Attachments: ${names.join(', ')}`}>
       {names.slice(0, 2).map((n, i) => (
-        <span key={i} className="inline-flex min-w-0 max-w-[60%] items-center gap-1 rounded-sm border border-border bg-secondary px-1.5 py-0.5 text-[11px] text-secondary-text">
-          <Paperclip className="size-3 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-          <span className="truncate">{n}</span>
+        <span key={i} className="mg-badge mg-badge--plain app-attnames__one">
+          <Paperclip strokeWidth={1.8} aria-hidden="true" />
+          <span>{n}</span>
         </span>
       ))}
-      {more > 0 && <span className="self-center text-[11px] text-muted-foreground num">+{more}</span>}
+      {more > 0 && <span className="app-attnames__more mg-num">+{more}</span>}
     </span>
   );
 }

@@ -1,0 +1,169 @@
+/* Feel (PR 14): one set of timings for every hover, press, focus, switch and
+   pop-up, so moving the cursor, hovering, switching and scrolling feel smooth
+   and refined (Sami, 8 Oct). Imported last. Only transform-type properties
+   (translate, scale, rotate), opacity, colours and shadows ever animate.
+   Repeated work stays instant: keyboard navigation (html.mg-kbd), typing,
+   sorting and filtering. Reduced motion and the pause button switch it off. */
+
+:root {
+  --mg-fast: 140ms;   /* hover in, press down */
+  --mg-med: 220ms;    /* hover out, colour swaps, fades */
+  --mg-slow: 360ms;   /* glides: indicators, lifts settling */
+  --mg-tip-delay: 250ms;
+}
+
+/* ── Every interactive element: a default, quietly. In the base layer so any
+   component's own transition still wins over it. ── */
+@layer base {
+  :where(a, button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], summary, label, input, select, textarea, tr) {
+    transition: background-color var(--mg-med) var(--mg-out), color var(--mg-med) var(--mg-out),
+      border-color var(--mg-med) var(--mg-out), box-shadow var(--mg-med) var(--mg-out),
+      text-decoration-color var(--mg-med) var(--mg-out), opacity var(--mg-med) var(--mg-out),
+      outline-color var(--mg-med) var(--mg-out);
+  }
+  :where(a, button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], summary, label, tr):hover { transition-duration: var(--mg-fast); }
+}
+
+/* ── Controls: hover eases in fast and out a touch slower; press is a small,
+   quick dip that springs back. `scale` is its own property, so it never fights
+   a component's transform or the jelly. ── */
+:is(.mg-btn, .mg-chip, .mg-iconbtn, .mg-seg button, .mg-tabs button, .mg-cal__day, .mg-cal__nav, .mg-cal__title, .mg-cal__time, .mg-cal__foot button,
+  .app-tab, .app-iconbtn, .app-strip > button, .app-age > button, button.app-att, .app-pinned__unpin, .app-theme-seg__item, .set-kind, .qn-opt,
+  .rp-disc, .mg-rail__btn, .mg-rail__theme, .app-rail__avatar, .app-tab__add, [data-press], [data-slot="button"]) {
+  transition: background-color var(--mg-med) var(--mg-out), color var(--mg-med) var(--mg-out), border-color var(--mg-med) var(--mg-out),
+    box-shadow var(--mg-med) var(--mg-out), opacity var(--mg-med) var(--mg-out), outline-color var(--mg-med) var(--mg-out),
+    scale var(--mg-slow) var(--mg-spring);
+}
+:is(.mg-btn, .mg-chip, .mg-iconbtn, .mg-seg button, .mg-tabs button, .mg-cal__day, .mg-cal__nav, .mg-cal__title, .mg-cal__time, .mg-cal__foot button,
+  .app-tab, .app-iconbtn, .app-strip > button, .app-age > button, button.app-att, .app-pinned__unpin, .app-theme-seg__item, .set-kind, .qn-opt,
+  .rp-disc, .mg-rail__btn, .mg-rail__theme, .app-rail__avatar, .app-tab__add, [data-press], [data-slot="button"]):hover {
+  transition-duration: var(--mg-fast), var(--mg-fast), var(--mg-fast), var(--mg-fast), var(--mg-fast), var(--mg-fast), var(--mg-slow);
+}
+/* The jelly owns the press on primary buttons, rail icons and the dock +. */
+:is(.mg-btn, .mg-chip, .mg-iconbtn, .mg-seg button, .mg-tabs button, .mg-cal__day, .mg-cal__nav, .mg-cal__time, .mg-cal__foot button,
+  .app-tab, .app-iconbtn, .app-strip > button, .app-age > button, button.app-att, .app-pinned__unpin, .set-kind, .qn-opt, .rp-disc, [data-press]):not(.mg-btn--primary):not([data-jelly]):not(:disabled):not([aria-disabled="true"]):active {
+  scale: .97; transition-duration: 80ms;
+}
+
+/* ── Rows and menu items: a soft tint that fades in and out (no snap, no
+   flicker), never a scale. Keyboard moves stay instant (html.mg-kbd). ── */
+:is(.mg-menu__item, .mg-list__opt, [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"], [cmdk-item], .mg-table tbody tr, .mg-row, .app-row, .app-diary__row, .app-ib__row,
+  .app-msg__top, .app-note, .app-pinned__row, a.app-recrow, .app-person, .set-nav__item, .set-nav__acct, .set-index__row, a.app-raillink,
+  .app-tdstrip > a, .app-tdbar, .app-tdmonth, a.rp-bar, a.rp-col, a.rp-act, .rp-dl a, .app-cf__col, .app-more__page, .app-views a, .mg select option) {
+  transition: background-color var(--mg-med) var(--mg-out), color var(--mg-med) var(--mg-out), box-shadow var(--mg-med) var(--mg-out);
+}
+:is(.mg-menu__item, .mg-list__opt, [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"], [cmdk-item], .mg-table tbody tr, .mg-row, .app-row, .app-diary__row, .app-ib__row,
+  .app-msg__top, .app-note, .app-pinned__row, a.app-recrow, .app-person, .set-nav__item, .set-nav__acct, .set-index__row, a.app-raillink,
+  .app-tdstrip > a, .app-tdbar, .app-tdmonth, a.rp-bar, a.rp-col, a.rp-act, .rp-dl a, .app-cf__col, .app-more__page, .app-views a, .mg select option):is(:hover, [data-highlighted], .is-active) {
+  transition-duration: var(--mg-fast);
+}
+a.mg-row:hover, button.mg-row:hover { background: var(--track); }
+html.mg-kbd :is(.mg-menu__item, .mg-list__opt, [data-slot$="-item"], [data-slot="dropdown-menu-sub-trigger"], [cmdk-item], .mg-table tbody tr, .mg-row,
+  .app-row, .app-ib__row, .app-note, .app-pinned__row, .set-nav__item, .mg-cal__day, .mg-cal__time, .mg select option, .app-theme-seg__item) {
+  transition-duration: 0s !important;
+}
+
+/* ── Links: the underline fades in rather than snapping. ── */
+:is(.mg a:not([class]), .app-link, .app-ref, .app-textbtn, .rp-link, .set-link, .cl-link, .qb-link, .app-doc) {
+  transition: color var(--mg-med) var(--mg-out), text-decoration-color var(--mg-med) var(--mg-out);
+}
+:is(.mg a:not([class]), .app-link, .app-ref, .app-textbtn, .rp-link, .set-link, .cl-link, .qb-link, .app-doc):hover { transition-duration: var(--mg-fast); }
+
+/* ── Cards that link lift a little: up 2px, a deeper shadow, a brighter edge. ── */
+:is(.app-card, a.rp-tile, .app-desktile, a.mg-tile, a.mg-glass, button.mg-tile) {
+  transition: translate var(--mg-slow) var(--mg-spring), box-shadow var(--mg-med) var(--mg-out), border-color var(--mg-med) var(--mg-out), background-color var(--mg-med) var(--mg-out);
+}
+:is(.app-card, a.rp-tile, .app-desktile, a.mg-tile, a.mg-glass, button.mg-tile):hover {
+  translate: 0 -2px; border-color: var(--glass-hi);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 34px -18px var(--shade);
+  transition-duration: var(--mg-slow), var(--mg-fast), var(--mg-fast), var(--mg-fast);
+}
+
+/* ── Icons nudge: arrows slide on, chevrons slide or turn. ── */
+:is(a, button) :is(.lucide-arrow-right, .lucide-chevron-right, .lucide-arrow-up-right, .lucide-move-right, .lucide-arrow-left, .lucide-chevron-left, .lucide-chevron-down) {
+  transition: translate var(--mg-med) var(--mg-out), rotate var(--mg-slow) var(--mg-spring);
+}
+:is(a, button):hover :is(.lucide-arrow-right, .lucide-chevron-right, .lucide-move-right) { translate: 3px 0; }
+:is(a, button):hover :is(.lucide-arrow-left, .lucide-chevron-left) { translate: -3px 0; }
+:is(a, button):hover .lucide-arrow-up-right { translate: 2px -2px; }
+:is(button, [role="combobox"])[aria-expanded="true"] > .lucide-chevron-down,
+:is(button, [role="combobox"])[data-state="open"] > .lucide-chevron-down { rotate: 180deg; }
+
+/* ── Focus: the caramel ring draws in from a little further out. ── */
+.mg :focus-visible { animation: mg-ring var(--mg-med) var(--mg-out); }
+@keyframes mg-ring { from { outline-color: transparent; outline-offset: 6px; } }
+
+/* ── Switching: tab underline glides (motion.js), the segment thumb and the
+   rail drop already ride their springs. Underline scales from its left edge. ── */
+.mg-tabs button::after { transform-origin: left center; }
+.mg-switch input::after { transition: translate 420ms var(--mg-spring), background-color var(--mg-med) var(--mg-out), scale var(--mg-med) var(--mg-out); }
+.mg-switch input:active::after { scale: 1.12 1; }
+.mg-check input:checked::after, [data-slot="checkbox-indicator"] { animation: mg-tick 420ms var(--mg-spring); }
+.mg-check input { transition: background-color var(--mg-med) var(--mg-out), border-color var(--mg-med) var(--mg-out), box-shadow var(--mg-med) var(--mg-out), scale var(--mg-slow) var(--mg-spring); }
+.mg-check input:active { scale: .9; transition-duration: 80ms; }
+@keyframes mg-tick { from { scale: .3; opacity: 0; } }
+
+/* ── Feedback: counts bump when they change (motion.js), toasts pop on the spring. ── */
+[data-sonner-toaster] [data-sonner-toast][data-mounted="true"] { animation: mg-toast-pop 560ms var(--mg-spring); }
+@keyframes mg-toast-pop { from { scale: .86; } }
+
+/* ── Tooltips: the rail tip glides between icons; it fades out quickly. ── */
+.app-shell__rail .mg-tip { transition: transform var(--mg-slow) var(--mg-out), opacity 160ms var(--mg-out); }
+.app-shell__rail .mg-tip.is-snap { transition: opacity var(--mg-med) var(--mg-out); }
+.app-shell__rail .mg-tip.is-on { transition-duration: var(--mg-slow), var(--mg-med); }
+
+/* ── Scrolling ── */
+/* Anchor and programmatic jumps glide; the wheel and trackpad stay native. */
+@media (prefers-reduced-motion: no-preference) { html:not(.mg-paused) { scroll-behavior: smooth; } }
+/* Scrollbars (Sami, 9 Oct): a slim rounded thumb with no arrow buttons, kept clear of
+   rounded corners, shown while the pointer is over the scroll area. Chrome draws the
+   standard scrollbar (with Windows arrow buttons) whenever scrollbar-color or
+   scrollbar-width is set, so those stay unset and the -webkit- parts do the work;
+   Firefox, which has no -webkit- parts, gets the thin standard one. */
+html, .mg, .mg * { scrollbar-width: auto; scrollbar-color: auto; }
+html::-webkit-scrollbar, .mg::-webkit-scrollbar, .mg ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+html::-webkit-scrollbar-button, .mg ::-webkit-scrollbar-button, .mg::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+html::-webkit-scrollbar-track, .mg ::-webkit-scrollbar-track, .mg::-webkit-scrollbar-track { background: transparent; margin: 16px; }
+html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: transparent; }
+html::-webkit-scrollbar-thumb, .mg ::-webkit-scrollbar-thumb, .mg::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+html:hover::-webkit-scrollbar-thumb, .mg :hover::-webkit-scrollbar-thumb, .mg :focus-within::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+.mg ::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+@supports (-moz-appearance: none) { html, .mg, .mg * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; } }
+/* Dialogs, sheets, menus and lists never hand their scroll on to the page. */
+[data-slot$="-content"], [data-slot$="-content"] *, .mg-list, .mg-menu, .mg-cal, .mg-palette, .mg-palette *, .set-nav { overscroll-behavior: contain; }
+/* While scrolling, the blobs hold still so the glass doesn't re-blur a moving scene every frame. */
+html.mg-scrolling .mg-blob { animation-play-state: paused; }
+
+/* ── The scene: the blobs drift visibly, slowly. ── */
+@keyframes mg-drift { from { translate: 0 0; scale: 1; } to { translate: 110px -80px; scale: 1.18; } }
+
+/* ── Off: reduced motion and the pause button. ── */
+@media (prefers-reduced-motion: reduce) {
+  .mg *, .mg *::before, .mg *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; animation-delay: 0ms !important; }
+  :is(.mg-btn, .mg-chip, .mg-iconbtn, [data-press], .mg-check input, .app-tab):active { scale: none !important; }
+  :is(.app-card, a.rp-tile, .app-desktile, a.mg-tile, a.mg-glass, button.mg-tile):hover, :is(a, button):hover svg { translate: none !important; }
+}
+html.mg-paused .mg *, html.mg-paused .mg *::before, html.mg-paused .mg *::after,
+html.mg-paused body.mg *, html.mg-paused body.mg *::before, html.mg-paused body.mg *::after { transition-duration: 1ms !important; }
+html.mg-paused :is(.mg-btn, .mg-chip, .mg-iconbtn, [data-press], .mg-check input, .app-tab):active { scale: none !important; }
+html.mg-paused :is(.app-card, a.rp-tile, .app-desktile, a.mg-tile, a.mg-glass, button.mg-tile):hover, html.mg-paused :is(a, button):hover svg { translate: none !important; }
+html.mg-paused :is(.mg-check input:checked::after, [data-slot="checkbox-indicator"], [data-sonner-toast]), html.mg-paused .mg :focus-visible { animation: none !important; }
+
+/* ── Hover tints stay inside their card and keep rounded corners (Sami, 9 Oct).
+   Rows and list items tint as a rounded pill; tiles that share a strip tint as a
+   rounded tile and do not lift (a lift pushed them past the card's edge). ── */
+:is(.app-row, .app-diary__row, .app-ib__row, .app-msg__top, .app-note, .app-pinned__row, a.app-recrow, .app-person,
+  .set-nav__item, .set-nav__acct, .set-index__row, .set-kind, a.app-raillink, .app-tdbar, .app-cf__col,
+  a.rp-bar, a.rp-col, a.rp-act, .rp-dl a, .app-age > button, a.mg-row, button.mg-row):is(:hover, :focus-visible, .is-active) {
+  border-radius: 14px;
+}
+:is(a.rp-tile, .app-desktile, .app-tdstrip > a, .app-strip > button, .mg-strip > a, .mg-strip > button) {
+  border-radius: 20px;
+}
+:is(a.rp-tile, .app-desktile, .app-tdstrip > a, .app-strip > button, .mg-strip > a, .mg-strip > button):hover {
+  translate: none !important; box-shadow: none !important;
+}
+.mg-table tbody tr > :first-child { border-top-left-radius: 14px; border-bottom-left-radius: 14px; }
+.mg-table tbody tr > :last-child { border-top-right-radius: 14px; border-bottom-right-radius: 14px; }

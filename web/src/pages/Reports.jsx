@@ -1,19 +1,18 @@
-import { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Bar, BarChart, CartesianGrid, Cell, LabelList, XAxis, YAxis } from 'recharts';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CalendarClock, ChevronDown, CircleAlert, Download, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
-import { AGE_COLOUR, AXIS, BAR, BAR_LABEL, CASH_BANDS, ChartCard, ChartTip, GRID, HOVER, ROW_CHART, ZERO_BAR } from '../components/charts.jsx';
-import { ChartContainer, ChartTooltip } from '../components/ui/chart.tsx';
-import { Alert, Input, Select } from '../components/ui.jsx';
+import { AGE_TONE, ChartBlock, ColBars, Note, RowBars, inr, inrFull } from '../components/charts.jsx';
 import {
   CustomersSection, DataNotes, EnquiriesSection, OutcomesSection, RevenueSection, SectorsSection, ServicesSection, SummaryStrip,
 } from '../components/SalesReportSections.jsx';
+import { PillSelect, SectionFailed } from '../components/insights/shared.jsx';
+import { useEntrance } from '../components/daily.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { PRESETS, defaultGrain, localToday, presetPeriod, readReportQuery } from '../lib/reportPeriods.js';
-import { Skeleton } from '../components/ui/skeleton.tsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
-import { date, money, number, percent } from '../lib/format.js';
+import { date, number, percent } from '../lib/format.js';
 
 /**
  * Reports: six questions about a period on top (docs/sales-report-rework-
@@ -32,7 +31,9 @@ import { date, money, number, percent } from '../lib/format.js';
  */
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthLabel = (ym) => `${MONTHS[Number(ym.slice(5, 7)) - 1]} ${ym.slice(2, 4)}`;
-const inr = (value) => money(value, 'INR', { compact: true });
+const presetLabel = (key) => (key === 'custom' ? 'Custom dates' : PRESETS.find((p) => p.key === key)?.label || key);
+const clock = (t) => t && new Date(t).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+const plural = (n, one, many = `${one}s`) => `${number(n)} ${n === 1 ? one : many}`;
 
 export default function Reports() {
   const { isAdmin } = useAuth();
@@ -46,6 +47,14 @@ export default function Reports() {
   const report = useFetch(() => api.raw(`/reports/sales?${query}`), [query.toString()]);
   const users = useFetch(() => (isAdmin ? api.users.list() : Promise.resolve({ data: [] })), [isAdmin]);
   const d = report.data?.data;
+  const ref = useEntrance(Boolean(d));
+
+  // What the figures on screen are for, so "Updating" can say what it is leaving.
+  const shown = useRef(null);
+  const [updated, setUpdated] = useState(null);
+  const current = custom || preset === 'custom' ? `${date(from)} – ${date(to)}` : presetLabel(preset);
+  useEffect(() => { if (d && !report.loading) { shown.current = current; setUpdated(Date.now()); } }, [d, report.loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  const updating = report.loading && Boolean(d);
 
   /** Every control writes the address bar; the page reads it back. */
   const update = (next) => {
@@ -58,75 +67,110 @@ export default function Reports() {
     // A new period starts at its own default grain, not the last one picked.
     update({ ...presetPeriod(key, today), grain: '' });
   };
+  const ownerName = (users.data?.data || []).find((u) => String(u.id) === owner)?.name;
+  const showCustom = custom || preset === 'custom';
 
   return (
     <>
       <PageHeader
+        eyebrow="Overview"
         title="Reports"
-        subtitle={`${date(from)} – ${date(to)} · All figures in ₹ at the rate on each record's own date. Every bar opens the records behind it.`}
+        subtitle={`${date(from)} – ${date(to)} · ${ownerName ? `${ownerName}'s records` : isAdmin ? 'Everyone\'s records' : 'Your records'}. All figures in ₹ at the rate on each record's own date. Open any bar for the records behind it.`}
         actions={(
           <>
-            <Select
-              value={custom ? 'custom' : preset}
-              placeholder={null}
-              aria-label="Period"
-              options={PRESETS.map((p) => ({ value: p.key, label: p.label }))}
-              onChange={(e) => choosePreset(e.target.value)}
-            />
-            {(custom || preset === 'custom') && (
-              <>
-                <Input type="date" aria-label="From" value={from} max={to} onChange={(e) => e.target.value && update({ from: e.target.value, grain: '' })} />
-                <Input type="date" aria-label="To" value={to} min={from} onChange={(e) => e.target.value && update({ to: e.target.value, grain: '' })} />
-              </>
-            )}
-            <Select
-              value={grain || d?.grain || defaultGrain(from, to)}
-              placeholder={null}
-              aria-label="Group enquiries by"
-              options={[{ value: 'day', label: 'Group by: day' }, { value: 'week', label: 'Group by: week' }, { value: 'month', label: 'Group by: month' }]}
-              onChange={(e) => update({ grain: e.target.value === defaultGrain(from, to) ? '' : e.target.value })}
-            />
             {isAdmin && (
-              <Select
-                value={owner}
-                placeholder="Owner: everyone"
-                aria-label="Owner"
-                options={(users.data?.data || []).map((u) => ({ value: String(u.id), label: `Owner: ${u.name}` }))}
-                onChange={(e) => update({ owner: e.target.value })}
-              />
+              <Link className="mg-btn" to="/reports/scheduled" title="The daily briefing and weekly MIS the tracker emails">
+                <CalendarClock className="size-4" strokeWidth={1.8} aria-hidden="true" />Scheduled reports
+              </Link>
             )}
             <a
-              className="btn"
+              className="mg-btn mg-btn--primary"
               href={api.reportPdfUrl({ from, to, ...(grain && { grain }), ...(owner && { owner }) })}
               download
               title="These six questions for this period, as a PDF"
             >
-              Download PDF
+              <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />Download PDF
             </a>
-            {isAdmin && <Link className="btn" to="/reports/scheduled" title="The daily briefing and weekly MIS the tracker emails">Scheduled reports</Link>}
           </>
         )}
       />
-      <div className="page stack">
-        {report.error && <Alert tone="danger"><span>{report.error}</span></Alert>}
-        {report.loading && !d && <Loading height={480} />}
-        {d && (
+      <div className="app-page" ref={ref}>
+        <section className="mg-glass rp-filters" data-a="rise" aria-label="Report filters">
+          <div className="rp-sel">
+            <label className="rp-ctl" htmlFor="r-period">Period</label>
+            <span className="mg-select-wrap">
+              <select className="mg-select" id="r-period" value={showCustom ? 'custom' : preset} onChange={(e) => choosePreset(e.target.value)}>
+                {PRESETS.map((p) => <option key={p.key} value={p.key}>{presetLabel(p.key)}</option>)}
+              </select>
+            </span>
+          </div>
+          {showCustom && (
+            <>
+              <div className="rp-sel">
+                <label className="rp-ctl" htmlFor="r-from">From</label>
+                <input className="mg-input" id="r-from" type="date" value={from} max={to} onChange={(e) => e.target.value && update({ from: e.target.value, grain: '' })} />
+              </div>
+              <div className="rp-sel">
+                <label className="rp-ctl" htmlFor="r-to">To</label>
+                <input className="mg-input" id="r-to" type="date" value={to} min={from} onChange={(e) => e.target.value && update({ to: e.target.value, grain: '' })} />
+              </div>
+            </>
+          )}
+          {isAdmin && (
+            <PillSelect
+              id="r-owner"
+              label="Owner"
+              value={owner}
+              onChange={(v) => update({ owner: v })}
+              options={[{ value: '', label: 'Everyone' }, ...(users.data?.data || []).map((u) => ({ value: String(u.id), label: u.name }))]}
+            />
+          )}
+          <span className="rp-ctl rp-filters__status" role="status">{updating || (report.loading && !d) ? 'Fetching new figures' : updated ? `Updated ${clock(updated)}` : ''}</span>
+          <button type="button" className="mg-btn mg-btn--sm" onClick={report.refetch} disabled={report.loading}>
+            <RefreshCw className={`size-4 ${report.loading ? 'animate-spin' : ''}`} strokeWidth={1.8} aria-hidden="true" />{report.loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </section>
+
+        {updating && shown.current && shown.current !== current && (
+          <div className="mg-banner mg-glass" role="status">
+            <RefreshCw className="animate-spin" aria-hidden="true" />
+            <div className="mg-banner__body"><strong>Updating to {current}</strong>The figures below are still {shown.current} until the new ones arrive.</div>
+          </div>
+        )}
+
+        {report.error && !d ? (
+          <section className="mg-glass mg-empty" data-a="rise" role="alert" style={{ padding: '64px 24px' }}>
+            <span className="mg-empty__mark" style={{ color: 'var(--late)', background: 'var(--late-soft)' }}><CircleAlert className="size-6" strokeWidth={1.8} aria-hidden="true" /></span>
+            <h2 className="mg-empty__title">Couldn't load the report</h2>
+            <p className="mg-empty__text">{report.error} Nothing has changed in your records; try again.</p>
+            <button type="button" className="mg-btn mg-btn--sm" onClick={report.refetch}><RefreshCw className="size-4" strokeWidth={1.8} aria-hidden="true" />Try again</button>
+          </section>
+        ) : !d ? (
+          <div className="flex flex-col gap-[18px]" aria-busy="true" aria-label="Loading the report">
+            <section className="mg-glass mg-panel" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 26 }}>
+              {[0, 1, 2, 3].map((i) => <div key={i} className="mg-skel" style={{ height: 70 }} />)}
+            </section>
+            <div className="rp-grid">
+              {[0, 1, 2, 3].map((i) => (
+                <section key={i} className="mg-glass rp-q"><div className="mg-skel" style={{ height: 20, width: '60%' }} /><div className="mg-skel" style={{ height: 14, width: '80%' }} /><div className="mg-skel" style={{ height: 200 }} /></section>
+              ))}
+            </div>
+          </div>
+        ) : (
           <>
             <SummaryStrip report={d} scope={scope} />
             <DataNotes notes={d.notes} staleRates={d.stale_rates} />
-            <div className="@container">
-              <div className="grid gap-6 @3xl:grid-cols-2">
-                <EnquiriesSection report={d} scope={scope} />
-                <OutcomesSection report={d} scope={scope} />
-                <SectorsSection report={d} scope={scope} />
-                <ServicesSection report={d} scope={scope} />
-                <CustomersSection report={d} scope={scope} />
-                <RevenueSection report={d} scope={scope} />
-              </div>
+            <div className="rp-grid">
+              <EnquiriesSection report={d} scope={scope} onGrain={(g) => update({ grain: g === defaultGrain(from, to) ? '' : g })} />
+              <OutcomesSection report={d} scope={scope} />
+              <SectorsSection report={d} scope={scope} />
+              <ServicesSection report={d} scope={scope} />
+              <CustomersSection report={d} scope={scope} />
+              <RevenueSection report={d} scope={scope} />
             </div>
           </>
         )}
-        <MoreAnalysis from={from} to={to} owner={owner} />
+        <MoreAnalysis from={from} to={to} owner={owner} isAdmin={isAdmin} />
       </div>
     </>
   );
@@ -138,16 +182,25 @@ export default function Reports() {
  * not "what happened in the period", so they keep their own two controls
  * and sit below, folded until opened.
  */
-function MoreAnalysis({ from, to, owner }) {
+function MoreAnalysis({ from, to, owner, isAdmin }) {
   const [open, setOpen] = useState(false);
   return (
-    <details className="group" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary className="cursor-pointer py-2 font-display text-base font-bold text-foreground">
-        More analysis: pipeline, ageing, cash, win rate
-      </summary>
-      {open && <AnalysisCharts />}
-      {open && <DetailedDownloads from={from} to={to} owner={owner} />}
-    </details>
+    <section aria-labelledby="more-t" className="flex flex-col gap-[18px]">
+      <button type="button" className="mg-glass rp-fold" data-a="rise" aria-expanded={open} aria-controls="more-body" onClick={() => setOpen(!open)}>
+        <span className="rp-fold__icon" aria-hidden="true"><ChevronDown className="size-[18px]" strokeWidth={1.8} /></span>
+        <span className="min-w-0">
+          <span className="rp-fold__t" id="more-t">More analysis</span>
+          <span className="rp-fold__s">Pipeline · collections ageing · cash expected · win rate by quarter · quoted against won · win rate by owner · open deals by status</span>
+        </span>
+        <span className="mg-badge" style={{ marginLeft: 'auto' }}>7 charts</span>
+      </button>
+      {open && (
+        <div id="more-body" className="flex flex-col gap-[18px]">
+          <AnalysisCharts isAdmin={isAdmin} />
+          <DetailedDownloads from={from} to={to} owner={owner} />
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -168,19 +221,25 @@ const DETAILED_CSVS = [
 
 function DetailedDownloads({ from, to, owner }) {
   return (
-    <div className="mt-4 rounded-lg border border-border px-4 py-3 text-[13px]">
-      <div className="font-medium text-foreground">Detailed tables for {date(from)} – {date(to)}</div>
-      <ul className="mt-1.5 grid gap-1 @3xl:grid-cols-2">
+    <section className="mg-glass rp-q" aria-labelledby="dl-t">
+      <div className="rp-bhead">
+        <h2 className="rp-btitle" id="dl-t">Detailed tables for {date(from)} – {date(to)}</h2>
+        <span className="mg-panel__hint">Each downloads a CSV for this period and owner</span>
+      </div>
+      <ul className="rp-dl">
         {DETAILED_CSVS.map(([name, label]) => (
-          <li key={name}><a href={api.reportCsvUrl(name, { from, to, ...(owner && { owner }) })} download>{label} (CSV)</a></li>
+          <li key={name}>
+            <a href={api.reportCsvUrl(name, { from, to, ...(owner && { owner }) })} download>
+              <FileSpreadsheet className="size-4" strokeWidth={1.8} aria-hidden="true" />{label}<span>CSV</span>
+            </a>
+          </li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }
 
-function AnalysisCharts() {
-  const navigate = useNavigate();
+function AnalysisCharts({ isAdmin }) {
   const [horizon, setHorizon] = useState('6');
   const [dimension, setDimension] = useState('owner');
 
@@ -192,101 +251,88 @@ function AnalysisCharts() {
   const quotedWon = useFetch(() => api.raw(`/reports/quoted-won?months=${horizon}`), [horizon]);
   const byStatus = useFetch(() => api.raw('/reports/by-status'), []);
 
-  const errors = [pipeline.error, collections.error, cashflow.error, winRate.error, conversion.error, quotedWon.error, byStatus.error].filter(Boolean);
-
   return (
-    <div className="stack mt-3">
+    <>
       {/* Two controls, and each one genuinely reframes a chart: the
           horizon moves the cash bands and the months on quoted-vs-won,
           the dimension regroups the win-rate bars. */}
-      <div className="flex flex-wrap gap-2">
-        <Select
-          className="w-auto"
-          value={horizon}
-          placeholder={null}
-          aria-label="Months shown"
-          options={[{ value: '3', label: 'Months: 3' }, { value: '6', label: 'Months: 6' }, { value: '12', label: 'Months: 12' }]}
-          onChange={(e) => setHorizon(e.target.value)}
-        />
-        <Select
-          className="w-auto"
-          value={dimension}
-          placeholder={null}
-          aria-label="Win rate grouped by"
-          options={[{ value: 'owner', label: 'Win rate by: owner' }, { value: 'sector', label: 'Win rate by: sector' }, { value: 'service', label: 'Win rate by: service' }]}
-          onChange={(e) => setDimension(e.target.value)}
-        />
+      <div className="rp-morebar">
+        <PillSelect id="m-months" label="Months shown" value={horizon} onChange={setHorizon} options={['3', '6', '12'].map((h) => ({ value: h, label: h }))} />
+        <span className="rp-note">
+          Changes Cash expected and Quoted against won.{' '}
+          {isAdmin ? 'These charts show everyone\'s records: the owner above does not apply here.' : 'Your deals only, except Cash expected, which is the whole company\'s.'}
+        </span>
       </div>
-      {errors.map((message, i) => <Alert key={i} tone="danger"><span>{message}</span></Alert>)}
-
-      {/* Two columns when the page itself is wide enough for them, not when
-          the window is. The container has to be an ancestor of the thing
-          that queries it: both classes on one element is a query against
-          nothing. */}
-      <div className="@container">
-        <div className="grid gap-4 @3xl:grid-cols-2">
-          <PipelineChart state={pipeline} onOpen={(stageId) => navigate(`/quotations?stage_id=${stageId}`)} />
-          <AgeingChart state={collections} onOpen={(bucket) => navigate(`/collections?bucket=${encodeURIComponent(bucket)}`)} />
-          <CashChart state={cashflow} horizon={horizon} onOpen={(month) => navigate(`/cashflow?month=${month}`)} />
-          <WinRateChart state={winRate} />
-          <QuotedWonChart state={quotedWon} horizon={horizon} onOpen={(month) => navigate(`/quotations?month=${month}`)} />
-          <ConversionChart state={conversion} />
-          <StatusChart state={byStatus} onOpen={(status) => navigate(`/quotations?status=${encodeURIComponent(status)}`)} />
-        </div>
+      <div className="rp-grid">
+        <Card state={pipeline}><PipelineChart state={pipeline} /></Card>
+        <Card state={collections}><AgeingChart state={collections} /></Card>
+        <Card state={cashflow}><CashChart state={cashflow} horizon={horizon} /></Card>
+        <Card state={winRate}><WinRateChart state={winRate} /></Card>
+        <Card state={quotedWon}><QuotedWonChart state={quotedWon} horizon={horizon} /></Card>
+        <Card state={conversion}><ConversionChart state={conversion} dimension={dimension} onDimension={setDimension} /></Card>
+        <Card state={byStatus} wide><StatusChart state={byStatus} /></Card>
       </div>
-    </div>
+    </>
   );
 }
 
-function Loading({ height }) {
-  return <Skeleton style={{ height }} className="w-full" />;
+/** One More-analysis chart in its own panel, with its own loading and failed state (H-1). */
+function Card({ state, wide, children }) {
+  const d = state.data?.data;
+  return (
+    <section className={`mg-glass rp-q rp-card${wide ? ' rp-full' : ''}`} data-a="rise" aria-busy={state.loading && !d ? true : undefined}>
+      {state.error && !d ? (
+        <SectionFailed message={`${state.error}.`} onRetry={state.refetch} />
+      ) : state.loading && !d ? (
+        <>
+          <div className="mg-skel" style={{ height: 18, width: '50%' }} />
+          <div className="mg-skel" style={{ height: 12, width: '75%' }} />
+          {[80, 60, 70, 40, 55].map((w) => <div key={w} className="mg-skel" style={{ height: 22, width: `${w}%` }} />)}
+        </>
+      ) : children}
+    </section>
+  );
 }
 
 /* ---------------------------------------------------------------- pipeline */
 
-function PipelineChart({ state, onOpen }) {
+function PipelineChart({ state }) {
   const d = state.data?.data;
-  const stages = (d?.stages || []).filter((s) => s.type === 'open' || s.type === 'paused');
-  const rows = stages.map((s) => ({ ...s, label: s.name }));
+  const rows = (d?.stages || []).filter((s) => s.type === 'open' || s.type === 'paused');
   const weighted = rows.reduce((sum, s) => sum + Number(s.weighted || 0), 0);
   const gross = rows.reduce((sum, s) => sum + Number(s.value || 0), 0);
-
-  if (state.loading && !d) return <Loading height={320} />;
-
   return (
-    <ChartCard
+    <ChartBlock
       title="Pipeline by stage"
       meta="Open deals, weighted by the stage's own probability"
-      height={ROW_CHART(rows.length)}
+      legend={[{ tone: 'hatch', label: 'Weighted value: expected, not yet won' }]}
       columns={['Stage', 'Deals', 'Chance', 'Weighted', 'Gross']}
-      rows={rows.map((s) => ({
-        key: s.id,
-        href: `/quotations?stage_id=${s.id}`,
-        cells: [s.name, number(s.count), `${s.probability}%`, inr(s.weighted), inr(s.value)],
-      }))}
-      footnote={`Weighted total ${inr(weighted)} of ${inr(gross)} gross. Deals quoted in another currency are counted but not summed.`}
+      rows={rows.map((s) => ({ key: s.id, href: `/quotations?stage_id=${s.id}`, cells: [s.name, number(s.count), `${s.probability}%`, inrFull(s.weighted), inrFull(s.value)] }))}
+      empty={rows.some((s) => s.count) ? null : 'No open deals just now.'}
+      emptyPlain
+      note={<Note>{`Weighted total ${inrFull(weighted)} of ${inrFull(gross)} gross. Deals quoted in another currency are counted but not summed.`}</Note>}
     >
-      <ChartContainer
-        config={Object.fromEntries(rows.map((s) => [`stage-${s.id}`, { label: s.name }]))}
-        className="h-full w-full aspect-auto"
-      >
-        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" dataKey="weighted" {...AXIS} tickFormatter={inr} />
-          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ weighted: 'weighted' }} />} />
-          <Bar dataKey="weighted" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.id)}>
-            <LabelList dataKey="weighted" position="right" formatter={inr} {...BAR_LABEL} />
-          </Bar>
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <RowBars
+        label="Pipeline by stage: open a stage for its deals"
+        lw={110}
+        vw={84}
+        format={inr}
+        rows={rows.map((s) => ({
+          key: s.id,
+          label: s.name,
+          href: `/quotations?stage_id=${s.id}`,
+          aria: `${s.name}: ${plural(s.count, 'deal')} at ${s.probability}%, ${inrFull(s.weighted)} weighted of ${inrFull(s.value)}. Open the list`,
+          value: inr(s.weighted),
+          segs: [{ v: s.weighted, tone: 'hatch' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
 /* ---------------------------------------------------------------- ageing */
 
-function AgeingChart({ state, onOpen }) {
+function AgeingChart({ state }) {
   const d = state.data?.data;
   const rows = useMemo(() => {
     if (!d) return [];
@@ -294,103 +340,67 @@ function AgeingChart({ state, onOpen }) {
     for (const client of d.clients) for (const stage of client.stages) counts[stage.bucket] = (counts[stage.bucket] || 0) + 1;
     return d.buckets.map((b) => ({ ...b, amount: d.totals.buckets[b.key] || 0, invoices: counts[b.key] || 0 }));
   }, [d]);
-
-  if (state.loading && !d) return <Loading height={320} />;
-
   return (
-    <ChartCard
+    <ChartBlock
       title="Collections ageing"
       meta="Invoiced and not yet paid, by how late it is"
-      height={ROW_CHART(rows.length)}
+      legend={[{ tone: 'info', label: 'Not yet due' }, { tone: 'wait', label: '1–60 days late' }, { tone: 'late', label: 'Over 60 days late' }]}
       columns={['Age', 'Invoices', 'Outstanding']}
-      rows={rows.map((b) => ({
-        key: b.key,
-        href: `/collections?bucket=${encodeURIComponent(b.key)}`,
-        cells: [b.label, number(b.invoices), inr(b.amount)],
-      }))}
-      footnote={`Each band opens the chase queue filtered to it. Red is used only for money that is properly late.${d?.foreign?.length ? ` ${d.foreign.length} invoice${d.foreign.length === 1 ? '' : 's'} in another currency ${d.foreign.length === 1 ? 'is' : 'are'} not in these totals.` : ''}`}
+      rows={rows.map((b) => ({ key: b.key, href: `/collections?bucket=${encodeURIComponent(b.key)}`, cells: [b.label, number(b.invoices), inrFull(b.amount)] }))}
+      note={<Note>{`Each band opens the chase queue filtered to it. Red is used only for money that is properly late.${d?.foreign?.length ? ` ${plural(d.foreign.length, 'invoice')} in another currency ${d.foreign.length === 1 ? 'is' : 'are'} not in these totals.` : ''}`}</Note>}
     >
-      <ChartContainer config={{ amount: { label: 'Outstanding' } }} className="h-full w-full aspect-auto">
-        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" dataKey="amount" {...AXIS} tickFormatter={inr} />
-          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ amount: 'outstanding' }} />} />
-          <Bar dataKey="amount" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.key)}>
-            {rows.map((b) => <Cell key={b.key} fill={AGE_COLOUR[b.key] || 'var(--forecast)'} />)}
-            <LabelList dataKey="amount" position="right" formatter={inr} {...BAR_LABEL} />
-          </Bar>
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <RowBars
+        label="Collections ageing: open a band for its chase queue"
+        lw={96}
+        vw={92}
+        format={inr}
+        rows={rows.map((b) => ({
+          key: b.key,
+          label: b.label,
+          href: `/collections?bucket=${encodeURIComponent(b.key)}`,
+          aria: `${b.label}: ${plural(b.invoices, 'invoice')}, ${inrFull(b.amount)}. Open the chase queue`,
+          value: inrFull(b.amount),
+          segs: [{ v: b.amount, tone: AGE_TONE[b.key] || 'info' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
 /* ---------------------------------------------------------------- cash */
 
-function CashChart({ state, horizon, onOpen }) {
+function CashChart({ state, horizon }) {
   const d = state.data?.data;
   // Only the dated months: "later" and "no date yet" are real, and they are
   // on the Cash-flow page, but a column with no month on the axis is not a
   // month and would read as one.
   const rows = (d?.months || []).filter((m) => /^\d{4}-\d{2}$/.test(m.month)).map((m) => ({ ...m, label: monthLabel(m.month) }));
-
-  if (state.loading && !d) return <Loading height={320} />;
-
+  const firm = (m) => Number(m.received) + Number(m.invoiced) + Number(m.scheduled);
   return (
-    <ChartCard
+    <ChartBlock
       title={`Cash expected, next ${horizon} months`}
       meta="From stage due dates and the triggers on stages not yet invoiced"
-      height={260}
+      legend={[{ tone: 'figure', label: 'Received' }, { tone: 'wait', label: 'Invoiced, due' }, { tone: 'hatch', label: 'Not yet invoiced (forecast)' }]}
       columns={['Month', 'Received', 'Invoiced, due', 'Not yet invoiced', 'Total']}
-      rows={rows.map((m) => ({
-        key: m.month,
-        href: `/cashflow?month=${m.month}`,
-        cells: [m.label, inr(m.received), inr(m.invoiced), inr(m.scheduled), inr(m.received + m.invoiced + m.scheduled)],
-      }))}
-      footnote="Grey is what becomes billable if deliveries land on their planned dates — a forecast, and labelled as one. The weighted pipeline is not in these columns; it is on the Cash-flow page."
+      rows={rows.map((m) => ({ key: m.month, href: `/cashflow?month=${m.month}`, cells: [m.label, inrFull(m.received), inrFull(m.invoiced), inrFull(m.scheduled), inrFull(firm(m))] }))}
+      empty={rows.some((m) => firm(m)) ? null : 'Nothing is due or scheduled in these months.'}
+      emptyPlain
+      note={<Note>Hatched is what becomes billable if deliveries land on their planned dates: a forecast, and labelled as one. The weighted pipeline is not in these columns; it is on the <Link to="/cashflow">Cash flow</Link> page.</Note>}
     >
-      <ChartContainer
-        config={Object.fromEntries(CASH_BANDS.map((b) => [b.key, { label: b.label, color: b.colour }]))}
-        className="h-full w-full aspect-auto"
-      >
-        <BarChart data={rows} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
-          <CartesianGrid {...GRID} vertical={false} />
-          <XAxis dataKey="label" {...AXIS} interval={0} />
-          <YAxis {...AXIS} width={56} tickFormatter={inr} />
-          <ChartTooltip
-            cursor={HOVER}
-            content={<ChartTip format={inr} names={Object.fromEntries(CASH_BANDS.map((b) => [b.key, b.label.toLowerCase()]))} />}
-          />
-          {CASH_BANDS.map((band, i) => (
-            <Bar
-              key={band.key}
-              dataKey={band.key}
-              stackId="cash"
-              fill={band.colour}
-              maxBarSize={BAR.size}
-              // Only the top band is rounded: a stack is one bar, so the
-              // corners belong to the column, not to each band in it.
-              radius={i === CASH_BANDS.length - 1 ? BAR.up : 0}
-              // The top band carries the month's total, so it keeps a
-              // sliver even at zero — otherwise an empty month is a gap
-              // with no number, which reads as missing rather than nil.
-              minPointSize={i === CASH_BANDS.length - 1 ? ZERO_BAR : 0}
-              cursor="pointer"
-              onClick={(bar) => bar?.payload && onOpen(bar.payload.month)}
-            >
-              {i === CASH_BANDS.length - 1 && (
-                <LabelList
-                  position="top"
-                  {...BAR_LABEL}
-                  valueAccessor={(entry) => inr(entry.payload.received + entry.payload.invoiced + entry.payload.scheduled)}
-                />
-              )}
-            </Bar>
-          ))}
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <ColBars
+        label="Cash expected: open a month in cash flow"
+        height={150}
+        format={inr}
+        rows={rows.map((m) => ({
+          key: m.month,
+          label: m.label,
+          href: `/cashflow?month=${m.month}`,
+          aria: `${m.label}: ${inrFull(firm(m))} (received ${inrFull(m.received)}, invoiced ${inrFull(m.invoiced)}, not yet invoiced ${inrFull(m.scheduled)}). Open cash flow`,
+          value: inr(firm(m)),
+          segs: [{ v: m.received, tone: 'figure' }, { v: m.invoiced, tone: 'wait' }, { v: m.scheduled, tone: 'hatch' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
@@ -398,89 +408,72 @@ function CashChart({ state, horizon, onOpen }) {
 
 function WinRateChart({ state }) {
   const d = state.data?.data;
-  const rows = (d?.quarters || []).map((q) => ({ ...q, rate: q.win_rate === null ? 0 : Math.round(q.win_rate * 100) }));
-
-  if (state.loading && !d) return <Loading height={320} />;
-
+  const rows = d?.quarters || [];
   return (
-    <ChartCard
+    <ChartBlock
       title="Win rate by quarter"
       meta="Deals closed, won ÷ (won + lost)"
-      height={260}
+      legend={[{ tone: 'figure', label: 'This quarter, so far' }, { tone: 'soft', label: 'Earlier quarters' }]}
       columns={['Quarter', 'Won', 'Lost', 'Win rate']}
-      rows={rows.map((q) => ({
-        key: q.key,
-        cells: [q.label, number(q.won), number(q.lost), q.win_rate === null ? 'nothing closed' : percent(q.win_rate)],
-      }))}
-      footnote={`Bars, not a line — five points is too few for a trend to be honest. The current quarter is the only coloured one.${d?.foreign ? ` ${d.foreign} closed deal${d.foreign === 1 ? '' : 's'} quoted in another currency count here but not in any rupee total.` : ''}`}
+      rows={rows.map((q) => ({ key: q.key, cells: [q.label, number(q.won), number(q.lost), q.win_rate === null ? 'nothing closed' : percent(q.win_rate)] }))}
+      empty={rows.some((q) => q.won || q.lost) ? null : 'No deal was won or lost in these quarters, so there is no rate yet.'}
+      emptyPlain
+      note={<Note>{`Bars, not a line: five points is too few for a trend to be honest. A summary only, so the bars don't open a list.${d?.foreign ? ` ${plural(d.foreign, 'closed deal')} quoted in another currency count here but not in any rupee total.` : ''}`}</Note>}
     >
-      <ChartContainer config={{ rate: { label: 'Win rate' } }} className="h-full w-full aspect-auto">
-        <BarChart data={rows} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
-          <CartesianGrid {...GRID} vertical={false} />
-          {/* No interval={0} here. sales-tracker forces every tick because its
-              labels are three characters; "Q2 FY25-26" is ten, and forcing
-              them made five quarters run into one another at sidebar width.
-              Letting Recharts drop every other label is the honest fallback:
-              a tick it cannot fit is a tick nobody can read. */}
-          <XAxis dataKey="label" {...AXIS} />
-          <YAxis {...AXIS} width={40} domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={(value) => `${value}%`} names={{ rate: 'win rate' }} />} />
-          <Bar dataKey="rate" maxBarSize={BAR.size} radius={BAR.up} minPointSize={ZERO_BAR}>
-            {rows.map((q) => <Cell key={q.key} fill={q.current ? 'var(--primary)' : 'var(--forecast)'} />)}
-            {/* No bar and no percentage for a quarter that closed nothing:
-                "0%" would read as "we lost them all". */}
-            <LabelList
-              position="top"
-              {...BAR_LABEL}
-              valueAccessor={(entry) => (entry.payload.win_rate === null ? 'none closed' : `${entry.payload.rate}%`)}
-            />
-          </Bar>
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      {/* No bar and no percentage for a quarter that closed nothing: "0%" would read as "we lost them all". */}
+      <ColBars
+        label="Win rate by quarter"
+        height={150}
+        integer={false}
+        format={(v) => `${Math.round(v * 100)}%`}
+        rows={rows.map((q) => ({
+          key: q.key,
+          label: q.label,
+          aria: `${q.label}: ${q.win_rate === null ? 'nothing closed' : `${percent(q.win_rate)}, ${number(q.won)} won, ${number(q.lost)} lost`}`,
+          value: q.win_rate === null ? 'none closed' : percent(q.win_rate),
+          segs: [{ v: q.win_rate === null ? 0 : q.win_rate, tone: q.current ? 'figure' : 'soft' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
 /* ------------------------------------------------- quoted against won */
 
 /**
- * Two series, because the gap between them is the finding.
- *
- * A month where both fell is a quiet month; a month where quoting held and
- * winning fell is a problem, and one bar cannot tell you which it was.
+ * Two series, because the gap between them is the finding: a month where
+ * quoting held and winning fell is a problem, and one bar cannot say which.
  */
-function QuotedWonChart({ state, horizon, onOpen }) {
+function QuotedWonChart({ state, horizon }) {
   const d = state.data?.data;
   const rows = (d?.months || []).map((m) => ({ ...m, label: monthLabel(m.month) }));
   const quoted = rows.reduce((sum, m) => sum + Number(m.quoted || 0), 0);
   const won = rows.reduce((sum, m) => sum + Number(m.won || 0), 0);
-
-  if (state.loading && !d) return <Loading height={320} />;
-
   return (
-    <ChartCard
+    <ChartBlock
       title="Quoted against won"
-      meta={`The last ${horizon} months · quoted in the lighter bar, won in the accent`}
-      height={280}
+      meta={`The last ${horizon} months · quoted in the lighter bar, won in the darker`}
+      legend={[{ tone: 'soft', label: 'Quoted' }, { tone: 'figure', label: 'Won' }]}
       columns={['Month', 'Deals', 'Quoted', 'Won', 'Share won']}
-      rows={rows.map((m) => ({
-        key: m.month,
-        href: `/quotations?month=${m.month}`,
-        cells: [m.label, number(m.deals), inr(m.quoted), inr(m.won), m.quoted > 0 ? percent(m.won / m.quoted) : '—'],
-      }))}
-      footnote={`${inr(won)} won of ${inr(quoted)} quoted over the period.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+      rows={rows.map((m) => ({ key: m.month, href: `/quotations?month=${m.month}`, cells: [m.label, number(m.deals), inrFull(m.quoted), inrFull(m.won), m.quoted > 0 ? percent(m.won / m.quoted) : '—'] }))}
+      empty={quoted || won ? null : 'Nothing was quoted in these months.'}
+      emptyPlain
+      note={<Note>{`${inrFull(won)} won of ${inrFull(quoted)} quoted over the period. Labels above each pair are the quoted value.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}</Note>}
     >
-      <ChartContainer config={{ quoted: { label: 'Quoted' }, won: { label: 'Won' } }} className="h-full w-full aspect-auto">
-        <BarChart data={rows} barGap={2} margin={{ left: 0, right: 4, top: 16, bottom: 4 }}>
-          <CartesianGrid {...GRID} vertical={false} />
-          <XAxis dataKey="label" {...AXIS} interval={0} />
-          <YAxis {...AXIS} width={56} tickFormatter={inr} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={inr} names={{ quoted: 'quoted', won: 'won' }} />} />
-          <Bar dataKey="quoted" maxBarSize={BAR.paired} radius={BAR.up} minPointSize={ZERO_BAR} fill="var(--forecast)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
-          <Bar dataKey="won" maxBarSize={BAR.paired} radius={BAR.up} minPointSize={ZERO_BAR} fill="var(--primary)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.month)} />
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <ColBars
+        label="Quoted against won: open a month for its quotations"
+        height={150}
+        format={inr}
+        rows={rows.map((m) => ({
+          key: m.month,
+          label: m.label,
+          href: `/quotations?month=${m.month}`,
+          aria: `${m.label}: ${inrFull(m.quoted)} quoted, ${inrFull(m.won)} won. Open the list`,
+          value: inr(m.quoted),
+          bars: [[{ v: m.quoted, tone: 'soft' }], [{ v: m.won, tone: 'figure' }]],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
@@ -491,37 +484,40 @@ function QuotedWonChart({ state, horizon, onOpen }) {
  * is already winning, which is the question asked before deciding what to
  * chase next.
  */
-function ConversionChart({ state }) {
+function ConversionChart({ state, dimension, onDimension }) {
   const d = state.data?.data;
-  const rows = (d?.groups || []).map((g) => ({ ...g, label: g.key, rate: g.win_rate === null ? 0 : g.win_rate * 100 }));
-
-  if (state.loading && !d) return <Loading height={320} />;
-
+  const rows = d?.groups || [];
   return (
-    <ChartCard
-      title={`Win rate by ${d?.label?.toLowerCase() || 'owner'}`}
-      meta="Decided deals only — won over won plus lost"
-      height={ROW_CHART(rows.length)}
+    <ChartBlock
+      title={`Win rate by ${d?.label?.toLowerCase() || dimension}`}
+      meta="Decided deals only: won over won plus lost"
+      tools={(
+        <PillSelect id="m-dim" label="Group by" value={dimension} onChange={onDimension}
+          options={[{ value: 'owner', label: 'Owner' }, { value: 'sector', label: 'Sector' }, { value: 'service', label: 'Service' }]}
+        />
+      )}
       columns={[d?.label || 'Owner', 'Won', 'Lost', 'Win rate']}
       rows={rows.map((g) => ({ key: g.key, cells: [g.key, number(g.won), number(g.lost), g.win_rate === null ? '—' : percent(g.win_rate)] }))}
-      footnote="A rate is a count, so a deal in any currency counts in it."
+      empty={rows.some((g) => g.won || g.lost) ? null : 'No deal has been won or lost yet, so there is no rate to compare.'}
+      emptyPlain
+      note={<Note>A rate is a count, so a deal in any currency counts in it. A summary only, so the bars don't open a list.</Note>}
     >
-      <ChartContainer config={Object.fromEntries(rows.map((g) => [g.key, { label: g.key }]))} className="h-full w-full aspect-auto">
-        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 96, top: 4, bottom: 4 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" dataKey="rate" domain={[0, 100]} {...AXIS} tickFormatter={(value) => `${value}%`} />
-          <YAxis type="category" dataKey="label" width={116} {...AXIS} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={(value) => `${Math.round(value)}%`} names={{ rate: 'win rate' }} />} />
-          <Bar dataKey="rate" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--primary)">
-            <LabelList
-              position="right"
-              {...BAR_LABEL}
-              valueAccessor={(entry) => (entry?.payload ? `${Math.round(entry.payload.rate)}% · ${entry.payload.won}W ${entry.payload.lost}L` : '')}
-            />
-          </Bar>
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <RowBars
+        label={`Win rate by ${d?.label?.toLowerCase() || dimension}`}
+        lw={110}
+        vw={120}
+        max={1}
+        integer={false}
+        format={(v) => `${Math.round(v * 100)}%`}
+        rows={rows.map((g) => ({
+          key: g.key,
+          label: g.key,
+          aria: `${g.key}: ${g.win_rate === null ? 'nothing decided' : `${percent(g.win_rate)}, ${number(g.won)} won, ${number(g.lost)} lost`}`,
+          value: g.win_rate === null ? '—' : `${percent(g.win_rate)} · ${number(g.won)} won, ${number(g.lost)} lost`,
+          segs: [{ v: g.win_rate ?? 0, tone: 'figure' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }
 
@@ -532,33 +528,33 @@ function ConversionChart({ state }) {
  * by status, which is what the record says it is. They drift, and a deal
  * parked at On Hold is invisible on a board that only shows progress.
  */
-function StatusChart({ state, onOpen }) {
+function StatusChart({ state }) {
   const d = state.data?.data;
-  const rows = (d?.statuses || []).map((r) => ({ ...r, label: r.status }));
+  const rows = d?.statuses || [];
   const total = rows.reduce((sum, r) => sum + Number(r.deals || 0), 0);
-
-  if (state.loading && !d) return <Loading height={320} />;
-
   return (
-    <ChartCard
+    <ChartBlock
       title="Open deals by status"
       meta="What each record says it is, which is not always where its stage puts it"
-      height={ROW_CHART(rows.length)}
       columns={['Status', 'Deals', 'Value']}
-      rows={rows.map((r) => ({ key: r.status, href: `/quotations?status=${encodeURIComponent(r.status)}`, cells: [r.status, number(r.deals), inr(r.value)] }))}
-      footnote={`${number(total)} open deals.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}
+      rows={rows.map((r) => ({ key: r.status, href: `/quotations?status=${encodeURIComponent(r.status)}`, cells: [r.status, number(r.deals), inrFull(r.value)] }))}
+      empty={total ? null : 'No open deals just now.'}
+      emptyPlain
+      note={<Note>{`${plural(total, 'open deal')}.${d?.foreign ? ` ${number(d.foreign)} quoted in another currency are counted but not summed.` : ''}`}</Note>}
     >
-      <ChartContainer config={Object.fromEntries(rows.map((r) => [r.status, { label: r.status }]))} className="h-full w-full aspect-auto">
-        <BarChart data={rows} layout="vertical" margin={{ left: 4, right: 64, top: 4, bottom: 4 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" dataKey="deals" {...AXIS} allowDecimals={false} />
-          <YAxis type="category" dataKey="label" width={136} {...AXIS} />
-          <ChartTooltip cursor={HOVER} content={<ChartTip format={number} names={{ deals: 'open deals' }} />} />
-          <Bar dataKey="deals" maxBarSize={BAR.size} radius={BAR.right} minPointSize={ZERO_BAR} fill="var(--info)" cursor="pointer" onClick={(bar) => bar?.payload && onOpen(bar.payload.status)}>
-            <LabelList dataKey="deals" position="right" formatter={number} {...BAR_LABEL} />
-          </Bar>
-        </BarChart>
-      </ChartContainer>
-    </ChartCard>
+      <RowBars
+        label="Open deals by status: open a status for its deals"
+        lw={140}
+        vw={96}
+        rows={rows.map((r) => ({
+          key: r.status,
+          label: r.status,
+          href: `/quotations?status=${encodeURIComponent(r.status)}`,
+          aria: `${r.status}: ${plural(r.deals, 'deal')}, ${inrFull(r.value)}. Open the list`,
+          value: `${number(r.deals)} · ${inr(r.value)}`,
+          segs: [{ v: r.deals, tone: 'figure' }],
+        }))}
+      />
+    </ChartBlock>
   );
 }

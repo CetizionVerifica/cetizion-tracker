@@ -11,11 +11,13 @@ import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  // The toast follows the page's resolved theme; the glass pill look is in
+  // styles/mocha/app.css (sonner injects its own styles at runtime).
+  const { resolvedTheme = "light" } = useTheme()
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={resolvedTheme as ToasterProps["theme"]}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
@@ -26,10 +28,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          "--normal-bg": "var(--glass-strong)",
+          "--normal-text": "var(--text)",
+          "--normal-border": "var(--glass-edge)",
+          "--border-radius": "999px",
+          "--font-family": "var(--font-sans)",
         } as React.CSSProperties
       }
       {...props}

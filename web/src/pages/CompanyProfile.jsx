@@ -1,10 +1,8 @@
 import { useState } from 'react';
 import { cn } from 'cn';
 import { useToast } from '../components/ui.jsx';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Textarea } from '../components/ui/textarea';
+import { FailedCard, LoadingPanel } from '../components/daily.jsx';
+import { BrandMark } from '../components/shell/Shell.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useFetch } from '../lib/hooks.js';
@@ -12,96 +10,62 @@ import { invalidateLookups, useFetch } from '../lib/hooks.js';
 /**
  * The company profile (C21): the facts printed on every quotation.
  *
- * The design's claim is "change once, everything follows", and the way it
- * earns that claim is the panel on the right — it is not a mock-up of a
- * PDF, it is the same three fields the generator lays out, in the same
- * order, updating as you type. Someone editing the GSTIN can see where it
- * lands before saving, which is the only way a settings form stops being
- * a list of keys with no consequences.
- *
- * The preview is kept honest deliberately: `lib/quotationPdf.js` prints
- * the name, the address and "GSTIN <n>" and nothing else, so the preview
- * shows those and nothing else. The design draws an accounts email and a
- * bank line in the header too; the generator does not print them, and
- * drawing them here would be promising something the PDF will not do.
+ * The panel on the right is not a mock-up of a PDF: it is the same three
+ * fields the generator lays out (`lib/quotationPdf.js` prints the name, the
+ * address and "GSTIN <n>"), in the same order, updating as you type, with
+ * the next real quotation number. Wave 8: drawn from the tokens, changed
+ * fields marked with what they were, and Discard beside Save.
  */
 
 const FIELDS = [
+  { key: 'company_name', label: 'Legal name', hint: 'Printed at the top of every quotation, and used wherever the app names the company.' },
+  { key: 'company_gstin', label: 'GSTIN', mono: true, hint: 'Sets the home state. The place of supply then decides CGST and SGST, or IGST.' },
   {
-    key: 'company_name',
-    label: 'Legal name',
-    hint: 'Printed at the top of every quotation, and used wherever the app names itself.',
+    key: 'company_gstins', label: 'All our GSTINs', mono: true, span: true,
+    hint: 'Every state we are registered in, separated by commas. The email readers accept a PO addressed to any of them; an invoice raised from a different GSTIN than its PO was addressed to goes to review.',
   },
   {
-    key: 'company_gstin',
-    label: 'GSTIN',
-    mono: true,
-    hint: 'Sets the home state — the place of supply then decides CGST+SGST or IGST.',
+    key: 'partner_companies', label: 'Partner companies', multiline: true, span: true,
+    hint: 'Companies clients also order through, one per line: name | GSTIN | other names. A PO addressed to one is registered as ours and marked “Through” it. Write “none” for no partners.',
   },
-  {
-    key: 'company_gstins',
-    label: 'All our GSTINs',
-    mono: true,
-    span: true,
-    hint: 'Every state we are registered in, comma-separated. The email readers take a PO addressed to, or an invoice raised from, any of them; an invoice raised from another GSTIN than its PO was addressed to goes to review.',
-  },
-  {
-    key: 'partner_companies',
-    label: 'Partner companies',
-    multiline: true,
-    span: true,
-    hint: 'Companies clients also order through, one per line: name | GSTIN | other names. A PO addressed to one is registered as ours and marked "Through" it. Write "none" for no partners.',
-  },
-  {
-    key: 'company_address',
-    label: 'Registered address',
-    multiline: true,
-    span: true,
-    hint: 'One block, as it should appear under the name.',
-  },
-  {
-    key: 'finance_email',
-    label: 'Accounts email',
-    type: 'email',
-    hint: 'Where payment questions and the finance digest go.',
-  },
-  {
-    key: 'company_state_code',
-    label: 'Home state code',
-    mono: true,
-    hint: 'Two digits, matching the start of the GSTIN — 27 for Maharashtra.',
-  },
+  { key: 'company_address', label: 'Registered address', multiline: true, span: true, hint: 'One block, as it should appear under the name.' },
+  { key: 'finance_email', label: 'Accounts email', type: 'email', hint: 'Where payment questions and the finance digest go.' },
+  { key: 'company_state_code', label: 'Home state code', mono: true, hint: 'Two digits, matching the start of the GSTIN: 27 for Maharashtra.' },
 ];
 
-/** The PDF header, as quotationPdf.js actually lays it out. */
-function PdfHeader({ values }) {
+/** The PDF header, as quotationPdf.js lays it out, drawn from the tokens. */
+function PdfHeader({ values, number }) {
+  const name = values.company_name || 'Your company name';
+  const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   return (
-    <div className="flex flex-col gap-4 rounded-lg bg-white p-6 text-[#151517]">
-      <div>
-        <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Your company name'}</div>
-        {values.company_address && <div className="mt-1 text-[8.5px]/[1.5] text-[#5d5d66]">{values.company_address}</div>}
-        {values.company_gstin && <div className="text-[8.5px] text-[#5d5d66]">GSTIN {values.company_gstin}</div>}
+    <div className="set-preview">
+      <div className="set-preview__top">
+        <BrandMark size={30} />
+        <div className="min-w-0">
+          <div className="set-preview__name">{name}</div>
+          {values.company_address && <div className="set-preview__addr">{values.company_address}</div>}
+          {values.company_gstin && <div className="set-mono text-secondary-text">GSTIN {values.company_gstin}</div>}
+        </div>
       </div>
-      <div className="flex justify-between border-t border-[#e2e2de] pt-3 text-[11.5px] text-[#3d3d45]">
-        <span>Quotation <span className="mono">CTZ/QT/2026/063</span></span>
-        <span>22 Sep 2026</span>
-      </div>
-      <div className="border-t border-[#e2e2de] pt-3 text-[11px]/[1.6] text-[#5d5d66]">
-        For {values.company_name || 'your company'} · authorised signatory
-      </div>
+      <div className="set-preview__rule" />
+      <div className="set-preview__row"><span className="font-extrabold tracking-[.04em]">QUOTATION {number || ''}</span><span className="text-secondary-text">{today}</span></div>
+      <div className="set-preview__hair" />
+      <div className="text-right text-secondary-text">For {name} · authorised signatory</div>
     </div>
   );
 }
 
 export function CompanyProfile() {
   const toast = useToast();
-  const { data, loading, refetch } = useFetch(() => api.raw('/lookups'));
+  const { data, loading, error, refetch } = useFetch(() => api.raw('/lookups'));
+  const next = useFetch(() => api.raw('/lookups/next-id/quotation').catch(() => null), []);
   const [draft, setDraft] = useState({});
   const [busy, setBusy] = useState(false);
 
   const saved = data?.data?.settings || {};
   const values = Object.fromEntries(FIELDS.map((f) => [f.key, draft[f.key] ?? saved[f.key] ?? '']));
   const changed = FIELDS.filter((f) => draft[f.key] !== undefined && draft[f.key] !== (saved[f.key] ?? ''));
+  const number = next.data?.data?.next;
 
   async function save() {
     setBusy(true);
@@ -122,62 +86,55 @@ export function CompanyProfile() {
     }
   }
 
-  if (loading && !data) return <div className="skeleton h-[240px]" />;
+  const names = changed.map((f) => f.label);
+  const said = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
 
   return (
     <SettingsPane
       title="Company profile"
-      description="The legal identity and tax registration printed on every quotation. The preview beside it is the header the PDF generator actually lays out, so a change here shows where it lands before it is saved."
+      description="The legal identity and tax registration printed on every quotation. The preview shows where a change lands before you save it."
     >
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <div className="grid gap-x-6 gap-y-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2">
-          {FIELDS.map((field) => (
-            <div key={field.key} className={cn('min-w-0', field.span && 'sm:col-span-2')}>
-              <Label htmlFor={field.key} className="mb-2 text-[12.5px] font-medium text-secondary-text">{field.label}</Label>
-              {field.multiline ? (
-                <Textarea
-                  id={field.key}
-                  rows={2}
-                  className="text-[13px]"
-                  value={values[field.key]}
-                  onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))}
-                />
-              ) : (
-                <Input
-                  id={field.key}
-                  type={field.type || 'text'}
-                  className={cn('h-8 text-[13px]', field.mono && 'mono')}
-                  value={values[field.key]}
-                  onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))}
-                />
-              )}
-              {field.hint && <p className="mt-1.5 text-[11.5px]/[1.5] text-muted-foreground">{field.hint}</p>}
+      {error ? <FailedCard title="Couldn’t load the company profile" text="The server didn’t answer, so nothing is shown. This isn’t “nothing set”: nothing has changed. Try again in a moment." onRetry={refetch} />
+      : loading && !data ? <LoadingPanel rows={5} />
+      : (
+        <div className="set-two" data-a="rise">
+          <section className="mg-glass mg-glass--strong mg-panel" aria-labelledby="set-cp" style={{ flex: '3 1 480px' }}>
+            <div className="flex flex-col gap-0.5"><h2 className="mg-panel__title" id="set-cp">Legal identity and tax</h2><span className="mg-panel__hint">What every quotation, invoice and email reader takes as ours.</span></div>
+            <div className="mg-grid2">
+              {FIELDS.map((field) => {
+                const was = saved[field.key] ?? '';
+                const isChanged = changed.includes(field);
+                return (
+                  <label key={field.key} className={cn('mg-field', isChanged && 'is-changed')} style={{ gridColumn: field.span ? '1 / -1' : undefined }}>
+                    <span className="mg-field__label">{field.label}</span>
+                    {field.multiline ? (
+                      <textarea className="mg-textarea" rows={2} value={values[field.key]} onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))} />
+                    ) : (
+                      <input className={cn('mg-input', field.mono && 'set-mono')} type={field.type || 'text'} value={values[field.key]} onChange={(e) => setDraft((d) => ({ ...d, [field.key]: e.target.value }))} />
+                    )}
+                    {isChanged && <span className="set-was">{was ? `Was “${was.length > 60 ? `${was.slice(0, 60)}…` : was}”` : 'Was blank'}</span>}
+                    {field.hint && <span className="mg-field__hint">{field.hint}</span>}
+                  </label>
+                );
+              })}
             </div>
-          ))}
-
-          <div className="flex items-center gap-3 sm:col-span-2">
-            <Button size="sm" className="h-8 px-4 text-[13px]" disabled={!changed.length || busy} onClick={save}>
-              {busy ? 'Saving…' : 'Save changes'}
-            </Button>
-            {changed.length > 0 && !busy && (
-              <span className="text-[12px] text-muted-foreground">
-                {changed.length === 1 ? `${changed[0].label} has changed` : `${changed.length} fields have changed`}
+            <div className="set-savebar">
+              <button type="button" className="mg-btn mg-btn--primary" disabled={!changed.length || busy} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+              {changed.length > 0 && !busy && <button type="button" className="mg-btn mg-btn--ghost" onClick={() => setDraft({})}>Discard</button>}
+              <span className={cn('text-[13px] font-semibold', changed.length ? 'text-caramel-text' : 'text-muted-foreground')}>
+                {changed.length ? `${said} ${changed.length === 1 ? 'has' : 'have'} changed. Save, or ${changed.length === 1 ? 'it’s' : 'they’re'} lost when you leave.` : 'Nothing has changed yet'}
               </span>
-            )}
-          </div>
+            </div>
+          </section>
+          <section className="mg-glass mg-panel" aria-labelledby="set-pdf" style={{ flex: '2 1 320px', maxWidth: 480 }}>
+            <div className="flex flex-col gap-0.5"><h2 className="mg-panel__title" id="set-pdf">PDF header, live</h2><span className="mg-panel__hint">The name, address and GSTIN, as the quotation PDF prints them.</span></div>
+            <PdfHeader values={values} number={number} />
+            <p className="m-0 text-[12.5px] text-secondary-text">
+              Shown with your next quotation number and today’s date. The number series ({number ? <span className="set-mono">{number}</span> : 'CTZ/QT/…'}, PRJ-…, CVPL/…) stay server-owned and aren’t edited here.
+            </p>
+          </section>
         </div>
-      </div>
-
-      <div className="flex flex-col gap-3">
-        <div className="eyebrow">PDF header, live</div>
-        <PdfHeader values={values} />
-        <p className="text-[11.5px]/[1.6] text-muted-foreground">
-          The numbering series — <span className="mono">CTZ/QT/2026/…</span>, <span className="mono">PRJ-2026-…</span>,
-          {' '}<span className="mono">CVPL/26-27/…</span> — stay server-owned and are not editable here.
-        </p>
-      </div>
-      </div>
+      )}
     </SettingsPane>
   );
 }

@@ -39,7 +39,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "mg-scrim fixed inset-0 z-[70] data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
         className
       )}
       {...props}
@@ -61,16 +61,20 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-150 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          // Strong glass over the blurred scrim, rising out of a blur on the soft
+          // spring (mg-dialog). On a phone it is a bottom sheet on the Brew spring.
+          "mg-glass mg-glass--strong mg-dialog fixed top-[50%] left-[50%] z-[70] grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-[28px] p-6 outline-none data-[state=closed]:animate-[mg-dialog-out_170ms_ease-in_forwards] sm:max-w-[560px]",
+          "max-[719px]:top-auto max-[719px]:bottom-0 max-[719px]:left-0 max-[719px]:max-h-[92dvh] max-[719px]:max-w-full max-[719px]:translate-x-0 max-[719px]:translate-y-0 max-[719px]:rounded-b-none max-[719px]:border-b-0 max-[719px]:pb-[max(1.5rem,env(safe-area-inset-bottom))] max-[719px]:data-[state=open]:animate-[mg-sheet-in_640ms_var(--mg-brew)_both]",
           className
         )}
         {...props}
       >
+        <div aria-hidden="true" className="mg-sheet__grab -mt-3 -mb-2 min-[720px]:hidden" />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="absolute top-3.5 right-3.5 grid size-9 place-items-center rounded-full text-secondary-text transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
             <span className="sr-only">Close</span>
@@ -125,7 +129,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-lg leading-none font-semibold", className)}
+      className={cn("text-lg leading-tight font-bold", className)}
       {...props}
     />
   )
@@ -138,7 +142,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-[13px] text-secondary-text", className)}
       {...props}
     />
   )

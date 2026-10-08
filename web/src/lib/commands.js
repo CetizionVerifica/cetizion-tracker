@@ -22,9 +22,6 @@
  * keep `hint` to the thing somebody needs to know before choosing it.
  */
 
-/** A record the palette is acting on, when the person picked one first. */
-export const NEEDS_RECORD = 'needs-record';
-
 /**
  * The fields a step asks for.
  *
@@ -70,9 +67,28 @@ export const STEPS = [
     hint: 'against an invoice already raised',
     icon: 'money',
     keywords: 'payment received money paid receipt',
-    // Anything already invoiced, whether or not it has gone past its date.
-    picks: { type: 'stage', resource: 'payment-stages', params: { stage_status: 'Overdue,Partially Paid,Not Due' }, label: 'Against which invoice?' },
+    // Anything invoiced and not yet paid in full: overdue, due and part-paid.
+    // Stages not yet invoiced have nothing to pay against.
+    picks: { type: 'stage', resource: 'payment-stages', params: { stage_status: 'Overdue,Due,Partially Paid' }, label: 'Against which invoice?', note: 'Overdue, due and part-paid invoices. Stages not yet invoiced are not listed.' },
     fields: [
+      // The client's open payment reports on this invoice (#198): linking one
+      // settles it in Collections, so it is not matched again later. Only
+      // shown when there is one.
+      f.choice('portal_action_id', "The client's payment report", [], {
+        hint: 'Linking settles their report in Collections, so it is not matched again later.',
+        span: 2,
+        optional: 'Not linked to a report',
+        load: async (record, api) => {
+          const res = await api.raw(`/portal-admin/actions?status=open&kind=payment_advice&po_number=${encodeURIComponent(record.po_number)}`);
+          return (res.data || [])
+            .filter((a) => a.invoices.some((i) => i.id === record.id))
+            .map((a) => ({
+              value: String(a.id),
+              label: `${a.company_name}: ${Number(a.amount).toLocaleString('en-IN')} paid on ${String(a.paid_on).slice(0, 10)}${a.reference ? ` · ${a.reference}` : ''}`,
+              fills: { amount_received: String(Number(a.amount)), payment_received_date: String(a.paid_on).slice(0, 10), reference: a.reference || '', mode: 'add' },
+            }));
+        },
+      }),
       f.money('amount_received', 'Amount received', { required: true }),
       f.date('payment_received_date', 'Received on', { value: today }),
       f.choice('mode', 'This figure is', [
@@ -95,6 +111,7 @@ export const STEPS = [
     id: 'pay-vendor-bill',
     verb: 'Pay a travel vendor bill',
     hint: 'the ones waiting on finance',
+    hr: true,
     icon: 'trip',
     keywords: 'vendor bill travel pay holidays agent',
     picks: { type: 'bill', resource: 'vendor-invoices', params: { payment_status: 'Overdue,To Pay,Partially Paid,Enter amount,Enter date' }, label: 'Which bill?' },
@@ -125,8 +142,8 @@ export const STEPS = [
   },
   {
     id: 'log-chase',
-    verb: 'Log a chase on an overdue invoice',
-    hint: 'and pause the reminders if they promised a date',
+    verb: 'Log a chase',
+    hint: 'on an overdue invoice, and pause the reminders if they promised a date',
     icon: 'money',
     keywords: 'chase collections call promise follow up overdue',
     picks: { type: 'stage', resource: 'payment-stages', params: { stage_status: 'Overdue' }, label: 'Which invoice?' },
@@ -254,13 +271,15 @@ export const JUMPS = [
 ];
 
 /** Everything, with the steps first: a verb is more useful than a screen. */
-export function commandsFor({ isAdmin, mode }) {
+export function commandsFor({ isAdmin, mode, isHr = false }) {
   // `personalOnly` is the account page: shared mode is one account in an
   // environment variable, so there is nothing personal to go to and the
   // route answers 404. A palette entry that 404s is worse than no entry.
   const allowed = (c) => (!c.adminOnly || isAdmin) && (!c.personalOnly || mode === 'database');
   return {
-    steps: STEPS.filter(allowed),
+    // The travel desk can only pay vendor bills; every other step would be
+    // refused by the server (F1-12).
+    steps: STEPS.filter(allowed).filter((c) => !isHr || c.hr),
     jumps: JUMPS.filter(allowed),
   };
 }
@@ -286,6 +305,7 @@ export function bodyFor(step, record, values) {
   const typed = {};
   for (const [key, value] of Object.entries(values)) {
     if (value === '' || value === null || value === undefined) continue;
+    if (key === 'portal_action_id') { typed[key] = Number(value); continue; }
     typed[key] = value;
   }
   return { ...typed, ...(step.body ? step.body(record, values) : {}) };

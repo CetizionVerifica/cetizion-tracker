@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Alert, Badge, Card, DataTable, Empty, Field, Input, Modal, Select, useToast } from './ui.jsx';
-import { Button } from './ui/button';
+import { AlertCircle, Check, Info, Mail, TriangleAlert } from 'lucide-react';
+import { DataTable, Field, Modal, useToast } from './ui.jsx';
 import { EmailThreadDialog } from './EmailThread.jsx';
 import { RegisterPoDialog } from './RegisterPoDialog.jsx';
 import { RecordInvoiceDialog } from './actions.jsx';
@@ -15,8 +15,6 @@ import { date, money } from '../lib/format.js';
  * Each item can be opened, registered or recorded by hand from a fresh read
  * of the email, or dismissed.
  */
-
-const ROW_BUTTON = 'h-7 px-3 text-[12.5px]';
 
 export const PO_REASONS = {
   no_match: 'No quotation matches it',
@@ -73,14 +71,86 @@ export function useReviewCount(path) {
   return data?.data ? data.data.length : undefined;
 }
 
-function OpenEmail({ threadId }) {
+function OpenEmail({ threadId, phone }) {
   const [open, setOpen] = useState(false);
   if (!threadId) return null;
   return (
     <>
-      <Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setOpen(true)}>Open email</Button>
+      <button type="button" className={phone ? 'mg-btn' : 'mg-btn mg-btn--ghost mg-btn--sm'} onClick={() => setOpen(true)}>
+        <Mail className="size-4" strokeWidth={1.8} aria-hidden="true" />Open email
+      </button>
       {open && <EmailThreadDialog threadId={threadId} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** "Why it needs a look", in the wait tone, with the reader's note and where it came from. */
+function Why({ reasons, row }) {
+  return (
+    <>
+      <span className="app-why" style={{ display: 'block' }}>{reasons[row.review_reason] || row.review_reason}</span>
+      {row.review_note && <span className="sub">{row.review_note}</span>}
+      {row.mode === 'history' && <span className="sub is-info">from past mail</span>}
+    </>
+  );
+}
+
+/**
+ * A review queue as one strong-glass panel: the title and what to do, then
+ * the table (phone rows under 768px), or its loading, failed or empty state.
+ */
+function Queue({ id, title, hint, label, rows, loading, error, onRetry, columns, phone, emptyText }) {
+  return (
+    <section className="mg-glass mg-glass--strong app-ib-panel" data-a="rise" aria-labelledby={id}>
+      <div className="app-ib-panel__head">
+        <div className="app-ib-panel__titles"><h2 className="mg-panel__title" id={id}>{title}</h2><p className="mg-panel__hint">{hint}</p></div>
+      </div>
+      {error ? (
+        <div style={{ padding: '0 22px 20px' }}>
+          <div className="mg-banner mg-banner--late" role="alert">
+            <AlertCircle strokeWidth={1.8} aria-hidden="true" />
+            <div className="mg-banner__body"><strong>Couldn’t load the {label.toLowerCase()}.</strong>{error}. Nothing was registered or dismissed.</div>
+            <button type="button" className="mg-btn mg-btn--sm" onClick={onRetry}>Try again</button>
+          </div>
+        </div>
+      ) : loading ? (
+        <div className="mg-panel" aria-busy="true" aria-label={`Loading the ${label.toLowerCase()}`} style={{ paddingTop: 0 }}>
+          <div className="mg-skel" style={{ height: 64 }} /><div className="mg-skel" style={{ height: 64 }} /><div className="mg-skel" style={{ height: 64, width: '84%' }} />
+        </div>
+      ) : (
+        <DataTable
+          rows={rows}
+          label={label}
+          columns={columns}
+          phone={phone}
+          empty={(
+            <div className="mg-empty">
+              <span className="mg-empty__mark"><Check className="size-6" strokeWidth={1.8} aria-hidden="true" /></span>
+              <h3 className="mg-empty__title">Nothing to review</h3>
+              <p className="mg-empty__text" style={{ maxWidth: '56ch' }}>{emptyText}</p>
+            </div>
+          )}
+        />
+      )}
+    </section>
+  );
+}
+
+/** The facts a review dialog is about, on the track: what was read, and why it is here. */
+function Facts({ items }) {
+  return (
+    <div className="app-ib-facts">
+      {items.filter(Boolean).map(([k, v]) => <span key={k}><span className="mg-label">{k}</span>{v}</span>)}
+    </div>
+  );
+}
+
+function Banner({ tone, icon: Icon = Info, children, role = 'note' }) {
+  return (
+    <div className={`mg-banner${tone ? ` mg-banner--${tone}` : ''}`} role={role}>
+      <Icon strokeWidth={1.8} aria-hidden="true" />
+      <div className="mg-banner__body" style={{ fontSize: 13 }}>{children}</div>
+    </div>
   );
 }
 
@@ -102,43 +172,51 @@ export function PoReviewList() {
     finally { setBusy(null); }
   }
 
+  const acts = (r, phone) => (
+    <>
+      <OpenEmail threadId={r.thread_id} phone={phone} />
+      <button type="button" className={phone ? 'mg-btn mg-btn--primary' : 'mg-btn mg-btn--primary mg-btn--sm'} disabled={busy === r.id} onClick={() => setChoosing(r)}>Register against…</button>
+      <button type="button" className={phone ? 'mg-btn mg-btn--ghost' : 'mg-btn mg-btn--ghost mg-btn--sm'} disabled={busy === r.id} onClick={() => dismiss(r)}>Not a PO</button>
+    </>
+  );
+  const suggestion = (q) => `${q.quotation_no} · ${q.client_name} · ${money(q.total, q.currency)}`;
+
   const columns = [
-    { key: 'received_at', header: 'Received', render: (r) => <>{date(r.received_at)}<div className="small muted">{r.mailbox}</div></> },
-    { key: 'from_email', header: 'From', className: 'small', render: (r) => r.from_email || <span className="muted">—</span> },
+    { key: 'received_at', header: 'Received', className: 'app-nowrap', render: (r) => <>{date(r.received_at)}<span className="sub">{r.mailbox}</span></> },
+    { key: 'from_email', header: 'From', render: (r) => (r.from_email ? <strong style={{ overflowWrap: 'anywhere' }}>{r.from_email}</strong> : <span className="text-muted-foreground">—</span>) },
+    { key: 'review_reason', header: 'Why it needs a look', className: 'app-say', render: (r) => <Why reasons={PO_REASONS} row={r} /> },
     {
-      key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{PO_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
+      key: 'suggested', header: 'Suggested quotation', className: 'app-say',
+      render: (r) => (r.suggested.length ? r.suggested.map((q, i) => (
+        <span key={q.quotation_no} className={i ? 'sub' : undefined} style={i ? undefined : { display: 'block' }}>{suggestion(q)}</span>
+      )) : <span className="text-muted-foreground">none</span>),
     },
-    {
-      key: 'suggested', header: 'Suggested quotation',
-      render: (r) => (r.suggested.length ? r.suggested.map((q) => (
-        <div key={q.quotation_no} className="small"><span className="mono">{q.quotation_no}</span> · {q.client_name} · {money(q.total, q.currency)}</div>
-      )) : <span className="muted small">none</span>),
-    },
-    {
-      key: 'act', header: '', align: 'right',
-      render: (r) => (
-        <div className="table__actions">
-          <OpenEmail threadId={r.thread_id} />
-          <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Register against…</Button>
-          <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => dismiss(r)}>Not a PO</Button>
-        </div>
-      ),
-    },
+    { key: 'act', header: '', render: (r) => acts(r, false) },
   ];
+  const phone = (r) => (
+    <div className="app-rv">
+      <span className="app-rv__top"><strong>{r.from_email || 'Unknown sender'}</strong><span>{date(r.received_at)}</span></span>
+      <span className="app-rv__why">{PO_REASONS[r.review_reason] || r.review_reason}</span>
+      <span className="app-rv__detail">{[r.review_note, r.suggested.length ? `Suggested ${r.suggested.map((q) => q.quotation_no).join(' or ')}` : 'No quotation suggested', r.mode === 'history' ? 'from past mail' : null].filter(Boolean).join(' · ')}</span>
+      <span className="app-rv__acts">{acts(r, true)}</span>
+    </div>
+  );
 
   return (
     <>
-      {error && <Alert tone="danger">{error}</Alert>}
-      <Card flush title="Purchase orders read from email that need a person">
-        <DataTable
-          rows={rows}
-          loading={loading && !data}
-          label="POs to review"
-          columns={columns}
-          empty={<Empty title="Nothing to review" text="POs the email reader could not register safely appear here: no matching quotation, a value off the quotation, an amendment, or a reading it was unsure of." />}
-        />
-      </Card>
+      <Queue
+        id="sec-po-review"
+        title="Purchase orders read from email that need a person"
+        hint="The email reader would not register these on its own. Choose the quotation, or mark it not a PO."
+        label="POs to review"
+        rows={rows}
+        loading={loading && !data}
+        error={error}
+        onRetry={refetch}
+        columns={columns}
+        phone={phone}
+        emptyText="POs the email reader could not register safely appear here: no matching quotation, a value off the quotation, an amendment, or a reading it was unsure of."
+      />
       {choosing && (
         <ChooseQuotation
           row={choosing}
@@ -160,24 +238,27 @@ export function PoReviewList() {
   );
 }
 
-/** Which quotation the PO is for, then a fresh read of the email for the dialog. */
+/** Which quotation the PO is for, then a fresh read of the email for the Register the PO dialog. */
 function ChooseQuotation({ row, onClose, onReady }) {
-  const [choice, setChoice] = useState(row.suggested[0]?.quotation_no || '');
+  const [choice, setChoice] = useState(row.suggested[0]?.quotation_no || '__other__');
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const key = (choice === '__other__' ? typed : choice).trim();
+  const [missing, setMissing] = useState(null);
+  const other = choice === '__other__';
+  const key = (other ? typed : choice).trim();
 
   async function go(e) {
     e.preventDefault();
     if (!key) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setMissing(null);
     try {
       const { data: quotation } = await api.get('quotations', key);
       const { data: read } = await api.action(`/purchase-orders/review/${row.id}/register`);
       onReady({ quotation, prefill: read.prefill, reviewId: row.id, note: read.note });
     } catch (err) {
-      setError(err.status === 404 ? `There is no quotation ${key} you can open` : err.message);
+      if (err.status === 404) setMissing(`There is no quotation ${key} you can open. Check the number, or ask its owner to share the deal with you.`);
+      else setError(err.message);
       setBusy(false);
     }
   }
@@ -187,21 +268,28 @@ function ChooseQuotation({ row, onClose, onReady }) {
       title="Register this PO against…"
       subtitle={`${row.from_email || 'Client'} · received ${date(row.received_at)}`}
       onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="choose-quotation" className="btn btn--primary" disabled={busy || !key}>{busy ? 'Reading the PO again…' : 'Continue'}</button></>}
+      footer={<>
+        <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="submit" form="choose-quotation" className="mg-btn mg-btn--primary" disabled={busy || !key} aria-busy={busy || undefined}>{busy ? 'Reading the PO again…' : 'Continue'}</button>
+      </>}
     >
-      <form id="choose-quotation" onSubmit={go} className="stack">
-        {error && <Alert tone="danger">{error}</Alert>}
-        <Field label="Quotation" hint="The PO is read again from the email and the Register PO dialog is filled in; nothing is saved until you register it.">
-          <Select
-            value={choice}
-            placeholder={null}
-            options={[...row.suggested.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} · ${q.client_name} · ${money(q.total, q.currency)}` })), { value: '__other__', label: 'Another quotation…' }]}
-            onChange={(e) => setChoice(e.target.value)}
-          />
+      <form id="choose-quotation" onSubmit={go} className="flex flex-col gap-3.5">
+        <Facts items={[['From', row.from_email || '—'], ['Why it is here', PO_REASONS[row.review_reason] || row.review_reason]]} />
+        {error && <Banner tone="late" icon={AlertCircle} role="alert">{error}</Banner>}
+        <Field label="Quotation" hint="The PO is read again from the email and the Register the PO form is filled in. Nothing is saved until you register it.">
+          <span className="mg-select-wrap">
+            <select className="mg-select" value={choice} onChange={(e) => { setChoice(e.target.value); setMissing(null); }}>
+              {row.suggested.map((q) => <option key={q.quotation_no} value={q.quotation_no}>{`${q.quotation_no} · ${q.client_name} · ${money(q.total, q.currency)}`}</option>)}
+              <option value="__other__">Another quotation…</option>
+            </select>
+          </span>
         </Field>
-        {choice === '__other__' && (
-          <Field label="Quotation number"><Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="CTZ/QT/2026/045" autoFocus /></Field>
+        {other && (
+          <Field label="Quotation number" required error={missing}>
+            <input className="mg-input" value={typed} onChange={(e) => { setTyped(e.target.value); setMissing(null); }} placeholder="CTZ/QT/2026/045" autoFocus aria-invalid={missing ? true : undefined} />
+          </Field>
         )}
+        {!other && missing && <Banner tone="late" icon={AlertCircle} role="alert">{missing}</Banner>}
       </form>
     </Modal>
   );
@@ -235,40 +323,48 @@ export function InvoiceReviewList() {
     finally { setBusy(null); }
   }
 
+  const acts = (r, phone) => (
+    <>
+      <OpenEmail threadId={r.thread_id} phone={phone} />
+      {r.split_suggestion && <button type="button" className={phone ? 'mg-btn' : 'mg-btn mg-btn--sm'} disabled={busy === r.id} onClick={() => split(r)} title={`The invoice covers ${r.split_suggestion.percent}% of a PO with one 100% stage: this splits that stage in two, then records the invoice against the ${r.split_suggestion.percent}% share`}>Split {r.split_suggestion.percent}% and record</button>}
+      {r.split_suggestion && <span className="basis-full text-[12px] text-muted-foreground" style={{ whiteSpace: 'normal' }}>Splits the PO's one 100% stage into {r.split_suggestion.percent}% (this invoice) and {100 - Number(r.split_suggestion.percent)}% still to bill.</span>}
+      <button type="button" className={phone ? 'mg-btn mg-btn--primary' : 'mg-btn mg-btn--primary mg-btn--sm'} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</button>
+      <button type="button" className={phone ? 'mg-btn mg-btn--ghost' : 'mg-btn mg-btn--ghost mg-btn--sm'} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</button>
+    </>
+  );
+
   const columns = [
-    { key: 'sent_at', header: 'Sent', render: (r) => <>{date(r.sent_at)}<div className="small muted">{r.mailbox}</div></> },
-    { key: 'to_emails', header: 'To', className: 'small', render: (r) => (r.to_emails || []).join(', ') || <span className="muted">—</span> },
-    { key: 'invoice_no', header: 'Invoice', className: 'mono small', render: (r) => r.invoice_no || <span className="muted">not read</span> },
-    { key: 'po_number', header: 'PO', className: 'mono small', render: (r) => r.po_number || <span className="muted">—</span> },
-    {
-      key: 'review_reason', header: 'Why it needs a look',
-      render: (r) => <>{INVOICE_REASONS[r.review_reason] || r.review_reason}{r.review_note && <div className="small muted">{r.review_note}</div>}{r.mode === 'history' && <div className="small muted">from past mail</div>}</>,
-    },
-    {
-      key: 'act', header: '', align: 'right',
-      render: (r) => (
-        <div className="table__actions">
-          <OpenEmail threadId={r.thread_id} />
-          {r.split_suggestion && <Button size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => split(r)}>Split {r.split_suggestion.percent}% and record</Button>}
-          <Button size="sm" variant={r.split_suggestion ? 'secondary' : undefined} className={ROW_BUTTON} disabled={busy === r.id} onClick={() => setChoosing(r)}>Record against…</Button>
-          <Button variant="secondary" size="sm" className={ROW_BUTTON} disabled={busy === r.id} onClick={() => dismiss(r)}>Not an invoice</Button>
-        </div>
-      ),
-    },
+    { key: 'sent_at', header: 'Sent', className: 'app-nowrap', render: (r) => <>{date(r.sent_at)}<span className="sub">{r.mailbox}</span></> },
+    { key: 'to_emails', header: 'To', render: (r) => ((r.to_emails || []).length ? <span style={{ overflowWrap: 'anywhere' }}>{r.to_emails.join(', ')}</span> : <span className="text-muted-foreground">—</span>) },
+    { key: 'invoice_no', header: 'Invoice', className: 'app-nowrap', render: (r) => (r.invoice_no ? <strong className="mg-num">{r.invoice_no}</strong> : <span className="text-muted-foreground">not read</span>) },
+    { key: 'po_number', header: 'PO', className: 'app-nowrap', render: (r) => (r.po_number ? <span className="mg-num">{r.po_number}</span> : <span className="text-muted-foreground">—</span>) },
+    { key: 'review_reason', header: 'Why it needs a look', className: 'app-say', render: (r) => <Why reasons={INVOICE_REASONS} row={r} /> },
+    { key: 'act', header: '', render: (r) => acts(r, false) },
   ];
+  const phone = (r) => (
+    <div className="app-rv">
+      <span className="app-rv__top"><strong>{(r.to_emails || [])[0] || 'Unknown client'}</strong><span>{date(r.sent_at)}</span></span>
+      <span className="app-rv__why">{INVOICE_REASONS[r.review_reason] || r.review_reason}</span>
+      <span className="app-rv__detail">{[r.invoice_no || 'Invoice number not read', r.po_number ? `PO ${r.po_number}` : 'no PO', r.review_note, r.mode === 'history' ? 'from past mail' : null].filter(Boolean).join(' · ')}</span>
+      <span className="app-rv__acts">{acts(r, true)}</span>
+    </div>
+  );
 
   return (
     <>
-      {error && <Alert tone="danger">{error}</Alert>}
-      <Card flush title="Invoices we emailed that need a person">
-        <DataTable
-          rows={rows}
-          loading={loading && !data}
-          label="Invoices to review"
-          columns={columns}
-          empty={<Empty title="Nothing to review" text="Invoices the email reader could not record safely appear here: an amount that is not a stage, a number already in use, no PO, or a credit note." />}
-        />
-      </Card>
+      <Queue
+        id="sec-invoice-review"
+        title="Invoices we emailed that need a person"
+        hint="The email reader would not record these on its own. Choose the stage, split one, or mark it not an invoice."
+        label="Invoices to review"
+        rows={rows}
+        loading={loading && !data}
+        error={error}
+        onRetry={refetch}
+        columns={columns}
+        phone={phone}
+        emptyText="Invoices the email reader could not record safely appear here: an amount that is not a stage, a number already in use, no PO, or a credit note."
+      />
       {choosing && (
         <ChooseStage
           row={choosing}
@@ -302,6 +398,7 @@ function ChooseStage({ row, onClose, onReady }) {
   const [poNumber, setPoNumber] = useState(row.po_number || '');
   const [stages, setStages] = useState(row.po_number ? row.stages : null);
   const open = (stages || []).filter((s) => !s.invoice_no);
+  const invoiced = (stages || []).filter((s) => s.invoice_no);
 
   async function loadPo() {
     const { data } = await api.raw(`/purchase-orders/${encodeURIComponent(poNumber.trim())}/full`);
@@ -343,34 +440,52 @@ function ChooseStage({ row, onClose, onReady }) {
       title="Record this invoice against…"
       subtitle={`${row.invoice_no || 'Invoice'}${row.po_number ? ` · PO ${row.po_number}` : ''}`}
       onClose={onClose}
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="choose-stage" className="btn btn--primary" disabled={busy || (!read && !poNumber.trim()) || (read && !stageId)}>{busy ? 'Reading the invoice again…' : read ? 'Continue' : 'Read the invoice'}</button></>}
+      footer={<>
+        <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="submit" form="choose-stage" className="mg-btn mg-btn--primary" disabled={busy || (!read && !poNumber.trim()) || (read && !stageId)} aria-busy={busy || undefined}>
+          {busy ? 'Reading the invoice again…' : read ? 'Continue' : 'Read the invoice'}
+        </button>
+      </>}
     >
-      <form id="choose-stage" onSubmit={go} className="stack">
-        {error && <Alert tone="danger">{error}</Alert>}
-        {read?.note && <Alert tone="warning">{read.note}</Alert>}
-        {!read && <Alert>The invoice is read again from the email, and the invoice dialog is filled in. Nothing is saved until you record it.</Alert>}
+      <form id="choose-stage" onSubmit={go} className="flex flex-col gap-3.5">
+        <Facts items={[['Invoice', row.invoice_no || 'not read'], row.po_number && ['PO', row.po_number], ['Why it is here', INVOICE_REASONS[row.review_reason] || row.review_reason]]} />
+        {error && <Banner tone="late" icon={AlertCircle} role="alert">{error}</Banner>}
+        {read?.note && <Banner tone="wait" icon={TriangleAlert}>{read.note}</Banner>}
+        {!read && <Banner>The invoice is read again from the email, and the invoice dialog is filled in. Nothing is saved until you record it.</Banner>}
         {!read && !row.po_number && (
           <Field label="Purchase order" hint="This invoice was matched to no PO: name the one it bills. Register the PO first if it is not in the tracker.">
-            <Input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="4500012345" autoFocus />
+            <input className="mg-input" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="4500012345" autoFocus />
           </Field>
         )}
         {read && (
           <>
-            {total != null && !open.some(fits) && (
-              <Alert tone="warning">
-                The invoice is for {money(total, read.prefill.currency)}, which is none of this PO's open stages.
-                Re-split the stages on the <Link to={`/purchase-orders/${encodeURIComponent(poNumber)}`}>PO's page</Link> first if the invoice covers a different share.
-              </Alert>
+            {total != null && (
+              <Banner>
+                The invoice was read again from the email, so what you record matches what the client was sent: <strong style={{ display: 'inline' }}>{money(total, read.prefill.currency)}</strong>.
+              </Banner>
             )}
-            <Field label="Stage">
-              <Select
-                value={stageId}
-                placeholder={null}
-                options={open.map((s) => ({ value: String(s.id), label: `${s.stage_no}. ${s.stage_name} · ${money(s.stage_amount, s.currency)}${fits(s) ? ' · matches' : ''}` }))}
-                onChange={(e) => setStageId(e.target.value)}
-              />
-            </Field>
-            {!open.length && <Badge tone="warning">Every stage of this PO has an invoice</Badge>}
+            {total != null && open.length > 0 && !open.some(fits) && (
+              <Banner tone="wait" icon={TriangleAlert}>
+                {money(total, read.prefill.currency)} fits no open stage of this PO. Re-split the stages on the{' '}
+                <Link className="app-link" to={`/purchase-orders/${encodeURIComponent(poNumber)}`}>PO’s page</Link> first if the invoice covers a different share.
+              </Banner>
+            )}
+            {open.length ? (
+              <Field label="Stage">
+                <span className="mg-select-wrap">
+                  <select className="mg-select" value={stageId} onChange={(e) => setStageId(e.target.value)}>
+                    {open.map((s) => <option key={s.id} value={String(s.id)}>{`${s.stage_no}. ${s.stage_name} · ${money(s.stage_amount, s.currency)}${fits(s) ? ' · matches' : ''}`}</option>)}
+                    {invoiced.map((s) => <option key={s.id} value={String(s.id)} disabled>{`${s.stage_no}. ${s.stage_name} · ${money(s.stage_amount, s.currency)} · already invoiced`}</option>)}
+                  </select>
+                </span>
+              </Field>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <span className="text-[12px] font-medium text-secondary-foreground">Stage</span>
+                <span className="mg-badge mg-badge--wait" style={{ alignSelf: 'flex-start' }}>Every stage of this PO has an invoice</span>
+                <span className="text-[12px] text-muted-foreground">Add a stage on the PO’s page, or mark this one not an invoice.</span>
+              </div>
+            )}
           </>
         )}
       </form>
