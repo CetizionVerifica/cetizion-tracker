@@ -131,7 +131,7 @@
   --destructive-foreground: #ffffff;
 
   --border: #e2e8f0;             /* rule */
-  --input: #8a97a8;              /* control border, 3:1 on white */
+  --input: #7c889a;              /* control border, 3.6:1 on white */
   --ring: #1d5fa8;
 
   /* The four states. Each is 4.5:1 or better as text on white, so a chip
@@ -191,7 +191,7 @@
   --destructive-foreground: #0b1220;
 
   --border: #1e293b;
-  --input: #475569;
+  --input: #64748b;              /* control border, 3.6:1 on the card */
   --ring: #60a5fa;
 
   --late: #fb7185;

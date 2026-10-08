@@ -34,7 +34,7 @@ All colours live as CSS variables in `src/styles/globals.css` (`:root` for light
 | `secondary-text` | `#334155` | `#cbd5e1` | Body copy that is not the main line |
 | `muted-foreground` | `#475569` | `#94a3b8` | Meta, captions, table headers (never the only carrier of meaning) |
 | `border` | `#e2e8f0` | `#1e293b` | Rules, card borders |
-| `input` / `border-strong` | `#8a97a8` / `#cbd5e1` | `#475569` / `#334155` | Control borders (3:1) / stronger rules |
+| `input` / `border-strong` | `#7c889a` / `#cbd5e1` | `#64748b` / `#334155` | Control borders (3:1) / stronger rules |
 | `primary` | `#1d5fa8` | `#60a5fa` | **The only action colour**: primary buttons, links, active nav, focus ring |
 | `secondary`, `muted`, `accent` | slate tints | slate shades | Secondary button fill, sunken wells, hover surface |
 | `sidebar*` | navy `#0b1f33` | navy `#08172a` | The app sidebar, in both themes |
@@ -176,3 +176,9 @@ Button variants: `default` (primary, once per view), `outline` (secondary), `gho
 - Checked in light and dark, at 1440 and 390 wide.
 - No new hex values or Tailwind palette colours in components (`grep -rnE "#[0-9a-fA-F]{6}" src --include=*.jsx`).
 - Screens you changed follow §2 and, for records, §4.
+
+`test/uiConsistency.test.js` checks the parts of this file a machine can: no hex or
+Tailwind palette colours in components, every token defined in both themes, the
+contrast of every text/ground pair, and no company name in the app. If it fails,
+fix the screen or the token; add to its exceptions only for something that is
+deliberately not themed (a third-party logo, an email body, the PDF preview).

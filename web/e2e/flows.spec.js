@@ -59,8 +59,28 @@ async function palette(page, type) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  // Six record types, not thirty screens.
   await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
+});
+
+/**
+ * The sidebar is grouped by the process (web/CLAUDE.md §3): every group is
+ * there in order, a folded group stays folded after a reload, and the app
+ * carries no company name.
+ */
+test('the sidebar groups follow the process and remember being folded', async ({ page }) => {
+  await signIn(page);
+  const nav = page.locator('nav');
+  const groups = nav.getByRole('button', { name: /^(Sell|Deliver|Money|Travel|Insights)$/ });
+  await expect(groups).toHaveText(['Sell', 'Deliver', 'Money', 'Travel', 'Insights']);
+  await expect(page.getByText('Sales Tracker', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
+
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeHidden();
+  await page.reload();
+  await expect(nav.getByRole('button', { name: 'Sell' })).toHaveAttribute('aria-expanded', 'false');
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeVisible();
 });
 
 test('the palette finds a record by half its client name', async ({ page }) => {
