@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Modal, Field, Input, Select, Textarea, Combo, Alert } from './ui.jsx';
+import { Fragment, useEffect, useState } from 'react';
+import { CircleAlert } from 'lucide-react';
+import { Modal, Field, Input, Select, Textarea, Combo, Alert, FileDrop } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { useDocumentUploads } from '../lib/hooks.js';
 import { fileSize } from '../lib/format.js';
@@ -37,6 +38,8 @@ export function RecordForm({
   onSaved,
   intro,
   submitLabel,
+  size,
+  extraAction,
 }) {
   const toast = useToast();
   const isEdit = Boolean(record?.id);
@@ -58,6 +61,9 @@ export function RecordForm({
 
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState(null);
+  // DialogErrors: a refused field says so under itself; any other failure
+  // (network, permission) leaves only the banner, and the button offers again.
+  const [fieldFailure, setFieldFailure] = useState(false);
   const [busy, setBusy] = useState(false);
   // Files chosen in document fields, and what each became once uploaded.
   const [picked, setPicked] = useState({});
@@ -122,6 +128,7 @@ export function RecordForm({
     event.preventDefault();
     setBusy(true);
     setFormError(null);
+    setFieldFailure(false);
     setErrors({});
 
     const payload = {};
@@ -151,9 +158,11 @@ export function RecordForm({
     } catch (err) {
       if (err.fields) {
         setErrors(err.fields);
-        setFormError('Some fields need attention.');
+        const n = Object.keys(err.fields).length;
+        setFormError(`${n === 1 ? 'One field needs' : `${n} fields need`} a look. Nothing was saved.`);
+        setFieldFailure(true);
       } else {
-        setFormError(err.message);
+        setFormError(err.message || 'Nothing was saved.');
       }
       setBusy(false);
     }
@@ -164,22 +173,31 @@ export function RecordForm({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
+      size={size}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" form="record-form" className="btn btn--primary" disabled={busy}>
-            {busy ? 'Saving…' : submitLabel || (isEdit ? 'Save changes' : 'Create')}
+          {extraAction}
+          <button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" form="record-form" className="mg-btn mg-btn--primary" disabled={busy} aria-busy={busy || undefined}>
+            {busy ? 'Saving…' : formError && !fieldFailure ? 'Try again' : submitLabel || (isEdit ? 'Save changes' : 'Create')}
           </button>
         </>
       }
     >
-      <form id="record-form" onSubmit={submit} className="stack">
+      <form id="record-form" onSubmit={submit} className="stack" noValidate={false}>
+        {formError && (
+          <div className="mg-banner mg-banner--late" role="alert" tabIndex={-1} ref={(el) => el?.focus()}>
+            <CircleAlert aria-hidden="true" />
+            <div className="mg-banner__body"><strong>Couldn't save {isEdit ? 'the changes' : 'this'}.</strong>{formError}</div>
+          </div>
+        )}
         {intro && <Alert>{intro}</Alert>}
-        {formError && <Alert tone="danger">{formError}</Alert>}
 
-        <div className="form-grid">
-          {fields.map((field) => (
-            <div key={field.name} className={field.span === 'all' ? 'span-all' : field.span === 2 ? 'span-2' : ''}>
+        <div className={size === 'lg' ? 'form-grid app-form3' : 'form-grid'}>
+          {fields.map((field, i) => field.type === 'hidden' ? null : (
+            <Fragment key={field.name}>
+            {field.group && field.group !== fields[i - 1]?.group && <h3 className="app-formgroup">{field.group}</h3>}
+            <div className={field.span === 'all' ? 'span-all' : field.span === 2 ? 'span-2' : ''}>
               <FormField
                 field={resolveOptions(field, values)}
                 value={values[field.name]}
@@ -193,6 +211,7 @@ export function RecordForm({
                 isEdit={isEdit}
               />
             </div>
+            </Fragment>
           ))}
         </div>
       </form>
@@ -316,7 +335,7 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
   }
 
   return (
-    <Field label={field.label} required={field.required} hint={hint} error={error}>
+    <Field label={field.label} required={field.required} hint={hint} error={error} as={field.type === 'document' ? 'div' : 'label'}>
       {control}
       {warning && !error && (
         <span className="field__hint" role="status" style={{ color: 'var(--wait)' }}>{warning}</span>
@@ -325,13 +344,17 @@ function FormField({ field, value, error, warning, onChange, record, file, onFil
   );
 }
 
-/** A file picker that also shows, and links to, the document already attached. */
+/**
+ * The system's drop zone (FilePicker), which also shows the file chosen and
+ * links to the one already attached (B-11). A file over the limit is refused
+ * before upload and says so under the field.
+ */
 function DocumentInput({ current, file, onFile, error, disabled }) {
   return (
     <>
-      <input
-        type="file"
-        className={`input ${error ? 'has-error' : ''}`}
+      <FileDrop
+        text={file ? `${file.name} · ${fileSize(file.size)}` : current ? 'Drop a new file here to replace it' : 'Drop a file here'}
+        error={error}
         disabled={disabled}
         onChange={(e) => {
           if (!onFile(e.target.files?.[0] || null)) e.target.value = '';
@@ -339,7 +362,7 @@ function DocumentInput({ current, file, onFile, error, disabled }) {
       />
       {file ? (
         <span className="field__hint">
-          {file.name} · {fileSize(file.size)}
+          Chosen: {file.name} · {fileSize(file.size)}
           {current && ' · replaces the current document'}
         </span>
       ) : current ? (

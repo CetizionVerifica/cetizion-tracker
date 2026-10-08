@@ -15,9 +15,6 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog.tsx';
 import { Card as UiCard, CardContent, CardHeader } from '@/components/ui/card.tsx';
-import {
-  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table.tsx';
 
 /**
  * These keep the names and props every page already passes, and render the
@@ -190,82 +187,62 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
  * cell would silently sort by something else. `label` names the table for
  * anybody who cannot see it sitting under a heading.
  */
-export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false }) {
+export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false, phone }) {
   const wide = useMediaQuery('(min-width: 768px)');
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 
   // One or the other, never both: rendering the rows twice put every row
-  // in the document twice and left the first match hidden.
+  // in the document twice and left the first match hidden. A page that
+  // draws its own phone row (`phone(row)`) gets the system's mg-rows.
+  if (!wide && phone) return <div className="mg-rows">{rows.map((row, i) => <PhoneSlot key={row.id ?? i}>{phone(row)}</PhoneSlot>)}</div>;
   if (!wide) return <CardList columns={columns} rows={rows} onRowClick={onRowClick} rowClassName={rowClassName} />;
 
   const [sortKey, sortDir] = String(sort || '').split(':');
 
+  /*
+   * The system's mg-table. `position: sticky` resolves against the nearest
+   * scrolling ancestor, so full-page lists opt in to a bounded wrapper
+   * (`stickyHeader`): the table gets the height and the page stops
+   * scrolling, one scroll region rather than two fighting. A table inside a
+   * record page does not, because there it is one section among several.
+   */
   return (
-      /**
-       * `position: sticky` resolves against the nearest scrolling
-       * ancestor, and every one of these tables is wider than its box, so
-       * the horizontal wrapper is always that ancestor. A sticky header
-       * therefore does nothing unless this wrapper scrolls vertically too
-       * — which is why the same `position: sticky` in the old stylesheet
-       * never worked either.
-       *
-       * Full-page lists opt in: the table gets the height and the page
-       * stops scrolling, so there is one scroll region rather than two
-       * fighting. A table embedded in a record page does not, because
-       * there it is one section among several.
-       */
-      <div className="w-full">
-      <Table containerClassName={cn(stickyHeader && 'max-h-[calc(100dvh_-_17rem)] overflow-y-auto')}>
+    <div className={cn('mg-tablewrap', stickyHeader && 'is-sticky')}>
+      <table className="mg-table app-dtable">
         {label && <caption className="sr-only">{label}</caption>}
-        <TableHeader>
-          <TableRow className="border-border hover:bg-transparent">
+        <thead>
+          <tr>
             {columns.map((col) => {
               const sortable = onSort && col.sortBy;
               const active = sortable && sortKey === col.sortBy;
               const next = active && sortDir === 'asc' ? 'desc' : 'asc';
               return (
-              <TableHead
-                key={col.key}
-                scope="col"
-                // Sticky, because a list of sixty rows loses its headers
-                // on the first scroll and every column becomes a guess.
-                aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : sortable ? 'none' : undefined}
-                className={cn(
-                  'h-row whitespace-nowrap bg-card px-3 text-[12px] font-semibold text-muted-foreground',
-                  stickyHeader && 'sticky top-0 z-10',
-                  col.align === 'right' && 'num text-right'
-                )}
-                style={col.width ? { width: col.width } : undefined}
-              >
-                {sortable ? (
-                  <button
-                    type="button"
-                    onClick={() => onSort(`${col.sortBy}:${next}`)}
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-[4px] hover:text-foreground',
-                      active && 'text-foreground'
-                    )}
-                  >
-                    {col.header}
-                    <span aria-hidden="true" className={cn('text-[10px]', !active && 'opacity-0 group-hover:opacity-60')}>
-                      {active ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
-                    </span>
-                  </button>
-                ) : col.header}
-              </TableHead>
+                <th
+                  key={col.key}
+                  scope="col"
+                  aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : undefined}
+                  aria-label={col.header ? undefined : 'Actions'}
+                  className={cn(col.align === 'right' && 'num', !col.header && 'actions')}
+                  style={col.width ? { width: col.width } : undefined}
+                >
+                  {sortable ? (
+                    <button type="button" data-active={active || undefined} onClick={() => onSort(`${col.sortBy}:${next}`)} title={`Sort by ${col.header}`}>
+                      {col.header}
+                    </button>
+                  ) : col.header}
+                </th>
               );
             })}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
+          </tr>
+        </thead>
+        <tbody>
           {rows.map((row, i) => (
-            <TableRow
+            <tr
               key={row.id ?? i}
               // A row that opens a record has to be openable without a
               // pointer. `tabIndex` and Enter give it that without a
-              // wrapper element inside the cell, which shrink-wrapped the
-              // identifier column and broke references across three lines.
+              // wrapper element inside the cell.
               tabIndex={onRowClick ? 0 : undefined}
               aria-label={onRowClick ? `Open ${String(row[columns[0].key] ?? 'this record')}` : undefined}
               onKeyDown={onRowClick ? (e) => {
@@ -274,34 +251,32 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
                 e.preventDefault();
                 onRowClick(row);
               } : undefined}
-              className={cn(
-                'border-border',
-                onRowClick && 'cursor-pointer',
-                rowClassName ? rowClassName(row) || '' : ''
-              )}
+              className={cn(onRowClick && 'is-clickable', rowClassName ? rowClassName(row) || '' : '')}
               onClick={onRowClick ? (e) => {
-                if (e.target.closest('button, a, input, select')) return;
+                if (e.target.closest('button, a, input, select, label')) return;
                 onRowClick(row);
               } : undefined}
             >
               {columns.map((col) => (
                 // Cells wrap rather than truncate: a client's name is the
-                // thing you came to read.
-                <TableCell
+                // thing you came to read. Sentence columns keep a width.
+                <td
                   key={col.key}
-                  className={cn('px-3 py-2 align-top text-[13px] whitespace-normal', col.align === 'right' && 'num text-right', col.className)}
+                  className={cn(col.align === 'right' && 'num', !col.header && 'actions', col.className)}
                 >
-                  {col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>}
-                </TableCell>
+                  {col.min ? <div style={{ minWidth: col.min }}>{cellOf(col, row)}</div> : cellOf(col, row)}
+                </td>
               ))}
-            </TableRow>
+            </tr>
           ))}
-        </TableBody>
-        {footer && <TableFooter className="bg-muted/40"><TableRow className="border-border">{footer}</TableRow></TableFooter>}
-      </Table>
-      </div>
+        </tbody>
+        {footer && <tfoot><tr>{footer}</tr></tfoot>}
+      </table>
+    </div>
   );
 }
+const PhoneSlot = ({ children }) => children;
+const cellOf = (col, row) => (col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>);
 
 function TableSkeleton() {
   return (
@@ -355,9 +330,9 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
 
 /* ---------------------------------------------------------------- fields */
 
-export function Field({ label, required, hint, error, children }) {
+export function Field({ label, required, hint, error, children, as: Tag = 'label' }) {
   return (
-    <label className="flex flex-col gap-1.5">
+    <Tag className={cn('flex flex-col gap-1.5', error && 'is-error')}>
       <span className="text-[12px] font-medium text-secondary-foreground">
         {label}
         {required && <span className="ml-0.5 text-late" aria-hidden="true">*</span>}
@@ -368,7 +343,7 @@ export function Field({ label, required, hint, error, children }) {
       ) : hint ? (
         <span className="text-[12px] text-muted-foreground">{hint}</span>
       ) : null}
-    </label>
+    </Tag>
   );
 }
 
@@ -609,7 +584,7 @@ export function ToastProvider({ children }) {
  * action whose own message says it can be run twice — a red button and a
  * calm sentence disagree, and the button is the one people read.
  */
-export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfirm, onClose, busy, tone = 'danger' }) {
+export function ConfirmDialog({ title, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', children }) {
   return (
     <Modal
       title={title}
@@ -618,7 +593,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfi
       footer={
         <>
           {/* On a phone the two stack, full width and 44px tall (the dialog is a bottom sheet there). */}
-          <Button variant="outline" size="sm" onClick={onClose} disabled={busy} className="max-sm:h-11 max-sm:w-full">Cancel</Button>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy} className="max-sm:h-11 max-sm:w-full">{cancelLabel}</Button>
           <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy} aria-busy={busy || undefined} className="max-sm:h-11 max-sm:w-full">
             {busy ? 'Working…' : confirmLabel}
           </Button>
@@ -626,6 +601,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfi
       }
     >
       <p className="measure m-0 text-[13px] text-secondary-foreground">{message}</p>
+      {children}
     </Modal>
   );
 }

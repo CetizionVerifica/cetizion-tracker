@@ -91,7 +91,7 @@ for (const role of ['sales', 'admin']) {
       );
       const betaRow = page.getByRole('row', { name: /E2E Beta Services/ });
       await expect(betaRow).toBeVisible();
-      await expectCount(betaRow.getByRole('button', { name: '✕' }), 'Company delete');
+      await expectCount(betaRow.getByRole('button', { name: 'Delete' }), 'Company delete');
     });
 
     // ---------------------------------------------------------- 2 and 8
@@ -139,14 +139,14 @@ for (const role of ['sales', 'admin']) {
     test('Purchase orders: row delete', async ({ page }) => {
       await go(page, '/purchase-orders', page.getByRole('cell', { name: 'PO-E2E-001' }));
       const poRow = page.getByRole('row', { name: /PO-E2E-001/ });
-      await expectCount(poRow.getByRole('button', { name: '✕' }), 'Purchase order delete');
+      await expectCount(poRow.getByRole('button', { name: 'Delete' }), 'Purchase order delete');
     });
 
     // --------------------------------------------------------------- 10
     test('Payment stages: row delete', async ({ page }) => {
       await go(page, '/payment-stages', page.getByRole('cell', { name: 'PO-E2E-001' }).first());
       const stageRow = page.getByRole('row', { name: /PO-E2E-001/ }).first();
-      await expectCount(stageRow.getByRole('button', { name: '✕' }), 'Payment stage delete');
+      await expectCount(stageRow.getByRole('button', { name: 'Delete' }), 'Payment stage delete');
     });
 
     // --------------------------------------------------------- 11 and 12
