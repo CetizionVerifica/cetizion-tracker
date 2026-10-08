@@ -49,8 +49,8 @@ html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: tra
 @property --my { syntax: "<percentage>"; inherits: true; initial-value: 10%; }
 .mg-hero { transition: --mx 260ms var(--mg-out), --my 260ms var(--mg-out); }
 .mg-hero.is-placing { transition: none; }
-.mg-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: radial-gradient(380px circle at var(--mx) var(--my), rgba(255,210,170,.16), transparent 60%); opacity: 0; transition: opacity 420ms var(--mg-out); }
-.mg-hero.is-lit::before { opacity: 1; }
+.mg-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: radial-gradient(380px circle at var(--mx) var(--my), rgba(255,210,170,.16), transparent 60%); opacity: 0; transition: opacity 900ms cubic-bezier(.45, 0, .25, 1); }
+.mg-hero.is-lit::before { opacity: 1; transition: opacity 420ms var(--mg-out); }
 .mg-hero__label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--on-hero-2); }
 .mg-hero__figure { font-size: 62px; line-height: 1; font-weight: 700; letter-spacing: -.045em; margin: 6px 0 4px; }
 .mg-hero__sub { font-size: 13.5px; color: var(--on-hero-2); }
