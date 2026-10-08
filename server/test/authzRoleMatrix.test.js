@@ -809,4 +809,76 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       );
     });
   });
+
+  // ------------------------------------- which invoice billed a trip (#214)
+
+  describe('the trip billing link is the PO side\'s, not the travel desk\'s', () => {
+    let tripId;
+    let stageId;
+
+    /**
+     * Set up through SQL rather than the API, deliberately: the admin sweep
+     * above drives every administrator-only route, DELETE /api/trip-types/:id
+     * included, so by the time this runs the seeded Chargeable type may be
+     * gone and POST /api/travel-logs cannot make a chargeable trip. The
+     * subject here is the gate on one column, not trip creation.
+     */
+    before(async () => {
+      await db.query(`INSERT INTO projects (project_id, client_name) VALUES ('PRJ-MX-214', 'Matrix 214 Ltd')`);
+      await db.query(`INSERT INTO purchase_orders (po_number, project_id, po_value) VALUES ('PO-MX-214', 'PRJ-MX-214', 100000)`);
+      ({ rows: [{ id: stageId }] } = await db.query(
+        `INSERT INTO payment_stages (po_number, stage_no, stage_name, stage_percent, invoice_no)
+              VALUES ('PO-MX-214', 1, 'Advance', 1, 'CVPL/MX/214') RETURNING id`));
+      const { rows: [type] } = await db.query(
+        `INSERT INTO trip_types (name, chargeable, sort_order) VALUES ('Chargeable (matrix 214)', true, 99)
+         ON CONFLICT (name) DO UPDATE SET chargeable = true RETURNING id`);
+      ({ rows: [{ id: tripId }] } = await db.query(
+        `INSERT INTO travel_logs (travel_id, employee_name, po_number, trip_type_id)
+              VALUES ('TRV-MX-214', 'Asha', 'PO-MX-214', $1) RETURNING id`, [type.id]));
+    });
+
+    const stored = async () => (await db.query(
+      `SELECT billed_stage_id FROM travel_logs WHERE travel_id = 'TRV-MX-214'`)).rows[0].billed_stage_id;
+
+    test('HR cannot reach the billing route, though it may edit the trip', async () => {
+      const res = await as(hr)('post', '/api/travel-logs/TRV-MX-214/billed-stage').send({ billed_stage_id: stageId });
+      assert.equal(
+        res.status, 403,
+        `an HR user got ${res.status} setting which client invoice billed a trip. The route is deliberately absent from ` +
+        'HR_ROUTES: HR runs the travel desk (#196 §3) but which invoice recovered the cost is the PO side\'s (#214).'
+      );
+      assert.equal(await stored(), null, 'the link moved despite the 403');
+
+      // The rest of the trip is still HR's work, which is why one field is
+      // closed rather than the resource.
+      const edit = await as(hr)('patch', `/api/travel-logs/${tripId}`).send({ remarks: 'Tickets reissued' });
+      assert.equal(edit.status, 200, JSON.stringify(edit.body));
+    });
+
+    test('billed_stage_id cannot be written through ordinary CRUD by anybody', async () => {
+      for (const who of [admin, salesA, hr]) {
+        const res = await as(who)('patch', `/api/travel-logs/${tripId}`).send({ billed_stage_id: stageId });
+        assert.equal(
+          res.status, 403,
+          `${who.label} got ${res.status} writing billed_stage_id through PATCH /api/travel-logs/:id. ` +
+          'It moves only through POST /api/travel-logs/:travelId/billed-stage; protectedFields for travel-logs ' +
+          'is enforced in validate() in lib/crud.js (#214). Without it the hidden selector on the Trip screen ' +
+          'is the whole of the restriction.'
+        );
+        assert.equal(await stored(), null, `${who.label}: the column moved despite the refusal`);
+      }
+    });
+
+    test('admin and sales set it and clear it through its own route', async () => {
+      for (const who of [admin, salesA]) {
+        const res = await as(who)('post', '/api/travel-logs/TRV-MX-214/billed-stage').send({ billed_stage_id: stageId });
+        assert.equal(res.status, 200, `${who.label}: ${JSON.stringify(res.body)}`);
+        assert.equal(await stored(), stageId);
+
+        const cleared = await as(who)('post', '/api/travel-logs/TRV-MX-214/billed-stage').send({ billed_stage_id: null });
+        assert.equal(cleared.status, 200, `${who.label} clearing: ${JSON.stringify(cleared.body)}`);
+        assert.equal(await stored(), null);
+      }
+    });
+  });
 });

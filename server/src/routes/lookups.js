@@ -106,6 +106,13 @@ lookupRouter.get('/', async (req, res) => {
              UNION
              SELECT e.sales_person FROM enquiries e
               WHERE e.sales_person IS NOT NULL ${pplE}
+             ${scope.unrestricted
+               // An admin is also offered every active sales user by their
+               // account name: picking one is what makes them the record's
+               // owner (lib/salespersonOwner.js), and a spelling only the
+               // old data carries would not.
+               ? `UNION SELECT u.name FROM users u WHERE u.active AND u.role = 'sales'`
+               : ''}
              ORDER BY 1`, ppl.params),
       // One spelling per client: the companies table (#20).
       query('SELECT id, name, sector FROM companies ORDER BY name'),

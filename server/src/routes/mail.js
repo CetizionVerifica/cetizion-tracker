@@ -26,10 +26,12 @@ import { mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
-import { forwardedEmail, publicAttachment, toHtml, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
+import { forwardedEmail, officeExt, publicAttachment, toHtml, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
+import { converterConfigured, toPdf } from '../lib/mailbox/officeConvert.js';
+import { liveAttachmentList, providerFailed, withLiveNames } from '../lib/mailbox/liveAttachments.js';
 import { canReadLive, cleanHtml, isOwner, mayReadContent, mayViewAttachments, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
-import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
+import { listAttachmentsNow, providerFor, saveTokens } from '../lib/mailbox/sync.js';
 
 export const mailRouter = Router();
 
@@ -46,19 +48,6 @@ const readableThread = (req, params) => threadClause(scopeOf(req), params, { acc
 
 /** Who is asking, for the owner rule (rules.js: isOwner, mayReadContent, canReadLive — shared with the thread route). */
 const userOf = (req) => req.user?.id ?? null;
-
-/**
- * A provider that would not answer a route. A revoked or expired grant
- * (`err.reconnect`, microsoft.js) marks the mailbox the way the sync does,
- * so the thread route stops promising live reads and the switcher shows
- * the reconnect; anything else is left for the next sync to judge. The
- * provider's own words never reach the client: a fixed message does.
- */
-async function providerFailed(accountId, err) {
-  if (!err?.reconnect) return;
-  await query(`UPDATE connected_accounts SET status = 'needs_reconnect', last_error = $2 WHERE id = $1 AND status = 'active'`,
-    [accountId, String(err.message || 'The mailbox needs to be reconnected').slice(0, 500)]).catch(() => {});
-}
 
 const pageOf = (req, { size = 50, max = 200 } = {}) => ({
   pageSize: Math.min(max, Math.max(1, Number.parseInt(req.query.page_size, 10) || size)),
@@ -227,32 +216,6 @@ const attachmentsOf = async (messageId) => (await query(
   'SELECT id, provider_id, name, content_type, size_bytes, is_inline, content_id, kind FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
 
 /**
- * A mailbox that stores metadata only keeps no attachment names and no
- * content ids (sync.js: a file name is content). Its owner sees them all
- * the same, as they see the body: read from the provider for the request
- * and never written. Returns the list, or null when the provider would not
- * answer, so the stored rows stand as they are.
- */
-async function liveAttachmentList(m) {
-  const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [m.account_id]);
-  if (!a || a.status !== 'active') return null;
-  const provider = providerFor(a);
-  if (!provider.attachmentList) return null;
-  try {
-    const list = await provider.attachmentList(m.provider_id);
-    await saveTokens(a, provider).catch(() => {});
-    return list || [];
-  } catch (err) {
-    await providerFailed(a.id, err);
-    return null;
-  }
-}
-/** The stored rows, with what the owner may see of a withheld list filled in from the provider's. */
-const withLiveNames = (stored, live) => (live ? stored.map((s) => {
-  const l = live.find((x) => x.provider_id === s.provider_id);
-  return l ? { ...s, name: s.name ?? l.name ?? null, content_id: s.content_id ?? l.content_id ?? null } : s;
-}) : stored);
-/**
  * The stored attachment rows of a metadata-only mailbox carry no names; its
  * owner, and the readers of a shared one (who may view its attachments),
  * see them read from the provider.
@@ -286,6 +249,8 @@ mailRouter.get('/messages/:id', async (req, res) => {
           : 'The mailbox could not be read just now';
     }
   }
+  // Files the sync has not listed yet are listed now, so they show on opening.
+  await listAttachmentsNow(m.account_id, [m]);
   const stored = await attachmentsOf(m.id);
   const attachments = needsLiveNames(req, m, account) ? withLiveNames(stored, await liveAttachmentList(m)) : stored;
   res.json({ data: publicMessage(m, { attachments, live, canView }) });
@@ -372,20 +337,24 @@ async function readAttachment(m, att) {
  * image cannot touch the app's origin or the network even if the file is
  * opened on its own.
  */
-async function streamAttachment(res, { m, att, type, opened = null }) {
-  const got = await openAttachment(m, att);
-  if (opened) await opened();
-  const name = String(att.name || 'attachment').replace(/[\r\n"\\]/g, '_').slice(0, 200);
+function inlineHeaders(res, { att, type, name = att.name }) {
+  const safe = String(name || 'attachment').replace(/[\r\n"\\]/g, '_').slice(0, 200);
   // RFC 6266: the real name goes in filename*, and the plain filename= is
   // for a client that ignores it — so plain ASCII, with anything else
   // replaced, rather than a percent-encoded name it would show as typed.
-  const ascii = name.replace(/[^\x20-\x7e]/g, '_');
+  const ascii = safe.replace(/[^\x20-\x7e]/g, '_');
   res.status(200);
   res.setHeader('Content-Type', type);
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Content-Disposition', `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   res.setHeader('Cache-Control', 'private, no-store');
+}
+
+async function streamAttachment(res, { m, att, type, opened = null }) {
+  const got = await openAttachment(m, att);
+  if (opened) await opened();
+  inlineHeaders(res, { att, type });
   if (got.size) res.setHeader('Content-Length', String(got.size));
   try {
     await pipeline(Readable.fromWeb(got.stream), capped(), res);
@@ -400,8 +369,9 @@ async function streamAttachment(res, { m, att, type, opened = null }) {
  * §4). Only the viewer: it asks with `X-Tracker-View: 1`, which a link, an
  * address typed in the bar or an <a download> cannot send, so pasting this
  * address into a tab gives a refusal rather than the file. A PDF or a
- * picture comes back as bytes for the viewer to draw; a spreadsheet or a
- * text file as data; anything else is not viewable yet (415). Each view is
+ * picture comes back as bytes for the viewer to draw, and so does a
+ * PowerPoint or older Office file, converted to a PDF first; a spreadsheet,
+ * a text file or a Word document as data; anything else is not viewable (415). Each view is
  * recorded in the activity log.
  */
 mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
@@ -417,6 +387,7 @@ mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
   const kind = viewKind(att);
   if (!kind && att.kind === 'reference') throw new ApiError(415, 'This is a link to a file in OneDrive or SharePoint; open the message in Outlook to reach it');
   if (!kind) throw new ApiError(415, 'This kind of file cannot be shown in the tracker yet; open it in Outlook');
+  if (kind === 'office' && !converterConfigured()) throw new ApiError(415, 'PowerPoint and older Office files cannot be shown in the tracker yet; open it in Outlook');
   // Recorded once the provider has handed the file over: a view that
   // never happened is not in the log.
   const viewed = () => logActivity(undefined, {
@@ -432,6 +403,20 @@ mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
   }
   // Read and turned into data first: a file that cannot be read was not viewed.
   const bytes = await readAttachment(m, att);
+  if (kind === 'office') {
+    // Converted to a PDF on the private network and drawn by the same
+    // viewer as any PDF; the PDF is sent once and kept nowhere.
+    let pdf;
+    try { pdf = await toPdf(bytes, officeExt(att)); }
+    catch (err) {
+      console.warn('[mail] an attachment could not be converted:', err.message);
+      throw new ApiError(422, 'This file could not be converted for viewing; open it in Outlook');
+    }
+    await viewed();
+    inlineHeaders(res, { att, type: 'application/pdf', name: `${String(att.name || 'attachment').replace(/\.[a-z0-9]{1,8}$/i, '')}.pdf` });
+    res.setHeader('Content-Length', String(pdf.length));
+    return res.end(pdf);
+  }
   let data;
   if (kind === 'text') data = toText(bytes);
   else if (kind === 'word') {

@@ -426,14 +426,21 @@ export default function TripDetail() {
   );
 }
 
-/** The payment stage whose invoice billed this trip to the client. */
+/**
+ * The payment stage whose invoice billed this trip to the client.
+ *
+ * Through its own route, not the trip's edit form: billed_stage_id is a
+ * protected field on the travel-logs resource, so a PATCH naming it is
+ * refused whoever sends it (#214). The route is addressed by travel_id, as
+ * the trip's other workflow route is.
+ */
 function BilledStage({ trip, onChanged }) {
   const toast = useToast();
   const { data } = useFetch(() => api.list('payment-stages', { po_number: trip.po_number }), [trip.po_number]);
   const stages = (data?.data ?? []).filter((s) => s.invoice_no);
   async function set(value) {
     try {
-      await api.update('travel-logs', trip.id, { billed_stage_id: value ? Number(value) : null });
+      await api.action(`/travel-logs/${encodeURIComponent(trip.travel_id)}/billed-stage`, { billed_stage_id: value ? Number(value) : null });
       toast(value ? 'Recorded as billed.' : 'No longer marked as billed.', 'success');
       onChanged();
     } catch (err) {

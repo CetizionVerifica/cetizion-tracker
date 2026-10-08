@@ -49,6 +49,10 @@ export const ACTIONS = {
   CLAIM_REIMBURSED: 'claim.reimbursed',
   CLAIM_CORRECTED: 'claim.corrected',
   VENDOR_INVOICE_PAID: 'vendor_invoice.paid',
+  // Which client invoice a trip's cost was billed on (#214). The link is
+  // what makes a trip's cost recoverable, so it moves through its own
+  // route and leaves the account that moved it behind.
+  TRIP_BILLED_STAGE_SET: 'travel_log.billed_stage_set',
   // A vendor payment taken back off the invoice (#214). Payments are a
   // ledger, so a correction is a row rather than a rewrite — but the row
   // alone does not say who decided it or why, which is what this is for.

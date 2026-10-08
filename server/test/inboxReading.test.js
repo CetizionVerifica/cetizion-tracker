@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
@@ -329,11 +330,89 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     const link = await view(listed[2]);
     assert.equal(link.status, 415);
     assert.match(link.body.error.message, /OneDrive or SharePoint/);
-    assert.equal((await view(listed[3])).status, 415, 'PowerPoint waits for step 3');
+    assert.equal((await view(listed[3])).status, 415, 'PowerPoint needs the converter, which this test does not set up');
 
     // The thread route lists the same kinds.
     const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
     assert.deepEqual(thread.body.data.messages[0].attachments.map((a) => a.view), ['word', 'email', null, null]);
+  });
+
+  test('PowerPoint and older Office files open as a PDF from the converter, and say so when it is not there', async () => {
+    // A stand-in for Gotenberg: it checks what the tracker sends and answers with a PDF.
+    const seen = [];
+    let answer = 'pdf';
+    const server = createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString('latin1');
+        seen.push({ path: req.url, auth: req.headers.authorization || null, filename: /filename="([^"]+)"/.exec(body)?.[1], body });
+        if (answer === 'fail') { res.writeHead(503); return res.end('busy'); }
+        if (answer === 'junk') { res.writeHead(200, { 'Content-Type': 'application/pdf' }); return res.end('<html>'); }
+        res.writeHead(200, { 'Content-Type': 'application/pdf' });
+        return res.end('%PDF-1.7\nconverted\n%%EOF');
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com` });
+    const m = mail({ has_attachments: true, attachments: [
+      { provider_id: 'p', name: 'Audit plan.pptx', contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', content: Buffer.from('PK deck bytes') },
+      { provider_id: 'd', name: 'old letter', contentType: 'application/msword', content: Buffer.from('doc bytes') },
+      { provider_id: 'r', name: 'terms.rtf', contentType: 'application/octet-stream', content: Buffer.from('{\\rtf1 hi}') },
+      { provider_id: 'x', name: 'old.xls', contentType: 'application/vnd.ms-excel', content: Buffer.from('x') },
+    ] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const list = async () => (await as(salesB)('get', `/api/mail/messages/${row.id}`)).body.data.attachments;
+    const view = (a) => as(salesB)('get', a.view_url).set('X-Tracker-View', '1').buffer(true).parse(bytes);
+    const before = await list();
+    try {
+      // No converter: listed, not viewable, and the route says to use Outlook.
+      assert.deepEqual(before.map((a) => a.view), [null, null, null, 'sheet'], 'an old .xls stays with the sheet viewer');
+      const none = await as(salesB)('get', before[0].view_url).set('X-Tracker-View', '1');
+      assert.equal(none.status, 415);
+      assert.match(none.body.error.message, /Outlook/);
+      assert.equal(seen.length, 0);
+
+      process.env.DOC_CONVERTER_URL = `http://conv:s3cret@127.0.0.1:${server.address().port}`;
+      const listed = await list();
+      assert.deepEqual(listed.map((a) => a.view), ['office', 'office', 'office', 'sheet']);
+
+      const deck = await view(listed[0]);
+      assert.equal(deck.status, 200);
+      assert.equal(deck.headers['content-type'], 'application/pdf');
+      assert.match(deck.headers['content-disposition'], /^inline; filename="Audit plan\.pdf"/);
+      assert.equal(deck.headers['cache-control'], 'private, no-store');
+      assert.match(deck.headers['content-security-policy'], /sandbox/);
+      assert.equal(deck.body.subarray(0, 8).toString(), '%PDF-1.7');
+      assert.equal(seen[0].path, '/forms/libreoffice/convert');
+      assert.equal(seen[0].auth, `Basic ${Buffer.from('conv:s3cret').toString('base64')}`);
+      assert.equal(seen[0].filename, 'attachment.pptx', 'sent under a plain name with the format LibreOffice reads');
+      assert.ok(seen[0].body.includes('PK deck bytes'));
+
+      // The extension comes from the type when the name has none, and from the name when the type is vague.
+      assert.equal((await view(listed[1])).status, 200);
+      assert.equal(seen[1].filename, 'attachment.doc');
+      assert.equal((await view(listed[2])).status, 200);
+      assert.equal(seen[2].filename, 'attachment.rtf');
+
+      // A converter that fails, or answers with something that is not a PDF, is a 422 and not a view.
+      answer = 'fail';
+      const failed = await as(salesB)('get', listed[0].view_url).set('X-Tracker-View', '1');
+      assert.equal(failed.status, 422);
+      assert.match(failed.body.error.message, /could not be converted/);
+      answer = 'junk';
+      assert.equal((await as(salesB)('get', listed[0].view_url).set('X-Tracker-View', '1')).status, 422);
+
+      const { rows: log } = await db.query(`SELECT metadata FROM activity_log WHERE action = 'mail.attachment_viewed' AND entity_id = $1 ORDER BY id`, [String(row.id)]);
+      assert.deepEqual(log.map((l) => l.metadata.name), ['Audit plan.pptx', 'old letter', 'terms.rtf']);
+
+      // Still the viewer only.
+      assert.equal((await as(salesB)('get', listed[0].view_url)).status, 403);
+    } finally {
+      delete process.env.DOC_CONVERTER_URL;
+      server.close();
+    }
   });
 
   test('the folder list names what the newest message carries, inline pictures aside', async () => {
@@ -372,6 +451,51 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(rowCount, 1);
     assert.equal((await as(salesB)('get', att.view_url).set('X-Tracker-View', '1')).status, 404);
     assert.equal((await as(salesA)('get', att.view_url).set('X-Tracker-View', '1')).status, 200);
+  });
+
+  test('a shared mailbox that stores who and when only still names its files in the reading pane, so a PDF Outlook calls octet-stream opens', async () => {
+    const box = await mailbox({ shared: true, email: `${uid('team')}@cetizionverifica.com`, visibility: 'metadata' });
+    const m = mail({ to: [{ email: box.email }], has_attachments: true,
+      attachments: [{ provider_id: 'att-o', name: 'PO 5512.pdf', contentType: 'application/octet-stream', content: Buffer.from('%PDF po') }] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const { rows: [kept] } = await db.query('SELECT name FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.equal(kept.name, null, 'the name is not stored');
+    const thread = await as(salesA)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.status, 200, JSON.stringify(thread.body));
+    const att = thread.body.data.messages[0].attachments[0];
+    assert.equal(att.name, 'PO 5512.pdf', 'read live for the reader');
+    assert.equal(att.view, 'pdf');
+    assert.equal(att.provider_id, undefined);
+    assert.equal(thread.body.data.messages[0].provider_id, undefined);
+    const got = await as(salesA)('get', att.view_url).set('X-Tracker-View', '1').buffer(true).parse(bytes);
+    assert.equal(got.status, 200);
+    assert.equal(got.headers['content-type'], 'application/pdf');
+    const { rows: [still] } = await db.query('SELECT name FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.equal(still.name, null, 'and nothing is written');
+  });
+
+  test('files the sync has not listed yet are listed when the conversation is opened', async () => {
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com` });
+    const m = mail({ has_attachments: true, attachments: [{ provider_id: 'late', name: 'Audit report.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF late') }] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    // As every message was while Graph refused the list: nothing stored, still to be read.
+    await db.query('DELETE FROM email_attachments WHERE message_id = $1', [row.id]);
+    await db.query('UPDATE email_messages SET attachments_listed_at = NULL WHERE id = $1', [row.id]);
+    const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.status, 200, JSON.stringify(thread.body));
+    const [att] = thread.body.data.messages[0].attachments;
+    assert.equal(att?.name, 'Audit report.pdf');
+    assert.equal(att.view, 'pdf');
+    assert.equal(thread.body.data.messages[0].attachments_listed_at, undefined);
+    const { rows: [after] } = await db.query('SELECT attachments_listed_at FROM email_messages WHERE id = $1', [row.id]);
+    assert.ok(after.attachments_listed_at, 'and stored, so the next open needs no call');
+
+    await db.query('DELETE FROM email_attachments WHERE message_id = $1', [row.id]);
+    await db.query('UPDATE email_messages SET attachments_listed_at = NULL WHERE id = $1', [row.id]);
+    const one = await as(salesB)('get', `/api/mail/messages/${row.id}`);
+    assert.deepEqual(one.body.data.attachments.map((a) => a.name), ['Audit report.pdf'], 'the message route too');
   });
 
   test('the owner of a mailbox that stores subjects only reads the body live, and nothing is stored; an admin sees only what is stored', async () => {
