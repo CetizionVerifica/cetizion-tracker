@@ -593,7 +593,7 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
             CASE WHEN m.direction = 'outbound' THEN COALESCE(m.bcc_emails, '{}') ELSE '{}' END AS bcc_emails,
             m.subject, CASE WHEN m.removed_at IS NULL THEN m.snippet END AS snippet, CASE WHEN m.removed_at IS NULL THEN m.body_html END AS body_html,
             m.has_attachments, m.sent_at, m.sent_from_tracker_by, m.is_read, m.flag_status, m.importance, m.web_link, m.folder_id, m.removed_at,
-            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id) ORDER BY x.is_inline, x.id)
+            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id, 'kind', x.kind) ORDER BY x.is_inline, x.id)
                         FROM email_attachments x WHERE x.message_id = m.id), '[]'::json) AS attachments
        FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id]);
   // The owner of a personal mailbox that stores less than the whole message
