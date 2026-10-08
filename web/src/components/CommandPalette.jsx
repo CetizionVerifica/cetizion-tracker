@@ -92,6 +92,29 @@ function StateChip({ state }) {
   return <span className={cn('mg-badge ml-auto shrink-0', late && 'mg-badge--late', waiting && 'mg-badge--wait')}>{state}</span>;
 }
 
+/**
+ * What a picker row shows on its right: how much is open on it and its
+ * state, in the system's tones (stages and vendor bills; nothing for the rest).
+ */
+function pickFacts(row) {
+  const days = (iso) => { if (!iso) return null; const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`); const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((d - t) / 864e5); };
+  const inr = (n, cur = 'INR') => `${cur === 'INR' ? '₹' : `${cur} `}${Number(n || 0).toLocaleString(cur === 'INR' ? 'en-IN' : 'en-US', { maximumFractionDigits: 0 })}`;
+  if (row.stage_status) {
+    const open = Math.max(Number(row.stage_amount || 0) - Number(row.amount_received || 0), 0);
+    const badge = row.stage_status === 'Overdue' ? { tone: 'late', text: `${row.days_overdue} days late` }
+      : row.stage_status === 'Partially Paid' ? { tone: 'wait', text: 'Part paid' }
+      : row.stage_status === 'Due' ? { tone: 'info', text: `Due ${row.invoice_due_date ? new Date(`${row.invoice_due_date.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).replace('Sept', 'Sep') : ''}`.trim() }
+      : row.stage_status === 'To Invoice' ? { tone: 'wait', text: 'To invoice' } : null;
+    return { amountText: inr(row.stage_status === 'To Invoice' ? row.stage_amount : open, row.currency), badge, outstanding: open, lateBy: row.stage_status === 'Overdue' ? row.days_overdue : null };
+  }
+  if (row.vendor_invoice_id || row.vendor_invoice_no) {
+    const open = Math.max(Number(row.net_payable ?? row.invoice_amount ?? 0) - Number(row.amount_paid || 0), 0);
+    const late = row.payment_status === 'Overdue';
+    return { amountText: row.invoice_amount == null ? null : inr(open), badge: { tone: late ? 'late' : row.payment_status === 'Partially Paid' ? 'wait' : 'info', text: row.payment_status }, lateBy: late ? -days(row.pay_by) : null };
+  }
+  return {};
+}
+
 /** Back, what this is, and where you are in the step. */
 function StepHead({ onBack, title, sub, where }) {
   return (
@@ -121,8 +144,24 @@ function Note({ tone, children, role = 'status' }) {
 function StepForm({ step, record, values, setValues, error, busy, onRun, onBack }) {
   const firstField = useRef(null);
   useEffect(() => { firstField.current?.focus(); }, []);
+  // Options a field reads for the chosen record (the client's payment reports).
+  const [loaded, setLoaded] = useState({});
+  useEffect(() => {
+    let live = true;
+    for (const field of step.fields) {
+      if (!field.load || !record) continue;
+      field.load(record, api).then((opts) => { if (live) setLoaded((l) => ({ ...l, [field.name]: opts })); }).catch(() => {});
+    }
+    return () => { live = false; };
+  }, [step, record]);
+  const fields = step.fields.filter((field) => !field.load || loaded[field.name]?.length);
+  const optionsOf = (field) => (field.load ? loaded[field.name] || [] : field.options);
 
-  const set = (name) => (value) => setValues({ ...values, [name]: value });
+  const set = (name) => (value) => {
+    const field = step.fields.find((x) => x.name === name);
+    const picked = field?.load ? optionsOf(field).find((o) => o.value === value) : null;
+    setValues({ ...values, [name]: value === '__none__' ? '' : value, ...(picked?.fills || {}) });
+  };
 
   return (
     <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => { event.preventDefault(); onRun(); }}>
@@ -134,20 +173,29 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
       />
 
       <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-5 py-4">
+        {record?.amountText && (
+          <div className="app-mfacts">
+            <span className="app-mfacts__items">
+              <span><b className="mg-num">{record.title}</b>{record.subtitle ? ` · ${record.subtitle}` : ''}</span>
+              <span className="ml-auto"><b className={cn('mg-num', record.lateBy > 0 ? 'is-late' : 'is-wait')}>{record.amountText}</b> outstanding{record.lateBy > 0 ? ` · ${record.lateBy} days overdue` : ''}</span>
+            </span>
+          </div>
+        )}
         <div className="grid gap-3.5 sm:grid-cols-2">
-          {step.fields.map((field, index) => (
-            <div key={field.name} className={cn('flex min-w-0 flex-col gap-1.5', field.type === 'textarea' && 'sm:col-span-2')}>
+          {fields.map((field, index) => (
+            <div key={field.name} className={cn('flex min-w-0 flex-col gap-1.5', (field.type === 'textarea' || field.span === 2) && 'sm:col-span-2')}>
               <Label htmlFor={`step-${field.name}`}>
                 {field.label}{field.required && <span className="ml-0.5 text-late">*</span>}
               </Label>
 
               {field.type === 'select' ? (
-                <Select value={values[field.name] ?? ''} onValueChange={set(field.name)}>
+                <Select value={values[field.name] || (field.optional ? '__none__' : '')} onValueChange={set(field.name)}>
                   <SelectTrigger id={`step-${field.name}`} ref={index === 0 ? firstField : undefined} className="w-full">
                     <SelectValue placeholder={`Choose ${field.label.toLowerCase()}`} />
                   </SelectTrigger>
                   <SelectContent>
-                    {field.options.map((opt) => (
+                    {field.optional && <SelectItem value="__none__">{field.optional}</SelectItem>}
+                    {optionsOf(field).map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                     ))}
                   </SelectContent>
@@ -224,7 +272,7 @@ export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, mode }), [isAdmin, mode]);
+  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, mode, isHr }), [isAdmin, mode, isHr]);
 
   const reset = useCallback(() => {
     setQ(''); setFound([]); setSearching('idle'); setStep(null); setRecord(null);
@@ -265,8 +313,9 @@ export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode 
       setChoices((res.data || []).map((row) => ({
         ...row,
         title: String(row[chosen.key || 'invoice_no'] ?? row.stage_name ?? row.claim_id ?? row.vendor_invoice_no ?? row.id),
-        subtitle: [row.client_name, row.po_number, row.employee_name, row.service_quoted]
+        subtitle: [row.client_name, row.po_number ? (row.invoice_no ? `PO ${row.po_number}` : row.po_number) : null, row.employee_name, row.service_quoted]
           .filter(Boolean).slice(0, 2).join(' · '),
+        ...pickFacts(row),
       })));
       setListing('idle');
     } catch {
@@ -391,6 +440,8 @@ export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode 
                             <strong className="mg-num">{choice.title}</strong>
                             {choice.subtitle && <span className="text-muted-foreground"> · {choice.subtitle}</span>}
                           </span>
+                          {choice.amountText && <strong className="mg-num shrink-0 max-sm:hidden">{choice.amountText}</strong>}
+                          {choice.badge && <span className={cn('mg-badge shrink-0', `mg-badge--${choice.badge.tone}`)}>{choice.badge.text}</span>}
                           <ChevronRight size={16} strokeWidth={2} aria-hidden="true" className="shrink-0" />
                         </Command.Item>
                       ))}
@@ -470,7 +521,7 @@ export function CommandPalette({ open, onOpenChange, start, isAdmin, isHr, mode 
               <span className="hidden sm:inline"><kbd className="mg-kbd">↵</kbd> {picking ? 'choose' : 'run'}</span>
               <span><kbd className="mg-kbd">Esc</kbd> close</span>
               {!picking && <span className="hidden sm:inline"><kbd className="mg-kbd">/</kbd> opens this too</span>}
-              <span className="ml-auto hidden md:inline">{picking ? 'Then fill in the step.' : 'Steps run here. The page stays as it is.'}</span>
+              <span className="ml-auto hidden md:inline">{picking ? (step.picks.note || 'Then fill in the step.') : 'Steps run here. The page stays as it is.'}</span>
             </div>
           </Command>
         )}
