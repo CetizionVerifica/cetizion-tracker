@@ -145,3 +145,20 @@ html.mg-paused body.mg *, html.mg-paused body.mg *::before, html.mg-paused body.
 html.mg-paused :is(.mg-btn, .mg-chip, .mg-iconbtn, [data-press], .mg-check input, .app-tab):active { scale: none !important; }
 html.mg-paused :is(.app-card, a.rp-tile, .app-desktile, a.mg-tile, a.mg-glass, button.mg-tile):hover, html.mg-paused :is(a, button):hover svg { translate: none !important; }
 html.mg-paused :is(.mg-check input:checked::after, [data-slot="checkbox-indicator"], [data-sonner-toast]), html.mg-paused .mg :focus-visible { animation: none !important; }
+
+/* ── Hover tints stay inside their card and keep rounded corners (Sami, 9 Oct).
+   Rows and list items tint as a rounded pill; tiles that share a strip tint as a
+   rounded tile and do not lift (a lift pushed them past the card's edge). ── */
+:is(.app-row, .app-diary__row, .app-ib__row, .app-msg__top, .app-note, .app-pinned__row, a.app-recrow, .app-person,
+  .set-nav__item, .set-nav__acct, .set-index__row, .set-kind, a.app-raillink, .app-tdbar, .app-cf__col,
+  a.rp-bar, a.rp-col, a.rp-act, .rp-dl a, .app-age > button, a.mg-row, button.mg-row):is(:hover, :focus-visible, .is-active) {
+  border-radius: 14px;
+}
+:is(a.rp-tile, .app-desktile, .app-tdstrip > a, .app-strip > button, .mg-strip > a, .mg-strip > button) {
+  border-radius: 20px;
+}
+:is(a.rp-tile, .app-desktile, .app-tdstrip > a, .app-strip > button, .mg-strip > a, .mg-strip > button):hover {
+  translate: none !important; box-shadow: none !important;
+}
+.mg-table tbody tr > :first-child { border-top-left-radius: 14px; border-bottom-left-radius: 14px; }
+.mg-table tbody tr > :last-child { border-top-right-radius: 14px; border-bottom-right-radius: 14px; }
