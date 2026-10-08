@@ -158,3 +158,51 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 @media (max-width: 559px) { .app-age.app-age--6 { gap: 2px; } .app-age--6 > button { padding: 8px 0 6px; } .app-age--6 .app-age__fig { font-size: 11.5px; } }
 .app-rowbtns { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .app-rowbtns > * { flex: 1 1 120px; }
+
+/* Travel dashboard. */
+.app-todos { flex: 1.35 1 520px; }
+.app-todo-list { list-style: none; margin: 0; padding: 0 22px 10px; }
+.app-todo { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 8px 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.app-todo:first-child { border-top: 0; }
+.app-todo b { display: block; font-size: 13.5px; font-weight: 700; }
+.app-todo b + span { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.5; color: var(--text2); }
+.app-line__mark.is-info { background: var(--info-soft); color: var(--info); }
+@media (max-width: 719px) { .app-todo-list { padding: 0 16px 8px; } .app-todo { grid-template-columns: 38px minmax(0, 1fr); } .app-todo > .mg-btn { grid-column: 2; justify-self: start; } }
+.app-desktiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.app-desktile { border-radius: 22px; color: inherit; text-decoration: none; display: flex; flex-direction: column; gap: 6px; }
+.app-desktile:hover { background: var(--track); }
+.app-desktile .mg-tile__foot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.app-tdstrip > a { padding: 16px 20px; color: inherit; text-decoration: none; transition: background 200ms; }
+.app-tdstrip > a:hover { background: var(--track); }
+.app-tdstrip > a:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-tdstrip .mg-tile__figure.is-late { color: var(--late); }
+.app-tdstrip .mg-tile__figure.is-wait { color: var(--caramel-text); }
+.app-tdcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; align-items: start; }
+@media (max-width: 1199px) { .app-tdcards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 759px) { .app-tdcards { grid-template-columns: minmax(0, 1fr); } }
+.app-tdcard { border-radius: 26px; min-width: 0; gap: 12px; }
+.app-tdcard__head { display: flex; flex-direction: column; gap: 2px; }
+.app-tdbars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.app-tdbar { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "mark label amt" "mark track track" ". foot foot"; align-items: center; gap: 2px 10px; padding: 8px 6px; border-radius: 14px; color: inherit; text-decoration: none; }
+.app-tdbar:hover { background: var(--track); }
+.app-tdbar:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-tdbar__mark { grid-area: mark; width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: var(--track); color: var(--text2); }
+.app-tdbar__mark svg { width: 15px; height: 15px; }
+.app-tdbar__mark.is-ok { background: var(--ok-soft); color: var(--ok); } .app-tdbar__mark.is-late { background: var(--late-soft); color: var(--late); }
+.app-tdbar__mark.is-wait { background: var(--wait-soft); color: var(--wait); } .app-tdbar__mark.is-info { background: var(--info-soft); color: var(--info); }
+.app-tdbar__label { grid-area: label; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; font-weight: 700; min-width: 0; }
+.app-tdbar__amt { grid-area: amt; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-tdbar__track { grid-area: track; height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.app-tdbar__track > span { display: block; height: 100%; border-radius: 999px; }
+.app-tdbar__foot { grid-area: foot; justify-self: end; font-size: 11.5px; color: var(--muted); }
+.app-tdstack { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--track); gap: 2px; }
+.app-tdstack > span { display: block; height: 100%; }
+.app-tdmonths { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; align-items: end; }
+.app-tdmonth { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; border-radius: 12px; color: inherit; text-decoration: none; min-width: 0; }
+.app-tdmonth:hover { background: var(--track); }
+.app-tdmonth__n { font-size: 11px; font-weight: 700; color: var(--text2); white-space: nowrap; }
+.app-tdmonth__plot { width: 100%; height: 120px; display: flex; align-items: flex-end; justify-content: center; }
+.app-tdmonth__bar { display: block; width: min(34px, 80%); border-radius: 8px 8px 3px 3px; background: var(--figure); }
+.app-tdmonth__bar.mg-hatch { background: var(--mg-hatch); }
+.app-tdmonth__label { font-size: 12px; font-weight: 700; }
+.app-tdmonth__amt { font-size: 11px; color: var(--muted); white-space: nowrap; }
