@@ -439,7 +439,7 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
 
   return (
     <ActionModal
-      title="Register the project"
+      title="Create the project"
       subtitle={[quotation.quotation_no, quotation.client_name, quotation.quotation_value != null ? money(quotation.quotation_value, quotation.currency) : null].filter(Boolean).join(' · ')}
       onClose={onClose}
       onSubmit={submit}

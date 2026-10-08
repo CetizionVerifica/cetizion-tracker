@@ -93,7 +93,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
       subtitle={`${quotation.quotation_no} · ${quotation.client_name} · ${money(quotation.total ?? quotation.quotation_value, quotation.currency)}`}
       onClose={onClose}
       size="lg"
-      footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="register-po" className="btn btn--primary" disabled={busy}>{busy ? 'Registering…' : 'Register PO and project'}</button></>}
+      footer={<><button type="button" className="mg-btn mg-btn--ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" form="register-po" className="mg-btn mg-btn--primary" disabled={busy}>{busy ? 'Registering…' : 'Register PO and project'}</button></>}
     >
       <form id="register-po" onSubmit={submit} className="stack">
         {prefill ? (
@@ -108,7 +108,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
           <Alert><span>One save: the quotation is marked won, the project is created (or the PO joins the one you pick), the PO is registered with its service lines, the payment stages come from the template, and the checklist is added.</span></Alert>
         )}
         {note && <Alert tone="warning">{note}</Alert>}
-        {error && <Alert tone="danger">{error}</Alert>}
+        {error && <div className="mg-banner mg-banner--late" role="alert"><div className="mg-banner__body"><strong>Couldn't register the PO.</strong>{error}</div></div>}
         <div className="form-grid">
           <div className="span-all" style={{ fontWeight: 650 }}>Purchase order</div>
           <Field label="PO number" required error={errors.po_number}><Input value={v.po_number} onChange={(e) => set('po_number', e.target.value)} /></Field>
