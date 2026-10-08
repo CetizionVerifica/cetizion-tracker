@@ -252,7 +252,7 @@ export default function InvoiceRun() {
 
             {after.length > 0 && (
               <section className="mg-glass mg-glass--strong app-panel" data-a="rise" aria-labelledby="after-t">
-                <div className="app-panel__head"><h2 className="mg-panel__title" id="after-t">After this one</h2><span className="mg-panel__hint ml-auto">{plural(after.length, 'more')} in the queue</span></div>
+                <div className="app-panel__head"><h2 className="mg-panel__title" id="after-t">After this one</h2><span className="mg-panel__hint ml-auto">{after.length} more in the queue</span></div>
                 <div className="mg-rows app-panel__body">
                   {after.slice(0, 6).map((next) => (
                     <div key={next.id} className="mg-row">
