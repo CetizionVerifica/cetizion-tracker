@@ -30,10 +30,11 @@ import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
 import { publicAttachment } from '../lib/mailbox/attachmentView.js';
+import { liveAttachmentList, withLiveNames } from '../lib/mailbox/liveAttachments.js';
 import { applyVisibility, canReadLive, mayViewAttachments, sealTokens } from '../lib/mailbox/rules.js';
 import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
-import { disconnect, ensureSubscriptions, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
+import { disconnect, ensureSubscriptions, listAttachmentsNow, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
 
 export const mailboxRouter = Router();
 export const mailThreadRouter = Router();
@@ -588,14 +589,18 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // Outlook's state of each message and what is attached to it (076), for
   // the reading pane (docs/inbox-outlook-plan.md §3.3). Bcc only on mail we
   // sent; a message deleted in Outlook keeps its place with no body.
-  const { rows } = await query(
+  const messagesOf = async () => (await query(
     `SELECT m.id, m.direction, m.from_email, m.from_name, m.to_emails, m.cc_emails,
             CASE WHEN m.direction = 'outbound' THEN COALESCE(m.bcc_emails, '{}') ELSE '{}' END AS bcc_emails,
             m.subject, CASE WHEN m.removed_at IS NULL THEN m.snippet END AS snippet, CASE WHEN m.removed_at IS NULL THEN m.body_html END AS body_html,
             m.has_attachments, m.sent_at, m.sent_from_tracker_by, m.is_read, m.flag_status, m.importance, m.web_link, m.folder_id, m.removed_at,
-            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id, 'kind', x.kind) ORDER BY x.is_inline, x.id)
+            m.provider_id, m.attachments_listed_at,
+            COALESCE((SELECT json_agg(json_build_object('id', x.id, 'provider_id', x.provider_id, 'name', x.name, 'content_type', x.content_type, 'size_bytes', x.size_bytes, 'is_inline', x.is_inline, 'content_id', x.content_id, 'kind', x.kind) ORDER BY x.is_inline, x.id)
                         FROM email_attachments x WHERE x.message_id = m.id), '[]'::json) AS attachments
-       FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id]);
+       FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id])).rows;
+  let rows = await messagesOf();
+  // Files the sync has not listed yet are listed now, so they show on opening.
+  if (await listAttachmentsNow(t.account_id, rows)) rows = await messagesOf();
   // The owner of a personal mailbox that stores less than the whole message
   // reads the rest live (GET /api/mail/messages/:id) and views its
   // attachments; so does anybody, from a mailbox that shares everything,
@@ -603,13 +608,23 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
   // (docs/inbox-attachments-plan.md §8). Nobody downloads them.
   const account = { is_shared: t.is_shared, user_id: t.user_id, visibility: t.visibility, status: t.mailbox_status };
   const canView = mayViewAttachments(req.user?.id, account);
+  // A mailbox that stores metadata only keeps no file names, and a file
+  // Outlook calls application/octet-stream is told apart by its name: whoever
+  // may view the attachments gets the names read live, as the message route
+  // does, and nothing is written.
+  if (canView && t.visibility === 'metadata') {
+    await Promise.all(rows.map(async (m) => {
+      if (!m.has_attachments || m.removed_at || !m.attachments.length || m.attachments.every((a) => a.name)) return;
+      m.attachments = withLiveNames(m.attachments, await liveAttachmentList({ account_id: t.account_id, provider_id: m.provider_id }));
+    }));
+  }
   const { user_id, ...thread } = t;
   res.json({
     data: {
       ...(thread.visibility === 'metadata' ? { ...thread, subject: null } : thread),
       can_view_attachments: canView,
       messages: rows.map((m) => {
-        const v = applyVisibility(m, t.visibility);
+        const { provider_id: _providerId, attachments_listed_at: _listedAt, ...v } = applyVisibility(m, t.visibility);
         return {
           ...v,
           attachments: v.attachments.map((a) => publicAttachment(m.id, a, canView)),

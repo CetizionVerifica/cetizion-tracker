@@ -28,9 +28,10 @@ import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { forwardedEmail, officeExt, publicAttachment, toHtml, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
 import { converterConfigured, toPdf } from '../lib/mailbox/officeConvert.js';
+import { liveAttachmentList, providerFailed, withLiveNames } from '../lib/mailbox/liveAttachments.js';
 import { canReadLive, cleanHtml, isOwner, mayReadContent, mayViewAttachments, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
-import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
+import { listAttachmentsNow, providerFor, saveTokens } from '../lib/mailbox/sync.js';
 
 export const mailRouter = Router();
 
@@ -47,19 +48,6 @@ const readableThread = (req, params) => threadClause(scopeOf(req), params, { acc
 
 /** Who is asking, for the owner rule (rules.js: isOwner, mayReadContent, canReadLive — shared with the thread route). */
 const userOf = (req) => req.user?.id ?? null;
-
-/**
- * A provider that would not answer a route. A revoked or expired grant
- * (`err.reconnect`, microsoft.js) marks the mailbox the way the sync does,
- * so the thread route stops promising live reads and the switcher shows
- * the reconnect; anything else is left for the next sync to judge. The
- * provider's own words never reach the client: a fixed message does.
- */
-async function providerFailed(accountId, err) {
-  if (!err?.reconnect) return;
-  await query(`UPDATE connected_accounts SET status = 'needs_reconnect', last_error = $2 WHERE id = $1 AND status = 'active'`,
-    [accountId, String(err.message || 'The mailbox needs to be reconnected').slice(0, 500)]).catch(() => {});
-}
 
 const pageOf = (req, { size = 50, max = 200 } = {}) => ({
   pageSize: Math.min(max, Math.max(1, Number.parseInt(req.query.page_size, 10) || size)),
@@ -228,32 +216,6 @@ const attachmentsOf = async (messageId) => (await query(
   'SELECT id, provider_id, name, content_type, size_bytes, is_inline, content_id, kind FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
 
 /**
- * A mailbox that stores metadata only keeps no attachment names and no
- * content ids (sync.js: a file name is content). Its owner sees them all
- * the same, as they see the body: read from the provider for the request
- * and never written. Returns the list, or null when the provider would not
- * answer, so the stored rows stand as they are.
- */
-async function liveAttachmentList(m) {
-  const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [m.account_id]);
-  if (!a || a.status !== 'active') return null;
-  const provider = providerFor(a);
-  if (!provider.attachmentList) return null;
-  try {
-    const list = await provider.attachmentList(m.provider_id);
-    await saveTokens(a, provider).catch(() => {});
-    return list || [];
-  } catch (err) {
-    await providerFailed(a.id, err);
-    return null;
-  }
-}
-/** The stored rows, with what the owner may see of a withheld list filled in from the provider's. */
-const withLiveNames = (stored, live) => (live ? stored.map((s) => {
-  const l = live.find((x) => x.provider_id === s.provider_id);
-  return l ? { ...s, name: s.name ?? l.name ?? null, content_id: s.content_id ?? l.content_id ?? null } : s;
-}) : stored);
-/**
  * The stored attachment rows of a metadata-only mailbox carry no names; its
  * owner, and the readers of a shared one (who may view its attachments),
  * see them read from the provider.
@@ -287,6 +249,8 @@ mailRouter.get('/messages/:id', async (req, res) => {
           : 'The mailbox could not be read just now';
     }
   }
+  // Files the sync has not listed yet are listed now, so they show on opening.
+  await listAttachmentsNow(m.account_id, [m]);
   const stored = await attachmentsOf(m.id);
   const attachments = needsLiveNames(req, m, account) ? withLiveNames(stored, await liveAttachmentList(m)) : stored;
   res.json({ data: publicMessage(m, { attachments, live, canView }) });

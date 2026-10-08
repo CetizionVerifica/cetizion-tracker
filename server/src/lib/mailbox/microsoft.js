@@ -223,12 +223,26 @@ export function microsoftProvider(account, tokens) {
      * Outlook. `kind` says what Graph holds: a file, an Outlook item (an
      * email forwarded as an attachment), or a reference (a link to a file
      * in OneDrive or SharePoint, which Graph v1.0 does not describe further).
+     *
+     * $select names only what every attachment type has: Graph refuses the
+     * whole list (400, "Could not find a property named 'contentId' on type
+     * 'microsoft.graph.attachment'") when it names a property of one type.
+     * An inline picture's content id, which only a file attachment carries,
+     * is read from that attachment on its own; the body names its pictures
+     * by it.
      */
     async attachmentList(providerId) {
-      const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size,isInline,contentId`);
-      return (j.value || []).map((a) => ({
-        provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: a.contentId || null,
-        kind: ATTACHMENT_KINDS[a['@odata.type']] || 'file',
+      const base = `${who}/messages/${providerId}/attachments`;
+      const j = await graph(`${base}?$select=id,name,contentType,size,isInline`);
+      return Promise.all((j.value || []).map(async (a) => {
+        const kind = ATTACHMENT_KINDS[a['@odata.type']] || 'file';
+        let contentId = null;
+        if (kind === 'file' && a.isInline) {
+          contentId = await graph(`${base}/${a.id}`).then((one) => one?.contentId || null, () => null);
+        }
+        return {
+          provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: contentId, kind,
+        };
       }));
     },
     /**

@@ -453,6 +453,51 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal((await as(salesA)('get', att.view_url).set('X-Tracker-View', '1')).status, 200);
   });
 
+  test('a shared mailbox that stores who and when only still names its files in the reading pane, so a PDF Outlook calls octet-stream opens', async () => {
+    const box = await mailbox({ shared: true, email: `${uid('team')}@cetizionverifica.com`, visibility: 'metadata' });
+    const m = mail({ to: [{ email: box.email }], has_attachments: true,
+      attachments: [{ provider_id: 'att-o', name: 'PO 5512.pdf', contentType: 'application/octet-stream', content: Buffer.from('%PDF po') }] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const { rows: [kept] } = await db.query('SELECT name FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.equal(kept.name, null, 'the name is not stored');
+    const thread = await as(salesA)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.status, 200, JSON.stringify(thread.body));
+    const att = thread.body.data.messages[0].attachments[0];
+    assert.equal(att.name, 'PO 5512.pdf', 'read live for the reader');
+    assert.equal(att.view, 'pdf');
+    assert.equal(att.provider_id, undefined);
+    assert.equal(thread.body.data.messages[0].provider_id, undefined);
+    const got = await as(salesA)('get', att.view_url).set('X-Tracker-View', '1').buffer(true).parse(bytes);
+    assert.equal(got.status, 200);
+    assert.equal(got.headers['content-type'], 'application/pdf');
+    const { rows: [still] } = await db.query('SELECT name FROM email_attachments WHERE message_id = $1', [row.id]);
+    assert.equal(still.name, null, 'and nothing is written');
+  });
+
+  test('files the sync has not listed yet are listed when the conversation is opened', async () => {
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com` });
+    const m = mail({ has_attachments: true, attachments: [{ provider_id: 'late', name: 'Audit report.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF late') }] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    // As every message was while Graph refused the list: nothing stored, still to be read.
+    await db.query('DELETE FROM email_attachments WHERE message_id = $1', [row.id]);
+    await db.query('UPDATE email_messages SET attachments_listed_at = NULL WHERE id = $1', [row.id]);
+    const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.status, 200, JSON.stringify(thread.body));
+    const [att] = thread.body.data.messages[0].attachments;
+    assert.equal(att?.name, 'Audit report.pdf');
+    assert.equal(att.view, 'pdf');
+    assert.equal(thread.body.data.messages[0].attachments_listed_at, undefined);
+    const { rows: [after] } = await db.query('SELECT attachments_listed_at FROM email_messages WHERE id = $1', [row.id]);
+    assert.ok(after.attachments_listed_at, 'and stored, so the next open needs no call');
+
+    await db.query('DELETE FROM email_attachments WHERE message_id = $1', [row.id]);
+    await db.query('UPDATE email_messages SET attachments_listed_at = NULL WHERE id = $1', [row.id]);
+    const one = await as(salesB)('get', `/api/mail/messages/${row.id}`);
+    assert.deepEqual(one.body.data.attachments.map((a) => a.name), ['Audit report.pdf'], 'the message route too');
+  });
+
   test('the owner of a mailbox that stores subjects only reads the body live, and nothing is stored; an admin sees only what is stored', async () => {
     const m = mail({ subject: 'Confidential terms', body_html: '<p>Our best price is <b>secret</b>.</p><script>x()</script>', has_attachments: true,
       attachments: [{ provider_id: 'att-1', name: 'terms.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF') }] });

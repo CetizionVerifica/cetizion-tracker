@@ -405,7 +405,13 @@ async function storeAttachmentList(account, message, provider) {
   // not while a thread row is locked. A call that fails (throttled, timed
   // out) leaves attachments_listed_at empty, and the sync tries again later.
   let list;
-  try { list = await provider.attachmentList(message.provider_id); } catch { return false; }
+  try { list = await provider.attachmentList(message.provider_id); }
+  catch (err) {
+    // Logged: a list that fails every time (as a $select Graph refused did)
+    // is otherwise invisible, and no attachment ever shows.
+    console.warn(`[mail.attachments] the attachment list of a message in mailbox ${account.id} could not be read: ${err.status || ''} ${err.message}`.trim());
+    return false;
+  }
   await transaction(async (db) => {
     for (const a of list || []) {
       await db.query(
@@ -417,6 +423,24 @@ async function storeAttachmentList(account, message, provider) {
     await db.query('UPDATE email_messages SET attachments_listed_at = now() WHERE id = $1', [message.id]);
   });
   return true;
+}
+
+/**
+ * The attachment lists of messages about to be shown that the sync has not
+ * read yet (a backlog it works through a few per sync), read now so the
+ * reader sees the files on opening the conversation, not some syncs later.
+ * Stored as the sync stores them, under the mailbox's visibility.
+ */
+export async function listAttachmentsNow(accountId, messages) {
+  const pending = messages.filter((m) => m.has_attachments && !m.attachments_listed_at && !m.removed_at).slice(0, 10);
+  if (!pending.length) return 0;
+  const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [accountId]);
+  if (!account || account.status !== 'active') return 0;
+  const provider = providerFor(account);
+  let n = 0;
+  for (const m of pending) if (await storeAttachmentList(account, m, provider)) n += 1;
+  if (n) await saveTokens(account, provider).catch(() => {});
+  return n;
 }
 
 /** Messages whose attachment list is still to be read (a failed call earlier), newest first, a few per sync. */
