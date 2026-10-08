@@ -48,12 +48,12 @@ export default function ProjectDetail() {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useTab(TAB_KEYS);
 
-  const { data, loading, error, errorStatus, refetch } = useFetch(
+  const { data, loading, fresh, error, errorStatus, refetch } = useFetch(
     () => api.raw(`/projects/${encodeURIComponent(projectId)}/full`),
     [projectId]
   );
 
-  if (error || loading || !data) {
+  if (error || (loading && !fresh) || !data) {
     return (
       <RecordState
         parent="Projects" parentTo="/projects" crumb={projectId} noun="project"

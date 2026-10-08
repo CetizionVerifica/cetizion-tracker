@@ -61,7 +61,7 @@ export default function Account() {
   const shared = mode === 'shared';
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { data, loading, error, refetch } = useFetch(() => (shared ? null : api.raw('/auth/account')), [shared]);
+  const { data, loading, fresh, error, refetch } = useFetch(() => (shared ? null : api.raw('/auth/account')), [shared]);
   const [everywhere, setEverywhere] = useState(false);
   const navRef = useRef(null);
   const [mark, setMark] = useState(null);
@@ -101,7 +101,7 @@ export default function Account() {
       </div>
     );
   }
-  if (loading || !data) {
+  if ((loading && !fresh) || !data) {
     return <div className="app-page set-page">{head()}<LoadingPanel rows={4} /></div>;
   }
 

@@ -84,7 +84,7 @@ export default function TripDetail() {
   const tabKeys = ['legs', 'costs', 'docs', ...(isHr ? [] : ['billing'])];
   const [tab, setTab] = useTab(tabKeys);
 
-  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/travel-logs/${encodeURIComponent(travelId)}/full`), [travelId]);
+  const { data, loading, fresh, error, errorStatus, refetch } = useFetch(() => api.raw(`/travel-logs/${encodeURIComponent(travelId)}/full`), [travelId]);
   const trip = data?.data?.trip;
   const bills = data?.data?.vendor_invoices ?? [];
   const claims = data?.data?.expense_claims ?? [];
@@ -143,7 +143,7 @@ export default function TripDetail() {
     }
   }
 
-  if (error || loading || !trip) {
+  if (error || (loading && !fresh) || !trip) {
     return <RecordState parent="Trips" parentTo="/travel" crumb={travelId} noun="trip" loading={!error} missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
 

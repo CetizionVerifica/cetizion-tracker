@@ -117,7 +117,7 @@ export default function PurchaseOrderDetail() {
   const mayDeleteService = mayDeleteResource('po-services', isAdmin);
   const [dialog, setDialog] = useState(null);
 
-  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`), [poNumber]);
+  const { data, loading, fresh, error, errorStatus, refetch } = useFetch(() => api.raw(`/purchase-orders/${encodeURIComponent(poNumber)}/full`), [poNumber]);
   // The client's confirmations, queries and payment advice on this PO (#198), newest first.
   const portal = useFetch(() => api.raw(`/portal-admin/actions?status=all&po_number=${encodeURIComponent(poNumber)}`).catch(() => ({ data: [] })), [poNumber]);
 
@@ -133,7 +133,7 @@ export default function PurchaseOrderDetail() {
   if (error) {
     return <RecordState parent="Orders" parentTo="/purchase-orders" crumb={`PO ${poNumber}`} noun="order" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
-  if (loading || !data) {
+  if ((loading && !fresh) || !data) {
     return (
       <div className="app-page app-rec" aria-busy="true" aria-label="Loading the purchase order">
         {crumbs(`PO ${poNumber}`)}

@@ -6,7 +6,11 @@ import { api } from './api.js';
  * mutation elsewhere on the page can pull fresh totals.
  */
 export function useFetch(fetcher, deps = []) {
-  const [state, setState] = useState({ data: null, loading: true, error: null, errorStatus: null });
+  const [state, setState] = useState({ data: null, loading: true, error: null, errorStatus: null, for: null });
+  // Which deps the data on hand was fetched for. A refetch keeps them, so a page can
+  // keep showing its record (and any open dialog) while it reloads, and only show its
+  // skeleton when it moves to another record.
+  const depsKey = JSON.stringify(deps);
   const [tick, setTick] = useState(0);
   const latest = useRef(0);
 
@@ -18,12 +22,12 @@ export function useFetch(fetcher, deps = []) {
     Promise.resolve(fetcher())
       .then((result) => {
         if (cancelled || run !== latest.current) return;
-        setState({ data: result, loading: false, error: null, errorStatus: null });
+        setState({ data: result, loading: false, error: null, errorStatus: null, for: depsKey });
       })
       .catch((err) => {
         if (cancelled || err.name === 'AbortError' || run !== latest.current) return;
         // The status rides along so a screen can tell "not found" from "not now".
-        setState({ data: null, loading: false, error: err.message, errorStatus: err.status ?? null });
+        setState({ data: null, loading: false, error: err.message, errorStatus: err.status ?? null, for: depsKey });
       });
 
     return () => {
@@ -33,7 +37,7 @@ export function useFetch(fetcher, deps = []) {
   }, [...deps, tick]);
 
   const refetch = useCallback(() => setTick((n) => n + 1), []);
-  return { ...state, refetch };
+  return { ...state, fresh: state.for === depsKey, refetch };
 }
 
 export function useList(resource, params = {}, deps = []) {

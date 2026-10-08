@@ -30,7 +30,7 @@ export default function VendorInvoiceDetail() {
   const [dialog, setDialog] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useTab(['lines', 'notes', 'docs']);
-  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/vendor-invoices/${encodeURIComponent(id)}/full`), [id]);
+  const { data, loading, fresh, error, errorStatus, refetch } = useFetch(() => api.raw(`/vendor-invoices/${encodeURIComponent(id)}/full`), [id]);
   const invoice = data?.data?.invoice;
   const lines = data?.data?.lines ?? [];
   const credits = data?.data?.credit_notes ?? [];
@@ -58,7 +58,7 @@ export default function VendorInvoiceDetail() {
     }
   }
 
-  if (error || loading || !invoice) {
+  if (error || (loading && !fresh) || !invoice) {
     return <RecordState parent="Vendor invoices" parentTo="/vendor-invoices" crumb={invoice?.vendor_invoice_no || `#${id}`} noun="vendor invoice" loading={!error} missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
 

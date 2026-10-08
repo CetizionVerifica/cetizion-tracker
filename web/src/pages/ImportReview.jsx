@@ -124,7 +124,7 @@ export default function ImportReview() {
   const [commitError, setCommitError] = useState(null);
   const [filters, setFilters] = useState({ status: '', flagged: false, action: '' });
 
-  const { data, loading, error, refetch } = useFetch(() => api.raw(`/import/batches/${id}`), [id]);
+  const { data, loading, fresh, error, refetch } = useFetch(() => api.raw(`/import/batches/${id}`), [id]);
   const batch = data?.data;
   const items = batch?.items ?? [];
   const bySeq = useMemo(() => new Map(items.map((it) => [it.seq, it])), [items]);
@@ -191,7 +191,7 @@ export default function ImportReview() {
       </>
     );
   }
-  if (loading || !batch) {
+  if ((loading && !fresh) || !batch) {
     return (
       <>
         <Head title={`Import #${id}`} subtitle="Loading the review…" />

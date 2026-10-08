@@ -81,7 +81,7 @@ export default function QuotationDetail() {
   const [busy, setBusy] = useState(false);
   const [linksVersion, setLinksVersion] = useState(0);
 
-  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
+  const { data, loading, fresh, error, errorStatus, refetch } = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/full`), [key]);
   const q = data?.data;
   const acceptances = useFetch(() => api.raw(`/quotations/${encodeURIComponent(key)}/acceptances`), [key, q?.revision, q?.accepted_at, linksVersion]);
   const links = acceptances.data?.data ?? [];
@@ -108,7 +108,7 @@ export default function QuotationDetail() {
   if (error) {
     return <RecordState parent="Deals" parentTo="/quotations" crumb={key} noun="deal" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
-  if (loading || !q) {
+  if ((loading && !fresh) || !q) {
     return (
       <div className="app-page" aria-busy="true" aria-label="Loading the deal">
         <div className="app-rec__bar"><span className="mg-skel" style={{ height: 14, width: 160 }} /></div>

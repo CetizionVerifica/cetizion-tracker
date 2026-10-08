@@ -65,7 +65,7 @@ export default function InvoiceRun() {
   // The queue is read once. Raising a stage takes it out of "To Invoice",
   // so refetching after every save would renumber the queue under the
   // person working it: the run keeps its own order and marks off as it goes.
-  const { data, loading, error, refetch } = useFetch(
+  const { data, loading, fresh, error, refetch } = useFetch(
     () => api.list('payment-stages', { stage_status: 'To Invoice', limit: 100 }),
     []
   );
@@ -106,7 +106,7 @@ export default function InvoiceRun() {
       </>
     );
   }
-  if (loading || !data) {
+  if ((loading && !fresh) || !data) {
     return (
       <>
         <PageHeader title="Raising invoices" actions={leave} />

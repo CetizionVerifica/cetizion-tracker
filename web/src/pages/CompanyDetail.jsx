@@ -84,7 +84,7 @@ export default function CompanyDetail() {
   const [into, setInto] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const { data, loading, error, errorStatus, refetch } = useFetch(() => api.raw(`/companies/${id}/full`), [id]);
+  const { data, loading, fresh: current, error, errorStatus, refetch } = useFetch(() => api.raw(`/companies/${id}/full`), [id]);
   const c = data?.data;
   // The portal switches are an admin's (the route is admin-only).
   const portal = useFetch(() => (isAdmin ? api.raw(`/portal-admin/companies/${id}`) : Promise.resolve(null)), [id, isAdmin]);
@@ -115,7 +115,7 @@ export default function CompanyDetail() {
   if (error) {
     return <RecordState parent="Companies" parentTo="/companies" crumb={`#${id}`} noun="company" missing={errorStatus === 404} error={error} onRetry={refetch} />;
   }
-  if (loading || !c) {
+  if ((loading && !current) || !c) {
     return (
       <div className="app-page" aria-busy="true" aria-label="Loading the company">
         <div className="app-rec__bar"><span className="mg-skel" style={{ height: 14, width: 160 }} /></div>
