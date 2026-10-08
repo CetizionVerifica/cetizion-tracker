@@ -40,6 +40,10 @@
 .app-tab.is-on { color: var(--text); }
 .app-tab__drop { position: absolute; top: 2px; width: 40px; height: 32px; border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; background: var(--pill); box-shadow: 0 10px 18px -10px var(--glow); opacity: 0; transform: scale(.4); transition: transform 600ms var(--mg-brew), opacity 200ms; }
 .app-tab.is-on .app-tab__drop { opacity: 1; transform: none; }
+/* The bar's single drop glides between tabs on the Brew spring (PR 14). */
+.app-tabbar__drop { top: 0; left: 0; z-index: 0; transition: translate 600ms var(--mg-brew), transform 600ms var(--mg-brew), opacity 200ms; }
+.app-tabbar__drop.is-on { opacity: 1; transform: none; }
+.app-tabbar__drop.is-snap { transition: transform 600ms var(--mg-brew), opacity 200ms; }
 .app-tab__icon { position: relative; margin-top: -6px; }
 .app-tab.is-on .app-tab__icon { color: var(--on-pill); }
 .app-tab__label { position: relative; margin-top: 4px; white-space: nowrap; }
@@ -125,10 +129,10 @@ body.is-staging { padding-top: 0 !important; }
 body.is-staging .app-shell__rail { top: 18px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-tab__drop, .app-shell__rail .mg-drop { transition-duration: 1ms; }
+  .app-tab__drop, .app-shell__rail .mg-drop { transition-duration: 1ms !important; }
   .app-spin { animation-duration: 2400ms; }
 }
-.mg-paused .app-tab__drop, .mg-paused .app-shell__rail .mg-drop { transition-duration: 1ms; }
+.mg-paused .app-tab__drop, .mg-paused .app-shell__rail .mg-drop { transition-duration: 1ms !important; }
 
 /* Sign-in "checking" mark: a slow breath. */
 .app-pulse { display: grid; animation: app-pulse 1600ms ease-in-out infinite; }

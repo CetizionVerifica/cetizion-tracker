@@ -120,7 +120,11 @@ html.mg-kbd :is(.mg-menu__item, .mg-list__opt, [data-slot$="-item"], [data-slot=
 /* Inner scroll areas: a thin themed thumb that fades in while the pointer is over them. */
 @media (hover: hover) {
   .mg * { scrollbar-color: transparent transparent; }
-  .mg *:hover { scrollbar-color: var(--scroll-thumb) transparent; }
+  .mg *:hover, .mg *:focus-within { scrollbar-color: var(--scroll-thumb) transparent; }
+  /* motion.js tags each scroll area the pointer reaches, so its thumb fades in and out. */
+  .mg .mg-sc { transition: scrollbar-color var(--mg-med) var(--mg-out); }
+  .mg .mg-sc:hover { transition-duration: var(--mg-fast); }
+  .mg .mg-sc-cold.mg-sc-cold { scrollbar-color: transparent transparent; }
 }
 /* Dialogs, sheets, menus and lists never hand their scroll on to the page. */
 [data-slot$="-content"], [data-slot$="-content"] *, .mg-list, .mg-menu, .mg-cal, .mg-palette, .mg-palette *, .set-nav { overscroll-behavior: contain; }

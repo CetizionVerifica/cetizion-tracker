@@ -1,5 +1,6 @@
-/* Mocha Glass motion for the app: the jelly and press, count-ups, the entrance, the pause
-   switch and the theme shockwave, ported from the design system's bundle.js (the canvas
+/* Mocha Glass motion for the app: the jelly (the .97 press of other controls is CSS, in
+   feel.css), count-ups, the entrance and the per-route arrival (arrive), the tab underline
+   glide, count bumps, scroll-area thumbs, the pause switch and the theme shockwave, ported from the design system's bundle.js (the canvas
    "Mocha mix · Glass 2"). No cursor ripple (removed 8 Oct). The scene's blobs and grain are
    drawn by components/SceneBackdrop.jsx rather than by scenes() here. */
 
@@ -185,6 +186,33 @@ function wireFeel() {
   const NAV = /^(Arrow|Tab$|Home$|End$|Page|Enter$|Escape$| $)/;
   document.addEventListener('keydown', (e) => { if (NAV.test(e.key)) html.classList.add('mg-kbd'); }, true);
   document.addEventListener('pointermove', () => { if (html.classList.contains('mg-kbd')) html.classList.remove('mg-kbd'); }, { passive: true, capture: true });
+
+  /* Scroll areas: the thin thumb fades in while the pointer is over one and out
+     after (feel.css). Each scroll area is tagged once, the first time the pointer
+     reaches it; one that already has transitions of its own gets the fade
+     appended to them instead. */
+  const tagged = new WeakSet();
+  // 'never' (overflow visible or hidden: never scrolls), 'yes', or 'not yet' (could once it fills).
+  const scrolls = (el) => {
+    const cs = getComputedStyle(el), y = /(auto|scroll)/.test(cs.overflowY), x = /(auto|scroll)/.test(cs.overflowX);
+    if (!x && !y) return 'never';
+    return (y && el.scrollHeight > el.clientHeight) || (x && el.scrollWidth > el.clientWidth) ? 'yes' : 'not yet';
+  };
+  document.addEventListener('pointerover', (e) => {
+    for (let el = e.target; el && el.nodeType === 1 && el !== document.body; el = el.parentElement) {
+      if (tagged.has(el)) continue;
+      const can = scrolls(el);
+      if (can !== 'not yet') tagged.add(el);
+      if (can !== 'yes') continue;
+      const own = getComputedStyle(el).transitionProperty;
+      // Start from a clear thumb even on this first hover, so it fades in too.
+      el.classList.add('mg-sc-cold');
+      if (!own || own === 'all' && getComputedStyle(el).transitionDuration === '0s') el.classList.add('mg-sc');
+      else el.style.transition = `${getComputedStyle(el).transition}, scrollbar-color var(--mg-med) var(--mg-out)`;
+      void getComputedStyle(el).scrollbarColor;
+      requestAnimationFrame(() => el.classList.remove('mg-sc-cold'));
+    }
+  }, { passive: true });
 
   /* While anything scrolls, the scene's blobs hold still (feel.css), so the glass
      never re-blurs a moving scene and a moving page in the same frame. */

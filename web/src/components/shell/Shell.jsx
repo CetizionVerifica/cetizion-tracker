@@ -642,9 +642,32 @@ function TabBar() {
   const location = useLocation();
   useEffect(() => { setSheet(null); }, [location.pathname]);
   const toggle = (name) => setSheet((cur) => (cur === name ? null : name));
+  // One drop for the whole bar, gliding to the current tab on the Brew spring
+  // like the rail's. Coming from no tab, it pops in where it lands.
+  const barRef = useRef(null);
+  const [drop, setDrop] = useState(null);
+  const measureDrop = useCallback(() => {
+    const on = barRef.current?.querySelector('.app-tab.is-on');
+    setDrop((prev) => (on
+      ? { x: on.offsetLeft + (on.offsetWidth - 40) / 2, y: on.offsetTop + 2, snap: !prev }
+      : null));
+  }, []);
+  useLayoutEffect(measureDrop, [measureDrop, location.pathname, sheet, s.isHr]);
+  useEffect(() => {
+    window.addEventListener('resize', measureDrop);
+    return () => window.removeEventListener('resize', measureDrop);
+  }, [measureDrop]);
+  const last = useRef(null);
+  if (drop) last.current = drop;
+  const at = drop || last.current;
   return (
     <>
-      <nav className="mg-glass app-shell__tabbar" aria-label="Main">
+      <nav className="mg-glass app-shell__tabbar" aria-label="Main" ref={barRef}>
+        <span
+          className={cn('app-tab__drop app-tabbar__drop', drop && 'is-on', drop?.snap && 'is-snap')}
+          aria-hidden="true"
+          style={at ? { translate: `${at.x}px ${at.y}px` } : undefined}
+        />
         {tabsFor(s.isHr).map((t) => {
           if (t === '+') {
             return (
@@ -656,7 +679,6 @@ function TabBar() {
           if (t === 'more') {
             return (
               <button key="more" type="button" className={cn('app-tab', sheet === 'more' && 'is-on')} aria-label="More pages, pinned views and account" aria-expanded={sheet === 'more'} onClick={() => toggle('more')}>
-                <span className="app-tab__drop" aria-hidden="true" />
                 <Menu size={20} strokeWidth={1.8} aria-hidden="true" className="app-tab__icon" />
                 <span className="app-tab__label">More</span>
               </button>
@@ -667,8 +689,7 @@ function TabBar() {
             <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cn('app-tab', isActive && !sheet && 'is-on')} aria-label={count > 0 ? `${t.label}, ${count} open` : t.label}>
               {({ isActive }) => (
                 <>
-                  <span className="app-tab__drop" aria-hidden="true" />
-                  <t.icon size={20} strokeWidth={1.8} aria-hidden="true" className="app-tab__icon" />
+                    <t.icon size={20} strokeWidth={1.8} aria-hidden="true" className="app-tab__icon" />
                   <span className="app-tab__label">{t.short || t.label}</span>
                   {count > 0 && !isActive && <span className="mg-count app-tab__count">{count}</span>}
                 </>
