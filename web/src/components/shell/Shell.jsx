@@ -192,7 +192,7 @@ function Rail() {
           <AccountMenu side="right" align="end" />
         </div>
       </aside>
-      <span className={cn('mg-tip', tip.on && 'is-on')} aria-hidden="true" style={{ left: 90, top: tip.y, transform: tip.on ? 'none' : 'translateX(-6px)' }}>
+      <span className={cn('mg-tip', tip.on && 'is-on')} aria-hidden="true" style={{ left: 90, top: 0, transform: `translateY(${tip.y}px) translateX(${tip.on ? 0 : -6}px)` }}>
         {tip.label}
         {tip.count > 0 && <span className="mg-count">{tip.count}</span>}
       </span>
