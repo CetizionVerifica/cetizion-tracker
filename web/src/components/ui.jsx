@@ -142,8 +142,15 @@ export function DocumentLink({ id, name }) {
  * of the card rather than getting a label that says nothing.
  */
 function CardList({ columns, rows, onRowClick, rowClassName }) {
-  const labelled = columns.filter((col) => col.header);
-  const actions = columns.filter((col) => !col.header);
+  /**
+   * A column whose header is a word labels a value; one whose header is an
+   * element is a control, and its header belongs to the table rather than to
+   * each card. Filtering on truthiness alone put a list's select-all box on
+   * every card, above that card's own tick box.
+   */
+  const named = (col) => typeof col.header === 'string' && col.header !== '';
+  const labelled = columns.filter(named);
+  const actions = columns.filter((col) => !named(col));
   return (
     <div className="flex flex-col gap-2 p-3">
       {rows.map((row, i) => {
@@ -203,6 +210,16 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
   if (!wide) return <CardList columns={columns} rows={rows} onRowClick={onRowClick} rowClassName={rowClassName} />;
 
   const [sortKey, sortDir] = String(sort || '').split(':');
+
+  /**
+   * The column a row is named by, for the label a keyboard user hears.
+   *
+   * The first column, until a list grew a leading checkbox: a tick box
+   * identifies no record, so every row of a selectable list would have been
+   * announced as "Open this record". A column says so with
+   * `identifies: false` rather than this guessing from its key.
+   */
+  const named = columns.find((col) => col.identifies !== false) ?? columns[0];
 
   return (
       /**
@@ -270,7 +287,7 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
               // wrapper element inside the cell, which shrink-wrapped the
               // identifier column and broke references across three lines.
               tabIndex={onRowClick ? 0 : undefined}
-              aria-label={onRowClick ? `Open ${String(row[columns[0].key] ?? 'this record')}` : undefined}
+              aria-label={onRowClick ? `Open ${String(row[named.key] ?? 'this record')}` : undefined}
               onKeyDown={onRowClick ? (e) => {
                 if (e.key !== 'Enter' && e.key !== ' ') return;
                 if (e.target !== e.currentTarget) return;

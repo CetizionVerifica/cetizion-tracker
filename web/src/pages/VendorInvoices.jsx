@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListPage } from '../components/ListPage.jsx';
-import { Badge, Tabs } from '../components/ui.jsx';
+import { Alert, Badge, Tabs } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
-import { PayVendorDialog } from '../components/vendorPayments.jsx';
+import { BulkPayVendorDialog, PayVendorDialog } from '../components/vendorPayments.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import { useLookups } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
-import { agencyInvoiceChip, mayRecordVendorPayment } from '../lib/vendorPayments.js';
+import {
+  MAX_BULK_VENDOR_INVOICES, agencyInvoiceChip, bulkBlockedReason, bulkSelection,
+  mayBulkPayVendorInvoices, mayRecordVendorPayment,
+} from '../lib/vendorPayments.js';
 
 const vendorOptions = (lookups) => lookups.travel_vendor_list.map((v) => ({ value: String(v.id), label: v.name }));
 
@@ -59,6 +62,63 @@ export default function VendorInvoices() {
   const tab = params.get('tab') === 'credit-notes' ? 'credit-notes' : 'invoices';
   const [paying, setPaying] = useState(null);
   const [version, setVersion] = useState(0);
+
+  /**
+   * Bills ticked for one transfer (#214 §2.6).
+   *
+   * The rows are kept, not only their ids: the dialog needs each bill's
+   * payable, what it already settles and its agency, and re-reading those
+   * from the table as it re-renders is how a figure in a dialog ends up
+   * disagreeing with the figure that was ticked.
+   *
+   * The first tick decides the agency. Every row of another agency is then
+   * drawn disabled with the reason on it, because discovering the one-vendor
+   * rule from a 422 after filling in a dozen amounts is no way to find out.
+   */
+  const mayBulk = mayBulkPayVendorInvoices({ isAdmin, isHr });
+  const [picked, setPicked] = useState(() => new Map());
+  const [bulk, setBulk] = useState(null);
+  const chosen = bulkSelection([...picked.values()], picked.keys());
+
+  const toggle = useCallback((row) => setPicked((current) => {
+    const next = new Map(current);
+    if (next.has(row.id)) next.delete(row.id);
+    else next.set(row.id, row);
+    return next;
+  }), []);
+
+  const toggleAll = useCallback((rows) => setPicked((current) => {
+    const offered = rows.filter((row) => current.has(row.id)
+      || !bulkBlockedReason(row, bulkSelection([...current.values()], current.keys())));
+    if (offered.length > 0 && offered.every((row) => current.has(row.id))) return new Map();
+    // Added one at a time through the same rule the checkboxes use, so "all"
+    // can never assemble a selection a person could not have ticked by hand:
+    // one agency, and never more than the transfer may carry.
+    const next = new Map(current);
+    for (const row of rows) {
+      if (next.has(row.id)) continue;
+      if (bulkBlockedReason(row, bulkSelection([...next.values()], next.keys()))) continue;
+      next.set(row.id, row);
+    }
+    return next;
+  }), []);
+
+  /**
+   * A bill no longer on the list stops being ticked, and one still on it is
+   * refreshed to what the list now says.
+   *
+   * Both halves matter. A pick the reader can no longer see is a pick they
+   * cannot check before acting on it; and a snapshot taken before somebody
+   * else's payment landed would open the dialog on a balance that is no
+   * longer the balance.
+   */
+  const onVisible = useCallback((rows) => setPicked((current) => {
+    if (current.size === 0) return current;
+    const visible = new Map(rows.map((row) => [row.id, row]));
+    const next = new Map();
+    for (const id of current.keys()) if (visible.has(id)) next.set(id, visible.get(id));
+    return next;
+  }), []);
 
   const columns = [
     { key: 'vendor_invoice_no', header: 'Invoice', className: 'mono', render: (r) => <>{r.vendor_invoice_no || r.vendor_invoice_id}<div className="small muted">{date(r.invoice_date)}</div></> },
@@ -123,6 +183,33 @@ export default function VendorInvoices() {
       {tab === 'invoices' ? (
         <ListPage
           refreshToken={version}
+          selection={mayBulk ? {
+            ids: new Set(picked.keys()),
+            label: 'Select vendor invoice',
+            blockedReason: (row) => bulkBlockedReason(row, chosen),
+            onToggle: toggle,
+            onToggleAll: toggleAll,
+            onVisible,
+          } : undefined}
+          banner={chosen.count > 0 ? (
+            <Alert tone="info">
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>
+                  <strong>
+                    {chosen.count} {chosen.count === 1 ? 'bill' : 'bills'} of {chosen.vendorName || 'one agency'}
+                  </strong>
+                  {' '}selected · {money(chosen.outstanding)} outstanding
+                  {chosen.atLimit && <> · at the limit of {MAX_BULK_VENDOR_INVOICES} a transfer may settle</>}
+                </span>
+                <button type="button" className="btn btn--sm btn--primary" onClick={() => setBulk([...picked.values()])}>
+                  Record one transfer
+                </button>
+                <button type="button" className="btn btn--sm btn--ghost" onClick={() => setPicked(new Map())}>
+                  Clear selection
+                </button>
+              </span>
+            </Alert>
+          ) : undefined}
           title="Vendor invoices"
           subtitle="HR records the bill; finance pays by the following month-end. One bill can cover several trips."
           resource="vendor-invoices"
@@ -149,6 +236,20 @@ export default function VendorInvoices() {
           formTitle="credit note"
           searchPlaceholder="Search credit note…"
           filters={[{ name: 'kind', label: 'Kind', options: [{ value: 'credit_note', label: 'Credit note' }, { value: 'cancellation_note', label: 'Cancellation note' }] }]}
+        />
+      )}
+
+      {bulk && (
+        <BulkPayVendorDialog
+          invoices={bulk}
+          onClose={() => setBulk(null)}
+          onDone={() => {
+            // Nothing is half done: the batch is one transaction, so a reply
+            // means every bill moved. Clear the selection and re-read the list.
+            setBulk(null);
+            setPicked(new Map());
+            setVersion((v) => v + 1);
+          }}
         />
       )}
 

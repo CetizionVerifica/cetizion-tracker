@@ -61,7 +61,7 @@ import { httpMetrics } from './lib/ops/metrics.js';
 import { appEnv, stagingGate } from './lib/ops/environment.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
-  vendorInvoiceRouter, claimRouter, travelRouter,
+  vendorInvoiceRouter, vendorPaymentRouter, claimRouter, travelRouter,
 } from './routes/workflow.js';
 import { kpiRouter } from './routes/kpis.js';
 import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
@@ -207,6 +207,10 @@ app.use('/api/quotations', quotationRouter);
 app.use('/api/payment-stages', invoiceReviewRouter);
 app.use('/api/payment-stages', stageRouter);
 app.use('/api/vendor-invoices', vendorInvoiceRouter);
+// One bank transfer settling several of one agency's bills (#214 §2.6).
+// Not under /api/vendor-invoices: the request is the transfer, and the
+// bills it closed are what it carries.
+app.use('/api/vendor-payments', vendorPaymentRouter);
 app.use('/api/expense-claims', claimRouter);
 app.use('/api/travel-logs', travelRouter);
 

@@ -193,6 +193,30 @@ for (const role of ['sales', 'admin']) {
       await expectCount(invoiceRow.getByRole('button', { name: 'Pay' }), 'Vendor Pay');
     });
 
+    // ----------------------------- the bulk transfer: the same two roles
+    //
+    // Paying the agency monthly is one transfer over several bills (#214
+    // §2.6), and it is gated exactly as the single Pay is. A sales user gets
+    // no tick box at all, so there is nothing to select and no bulk action
+    // to reach — and POST /api/vendor-payments/batch refuses them anyway.
+    test('Vendor invoices: the bulk selection is not a sales user\'s', async ({ page }) => {
+      await go(page, '/vendor-invoices', page.getByText('TRV-2026-E2E').first());
+      const invoiceRow = page.getByRole('row', { name: /TRV-2026-E2E/ });
+      await expectCount(invoiceRow.getByRole('checkbox'), 'Vendor invoice tick box');
+
+      if (visible) {
+        // Ticking one bill offers the transfer and says which agency it is for.
+        await invoiceRow.getByRole('checkbox').check();
+        await expect(page.getByRole('button', { name: 'Record one transfer' })).toBeVisible();
+        await expect(page.getByText(/selected ·/)).toBeVisible();
+      } else {
+        await expect(
+          page.getByRole('button', { name: 'Record one transfer' }),
+          'the bulk action must not be offered to a sales user',
+        ).toHaveCount(0);
+      }
+    });
+
     // ------------------------- vendor payment history and the correction
     //
     // The ledger is left out of the invoice's reply for a sales user, so
