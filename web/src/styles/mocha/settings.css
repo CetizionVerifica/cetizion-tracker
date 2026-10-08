@@ -275,3 +275,6 @@
 .set-flag { border-radius: 10px; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; white-space: normal; text-align: left; max-width: 100%; }
 .mg-row.tr--dup { background: color-mix(in oklab, var(--waiting) 10%, transparent); }
 .app-panel__head > .mg-banner, .app-panel__head > .mg-field { flex-basis: 100%; }
+.acc-item--here { background: var(--wait-soft); border-radius: 16px; padding-left: 12px; padding-right: 12px; border-top-color: transparent; }
+.acc-item--here + .acc-item { border-top-color: transparent; }
+.acc-who__inner .mg-avatar { font-size: 15px; }

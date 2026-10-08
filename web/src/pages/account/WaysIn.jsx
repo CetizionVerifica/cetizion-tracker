@@ -1,145 +1,138 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check } from 'lucide-react';
-import { Chip } from '../../components/record.jsx';
-import { Button } from '../../components/ui/button.tsx';
-import { Input } from '../../components/ui/input.tsx';
-import { Label } from '../../components/ui/label.tsx';
-import { Separator } from '../../components/ui/separator.tsx';
+import { Globe, LayoutGrid } from 'lucide-react';
+import { ConfirmDialog, Modal } from '../../components/ui.jsx';
+import { MoneyBanner } from '../../components/money.jsx';
+import { Tone } from '../../components/sales.jsx';
 import { api } from '../../lib/api.js';
 import { useAccount } from './index.jsx';
 import { Pane } from './Pane.jsx';
 
 const LABEL = { microsoft: 'Microsoft 365', google: 'Google' };
+const ICON = { microsoft: LayoutGrid, google: Globe };
 
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : null);
 
 /**
- * The doors into this account: linked providers, and the password.
- *
- * The password used to be crammed into the bottom of the provider list,
- * which made a form look like a fourth row of a table. It is the same kind
- * of thing as a linked provider — a way in — so it belongs in this pane,
- * but below a rule of its own.
+ * The doors into this account: linked providers, and the password (Wave 8).
+ * Unlinking asks first; unlinking the only way in is refused with the reason
+ * (set a password or link the other provider first).
  */
 export function WaysIn() {
   const { profile, identities, providers, refetch, toast } = useAccount();
   const [passwords, setPasswords] = useState({ current_password: '', new_password: '' });
   const [changing, setChanging] = useState(false);
+  const [pwError, setPwError] = useState(null);
+  const [unlinking, setUnlinking] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const linked = Object.fromEntries(identities.map((i) => [i.provider, i]));
   const known = [...new Set([...providers.map((p) => p.id), ...identities.map((i) => i.provider)])];
+  const onlyWay = !profile.password_set && identities.length <= 1;
 
   async function unlink(provider) {
+    setBusy(true);
     try {
       await api.raw(`/auth/account/identities/${provider}`, { method: 'DELETE' });
       toast(`${LABEL[provider]} unlinked`, 'success');
+      setUnlinking(null);
       refetch();
     } catch (err) {
       toast(err.message, 'danger');
+    } finally {
+      setBusy(false);
     }
   }
 
   async function changePassword(e) {
     e.preventDefault();
     setChanging(true);
+    setPwError(null);
     try {
       await api.raw('/auth/account/password', { method: 'POST', body: passwords });
       toast('Password changed. Every other device has been signed out.', 'success');
       setPasswords({ current_password: '', new_password: '' });
       refetch();
     } catch (err) {
-      toast(err.fields ? Object.values(err.fields)[0] : err.message, 'danger');
+      setPwError(err.fields ? Object.values(err.fields)[0] : err.message);
     } finally {
       setChanging(false);
     }
   }
 
   return (
-    <Pane
-      title="Ways in"
-      description="One person, several doors. Any of them signs you into the same account, and unlinking one never deletes anything."
-    >
-      {known.length === 0 ? (
-        <p className="text-[12.5px]/[1.6] text-muted-foreground">
-          This deployment signs in with a password only. Connecting Microsoft 365 or Google is an admin
-          job, and <Link to="/settings/sign-in">Settings → Sign-in methods</Link> says what each one needs.
-        </p>
-      ) : (
-        <div className="grid gap-3">
-          {known.map((id) => {
-            const mine = linked[id];
-            return (
-              <div key={id} className="flex flex-wrap items-center gap-3 rounded-[8px] border border-border px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-medium text-foreground">{LABEL[id] || id}</div>
-                  <div className="text-[12px] text-muted-foreground">
+    <>
+      <Pane title="Microsoft 365 and Google" description="Any of them signs you in to the same account, and unlinking one never deletes anything.">
+        {known.length === 0 ? (
+          <p className="m-0 text-[13px] text-secondary-text">
+            This deployment signs in with a password only. Connecting Microsoft 365 or Google is an admin job
+            {profile.role === 'admin' ? <>, and <Link className="set-link" to="/settings/sign-in">Settings › Sign-in methods</Link> says what each one needs.</> : '.'}
+          </p>
+        ) : (
+          <div className="acc-list">
+            {known.map((id) => {
+              const mine = linked[id];
+              const Icon = ICON[id] || Globe;
+              return (
+                <div key={id} className="acc-item">
+                  <span className="acc-item__mark"><Icon aria-hidden="true" /></span>
+                  <div className="acc-item__text">
+                    <b>{LABEL[id] || id}</b>
+                    <small>{mine ? `${mine.email || 'Linked'} · linked ${day(mine.linked_at)}` : 'Not linked. Link it to sign in without typing a password.'}</small>
+                  </div>
+                  <div className="acc-item__end">
+                    {mine && <Tone tone="ok">Linked</Tone>}
                     {mine
-                      ? `${mine.email || 'linked'} · linked ${day(mine.linked_at)}`
-                      : 'Not linked. Link it to sign in without typing a password.'}
+                      ? <button type="button" className="mg-btn mg-btn--sm mg-btn--ghost" aria-label={`Unlink ${LABEL[id]}`} onClick={() => setUnlinking(id)}>Unlink</button>
+                      : providers.some((p) => p.id === id) && <a className="mg-btn mg-btn--sm" href={`/api/auth/oauth/${id}/start?next=/account/ways-in`}>Link {LABEL[id]}</a>}
                   </div>
                 </div>
-                {mine && <Chip tone="settled" icon={Check}>Linked</Chip>}
-                {mine
-                  ? <Button variant="ghost" size="sm" onClick={() => unlink(id)}>Unlink</Button>
-                  : providers.some((p) => p.id === id) && (
-                    <Button variant="secondary" size="sm" asChild>
-                      <a href={`/api/auth/oauth/${id}/start?next=/account/ways-in`}>Link {LABEL[id]}</a>
-                    </Button>
-                  )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </Pane>
 
-      <Separator className="my-6" />
+      <Pane title="Password" description={profile.password_set ? 'Set. Changing it signs out every other device, and keeps this one.' : 'Not set.'}>
+        <form className="flex flex-col gap-4" onSubmit={changePassword}>
+          <div className="mg-grid2">
+            <label className="mg-field">
+              <span className="mg-field__label">Current password</span>
+              <input className="mg-input" id="account-current" type="password" autoComplete="current-password" value={passwords.current_password} onChange={(e) => setPasswords((p) => ({ ...p, current_password: e.target.value }))} />
+            </label>
+            <label className={`mg-field${pwError ? ' is-error' : ''}`}>
+              <span className="mg-field__label">New password</span>
+              <input className="mg-input" id="account-new" type="password" autoComplete="new-password" value={passwords.new_password} onChange={(e) => setPasswords((p) => ({ ...p, new_password: e.target.value }))} />
+              {pwError ? <span className="mg-field__error">{pwError}</span> : <span className="mg-field__hint">12 characters or more.</span>}
+            </label>
+          </div>
+          <div>
+            <button type="submit" className="mg-btn mg-btn--primary" disabled={changing || !passwords.current_password || !passwords.new_password}>{changing ? 'Changing…' : 'Change password'}</button>
+          </div>
+        </form>
+      </Pane>
 
-      <form className="grid gap-5 @2xl:grid-cols-2" onSubmit={changePassword}>
-        <div className="@2xl:col-span-2">
-          <h3 className="text-[13px] font-semibold text-foreground">Password</h3>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">
-            {profile.password_set
-              ? 'Set. Changing it signs out every other device, and keeps this one.'
-              : 'Not set.'}
-          </p>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="account-current">Current password</Label>
-          <Input
-            id="account-current"
-            type="password"
-            autoComplete="current-password"
-            value={passwords.current_password}
-            onChange={(e) => setPasswords((p) => ({ ...p, current_password: e.target.value }))}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="account-new">New password</Label>
-          <Input
-            id="account-new"
-            type="password"
-            autoComplete="new-password"
-            value={passwords.new_password}
-            onChange={(e) => setPasswords((p) => ({ ...p, new_password: e.target.value }))}
-          />
-          <p className="text-[12px] text-muted-foreground">Twelve characters or more.</p>
-        </div>
-        <div className="@2xl:col-span-2">
-          <Button
-            type="submit"
-            variant="secondary"
-            disabled={changing || !passwords.current_password || !passwords.new_password}
-          >
-            {changing ? 'Changing…' : 'Change password'}
-          </Button>
-        </div>
-      </form>
-
-      <p className="mt-6 text-[12px]/[1.6] text-muted-foreground">
-        Linking matches on the verified email of the provider account. A different address needs an admin
-        to attach it under <Link to="/settings/users">Users &amp; roles</Link>.
+      <p className="mg-glass set-note" data-a="rise">
+        Linking matches the verified email of the provider account. A different address needs an admin to attach it under {profile.role === 'admin' ? <Link to="/settings/users">Users &amp; roles</Link> : 'Users & roles'}.
       </p>
-    </Pane>
+
+      {unlinking && (onlyWay ? (
+        <Modal title={`${LABEL[unlinking]} is your only way in`} subtitle={profile.email} size="sm" onClose={() => setUnlinking(null)} footer={<button type="button" className="mg-btn mg-btn--primary" onClick={() => setUnlinking(null)}>Close</button>}>
+          <MoneyBanner tone="wait" title="Set a password first.">{' '}Unlinking now would leave no way in to this account. Ask an admin to set a password, or link the other provider, then unlink.</MoneyBanner>
+        </Modal>
+      ) : (
+        <ConfirmDialog
+          title={`Unlink ${LABEL[unlinking]}?`}
+          subtitle={profile.email}
+          message={`You’ll sign in ${profile.password_set ? 'with your password' : 'another way'} from now on. Your account and everything in it stay as they are, and you can link it again at any time.`}
+          tone="neutral"
+          confirmLabel="Unlink"
+          cancelLabel="Keep it linked"
+          busy={busy}
+          onConfirm={() => unlink(unlinking)}
+          onClose={() => setUnlinking(null)}
+        />
+      ))}
+    </>
   );
 }
