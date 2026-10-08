@@ -196,6 +196,9 @@ function scopedIdPredicate(def, rawId, params, scope, relation) {
 const PARENT_KEYS = {
   purchase_order: [['quotation_no', 'text'], ['project_id', 'text']],
   via_po: [['po_number', 'text']],
+  // A payment stage reads both: a travel invoice may have a project and no
+  // PO (097, #214).
+  via_po_or_project: [['po_number', 'text'], ['project_id', 'text']],
   via_stage: [['stage_id', 'int']],
   quotation: [['quotation_id', 'int']],
   project: [['project_id', 'text']],

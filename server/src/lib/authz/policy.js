@@ -565,6 +565,10 @@ export const routes = [
     why: 'The only route that can take a vendor payment back off an invoice, or move its cash and TDS legs against each other, so it is the one place a figure already booked against an agency bill can be reduced (#214). It refuses to run without a reason, appends a row rather than editing the ledger — the original payment and the bank advice attached to it are never touched — and records the before and after in the same transaction. Paying is the travel desk\'s; deciding that what the travel desk recorded was wrong is not, for the same reason /api/expense-claims/:id/correct is the administrator\'s: this is the correction path for money, not a tidy-up.',
   },
   {
+    method: 'POST', path: '/api/travel-invoices', access: signedIn,
+    note: 'Raising the invoice that bills a trip to the client (#214 \u00a75.2): one transaction that creates a payment stage of kind \'travel\' and sets billed_stage_id on the trips it carries. Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES \u2014 the travel desk keeps the trips and the agency\'s bills, but raising a client invoice is not its work (\u00a79.3). It grants HR no generic payment-stage right: /api/payment-stages stays closed to them. The project is owner-scoped, so a salesperson raises invoices on their own projects only, and a 404 answers an id they do not own exactly as it answers one that does not exist.',
+  },
+  {
     method: 'POST', path: '/api/travel-logs/:travelId/billed-stage', access: signedIn,
     note: 'Which client invoice recovered a trip\'s cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk\'s call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it.',
   },

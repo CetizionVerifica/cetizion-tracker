@@ -14,6 +14,7 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch, useFileLimit, useLookups } from '../lib/hooks.js';
 import { money } from '../lib/format.js';
+import { TRAVEL_KIND, billableInvoices } from '../lib/travelInvoices.js';
 import { tripFields } from './TravelLogs.jsx';
 
 /** A leg's mark, by how it travelled (#196). */
@@ -480,8 +481,20 @@ export default function TripDetail() {
  */
 function BilledStage({ trip, onChanged }) {
   const toast = useToast();
-  const { data, loading } = useFetch(() => (trip.po_number ? api.list('payment-stages', { po_number: trip.po_number }) : Promise.resolve(null)), [trip.po_number]);
-  const stages = (data?.data ?? []).filter((s) => s.invoice_no);
+  // The travel invoices of this trip's project. Keyed on the project rather
+  // than the PO, because v_payment_stages resolves a stage's project through
+  // its PO when it has one: that one request therefore finds the invoices
+  // raised on the trip's PO *and* those raised on the project with no PO,
+  // which is exactly the set the database will accept (097, #214).
+  const project = trip.project_id ?? null;
+  const { data, loading } = useFetch(
+    () => (project ? api.list('payment-stages', { project_id: project, kind: TRAVEL_KIND }) : null),
+    [project]
+  );
+  // Filtered again here: an ordinary PO stage is never a billing target any
+  // more, and a screen that offered one would be offering a refusal.
+  const invoices = billableInvoices(data?.data ?? [], trip).filter((s) => s.invoice_no);
+
   async function set(value) {
     try {
       await api.action(`/travel-logs/${encodeURIComponent(trip.travel_id)}/billed-stage`, { billed_stage_id: value ? Number(value) : null });
@@ -491,26 +504,41 @@ function BilledStage({ trip, onChanged }) {
       toast(err.message, 'danger');
     }
   }
-  if (!trip.chargeable || !trip.po_number) {
+  // A chargeable trip can be billed as soon as it has a project — with a PO
+  // or without one. Before 097 the control was keyed on the PO and hidden
+  // without one, which is how a chargeable project-only trip could never be
+  // marked billed at all (#214 §5.2, G3).
+  if (!trip.chargeable || (!trip.po_number && !trip.project_id)) {
     return (
       <StateCard inPanel bordered={false} tone="plain" icon={Receipt}
-        title={trip.chargeable ? 'Billed once it has a PO' : 'Not billed to a client'}
+        title={trip.chargeable ? 'Billed once it has a project' : 'Not billed to a client'}
         text={trip.chargeable
-          ? `A chargeable trip is billed on one of its PO's invoices. ${trip.project_id ? `${trip.project_id} has no PO yet;` : 'This trip has no PO;'} once it does, pick the invoice here.`
+          ? 'A chargeable trip is billed on a travel invoice raised for its project or its PO. Name the project or the PO on the trip, raise the invoice there, and pick it here.'
           : 'This trip type is not chargeable, so its cost stays with us.'} />
     );
   }
   return (
-    <Sec id="trip-billed" title="Billed to the client" hint="The invoice that carried this trip's cost">
-      <label className="mg-field" style={{ maxWidth: 420 }}>
-        <span className="mg-field__label">Invoice that billed this trip</span>
+    <Sec id="trip-billed" title="Billed to the client" hint="The travel invoice that carried this trip's cost">
+      <label className="mg-field" style={{ maxWidth: 460 }}>
+        <span className="mg-field__label">Travel invoice that billed this trip</span>
         <span className="mg-select-wrap">
           <select className="mg-select" value={trip.billed_stage_id ?? ''} onChange={(e) => set(e.target.value)} disabled={loading}>
             <option value="">Not billed yet</option>
-            {stages.map((s) => <option key={s.id} value={s.id}>{s.invoice_no} · {s.stage_name}</option>)}
+            {/* Its own printed amount, and the PO it was raised on when it
+                has one: two invoices on one project are told apart by those,
+                not by a stage name a travel invoice does not have. */}
+            {invoices.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.invoice_no} · {money(s.stage_amount)}{s.po_number ? ` · PO ${s.po_number}` : ' · no PO'}
+              </option>
+            ))}
           </select>
         </span>
-        <span className="mg-field__hint">{!loading && !stages.length ? `No invoice has been raised on PO ${trip.po_number} yet.` : trip.billed_invoice_no ? `Billed on ${trip.billed_invoice_no}.` : 'Pick the invoice once it has gone to the client.'}</span>
+        <span className="mg-field__hint">
+          {loading ? 'Looking for the travel invoices on this project…'
+            : !invoices.length ? `No travel invoice has been raised on ${project || 'this trip'} yet — raise one from the project or the PO, and this trip can go on it.`
+              : trip.billed_invoice_no ? `Billed on ${trip.billed_invoice_no}.` : 'Pick the invoice once it has gone to the client.'}
+        </span>
       </label>
     </Sec>
   );

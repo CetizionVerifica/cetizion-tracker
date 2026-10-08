@@ -40,7 +40,7 @@ export const NORMALISED_INVOICE_NO = (column = 'invoice_no') => `lower(regexp_re
  */
 export async function splitStage(client, { stageId, percent, stageName, triggerEvent = 'Manual', scope = UNRESTRICTED }) {
   const params = [Number(stageId)];
-  const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
+  const mine = parentClause(scope, params, { kind: 'via_po_or_project', alias: 'ps' });
   const { rows: [s] } = await client.query(
     `SELECT ps.* FROM payment_stages ps WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`, params);
   if (!s) throw new ApiError(404, 'Payment stage not found');
@@ -68,7 +68,7 @@ export async function recordInvoice(client, { stageId, invoiceNo = null, invoice
   // Locked and scoped in one statement: the stage is only this user's if
   // the purchase order above it is (#18 Phase 2C).
   const params = [Number(stageId)];
-  const mine = parentClause(scope, params, { kind: 'via_po', alias: 'ps' });
+  const mine = parentClause(scope, params, { kind: 'via_po_or_project', alias: 'ps' });
   const { rows: [stage] } = await client.query(
     `SELECT ps.id, ps.document_id FROM payment_stages ps
       WHERE ps.id = $1 ${mine ? `AND ${mine}` : ''} FOR UPDATE`,

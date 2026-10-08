@@ -63,7 +63,7 @@ import { httpMetrics } from './lib/ops/metrics.js';
 import { appEnv, stagingGate } from './lib/ops/environment.js';
 import {
   projectRouter, poRouter, quotationRouter, stageRouter,
-  vendorInvoiceRouter, claimRouter, travelRouter,
+  vendorInvoiceRouter, claimRouter, travelRouter, travelInvoiceRouter,
 } from './routes/workflow.js';
 import { kpiRouter } from './routes/kpis.js';
 import './lib/aiUsage.js'; // each day's AI calls and spend, for the auto-entry panel
@@ -217,6 +217,10 @@ app.use('/api/payment-stages', stageRouter);
 app.use('/api/vendor-invoices', vendorInvoiceRouter);
 app.use('/api/expense-claims', claimRouter);
 app.use('/api/travel-logs', travelRouter);
+// Raising the invoice that bills a trip to the client (#214 §5.2): it
+// creates a payment stage of kind 'travel' and links the trips it carries
+// in one transaction, which neither of the resources it touches can do.
+app.use('/api/travel-invoices', travelInvoiceRouter);
 
 // Administrative ownership assignment and handover history (#18 Phase 3).
 // Mounted ahead of generic CRUD so :id/owner and :id/ownership-history match first.

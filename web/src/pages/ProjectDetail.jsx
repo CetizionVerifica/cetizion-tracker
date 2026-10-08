@@ -8,6 +8,10 @@ import { Checklist } from '../components/checklist.jsx';
 import { Button } from '../components/ui/button.tsx';
 import { useToast, ConfirmDialog } from '../components/ui.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
+import { RaiseTravelInvoiceDialog } from '../components/actions.jsx';
+import { TravelInvoicesSection } from '../components/travelInvoices.jsx';
+import { useAuth } from '../lib/auth.jsx';
+import { mayRaiseTravelInvoice } from '../lib/travelInvoices.js';
 import { Timeline } from '../components/Timeline.jsx';
 import { ProjectProfit } from '../components/ProjectProfit.jsx';
 import { ProjectVisits } from './Schedule.jsx';
@@ -45,6 +49,8 @@ export default function ProjectDetail() {
   const toast = useToast();
   const lookups = useLookups();
   const [dialog, setDialog] = useState(null);
+  // Above the loading return: a hook cannot be called conditionally.
+  const { isAdmin, isHr } = useAuth();
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useTab(TAB_KEYS);
 
@@ -65,7 +71,13 @@ export default function ProjectDetail() {
   const {
     project: p, purchase_orders: pos, payment_stages: stages,
     onboarding, onboarding_progress: progress, travel, quotations, milestones = [],
+    travel_invoices: travelInvoices = [],
   } = data.data;
+
+  // Raising the invoice that bills a trip is admin's and sales' (#214
+  // §9.3). HR keeps the trips and the agency's bills and never raises a
+  // client invoice; the route refuses them whatever is drawn here.
+  const mayRaiseTravel = mayRaiseTravelInvoice({ isAdmin, isHr });
 
   // One currency across every PO on the project, or null when they differ.
   const mixed = p.po_count > 0 && !p.currency;
@@ -393,6 +405,22 @@ export default function ProjectDetail() {
                   </div>
                 )}
               </Sec>
+
+              {/* Beside the orders and never inside them: travel billed on
+                  this project carries its own printed amount, takes no stage
+                  number, and is left out of every figure the PO's split
+                  answers (097, #214 §5.4). A project with no PO can have one
+                  too, which is the whole point of the kind. */}
+              <TravelInvoicesSection
+                flat
+                showPo
+                invoices={travelInvoices}
+                action={mayRaiseTravel ? (
+                  <button type="button" className="mg-btn mg-btn--sm" onClick={() => setDialog({ type: 'travel-invoice' })}>
+                    <Plus className="size-4" strokeWidth={2} aria-hidden="true" />Raise travel invoice
+                  </button>
+                ) : undefined}
+              />
             </>
           )}
 
@@ -416,6 +444,14 @@ export default function ProjectDetail() {
           {tab === 'activity' && <Timeline entity="project" id={projectId} flat />}
         </TabsPanel>
       </RecordPage>
+
+      {dialog?.type === 'travel-invoice' && (
+        <RaiseTravelInvoiceDialog
+          scope={{ projectId: p.project_id, poNumber: null, trips: travel }}
+          onClose={close}
+          onDone={done}
+        />
+      )}
 
       {dialog?.type === 'milestone' && (
         <RecordForm

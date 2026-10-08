@@ -458,6 +458,8 @@ session is **401**, before any of these is considered.
 | `GET /api/tasks/summary` | any |  |
 | **/api/timeline** | | |
 | `GET /api/timeline` | any | The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own. |
+| **/api/travel-invoices** | | |
+| `POST /api/travel-invoices` | any | Raising the invoice that bills a trip to the client (#214 §5.2): one transaction that creates a payment stage of kind 'travel' and sets billed_stage_id on the trips it carries. Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES — the travel desk keeps the trips and the agency's bills, but raising a client invoice is not its work (§9.3). It grants HR no generic payment-stage right: /api/payment-stages stays closed to them. The project is owner-scoped, so a salesperson raises invoices on their own projects only, and a 404 answers an id they do not own exactly as it answers one that does not exist. |
 | **/api/travel-logs** | | |
 | `POST /api/travel-logs/:travelId/billed-stage` | any | Which client invoice recovered a trip's cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk's call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it. |
 | `GET /api/travel-logs/:travelId/full` | any |  |

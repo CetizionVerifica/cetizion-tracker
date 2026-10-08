@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { Modal, Field, FileDrop, Input, Select, Textarea, Alert, useToast } from './ui.jsx';
 import { Button } from '@/components/ui/button.tsx';
 import { api } from '../lib/api.js';
-import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
+import { invalidateLookups, useDocumentUploads, useFileLimit, useLookups } from '../lib/hooks.js';
 import { date, fileSize, money, today } from '../lib/format.js';
-import { Banknote, MessageSquareText } from 'lucide-react';
-import { DialogError, MoneyBanner, MoneyFacts } from './money.jsx';
+import { Banknote, MessageSquareText, Plane } from 'lucide-react';
+import { DialogError, MoneyBanner, MoneyFacts, shortDate } from './money.jsx';
 import { SumBox } from './travel.jsx';
+import {
+  billableTrips, selectedCost, todayIso, travelInvoiceBody, validateTravelInvoice,
+} from '../lib/travelInvoices.js';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
 function useAction({ onDone, successMessage }) {
@@ -62,6 +65,189 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, fieldErr
         {children}
       </form>
     </Modal>
+  );
+}
+
+/* ------------------------------------------- raise a travel invoice */
+
+/**
+ * The invoice that bills a trip to the client (#214 §5.2).
+ *
+ * One dialog, opened from a project or from a PO, because the act is the
+ * same either way: a travel invoice is raised on a project — with a PO when
+ * there is one — and the trips it carries are ticked while it is raised.
+ * Saving creates the payment stage of kind 'travel' and sets
+ * `billed_stage_id` on the ticked trips in one transaction, so there is no
+ * state where the invoice exists and the trips it bills do not.
+ *
+ * `scope` is where it was opened from: `{ projectId, poNumber, trips }`.
+ * With a PO only that PO's trips are offered, because an invoice raised
+ * against one order should not quietly bill a trip taken for another.
+ *
+ * ## The amount is typed
+ *
+ * It is the total printed on the invoice, not a share of anything. The
+ * ticked trips' cost is shown beneath it so the two can be compared, and it
+ * is never copied into the field: how much of a trip was re-billed is
+ * deliberately not recorded (#214 §9.4).
+ */
+export function RaiseTravelInvoiceDialog({ scope, onClose, onDone }) {
+  const [invoiceNo, setInvoiceNo] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(todayIso());
+  const [amount, setAmount] = useState('');
+  const [creditDays, setCreditDays] = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [pdf, setPdf] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [local, setLocal] = useState({});
+  const uploadDocument = useDocumentUploads();
+  const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Travel invoice raised' });
+
+  const offered = billableTrips(scope.trips ?? [], scope);
+  const eligible = offered.filter((o) => !o.blocked);
+  const cost = selectedCost(scope.trips ?? [], picked);
+  const errors = { ...local, ...fieldErrors };
+
+  const toggle = (travelId) => setPicked((current) => {
+    const next = new Set(current);
+    if (next.has(travelId)) next.delete(travelId);
+    else next.add(travelId);
+    return next;
+  });
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const found = validateTravelInvoice({ invoiceNo, invoiceDate, amount, creditDays });
+    setLocal(found);
+    if (Object.keys(found).length) return;
+
+    const ok = await run(async () => {
+      // Uploaded first and named on the stage. An upload nothing points at
+      // is what the daily purge is for, so a refused save leaves no file to
+      // clear up by hand.
+      const documentId = pdf ? await uploadDocument(pdf, 'payment-stages') : null;
+      return api.action('/travel-invoices', travelInvoiceBody({
+        projectId: scope.projectId,
+        poNumber: scope.poNumber,
+        invoiceNo, invoiceDate, amount, creditDays, documentId, remarks,
+        travelIds: [...picked],
+      }));
+    });
+    if (ok) onClose();
+  };
+
+  return (
+    <ActionModal
+      title="Raise a travel invoice"
+      subtitle={scope.poNumber
+        ? `${scope.projectId} · PO ${scope.poNumber}`
+        : `${scope.projectId} · no PO`}
+      onClose={onClose}
+      onSubmit={submit}
+      busy={busy}
+      error={error}
+      fieldErrors={errors}
+      what="the travel invoice"
+      size="lg"
+      submitLabel="Raise invoice"
+    >
+      <MoneyBanner tone="info" icon={Plane} title="Travel is billed on its own invoice.">
+        Its amount is the total printed on it — not a share of the order — so it never changes what the
+        PO&apos;s payment stages add up to.
+      </MoneyBanner>
+
+      <div className="mg-grid2">
+        <Field label="Invoice number" required error={errors.invoice_no}>
+          <Input value={invoiceNo} maxLength={60} onChange={(e) => setInvoiceNo(e.target.value)} autoFocus />
+        </Field>
+        <Field label="Invoice date" required error={errors.invoice_date}>
+          {/* Today is the latest: an invoice that has not been raised has no
+              number to record. A past date is ordinary. */}
+          <Input type="date" max={todayIso()} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+        </Field>
+        <Field label="Invoice amount" required hint="The total printed on the invoice, including GST" error={errors.amount}>
+          <Input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <Field label="Credit days" hint={scope.poNumber ? "Blank: the PO's terms" : 'Blank: the usual terms'} error={errors.credit_days}>
+          <Input type="number" min="0" step="1" value={creditDays} onChange={(e) => setCreditDays(e.target.value)} />
+        </Field>
+      </div>
+
+      <Field as="div" label="Invoice PDF" hint="Optional: the invoice as sent to the client" error={fileError || errors.document_id}>
+        <FileDrop label="Invoice PDF" onFile={(f) => setPdf(checkFile(f))} error={fileError || errors.document_id} />
+      </Field>
+
+      <Field label="Remarks" error={errors.remarks}>
+        <Input value={remarks} maxLength={1000} onChange={(e) => setRemarks(e.target.value)} />
+      </Field>
+
+      <Field
+        as="div"
+        label="Which trips does this invoice carry?"
+        hint={eligible.length === 0
+          ? 'Every chargeable trip here is already on an invoice, so this one can be raised on its own and trips added from the trip page later.'
+          : 'Tick the trips it bills. They can also be added from the trip page afterwards.'}
+      >
+        {offered.length === 0 ? (
+          <p className="app-tabnote">No trip here can go on an invoice yet.</p>
+        ) : (
+          <div className="mg-tablewrap">
+            <table className="mg-table" aria-label="Trips this invoice may carry">
+              <thead>
+                <tr>
+                  <th aria-label="Bill it" />
+                  <th>Trip</th>
+                  <th>Dates</th>
+                  <th>Route</th>
+                  <th>PO</th>
+                  <th className="num">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {offered.map(({ trip, blocked }) => (
+                  <tr key={trip.travel_id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={picked.has(trip.travel_id)}
+                        disabled={Boolean(blocked)}
+                        title={blocked || undefined}
+                        aria-label={`Bill ${trip.travel_id}${blocked ? ` — ${blocked}` : ''}`}
+                        onChange={() => toggle(trip.travel_id)}
+                      />
+                    </td>
+                    <td style={{ whiteSpace: 'normal' }}>
+                      <span className="app-lead mg-num">{trip.travel_id}</span>
+                      <span className="app-sub2">{trip.employee_name}</span>
+                      {/* A trip that cannot go on this invoice stays on the list
+                          and says why, rather than silently vanishing. */}
+                      {blocked && <span className="app-sub2 is-wrap text-late">{blocked}</span>}
+                    </td>
+                    <td>{trip.travel_start_date ? shortDate(trip.travel_start_date) : <span className="mg-muted">—</span>}</td>
+                    <td style={{ whiteSpace: 'normal' }}>{trip.destination || <span className="mg-muted">—</span>}</td>
+                    <td className="mg-num">{trip.po_number || <span className="mg-muted">—</span>}</td>
+                    <td className="num">{money(trip.total_travel_cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Field>
+
+      {/* The two figures side by side, and never one feeding the other: what
+          the ticked trips cost us, and what is being billed for them. How much
+          of a trip was re-billed is deliberately not recorded (#214 §9.4). */}
+      {picked.size > 0 && (
+        <SumBox
+          rows={[
+            [picked.size === 1 ? '1 trip selected' : `${picked.size} trips selected`, money(cost), 'what they cost us'],
+            ['Invoice amount', amount === '' ? '—' : money(amount), 'typed above', true],
+          ]}
+          foot="The invoice amount is not taken from the trips' cost: what each trip was re-billed for is not recorded."
+        />
+      )}
+    </ActionModal>
   );
 }
 

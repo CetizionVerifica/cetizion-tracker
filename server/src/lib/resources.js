@@ -485,7 +485,7 @@ export const resources = {
     // (#18 Phase 2C). A sales user reaches it only through a quotation or
     // project they own; an unreachable parent means unknown ownership, which
     // is admin-only.
-    ownerScopedBy: 'via_po',
+    ownerScopedBy: 'via_po_or_project',
     // The invoicing schedule: what has been raised, what is due and what has
     // been paid. A deleted stage is an invoice the tracker stops accounting
     // for. Sales users raise and record against stages as usual; only an
@@ -500,7 +500,10 @@ export const resources = {
     hasDocument: true,
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
-    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id'],
+    // `kind` tells a travel invoice from a share of a PO (097, #214): the
+    // trip page asks for travel invoices only, rather than fetching the
+    // project's whole schedule and discarding most of it.
+    filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id', 'kind'],
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',

@@ -86,12 +86,23 @@ $$ LANGUAGE sql STABLE;
 CREATE VIEW v_payment_stages AS
 SELECT
   ps.id,
+  -- A travel invoice may be raised on a project with no PO (097, #214
+  -- §9.2), so the PO columns below are nullable now and the joins are
+  -- outer. For an ordinary stage nothing changes: po_number is NOT NULL
+  -- for a po_stage by the shape constraint, and its PO and project exist
+  -- by foreign key, so the outer joins always find them.
   ps.po_number,
-  po.project_id,
+  ps.kind,
+  COALESCE(po.project_id, ps.project_id)                 AS project_id,
   pr.client_name,
   po.po_value,
   po.currency,
-  COALESCE(ps.credit_days, po.payment_terms_days)        AS terms_days,
+  -- A project-only travel invoice has no PO to take terms from, so it
+  -- falls back to the same setting a new PO defaults to rather than
+  -- having no due date at all.
+  COALESCE(ps.credit_days, po.payment_terms_days,
+           setting_num('default_po_payment_terms_days', 30)::int)
+                                                         AS terms_days,
   ps.credit_days,
   ps.milestone_name,
   ps.milestone_reached_on,
@@ -106,7 +117,14 @@ SELECT
   ps.stage_name,
   ps.trigger_event,
   ps.stage_percent,
-  ROUND(po.po_value * ps.stage_percent, 2)               AS stage_amount,
+  ps.amount,
+  -- One column, two ways of arriving at it: a PO stage is a share of the
+  -- PO, a travel invoice is its own printed total. Nothing derives a
+  -- travel invoice's amount from a PO value.
+  CASE ps.kind
+    WHEN 'travel' THEN ps.amount
+    ELSE ROUND(po.po_value * ps.stage_percent, 2)
+  END                                                    AS stage_amount,
   ps.invoice_no,
   ps.invoice_date,
   ps.document_id,
@@ -141,20 +159,27 @@ SELECT
     ELSE 'neutral'
   END                                                    AS status_tone
 FROM payment_stages ps
-JOIN purchase_orders po ON po.po_number = ps.po_number
-JOIN projects        pr ON pr.project_id = po.project_id
-LEFT JOIN documents doc ON doc.id = ps.document_id
+LEFT JOIN purchase_orders po ON po.po_number  = ps.po_number
+LEFT JOIN projects        pr ON pr.project_id = COALESCE(po.project_id, ps.project_id)
+LEFT JOIN documents      doc ON doc.id        = ps.document_id
 -- b: the stage's own facts.  A stage is due to invoice once its trigger
 --    has happened (PO registered / delivery recorded / manual).
 CROSS JOIN LATERAL (
-  SELECT ROUND(po.po_value * ps.stage_percent, 2),
+  SELECT CASE ps.kind
+           WHEN 'travel' THEN ps.amount
+           ELSE ROUND(po.po_value * ps.stage_percent, 2)
+         END,
+         -- A travel invoice is 'Manual' by constraint: it has been
+         -- raised, so there is nothing left to trigger it and it never
+         -- reads 'Not Due'.
          CASE ps.trigger_event
            WHEN 'On PO Registration' THEN po.po_date IS NOT NULL
            WHEN 'On Delivery'        THEN po.actual_delivery_date IS NOT NULL
            WHEN 'On Milestone'       THEN ps.milestone_reached_on IS NOT NULL
            ELSE true
          END,
-         ps.invoice_date + COALESCE(ps.credit_days, po.payment_terms_days)
+         ps.invoice_date + COALESCE(ps.credit_days, po.payment_terms_days,
+                                    setting_num('default_po_payment_terms_days', 30)::int)
 ) b(amount, due_to_invoice, invoice_due_date)
 CROSS JOIN LATERAL (
   SELECT CASE
@@ -626,6 +651,9 @@ SELECT
   sv.service_value_total,
   st.stage_count,
   st.stages_percent_total,
+  ti.travel_invoice_count,
+  ti.travel_invoiced,
+  ti.travel_received,
   st.total_invoiced,
   st.total_received,
   st.balance_due_now,
@@ -659,6 +687,12 @@ CROSS JOIN LATERAL (
   SELECT COUNT(*), COALESCE(SUM(service_value), 0)
   FROM po_services s WHERE s.po_number = po.po_number
 ) sv(service_count, service_value_total)
+-- The PO's own payment split, and only that (097, #214 §5.1). A travel
+-- invoice raised against this PO bills travel, not a share of the order,
+-- so counting it here would push stages_percent_total past 100%, make a
+-- PO with a travel invoice and no split look as though its stages were
+-- set, and move balance_to_bill by money the PO was never for. It is
+-- reported in the lateral below instead.
 CROSS JOIN LATERAL (
   SELECT COUNT(*),
          COALESCE(SUM(stage_percent), 0),
@@ -670,10 +704,19 @@ CROSS JOIN LATERAL (
          COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
          COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
          COUNT(*) FILTER (WHERE stage_status = 'Paid')
-  FROM v_payment_stages ps WHERE ps.po_number = po.po_number
+  FROM v_payment_stages ps
+ WHERE ps.po_number = po.po_number AND ps.kind = 'po_stage'
 ) st(stage_count, stages_percent_total, total_invoiced, total_received,
      balance_due_now, balance_to_bill, total_received_invoiced,
      overdue_stages, stages_to_invoice, paid_stages)
+-- Travel billed against this PO, beside the split rather than inside it.
+CROSS JOIN LATERAL (
+  SELECT COUNT(*),
+         COALESCE(SUM(stage_amount), 0),
+         COALESCE(SUM(amount_received), 0)
+  FROM v_payment_stages ps
+ WHERE ps.po_number = po.po_number AND ps.kind = 'travel'
+) ti(travel_invoice_count, travel_invoiced, travel_received)
 CROSS JOIN LATERAL (
   SELECT COALESCE(SUM(total_travel_cost), 0)
   FROM v_travel_logs tl WHERE tl.po_number = po.po_number
@@ -723,6 +766,10 @@ SELECT
   ob.onboarding_total,
   st.overdue_stages,
   st.stages_to_invoice,
+  ti.travel_invoice_count,
+  ti.travel_invoiced,
+  ti.travel_received,
+  ti.travel_overdue,
   CASE
     WHEN po.actual_delivery_date IS NOT NULL   THEN 'Delivered'
     WHEN po.actual_initiation_date IS NOT NULL THEN 'In Progress'
@@ -785,12 +832,24 @@ CROSS JOIN LATERAL (
                   / NULLIF(COUNT(*) FILTER (WHERE status <> 'N/A'), 0), 0)
   FROM onboarding_tasks o WHERE o.project_id = p.project_id
 ) ob(onboarding_done, onboarding_total, onboarding_percent)
+-- The payment split again, and only that: stage_count here answers
+-- "has anybody set this project's stages up", which a travel invoice
+-- does not. Travel invoices are counted beside it (097, #214 §5.1).
 CROSS JOIN LATERAL (
   SELECT COUNT(*) FILTER (WHERE stage_status = 'Overdue'),
          COUNT(*) FILTER (WHERE stage_status = 'To Invoice'),
          COUNT(*)
-  FROM v_payment_stages ps WHERE ps.project_id = p.project_id
-) st(overdue_stages, stages_to_invoice, stage_count);
+  FROM v_payment_stages ps
+ WHERE ps.project_id = p.project_id AND ps.kind = 'po_stage'
+) st(overdue_stages, stages_to_invoice, stage_count)
+CROSS JOIN LATERAL (
+  SELECT COUNT(*),
+         COALESCE(SUM(stage_amount), 0),
+         COALESCE(SUM(amount_received), 0),
+         COUNT(*) FILTER (WHERE stage_status = 'Overdue')
+  FROM v_payment_stages ps
+ WHERE ps.project_id = p.project_id AND ps.kind = 'travel'
+) ti(travel_invoice_count, travel_invoiced, travel_received, travel_overdue);
 
 -- ---------------------------------------------------------------------
 -- Quotations — the four "reflected" columns sales sees without
