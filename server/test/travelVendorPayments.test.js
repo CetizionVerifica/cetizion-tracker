@@ -41,9 +41,9 @@ const PASSWORD = 'a-good-long-test-password';
 /** The schema as it stood before this migration, so the backfill has work to do. */
 function schemaBefore() {
   const full = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
-  const marker = '-- What the company has paid a travel agency, as a ledger (095, #214).';
+  const marker = '-- What the company has paid a travel agency, as a ledger (096, #214).';
   const at = full.indexOf(marker);
-  assert.ok(at > 0, 'the 095 section should be marked in schema.sql');
+  assert.ok(at > 0, 'the 096 section should be marked in schema.sql');
   // Cut back to the comment banner that opens the section.
   return full.slice(0, full.lastIndexOf('-- ---------------------------------------------------------------------', at));
 }
@@ -97,7 +97,7 @@ describe('travel vendor payments (#214)', { skip: !ADMIN_URL && 'set TEST_DATABA
         );
       }
       // The subject under test.
-      await db.query(readFileSync(join(DB_DIR, 'migrations', '095_travel_vendor_payments.sql'), 'utf8'));
+      await db.query(readFileSync(join(DB_DIR, 'migrations', '096_travel_vendor_payments.sql'), 'utf8'));
       await db.query(readFileSync(join(DB_DIR, 'views.sql'), 'utf8'));
     });
 
@@ -153,7 +153,7 @@ describe('travel vendor payments (#214)', { skip: !ADMIN_URL && 'set TEST_DATABA
 
     test('running the migration again carries nothing over twice', async () => {
       const before = (await db.query('SELECT count(*)::int AS n FROM travel_vendor_payments')).rows[0].n;
-      await db.query(readFileSync(join(DB_DIR, 'migrations', '095_travel_vendor_payments.sql'), 'utf8'));
+      await db.query(readFileSync(join(DB_DIR, 'migrations', '096_travel_vendor_payments.sql'), 'utf8'));
       const after = (await db.query('SELECT count(*)::int AS n FROM travel_vendor_payments')).rows[0].n;
       assert.equal(after, before, 'the backfill is guarded against a second run');
       for (const l of LEGACY) assert.equal(Number((await invoice(l.id)).amount_paid), l.paid);
@@ -163,7 +163,7 @@ describe('travel vendor payments (#214)', { skip: !ADMIN_URL && 'set TEST_DATABA
       // Put the two out of step the only way nothing else can, then re-run.
       await db.query(`UPDATE travel_vendor_invoices SET amount_paid = amount_paid + 1 WHERE vendor_invoice_id = 'L1-pos-date'`);
       await assert.rejects(
-        () => db.query(readFileSync(join(DB_DIR, 'migrations', '095_travel_vendor_payments.sql'), 'utf8')),
+        () => db.query(readFileSync(join(DB_DIR, 'migrations', '096_travel_vendor_payments.sql'), 'utf8')),
         /could not be carried over without changing the figure/,
         'a mismatch must abort rather than be quietly corrected'
       );

@@ -1,5 +1,5 @@
 -- =====================================================================
--- 095_travel_vendor_payments.sql
+-- 096_travel_vendor_payments.sql
 -- What the company has actually paid a travel agency, as a ledger (#214).
 --
 -- Until now a vendor payment was one overwritten figure on the invoice,
@@ -111,7 +111,7 @@ BEGIN
     INTO n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero
     FROM travel_vendor_invoices;
 
-  RAISE NOTICE 'Vendor payments (095): % invoices; % with a figure to carry over, % negative, % with no date, % dated ahead of today, % over the invoice, % with no invoice amount, % dated but unpaid.',
+  RAISE NOTICE 'Vendor payments (096): % invoices; % with a figure to carry over, % negative, % with no date, % dated ahead of today, % over the invoice, % with no invoice amount, % dated but unpaid.',
     n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero;
 END $$;
 
@@ -133,7 +133,7 @@ SELECT vi.id,
        -- every row that reduces the invoice to say why it does, and for
        -- these the honest answer is that this is how it was recorded.
        CASE WHEN vi.amount_paid < 0
-            THEN 'Legacy opening balance migrated from travel_vendor_invoices (095)' END
+            THEN 'Legacy opening balance migrated from travel_vendor_invoices (096)' END
   FROM travel_vendor_invoices vi
  WHERE vi.amount_paid <> 0
    AND NOT EXISTS (SELECT 1 FROM travel_vendor_payments p WHERE p.vendor_invoice_id = vi.id);
@@ -154,11 +154,11 @@ BEGIN
                                         WHERE p.vendor_invoice_id = vi.id), 0)
   LOOP
     n := n + 1;
-    RAISE WARNING 'Vendor payments (095): invoice % (%) recorded % but its ledger adds to %',
+    RAISE WARNING 'Vendor payments (096): invoice % (%) recorded % but its ledger adds to %',
       bad.id, bad.vendor_invoice_id, bad.amount_paid, bad.ledger;
   END LOOP;
   IF n > 0 THEN
-    RAISE EXCEPTION 'Vendor payments (095): % invoice(s) could not be carried over without changing the figure recorded against them. Nothing has been migrated.', n;
+    RAISE EXCEPTION 'Vendor payments (096): % invoice(s) could not be carried over without changing the figure recorded against them. Nothing has been migrated.', n;
   END IF;
 END $$;
 

@@ -606,8 +606,9 @@ test('an admin sees every client email and can hold them', async ({ page }) => {
 
 /**
  * An email's attachments are viewed in the Inbox and nowhere else
- * (docs/inbox-attachments-plan.md, step 1): a PDF drawn by pdf.js inside
- * the page, a CSV as a table, and no download anywhere — the file's own
+ * (docs/inbox-attachments-plan.md, steps 1 and 2): a PDF drawn by pdf.js
+ * inside the page, a CSV as a table, a Word document as HTML, and no
+ * download anywhere — the file's own
  * address, opened as a link, is refused.
  */
 test('an attachment opens in the Inbox viewer, and cannot be downloaded', async ({ page }) => {
@@ -640,6 +641,8 @@ test('an attachment opens in the Inbox viewer, and cannot be downloaded', async 
     attachments: [
       { provider_id: 'att-pdf', name: 'quote.pdf', contentType: 'application/pdf', content: bytes(pdf) },
       { provider_id: 'att-csv', name: 'rates.csv', contentType: 'text/csv', content: bytes('Item,Rate\nAudit,1200\n') },
+      { provider_id: 'att-doc', name: 'scope.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        content: [...readFileSync(join(here, '..', '..', 'server', 'test', 'fixtures', 'attachments', 'letter.docx'))] },
     ],
   }] } });
   expect((await page.request.post(`/api/mailboxes/${box.id}/sync`)).ok()).toBeTruthy();
@@ -665,6 +668,9 @@ test('an attachment opens in the Inbox viewer, and cannot be downloaded', async 
 
   await page.keyboard.press('ArrowRight');
   await expect(viewer.getByRole('cell', { name: 'Audit' })).toBeVisible();
+  // A Word document, as cleaned HTML in the script-free frame.
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.frameLocator('iframe[title="scope.docx"]').getByRole('heading', { name: 'Scope of audit' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(viewer).toHaveCount(0);
 

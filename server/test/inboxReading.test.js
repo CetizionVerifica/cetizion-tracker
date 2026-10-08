@@ -245,7 +245,7 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     const view = (who, att) => as(who)('get', `/api/mail/messages/${row.id}/attachments/${att.id}/view`).set('X-Tracker-View', '1');
 
     const listed = (await as(salesB)('get', `/api/mail/messages/${row.id}`)).body.data.attachments;
-    assert.deepEqual(listed.map((a) => [a.name, a.view]), [['spec.pdf', 'pdf'], ['rates.xlsx', 'sheet'], ['list.csv', 'sheet'], ['notes.txt', 'text'], ['letter.docx', null], ['logo.png', 'image']]);
+    assert.deepEqual(listed.map((a) => [a.name, a.view]), [['spec.pdf', 'pdf'], ['rates.xlsx', 'sheet'], ['list.csv', 'sheet'], ['notes.txt', 'text'], ['letter.docx', 'word'], ['logo.png', 'image']]);
 
     const shown = await view(salesB, pdf).buffer(true).parse(bytes);
     assert.equal(shown.status, 200);
@@ -272,7 +272,7 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     const text = await view(salesB, by('notes.txt'));
     assert.deepEqual(text.body.data, { kind: 'text', text: 'Hello <b>there</b>', truncated: false });
     const doc = await view(salesB, by('letter.docx'));
-    assert.equal(doc.status, 415, 'Word waits for step 2');
+    assert.equal(doc.status, 422, 'not a real Word file: said plainly, not a crash');
 
     // Every view is in the activity log; the refused ones are not.
     const { rows: log } = await db.query(`SELECT actor_user_id, entity_id, metadata FROM activity_log WHERE action = 'mail.attachment_viewed' AND entity_id = $1 ORDER BY id`, [String(row.id)]);
@@ -292,6 +292,48 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     // Too large for the tracker, by what the provider said of it.
     await db.query('UPDATE email_attachments SET size_bytes = 26 * 1024 * 1024 WHERE id = $1', [pdf.id]);
     assert.equal((await view(salesB, pdf)).status, 413);
+  });
+
+  test('a Word document opens as cleaned HTML, a forwarded email as the message it is, and a OneDrive link says where it lives', async () => {
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com` });
+    const forwarded = {
+      subject: 'Fwd: PO 4471', from: { email: 'buyer@acme-steel.co.in', name: 'Ravi' }, to: [{ email: 'bea@cetizionverifica.com' }], cc: [],
+      sent_at: '2026-10-01T09:30:00Z', body_html: '<p>PO attached.</p><script>steal()</script><img src="https://tracker.invalid/p.gif">',
+    };
+    const m = mail({ has_attachments: true, attachments: [
+      { provider_id: 'w', name: 'scope.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'attachments', 'letter.docx')) },
+      { provider_id: 'i', name: 'Fwd: PO 4471', contentType: null, kind: 'item', size: 2048, item: forwarded },
+      { provider_id: 'r', name: 'Drawings', contentType: null, kind: 'reference', size: 0 },
+      { provider_id: 'p', name: 'deck.pptx', contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', content: Buffer.from('PK') },
+    ] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const listed = (await as(salesB)('get', `/api/mail/messages/${row.id}`)).body.data.attachments;
+    assert.deepEqual(listed.map((a) => [a.name, a.kind, a.view]), [['scope.docx', 'file', 'word'], ['Fwd: PO 4471', 'item', 'email'], ['Drawings', 'reference', null], ['deck.pptx', 'file', null]]);
+    const view = (a) => as(salesB)('get', a.view_url).set('X-Tracker-View', '1');
+
+    const word = await view(listed[0]);
+    assert.equal(word.status, 200, JSON.stringify(word.body));
+    assert.equal(word.body.data.kind, 'word');
+    assert.match(word.body.data.html, /<h1>Scope of audit<\/h1>/);
+    assert.match(word.body.data.html, /<td><p>Audit<\/p><\/td>/);
+
+    const fwd = await view(listed[1]);
+    assert.equal(fwd.status, 200, JSON.stringify(fwd.body));
+    assert.equal(fwd.body.data.kind, 'email');
+    assert.equal(fwd.body.data.subject, 'Fwd: PO 4471');
+    assert.deepEqual(fwd.body.data.from, { email: 'buyer@acme-steel.co.in', name: 'Ravi' });
+    assert.match(fwd.body.data.html, /<p>PO attached\.<\/p>/);
+    assert.ok(!fwd.body.data.html.includes('<script'), 'cleaned like any mail body');
+
+    const link = await view(listed[2]);
+    assert.equal(link.status, 415);
+    assert.match(link.body.error.message, /OneDrive or SharePoint/);
+    assert.equal((await view(listed[3])).status, 415, 'PowerPoint waits for step 3');
+
+    // The thread route lists the same kinds.
+    const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.deepEqual(thread.body.data.messages[0].attachments.map((a) => a.view), ['word', 'email', null, null]);
   });
 
   test('the folder list names what the newest message carries, inline pictures aside', async () => {

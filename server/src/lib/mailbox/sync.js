@@ -129,7 +129,14 @@ function testProvider(account) {
     },
     async attachmentList(providerId) {
       if (takeFailure(account.id, 'attachments')) throw Object.assign(new Error('throttled'), { status: 429 });
-      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null }));
+      return (testAttachments.get(`${account.id}:${providerId}`) || []).map((a, i) => ({ provider_id: a.provider_id || `att-${i}`, name: a.name, content_type: a.contentType || a.content_type || null, size_bytes: a.content?.length ?? a.size ?? null, is_inline: Boolean(a.is_inline), content_id: a.content_id || null, kind: a.kind || 'file' }));
+    },
+    /** A forwarded email attached as an Outlook item: `item` on the pushed attachment, shaped as a message. */
+    async attachmentItem(providerId, attachmentId) {
+      const list = testAttachments.get(`${account.id}:${providerId}`) || [];
+      const a = list.find((x, n) => (x.provider_id || `att-${n}`) === attachmentId);
+      if (!a) throw Object.assign(new Error('Not found'), { status: 404 });
+      return a.item || null;
     },
     async message(providerId) {
       // pushTestFailure(id, { message: { status, reconnect, message } }): the next live read fails like Graph would.
@@ -402,9 +409,10 @@ async function storeAttachmentList(account, message, provider) {
   await transaction(async (db) => {
     for (const a of list || []) {
       await db.query(
-        `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id) VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id`,
-        [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null]);
+        `INSERT INTO email_attachments (message_id, provider_id, name, content_type, size_bytes, is_inline, content_id, kind) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (message_id, provider_id) DO UPDATE SET name = EXCLUDED.name, content_type = EXCLUDED.content_type, size_bytes = EXCLUDED.size_bytes, is_inline = EXCLUDED.is_inline, content_id = EXCLUDED.content_id, kind = EXCLUDED.kind`,
+        [message.id, a.provider_id, account.visibility === 'metadata' ? null : a.name, a.content_type || null, a.size_bytes ?? null, Boolean(a.is_inline), account.visibility === 'metadata' ? null : a.content_id || null,
+          ['file', 'item', 'reference'].includes(a.kind) ? a.kind : 'file']);
     }
     await db.query('UPDATE email_messages SET attachments_listed_at = now() WHERE id = $1', [message.id]);
   });

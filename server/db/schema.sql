@@ -3848,7 +3848,15 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------
--- What the company has paid a travel agency, as a ledger (095, #214).
+-- What kind of thing an email attachment is: a file, an Outlook item
+-- (a forwarded email), or a OneDrive/SharePoint link (096).
+-- ---------------------------------------------------------------------
+ALTER TABLE email_attachments ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'file';
+ALTER TABLE email_attachments DROP CONSTRAINT IF EXISTS email_attachments_kind_check;
+ALTER TABLE email_attachments ADD CONSTRAINT email_attachments_kind_check CHECK (kind IN ('file','item','reference'));
+
+-- ---------------------------------------------------------------------
+-- What the company has paid a travel agency, as a ledger (096, #214).
 --
 -- Payments are rows, as a client's receipts are rows in `payments`; the
 -- invoice's amount_paid and payment_date stay as the cache the trigger
@@ -3921,7 +3929,7 @@ BEGIN
     INTO n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero
     FROM travel_vendor_invoices;
 
-  RAISE NOTICE 'Vendor payments (095): % invoices; % with a figure to carry over, % negative, % with no date, % dated ahead of today, % over the invoice, % with no invoice amount, % dated but unpaid.',
+  RAISE NOTICE 'Vendor payments (096): % invoices; % with a figure to carry over, % negative, % with no date, % dated ahead of today, % over the invoice, % with no invoice amount, % dated but unpaid.',
     n_total, n_paid, n_neg, n_nodate, n_future, n_over, n_noamount, n_datezero;
 END $$;
 
@@ -3943,7 +3951,7 @@ SELECT vi.id,
        -- every row that reduces the invoice to say why it does, and for
        -- these the honest answer is that this is how it was recorded.
        CASE WHEN vi.amount_paid < 0
-            THEN 'Legacy opening balance migrated from travel_vendor_invoices (095)' END
+            THEN 'Legacy opening balance migrated from travel_vendor_invoices (096)' END
   FROM travel_vendor_invoices vi
  WHERE vi.amount_paid <> 0
    AND NOT EXISTS (SELECT 1 FROM travel_vendor_payments p WHERE p.vendor_invoice_id = vi.id);
@@ -3964,11 +3972,11 @@ BEGIN
                                         WHERE p.vendor_invoice_id = vi.id), 0)
   LOOP
     n := n + 1;
-    RAISE WARNING 'Vendor payments (095): invoice % (%) recorded % but its ledger adds to %',
+    RAISE WARNING 'Vendor payments (096): invoice % (%) recorded % but its ledger adds to %',
       bad.id, bad.vendor_invoice_id, bad.amount_paid, bad.ledger;
   END LOOP;
   IF n > 0 THEN
-    RAISE EXCEPTION 'Vendor payments (095): % invoice(s) could not be carried over without changing the figure recorded against them. Nothing has been migrated.', n;
+    RAISE EXCEPTION 'Vendor payments (096): % invoice(s) could not be carried over without changing the figure recorded against them. Nothing has been migrated.', n;
   END IF;
 END $$;
 

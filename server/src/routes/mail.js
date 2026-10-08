@@ -26,7 +26,7 @@ import { mailboxClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
-import { publicAttachment, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
+import { forwardedEmail, publicAttachment, toHtml, toSheets, toText, viewKind, viewType } from '../lib/mailbox/attachmentView.js';
 import { canReadLive, cleanHtml, isOwner, mayReadContent, mayViewAttachments, snippet } from '../lib/mailbox/rules.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { providerFor, saveTokens } from '../lib/mailbox/sync.js';
@@ -224,7 +224,7 @@ function publicMessage(m, { attachments, live = false, canView }) {
 }
 
 const attachmentsOf = async (messageId) => (await query(
-  'SELECT id, provider_id, name, content_type, size_bytes, is_inline, content_id FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
+  'SELECT id, provider_id, name, content_type, size_bytes, is_inline, content_id, kind FROM email_attachments WHERE message_id = $1 ORDER BY is_inline, id', [messageId])).rows;
 
 /**
  * A mailbox that stores metadata only keeps no attachment names and no
@@ -330,7 +330,29 @@ const capped = () => {
   });
 };
 
-/** The whole file, for the viewers that read it here (a sheet, a text file). */
+/**
+ * An email forwarded as an attachment (an Outlook item), read from the
+ * provider as the message it is. Nothing is stored.
+ */
+async function readAttachedEmail(m, att) {
+  const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [m.account_id]);
+  if (!a || a.status !== 'active') throw new ApiError(409, 'The mailbox needs to be reconnected before its attachments can be read');
+  const provider = providerFor(a);
+  if (!provider.attachmentItem) throw new ApiError(501, 'This mailbox cannot serve attachments');
+  let item;
+  try { item = await provider.attachmentItem(m.provider_id, att.provider_id); }
+  catch (err) {
+    await providerFailed(a.id, err);
+    if (err.status === 404) throw new ApiError(404, 'The attachment is no longer in the mailbox');
+    if (err.reconnect) throw new ApiError(409, 'The mailbox needs to be reconnected before its attachments can be read');
+    throw new ApiError(502, 'The attachment could not be read from the mailbox just now');
+  }
+  await saveTokens(a, provider).catch(() => {});
+  if (!item) throw new ApiError(415, 'This Outlook item is not an email; open the message in Outlook');
+  return item;
+}
+
+/** The whole file, for the viewers that read it here (a sheet, a text file, a Word document). */
 async function readAttachment(m, att) {
   const got = await openAttachment(m, att);
   const chunks = [];
@@ -393,6 +415,7 @@ mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
   // A metadata-only mailbox stores no names; which viewer to use may hang on one.
   if (!att.name && needsLiveNames(req, m, account)) [att] = withLiveNames([att], await liveAttachmentList(m));
   const kind = viewKind(att);
+  if (!kind && att.kind === 'reference') throw new ApiError(415, 'This is a link to a file in OneDrive or SharePoint; open the message in Outlook to reach it');
   if (!kind) throw new ApiError(415, 'This kind of file cannot be shown in the tracker yet; open it in Outlook');
   // Recorded once the provider has handed the file over: a view that
   // never happened is not in the log.
@@ -401,14 +424,26 @@ mailRouter.get('/messages/:id/attachments/:attId/view', async (req, res) => {
     metadata: { attachment_id: att.id, name: att.name ?? null, content_type: att.content_type ?? null, mailbox: m.mailbox },
   });
   if (kind === 'pdf' || kind === 'image') return streamAttachment(res, { m, att, type: viewType(att), opened: viewed });
+  if (kind === 'email') {
+    const item = await readAttachedEmail(m, att);
+    await viewed();
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ data: { kind, ...forwardedEmail(item) } });
+  }
+  // Read and turned into data first: a file that cannot be read was not viewed.
   const bytes = await readAttachment(m, att);
+  let data;
+  if (kind === 'text') data = toText(bytes);
+  else if (kind === 'word') {
+    try { data = await toHtml(bytes); }
+    catch { throw new ApiError(422, 'This document could not be read; open it in Outlook'); }
+  } else {
+    try { data = { sheets: toSheets(bytes, att) }; }
+    catch { throw new ApiError(422, 'This spreadsheet could not be read; open it in Outlook'); }
+  }
   await viewed();
   res.setHeader('Cache-Control', 'private, no-store');
-  if (kind === 'text') return res.json({ data: { kind, ...toText(bytes) } });
-  let sheets;
-  try { sheets = toSheets(bytes, att); }
-  catch { throw new ApiError(422, 'This spreadsheet could not be read; open it in Outlook'); }
-  return res.json({ data: { kind, sheets } });
+  return res.json({ data: { kind, ...data } });
 });
 
 mailRouter.get('/messages/:id/inline/:contentId', async (req, res) => {

@@ -9,11 +9,16 @@
  *   image   png, jpeg, gif, webp, bmp, svg       bytes, drawn by an <img>
  *   sheet   xlsx, xls, xlsm, ods, csv            { sheets: [{ name, rows, truncated }] }
  *   text    txt, log, json, xml, md              { text, truncated }
+ *   word    docx                                 { html } (step 2), cleaned like a mail body
+ *   email   an email forwarded as an attachment  { from, to, cc, subject, sent_at, html } (step 2)
  *
- * Anything else (Word, PowerPoint, archives, programs) is not viewable yet
- * and says so; Word and PowerPoint follow in steps 2 and 3.
+ * Anything else (PowerPoint, old .doc, archives, programs, a OneDrive
+ * link) is not viewable yet and says so; PowerPoint and the old Office
+ * formats follow in step 3.
  */
+import mammoth from 'mammoth';
 import XLSX from 'xlsx';
+import { cleanHtml } from './rules.js';
 
 /** The most rows and columns a sheet shows; a note says when there was more. */
 export const SHEET_MAX_ROWS = 2000;
@@ -29,16 +34,20 @@ const SHEET_TYPES = /^(application\/vnd\.openxmlformats-officedocument\.spreadsh
 const SHEET_EXT = new Set(['xlsx', 'xls', 'xlsm', 'ods', 'csv']);
 const TEXT_TYPES = /^(text\/plain|application\/json|application\/xml|text\/xml|text\/markdown)$/i;
 const TEXT_EXT = new Set(['txt', 'log', 'json', 'xml', 'md']);
+const WORD_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 /**
  * How an attachment is shown, from its declared type and, when a mail
  * client sent the vague `application/octet-stream`, its name. null when
  * the viewer cannot show it.
  */
-export function viewKind({ name, content_type: type } = {}) {
+export function viewKind({ name, content_type: type, kind = 'file' } = {}) {
+  if (kind === 'item') return 'email';
+  if (kind === 'reference') return null;
   const t = String(type || '').toLowerCase().split(';')[0].trim();
   const e = ext(name);
   const vague = !t || t === 'application/octet-stream';
+  if (t === WORD_TYPE || e === 'docx') return 'word';
   if (t === 'application/pdf' || (vague && e === 'pdf')) return 'pdf';
   if (IMAGE_TYPES.test(t) || (vague && IMAGE_EXT[e])) return 'image';
   if (SHEET_TYPES.test(t) || SHEET_EXT.has(e)) return 'sheet';
@@ -63,6 +72,7 @@ export function viewType(att) {
  */
 export const publicAttachment = (messageId, a, canView) => ({
   id: a.id, name: a.name, content_type: a.content_type, size_bytes: a.size_bytes, is_inline: a.is_inline, content_id: a.content_id,
+  kind: a.kind || 'file',
   view: viewKind(a),
   view_url: canView ? `/api/mail/messages/${messageId}/attachments/${a.id}/view` : null,
 });
@@ -96,3 +106,24 @@ export function toText(buffer) {
   const text = buffer.toString('utf8').replace(/^﻿/, '');
   return { text: text.slice(0, TEXT_MAX_CHARS), truncated: text.length > TEXT_MAX_CHARS };
 }
+
+/**
+ * A Word document as HTML (mammoth): headings, paragraphs, lists, tables
+ * and pictures, without the page layout (headers, footers, columns).
+ * Cleaned with the same rules as a mail body, so it is shown the same way:
+ * in the sandboxed, script-free frame.
+ */
+export async function toHtml(buffer) {
+  const { value } = await mammoth.convertToHtml({ buffer });
+  return { html: cleanHtml(value) };
+}
+
+/** A forwarded email, as the viewer shows it: who, when, and the cleaned body. */
+export const forwardedEmail = (m) => ({
+  subject: m.subject || null,
+  from: m.from || null,
+  to: m.to || [],
+  cc: m.cc || [],
+  sent_at: m.sent_at || null,
+  html: cleanHtml(m.body_html || ''),
+});

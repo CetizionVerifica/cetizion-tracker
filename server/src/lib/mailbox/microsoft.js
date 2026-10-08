@@ -35,6 +35,8 @@ const SCOPES = [
   'Mail.Send',
   'Mail.Send.Shared',
 ];
+/** Graph's attachment types, by the kind stored for each (095). */
+const ATTACHMENT_KINDS = { '#microsoft.graph.fileAttachment': 'file', '#microsoft.graph.itemAttachment': 'item', '#microsoft.graph.referenceAttachment': 'reference' };
 const SELECT = 'id,conversationId,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,hasAttachments,isDraft,parentFolderId,webLink,isRead,flag,importance';
 
 /** Folders synced for display only (docs/inbox-outlook-plan.md §3.5): shown in the Inbox, never read by the email readers or routed to the team queue. */
@@ -216,11 +218,30 @@ export function microsoftProvider(account, tokens) {
       }
       return out;
     },
-    /** The attachments of a message, metadata only (076): the file stays in Outlook. */
+    /**
+     * The attachments of a message, metadata only (076): the file stays in
+     * Outlook. `kind` says what Graph holds: a file, an Outlook item (an
+     * email forwarded as an attachment), or a reference (a link to a file
+     * in OneDrive or SharePoint, which Graph v1.0 does not describe further).
+     */
     async attachmentList(providerId) {
       const j = await graph(`${who}/messages/${providerId}/attachments?$select=id,name,contentType,size,isInline,contentId`);
-      return (j.value || []).filter((a) => !a['@odata.type'] || a['@odata.type'] === '#microsoft.graph.fileAttachment')
-        .map((a) => ({ provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: a.contentId || null }));
+      return (j.value || []).map((a) => ({
+        provider_id: a.id, name: a.name, content_type: a.contentType || null, size_bytes: a.size ?? null, is_inline: Boolean(a.isInline), content_id: a.contentId || null,
+        kind: ATTACHMENT_KINDS[a['@odata.type']] || 'file',
+      }));
+    },
+    /**
+     * An Outlook item attached to a message, read as the message it is (an
+     * email forwarded as an attachment): who, when, the body as HTML.
+     * Anything else Outlook attaches (an event, a contact) has no body to
+     * show and comes back as null.
+     */
+    async attachmentItem(providerId, attachmentId) {
+      const j = await graph(`${who}/messages/${providerId}/attachments/${attachmentId}?$expand=microsoft.graph.itemattachment/item`, { headers: { Prefer: 'outlook.body-content-type="html"' } });
+      const item = j?.item;
+      if (!item || (item['@odata.type'] && item['@odata.type'] !== '#microsoft.graph.message')) return null;
+      return toMessage(item);
     },
     /**
      * New and changed messages in a folder since the last delta link, at
