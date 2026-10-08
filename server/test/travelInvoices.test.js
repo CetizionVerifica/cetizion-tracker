@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
@@ -89,6 +89,11 @@ describe('travel invoices (#214)', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL 
       const before = (await db.query(
         `SELECT stage_no, stage_percent, invoice_no, amount_received FROM payment_stages ORDER BY stage_no`)).rows;
       await db.query(read('migrations/097_travel_invoices.sql'));
+      // And anything after it, for the same reason the vendor-payment suite
+      // does: views.sql is always current, so the table has to be too.
+      for (const file of readdirSync(join(DB_DIR, 'migrations')).filter((f) => f.endsWith('.sql') && f > '097_travel_invoices.sql').sort()) {
+        await db.query(read(`migrations/${file}`));
+      }
       await db.query(read('views.sql'));
 
       const after = (await db.query(
