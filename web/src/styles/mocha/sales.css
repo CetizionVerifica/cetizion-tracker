@@ -95,7 +95,7 @@
 .app-rec__bar .mg-crumbs b { color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
 .app-rec__head { border-radius: 26px; }
 .app-rec__top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
-.app-rec__mark { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 16px; background: var(--latte); color: var(--text); font-weight: 800; font-size: 15px; }
+.app-rec__mark { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 16px; background: var(--latte); color: var(--on-caramel); font-weight: 800; font-size: 15px; }
 .app-rec__titles { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .app-rec__titles .mg-record__title { overflow-wrap: anywhere; }
 .app-rec__badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
