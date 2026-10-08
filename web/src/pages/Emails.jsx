@@ -31,6 +31,7 @@ function cronWords(cron) {
   if (p.length !== 5) return cron;
   const [m, h, dom, mon, dow] = p;
   if (dom !== '*' || mon !== '*') return cron;
+  if (m === '*' && h === '*' && dow === '*') return 'Every minute';
   if (/^\*\/\d+$/.test(m) && h === '*' && dow === '*') return `Every ${m.slice(2)} minutes`;
   if (/^\d+$/.test(m) && h === '*' && dow === '*') return m === '0' ? 'Every hour' : `Every hour at :${m.padStart(2, '0')}`;
   if (/^\d+$/.test(m) && /^\*\/\d+$/.test(h) && dow === '*') return `Every ${h.slice(2)} hours`;

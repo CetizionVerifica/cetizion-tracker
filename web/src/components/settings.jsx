@@ -76,7 +76,7 @@ export function SettingsPane({ title, description, actions, readOnly, crumbs, ba
       />
       {ctx && <SettingsSwitch />}
       {state?.settingsNotice && (
-        <MoneyBanner icon={Info} title={state.settingsNotice}>{' '}Ask an admin if something there needs changing.</MoneyBanner>
+        <MoneyBanner icon={Info} title={state.settingsNotice}>{state.settingsAsk ? ' Ask an admin if something there needs changing.' : null}</MoneyBanner>
       )}
       {children}
     </>

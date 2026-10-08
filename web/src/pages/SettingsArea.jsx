@@ -181,7 +181,7 @@ export default function SettingsArea() {
               {groups.flatMap((group) => group.items).map((item) => (
                 <Route key={item.to} path={`${item.to}/*`} element={item.element} />
               ))}
-              <Route path="*" element={<Navigate to={`/settings/${first}`} replace state={{ settingsNotice: notice }} />} />
+              <Route path="*" element={<Navigate to={`/settings/${first}`} replace state={{ settingsNotice: notice, settingsAsk: Boolean(refused) }} />} />
             </Routes>
           </div>
         </div>
