@@ -59,7 +59,7 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
       </span>
       <span className="app-ib__name">
         {row.unread && <span className="app-ib__dot" aria-hidden="true" />}
-        <span className="app-ib__lead" title={[row.company_name, lead].filter(Boolean).join(' · ')}>{lead}</span>
+        <span className="app-ib__lead" title={[row.company_name, lead].filter(Boolean).join(' · ')}><span>{lead}</span></span>
         {row.in_folder > 1 && <span className="app-ib__n mg-num">{row.in_folder}</span>}
       </span>
       <span className="app-ib__time">
@@ -68,7 +68,7 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
         <span>{when}</span>
       </span>
       <span className="app-ib__subj" title={row.subject || '(no subject)'}>{row.subject || '(no subject)'}</span>
-      {row.snippet && <span className="app-ib__snip is-one">{row.snippet}</span>}
+      {row.snippet && <span className="app-ib__snip is-one"><span>{row.snippet}</span></span>}
       {tag && <span className="app-ib__chips"><span className="mg-badge mg-badge--plain">{tag}</span></span>}
     </div>
   );

@@ -128,7 +128,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
       <span className="app-ib__name">
         {row.unread && <span className="app-ib__dot" aria-hidden="true" />}
         <span className="app-ib__lead" title={[row.company_name, row.from_name, row.from_email].filter(Boolean).join(' · ')}>
-          {lead}{row.company_name && row.from_name && <small> · {row.from_name}</small>}
+          <span>{lead}{row.company_name && row.from_name && <small> · {row.from_name}</small>}</span>
         </span>
       </span>
       <span className={cn('app-ib__time', row.overdue && 'is-late')} title={row.overdue ? 'Nobody has replied to this yet' : undefined}>
@@ -137,7 +137,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
       </span>
       <span className="app-ib__subj" title={row.subject || '(no subject)'}>{row.subject || '(no subject)'}</span>
       {/* A mailbox set to metadata-only stores no snippet; the band does not appear rather than show a blank line. */}
-      {row.snippet && <span className="app-ib__snip">{row.snippet}</span>}
+      {row.snippet && <span className="app-ib__snip"><span>{row.snippet}</span></span>}
       <span className="app-ib__chips">
         {due && <span className={cn('mg-badge', due[1])}>{due[0]}</span>}
         {tag && <span className={cn('mg-badge mg-num', tag[1])}>{tag[0]}</span>}
