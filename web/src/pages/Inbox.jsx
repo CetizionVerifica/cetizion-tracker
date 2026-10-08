@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState }
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast as sonnerToast } from 'sonner';
 import {
-  ArrowLeft, Check, Clock, Copy, ExternalLink, FilePlus, Filter, Keyboard, Lightbulb, Lock, Paperclip, Plus, Reply, RotateCcw, Search, Send, SlidersHorizontal, X,
+  ArrowLeft, Check, CircleAlert, Clock, Copy, ExternalLink, FilePlus, Filter, Keyboard, Lightbulb, Lock, Paperclip, Plus, Reply, RotateCcw, Search, Send, SlidersHorizontal, X,
 } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
 import { useToast } from '../components/ui.jsx';
@@ -762,7 +762,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
           </div>
         )}
         {thread.error ? (
-          <p className="app-msg__note" role="alert">The messages couldn’t be loaded: {thread.error}</p>
+          <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body">The messages couldn’t be loaded: {thread.error}</div></div>
         ) : !t ? <div className="mg-skel" style={{ height: 120 }} aria-label="Loading the messages" /> : (
           <>
             {t.visibility !== 'share_everything' && !t.messages.some((m) => m.can_read_live) && (

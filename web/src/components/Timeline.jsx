@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import {
-  CalendarClock, ClipboardList, Inbox, Mail, MessageCircle, NotebookPen, Paperclip, Phone, X,
+  CalendarClock, CircleAlert, ClipboardList, Inbox, Mail, MessageCircle, NotebookPen, Paperclip, Phone, X,
 } from 'lucide-react';
 import { cn } from 'cn';
 import { ConfirmDialog, Field, FileDrop, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
@@ -237,7 +237,7 @@ function NoteDialog({ entity, id, record, onClose, onSaved }) {
       {!body.trim() && <span className="app-why">Write the note to save it.</span>}
     </>}>
       <form id="note-form" onSubmit={save} className="stack">
-        {failed && <div className="mg-banner mg-banner--late" role="alert"><div className="mg-banner__body"><strong>Couldn't save the note.</strong>{failed} What you wrote is still here.</div></div>}
+        {failed && <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't save the note.</strong>{failed} What you wrote is still here.</div></div>}
         <Field label="Note" required><Textarea rows={5} value={body} onChange={(e) => setBody(e.target.value)} autoFocus /></Field>
         <label className="mg-check"><input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} /> Pin to the top</label>
       </form>
@@ -388,7 +388,7 @@ function FileDialog({ entity, id, maxBytes, onClose, onSaved }) {
       {!file && !busy && <span className="app-why">Choose a file to attach it.</span>}
     </>}>
       <form id="file-form" onSubmit={save} className="stack">
-        {failed && <div className="mg-banner mg-banner--late" role="alert"><div className="mg-banner__body"><strong>Couldn't attach it.</strong>{failed}</div></div>}
+        {failed && <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't attach it.</strong>{failed}</div></div>}
         <Field as="div" label="File" required error={error} hint={file ? `Chosen: ${file.name} · ${fileSize(file.size)}` : maxBytes ? `Any file, up to ${fileSize(maxBytes)}` : undefined}>
           <FileDrop label="File" text={file ? `${file.name} · ${fileSize(file.size)}` : 'Drop a file here'} error={error} onFile={pick} />
         </Field>

@@ -331,11 +331,11 @@ html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: tra
 }
 
 /* ── Pop-ups open with their own motion (mount = open). Closing is a quick 160ms fade + scale .97 in code. ── */
-@keyframes mg-pop-in { from { opacity: 0; transform: translate(var(--pop-x, 0px), var(--pop-y, 8px)) scale(.9); filter: blur(8px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes mg-pop-in { from { opacity: 0; transform: translate(var(--pop-x, 0px), var(--pop-y, 8px)) scale(.9); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes mg-item-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes mg-fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes mg-dialog-in { from { opacity: 0; transform: translateY(18px) scale(.95); filter: blur(10px); } to { opacity: 1; transform: none; filter: blur(0); } }
-@keyframes mg-drop-in { from { opacity: 0; transform: translateY(-16px) scale(.96); filter: blur(8px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes mg-dialog-in { from { opacity: 0; transform: translateY(18px) scale(.95); filter: blur(10px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes mg-drop-in { from { opacity: 0; transform: translateY(-16px) scale(.96); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes mg-sheet-in { from { transform: translateY(calc(100% + 120px)); } to { transform: none; } }
 @keyframes mg-toast-in { from { opacity: 0; transform: translateY(22px) scale(.88); } 60% { opacity: 1; } to { opacity: 1; transform: none; } }
 /* Menus and panels unfold from the control that opened them: set --pop-origin (and --pop-x / --pop-y toward it). */

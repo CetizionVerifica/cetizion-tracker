@@ -1,3 +1,4 @@
+import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Alert, Field, Input, Modal, Select, useToast } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
@@ -108,7 +109,7 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
           <Alert><span>One save: the quotation is marked won, the project is created (or the PO joins the one you pick), the PO is registered with its service lines, the payment stages come from the template, and the checklist is added.</span></Alert>
         )}
         {note && <Alert tone="warning">{note}</Alert>}
-        {error && <div className="mg-banner mg-banner--late" role="alert"><div className="mg-banner__body"><strong>Couldn't register the PO.</strong>{error}</div></div>}
+        {error && <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't register the PO.</strong>{error}</div></div>}
         <div className="form-grid">
           <div className="span-all" style={{ fontWeight: 650 }}>Purchase order</div>
           <Field label="PO number" required error={errors.po_number}><Input value={v.po_number} onChange={(e) => set('po_number', e.target.value)} /></Field>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Link2, Send } from 'lucide-react';
+import { CircleAlert, Copy, Link2, Send } from 'lucide-react';
 import { ConfirmDialog, DataTable, Field, Input, Modal, Textarea, useToast } from './ui.jsx';
 import { Sec, Tone } from './sales.jsx';
 import { api } from '../lib/api.js';
@@ -141,7 +141,7 @@ export function LinkDialog({ quotation, onClose, onDone }) {
       {off && <span className="app-why">Type the address to email it, or untick the box.</span>}
     </>}>
       <div className="stack">
-        {failed && <div className="mg-banner mg-banner--late" role="alert"><div className="mg-banner__body"><strong>Couldn't create the link.</strong>{failed}</div></div>}
+        {failed && <div className="mg-banner mg-banner--late" role="alert"><CircleAlert strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body"><strong>Couldn't create the link.</strong>{failed}</div></div>}
         <label className="mg-check"><input type="checkbox" checked={email} onChange={(e) => setEmail(e.target.checked)} /> Email the link and the PDF to the client</label>
         {email && <Field label="To" required><Input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@company.com" /></Field>}
         {email && <Field label="Message" hint="Blank: a standard covering note"><Textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} /></Field>}

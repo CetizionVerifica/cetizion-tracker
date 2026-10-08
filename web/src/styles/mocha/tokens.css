@@ -1,7 +1,7 @@
 /* Mocha Glass — generated from tokens.json */
 :root, [data-theme="light"] {
   --canvas: #EEE3D5; --b1: rgba(205,160,112,.70); --b2: rgba(232,201,163,.85); --b3: rgba(190,134,92,.50); --b4: rgba(250,238,222,.95);
-  --glass: rgba(255,251,246,.52); --glass-strong: rgba(255,251,246,.74); --glass-edge: rgba(255,255,255,.72); --glass-hi: rgba(255,255,255,.85);
+  --glass: rgba(255,251,246,.52); --glass-strong: rgba(255,251,246,.74); --glass-edge: rgba(255,255,255,.72); --glass-hi: rgba(255,255,255,.85); --glass-dialog: rgba(255,251,246,.9); --scrim: rgba(20,12,8,.42); --glass-float: rgba(255,251,246,.88);
   --sheen: rgba(255,255,255,.45); --glint: rgba(255,255,255,.6); --ripple-core: rgba(255,255,255,.26); --shade: rgba(80,45,20,.42);
   --hero-glass: rgba(52,34,23,.86); --hero-glow: rgba(200,135,80,.50); --hero-edge: rgba(255,235,215,.16); --hero-hi: rgba(255,240,225,.22);
   --on-hero: #FFF5E9; --on-hero-2: #DCC6AE; --text: #2A1C14; --text2: #68513F; --muted: #7A6352; --line: rgba(42,28,20,.10);
@@ -15,7 +15,7 @@
 }
 .dark, [data-theme="dark"] {
   --canvas: #0C0806; --b1: rgba(150,64,22,.55); --b2: rgba(70,40,24,.80); --b3: rgba(190,90,35,.35); --b4: rgba(60,34,20,.70);
-  --glass: rgba(32,22,16,.46); --glass-strong: rgba(40,28,20,.70); --glass-edge: rgba(255,222,190,.11); --glass-hi: rgba(255,230,205,.10);
+  --glass: rgba(32,22,16,.46); --glass-strong: rgba(40,28,20,.70); --glass-edge: rgba(255,222,190,.11); --glass-hi: rgba(255,230,205,.10); --glass-dialog: rgba(36,25,18,.92); --scrim: rgba(6,3,1,.55); --glass-float: rgba(36,25,18,.9);
   --sheen: rgba(255,225,195,.06); --glint: rgba(255,205,165,.22); --ripple-core: rgba(255,190,140,.08); --shade: rgba(0,0,0,.85);
   --hero-glass: rgba(18,12,8,.60); --hero-glow: rgba(230,110,45,.45);
   --on-hero-2: #D9C1A8; --text: #FAEFE3; --text2: #CDB8A2; --muted: #A8927C; --line: rgba(255,230,205,.09);

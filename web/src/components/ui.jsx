@@ -3,7 +3,7 @@ import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
-import { Upload } from 'lucide-react';
+import { CircleAlert, CircleCheck, Info, TriangleAlert, Upload } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -461,18 +461,24 @@ export function Tabs({ tabs, active, onChange }) {
 }
 
 
+const ALERT = {
+  info: ['', Info],
+  warning: ['mg-banner--wait', TriangleAlert],
+  danger: ['mg-banner--late', CircleAlert],
+  success: ['mg-banner--ok', CircleCheck],
+};
+
+/**
+ * A note, hint or warning inside a page or dialog: the Mocha Glass banner
+ * (tone tint, tone icon, theme text). Tone is never the only signal: the
+ * text says what it is, and the icon agrees with it.
+ */
 export function Alert({ tone = 'info', children }) {
-  // Tone is never the only signal: the text says what it is, and the icon
-  // agrees with it.
-  const look = {
-    info: 'bg-info-soft [&>svg]:text-info',
-    warning: 'bg-wait-soft [&>svg]:text-wait',
-    danger: 'bg-late-soft [&>svg]:text-late',
-    success: 'bg-ok-soft [&>svg]:text-ok',
-  }[tone] || 'bg-info-soft [&>svg]:text-info';
+  const [cls, Icon] = ALERT[tone] || ALERT.info;
   return (
-    <div className={cn('alert flex items-start gap-3 rounded-[18px] px-4 py-3.5 text-[13.5px] text-foreground [&>svg]:size-[18px] [&>svg]:shrink-0', look)} role="status">
-      {children}
+    <div className={cn('mg-banner', cls)} role="status">
+      <Icon strokeWidth={1.8} aria-hidden="true" />
+      <div className="mg-banner__body">{children}</div>
     </div>
   );
 }

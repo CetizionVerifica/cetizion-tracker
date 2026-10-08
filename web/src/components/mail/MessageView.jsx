@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ExternalLink, Flag, FlagOff, ImageOff } from 'lucide-react';
+import { ArrowDown, ExternalLink, Flag, FlagOff, ImageOff, Info } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { cn } from 'cn';
 import { api } from '../../lib/api.js';
@@ -230,7 +230,7 @@ export function Message({ m, openByDefault }) {
             </dl>
           )}
           {removed ? (
-            <p className="app-msg__note">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</p>
+            <div className="mg-banner" role="status"><Info strokeWidth={1.8} aria-hidden="true" /><div className="mg-banner__body">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</div></div>
           ) : body
             ? <MailBody id={m.id} html={body} />
             : live.loading && m.can_read_live
