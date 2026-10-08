@@ -249,7 +249,7 @@ export default function Mailboxes() {
           </Alert>
         )}
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
             <span>Mailbox</span><span>Status</span><span>{isAdmin ? 'Team sees' : 'The tracker stores'}</span><span>Synced</span><span />
           </div>
@@ -421,7 +421,7 @@ export default function Mailboxes() {
         <AutoEntryPanel />
 
         {isAdmin && <div className="grid gap-4 @3xl:grid-cols-2">
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Never sync</div>
             <p className="text-[12.5px]/[1.6] text-secondary-text">
               Addresses or whole domains — newsletters, personal contacts. Robots like no-reply@ are always skipped.
@@ -464,7 +464,7 @@ export default function Mailboxes() {
             )}
           </div>
 
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
             <div className="text-[14px] font-semibold text-foreground">Server setup</div>
             <Ready label="Microsoft Entra app" ok={Boolean(cfg?.microsoft)} okLabel="Registered" missing="Not registered" />
             <Ready label="Token encryption key" ok={Boolean(cfg?.token_key)} />
@@ -780,7 +780,7 @@ function AutoEnquiries() {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[14px] font-semibold text-foreground">Automatic enquiries, POs and invoices</div>

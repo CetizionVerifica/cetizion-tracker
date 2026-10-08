@@ -77,8 +77,9 @@ from `components/ui.jsx`; do not hand-roll chips.
   (`h-touch`) on phone.
 - **Spacing:** 4px grid. Gaps are 8, 12, 16, 24, 32. Page padding 24px (16px on phone).
   Card padding 16–24px.
-- **Radius:** 6px chips and small controls, 8px buttons and inputs, 12px cards,
-  16px dialogs and sheets, pill for status chips only.
+- **Radius:** 6px small controls (`rounded-sm`), 8px buttons and inputs (`rounded-md`),
+  12px cards (`rounded-lg`), 16px dialogs and sheets (`rounded-xl`), pill for status
+  chips only. 2px and 4px only for tiny marks (a legend dot, a kbd). No other values.
 - **Shadow:** none on cards at rest (a border is enough); `shadow-sm` on hover or on the
   one promoted card; `shadow-lg` for dialogs only.
 - **Motion:** 120–180ms ease-out; nothing under `prefers-reduced-motion`.
@@ -131,9 +132,13 @@ Every record that moves through a process (enquiry, quotation, project, PO, paym
 trip) follows the same order, top to bottom:
 
 1. Breadcrumb, then header: identity, status chip, owner, overflow menu.
-2. **Process rail**: the steps of its journey; done steps ticked in `settled`, the current
-   step in `primary`, later steps muted. Under it, **one sentence** saying what the
-   current step waits on and who, and the one primary button that moves it on.
+2. **Process rail** (`RecordFlow` and `flowSteps` in `components/record.jsx`; never draw
+   one by hand): the steps of its journey as numbered discs; done steps filled `settled`
+   with a tick, the current step filled `primary` with a halo, later steps hollow and
+   muted. The current step is the one after the furthest step reached, so a skipped step
+   stays hollow instead of dragging the marker back. Under it, a "Now · <step>" eyebrow,
+   **one sentence** saying what the current step waits on and who, and the one primary
+   button that moves it on. Each step is read off a stored fact, never typed.
 3. Key figures strip (2–4 stat tiles).
 4. Body sections, each with a section title.
 5. Timeline (tasks, notes, files, activity with who did what).
@@ -179,6 +184,7 @@ Button variants: `default` (primary, once per view), `outline` (secondary), `gho
 
 `test/uiConsistency.test.js` checks the parts of this file a machine can: no hex or
 Tailwind palette colours in components, every token defined in both themes, the
-contrast of every text/ground pair, and no company name in the app. If it fails,
+contrast of every text/ground pair, radii on the scale, the process rail on the Deal,
+Order and Project pages (and the Deal's nine steps), and no company name in the app. If it fails,
 fix the screen or the token; add to its exceptions only for something that is
 deliberately not themed (a third-party logo, an email body, the PDF preview).

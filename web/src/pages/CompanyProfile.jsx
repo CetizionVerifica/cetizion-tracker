@@ -76,7 +76,7 @@ const FIELDS = [
 /** The PDF header, as quotationPdf.js actually lays it out. */
 function PdfHeader({ values }) {
   return (
-    <div className="flex flex-col gap-4 rounded-[10px] bg-white p-6 text-[#151517]">
+    <div className="flex flex-col gap-4 rounded-lg bg-white p-6 text-[#151517]">
       <div>
         <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Your company name'}</div>
         {values.company_address && <div className="mt-1 text-[8.5px]/[1.5] text-[#5d5d66]">{values.company_address}</div>}
@@ -131,7 +131,7 @@ export function CompanyProfile() {
     >
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
       <div className="flex min-w-0 flex-col gap-5">
-        <div className="grid gap-x-6 gap-y-4 rounded-[10px] border border-border bg-card p-5 sm:grid-cols-2">
+        <div className="grid gap-x-6 gap-y-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2">
           {FIELDS.map((field) => (
             <div key={field.key} className={cn('min-w-0', field.span && 'sm:col-span-2')}>
               <Label htmlFor={field.key} className="mb-2 text-[12.5px] font-medium text-secondary-text">{field.label}</Label>

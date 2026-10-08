@@ -85,7 +85,7 @@ export default function Webhooks() {
         </>}
       >
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           {loading && !data ? <div className="skeleton" style={{ height: 96, margin: 16 }} />
           : rows.length === 0 ? (
             <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">

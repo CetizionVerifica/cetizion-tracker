@@ -238,7 +238,7 @@ export default function InvoiceRun() {
 
       <div className="grid items-start gap-6 px-4 pt-6 pb-8 sm:px-8 xl:grid-cols-[minmax(0,1fr)_400px]">
         <div className="flex min-w-0 flex-col gap-4">
-          <div className="rounded-[10px] border border-border bg-card p-6">
+          <div className="rounded-lg border border-border bg-card p-6">
             <div className="flex flex-wrap items-baseline gap-3">
               <span className="text-[18px] font-semibold text-foreground">{stage.client_name}</span>
               <Link to={`/purchase-orders/${encodeURIComponent(stage.po_number)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">
@@ -309,7 +309,7 @@ export default function InvoiceRun() {
           )}
         </div>
 
-        <div className="overflow-hidden rounded-[10px] border border-border-strong bg-card">
+        <div className="overflow-hidden rounded-lg border border-border-strong bg-card">
           <div className="border-b border-border px-6 py-5">
             <div className="text-[15px] font-semibold text-foreground">Raise the invoice</div>
             <p className="mt-1 text-[12.5px] text-secondary-text">

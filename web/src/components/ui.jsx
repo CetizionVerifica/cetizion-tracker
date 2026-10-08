@@ -42,12 +42,12 @@ const TONE = {
 
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
-    <UiCard className={cn('gap-0 rounded-[10px] border-border bg-card py-0 shadow-none', className)}>
+    <UiCard className={cn('gap-0 rounded-lg border-border bg-card py-0 shadow-none', className)}>
       {/* The actions sit beside the title when there is room and under it
           when there is not. Held `shrink-0` beside it, a card header
           carrying two filters pushed a phone page past its viewport. */}
       {(title || actions) && (
-        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 [.border-b]:pb-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
           {/* The title keeps a readable width; actions too wide to sit
               beside it wrap onto their own line rather than squeezing it
               to a word per line. */}
@@ -73,7 +73,7 @@ export function Stat({ label, value, meta, tone = '', to, onClick }) {
     info: 'text-info',
   }[tone];
   const className = cn(
-    'flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
+    'flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
     (to || onClick) && 'hover:border-primary/40 hover:bg-accent'
   );
   const inner = (
@@ -149,7 +149,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
           <UiCard
             key={row.id ?? i}
             className={cn(
-              'gap-0 rounded-[10px] border-border bg-card py-0 shadow-none',
+              'gap-0 rounded-lg border-border bg-card py-0 shadow-none',
               onRowClick && 'cursor-pointer',
               rowClassName ? rowClassName(row) || '' : ''
             )}
@@ -335,7 +335,7 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         className={cn(
-          'max-h-[86vh] gap-0 overflow-hidden rounded-[14px] border-border bg-popover p-0',
+          'max-h-[86vh] gap-0 overflow-hidden rounded-xl border-border bg-popover p-0',
           size === 'lg' ? 'sm:max-w-3xl' : size === 'sm' ? 'sm:max-w-md' : 'sm:max-w-xl'
         )}
       >
@@ -540,7 +540,7 @@ export function Alert({ tone = 'info', children }) {
     success: 'border-settled/30 bg-settled/10 text-settled',
   }[tone] || 'border-info/30 bg-info/10 text-info';
   return (
-    <div className={cn('alert flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px]', look)} role="status">
+    <div className={cn('alert flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px]', look)} role="status">
       {children}
     </div>
   );

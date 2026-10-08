@@ -42,7 +42,7 @@ export function AutoEntryPanel() {
 
   const cell = 'px-2 py-1.5 text-right mono';
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5" data-testid="auto-entry-panel">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5" data-testid="auto-entry-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[14px] font-semibold text-foreground">Mail auto-entry</div>

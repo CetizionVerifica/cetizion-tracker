@@ -95,7 +95,7 @@ export function UsersAdmin() {
         {error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
-          <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className={cn('hidden h-9 items-center gap-4 bg-secondary px-5 @3xl:grid', GRID, COL_LABEL)}>
               <span>Person</span><span>Role</span><span>Signs in</span><span>Last seen</span><span />
             </div>

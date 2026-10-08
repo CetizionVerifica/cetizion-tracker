@@ -200,7 +200,7 @@ export function Message({ m, openByDefault }) {
   return (
     <article
       className={cn(
-        'overflow-hidden rounded-[10px] border border-border bg-card',
+        'overflow-hidden rounded-lg border border-border bg-card',
         outbound && 'border-l-[3px] border-l-primary',
         removed && 'opacity-80'
       )}
@@ -274,13 +274,13 @@ export function Message({ m, openByDefault }) {
             )}
           </div>
           {removed ? (
-            <div className="rounded-[7px] bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</div>
+            <div className="rounded-md bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">This message was deleted in Outlook. The record keeps the fact that it was sent; the text is gone.</div>
           ) : body
             ? <MailBody id={m.id} html={body} />
             : live.loading && m.can_read_live
               ? <div className="skeleton" style={{ height: 80 }} />
               : (
-                <div className="rounded-[7px] bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">
+                <div className="rounded-md bg-secondary px-3 py-2.5 text-[13px] text-secondary-text">
                   {snippet || (liveData?.live_error || (m.can_read_live ? 'The message could not be read from the mailbox just now.' : 'The mailbox owner shares only who and when.'))}
                 </div>
               )}

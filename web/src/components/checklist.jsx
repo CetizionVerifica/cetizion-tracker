@@ -89,7 +89,7 @@ function ChecklistRow({ step, onToggle, onEdit, onDelete, last }) {
               <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-40 rounded-[10px] p-1.5">
+          <DropdownMenuContent align="end" className="min-w-40 rounded-lg p-1.5">
             {onEdit && <DropdownMenuItem className="text-[13px]" onSelect={() => onEdit(step)}>Edit this step</DropdownMenuItem>}
             {onDelete && <DropdownMenuItem className="text-[13px]" onSelect={() => onDelete(step)}>Remove it</DropdownMenuItem>}
           </DropdownMenuContent>

@@ -13,7 +13,7 @@ export function Pane({ title, description, actions, children }) {
     /* A container, not a viewport query: the pane sits beside a rail and is
        far narrower than the window, so a grid switching on window width
        would go two-column while it had 600px to do it in. */
-    <Card className="@container gap-0 rounded-[10px] border-border py-0 shadow-none">
+    <Card className="@container gap-0 rounded-lg border-border py-0 shadow-none">
       <CardContent className="px-5 py-5 sm:px-6 sm:py-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">

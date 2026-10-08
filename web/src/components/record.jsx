@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
@@ -35,8 +35,8 @@ import { Separator } from './ui/separator';
  * only reason those two are not Card and Button like the rest.
  */
 
-/** A card that keeps the design's 10px radius and its own padding. */
-const PANEL = 'gap-0 rounded-[10px] border-border py-0 shadow-none';
+/** A card on the 12px card radius, with its own padding. */
+const PANEL = 'gap-0 rounded-lg border-border py-0 shadow-none';
 
 /**
  * Two letters, for the mark beside the title.
@@ -66,9 +66,9 @@ export function RecordStat({ label, value, detail, tone }) {
   return (
     <Card className={PANEL}>
       <CardContent className="px-5 py-4">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{label}</div>
+        <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
         <div className={cn(
-          'num mt-2 text-[22px] font-semibold tracking-[-0.02em]',
+          'num mt-2 text-2xl font-semibold tracking-[-0.02em]',
           tone === 'late' ? 'text-late' : tone === 'waiting' ? 'text-waiting' : tone === 'settled' ? 'text-settled' : 'text-foreground'
         )}>
           {value}
@@ -83,10 +83,10 @@ export function RecordStat({ label, value, detail, tone }) {
 export function RecordSection({ title, hint, action, children, className }) {
   return (
     <Card className={cn(PANEL, 'overflow-hidden', className)}>
-      <CardHeader className="flex h-11 flex-row items-center gap-3 space-y-0 border-b border-border px-5 pb-0">
+      <CardHeader className="flex h-11 flex-row items-center gap-3 space-y-0 border-b border-border px-5 [.border-b]:pb-0">
         {/* The title never shrinks: letting it wrap broke the 44px header
             and pushed it into the hint beside it. The hint truncates instead. */}
-        <CardTitle className="shrink-0 text-[14px] font-semibold text-foreground">{title}</CardTitle>
+        <CardTitle className="shrink-0 font-display text-[15px] font-bold text-foreground">{title}</CardTitle>
         {hint && <span className="min-w-0 truncate text-[12.5px] font-normal text-muted-foreground">{hint}</span>}
         {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
       </CardHeader>
@@ -145,7 +145,7 @@ export function Chip({ tone = 'plain', icon: Icon, className, children }) {
   return (
     <Badge
       variant="outline"
-      className={cn('h-[22px] gap-1.5 rounded-[6px] px-2.5 text-[11.5px] font-semibold', CHIP_TONES[tone] || CHIP_TONES.plain, className)}
+      className={cn('h-[22px] gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold', CHIP_TONES[tone] || CHIP_TONES.plain, className)}
     >
       {Icon && <Icon strokeWidth={2.4} aria-hidden="true" />}
       {children}
@@ -204,27 +204,34 @@ export function RecordMenuItem({ children, ...props }) {
  * its stages, the deal from its status and its PO — so the component
  * draws the state it is given and holds no opinion about it.
  */
-export function FlowStep({ label, state = 'future', since }) {
+export function FlowStep({ label, state = 'future', since, n }) {
   const done = state === 'done';
   const current = state === 'current';
   return (
-    <div className={cn('flex flex-none flex-col items-center gap-2', current ? 'w-[112px]' : 'w-[92px]')}>
+    <li
+      aria-current={current ? 'step' : undefined}
+      className={cn('flex flex-none flex-col items-center gap-2', current ? 'w-[112px]' : 'w-[92px]')}
+    >
+      {/* Done is ticked in settled, where the record is now is the action
+          colour with a halo, and what has not happened yet is a hollow
+          numbered disc: web/CLAUDE.md §4. */}
       <span className={cn(
-        'grid size-[18px] place-items-center rounded-full',
-        done && 'border border-settled/40 bg-settled/15',
-        current && 'bg-settled ring-4 ring-settled/20',
-        !done && !current && 'border border-border-strong'
+        'num grid size-6 place-items-center rounded-full text-[11px] font-bold',
+        done && 'bg-settled text-primary-foreground',
+        current && 'bg-primary text-primary-foreground ring-4 ring-primary/20',
+        !done && !current && 'border border-border-strong bg-card text-muted-foreground'
       )}>
-        {done && <Check className="size-[11px] text-settled" strokeWidth={3.2} aria-hidden="true" />}
+        {done ? <Check className="size-3.5" strokeWidth={3} aria-hidden="true" /> : n}
       </span>
       <span className={cn(
-        'text-center text-[11.5px]',
-        current ? 'font-semibold text-foreground' : done ? 'font-medium text-secondary-text' : 'font-medium text-muted-foreground'
+        'text-center text-[12px]',
+        current ? 'font-semibold text-primary' : done ? 'font-medium text-foreground' : 'font-medium text-muted-foreground'
       )}>
         {label}
+        <span className="sr-only">{done ? ', done' : current ? ', now' : ', to come'}</span>
       </span>
       {since && <span className="text-center text-[11px] text-muted-foreground">{since}</span>}
-    </div>
+    </li>
   );
 }
 
@@ -259,26 +266,42 @@ export function flowSteps(reached) {
  * and what was moved into the menu.
  */
 export function RecordFlow({ steps = [], verdict, actions, note }) {
+  const now = steps.find((step) => step.state === 'current');
+  // On a phone the rail scrolls sideways; start it with the current step in
+  // view, rather than showing the three oldest ticks and hiding where it is.
+  const rail = useRef(null);
+  useEffect(() => {
+    const ol = rail.current;
+    const at = ol?.querySelector('[aria-current="step"]');
+    if (ol && at && ol.scrollWidth > ol.clientWidth) ol.scrollLeft = at.offsetLeft - ol.offsetLeft - ol.clientWidth / 2 + at.clientWidth / 2;
+  }, [now?.label]);
   return (
     <Card className={cn(PANEL, 'mt-6 px-6 py-5')}>
-      <div className="flex items-center overflow-x-auto px-1">
+      <ol ref={rail} aria-label="Progress" className="m-0 flex list-none items-center overflow-x-auto p-0 px-1">
         {steps.map((step, i) => (
           <Fragment key={step.label}>
             {/* The connector is lit when the step behind it is done, so the
                 colour stops exactly where the record stopped. */}
             {i > 0 && (
-              <span className={cn('mb-[22px] h-px flex-1', steps[i - 1].state === 'done' ? 'bg-settled/30' : 'bg-border-strong')} />
+              <li aria-hidden="true" className={cn('mb-[26px] h-0.5 min-w-4 flex-1 rounded-full', steps[i - 1].state === 'done' ? 'bg-settled' : 'bg-border')} />
             )}
-            <FlowStep {...step} />
+            <FlowStep {...step} n={i + 1} />
           </Fragment>
         ))}
-      </div>
+      </ol>
 
       {(verdict || actions) && (
         <>
           <Separator className="mt-5" />
           <div className="mt-5 flex flex-wrap items-center gap-5">
-            {verdict && <p className="min-w-[320px] max-w-[64ch] flex-1 text-[14px]/[1.6] text-foreground">{verdict}</p>}
+            {verdict && (
+              <div className="min-w-[min(320px,100%)] max-w-[64ch] flex-1">
+                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                  {now ? `Now · ${now.label}` : steps.length ? 'Complete' : 'Now'}
+                </div>
+                <p className="mt-1 text-[14px]/[1.6] text-foreground">{verdict}</p>
+              </div>
+            )}
             {actions && <div className="flex flex-wrap items-center gap-3">{actions}</div>}
           </div>
         </>
@@ -321,9 +344,9 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
             an empty 44px square with a gap beside it is worse than none.
             `undefined` still falls back to the title's initials. */}
         {mark !== false && (
-          <Avatar className="size-11 shrink-0 rounded-[10px]">
+          <Avatar className="size-11 shrink-0 rounded-lg">
             <AvatarFallback className={cn(
-              'rounded-[10px] bg-secondary text-[14px] font-semibold',
+              'rounded-lg bg-secondary text-[14px] font-semibold',
               markTone === 'late' ? 'text-late' : 'text-primary'
             )}>
               {mark ?? initialsOf(title)}
@@ -331,7 +354,7 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
           </Avatar>
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl/[1.25] font-semibold tracking-[-0.022em] text-foreground">{title}</h1>
+          <h1 className="truncate font-display text-2xl/[1.25] font-bold tracking-[-0.02em] text-foreground">{title}</h1>
           {facts.length > 0 && (
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-secondary-text">
               {facts.filter(Boolean).map((fact, i) => <span key={i} className="min-w-0 truncate">{fact}</span>)}
@@ -346,7 +369,7 @@ export function RecordPage({ parent, parentTo, title, mark, markTone, facts = []
                 <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-48 rounded-[10px] p-1.5">
+            <DropdownMenuContent align="end" className="min-w-48 rounded-lg p-1.5">
               {menu}
             </DropdownMenuContent>
           </DropdownMenu>

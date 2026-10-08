@@ -5,6 +5,8 @@
  *   §1  colours come from tokens: no hex or Tailwind palette colours in
  *       components, and every token is defined for both themes;
  *   §1  the token pairs that carry text meet their contrast in both themes;
+ *   §1  corners come from the radius scale;
+ *   §4  every record page draws its progress with the shared process rail;
  *   §3  the app carries no company name.
  */
 import { test } from 'node:test';
@@ -59,6 +61,30 @@ test('components never use Tailwind palette colours', () => {
   assert.deepEqual(hits, [], `Use a token class such as text-late or bg-primary (web/CLAUDE.md §1):\n${hits.join('\n')}`);
 });
 
+test('corners come from the radius scale (6, 8, 12, 16, or 2 and 4 for tiny marks)', () => {
+  const allowed = new Set(['2', '4', '6', '8', '12', '16']);
+  const hits = [];
+  for (const path of files(SRC)) {
+    for (const { line, n } of codeLines(path)) {
+      for (const m of line.matchAll(/rounded(?:-[a-z]{1,2})?-\[([\d.]+)px\]/g)) {
+        if (!allowed.has(m[1])) hits.push(`${relative(SRC, path)}:${n} ${m[0]}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, [], `Use rounded-sm (6), rounded-md (8), rounded-lg (12) or rounded-xl (16) (web/CLAUDE.md §1):\n${hits.join('\n')}`);
+});
+
+test('records that move through a process show it with the shared rail (web/CLAUDE.md §4)', () => {
+  for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
+    const text = readFileSync(join(SRC, 'pages', page), 'utf8');
+    assert.match(text, /<RecordFlow\b/, `${page} has no process rail`);
+    assert.match(text, /flowSteps\(/, `${page} works out its rail by hand instead of with flowSteps`);
+  }
+  const deal = readFileSync(join(SRC, 'pages/QuotationDetail.jsx'), 'utf8');
+  const labels = [...deal.matchAll(/\{ label: '([^']+)', done:/g)].map((m) => m[1]);
+  assert.deepEqual(labels, ['Enquiry', 'Quoted', 'Sent', 'Negotiation', 'Won', 'Project', 'Order', 'Invoiced', 'Paid']);
+});
+
 // ------------------------------------------------------------------ tokens
 
 const CSS = readFileSync(join(SRC, 'styles/globals.css'), 'utf8');
@@ -94,6 +120,7 @@ const PAIRS = [
   ...['foreground', 'secondary-text', 'muted-foreground', 'primary', 'late', 'waiting', 'settled', 'info']
     .flatMap((t) => [[t, 'card', 4.5], [t, 'background', 4.5]]),
   ['primary-foreground', 'primary', 4.5],
+  ['primary-foreground', 'settled', 4.5], // the tick and number on a done rail step
   ['late-foreground', 'late', 4.5],
   ['destructive-foreground', 'destructive', 4.5],
   ['sidebar-foreground', 'sidebar', 4.5],

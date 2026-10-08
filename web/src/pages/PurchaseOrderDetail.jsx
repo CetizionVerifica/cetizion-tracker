@@ -197,7 +197,7 @@ function Fact({ label, value, tone }) {
 /** A card in the rail: a small caps label over a short list. */
 function RailCard({ title, children }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{title}</div>
       {children}
     </div>

@@ -67,7 +67,7 @@ function ReportCard({ kind, settingKey, title, when, what, settings, onChanged }
   });
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
@@ -141,7 +141,7 @@ function SharedSettings({ settings, onChanged }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="text-[14px] font-semibold text-foreground">Recipients</div>
       <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go to the same people.</p>
       <div className="grid gap-3 @3xl:grid-cols-2">
@@ -209,7 +209,7 @@ function SenderCard({ settings, mailboxes, onChanged }) {
 
   const from = info ? `${info.name ? `${info.name} <${info.from}>` : info.from}` : null;
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="text-[14px] font-semibold text-foreground">Sender</div>
       <p className="text-[12.5px]/[1.6] text-secondary-text">Both reports go from here. Through a mailbox, they land in its Sent Items. If the mailbox cannot send, the report goes by the server's SMTP sender instead and admins are told.</p>
       <div className="grid gap-3 @3xl:grid-cols-3">
@@ -274,7 +274,7 @@ function DebtorsList({ settings, onChanged }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="text-[14px] font-semibold text-foreground">Finance's debtors list</div>
       <p className="text-[12.5px]/[1.6] text-secondary-text">The daily briefing reconciles the receivables with the newest Sundry Debtors list Finance emailed to a shared mailbox in the last 14 days, as an Excel file or a PDF. Each list is read once. One whose rows do not add up to its grand total is not used, and the briefing says so.</p>
       <div className="grid gap-3 @3xl:grid-cols-2">
@@ -304,7 +304,7 @@ function Runs({ runs, onChanged }) {
   }
   const period = (r) => (r.period_from === r.period_to ? date(r.period_from) : `${date(r.period_from)} – ${date(r.period_to)}`);
   return (
-    <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="px-5 pt-4 text-[14px] font-semibold text-foreground">Sent so far</div>
       <DataTable
         rows={runs}

@@ -23,7 +23,7 @@ import { money } from '../lib/format.js';
  * right column is reference only and never contains a task**.
  */
 
-const CARD = 'rounded-[10px] border border-border bg-card';
+const CARD = 'rounded-lg border border-border bg-card';
 
 /**
  * The shape of the day, before the day is known.
@@ -129,7 +129,7 @@ function StartHere({ overdue }) {
     .slice(0, 3);
 
   return (
-    <section className="overflow-hidden rounded-[10px] border border-late/25 bg-card">
+    <section className="overflow-hidden rounded-lg border border-late/25 bg-card">
       <div className="flex items-center gap-2 border-b border-late/20 bg-late/[0.07] px-5 py-3">
         <AlertTriangle className="size-3.5 text-late" strokeWidth={2.2} aria-hidden="true" />
         <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-late">Start here</span>
@@ -257,7 +257,7 @@ function Rail({ finance, sales, travel }) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-[10px] border border-primary/20 bg-primary/[0.06] p-5">
+      <div className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/[0.06] p-5">
         <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-primary">How do I…</div>
         {[
           '…raise an invoice for a stage?',
@@ -346,7 +346,7 @@ export default function Today() {
           )}
 
           {!loading && waiting === 0 && (
-            <div className="flex items-center gap-2.5 rounded-[10px] border border-dashed border-border px-4 py-3">
+            <div className="flex items-center gap-2.5 rounded-lg border border-dashed border-border px-4 py-3">
               <CheckCircle2 className="size-4 text-settled" strokeWidth={2.2} aria-hidden="true" />
               <span className="text-[13px] text-secondary-text">
                 Nothing is waiting. Anything raised is either paid or not yet due.

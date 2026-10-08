@@ -138,7 +138,7 @@ export default function Templates() {
           open.key === 'terms' ? <DefaultTerms /> : <TemplateSet {...open} />
         ) : (
           <>
-            <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+            <div className="overflow-hidden rounded-lg border border-border bg-card">
               {KINDS.map((kind, i) => (
                 <KindRow key={kind.key} kind={kind} count={counts[kind.key]} last={i === KINDS.length - 1} onOpen={() => setOpen(kind)} />
               ))}

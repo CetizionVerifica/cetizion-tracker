@@ -280,7 +280,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[14px] border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
+        className="top-20 left-1/2 max-h-[min(560px,calc(100vh-10rem))] w-[640px] max-w-[calc(100%-2rem)] translate-y-0 gap-0 overflow-hidden rounded-xl border-border-strong bg-popover p-0 shadow-[0_28px_80px_rgba(0,0,0,0.66)] sm:max-w-[640px]"
       >
         <DialogTitle className="sr-only">Search or do anything</DialogTitle>
         <DialogDescription className="sr-only">

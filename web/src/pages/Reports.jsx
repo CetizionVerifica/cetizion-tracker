@@ -168,7 +168,7 @@ const DETAILED_CSVS = [
 
 function DetailedDownloads({ from, to, owner }) {
   return (
-    <div className="mt-4 rounded-[10px] border border-border px-4 py-3 text-[13px]">
+    <div className="mt-4 rounded-lg border border-border px-4 py-3 text-[13px]">
       <div className="font-medium text-foreground">Detailed tables for {date(from)} – {date(to)}</div>
       <ul className="mt-1.5 grid gap-1 @3xl:grid-cols-2">
         {DETAILED_CSVS.map(([name, label]) => (

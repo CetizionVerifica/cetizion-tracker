@@ -645,7 +645,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-[10px] border border-border p-4">
+          <div className="flex flex-col gap-3 rounded-lg border border-border p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-[12.5px] font-medium text-foreground">Reply from the shared address</span>
               <div className="flex-1" />

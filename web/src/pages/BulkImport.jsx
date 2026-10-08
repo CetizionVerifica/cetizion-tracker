@@ -110,7 +110,7 @@ export default function BulkImport() {
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); send(e.dataTransfer.files?.[0]); }}
           className={cn(
-            'block cursor-pointer rounded-[10px] border border-dashed bg-card px-5 py-7 text-center transition-colors',
+            'block cursor-pointer rounded-lg border border-dashed bg-card px-5 py-7 text-center transition-colors',
             dragging ? 'border-primary bg-primary/[0.04]' : 'border-border-strong hover:border-muted-foreground',
             busy && 'pointer-events-none opacity-60'
           )}
@@ -135,7 +135,7 @@ export default function BulkImport() {
           onChange={(e) => send(e.target.files?.[0])}
         />
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           {loading && !batches.length ? (
             <div className="skeleton" style={{ height: 88, margin: 18 }} />
           ) : batches.length === 0 ? (

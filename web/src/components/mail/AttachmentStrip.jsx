@@ -33,7 +33,7 @@ export function AttachmentStrip({ attachments = [], bodyHtml = '', className }) 
           <li
             key={a.id}
             className={cn(
-              'inline-flex max-w-full items-center gap-1.5 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px]',
+              'inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-secondary px-2 py-1 text-[12px]',
               locked && 'opacity-70'
             )}
             title={locked ? 'Only the mailbox owner can open this attachment' : name}

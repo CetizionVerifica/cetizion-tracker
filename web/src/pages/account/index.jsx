@@ -80,8 +80,8 @@ export default function Account() {
         {/* Who you are signed in as, once, at the top — rather than a
             sentence in the middle of a form. */}
         <div className="flex flex-wrap items-center gap-4">
-          <Avatar className="size-12 shrink-0 rounded-[10px]">
-            <AvatarFallback className="rounded-[10px] bg-secondary text-[15px] font-semibold text-primary">
+          <Avatar className="size-12 shrink-0 rounded-lg">
+            <AvatarFallback className="rounded-lg bg-secondary text-[15px] font-semibold text-primary">
               {initialsOf(profile.name)}
             </AvatarFallback>
           </Avatar>

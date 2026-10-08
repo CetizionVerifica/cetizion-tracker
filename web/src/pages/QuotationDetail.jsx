@@ -125,14 +125,21 @@ export default function QuotationDetail() {
   const received = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_received || 0), 0);
   const ordered = q.purchase_orders.reduce((sum, p) => sum + Number(p.po_value || 0), 0);
 
-  // Six facts the database actually holds, in the order they happen.
+  // The sales flow of web/CLAUDE.md §4, each rung read off a fact the
+  // database holds. Negotiation counts as passed once a sent deal is won
+  // or ordered; a deal won without ever being sent leaves it hollow rather
+  // than pretending it happened.
+  const hasOrder = q.purchase_orders.length > 0;
   const reached = [
     { label: 'Enquiry', done: Boolean(q.enquiry) },
     { label: 'Quoted', done: q.line_count > 0 || Number(q.quotation_value) > 0 },
     { label: 'Sent', done: Boolean(q.sent_at) },
-    { label: 'Won, PO in', done: q.purchase_orders.length > 0 },
+    { label: 'Negotiation', done: (won || hasOrder) && Boolean(q.sent_at) },
+    { label: 'Won', done: won || hasOrder },
+    { label: 'Project', done: Boolean(q.project_id) },
+    { label: 'Order', done: hasOrder },
     { label: 'Invoiced', done: invoiced > 0 },
-    { label: 'Collected', done: ordered > 0 && received >= ordered - 0.5 },
+    { label: 'Paid', done: ordered > 0 && received >= ordered - 0.5 },
   ];
   const steps = flowSteps(reached);
 
@@ -224,7 +231,7 @@ export default function QuotationDetail() {
         mark={false}
         facts={[
           <span className="inline-flex min-w-0 items-center gap-2 text-foreground">
-            <span className="grid size-5 shrink-0 place-items-center rounded-[5px] bg-secondary text-[9px] font-semibold text-settled">
+            <span className="grid size-5 shrink-0 place-items-center rounded-sm bg-secondary text-[9px] font-semibold text-settled">
               {initialsOf(q.client_name)}
             </span>
             {q.company_id
@@ -345,7 +352,7 @@ export default function QuotationDetail() {
           )}
         </RecordSection>
 
-        <Card className="gap-0 rounded-[10px] border-border py-0 shadow-none">
+        <Card className="gap-0 rounded-lg border-border py-0 shadow-none">
           <CardContent className="grid grid-cols-2 gap-5 p-5 sm:grid-cols-4">
             <GridFact label="Contact">
               {q.contact ? (
