@@ -951,6 +951,72 @@ travelRouter.get('/:travelId/full', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------
+// Which client invoice billed a trip (#214)
+//
+// `billed_stage_id` says that this trip's cost was recovered from the client
+// on that payment stage's invoice. It used to be an ordinary column on the
+// travel-log resource, so it could be set by anyone allowed to edit a trip —
+// HR included, which runs the travel desk and has full write access there
+// (#196 §3). The Trip screen hid the selector from HR, and that hiding was
+// the whole of the restriction: the API accepted a PATCH naming the field
+// from any signed-in caller.
+//
+// Hence this route. `protectedFields` on the resource closes the generic
+// door; this is the one that is open, and the policy keeps it to the roles
+// that own the PO side of a trip. HR is not one of them: the route is absent
+// from HR_ROUTES, so hrGate answers 403 before the handler is reached.
+//
+// What it deliberately does not do yet: check that the stage belongs to the
+// trip's own PO, project or client. The database's rule — only a chargeable
+// trip may name a billing stage — is unchanged, and the rest of that
+// validation belongs with the travel-invoice work this is a prerequisite for.
+// This change is about who may write the link, not what the link may say.
+// ---------------------------------------------------------------------
+
+const billedStageSchema = z.object({
+  // Null clears it: a trip marked as billed on the wrong invoice has to be
+  // able to stop being marked at all, which the Trip screen's "Not billed
+  // yet" option has always done.
+  billed_stage_id: z.union([z.number().int().positive(), z.null()]),
+});
+
+travelRouter.post('/:travelId/billed-stage', async (req, res) => {
+  const travelId = decodeURIComponent(req.params.travelId);
+  const body = parse(billedStageSchema, req.body || {});
+
+  const after = await transaction(async (client) => {
+    const { rows: [before] } = await client.query(
+      'SELECT id, travel_id, billed_stage_id FROM travel_logs WHERE travel_id = $1 FOR UPDATE',
+      [travelId]
+    );
+    if (!before) throw new ApiError(404, 'Trip not found');
+
+    // The trigger travel_log_rules() refuses a billing stage on a trip that
+    // is not chargeable, and the foreign key refuses a stage that is not
+    // there; both answer through the ordinary error translation.
+    const { rows: [row] } = await client.query(
+      'UPDATE travel_logs SET billed_stage_id = $1 WHERE id = $2 RETURNING id, billed_stage_id',
+      [body.billed_stage_id, before.id]
+    );
+
+    await logActivity(client, {
+      actor: actorFrom(req.user),
+      action: ACTIONS.TRIP_BILLED_STAGE_SET,
+      entityType: 'travel_log',
+      entityId: before.travel_id,
+      metadata: {
+        billed_stage_id_before: before.billed_stage_id,
+        billed_stage_id_after: row.billed_stage_id,
+      },
+    });
+    return row;
+  });
+
+  const { rows: [trip] } = await query('SELECT * FROM v_travel_logs WHERE id = $1', [after.id]);
+  res.json({ data: trip });
+});
+
+// ---------------------------------------------------------------------
 // Vendor invoice detail (#196) — the header, its lines and their trips,
 // its credit notes and its files
 // ---------------------------------------------------------------------

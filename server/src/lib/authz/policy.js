@@ -533,6 +533,10 @@ export const routes = [
     note: 'Recording a vendor payment is ordinary work for admin and sales, so the gate stays open — but amount_paid and payment_date must move only through here, never through PATCH /api/vendor-invoices/:id.',
   },
   {
+    method: 'POST', path: '/api/travel-logs/:travelId/billed-stage', access: signedIn,
+    note: 'Which client invoice recovered a trip\'s cost (#214). Open to admin and sales, who own the PO side of a trip, and closed to HR by being absent from HR_ROUTES: HR runs the travel desk and may edit a trip, but deciding which invoice billed it is not the travel desk\'s call. billed_stage_id is `protectedFields` on travel-logs, so this is the only way in — the Trip screen used to reach it through PATCH /api/travel-logs/:id, where nothing but the hidden selector stopped an HR caller writing it.',
+  },
+  {
     method: 'POST', path: '/api/expense-claims/:id/decide', access: mustBeAdmin,
     why: 'Approving, rejecting or holding an expense claim is the administrator\'s decision. An approval anybody can grant themselves is not an approval (#85).',
   },
@@ -631,7 +635,12 @@ export const resourceAccess = {
     restrictions: ['record-owner'],
     why: 'A salesperson\'s own working record. A project is the work won from one, and entering and working one is ordinary sales work, so the gate is open to both roles — but it is not open on every row: ownerScoped scopes every read, write and delete to the records the caller owns (#18 Phase 2C). An administrator sees all of them.' },
   onboarding: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
-  'travel-logs': { read: 'any', write: 'any', delete: 'any', hr: HR_ALL, why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk\'s own record too (#196).' },
+  'travel-logs': {
+    read: 'any', write: 'any', delete: 'any', hr: HR_ALL,
+    why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2). The travel desk\'s own record too (#196).',
+    protectedFields: ['billed_stage_id'],
+    protectedBecause: 'Which client invoice recovered a trip\'s cost moves through POST /api/travel-logs/:travelId/billed-stage, which HR cannot reach and which writes an audit row naming the account. Leaving it on the generic form made the Trip screen\'s hidden selector the only restriction there was: HR has full write access to a trip (#196 §3), so an HR caller — or any other — could PATCH billed_stage_id straight through the API and mark a trip as billed on an invoice, or unmark one, with nothing recorded (#214).',
+  },
   engagements: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   tasks: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
   notes: { read: 'any', write: 'any', delete: 'any', why: 'A salesperson\'s own working record. Open until ownership and row scoping land (#18 Phase 2).' },
