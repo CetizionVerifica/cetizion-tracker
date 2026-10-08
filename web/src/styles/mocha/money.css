@@ -1,0 +1,103 @@
+/* Money (Wave 5): Collections, orders, payment stages, the invoice run, cash
+   flow, profitability and accounting. Only layout the system's own classes
+   (mg-hero, mg-strip, mg-table, mg-rows, mg-ladder…) can't say from React. */
+
+/* The hero beside a chart or a figure panel. */
+.app-mrow { display: flex; flex-wrap: wrap; gap: 18px; align-items: stretch; min-width: 0; }
+.app-mrow > .mg-hero { flex: 1 1 400px; min-width: 0; display: flex; flex-direction: column; }
+.app-mrow > .app-mrow__side { flex: 1.35 1 520px; min-width: 0; }
+.app-mhero__figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.app-mhero__figure .mg-hero__figure { font-size: clamp(40px, 10vw, 62px); }
+.app-mhero__aside { font-size: 22px; font-weight: 700; color: var(--on-hero-2); }
+.app-mhero__foot { margin-top: auto; padding-top: 22px; }
+.app-mhero__legend { margin-top: 12px; color: var(--on-hero-2); }
+.app-mhero__legend strong { color: var(--on-hero); font-variant-numeric: tabular-nums; }
+.mg-legend i.app-key--empty { background: transparent; border: 1.5px solid currentColor; }
+.app-banner__act { align-self: center; display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* The track box at the top of a money dialog. */
+.app-mfacts { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--track); font-size: 13px; color: var(--text2); }
+.app-mfacts > svg { width: 17px; height: 17px; flex: none; margin-top: 1px; color: var(--muted); }
+.app-mfacts__items { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.app-mfacts b { color: var(--text); font-weight: 700; }
+.app-mfacts b.is-late { color: var(--late); } .app-mfacts b.is-wait { color: var(--caramel-text); } .app-mfacts b.is-ok { color: var(--ok); }
+
+/* A sub line under a table cell's main text. */
+.mg-table .app-sub2 { display: block; font-size: 12px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.mg-table .app-sub2.is-late { color: var(--late); font-weight: 600; }
+.mg-table .app-sub2.is-wrap { white-space: normal; }
+.app-link { color: var(--caramel-text); font-weight: 700; text-decoration: none; }
+.app-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.app-textbtn { border: 0; padding: 0; background: transparent; font: inherit; font-size: 12px; font-weight: 700; color: var(--caramel-text); cursor: pointer; }
+.app-textbtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.is-late-text { color: var(--late); }
+.is-wait-text { color: var(--caramel-text); }
+.is-ok-text { color: var(--ok); }
+
+/* Collections: the age chart, whose bands are filters. */
+.app-age { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.app-age > button { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 10px 4px 8px; border: 0; border-radius: 16px; background: transparent; color: var(--text); font: inherit; cursor: pointer; transition: background 200ms; }
+.app-age > button:hover { background: var(--track); }
+.app-age > button[aria-pressed="true"] { background: var(--wait-soft); }
+.app-age > button:focus-visible { outline: 2px solid var(--caramel); outline-offset: -2px; }
+.app-age__fig { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-age__plot { width: 100%; height: 132px; display: flex; align-items: flex-end; justify-content: center; }
+.app-age__bar { display: block; width: min(56px, 72%); min-height: 3px; border-radius: 10px 10px 4px 4px; background: var(--figure); }
+.app-age__bar.mg-hatch { background: var(--mg-hatch); }
+.app-age__label { font-size: 12px; font-weight: 700; line-height: 1.3; color: var(--text2); text-align: center; }
+.app-age__n { font-size: 11.5px; color: var(--muted); }
+@media (max-width: 479px) { .app-age__plot { height: 96px; } .app-age__label { font-size: 11px; } }
+
+/* A client's invoices open right under its row. */
+.mg-table tr.app-open > td { background: var(--track); }
+.mg-table td.app-inner { height: auto; padding: 0; background: var(--track); }
+.app-inner__wrap { padding: 14px 16px 10px 24px; }
+.app-inner__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-bottom: 4px; }
+.app-inner__head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.app-inner .mg-table th { background: transparent; position: static; }
+.app-inner .mg-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; height: auto; }
+.app-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.app-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: auto; }
+.app-acts--w { width: 236px; }
+.app-acts__break { flex-basis: 100%; height: 0; }
+.app-expand { flex: none; width: 32px; height: 32px; }
+.app-expand svg { transition: transform 420ms var(--mg-spring, ease); }
+.app-expand[aria-expanded="true"] svg { transform: rotate(90deg); }
+.app-client { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.app-client__text { min-width: 0; }
+.app-client__text a, .app-client__text b { font-weight: 700; color: var(--text); text-decoration: none; }
+.app-client__text .app-sub2 { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Phone: a client row, then its invoices on the track. */
+.app-prow { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.app-prow[aria-expanded="true"] { background: var(--track); }
+.app-pinv { padding: 4px 16px 12px; background: var(--track); border-bottom: 1px solid var(--line); }
+.app-pinv__item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.app-pinv__item:last-child { border-bottom: 0; }
+.app-pinv__full { grid-column: 1 / -1; min-width: 0; }
+.app-pinv__btns { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.app-pinv__btns > .mg-btn--primary { flex: 1 1 140px; }
+.app-pinv__btns > .app-grow { flex: 1 1 110px; }
+.app-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.app-badges .mg-badge { white-space: normal; height: auto; min-height: 24px; padding-top: 3px; padding-bottom: 3px; }
+
+/* The portal card's head. */
+.app-portal-card { border-radius: 26px; display: flex; flex-direction: column; min-width: 0; }
+.app-portal-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 20px 24px 0; }
+.app-portal-card__mark { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--info-soft); color: var(--info); flex: none; }
+.app-portal-card__mark svg { width: 17px; height: 17px; }
+.app-portal-card > .mg-panel__hint { margin: 6px 0 0; padding: 0 24px; }
+.app-portal-card > .mg-tabs { margin: 10px 24px 0; }
+.app-portal-card .mg-tablewrap { border-radius: 0 0 26px 26px; }
+@media (max-width: 719px) {
+  .app-portal-card__head { padding: 16px 16px 0; }
+  .app-portal-card > .mg-panel__hint { padding: 0 16px; }
+  .app-portal-card > .mg-tabs { margin: 10px 16px 0; }
+}
+
+/* A history list in a dialog. */
+.app-hist h3 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); }
+.app-hist .mg-tablewrap { border: 1px solid var(--line); border-radius: 16px; }
+.app-hist .mg-table td { height: 44px; }
+.app-hist .mg-table tfoot td { font-weight: 700; border-top: 1px solid var(--line); }
+.app-hist + .app-hist { margin-top: 16px; }

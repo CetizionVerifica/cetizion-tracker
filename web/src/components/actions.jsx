@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button.tsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
+import { Banknote, MessageSquareText } from 'lucide-react';
+import { DialogError, MoneyBanner, MoneyFacts } from './money.jsx';
 
 /** Shared plumbing: submit, surface field errors, toast, close. */
 function useAction({ onDone, successMessage }) {
@@ -32,7 +34,12 @@ function useAction({ onDone, successMessage }) {
   return { busy, error, fieldErrors, run };
 }
 
-function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLabel, submitDisabled = false, children, size = 'sm' }) {
+/**
+ * Every money dialog: a form, its refusal kept inside it (DialogErrors), and
+ * a button that offers "Try again" when the failure was not a field.
+ */
+function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, fieldErrors = {}, what = 'this', submitLabel, submitDisabled = false, children, size = '', extra }) {
+  const fieldFailure = Object.keys(fieldErrors).length > 0;
   return (
     <Modal
       title={title}
@@ -41,15 +48,16 @@ function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLa
       size={size}
       footer={
         <>
+          {extra}
           <Button type="button" variant="ghost" onClick={onClose} disabled={busy} className="max-sm:w-full">Cancel</Button>
           <Button type="submit" form="action-form" disabled={busy || submitDisabled} aria-busy={busy || undefined} className="max-sm:w-full">
-            {busy ? 'Saving…' : submitLabel}
+            {busy ? 'Saving…' : error && !fieldFailure ? 'Try again' : submitLabel}
           </Button>
         </>
       }
     >
       <form id="action-form" onSubmit={onSubmit} className="flex flex-col gap-4">
-        {error && <Alert tone="danger">{error}</Alert>}
+        <DialogError error={error} what={what} />
         {children}
       </form>
     </Modal>
@@ -90,6 +98,8 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
   const dueDate = invoiceDate
     ? new Date(new Date(invoiceDate).getTime() + (stage.terms_days || 0) * 86400000).toISOString().slice(0, 10)
     : null;
+  const wrongTotal = prefill?.total_value != null
+    && Math.abs(Number(prefill.total_value) - Number(stage.stage_amount)) > Math.max(1, 0.005 * Number(prefill.total_value));
 
   return (
     <ActionModal
@@ -99,20 +109,24 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
       onSubmit={submit}
       busy={busy}
       error={error}
+      fieldErrors={fieldErrors}
+      what="the invoice"
       submitLabel="Save invoice"
     >
       {prefill && (
-        <Alert tone="warning"><span>
-          <strong>Read from the invoice we emailed: check the number and date before you save.</strong>
-          {prefill.total_value != null && Math.abs(Number(prefill.total_value) - Number(stage.stage_amount)) > Math.max(1, 0.005 * Number(prefill.total_value))
-            && <> The invoice is for {money(prefill.total_value, prefill.currency)}, not this stage's {money(stage.stage_amount, stage.currency)}.</>}
-        </span></Alert>
+        <MoneyBanner tone="wait" title="Read from the invoice we emailed: check the number and date before you save.">
+          {wrongTotal && <>The invoice is for {money(prefill.total_value, prefill.currency)}, not this stage's {money(stage.stage_amount, stage.currency)}.</>}
+        </MoneyBanner>
       )}
-      <Alert><span>
-        Billing <strong>{money(stage.stage_amount, stage.currency)}</strong> to {stage.client_name}
-        {stage.terms_days ? ` on ${stage.terms_days}-day terms` : ''}.
-        {dueDate && <> Payment will be due <strong>{date(dueDate)}</strong>.</>}
-      </span></Alert>
+      <MoneyFacts
+        icon={Banknote}
+        items={[
+          { label: 'Billing', value: money(stage.stage_amount, stage.currency) },
+          { label: 'To', value: stage.client_name },
+          stage.terms_days ? { label: 'Terms', value: `${stage.terms_days} days` } : null,
+          dueDate && stage.terms_days ? { label: 'Due', value: date(dueDate), tone: 'wait' } : null,
+        ]}
+      />
       <div className="mg-grid2">
         <Field label="Invoice number" required error={fieldErrors.invoice_no}>
           <Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="CTZ/INV/2026/001" autoFocus />
@@ -122,23 +136,23 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
         </Field>
       </div>
       <Field
-        label="Invoice document"
-        hint={stage.document_id ? 'Optional. Leave it empty to keep the current file, or choose one to replace it.' : 'Optional. You can add it later.'}
+        as="div"
+        label="Invoice document (optional)"
+        hint={stage.document_id ? 'Leave it empty to keep the current file, or drop one to replace it.' : 'You can add it later.'}
         error={fieldErrors.document_id}
       >
+        {stage.document_id && !document && (
+          <div className="app-mfacts">
+            <span className="app-mfacts__items">
+              <span>Current file <a className="app-link" href={api.documentUrl(stage.document_id)} target="_blank" rel="noopener noreferrer">{stage.document_name || 'view document'}</a></span>
+            </span>
+          </div>
+        )}
         <FileDrop label="Invoice document" text={stage.document_id ? 'Drop a file here to replace the current one' : 'Drop a PDF or image here'} error={fieldErrors.document_id} onFile={setDocument} />
         {emailDocument && !document && (
           <div className="text-[12.5px] text-secondary-text">
-            <a href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The invoice from the email</a> will be attached
-            {' · '}<button type="button" className="underline" onClick={() => setEmailDocument(null)}>don't attach it</button>
-          </div>
-        )}
-        {stage.document_id && (
-          <div className="text-[12.5px] text-secondary-text">
-            Current file:{' '}
-            <a href={api.documentUrl(stage.document_id)} target="_blank" rel="noopener noreferrer">
-              {stage.document_name || 'view document'}
-            </a>
+            <a className="app-link" href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The invoice from the email</a> will be attached
+            {' · '}<button type="button" className="app-textbtn" onClick={() => setEmailDocument(null)}>don&apos;t attach it</button>
           </div>
         )}
       </Field>
@@ -150,18 +164,45 @@ export function RecordInvoiceDialog({ stage, prefill = null, reviewId = null, on
 
 /**
  * `advice` is a client's payment advice from the portal (#198 §4): the
- * dialog opens filled from it, and saving links the receipt to it.
+ * dialog opens filled from it, and saving links the receipt to it. Opened
+ * without one, the client's open payment reports on this invoice are
+ * offered in "The client's payment report", so a receipt that answers one
+ * settles it and it is not matched again later.
  */
-export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
+export function RecordPaymentDialog({ stage, onClose, onDone, advice: given, preselect }) {
   const outstanding = Math.max(Number(stage.stage_amount || 0) - Number(stage.amount_received || 0), 0);
+  const [reports, setReports] = useState([]);
+  const [adviceId, setAdviceId] = useState(given ? String(given.id) : '');
+  const advice = given || reports.find((a) => String(a.id) === adviceId) || null;
   // One invoice: what the client said they paid. Several: this invoice's outstanding, to adjust.
-  const single = advice && advice.invoices.length === 1;
-  const [amount, setAmount] = useState(String(single ? Number(advice.amount) : outstanding));
-  const [tds, setTds] = useState(single && Number(advice.tds_amount) > 0 ? String(Number(advice.tds_amount)) : '');
+  const single = (a) => a && a.invoices.length === 1;
+  const [amount, setAmount] = useState(String(single(given) ? Number(given.amount) : outstanding));
+  const [tds, setTds] = useState(single(given) && Number(given.tds_amount) > 0 ? String(Number(given.tds_amount)) : '');
   const [mode, setMode] = useState('bank_transfer');
-  const [reference, setReference] = useState(advice?.reference || '');
-  const [paidOn, setPaidOn] = useState(advice?.paid_on?.slice(0, 10) || today());
+  const [reference, setReference] = useState(given?.reference || '');
+  const [paidOn, setPaidOn] = useState(given?.paid_on?.slice(0, 10) || today());
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Payment recorded' });
+
+  useEffect(() => {
+    if (given || !stage.po_number) return;
+    api.raw(`/portal-admin/actions?status=open&kind=payment_advice&po_number=${encodeURIComponent(stage.po_number)}`)
+      .then((r) => setReports((r.data || []).filter((a) => a.invoices.some((i) => i.id === stage.id))))
+      .catch(() => setReports([]));
+  }, [given, stage.id, stage.po_number]);
+  // "Match it" on a client's word opens the dialog on that report.
+  useEffect(() => {
+    if (preselect && !adviceId && reports.some((a) => String(a.id) === String(preselect))) pickReport(String(preselect));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports, preselect]);
+
+  function pickReport(id) {
+    setAdviceId(id);
+    const a = reports.find((x) => String(x.id) === id);
+    if (!a) return;
+    if (single(a)) { setAmount(String(Number(a.amount))); setTds(Number(a.tds_amount) > 0 ? String(Number(a.tds_amount)) : ''); }
+    if (a.reference) setReference(a.reference);
+    if (a.paid_on) setPaidOn(a.paid_on.slice(0, 10));
+  }
 
   const submit = async (e) => {
     e.preventDefault();
@@ -180,36 +221,54 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
     if (ok) onClose();
   };
 
+  const subtitle = [stage.invoice_no, stage.po_number, stage.stage_name].filter(Boolean).join(' · ');
+  const reported = given && `${given.company_name} reported ${money(given.amount, stage.currency)}${Number(given.tds_amount) > 0 ? ` + TDS ${money(given.tds_amount, stage.currency)}` : ''} paid on ${date(given.paid_on)}${given.invoices.length > 1 ? `, across ${given.invoices.map((i) => i.invoice_no).join(' and ')}` : ''}.`;
   return (
     <ActionModal
       title="Record a payment"
-      subtitle={`${stage.po_number} · ${stage.stage_name}`}
+      subtitle={subtitle}
       onClose={onClose}
       onSubmit={submit}
       busy={busy}
       error={error}
+      fieldErrors={fieldErrors}
+      what="the payment"
       submitLabel="Save payment"
     >
-      {advice && (
-        <Alert tone="info"><span>
-          {advice.company_name} reported {money(advice.amount, stage.currency)}{Number(advice.tds_amount) > 0 ? ` + TDS ${money(advice.tds_amount, stage.currency)}` : ''} paid on {date(advice.paid_on)}
-          {advice.invoices.length > 1 ? `, across ${advice.invoices.map((i) => i.invoice_no).join(', ')}` : ''}. Check it against the bank before saving.
-        </span></Alert>
+      {given && <MoneyBanner icon={MessageSquareText} title={reported}>Check it against the bank before saving.</MoneyBanner>}
+      {given && outstanding <= 0 && (
+        <MoneyBanner tone="wait" title="This invoice is already fully received.">
+          If this is the payment already recorded, reject the client&apos;s advice with that reason rather than recording it again.
+        </MoneyBanner>
       )}
-      <Alert><span>
-        Stage value {money(stage.stage_amount, stage.currency)} · already received{' '}
-        {money(stage.amount_received, stage.currency)} · outstanding{' '}
-        <strong>{money(outstanding, stage.currency)}</strong>
-      </span></Alert>
+      {!given && reports.length > 0 && (
+        <Field label="The client's payment report" hint="Linking settles their report in Collections, so it is not matched again later." error={fieldErrors.portal_action_id}>
+          <Select
+            value={adviceId}
+            placeholder="Not linked to a report"
+            options={reports.map((a) => ({ value: String(a.id), label: `${a.company_name}: ${money(a.amount, stage.currency)} paid on ${date(a.paid_on)}${a.reference ? ` · ${a.reference}` : ''}` }))}
+            onChange={(e) => pickReport(e.target.value)}
+          />
+        </Field>
+      )}
+      {given && fieldErrors.portal_action_id && <MoneyBanner tone="late" role="alert">{fieldErrors.portal_action_id}</MoneyBanner>}
+      <MoneyFacts
+        icon={Banknote}
+        items={[
+          { label: 'Stage value', value: money(stage.stage_amount, stage.currency) },
+          { label: 'Already received', value: money(stage.amount_received, stage.currency) },
+          { label: 'Outstanding', value: money(outstanding, stage.currency), tone: outstanding > 0 ? 'wait' : undefined },
+        ]}
+      />
       <div className="mg-grid2">
         <Field label="Amount received now" required error={fieldErrors.amount_received}>
-          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" />
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus className="mg-input--money" aria-invalid={fieldErrors.amount_received ? true : undefined} />
         </Field>
         <Field label="Received on" error={fieldErrors.payment_received_date}>
           <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
         </Field>
-        <Field label="TDS deducted" hint="Counts as settled.">
-          <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} />
+        <Field label="TDS deducted" hint="Counts as settled." error={fieldErrors.tds_amount}>
+          <Input type="number" min="0" step="0.01" value={tds} onChange={(e) => setTds(e.target.value)} className="mg-input--money" placeholder="0" />
         </Field>
         <Field label="Mode">
           <Select value={mode} placeholder={null} options={[{ value: 'bank_transfer', label: 'Bank transfer' }, { value: 'cheque', label: 'Cheque' }, { value: 'upi', label: 'UPI' }, { value: 'cash', label: 'Cash' }, { value: 'other', label: 'Other' }]} onChange={(e) => setMode(e.target.value)} />
@@ -250,6 +309,7 @@ export function PayVendorDialog({ invoice, onClose, onDone }) {
       onSubmit={submit}
       busy={busy}
       error={error}
+      fieldErrors={fieldErrors}
       submitLabel="Record payment"
     >
       {invoice.invoice_amount === null ? (
@@ -445,6 +505,7 @@ export function ConvertQuotationDialog({ quotation, onClose, onDone }) {
       onSubmit={submit}
       busy={busy}
       error={error}
+      fieldErrors={fieldErrors}
       submitLabel={mode === 'existing' ? 'Link to project' : 'Create project'}
       submitDisabled={mode === 'existing' && (noSameClientProjects || !selectedProjectId)}
       size=""
@@ -628,26 +689,19 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
       submitDisabled={nothingToSplit || off}
       size=""
     >
-      <Alert><span>
-        Stages triggered <strong>On PO Registration</strong> become invoiceable immediately.
-        Ones triggered <strong>On Delivery</strong> wait until the PO's delivery date is recorded.
-      </span></Alert>
+      <MoneyBanner>
+        Stages triggered <strong className="inline">On PO Registration</strong> can be invoiced at once.
+        Ones triggered <strong className="inline">On Delivery</strong> wait until the order's delivery date is recorded.
+      </MoneyBanner>
 
       {nothingToSplit ? (
-        <Alert tone="warning">
-          <span>
-            <strong>Every stage on this PO is already invoiced or paid.</strong> Those are never
-            replaced, so there is nothing left to split. Record a payment or add a stage from the
-            payment schedule instead.
-          </span>
-        </Alert>
+        <MoneyBanner tone="wait" title="Every stage on this PO is already invoiced or paid.">
+          Those are never replaced, so there is nothing left to split. Record a payment, or add a stage, instead.
+        </MoneyBanner>
       ) : locked > 0 && (
-        <Alert tone="warning">
-          <span>
-            <strong>{locked}% of this PO is already invoiced or paid.</strong> Those stages are kept,
-            so the ones below must add up to the remaining <strong>{allocatable}%</strong>.
-          </span>
-        </Alert>
+        <MoneyBanner tone="wait" title={`${locked}% of this PO is already invoiced or paid.`}>
+          Those stages are kept, so the ones below must add up to the remaining {allocatable}%.
+        </MoneyBanner>
       )}
 
       <Field label="Start from a common split">
@@ -662,8 +716,8 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         />
       </Field>
 
-      <div className="table-wrap">
-        <table className="table">
+      <div className="mg-tablewrap app-splitwrap">
+        <table className="mg-table app-split">
           <thead>
             <tr>
               <th>Stage</th>
@@ -677,14 +731,14 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
               <tr key={i}>
                 <td>
                   <input
-                    className="input"
+                    className="mg-input"
                     value={stage.stage_name}
                     onChange={(e) => setStages((s) => s.map((x, j) => (j === i ? { ...x, stage_name: e.target.value } : x)))}
                   />
                 </td>
                 <td>
                   <select
-                    className="select"
+                    className="mg-select"
                     value={stage.trigger_event}
                     onChange={(e) => setStages((s) => s.map((x, j) => (j === i ? { ...x, trigger_event: e.target.value } : x)))}
                   >
@@ -696,7 +750,7 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
                 </td>
                 <td className="num" style={{ width: 90 }}>
                   <input
-                    className="input"
+                    className="mg-input"
                     type="number"
                     min="0"
                     max="100"
@@ -712,8 +766,8 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
           <tfoot>
             <tr>
               <td colSpan={2}>Total</td>
-              <td className="num" style={{ color: off ? 'var(--danger-fg)' : undefined }}>
-                {total}%{locked > 0 && <span className="small muted"> of {allocatable}%</span>}
+              <td className={off ? 'num is-late-text' : 'num'}>
+                {total}%{locked > 0 && <span className="text-muted-foreground"> of {allocatable}%</span>}
               </td>
               <td className="num">{money((Number(po.po_value) * total) / 100, po.currency)}</td>
             </tr>
@@ -721,21 +775,21 @@ export function PaymentSplitDialog({ po, lockedPercent = 0, onClose, onDone }) {
         </table>
       </div>
 
-      <div className="row">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="btn btn--sm"
+          className="mg-btn mg-btn--sm"
           onClick={() => setStages((s) => [...s, { stage_name: `Milestone ${s.length}`, trigger_event: 'Manual', percent: 0 }])}
         >
           + Add stage
         </button>
         {stages.length > 1 && (
-          <button type="button" className="btn btn--sm btn--ghost" onClick={() => setStages((s) => s.slice(0, -1))}>
+          <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => setStages((s) => s.slice(0, -1))}>
             Remove last
           </button>
         )}
         {off && (
-          <span className="small" style={{ color: 'var(--danger-fg)' }}>
+          <span className="text-[12.5px] font-semibold text-late" role="alert">
             Stages must total {allocatable}%{locked > 0 ? ` — the other ${locked}% is already invoiced or paid` : ''}
           </span>
         )}
