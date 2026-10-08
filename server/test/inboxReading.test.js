@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test, { after, before, describe } from 'node:test';
 import pg from 'pg';
 import request from 'supertest';
+import XLSX from 'xlsx';
 
 /**
  * The Inbox like Outlook, step 2: reading (docs/inbox-outlook-plan.md §3.3,
@@ -56,6 +57,7 @@ async function deliver(account, messages) {
   sync.pushTestMessages(account.id, messages);
   return sync.syncAccount(account.id);
 }
+const bytes = (res, cb) => { const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))); };
 const stored = async (providerId) => (await db.query('SELECT * FROM email_messages WHERE provider_id = $1', [providerId])).rows[0];
 
 describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
@@ -208,59 +210,126 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(d.web_link, 'https://outlook.office.com/mail/id/abc');
     assert.equal(d.body_html, '<p>Please quote.</p>');
     assert.equal(d.live, false);
-    assert.equal(d.can_download, true);
+    assert.equal(d.can_view_attachments, true);
     for (const k of ['provider_id', 'internet_message_id', 'conversation_id', 'mailbox_user_id', 'removed_seen_at', 'attachments_listed_at', 'mailbox_status', 'thread_subject', 'filtered_as']) {
       assert.ok(!(k in d), `${k} stays inside`);
     }
     assert.ok(!('provider_id' in d.attachments[0]), 'nor an attachment\'s');
     assert.deepEqual(d.attachments.map((a) => [a.name, a.content_type, a.is_inline, a.content_id]), [['spec.pdf', 'application/pdf', false, null], ['logo.png', 'image/png', true, 'logo@acme']]);
-    assert.equal(d.attachments[0].url, `/api/mail/messages/${row.id}/attachments/${d.attachments[0].id}`);
+    assert.equal(d.attachments[0].view_url, `/api/mail/messages/${row.id}/attachments/${d.attachments[0].id}/view`);
+    assert.equal(d.attachments[0].view, 'pdf');
+    assert.ok(!('url' in d.attachments[0]), 'there is no download address');
 
     // Another sales user: not theirs, not there.
     assert.equal((await as(salesA)('get', `/api/mail/messages/${row.id}`)).status, 404);
   });
 
-  test('an attachment streams from the provider with nosniff; a PDF may open inline, anything else downloads; a cid: image comes from the inline route', async () => {
+  test('an attachment opens in the viewer only: a PDF streams inline with nosniff, a sheet and a text file come back as data, nothing downloads; a cid: image comes from the inline route', async () => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['Item', 'Rate'], ['Audit', 1200], ['Travel', '=1+1']]), 'Rates');
+    const xlsxBytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
     const m = mail({ has_attachments: true, body_html: '<p>Logo: <img src="cid:logo@acme"></p>',
       attachments: [
         { provider_id: 'att-spec', name: 'spec.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF-1.4 test') },
-        { provider_id: 'att-xls', name: 'rates.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: Buffer.from('xlsx bytes') },
+        { provider_id: 'att-xls', name: 'rates.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: xlsxBytes },
+        { provider_id: 'att-csv', name: 'list.csv', contentType: 'application/octet-stream', content: Buffer.from('a,b\n007,x\n') },
+        { provider_id: 'att-txt', name: 'notes.txt', contentType: 'text/plain', content: Buffer.from('Hello <b>there</b>') },
+        { provider_id: 'att-doc', name: 'letter.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', content: Buffer.from('PK docx') },
         { provider_id: 'att-logo', name: 'logo.png', contentType: 'image/png', content: Buffer.from('PNG bytes'), is_inline: true, content_id: '<logo@acme>' },
       ] });
     await deliver(boxB, [m]);
     const row = await stored(m.provider_id);
     const { rows: atts } = await db.query('SELECT * FROM email_attachments WHERE message_id = $1 ORDER BY id', [row.id]);
-    const pdf = atts.find((a) => a.name === 'spec.pdf'); const xls = atts.find((a) => a.name === 'rates.xlsx');
+    const by = (name) => atts.find((a) => a.name === name);
+    const pdf = by('spec.pdf');
+    const view = (who, att) => as(who)('get', `/api/mail/messages/${row.id}/attachments/${att.id}/view`).set('X-Tracker-View', '1');
 
-    const down = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}`).buffer(true).parse((res, cb) => { const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))); });
-    assert.equal(down.status, 200);
-    assert.equal(down.headers['x-content-type-options'], 'nosniff');
-    assert.equal(down.headers['content-type'], 'application/pdf');
-    assert.match(down.headers['content-disposition'], /^attachment; filename="spec\.pdf"/);
-    assert.equal(down.body.toString(), '%PDF-1.4 test');
-    // A name outside ASCII: the real one in filename*, a plain ASCII stand-in for a client that ignores it.
-    await db.query(`UPDATE email_attachments SET name = 'Angebot für Müller & Co.pdf' WHERE id = $1`, [xls.id]);
-    const named = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${xls.id}`);
-    assert.equal(named.headers['content-disposition'], `attachment; filename="Angebot f_r M_ller & Co.pdf"; filename*=UTF-8''${encodeURIComponent('Angebot für Müller & Co.pdf')}`);
+    const listed = (await as(salesB)('get', `/api/mail/messages/${row.id}`)).body.data.attachments;
+    assert.deepEqual(listed.map((a) => [a.name, a.view]), [['spec.pdf', 'pdf'], ['rates.xlsx', 'sheet'], ['list.csv', 'sheet'], ['notes.txt', 'text'], ['letter.docx', null], ['logo.png', 'image']]);
 
-    const inline = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}?inline=1`);
-    assert.match(inline.headers['content-disposition'], /^inline;/);
-    assert.match(inline.headers['content-security-policy'], /sandbox/);
-    const notPreviewable = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${xls.id}?inline=1`);
-    assert.match(notPreviewable.headers['content-disposition'], /^attachment;/, 'a spreadsheet never opens in the browser');
+    const shown = await view(salesB, pdf).buffer(true).parse(bytes);
+    assert.equal(shown.status, 200);
+    assert.equal(shown.headers['x-content-type-options'], 'nosniff');
+    assert.equal(shown.headers['content-type'], 'application/pdf');
+    assert.match(shown.headers['content-disposition'], /^inline; filename="spec\.pdf"/);
+    assert.match(shown.headers['content-security-policy'], /sandbox/);
+    assert.match(shown.headers['cache-control'], /no-store/);
+    assert.equal(shown.body.toString(), '%PDF-1.4 test');
 
-    const cid = await as(salesB)('get', `/api/mail/messages/${row.id}/inline/${encodeURIComponent('logo@acme')}`).buffer(true).parse((res, cb) => { const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))); });
+    // Not from a link, a tab or a download: the viewer's header or nothing.
+    const bare = await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}/view`);
+    assert.equal(bare.status, 403);
+    assert.equal((await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}`)).status, 404, 'the download route is gone');
+
+    const sheet = await view(salesB, by('rates.xlsx'));
+    assert.equal(sheet.status, 200, JSON.stringify(sheet.body));
+    assert.equal(sheet.body.data.kind, 'sheet');
+    assert.equal(sheet.body.data.sheets[0].name, 'Rates');
+    assert.deepEqual(sheet.body.data.sheets[0].rows.slice(0, 2), [['Item', 'Rate'], ['Audit', '1200']]);
+    assert.equal(sheet.body.data.sheets[0].truncated, false);
+    const csv = await view(salesB, by('list.csv'));
+    assert.deepEqual(csv.body.data.sheets[0].rows, [['a', 'b'], ['007', 'x']], 'a CSV keeps the digits it was written with');
+    const text = await view(salesB, by('notes.txt'));
+    assert.deepEqual(text.body.data, { kind: 'text', text: 'Hello <b>there</b>', truncated: false });
+    const doc = await view(salesB, by('letter.docx'));
+    assert.equal(doc.status, 415, 'Word waits for step 2');
+
+    // Every view is in the activity log; the refused ones are not.
+    const { rows: log } = await db.query(`SELECT actor_user_id, entity_id, metadata FROM activity_log WHERE action = 'mail.attachment_viewed' AND entity_id = $1 ORDER BY id`, [String(row.id)]);
+    assert.deepEqual(log.map((l) => l.metadata.name), ['spec.pdf', 'rates.xlsx', 'list.csv', 'notes.txt']);
+    assert.equal(log[0].actor_user_id, salesB.user.id);
+
+    const cid = await as(salesB)('get', `/api/mail/messages/${row.id}/inline/${encodeURIComponent('logo@acme')}`).buffer(true).parse(bytes);
     assert.equal(cid.status, 200, JSON.stringify(cid.body));
     assert.equal(cid.headers['content-type'], 'image/png');
+    assert.match(cid.headers['content-disposition'], /^inline;/);
     assert.equal(cid.body.toString(), 'PNG bytes');
     assert.equal((await as(salesB)('get', `/api/mail/messages/${row.id}/inline/spec.pdf`)).status, 404, 'only an image answers as inline');
 
     // Not the caller's mailbox: nothing, by either route.
-    assert.equal((await as(salesA)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}`)).status, 404);
+    assert.equal((await view(salesA, pdf)).status, 404);
     assert.equal((await as(salesA)('get', `/api/mail/messages/${row.id}/inline/logo@acme`)).status, 404);
     // Too large for the tracker, by what the provider said of it.
     await db.query('UPDATE email_attachments SET size_bytes = 26 * 1024 * 1024 WHERE id = $1', [pdf.id]);
-    assert.equal((await as(salesB)('get', `/api/mail/messages/${row.id}/attachments/${pdf.id}`)).status, 413);
+    assert.equal((await view(salesB, pdf)).status, 413);
+  });
+
+  test('the folder list names what the newest message carries, inline pictures aside', async () => {
+    const box = await mailbox({ userId: salesB.user.id, email: `${uid('b')}@cetizionverifica.com` });
+    const m = mail({ has_attachments: true, attachments: [
+      { provider_id: 'a1', name: 'PO 4471.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF') },
+      { provider_id: 'a2', name: 'BOQ.xlsx', contentType: 'application/vnd.ms-excel', content: Buffer.from('x') },
+      { provider_id: 'a3', name: 'sig.png', contentType: 'image/png', content: Buffer.from('p'), is_inline: true, content_id: 'sig' },
+    ] });
+    await deliver(box, [m]);
+    const list = await as(salesB)('get', `/api/mail/folders/${box.id}/inbox/messages`);
+    assert.deepEqual(list.body.data[0].attachment_names, ['PO 4471.pdf', 'BOQ.xlsx']);
+  });
+
+  test('whoever reads a shared mailbox views its attachments, whatever the mailbox stores', async () => {
+    const box = await mailbox({ shared: true, email: `${uid('team')}@cetizionverifica.com`, visibility: 'subject' });
+    const m = mail({ to: [{ email: box.email }], has_attachments: true,
+      attachments: [{ provider_id: 'att-q', name: 'quote.pdf', contentType: 'application/pdf', content: Buffer.from('%PDF team') }] });
+    await deliver(box, [m]);
+    const row = await stored(m.provider_id);
+    const one = await as(salesA)('get', `/api/mail/messages/${row.id}`);
+    assert.equal(one.status, 200, JSON.stringify(one.body));
+    assert.equal(one.body.data.body_html, null, 'the body stays as the mailbox stores it');
+    assert.equal(one.body.data.can_view_attachments, true);
+    const att = one.body.data.attachments[0];
+    const got = await as(salesA)('get', att.view_url).set('X-Tracker-View', '1').buffer(true).parse(bytes);
+    assert.equal(got.status, 200);
+    assert.equal(got.body.toString(), '%PDF team');
+    const thread = await as(salesA)('get', `/api/mail/threads/${row.thread_id}`);
+    assert.equal(thread.body.data.can_view_attachments, true);
+    assert.equal(thread.body.data.messages[0].attachments[0].view_url, att.view_url);
+
+    // Members named on its Inbox, and the conversation taken: the others read nothing of it.
+    await db.query(`UPDATE inboxes SET members = ARRAY['Sam Sales'] WHERE account_id = $1`, [box.id]);
+    const { rowCount } = await db.query(`UPDATE inbox_conversations SET assignee = 'Sam Sales' WHERE thread_id = $1`, [row.thread_id]);
+    assert.equal(rowCount, 1);
+    assert.equal((await as(salesB)('get', att.view_url).set('X-Tracker-View', '1')).status, 404);
+    assert.equal((await as(salesA)('get', att.view_url).set('X-Tracker-View', '1')).status, 200);
   });
 
   test('the owner of a mailbox that stores subjects only reads the body live, and nothing is stored; an admin sees only what is stored', async () => {
@@ -276,7 +345,7 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(own.status, 200, JSON.stringify(own.body));
     assert.equal(own.body.data.live, true);
     assert.equal(own.body.data.body_html, '<p>Our best price is <b>secret</b>.</p>', 'read live, and cleaned like a stored body');
-    assert.equal(own.body.data.can_download, true, 'the owner downloads their own attachments');
+    assert.equal(own.body.data.can_view_attachments, true, 'the owner views their own attachments');
     assert.equal(own.body.data.attachments[0].name, 'terms.pdf', 'a subjects-only mailbox stores attachment names');
     assert.equal((await stored(m.provider_id)).body_html, null, 'still nothing stored');
     assert.equal((await stored(m.provider_id)).snippet, null);
@@ -285,21 +354,21 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(other.status, 200);
     assert.equal(other.body.data.live, false);
     assert.equal(other.body.data.body_html, null, 'an admin sees what the owner shares, no more');
-    assert.equal(other.body.data.can_download, false);
-    assert.equal(other.body.data.attachments[0].url, null);
-    assert.equal((await as(admin)('get', `/api/mail/messages/${row.id}/attachments/${other.body.data.attachments[0].id}`)).status, 404, 'and cannot download');
+    assert.equal(other.body.data.can_view_attachments, false);
+    assert.equal(other.body.data.attachments[0].view_url, null);
+    assert.equal((await as(admin)('get', `/api/mail/messages/${row.id}/attachments/${other.body.data.attachments[0].id}/view`).set('X-Tracker-View', '1')).status, 404, 'and cannot view');
     assert.equal((await as(salesB)('get', `/api/mail/messages/${row.id}`)).status, 404, 'another sales user gets nothing');
 
     // The thread route says the same: the owner may read live, an admin may not.
     const asOwner = await as(salesA)('get', `/api/mail/threads/${row.thread_id}`);
     assert.equal(asOwner.status, 200);
     assert.equal(asOwner.body.data.messages[0].can_read_live, true);
-    assert.equal(asOwner.body.data.can_download, true);
+    assert.equal(asOwner.body.data.can_view_attachments, true);
     assert.deepEqual(asOwner.body.data.messages[0].cc_emails, ['cc@acme-steel.co.in']);
     assert.equal(asOwner.body.data.messages[0].attachments.length, 1);
     const asAdmin = await as(admin)('get', `/api/mail/threads/${row.thread_id}`);
     assert.equal(asAdmin.body.data.messages[0].can_read_live, false);
-    assert.equal(asAdmin.body.data.can_download, false);
+    assert.equal(asAdmin.body.data.can_view_attachments, false);
     assert.ok(!('user_id' in asAdmin.body.data));
   });
 
@@ -320,8 +389,8 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.equal(own.body.data.live, true);
     assert.deepEqual(own.body.data.attachments.map((a) => [a.name, a.content_id]), [['Q4 terms.pdf', null], ['logo.png', 'logo@acme']], 'read from the provider with the body');
     const pdf = own.body.data.attachments[0];
-    const down = await as(salesB)('get', pdf.url);
-    assert.match(down.headers['content-disposition'], /^attachment; filename="Q4 terms\.pdf"/, 'saved under its name');
+    const down = await as(salesB)('get', pdf.view_url).set('X-Tracker-View', '1');
+    assert.match(down.headers['content-disposition'], /^inline; filename="Q4 terms\.pdf"/, 'shown under its name');
     const cid = await as(salesB)('get', `/api/mail/messages/${row.id}/inline/logo@acme`).buffer(true).parse((res, cb) => { const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))); });
     assert.equal(cid.status, 200, JSON.stringify(cid.body));
     assert.equal(cid.body.toString(), 'PNG bytes');
@@ -344,7 +413,7 @@ describe('reading mail as Outlook shows it', { skip: !ADMIN_URL && 'set TEST_DAT
     assert.match(acc.last_error, /AADSTS70000/);
     const thread = await as(salesB)('get', `/api/mail/threads/${row.thread_id}`);
     assert.equal(thread.body.data.messages[0].can_read_live, false, 'no more live reads are promised until it is reconnected');
-    assert.equal((await as(salesB)('get', pdf.url)).status, 409);
+    assert.equal((await as(salesB)('get', pdf.view_url).set('X-Tracker-View', '1')).status, 409);
   });
 
   test('a message deleted in Outlook is in no folder, and the thread keeps its place with no body', async () => {

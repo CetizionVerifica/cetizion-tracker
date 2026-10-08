@@ -61,6 +61,10 @@ export const ACTIONS = {
   // Who a personal mailbox belongs to, changed by an admin
   // (docs/per-user-mailboxes-plan.md §4.3). Records already made stay put.
   MAILBOX_OWNER_CHANGED: 'mailbox.owner_changed',
+  // Somebody opened an email's attachment in the Inbox's viewer
+  // (docs/inbox-attachments-plan.md §8): attachments are viewed, never
+  // downloaded, and an admin can see who looked at what.
+  MAIL_ATTACHMENT_VIEWED: 'mail.attachment_viewed',
   // Who did what to the sales records (mis-report-sender-plan.md §B3.2):
   // the facts a person's daily MIS reads as their Actions taken. Written by
   // src/lib/recordActs.js in the transaction of the change.

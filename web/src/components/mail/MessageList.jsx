@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import { cn } from 'cn';
 import { Button } from '@/components/ui/button.tsx';
 import { StateMarks } from './MessageView.jsx';
+import { AttachmentNames } from './AttachmentStrip.jsx';
 
 /** How long ago, the way a mail list writes it: minutes today, then the time, then the day, then the date. */
 export const since = (iso) => {
@@ -82,6 +83,7 @@ export const MessageRow = forwardRef(function MessageRow({ row, selected, outbou
         {row.snippet && (
           <span className="mt-0.5 block truncate text-[12px] text-muted-foreground">{row.snippet}</span>
         )}
+        <AttachmentNames names={row.attachment_names} />
         {(row.company_name || row.entity_id) && (
           <span className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
             {row.company_name && <span className="truncate">{row.company_name}</span>}

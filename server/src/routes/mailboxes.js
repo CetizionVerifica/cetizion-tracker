@@ -29,7 +29,8 @@ import { pool, query } from '../db.js';
 import { ACTIONS, actorFrom, logActivity } from '../lib/activity.js';
 import { config } from '../config.js';
 import { ApiError } from '../middleware/error.js';
-import { applyVisibility, canReadLive, mayReadContent, sealTokens } from '../lib/mailbox/rules.js';
+import { publicAttachment } from '../lib/mailbox/attachmentView.js';
+import { applyVisibility, canReadLive, mayViewAttachments, sealTokens } from '../lib/mailbox/rules.js';
 import { isStaging } from '../lib/ops/environment.js';
 import { authUrl, exchangeCode, microsoftConfigured } from '../lib/mailbox/microsoft.js';
 import { disconnect, ensureSubscriptions, pushTestMessages, refreshBodies, replyToThread, syncAccount } from '../lib/mailbox/sync.js';
@@ -596,20 +597,22 @@ mailThreadRouter.get('/threads/:id', async (req, res) => {
                         FROM email_attachments x WHERE x.message_id = m.id), '[]'::json) AS attachments
        FROM email_messages m WHERE m.thread_id = $1 ORDER BY m.sent_at, m.id`, [t.id]);
   // The owner of a personal mailbox that stores less than the whole message
-  // reads the rest live (GET /api/mail/messages/:id) and downloads its
-  // attachments; so does anybody, from a mailbox that shares everything.
+  // reads the rest live (GET /api/mail/messages/:id) and views its
+  // attachments; so does anybody, from a mailbox that shares everything,
+  // and whoever reads a shared mailbox views its attachments
+  // (docs/inbox-attachments-plan.md §8). Nobody downloads them.
   const account = { is_shared: t.is_shared, user_id: t.user_id, visibility: t.visibility, status: t.mailbox_status };
-  const canDownload = mayReadContent(req.user?.id, account);
+  const canView = mayViewAttachments(req.user?.id, account);
   const { user_id, ...thread } = t;
   res.json({
     data: {
       ...(thread.visibility === 'metadata' ? { ...thread, subject: null } : thread),
-      can_download: canDownload,
+      can_view_attachments: canView,
       messages: rows.map((m) => {
         const v = applyVisibility(m, t.visibility);
         return {
           ...v,
-          attachments: v.attachments.map((a) => ({ ...a, url: canDownload ? `/api/mail/messages/${m.id}/attachments/${a.id}` : null })),
+          attachments: v.attachments.map((a) => publicAttachment(m.id, a, canView)),
           can_read_live: canReadLive(req.user?.id, account, v),
         };
       }),

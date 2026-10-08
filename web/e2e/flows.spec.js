@@ -603,3 +603,74 @@ test('an admin sees every client email and can hold them', async ({ page }) => {
   await quotation.getByRole('button', { name: 'Release' }).click();
   await expect(quotation.getByText('Goes out', { exact: true })).toBeVisible();
 });
+
+/**
+ * An email's attachments are viewed in the Inbox and nowhere else
+ * (docs/inbox-attachments-plan.md, step 1): a PDF drawn by pdf.js inside
+ * the page, a CSV as a table, and no download anywhere — the file's own
+ * address, opened as a link, is refused.
+ */
+test('an attachment opens in the Inbox viewer, and cannot be downloaded', async ({ page }) => {
+  await signIn(page);
+  const crashes = [];
+  page.on('pageerror', (err) => crashes.push(String(err)));
+
+  // A one-page PDF, with its cross-reference table counted out.
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    '<< /Length 44 >>\nstream\nBT /F1 18 Tf 40 100 Td (Quotation) Tj ET\nendstream',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((body, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const bytes = (s) => [...Buffer.from(s)];
+
+  const box = (await (await page.request.post('/api/mailboxes/test', { data: { email: `viewer-${stamp}@cetizionverifica.com`, shared: true } })).json()).data;
+  // Subjects and file names stored, so the list can name the files.
+  expect((await page.request.patch(`/api/mailboxes/${box.id}`, { data: { visibility: 'subject' } })).ok()).toBeTruthy();
+  const subject = `Quotation ${stamp}`;
+  await page.request.post(`/api/mailboxes/${box.id}/test-messages`, { data: { messages: [{
+    conversation_id: `conv-${stamp}`, internet_message_id: `<${stamp}@client>`, subject, body_html: '<p>Please find attached.</p>',
+    from: { email: `buyer-${stamp}@acme-steel.co.in`, name: 'Ravi' }, to: [{ email: box.email }], has_attachments: true,
+    attachments: [
+      { provider_id: 'att-pdf', name: 'quote.pdf', contentType: 'application/pdf', content: bytes(pdf) },
+      { provider_id: 'att-csv', name: 'rates.csv', contentType: 'text/csv', content: bytes('Item,Rate\nAudit,1200\n') },
+    ],
+  }] } });
+  expect((await page.request.post(`/api/mailboxes/${box.id}/sync`)).ok()).toBeTruthy();
+
+  await page.goto(`/inbox?mb=${box.id}&f=inbox`);
+  const row = page.getByRole('option').filter({ hasText: subject });
+  // The list names the files before anything is opened.
+  await expect(row.getByText('quote.pdf')).toBeVisible();
+  await row.click();
+
+  await page.getByRole('button', { name: 'View quote.pdf' }).click();
+  const viewer = page.getByRole('dialog');
+  await expect(viewer.getByText('1 page')).toBeVisible();
+  await expect(viewer.getByLabel('Page 1')).toBeVisible();
+  // The page is drawn: some of the canvas is no longer blank.
+  await expect.poll(() => viewer.getByLabel('Page 1').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true;
+    return false;
+  })).toBe(true);
+  await expect(page.locator('a[download]')).toHaveCount(0);
+  await expect(page.getByText(/download/i)).toHaveCount(0);
+
+  await page.keyboard.press('ArrowRight');
+  await expect(viewer.getByRole('cell', { name: 'Audit' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(viewer).toHaveCount(0);
+
+  // The viewer's address, opened the way a link or a pasted URL opens it.
+  const message = (await (await page.request.get(`/api/mail/folders/${box.id}/inbox/messages?q=${encodeURIComponent(subject)}`)).json()).data[0];
+  const detail = (await (await page.request.get(`/api/mail/messages/${message.message_id}`)).json()).data;
+  expect((await page.request.get(detail.attachments[0].view_url)).status()).toBe(403);
+  expect(crashes).toEqual([]);
+});

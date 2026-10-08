@@ -19,6 +19,7 @@ import { Message, when } from '../components/mail/MessageView.jsx';
 import { MailboxSwitcher } from '../components/mail/MailboxSwitcher.jsx';
 import { MessageRow, Pager, initials, since } from '../components/mail/MessageList.jsx';
 import { ReadingPane } from '../components/mail/ReadingPane.jsx';
+import { AttachmentNames } from '../components/mail/AttachmentStrip.jsx';
 
 /**
  * The shared sales inbox (#30): who owns each email, what is waiting on
@@ -171,6 +172,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             {row.snippet}
           </span>
         )}
+        <AttachmentNames names={row.attachment_names} />
         {/* Two chips at most: what this thread is, and whose it is. The
             row had up to six, all the same size, so the one that differed
             between rows was the hardest to find. */}
