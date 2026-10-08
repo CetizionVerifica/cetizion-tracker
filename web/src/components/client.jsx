@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { LogOut, Moon, Pause, Play, Sun } from 'lucide-react';
-import { BrandMark, usePaused, useThemeSwitch } from './shell/Shell.jsx';
+import { LogOut, Moon, Sun } from 'lucide-react';
+import { BrandMark, MotionGlyph, usePaused, useThemeSwitch } from './shell/Shell.jsx';
 import { enter } from '../styles/mocha/motion.js';
 
 /**
@@ -34,7 +34,7 @@ export function ClientHeader({ sub, who, company, onSignOut, badge }) {
         </div>
       )}
       <button type="button" className="mg-iconbtn" aria-label={paused ? 'Play background motion' : 'Pause background motion'} aria-pressed={paused} onClick={togglePause}>
-        {paused ? <Play size={15} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={15} strokeWidth={2.2} aria-hidden="true" />}
+        <MotionGlyph paused={paused} />
       </button>
       <button type="button" className="mg-iconbtn" aria-label={`Switch to ${other} mode`} onClick={(e) => change(other, e.currentTarget)}>
         {resolved === 'dark' ? <Sun strokeWidth={1.8} aria-hidden="true" /> : <Moon strokeWidth={1.8} aria-hidden="true" />}

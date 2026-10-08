@@ -4,7 +4,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { DropdownMenu as DM } from 'radix-ui';
 import {
-  Bell, Keyboard, LogOut, Menu, Moon, Pause, Pin, PinOff, Play, Plus, Search,
+  Bell, Keyboard, LogOut, Menu, Moon, Pin, PinOff, Plus, Search,
   Settings as SettingsIcon, Sun, UserRound, X,
 } from 'lucide-react';
 import { cn } from 'cn';
@@ -463,13 +463,22 @@ function BellButton() {
   );
 }
 
+/** The pause button's glyph as the design draws it: two thin bars, or the play triangle. */
+export function MotionGlyph({ paused }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={paused ? 'M8 5v14l11-7z' : 'M9 6v12M15 6v12'} />
+    </svg>
+  );
+}
+
 /** Pause motion and the bell, at the end of every page header. */
 export function ControlBar({ className }) {
   const [paused, toggle] = usePaused();
   return (
     <div className={cn('mg-controlbar', className)}>
       <button type="button" className="mg-iconbtn" aria-label={paused ? 'Play motion' : 'Pause motion'} aria-pressed={paused} onClick={toggle}>
-        {paused ? <Play size={15} strokeWidth={2.2} aria-hidden="true" /> : <Pause size={15} strokeWidth={2.2} aria-hidden="true" />}
+        <MotionGlyph paused={paused} />
       </button>
       <BellButton />
     </div>
