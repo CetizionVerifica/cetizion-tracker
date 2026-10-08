@@ -143,6 +143,11 @@ export function RecordForm({
     }
 
     try {
+      // A required field left empty is named here: sent as blank, an edit could
+      // save nothing and still say "Changes saved".
+      const missing = fields.filter((field) => field.required && !field.auto && field.type !== 'document' && field.type !== 'boolean'
+        && (payload[field.name] == null || String(payload[field.name]).trim() === ''));
+      if (missing.length) throw new ApiError('Required', { fields: Object.fromEntries(missing.map((field) => [field.name, 'Required'])) });
       await attachDocuments(payload);
       const saved = isEdit
         ? await api.update(resource, record.id, payload)

@@ -20,7 +20,7 @@ import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money, percent } from '../lib/format.js';
+import { money, percent, today } from '../lib/format.js';
 
 /**
  * One purchase order, as Wave 5 draws it: the order's facts under its
@@ -458,7 +458,7 @@ export default function PurchaseOrderDetail() {
       )}
       {/* One field: the date that makes on-delivery stages billable. */}
       {dialog?.type === 'delivery' && (
-        <RecordForm title="Record the delivery date" subtitle={title} resource="purchase-orders" record={po} onClose={close} onSaved={refetch} submitLabel="Save the date"
+        <RecordForm title="Record the delivery date" subtitle={title} resource="purchase-orders" record={{ ...po, actual_delivery_date: po.actual_delivery_date || today() }} onClose={close} onSaved={refetch} submitLabel="Save the date"
           fields={[{ name: 'actual_delivery_date', label: 'Delivered on', type: 'date', required: true, hint: 'Stages triggered on delivery become billable from this date.' }]} />
       )}
       {dialog?.type === 'milestone' && (
