@@ -62,12 +62,13 @@ export function TravelInvoicesSection({ invoices = [], action, showPo = false, f
             return (
               <tr key={row.id}>
                 <td style={{ whiteSpace: 'normal' }}>
-                  <span className="app-lead mg-num">{row.invoiceNo || '—'}</span>
-                  <span className="app-sub2">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="app-lead mg-num">{row.invoiceNo || '—'}</span>
+                    {/* Beside the number, not under it: this badge is what
+                        stops a travel invoice being read as a PO stage. */}
                     <Tone>Travel</Tone>
-                    {' '}
-                    {row.invoiceDate ? shortDate(row.invoiceDate) : 'no date'}
                   </span>
+                  <span className="app-sub2">{row.invoiceDate ? shortDate(row.invoiceDate) : 'no date'}</span>
                 </td>
                 {showPo && (
                   <td className="mg-num">{row.poNumber || <span className="mg-muted">no PO</span>}</td>

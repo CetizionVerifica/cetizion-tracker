@@ -221,7 +221,7 @@ export function RaiseTravelInvoiceDialog({ scope, onClose, onDone }) {
                       <span className="app-sub2">{trip.employee_name}</span>
                       {/* A trip that cannot go on this invoice stays on the list
                           and says why, rather than silently vanishing. */}
-                      {blocked && <span className="app-sub2 is-wrap text-late">{blocked}</span>}
+                      {blocked && <span className="app-sub2 is-wrap is-late">{blocked}</span>}
                     </td>
                     <td>{trip.travel_start_date ? shortDate(trip.travel_start_date) : <span className="mg-muted">—</span>}</td>
                     <td style={{ whiteSpace: 'normal' }}>{trip.destination || <span className="mg-muted">—</span>}</td>
