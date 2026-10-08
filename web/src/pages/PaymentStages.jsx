@@ -217,7 +217,7 @@ function StagesStrip({ version }) {
           foot: ready && (
             <span className="flex flex-col items-start gap-2">
               <span>{plural(toBill.length, 'stage')} ready to invoice</span>
-              {toBill.length > 0 && <Link to="/money/invoice-run" className="mg-btn mg-btn--primary mg-btn--sm">Raise them one by one<ArrowRight className="size-4" strokeWidth={2} aria-hidden="true" /></Link>}
+              {toBill.length > 0 && <Link to="/money/invoice-run" className="mg-btn mg-btn--primary mg-btn--sm shrink-0 whitespace-nowrap">Raise them one by one<ArrowRight className="size-4" strokeWidth={2} aria-hidden="true" /></Link>}
             </span>
           ),
         },
