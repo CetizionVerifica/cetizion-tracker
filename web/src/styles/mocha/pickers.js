@@ -271,12 +271,17 @@
   ['dragleave', 'drop'].forEach(function (ev) {
     document.addEventListener(ev, function (e) { var i = fileField(e.target), z = i && zoneOf(i); if (z) z.classList.remove('is-drag'); }, true);
   });
-  document.addEventListener('change', function (e) {
-    var i = fileField(e.target), z = i && zoneOf(i); if (!z) return;
+  /* Read the field after the page's own handlers have run: a form that refuses the file (too large,
+     wrong type) clears it, and the zone must not keep showing a file that was turned away. */
+  function showFile(i, z) {
     var f = i.files || [];
-    if (!f.length) { z.classList.remove('has-file'); z.removeAttribute('data-file'); return; }
+    if (!f.length || z.classList.contains('is-error')) { z.classList.remove('has-file'); z.removeAttribute('data-file'); return; }
     z.setAttribute('data-file', f.length === 1 ? f[0].name + ' · ' + size(f[0].size) : f.length + ' files chosen');
     z.classList.add('has-file');
+  }
+  document.addEventListener('change', function (e) {
+    var i = fileField(e.target), z = i && zoneOf(i); if (!z) return;
+    setTimeout(function () { showFile(i, z); }, 0);
   }, true);
 
   /* Combobox: <input list="id"> with a <datalist>. The browser's suggestion list is swapped for the glass one;
