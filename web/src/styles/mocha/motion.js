@@ -94,18 +94,32 @@ export function installMotion() {
     const j = t.closest(JELLY); if (j && !j.disabled) return jelly(j);
     const p = t.closest(PRESS); if (p && !p.disabled) press(p);
   }, true);
-  /* The hero's light follows the cursor (Glass 2): a soft caramel glow under the pointer. */
-  let spotFrame = 0;
+  /* The hero's light follows the cursor (Glass 2): it fades in where the pointer enters, trails it smoothly,
+     and fades out when the pointer leaves. Pause and reduced motion keep it off. */
+  let lit = null, spotFrame = 0, last = null;
+  const place = (hero, ev) => {
+    const b = hero.getBoundingClientRect();
+    hero.style.setProperty('--mx', ((ev.clientX - b.left) / b.width * 100).toFixed(1) + '%');
+    hero.style.setProperty('--my', ((ev.clientY - b.top) / b.height * 100).toFixed(1) + '%');
+  };
+  const unlight = () => { if (lit) lit.classList.remove('is-lit'); lit = null; };
   document.addEventListener('pointermove', (e) => {
-    const hero = e.target && e.target.closest && e.target.closest('.mg-hero');
-    if (!hero || spotFrame) return;
+    last = e;
+    if (spotFrame) return;
     spotFrame = requestAnimationFrame(() => {
       spotFrame = 0;
-      const b = hero.getBoundingClientRect();
-      hero.style.setProperty('--mx', ((e.clientX - b.left) / b.width * 100).toFixed(1) + '%');
-      hero.style.setProperty('--my', ((e.clientY - b.top) / b.height * 100).toFixed(1) + '%');
+      const ev = last, hero = ev.target && ev.target.closest ? ev.target.closest('.mg-hero') : null;
+      if (hero !== lit) {
+        unlight();
+        if (!hero || isPaused() || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        hero.classList.add('is-placing'); place(hero, ev); void hero.offsetWidth; hero.classList.remove('is-placing');
+        hero.classList.add('is-lit'); lit = hero;
+        return;
+      }
+      if (hero) place(hero, ev);
     });
   }, { passive: true });
+  document.addEventListener('pointerout', (e) => { if (!e.relatedTarget) unlight(); });
   window.MochaGlass = Object.assign(window.MochaGlass || {}, {
     springs: { soft: SOFT, brew: BREW }, switchTheme, jelly, press, enter, countUps, pause, isPaused, inr,
   });
