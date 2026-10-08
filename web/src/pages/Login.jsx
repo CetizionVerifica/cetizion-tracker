@@ -120,8 +120,8 @@ export default function Login() {
               <Check className="size-[18px] text-primary-foreground" strokeWidth={3.4} aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <div className="text-[16px] font-semibold tracking-[-0.01em] text-foreground">Cetizion Tracker</div>
-              <div className="text-[12px] text-muted-foreground">Cetizion Verifica</div>
+              <div className="font-display text-[16px] font-bold tracking-[-0.01em] text-foreground">Sales Tracker</div>
+              <div className="text-[12px] text-muted-foreground">Sales, projects and expenses</div>
             </div>
           </div>
 

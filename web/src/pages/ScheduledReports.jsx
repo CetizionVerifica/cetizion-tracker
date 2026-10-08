@@ -228,7 +228,7 @@ function SenderCard({ settings, mailboxes, onChanged }) {
           <Input value={sendAs} onChange={(e) => setSendAs(e.target.value)} placeholder="mis@company.com" />
         </Field>
         <Field label="Display name" hint="Optional. The name beside the address">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cetizion MIS" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sales MIS" />
         </Field>
       </div>
       {info && (

@@ -336,24 +336,25 @@ test('the settings menu opens, with every item on it', async ({ page }) => {
 });
 
 /**
- * Light mode, end to end: choose it, and the document says so.
+ * Dark mode, end to end: light is the default (web/CLAUDE.md §1); choose
+ * dark, and the document says so.
  *
  * The class on <html> is the whole mechanism — every token in globals.css
  * hangs off `.dark` being present or absent — so this is the one assertion
  * that cannot pass while the theme is broken.
  */
-test('choosing light mode takes the dark class off the document', async ({ page }) => {
+test('choosing dark mode puts the dark class on the document', async ({ page }) => {
   await signIn(page);
-  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
 
   await page.getByRole('button', { name: 'Settings and sign out' }).click();
-  await page.getByRole('menuitemradio', { name: 'Light' }).click();
+  await page.getByRole('menuitemradio', { name: 'Dark' }).click();
 
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
   // And it survives a reload, which is what the pre-paint script in
   // index.html exists for.
   await page.reload();
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
 /**

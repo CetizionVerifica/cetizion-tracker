@@ -68,7 +68,6 @@ function SignIn({ error }) {
   return (
     <div className="accept">
       <form className="accept__card accept__form" onSubmit={go} style={{ maxWidth: 440 }}>
-        <div className="accept__seller">Cetizion Verifica</div>
         <h1>Client portal</h1>
         <p className="accept__muted">Enter the email address we have for you. We will send a link that signs you in.</p>
         {sent ? <div className="accept__done accept__done--ok">{sent}</div> : <>
@@ -87,7 +86,7 @@ function Home({ me, onOut }) {
     <div className="accept">
       <div className="accept__card portal">
         <div className="accept__head">
-          <div><div className="accept__seller">Cetizion Verifica · client portal</div><h1>{me.company_name}</h1><div className="accept__muted">Signed in as {me.contact_name}</div></div>
+          <div><div className="accept__seller">Client portal</div><h1>{me.company_name}</h1><div className="accept__muted">Signed in as {me.contact_name}</div></div>
           <button type="button" className="btn" onClick={onOut}>Sign out</button>
         </div>
         <div className="portal__tabs">{me.sections.map((s) => <button type="button" key={s} className={`portal__tab ${tab === s ? 'is-on' : ''}`} onClick={() => setTab(s)}>{PORTAL_LABEL[s]}</button>)}</div>
@@ -202,7 +201,7 @@ function Documents({ ctx }) {
   }
   return (
     <>
-      <h2 className="portal__section">From Cetizion</h2>
+      <h2 className="portal__section">From us</h2>
       <div className="portal__scroll">
         <table className="table">
           <thead><tr><th>Document</th><th>Date</th><th className="num">Amount</th><th /></tr></thead>
@@ -543,7 +542,7 @@ function Contact() {
         {done && <div className="accept__done accept__done--ok">{done}</div>}
         <div className="accept__actions"><button type="submit" className="btn btn--primary">Send</button></div>
       </form>
-      {s.data?.length > 0 && <div className="portal__item"><strong>Earlier messages</strong>{s.data.map((m) => <div key={m.id} className="accept__muted">{new Date(m.sent_at).toLocaleString('en-IN')} · {m.direction === 'inbound' ? 'You' : 'Cetizion'}: {m.snippet}</div>)}</div>}
+      {s.data?.length > 0 && <div className="portal__item"><strong>Earlier messages</strong>{s.data.map((m) => <div key={m.id} className="accept__muted">{new Date(m.sent_at).toLocaleString('en-IN')} · {m.direction === 'inbound' ? 'You' : 'Us'}: {m.snippet}</div>)}</div>}
     </>
   );
 }

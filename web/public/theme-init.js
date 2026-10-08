@@ -6,10 +6,10 @@
   try {
     var stored = localStorage.getItem('cetizion.theme');
     var system = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    var mode = stored === 'light' || stored === 'dark' ? stored : stored === 'system' ? system : 'dark';
+    var mode = stored === 'light' || stored === 'dark' ? stored : stored === 'system' ? system : 'light';
     document.documentElement.classList.toggle('dark', mode === 'dark');
     document.documentElement.style.colorScheme = mode;
   } catch (e) {
-    document.documentElement.classList.add('dark');
+    /* No storage: light, the default, which is no class at all. */
   }
 })();

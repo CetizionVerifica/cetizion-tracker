@@ -78,7 +78,7 @@ function PdfHeader({ values }) {
   return (
     <div className="flex flex-col gap-4 rounded-[10px] bg-white p-6 text-[#151517]">
       <div>
-        <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Cetizion Verifica'}</div>
+        <div className="text-[16px] font-bold text-[#0f7a66]">{values.company_name || 'Your company name'}</div>
         {values.company_address && <div className="mt-1 text-[8.5px]/[1.5] text-[#5d5d66]">{values.company_address}</div>}
         {values.company_gstin && <div className="text-[8.5px] text-[#5d5d66]">GSTIN {values.company_gstin}</div>}
       </div>
@@ -87,7 +87,7 @@ function PdfHeader({ values }) {
         <span>22 Sep 2026</span>
       </div>
       <div className="border-t border-[#e2e2de] pt-3 text-[11px]/[1.6] text-[#5d5d66]">
-        For {values.company_name || 'Cetizion Verifica'} · authorised signatory
+        For {values.company_name || 'your company'} · authorised signatory
       </div>
     </div>
   );

@@ -34,7 +34,7 @@ createRoot(bannerRoot).render(<EnvironmentBanner />);
  * setting belonging to whoever last used this browser.
  */
 const Theme = ({ children, forced }) => (
-  <ThemeProvider attribute="class" defaultTheme="dark" enableSystem storageKey="cetizion.theme" forcedTheme={forced}>
+  <ThemeProvider attribute="class" defaultTheme="light" enableSystem storageKey="cetizion.theme" forcedTheme={forced}>
     {children}
   </ThemeProvider>
 );
