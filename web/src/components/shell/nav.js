@@ -77,7 +77,8 @@ export const DOCK_HR = [
 
 /** The small word above a page title, from where the page lives. */
 const EYEBROWS = [
-  [/^\/(quotations|companies|projects|purchase-orders|payment-stages|enquiries|pipeline|renewals|deliverables)(\/|$)/, 'Records'],
+  [/^\/(quotations|companies|projects|purchase-orders|payment-stages|enquiries|pipeline|renewals)(\/|$)/, 'Records'],
+  [/^\/(worklist|tasks|follow-ups|schedule|notifications|data-quality|deliverables)(\/|$)/, 'Daily work'],
   [/^\/(travel|vendor-invoices|vendor-credit-notes|payables|travel-dashboard|import-travel)(\/|$)/, 'Travel desk'],
   [/^\/(collections|cashflow|money|profitability|accounting|expense-claims)(\/|$)/, 'Money'],
   [/^\/(settings|import)(\/|$)/, 'Settings'],

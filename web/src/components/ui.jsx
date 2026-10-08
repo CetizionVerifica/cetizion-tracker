@@ -4,7 +4,7 @@ import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleAlert, Upload } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -345,7 +345,7 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <DialogFooter className="border-t border-border px-5 py-3 sm:justify-end">{footer}</DialogFooter>
+          <DialogFooter className="border-t border-border px-5 py-3 sm:flex-wrap sm:justify-end">{footer}</DialogFooter>
         )}
       </DialogContent>
     </Dialog>
@@ -435,6 +435,22 @@ export function Combo({ options = [], listId, error, ...props }) {
         ))}
       </datalist>
     </>
+  );
+}
+
+/**
+ * A file field as the design system's drop zone (FilePicker): drop a file
+ * anywhere on it, or press "Choose a file". pickers.js lights it while a
+ * file is dragged over and shows the chosen file's name and size.
+ */
+export function FileDrop({ text = 'Drop a PDF or image here', onFile, accept, label, id, error, ...props }) {
+  return (
+    <label className={cn('mg-file', error && 'is-error')}>
+      <Upload className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.8} aria-hidden="true" />
+      <span className="mg-drop__text">{text}</span>
+      <span className="mg-btn mg-btn--sm">Choose a file</span>
+      <input type="file" id={id} aria-label={label} accept={accept} aria-invalid={error ? true : undefined} onChange={(e) => onFile?.(e.target.files?.[0] || null)} {...props} />
+    </label>
   );
 }
 

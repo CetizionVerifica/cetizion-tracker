@@ -39,7 +39,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "mg-scrim fixed inset-0 z-50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
+        "mg-scrim fixed inset-0 z-[70] data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
         className
       )}
       {...props}
@@ -63,7 +63,7 @@ function DialogContent({
         className={cn(
           // Strong glass over the blurred scrim, rising out of a blur on the soft
           // spring (mg-dialog). On a phone it is a bottom sheet on the Brew spring.
-          "mg-glass mg-glass--strong mg-dialog fixed top-[50%] left-[50%] z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-[28px] p-6 outline-none data-[state=closed]:animate-out data-[state=closed]:duration-150 data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 sm:max-w-[560px]",
+          "mg-glass mg-glass--strong mg-dialog fixed top-[50%] left-[50%] z-[70] grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-[28px] p-6 outline-none data-[state=closed]:animate-out data-[state=closed]:duration-150 data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 sm:max-w-[560px]",
           "max-[719px]:top-auto max-[719px]:bottom-0 max-[719px]:left-0 max-[719px]:max-h-[92dvh] max-[719px]:max-w-full max-[719px]:translate-x-0 max-[719px]:translate-y-0 max-[719px]:rounded-b-none max-[719px]:border-b-0 max-[719px]:pb-[max(1.5rem,env(safe-area-inset-bottom))] max-[719px]:data-[state=open]:animate-[mg-sheet-in_640ms_var(--mg-brew)_both]",
           className
         )}
