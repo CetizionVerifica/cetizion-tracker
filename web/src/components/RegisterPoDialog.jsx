@@ -1,9 +1,9 @@
 import { CircleAlert } from 'lucide-react';
 import { useState } from 'react';
-import { Alert, Field, Input, Modal, Select, useToast } from './ui.jsx';
+import { Alert, Field, FileDrop, Input, Modal, Select, useToast } from './ui.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
-import { money, today } from '../lib/format.js';
+import { fileSize, money, today } from '../lib/format.js';
 import { poCurrencyWarning } from '../lib/poCurrency.js';
 
 /**
@@ -43,6 +43,12 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
   // The PDF read from the email is already stored; a file chosen here replaces it.
   const [emailDocument, setEmailDocument] = useState(read.document_id || null);
   const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState(null);
+  const maxBytes = lookups.limits?.document_max_bytes;
+  const pickFile = (f) => {
+    if (f && maxBytes && f.size > maxBytes) { setFile(null); setFileError(`This file is ${fileSize(f.size)}: the limit is ${fileSize(maxBytes)}. Pick a smaller one.`); return; }
+    setFileError(null); setFile(f);
+  };
   const [errors, setErrors] = useState({});
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -120,15 +126,15 @@ export function RegisterPoDialog({ quotation, prefill = null, reviewId = null, n
             {currencyWarning && <span className="mg-field__hint" role="status" style={{ color: 'var(--wait)' }}>{currencyWarning}</span>}
           </Field>
           <Field label="Payment terms (days)" error={errors.payment_terms_days}><Input type="number" min="0" max="365" value={v.payment_terms_days} onChange={(e) => set('payment_terms_days', e.target.value)} /></Field>
-          <Field label="PO document" hint={emailDocument ? 'The PDF from the email is attached; choose a file only to replace it' : 'The client\'s PO, if you have the file'}>
-            <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <div className="span-all"><Field as="div" label="PO document" error={fileError} hint={file ? `Chosen: ${file.name} · ${fileSize(file.size)}` : emailDocument ? 'The PDF from the email is attached; choose a file only to replace it' : 'The client\'s PO, if you have the file'}>
+            <FileDrop label="PO document" text={file ? `${file.name} · ${fileSize(file.size)}` : 'Drop the PO here'} error={fileError} onFile={pickFile} />
             {emailDocument && !file && (
               <span className="mg-field__hint">
                 <a href={api.documentUrl(emailDocument)} target="_blank" rel="noopener noreferrer">The PO from the email</a>
                 {' · '}<button type="button" className="underline" onClick={() => setEmailDocument(null)}>don't attach it</button>
               </span>
             )}
-          </Field>
+          </Field></div>
           {differs && (
             <div className="span-all">
               <Alert tone="warning">
