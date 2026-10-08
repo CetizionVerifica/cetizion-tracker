@@ -254,4 +254,8 @@
 .app-client { min-width: 200px; }
 .app-client__text .app-sub2 { max-width: 100%; }
 .app-strip .mg-tile__figure { white-space: normal; }
+/* Summary strips: a figure shrinks with its tile rather than breaking mid-number ("₹15,94,00 / 0"
+   at 768px). Words in a text figure ("Not connected") still wrap at spaces. */
+.mg-strip > * { container-type: inline-size; min-width: 0; }
+.mg-strip .mg-tile__figure { overflow-wrap: normal; word-break: normal; font-size: clamp(17px, 17cqi, 24px); }
 @media (max-width: 1099px) { .app-span-wide { grid-column: 1 / -1; } }
