@@ -6,9 +6,8 @@
 export const SOFT = 'linear(0, 0.012, 0.048 2.3%, 0.2 5%, 0.718 13.4%, 0.92 17.6%, 1.006 21%, 1.045 24.2%, 1.056 27.4%, 1.047 31%, 1.012 39.5%, 0.996 46.5%, 0.993 52%, 1 70%, 1)';
 export const BREW = 'linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.067, 1.099 24.3%, 1.108 26%, 1.104, 1.087 31.4%, 1.008 39.6%, 0.985 45.8%, 0.98 50%, 0.996 63.4%, 1.001 72.4%, 1)';
 
-// Primary buttons jelly; every other button and chip gets the softer press.
+// Primary buttons jelly. Every other button and chip dips to .97 in CSS (feel.css, PR 14).
 const JELLY = '.mg-btn--primary, .mg-rail__btn, .mg-rail__theme, .mg-dock__add, [data-jelly]';
-const PRESS = '.mg-btn, .btn, .mg-chip, .mg-seg button, .mg-iconbtn, [data-press]';
 const state = { paused: false };
 
 function reduced() {
@@ -27,13 +26,16 @@ export function press(el) {
     { duration: 460, easing: 'ease-out', composite: 'add' });
 }
 
-/* Entrance, once per page view. Mark elements with data-a="rise|pop". */
+/* Entrance, once per page view. Mark elements with data-a="rise|pop". An element
+   rises once only, however many times enter() or arrive() reach it. */
+const seen = new WeakSet();
+const fresh = (el) => (seen.has(el) ? false : (seen.add(el), true));
 export function enter(root = document) {
   if (!still()) {
-    root.querySelectorAll('[data-a="rise"]').forEach((el, i) => el.animate(
+    [...root.querySelectorAll('[data-a="rise"]')].filter(fresh).forEach((el, i) => el.animate(
       [{ opacity: 0, translate: '0 22px', filter: 'blur(10px)' }, { opacity: 1, translate: '0 0', filter: 'blur(0px)' }],
       { duration: 900, delay: i * 75, easing: SOFT, fill: 'backwards' }));
-    root.querySelectorAll('[data-a="pop"]').forEach((el, i) => el.animate(
+    [...root.querySelectorAll('[data-a="pop"]')].filter(fresh).forEach((el, i) => el.animate(
       [{ scale: '.6', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 600, delay: 560 + i * 30, easing: SOFT, fill: 'backwards' }));
   }
   countUps(root);
@@ -41,8 +43,11 @@ export function enter(root = document) {
 
 /* Count-up: 1.5s ease-out, never past the real value. <span data-count="1842500" data-format="inr">. */
 export const inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
+const counted = new WeakSet();
 export function countUps(root = document) {
   root.querySelectorAll('[data-count]').forEach((el) => {
+    if (counted.has(el)) return;
+    counted.add(el);
     const to = Number(el.getAttribute('data-count'));
     const fmt = el.getAttribute('data-format') === 'inr' ? inr : (n) => Math.round(n).toLocaleString('en-IN');
     if (still()) { el.textContent = fmt(to); return; }
@@ -92,8 +97,8 @@ export function installMotion() {
     const t = e.target;
     if (!t || !t.closest) return;
     const j = t.closest(JELLY); if (j && !j.disabled) return jelly(j);
-    const p = t.closest(PRESS); if (p && !p.disabled) press(p);
   }, true);
+  wireFeel();
   /* The hero's light follows the cursor (Glass 2): it fades in where the pointer enters, trails it smoothly,
      and fades out when the pointer leaves. Pause and reduced motion keep it off. */
   let lit = null, spotFrame = 0, last = null;
@@ -121,6 +126,106 @@ export function installMotion() {
   }, { passive: true });
   document.addEventListener('pointerout', (e) => { if (!e.relatedTarget) unlight(); });
   window.MochaGlass = Object.assign(window.MochaGlass || {}, {
-    springs: { soft: SOFT, brew: BREW }, switchTheme, jelly, press, enter, countUps, pause, isPaused, inr,
+    springs: { soft: SOFT, brew: BREW }, switchTheme, jelly, press, enter, arrive, countUps, pause, isPaused, inr,
   });
+}
+
+/* ── Feel (PR 14) ─────────────────────────────────────────────────────────── */
+
+/* Page arrival, on every route change: sections rise in on the soft stagger, the
+   first rows of a list fade up (10 at most, then instant), figures count up and
+   progress bars fill. It watches the page for 1.2s so sections and rows that
+   arrive with their data still get it; after that nothing animates on a
+   re-render, so sorting, filtering and typing stay instant. Never blocks input. */
+const ROWS = '.mg-table tbody tr, .mg-row, .app-row, .app-ib__row, .app-diary__row, a.app-recrow, .set-index__row, .app-note';
+const SECTION = '[data-a="rise"]';
+let arrival = null;
+export function arrive(root) {
+  if (!root || typeof MutationObserver === 'undefined') return;
+  if (arrival) arrival.stop();
+  let sections = 0, rows = 0;
+  const t0 = performance.now();
+  const all = (scope, sel) => [...(scope.matches && scope.matches(sel) ? [scope] : []), ...scope.querySelectorAll(sel)];
+  const run = (scope) => {
+    const quiet = still();
+    all(scope, SECTION).filter(fresh).forEach((el) => {
+      if (quiet || sections >= 8) return;
+      el.animate([{ opacity: 0, translate: '0 14px' }, { opacity: 1, translate: '0 0' }],
+        { duration: 560, delay: Math.max(0, sections * 55 - (performance.now() - t0)), easing: SOFT, fill: 'backwards' });
+      sections += 1;
+    });
+    if (!quiet) {
+      all(scope, ROWS).filter(fresh).forEach((el) => {
+        if (rows >= 10) return;
+        el.animate([{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }],
+          { duration: 300, delay: rows * 28, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' });
+        rows += 1;
+      });
+      all(scope, '.mg-progress > *').filter(fresh).forEach((el) => {
+        el.animate([{ scale: '0 1' }, { scale: '1 1' }], { duration: 900, delay: 120, easing: SOFT, fill: 'backwards' });
+      });
+    }
+    countUps(scope);
+  };
+  run(root);
+  const mo = new MutationObserver((list) => {
+    for (const m of list) for (const n of m.addedNodes) if (n.nodeType === 1) run(n);
+  });
+  mo.observe(root, { childList: true, subtree: true });
+  const handle = {};
+  const timer = setTimeout(() => handle.stop(), 1200);
+  handle.stop = () => { mo.disconnect(); clearTimeout(timer); if (arrival === handle) arrival = null; };
+  arrival = handle;
+}
+
+function wireFeel() {
+  const html = document.documentElement;
+  /* Keyboard moves are instant: highlights in menus and lists skip their fade
+     while keys drive them; the pointer brings the fade back. */
+  const NAV = /^(Arrow|Tab$|Home$|End$|Page|Enter$|Escape$| $)/;
+  document.addEventListener('keydown', (e) => { if (NAV.test(e.key)) html.classList.add('mg-kbd'); }, true);
+  document.addEventListener('pointermove', () => { if (html.classList.contains('mg-kbd')) html.classList.remove('mg-kbd'); }, { passive: true, capture: true });
+
+  /* While anything scrolls, the scene's blobs hold still (feel.css), so the glass
+     never re-blurs a moving scene and a moving page in the same frame. */
+  let idle = 0;
+  document.addEventListener('scroll', () => {
+    if (!idle) html.classList.add('mg-scrolling'); else clearTimeout(idle);
+    idle = setTimeout(() => { idle = 0; html.classList.remove('mg-scrolling'); }, 160);
+  }, { passive: true, capture: true });
+
+  /* Tabs: the caramel underline glides from the old tab to the new one and the
+     panel under it fades in fast. Counts bump when their number changes. */
+  const bumped = new WeakMap();
+  const mo = new MutationObserver((list) => {
+    if (still()) return;
+    let from = null, to = null;
+    for (const m of list) {
+      if (m.type === 'attributes') {
+        const el = m.target;
+        if (!el.closest || !el.closest('.mg-tabs')) continue;
+        if (el.getAttribute('aria-selected') === 'true') to = el; else if (m.oldValue === 'true') from = el;
+        continue;
+      }
+      const host = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+      const count = host && host.closest ? host.closest('.mg-count') : null;
+      if (!count || !count.isConnected || !count.animate) continue;
+      const at = performance.now();
+      if (at - (bumped.get(count) || 0) < 400) continue;
+      bumped.set(count, at);
+      count.animate([{ scale: '1' }, { scale: '1.28' }, { scale: '1' }], { duration: 420, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+    }
+    if (from && to && from.isConnected && to.isConnected && from.parentElement === to.parentElement && to.animate) {
+      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+      const s = Math.max(0.05, (a.width - 20) / Math.max(1, b.width - 20));
+      try {
+        to.animate([{ transform: `translateX(${a.left - b.left}px) scaleX(${s})` }, { transform: 'none' }],
+          { duration: 420, easing: SOFT, pseudoElement: '::after' });
+      } catch { /* no pseudo-element animation here */ }
+      const id = to.getAttribute('aria-controls');
+      const panel = (id && document.getElementById(id)) || to.closest('.mg-tabs').nextElementSibling;
+      if (panel && panel.animate) panel.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+    }
+  });
+  mo.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['aria-selected'], attributeOldValue: true, childList: true, characterData: true });
 }
