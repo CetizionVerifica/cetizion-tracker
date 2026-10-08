@@ -117,15 +117,20 @@ html.mg-kbd :is(.mg-menu__item, .mg-list__opt, [data-slot$="-item"], [data-slot=
 /* ── Scrolling ── */
 /* Anchor and programmatic jumps glide; the wheel and trackpad stay native. */
 @media (prefers-reduced-motion: no-preference) { html:not(.mg-paused) { scroll-behavior: smooth; } }
-/* Inner scroll areas: a thin themed thumb that fades in while the pointer is over them. */
-@media (hover: hover) {
-  .mg * { scrollbar-color: transparent transparent; }
-  .mg *:hover, .mg *:focus-within { scrollbar-color: var(--scroll-thumb) transparent; }
-  /* motion.js tags each scroll area the pointer reaches, so its thumb fades in and out. */
-  .mg .mg-sc { transition: scrollbar-color var(--mg-med) var(--mg-out); }
-  .mg .mg-sc:hover { transition-duration: var(--mg-fast); }
-  .mg .mg-sc-cold.mg-sc-cold { scrollbar-color: transparent transparent; }
-}
+/* Scrollbars (Sami, 9 Oct): a slim rounded thumb with no arrow buttons, kept clear of
+   rounded corners, shown while the pointer is over the scroll area. Chrome draws the
+   standard scrollbar (with Windows arrow buttons) whenever scrollbar-color or
+   scrollbar-width is set, so those stay unset and the -webkit- parts do the work;
+   Firefox, which has no -webkit- parts, gets the thin standard one. */
+html, .mg, .mg * { scrollbar-width: auto; scrollbar-color: auto; }
+html::-webkit-scrollbar, .mg::-webkit-scrollbar, .mg ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+html::-webkit-scrollbar-button, .mg ::-webkit-scrollbar-button, .mg::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+html::-webkit-scrollbar-track, .mg ::-webkit-scrollbar-track, .mg::-webkit-scrollbar-track { background: transparent; margin: 16px; }
+html::-webkit-scrollbar-corner, .mg ::-webkit-scrollbar-corner { background: transparent; }
+html::-webkit-scrollbar-thumb, .mg ::-webkit-scrollbar-thumb, .mg::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+html:hover::-webkit-scrollbar-thumb, .mg :hover::-webkit-scrollbar-thumb, .mg :focus-within::-webkit-scrollbar-thumb { background-color: var(--scroll-thumb); }
+.mg ::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+@supports (-moz-appearance: none) { html, .mg, .mg * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; } }
 /* Dialogs, sheets, menus and lists never hand their scroll on to the page. */
 [data-slot$="-content"], [data-slot$="-content"] *, .mg-list, .mg-menu, .mg-cal, .mg-palette, .mg-palette *, .set-nav { overscroll-behavior: contain; }
 /* While scrolling, the blobs hold still so the glass doesn't re-blur a moving scene every frame. */
