@@ -174,11 +174,11 @@ function ReadyToInvoice({ stages }) {
         {rest.map(([cur, amount]) => <span key={cur} className="mg-num text-[14px] font-bold text-secondary-text">+ {money(amount, cur)}</span>)}
       </div>
       <span className="mg-tile__foot"><b className="text-foreground">{plural(stages.length, 'invoice is', 'invoices are')} ready to raise.</b> Every trigger has happened; nothing else is in the way.</span>
-      <div className="app-bars" role="img" aria-label={`${plural(stages.length, 'stage')} ready to raise, by value`}>
+      {bars.length > 1 && <div className="app-bars" role="img" aria-label={`${plural(stages.length, 'stage')} ready to raise, by value`}>
         {bars.map((s) => <span key={s.id} className="is-ready" data-a="grow" style={{ height: `${Math.max(18, (Number(s.stage_amount || 0) / top) * 100)}%` }} />)}
-      </div>
+      </div>}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
-        <span className="mg-legend"><span><i style={{ background: 'var(--caramel)' }} />Ready, by value</span></span>
+        {bars.length > 1 ? <span className="mg-legend"><span><i style={{ background: 'var(--caramel)' }} />Ready, by value</span></span> : <span />}
         <Link to="/money/invoice-run" className="mg-btn mg-btn--sm">Raise them</Link>
       </div>
     </section>
