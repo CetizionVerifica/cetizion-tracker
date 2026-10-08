@@ -241,7 +241,7 @@ test('Insights answers five questions, and a bar opens the list it counted', asy
   await card.getByRole('button', { name: 'Open as table' }).click();
   await card.getByRole('link', { name: band.label }).click();
   await expect(page).toHaveURL(new RegExp(`/quotations\\?follow_up=overdue&overdue_days=${band.key.replace('+', '%2B')}`));
-  await expect(page.getByText(`${band.count} of ${band.count}`)).toBeVisible();
+  await expect(page.getByText(`${band.count} record${band.count === 1 ? '' : 's'}`, { exact: true })).toBeVisible();
 });
 
 /**
