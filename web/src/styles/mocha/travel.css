@@ -206,3 +206,32 @@ a.app-line__title:hover { text-decoration: underline; text-underline-offset: 3px
 .app-tdmonth__bar.mg-hatch { background: var(--mg-hatch); }
 .app-tdmonth__label { font-size: 12px; font-weight: 700; }
 .app-tdmonth__amt { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* Import travel: the panel, the drop zone with a real Choose button, the imports, the how-to. */
+.app-import { border-radius: 26px; padding: 22px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.app-import__vendor { max-width: 380px; margin: 0; }
+.app-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 20px; border: 1.5px dashed var(--scroll-thumb, var(--line)); border-radius: 22px; text-align: center; transition: background 200ms, border-color 200ms; }
+.app-drop:focus-within { outline: 3px solid var(--caramel); outline-offset: 3px; }
+.app-drop.is-over { border-color: var(--caramel); background: var(--wait-soft); }
+.app-drop.is-busy { border-color: var(--caramel); background: var(--track); }
+.app-drop__mark { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--track); color: var(--text2); margin-bottom: 4px; }
+.app-drop__mark svg { width: 20px; height: 20px; }
+.app-drop b { font-size: 14px; }
+.app-drop > span:not(.app-drop__mark) { font-size: 12.5px; color: var(--muted); max-width: 52ch; }
+.app-drop__choose { margin-top: 8px; position: relative; }
+.app-import__list { display: flex; flex-direction: column; gap: 6px; }
+.app-batches { list-style: none; margin: 0; padding: 0; }
+.app-howto { border-radius: 18px; background: var(--track); padding: 12px 16px; }
+.app-howto summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.app-howto summary:focus-visible { outline: 2px solid var(--caramel); outline-offset: 3px; border-radius: 6px; }
+.app-howto p { margin: 10px 0 0; max-width: 80ch; font-size: 12.5px; line-height: 1.65; color: var(--text2); }
+@media (max-width: 719px) { .app-import { padding: 16px; } }
+
+/* Travel import review: rows of a step, inside the tab panel. */
+.app-ibox { border: 1px solid var(--line); border-radius: 18px; overflow: hidden; min-width: 0; }
+.app-ibox > .mg-table { min-width: 560px; }
+.app-irow { padding: 12px 16px; border-bottom: 1px solid var(--line); box-shadow: inset 3px 0 0 transparent; }
+.app-irow:last-child { border-bottom: 0; }
+.app-irow.is-known { box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait-soft) 55%, transparent); }
+.app-irow.is-out { opacity: .5; }
+.mg-count.app-count--late { background: var(--late); color: var(--on-late, #fff); margin-left: 6px; }

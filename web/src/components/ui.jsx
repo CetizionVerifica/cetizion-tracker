@@ -586,7 +586,7 @@ export function ToastProvider({ children }) {
  * action whose own message says it can be run twice — a red button and a
  * calm sentence disagree, and the button is the one people read.
  */
-export function ConfirmDialog({ title, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', children }) {
+export function ConfirmDialog({ title, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', busyLabel = 'Working…', children }) {
   return (
     <Modal
       title={title}
@@ -597,7 +597,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Delete', cancelL
           {/* On a phone the two stack, full width and 44px tall (the dialog is a bottom sheet there). */}
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy} className="max-sm:h-11 max-sm:w-full">{cancelLabel}</Button>
           <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy} aria-busy={busy || undefined} className="max-sm:h-11 max-sm:w-full">
-            {busy ? 'Working…' : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </Button>
         </>
       }

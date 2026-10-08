@@ -607,6 +607,9 @@ export function Holidays() {
   );
 }
 
+/** The travel desk's lists (#196): HR keeps them as an admin does. */
+const CATALOGUE_HR = new Set(['travel-vendors', 'trip-types']);
+
 export function Catalogue({ resource, label, title, hint, extraColumns = [], extraFields = [] }) {
   // A Settings list: an admin curates it, everybody reads it, because the same
   // rows fill the dropdowns sales users work in (#85). The travel desk keeps
@@ -614,7 +617,7 @@ export function Catalogue({ resource, label, title, hint, extraColumns = [], ext
   const auth = useAuth();
   const isAdmin = mayWriteResource(resource, auth.isAdmin, auth.isHr);
   const toast = useToast();
-  const { rows, loading, refetch } = useList(resource, {});
+  const { rows, loading, error, refetch } = useList(resource, {});
   const [editing, setEditing] = useState(null);
 
   async function toggle(row) {
@@ -631,9 +634,18 @@ export function Catalogue({ resource, label, title, hint, extraColumns = [], ext
     <SettingsPane
       title={title}
       description={hint}
-      actions={isAdmin && <Button size="sm" className="h-8 px-4 text-[13px]" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</Button>}
+      actions={isAdmin && <button type="button" className="mg-btn mg-btn--primary" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</button>}
     >
+      {!isAdmin && <p className="m-0 text-[12.5px] text-muted-foreground">Read only: an admin keeps this list{CATALOGUE_HR.has(resource) ? ', with the travel desk' : ''}.</p>}
       <Card flush>
+        {error ? (
+          <div className="mg-empty" role="alert">
+            <span className="mg-empty__mark bg-late-soft text-late" aria-hidden="true">!</span>
+            <h2 className="mg-empty__title">Couldn't load {title.toLowerCase()}</h2>
+            <p className="mg-empty__text">{error}</p>
+            <button type="button" className="mg-btn mg-btn--sm" onClick={refetch}>Try again</button>
+          </div>
+        ) : (
         <DataTable
           loading={loading}
           rows={rows}
@@ -658,8 +670,8 @@ export function Catalogue({ resource, label, title, hint, extraColumns = [], ext
                       in (#85). These resources are adminOnlyWrites on the server. */}
                   {isAdmin && (
                     <>
-                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => setEditing(r)}>{resource === 'services' || extraFields.length ? 'Edit' : 'Rename'}</button>
-                      <button type="button" className="btn btn--sm btn--ghost" onClick={() => toggle(r)}>
+                      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`${resource === 'services' || extraFields.length ? 'Edit' : 'Rename'} ${r.name}`} onClick={() => setEditing(r)}>{resource === 'services' || extraFields.length ? 'Edit' : 'Rename'}</button>
+                      <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" aria-label={`${r.active ? 'Hide' : 'Restore'} ${r.name}`} onClick={() => toggle(r)}>
                         {r.active ? 'Hide' : 'Restore'}
                       </button>
                     </>
@@ -668,8 +680,27 @@ export function Catalogue({ resource, label, title, hint, extraColumns = [], ext
               ),
             },
           ]}
-          empty={<Empty title={`No ${title.toLowerCase()} yet`} />}
+          phone={(r) => (
+            <div className="mg-row">
+              <span className="mg-row__title">{r.name}</span>
+              <span className="mg-row__amount"><Badge tone={r.active ? 'success' : 'neutral'}>{r.active ? 'Active' : 'Hidden'}</Badge></span>
+              {isAdmin && (
+                <span className="mg-row__meta" style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, marginTop: 6 }}>
+                  <button type="button" className="mg-btn mg-btn--sm" onClick={() => setEditing(r)}>{resource === 'services' || extraFields.length ? 'Edit' : 'Rename'}</button>
+                  <button type="button" className="mg-btn mg-btn--ghost mg-btn--sm" onClick={() => toggle(r)}>{r.active ? 'Hide' : 'Restore'}</button>
+                </span>
+              )}
+            </div>
+          )}
+          empty={(
+            <div className="mg-empty">
+              <h2 className="mg-empty__title">No {title.toLowerCase()} yet</h2>
+              <p className="mg-empty__text">{isAdmin ? `Add the first ${label.toLowerCase()}; it shows in the dropdowns that use this list.` : 'An admin adds them here.'}</p>
+              {isAdmin && <button type="button" className="mg-btn mg-btn--primary mg-btn--sm" onClick={() => setEditing('new')}>Add a {label.toLowerCase()}</button>}
+            </div>
+          )}
         />
+        )}
       </Card>
 
       {editing && (

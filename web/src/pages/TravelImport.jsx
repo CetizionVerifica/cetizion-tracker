@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, UploadCloud } from 'lucide-react';
+import { Download, FileSpreadsheet, LoaderCircle, Trash2, Upload } from 'lucide-react';
 import { cn } from 'cn';
-import { Alert, ConfirmDialog, Field, Select, useToast } from '../components/ui.jsx';
-import { Chip } from '../components/record.jsx';
-import { Button } from '../components/ui/button';
+import { ConfirmDialog, useToast } from '../components/ui.jsx';
+import { MoneyBanner } from '../components/money.jsx';
+import { Tone } from '../components/sales.jsx';
+import { count } from '../components/travel.jsx';
 import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
 import { SettingsPane } from './SettingsArea.jsx';
 import { api } from '../lib/api.js';
@@ -16,27 +17,34 @@ import { useFetch, useLookups } from '../lib/hooks.js';
  * out — the same promise as the sales import, for the travel desk. Every
  * tab is read; the vendor is chosen once for the whole workbook, or found
  * from its invoice numbers.
+ *
+ * Wave 6: one glass panel; the drop zone has a real Choose button and a
+ * visible focus ring, says when it is being dragged over and while it
+ * reads; the imports list says where each one stands (to fix, in, could
+ * not be read) with one button; the reading rules sit behind "How the
+ * import reads a workbook".
  */
 
 const ACCEPT = '.xlsx,.xls,.csv';
 
 function state(batch) {
-  if (batch.status === 'failed') return { tone: 'late', label: 'Could not be read' };
-  if (batch.status === 'committed') return { tone: 'settled', icon: Check, label: `${number(batch.summary?.written?.trip ?? 0)} trips in` };
+  if (batch.status === 'failed') return { tone: 'late', label: 'Could not be read', btn: 'See why' };
+  if (batch.status === 'committed') return { tone: 'ok', label: `${number(batch.summary?.written?.trip ?? 0)} trips in`, btn: 'View' };
   const red = batch.summary?.red || 0;
-  return { tone: 'waiting', label: red ? `Review · ${number(red)} to fix` : `Review · ${number(batch.row_count)} rows` };
+  return { tone: 'wait', label: red ? `Review · ${number(red)} to fix` : `Review · ${number(batch.row_count)} rows`, btn: 'Review', primary: true };
 }
 
 export default function TravelImport() {
   const navigate = useNavigate();
   const toast = useToast();
   const lookups = useLookups();
+  const input = useRef(null);
   const [vendor, setVendor] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [deleting, setDeleting] = useState(null);
-  const { data, loading, refetch } = useFetch(() => api.raw('/import/travel'), []);
+  const { data, loading, error: listError, refetch } = useFetch(() => api.raw('/import/travel'), []);
   const batches = data?.data ?? [];
 
   async function send(file) {
@@ -51,8 +59,9 @@ export default function TravelImport() {
       toast('Workbook read — review what was found', 'success');
       navigate(`/import-travel/${result.data.id}`);
     } catch (err) {
-      setError(err.message);
+      setError({ message: err.message, file: file.name });
       setBusy(false);
+      if (input.current) input.current.value = '';
     }
   }
 
@@ -71,82 +80,101 @@ export default function TravelImport() {
     <>
       <SettingsPane
         title="Import travel"
-        description="A travel agency's workbook in, trips, legs, agency invoices and credit notes out. Nothing is written until you commit the review."
+        description="A travel agency's workbook in; trips, legs, agency invoices and credit notes out. Nothing is written until you commit the review."
         actions={
           <div className="flex flex-wrap gap-2">
             <TravelDocumentsUpload />
-            <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" asChild>
-              <a href={api.travelTemplateUrl()} download>Download the template</a>
-            </Button>
+            <a className="mg-btn mg-btn--ghost" href={api.travelTemplateUrl()} download><Download className="size-4" strokeWidth={1.8} aria-hidden="true" />Download the template</a>
           </div>
         }
       >
-        {error && <Alert tone="danger">{error}</Alert>}
-
-        <div className="max-w-[360px]">
-          <Field label="Travel vendor" hint="The whole workbook is from one agency. Left blank, it is found from the invoice numbers.">
-            <Select value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Find from invoice numbers"
-              options={lookups.travel_vendor_list.map((v) => ({ value: String(v.id), label: v.name }))} />
-          </Field>
-        </div>
-
-        <label
-          htmlFor="travel-import-file"
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); send(e.dataTransfer.files?.[0]); }}
-          className={cn(
-            'block cursor-pointer rounded-[10px] border border-dashed bg-card px-5 py-7 text-center transition-colors',
-            dragging ? 'border-primary bg-primary/[0.04]' : 'border-border-strong hover:border-muted-foreground',
-            busy && 'pointer-events-none opacity-60'
+        <section className="mg-glass mg-glass--strong app-import" aria-label="Import a travel workbook">
+          {error && (
+            <MoneyBanner tone="late" role="alert" title={`${error.file} couldn't be read.`}
+              action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => input.current?.click()}>Choose another file</button>}>
+              {error.message} Nothing was saved.
+            </MoneyBanner>
           )}
-        >
-          <UploadCloud className="mx-auto size-[22px] text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-          <div className="mt-3 text-[13px] font-medium text-foreground">{busy ? 'Reading the workbook…' : 'Drop the travel .xlsx or .csv'}</div>
-          <div className="mt-1 text-[12px] text-muted-foreground">
-            {busy ? 'Every tab, grouped into trips and matched to POs, projects and staff.' : 'Flights, trains, buses, cabs and hotels, one row per leg, any number of monthly tabs'}
+
+          <label className="mg-field app-import__vendor">
+            <span className="mg-field__label">Travel vendor</span>
+            <span className="mg-select-wrap">
+              <select className="mg-select" value={vendor} onChange={(e) => setVendor(e.target.value)}>
+                <option value="">Find from invoice numbers</option>
+                {lookups.travel_vendor_list.map((v) => <option key={v.id} value={String(v.id)}>{v.name}</option>)}
+              </select>
+            </span>
+            <span className="mg-field__hint">The whole workbook is from one agency. Left on "Find from invoice numbers", it is found from them.</span>
+          </label>
+
+          <div
+            className={cn('app-drop', dragging && 'is-over', busy && 'is-busy')}
+            onDragOver={(e) => { e.preventDefault(); if (!busy) setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); if (!busy) send(e.dataTransfer.files?.[0]); }}
+            aria-busy={busy || undefined}
+          >
+            <span className="app-drop__mark" aria-hidden="true">{busy ? <LoaderCircle className="animate-spin" strokeWidth={1.8} /> : <Upload strokeWidth={1.8} />}</span>
+            <b>{busy ? 'Reading the workbook…' : dragging ? 'Drop it to start the review' : 'Drop the travel .xlsx or .csv here'}</b>
+            <span>{busy ? 'Every tab, grouped into trips and matched to POs, projects and staff.' : 'Flights, trains, buses, cabs and hotels, one row per leg, any number of monthly tabs.'}</span>
+            {!busy && (
+              <label className="mg-btn mg-btn--sm app-drop__choose">
+                Choose a file
+                <input ref={input} id="travel-import-file" type="file" accept={ACCEPT} className="sr-only" onChange={(e) => send(e.target.files?.[0])} />
+              </label>
+            )}
           </div>
-        </label>
-        <input id="travel-import-file" type="file" accept={ACCEPT} className="sr-only" disabled={busy} onChange={(e) => send(e.target.files?.[0])} />
 
-        <div className="overflow-hidden rounded-[10px] border border-border bg-card">
-          {loading && !batches.length ? (
-            <div className="skeleton" style={{ height: 88, margin: 18 }} />
-          ) : batches.length === 0 ? (
-            <p className="px-5 py-6 text-[13px]/[1.7] text-secondary-text">No travel imports yet. Drop a workbook above to start one.</p>
-          ) : batches.map((batch, i) => {
-            const look = state(batch);
-            return (
-              <div key={batch.id} className={cn('flex flex-wrap items-center gap-3 px-4 py-2.5', i < batches.length - 1 && 'border-b border-border')}>
-                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => navigate(`/import-travel/${batch.id}`)}>
-                  <div className={cn('truncate text-[13px] font-medium', batch.status === 'committed' ? 'text-secondary-text' : 'text-foreground')}>{batch.filename}</div>
-                  <div className="truncate text-[12px] text-muted-foreground">
-                    {[batch.vendor_name, batch.summary?.trips !== undefined && `${number(batch.summary.trips)} trips · ${number(batch.summary.invoices)} invoices`, batch.uploaded_by, ago(batch.created_at)].filter(Boolean).join(' · ')}
-                  </div>
-                </button>
-                <Chip tone={look.tone} icon={look.icon}>{look.label}</Chip>
-                <Button variant="secondary" size="sm" className="h-7 px-3 text-[12.5px]" onClick={() => navigate(`/import-travel/${batch.id}`)}>
-                  {batch.status === 'committed' ? 'View' : 'Review'}
-                </Button>
-                {batch.status !== 'committed' && (
-                  <Button variant="ghost" size="icon-sm" className="size-7" aria-label={`Delete the draft from ${batch.filename}`} onClick={() => setDeleting(batch)}>✕</Button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+          <div className="app-import__list">
+            <h3 className="mg-label">Imports</h3>
+            {listError ? (
+              <MoneyBanner tone="late" role="alert" title="Couldn't load the imports." action={<button type="button" className="mg-btn mg-btn--sm" onClick={refetch}>Try again</button>}>{listError}</MoneyBanner>
+            ) : loading && !batches.length ? (
+              <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading the imports">{[0, 1].map((i) => <div key={i} className="mg-skel" style={{ height: 52 }} />)}</div>
+            ) : batches.length === 0 ? (
+              <p className="app-tabnote">No travel imports yet. Drop a workbook above to start one; it waits here as a draft until you commit it.</p>
+            ) : (
+              <ul className="app-batches">
+                {batches.map((batch) => {
+                  const look = state(batch);
+                  return (
+                    <li key={batch.id} className="app-line">
+                      <span className={cn('app-line__mark', look.tone === 'late' && 'is-late')}><FileSpreadsheet strokeWidth={1.8} aria-hidden="true" /></span>
+                      <div className="app-line__text">
+                        <span className={cn('app-line__title', batch.status === 'committed' && 'text-secondary-text')}>{batch.filename}</span>
+                        <span className="app-line__meta">
+                          {[batch.vendor_name, batch.summary?.trips !== undefined && `${count(batch.summary.trips, 'trip')} · ${count(batch.summary.invoices, 'invoice')}`, batch.uploaded_by, ago(batch.created_at), batch.status === 'failed' && batch.error].filter(Boolean).join(' · ')}
+                        </span>
+                      </div>
+                      <div className="app-line__end">
+                        <Tone tone={look.tone}>{look.label}</Tone>
+                        <button type="button" className={cn('mg-btn mg-btn--sm', look.primary && 'mg-btn--primary')} aria-label={`${look.btn}: ${batch.filename}`} onClick={() => navigate(`/import-travel/${batch.id}`)}>{look.btn}</button>
+                        {batch.status !== 'committed' && (
+                          <button type="button" className="mg-iconbtn" aria-label={`Delete the draft from ${batch.filename}`} title="Delete the draft" onClick={() => setDeleting(batch)}><Trash2 strokeWidth={1.8} aria-hidden="true" /></button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
 
-        <p className="max-w-[80ch] text-[11.5px]/[1.6] text-muted-foreground">
-          Columns are found by their names, tab by tab, so a column added, repeated or left unnamed in one month does not
-          matter; a correction you make is remembered for the vendor. Rows of one person within
-          {' '}{lookups.settings?.travel_import_trip_gap_days || 7} days that chain on (out and back, or onward) become one
-          trip with its legs. Rows sharing an invoice number become one agency invoice with a line per leg, and a credit or
-          cancellation note is matched to the invoice it reverses.
-        </p>
-        <p className="max-w-[80ch] text-[11.5px]/[1.6] text-muted-foreground">
-          Upload the same workbook again as the month fills in. Legs, invoices and notes already in the tracker are
-          recognised and kept, or updated from the sheet if you choose; only what is new is added.
-        </p>
+          <details className="app-howto">
+            <summary>How the import reads a workbook</summary>
+            <p>
+              Columns are found by their names, tab by tab, so a column added, repeated or left unnamed in one month does not
+              matter; a correction you make is remembered for the vendor. Rows of one person within
+              {' '}{lookups.settings?.travel_import_trip_gap_days || 7} days that chain on (out and back, or onward) become one
+              trip with its legs. Rows sharing an invoice number become one agency invoice with a line per leg, and a credit or
+              cancellation note is matched to the invoice it reverses.
+            </p>
+            <p>
+              Upload the same workbook again as the month fills in. Legs, invoices and notes already in the tracker are
+              recognised and kept, or updated from the sheet if you choose; only what is new is added.
+            </p>
+          </details>
+        </section>
       </SettingsPane>
 
       {deleting && (
