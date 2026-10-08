@@ -53,3 +53,14 @@
 .mg input[type="number"]::-webkit-inner-spin-button,
 .mg input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
+
+/* Bare checkboxes (import review rows, saved views, portal invoice picks, questionnaire options):
+   the Mocha check rather than the browser's blue box. Switches and the timeline tick keep their own. */
+.mg input[type="checkbox"]:not([role="switch"], .sr-only, .app-tl__tick, .mg-switch input, .mg-check input) {
+  appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px; margin: 0; border-radius: 6px;
+  border: 1.5px solid var(--text2); background: var(--glass-strong); display: inline-grid; place-items: center; vertical-align: middle; cursor: pointer;
+}
+.mg input[type="checkbox"]:not([role="switch"], .sr-only, .app-tl__tick, .mg-switch input, .mg-check input):checked { background: var(--btn); border-color: var(--btn); }
+.mg input[type="checkbox"]:not([role="switch"], .sr-only, .app-tl__tick, .mg-switch input, .mg-check input):checked::after { content: ""; width: 5px; height: 9px; margin-top: -2px; border-right: 2px solid var(--on-btn); border-bottom: 2px solid var(--on-btn); rotate: 45deg; }
+.mg input[type="checkbox"]:not([role="switch"], .sr-only, .app-tl__tick, .mg-switch input, .mg-check input):disabled { opacity: .45; cursor: not-allowed; }
+.mg input[type="checkbox"]:not([role="switch"], .sr-only, .app-tl__tick, .mg-switch input, .mg-check input):focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; }
