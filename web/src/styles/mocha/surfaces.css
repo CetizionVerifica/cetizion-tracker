@@ -54,3 +54,39 @@
 .mg-pop, .mg-menu, .mg-cal, .mg-list, .mg-tip, .mg-toast, .mg-notice, .mg-palette, .mg-sheet {
   animation-fill-mode: backwards !important;
 }
+
+/* ── Solid glass (Sami, 9 Oct): pop-ups are fully opaque, so nothing behind them
+   can ever be read, yet keep the glass look: a sheen falling from the top, a
+   bright top edge, a soft inner glow, the glass edge and a deep shadow. ── */
+:root {
+  --solid-glass: #FBF4EC;
+  --solid-glass-float: #FCF7F1;
+  --solid-sheen: linear-gradient(180deg, rgba(255,255,255,.75) 0%, rgba(255,255,255,0) 46%);
+  --solid-hi: rgba(255,255,255,.95);
+  --solid-glow: rgba(255,255,255,.55);
+  --solid-shade: rgba(70,40,18,.26);
+}
+.dark, [data-theme="dark"] {
+  --solid-glass: #261A13;
+  --solid-glass-float: #2B1E16;
+  --solid-sheen: linear-gradient(180deg, rgba(255,230,205,.09) 0%, rgba(255,230,205,0) 46%);
+  --solid-hi: rgba(255,232,210,.16);
+  --solid-glow: rgba(255,215,180,.05);
+  --solid-shade: rgba(0,0,0,.6);
+}
+[data-slot="dialog-content"], [data-slot="sheet-content"],
+.mg-dialog.mg-glass, .mg-sheet.mg-glass, .mg-palette.mg-glass,
+.mg-pop.mg-glass, .mg-menu, .mg-cal, .mg-list, .mg-tip, .mg-toast, .mg-notice,
+[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"],
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  background: var(--solid-sheen), var(--solid-glass);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--solid-hi), inset 0 0 24px var(--solid-glow), 0 30px 70px -26px var(--solid-shade), 0 2px 8px -3px var(--solid-shade);
+}
+.mg-pop.mg-glass, .mg-menu, .mg-cal, .mg-list, .mg-tip, .mg-toast, .mg-notice,
+[data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"],
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  background: var(--solid-sheen), var(--solid-glass-float);
+}
+.mg select:not([multiple])::picker(select) { background: var(--solid-sheen), var(--solid-glass-float); backdrop-filter: none; }
