@@ -254,6 +254,33 @@ describe('the screens', () => {
     assert.match(bulk, /max=\{todayIso\(\)\}/, 'and an invoice cannot be dated in the future');
   });
 
+  /**
+   * The web suite has no renderer and the repo has no linter, so a name the
+   * dialog reads but never binds compiles, builds, and then throws the
+   * moment somebody opens it — which is exactly what the rebase onto the
+   * redesign did to `fileError`. Every hook the dialog's own markup depends
+   * on is checked against its binding here.
+   */
+  test('every hook the dialog reads is actually bound', () => {
+    const dialog = code(read('components/actions.jsx'));
+    const from = dialog.indexOf('export function RaiseTravelInvoiceDialog');
+    const bulk = dialog.slice(from, dialog.indexOf('\nexport function ', from + 1));
+    for (const [name, binding] of [
+      ['checkFile', /const \[checkFile, fileError\] = useFileLimit\(\)/],
+      ['fileError', /const \[checkFile, fileError\] = useFileLimit\(\)/],
+      ['uploadDocument', /const uploadDocument = useDocumentUploads\(\)/],
+      ['cost', /const cost = selectedCost\(/],
+      ['offered', /const offered = billableTrips\(/],
+      ['eligible', /const eligible = offered\.filter\(/],
+      ['errors', /const errors = \{ \.\.\.local, \.\.\.fieldErrors \}/],
+    ]) {
+      if (new RegExp(`\\b${name}\\b`).test(bulk)) {
+        assert.match(bulk, binding, `the dialog reads ${name} but never binds it`);
+      }
+    }
+    assert.match(code(read('components/actions.jsx')), /useFileLimit/, 'and the hook is imported');
+  });
+
   test('the trip page offers travel invoices only, and works without a PO', () => {
     const trip = code(read('pages/TripDetail.jsx'));
     assert.match(trip, /billableInvoices\(/, 'filtered through the shared rule');

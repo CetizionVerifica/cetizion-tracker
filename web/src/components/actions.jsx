@@ -100,6 +100,9 @@ export function RaiseTravelInvoiceDialog({ scope, onClose, onDone }) {
   const [pdf, setPdf] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
   const [local, setLocal] = useState({});
+  // The same size check every other dialog's file field uses, so one limit
+  // is reported in one way across the app.
+  const [checkFile, fileError] = useFileLimit();
   const uploadDocument = useDocumentUploads();
   const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Travel invoice raised' });
 
