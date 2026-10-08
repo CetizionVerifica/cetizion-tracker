@@ -77,6 +77,22 @@ export const CLIENT_EMAILS = [
     skips: null,
   },
   {
+    key: 'questionnaire_invite',
+    label: 'Service questionnaire',
+    automatic: false,
+    when: 'Someone sends a questionnaire from an enquiry with "Email it", or emails a new link to it.',
+    to: 'The enquiry\'s contact, or the address typed in, with a link to fill it in.',
+    skips: null,
+  },
+  {
+    key: 'questionnaire_reminder',
+    label: 'Questionnaire reminder',
+    automatic: true,
+    when: 'The daily questionnaire job finds one not submitted 3 days after the last email (the days are in Settings), at most twice; or someone presses Remind.',
+    to: 'The address the questionnaire was last emailed to.',
+    skips: 'Questionnaires submitted or withdrawn, and links expired or revoked.',
+  },
+  {
     key: 'mailbox_reply',
     label: 'Reply from the Inbox',
     automatic: false,
@@ -128,6 +144,7 @@ export async function clientEmailHold(db, template) {
  *                   (payment reminders, portal links and replies, visit
  *                   confirmations are logged against the company)
  *   email_thread    the same, for the company the thread is tied to
+ *   enquiry         the enquiry's owner (questionnaire emails, #208)
  *
  * Only owners who are active users of the app count: an owner who cannot
  * sign in has no view to see it in, and is not listed against it.
@@ -147,6 +164,9 @@ export const emailOwnersSql = (e = 'e') => `ARRAY(
       JOIN purchase_orders po ON po.po_number = s.po_number
       JOIN projects p ON p.project_id = po.project_id
      WHERE ${e}.entity = 'payment_stage' AND s.id::text = ${e}.entity_id
+    UNION ALL
+    SELECT en.owner_user_id FROM enquiries en
+     WHERE ${e}.entity = 'enquiry' AND en.enquiry_no = ${e}.entity_id
     UNION ALL
     SELECT r.owner_user_id FROM (
         SELECT company_id, owner_user_id FROM quotations

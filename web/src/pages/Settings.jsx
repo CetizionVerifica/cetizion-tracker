@@ -311,6 +311,14 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Service questionnaires',
+    hint: 'the form a client fills in before we quote',
+    items: [
+      { key: 'questionnaire_link_days', label: 'A questionnaire link stays open for', unit: 'days' },
+      { key: 'questionnaire_reminder_days', label: 'Remind a client who has not submitted after', unit: 'days' },
+    ],
+  },
+  {
     title: 'Client portal',
     hint: 'emails to clients who have the portal switched on',
     items: [
