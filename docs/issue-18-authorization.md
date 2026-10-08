@@ -172,6 +172,9 @@ session is **401**, before any of these is considered.
 | `GET /api/auth/providers` | **admin** | Which sign-in methods are configured, and how. It reports the provider set-up of the deployment, not the caller's own identities — those are on GET /api/auth/account. Carries its own requireAuth and requireAdmin because it is mounted before the /api gate. |
 | **/api/cashflow** | | |
 | `GET /api/cashflow` | any |  |
+| **/api/client-emails** | | |
+| `GET /api/client-emails` | **admin** | Every client email the tracker composed, with the client's address, and the switches that hold them. |
+| `PUT /api/client-emails` | **admin** | Holding or releasing client email decides whether clients hear from the company at all. |
 | **/api/client-errors** | | |
 | `POST /api/client-errors` | any | Mounted after requireAuth: browser errors are reported by signed-in people only. |
 | **/api/collections** | | |

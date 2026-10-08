@@ -306,6 +306,8 @@ export const routes = [
   { method: 'GET', path: '/api/emails', access: signedIn },
   { method: 'GET', path: '/api/emails/:id', access: signedIn },
   { method: 'POST', path: '/api/emails/test', access: mustBeAdmin, why: 'It sends real mail to an address the caller names — an effect outside the application.' },
+  { method: 'GET', path: '/api/client-emails', access: mustBeAdmin, why: 'Every client email the tracker composed, with the client\'s address, and the switches that hold them.' },
+  { method: 'PUT', path: '/api/client-emails', access: mustBeAdmin, why: 'Holding or releasing client email decides whether clients hear from the company at all.' },
 
   // ------------------------------------------------------------- pipeline
   { method: 'GET', path: '/api/pipeline', access: signedIn },

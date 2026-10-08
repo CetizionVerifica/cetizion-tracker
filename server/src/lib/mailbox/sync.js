@@ -16,6 +16,7 @@ import { DISPLAY_ONLY_FOLDERS, microsoftConfigured, microsoftProvider, SKIPPED_F
 import { isPortalSender } from './poDetect.js';
 import { resolveParties } from '../../routes/communications.js';
 import { assertNotStaging } from '../ops/environment.js';
+import { clientEmailHold } from '../clientEmails.js';
 import { enqueue, retryQueued, runReaders } from './readerQueue.js';
 
 /** The two folders every mailbox has, read by name; push notifications come from these. */
@@ -872,6 +873,20 @@ export async function replyToThread(threadId, html, by, { replyAll = true } = {}
   }
   const { rows: [account] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [t.account_id]);
   if (t.conversation_id.startsWith('portal-')) return replyToPortal(t, account, html, by);
+  // A reply goes to the client from the mailbox, past lib/mail.js, so the
+  // admin's hold on client emails (lib/clientEmails.js) is checked here:
+  // logged as it would have gone, and refused so the writer knows. Only a
+  // thread the tracker tied to a client company or contact counts.
+  const held = (t.company_id || t.contact_id) ? await clientEmailHold({ query }, 'mailbox_reply') : null;
+  if (held) {
+    const { rows: [m] } = await query('SELECT from_email, to_emails FROM email_messages WHERE thread_id = $1 ORDER BY sent_at DESC LIMIT 1', [threadId]);
+    const to = [m?.from_email, ...(m?.to_emails || [])].filter((a) => a && a.toLowerCase() !== String(account.email || '').toLowerCase());
+    await query(
+      `INSERT INTO email_log (to_email, subject, template, entity, entity_id, status, mode, reason, body_text, body_html, sent_by, from_email)
+       VALUES ($1,$2,'mailbox_reply','email_thread',$3,'suppressed','mailbox',$4,$5,$6,$7,$8)`,
+      [[...new Set(to)].join(', ') || '(thread participants)', `RE: ${t.subject || ''}`, String(t.id), held, snippet(html, 10000), cleanHtml(html), by, account.email]);
+    throw Object.assign(new Error('Client emails are held by an admin, so this reply was not sent. It is kept in Settings, Client emails.'), { status: 409 });
+  }
   const provider = providerFor(account);
   await provider.reply(last.provider_id, html, { replyAll });
   await saveTokens(account, provider);

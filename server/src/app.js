@@ -28,6 +28,7 @@ import { activityRouter } from './routes/activity.js';
 import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
+import { clientEmailRouter } from './routes/clientEmails.js';
 import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
 import { registerRouter } from './routes/register.js';
@@ -163,6 +164,7 @@ app.use('/api/activity', activityRouter);
 // two-segment paths (/:id/full, /:id/convert) are matched first.
 app.use('/api/companies', companyRouter);
 app.use('/api/emails', emailRouter);
+app.use('/api/client-emails', clientEmailRouter);
 app.use('/api/pipeline', pipelineRouter);
 app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);

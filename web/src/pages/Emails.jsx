@@ -203,7 +203,7 @@ function summarise(result) {
   return JSON.stringify(result).slice(0, 80);
 }
 
-function EmailBody({ id, onClose }) {
+export function EmailBody({ id, onClose }) {
   const { data, loading } = useFetch(() => api.raw(`/emails/${id}`), [id]);
   const e = data?.data;
   return (
