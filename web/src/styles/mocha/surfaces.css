@@ -98,3 +98,12 @@
 /* The calendar and suggestion lists always take clicks, even when a modal dialog has
    switched pointer events off around it (they are mounted inside that dialog). */
 .mg-cal, .mg-list { pointer-events: auto; }
+
+/* Every single select opens the Mocha Glass list, whatever a screen's own select
+   styles say (an unlayered "appearance: none", e.g. on filter chips, used to win
+   and bring back the browser's white list with its blue highlight). */
+@supports (appearance: base-select) {
+  .mg select:not([multiple]) { appearance: base-select !important; -webkit-appearance: base-select !important; }
+  .mg select:not([multiple])::picker(select) { appearance: base-select !important; }
+  .mg select:not([multiple])::picker-icon { display: none; }
+}
