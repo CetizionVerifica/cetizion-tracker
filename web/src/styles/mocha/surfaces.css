@@ -94,3 +94,7 @@
   background: var(--solid-sheen), var(--solid-glass-float);
 }
 .mg select:not([multiple])::picker(select) { background: var(--solid-sheen), var(--solid-glass-float); backdrop-filter: none; }
+
+/* The calendar and suggestion lists always take clicks, even when a modal dialog has
+   switched pointer events off around it (they are mounted inside that dialog). */
+.mg-cal, .mg-list { pointer-events: auto; }
