@@ -47,6 +47,19 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  /* Pop-ups live inside the dialog or sheet that holds their field. A modal dialog
+     turns pointer events off everywhere else and closes on any click outside it,
+     so a calendar or list hung on <body> could not be clicked there. */
+  function hostFor(input) {
+    return (input && input.closest && input.closest('[role="dialog"]:not(.mg-cal), [role="alertdialog"], [data-slot="dialog-content"], [data-slot="sheet-content"]')) || document.body;
+  }
+  function mountIn(node, input) {
+    var host = hostFor(input);
+    if (node.parentNode === host) return;
+    if (node.matches(':popover-open')) { try { node.hidePopover(); } catch (e) {} }
+    host.appendChild(node);
+  }
+
   function ensurePop() {
     if (pop && pop.isConnected) return pop;
     pop = el('div', 'mg mg-cal');
@@ -66,7 +79,7 @@
     if (!input || input.disabled || input.readOnly || !KINDS[input.type]) return;
     var kind = input.type, p = parse(kind, input.value), t = today(), anchor = p.sel || t;
     cur = { input: input, kind: kind, view: kind === 'month' ? 'months' : 'days', y: anchor.y, m: anchor.m, sel: p.sel, time: p.time, focus: null, slide: '' };
-    var P = ensurePop(), host = input.closest('[data-theme]');
+    var P = ensurePop(); mountIn(P, input); var host = input.closest('[data-theme]');
     if (host) P.setAttribute('data-theme', host.getAttribute('data-theme')); else P.removeAttribute('data-theme');
     P.setAttribute('aria-label', kind === 'time' ? 'Choose a time' : kind === 'month' ? 'Choose a month' : 'Choose a date');
     render();
@@ -314,7 +327,7 @@
   function showList(i) {
     var q = i.value.trim().toLowerCase(), all = optsOf(i), exact = false;
     var hits = all.filter(function (o) { if (o.v.toLowerCase() === q) exact = true; return !q || o.v.toLowerCase().indexOf(q) > -1 || o.l.toLowerCase().indexOf(q) > -1; }).slice(0, 60);
-    var L = listPop(), host = i.closest('[data-theme]');
+    var L = listPop(); mountIn(L, i); var host = i.closest('[data-theme]');
     if (host) L.setAttribute('data-theme', host.getAttribute('data-theme'));
     lcur = { input: i, items: [], active: -1 };
     L.replaceChildren();
