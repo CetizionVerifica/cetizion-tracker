@@ -1,20 +1,21 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  BedDouble, Bus, Car, ClipboardList, FileText, FolderKanban, Paperclip, Pencil, Plane, Plus, Receipt, TrainFront, Trash2, Wallet,
+  BedDouble, Bus, Car, CircleAlert, ClipboardList, FileText, FolderKanban, Paperclip, Pencil, Plane, Plus, Receipt, TrainFront, Trash2, Wallet,
 } from 'lucide-react';
 import { ConfirmDialog, FileDrop, useToast } from '../components/ui.jsx';
 import { RailPerson, RecordMenuItem, RecordPage, RecordStat } from '../components/record.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Sec, Tone, useTab } from '../components/sales.jsx';
 import { StateCard } from '../components/daily.jsx';
-import { MoneyBanner, shortDate } from '../components/money.jsx';
+import { MoneyBanner, MoneyFacts, shortDate } from '../components/money.jsx';
 import { BILL, CLAIM, typeLine, RailCard, RailLink, RecordState, StateBadge, TabsPanel, count, tripWhen } from '../components/travel.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useFetch, useFileLimit, useLookups } from '../lib/hooks.js';
 import { money } from '../lib/format.js';
 import { TRAVEL_KIND, billableInvoices } from '../lib/travelInvoices.js';
+import { clientBillingChip, isBilled, overdueBy, unbilledReason } from '../lib/tripBilling.js';
 import { tripFields } from './TravelLogs.jsx';
 
 /** A leg's mark, by how it travelled (#196). */
@@ -83,7 +84,9 @@ export default function TripDetail() {
   const [dialog, setDialog] = useState(null);
   const [checkFile, fileError] = useFileLimit();
   const [upload, setUpload] = useState({ file: null, doc_type: 'ticket', label: '', key: 0 });
-  const tabKeys = ['legs', 'costs', 'docs', ...(isHr ? [] : ['billing'])];
+  // The travel desk gets this tab as well now: read-only, and the whole
+  // of what it may see of the sales side (#214 §4, §5.3).
+  const tabKeys = ['legs', 'costs', 'docs', 'billing'];
   const [tab, setTab] = useTab(tabKeys);
 
   const { data, loading, fresh, error, errorStatus, refetch } = useFetch(() => api.raw(`/travel-logs/${encodeURIComponent(travelId)}/full`), [travelId]);
@@ -94,6 +97,12 @@ export default function TripDetail() {
   const lines = data?.data?.invoice_lines ?? [];
   const credits = data?.data?.credit_notes ?? [];
   const files = data?.data?.documents ?? [];
+  // What the client was billed, read through from the travel invoice by the
+  // server (#214 §5.3). It replaces a second request that fetched the
+  // project's whole payment schedule to find one stage in it — and that
+  // request was skipped for HR, so the travel desk could never see whether
+  // the client had paid. This block is the same for every role.
+  const billing = data?.data?.billing ?? null;
   const close = () => setDialog(null);
   const changed = () => { close(); refetch(); };
 
@@ -160,7 +169,7 @@ export default function TripDetail() {
     { key: 'legs', label: 'Legs', count: legs.length || undefined },
     { key: 'costs', label: 'Costs', count: bills.length + claims.length || undefined },
     { key: 'docs', label: 'Documents', count: files.length || undefined },
-    ...(isHr ? [] : [{ key: 'billing', label: 'Billed to the client' }]),
+    { key: 'billing', label: 'Billed to the client' },
   ];
 
   const blockedPanel = blocked.length > 0 && (
@@ -224,6 +233,13 @@ export default function TripDetail() {
           <>
             <Tone>{typeLine(trip)}</Tone>
             {trip.cancelled && <Tone tone="late">Cancelled</Tone>}
+            {/* The server's word, not a second opinion worked out here, and
+                prefixed "Client:" so it cannot be read as what we owe the
+                agency (#214 §5.3). */}
+            {(() => {
+              const chip = clientBillingChip(billing?.billing_status);
+              return chip ? <Tone tone={chip.tone}>{chip.label}</Tone> : null;
+            })()}
             {blocked.length > 0 && <Tone tone="late">{blocked.length === 1 ? 'A bill has no amount' : `${blocked.length} bills have no amount`}</Tone>}
             {trip.missing_documents?.length > 0 && <Tone tone="wait">Needs {trip.missing_documents.join(' and ')}</Tone>}
           </>
@@ -444,7 +460,10 @@ export default function TripDetail() {
             </Sec>
           )}
 
-          {tab === 'billing' && !isHr && <BilledStage trip={trip} onChanged={refetch} />}
+          {/* The travel desk reads it; the PO side decides it (#221). */}
+          {tab === 'billing' && (isHr
+            ? <ClientBilling billing={billing} />
+            : <BilledStage trip={trip} onChanged={refetch} />)}
         </TabsPanel>
       </RecordPage>
 
@@ -470,6 +489,84 @@ export default function TripDetail() {
     </>
   );
 }
+
+/**
+ * What the client was billed for this trip, read-only (#214 §4).
+ *
+ * The travel desk's one window on the sales side, and deliberately a flat
+ * one: the invoice, what has been received against it, when, its status,
+ * how late it is, and the invoice itself. No selector, because which
+ * invoice billed a trip is the PO side's decision (#221); no receipt list,
+ * no TDS, no reminders, no collections notes — none of which reach the
+ * browser at all, because the server's `billing` block does not carry them.
+ *
+ * Every figure here is the server's. Nothing is recomputed.
+ */
+function ClientBilling({ billing }) {
+  if (!billing) {
+    return (
+      <StateCard inPanel bordered={false} tone="plain" icon={Receipt}
+        title="Nothing is recorded about billing"
+        text="This trip carries no billing record at all. An administrator can look at it." />
+    );
+  }
+  const chip = clientBillingChip(billing.billing_status);
+  const late = overdueBy(billing);
+
+  // Not on a travel invoice. Which of the reasons it is, in words, and no
+  // figures — there are none to show. A trip pointing at an ordinary PO
+  // stage reads late, because that link is there to be corrected.
+  if (!isBilled(billing)) {
+    return (
+      <StateCard
+        inPanel
+        bordered={false}
+        tone={billing.billed_on_po_stage ? 'late' : 'plain'}
+        icon={billing.billed_on_po_stage ? CircleAlert : Receipt}
+        title={chip ? chip.label : 'Not billed'}
+        text={unbilledReason(billing)}
+      />
+    );
+  }
+
+  return (
+    <Sec
+      id="trip-billed"
+      title="Billed to the client"
+      hint="Read-only: raised by the sales side, and collected there"
+      tools={chip ? <Tone tone={chip.tone}>{chip.label}</Tone> : undefined}
+    >
+      <MoneyFacts
+        icon={Receipt}
+        items={[
+          { label: 'Invoice', value: billing.invoice_no || '—' },
+          { label: 'Dated', value: billing.invoice_date ? shortDate(billing.invoice_date) : '—' },
+          { label: 'Invoiced', value: money(billing.invoice_amount) },
+          { label: 'Received', value: money(billing.amount_received), tone: Number(billing.amount_received) > 0 ? 'ok' : undefined },
+          { label: 'Received on', value: billing.payment_received_date ? shortDate(billing.payment_received_date) : '—' },
+          { label: 'Status', value: billing.stage_status || '—', tone: chip?.tone === 'plain' ? undefined : chip?.tone },
+          // `overdueBy` already says "N days overdue", so the label must not
+          // say "late" again — the two together read twice.
+          late ? { label: 'This invoice is', value: late, tone: 'late' } : null,
+        ]}
+      />
+      <p className="app-tabnote">
+        {billing.invoice_document_id ? (
+          <a
+            className="app-link inline-flex items-center gap-1.5"
+            href={api.documentUrl(billing.invoice_document_id)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <FileText className="size-4" strokeWidth={1.8} aria-hidden="true" />
+            Open the client invoice
+          </a>
+        ) : 'PDF not on file.'}
+      </p>
+    </Sec>
+  );
+}
+
 
 /**
  * The payment stage whose invoice billed this trip to the client.

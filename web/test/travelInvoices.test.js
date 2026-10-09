@@ -298,6 +298,11 @@ describe('the screens', () => {
     // invoice has no stage name to do it with.
     assert.match(trip, /money\(s\.stage_amount\)/);
     assert.doesNotMatch(trip, /s\.stage_name/, 'a travel invoice is not a named share of a PO');
+    // The selector is the only thing on this page that asks the server for
+    // payment stages. What the client has paid comes through the trip's own
+    // `billing` block (#214 §5.3), which is why the travel desk can see it.
+    assert.equal((trip.match(/api\.list\('payment-stages'/g) || []).length, 1,
+      'one payment-stage lookup, and it is the selector\'s');
   });
 
   test('nothing from a later #214 phase has crept in', () => {

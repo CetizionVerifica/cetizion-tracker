@@ -858,6 +858,34 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(edit.status, 200, JSON.stringify(edit.body));
     });
 
+    /**
+     * The read-through phase (#214 §4) gives the travel desk one slice of
+     * the sales side and nothing else. The sweeps above prove HR is refused
+     * every route the policy does not mark for it; this proves the slice
+     * itself is narrow — HR reads the invoice a trip is billed on through a
+     * route it already had, and still cannot reach the payment stage behind
+     * it by any other door.
+     */
+    test('the travel desk reads a trip\'s client invoice and nothing else of the sales side', async () => {
+      const seen = await as(hr)('get', '/api/travel-logs/TRV-MX-214/full');
+      assert.equal(seen.status, 200, JSON.stringify(seen.body));
+      assert.ok(seen.body.data.billing, 'the billing block is HR\'s window on the sales side');
+      assert.equal(seen.body.data.payments, undefined, 'and it is not a window on the receipts');
+
+      for (const [method, path] of [
+        ['get', '/api/payment-stages'], ['post', '/api/payment-stages'],
+        ['get', '/api/payments'], ['get', '/api/quotations'],
+        ['post', '/api/travel-invoices'],
+      ]) {
+        const res = await as(hr)(method, path).send({});
+        assert.equal(
+          res.status, 403,
+          `an HR user got ${res.status} on ${method.toUpperCase()} ${path}. The billing block is a read-through `
+          + 'slice (#214 §4); it must not come with generic payment-stage or receipt access.'
+        );
+      }
+    });
+
     test('billed_stage_id cannot be written through ordinary CRUD by anybody', async () => {
       for (const who of [admin, salesA, hr]) {
         const res = await as(who)('patch', `/api/travel-logs/${tripId}`).send({ billed_stage_id: stageId });

@@ -1164,7 +1164,7 @@ travelRouter.get('/:travelId/full', async (req, res) => {
   // An invoice is this trip's when one of its lines is (#196): one agency
   // bill covers several trips and people.
   const mine = 'SELECT vendor_invoice_id FROM travel_vendor_invoice_lines WHERE travel_id = $1';
-  const [invoices, claims, legs, lines, credits, files] = await Promise.all([
+  const [invoices, claims, legs, lines, credits, files, billing] = await Promise.all([
     query(`SELECT * FROM v_travel_vendor_invoices WHERE id IN (${mine}) OR travel_id = $1 ORDER BY id`, [id]),
     query('SELECT * FROM v_employee_expense_claims WHERE travel_id = $1 ORDER BY id', [id]),
     query('SELECT * FROM v_travel_segments WHERE travel_id = $1 ORDER BY seq, start_date NULLS LAST, id', [id]),
@@ -1173,12 +1173,31 @@ travelRouter.get('/:travelId/full', async (req, res) => {
             WHERE c.against_invoice_id IN (${mine}) ORDER BY c.credit_note_date NULLS LAST, c.id`, [id]),
     query(`SELECT a.*, d.file_name, d.content_type, d.size_bytes FROM attachments a JOIN documents d ON d.id = a.document_id
             WHERE a.entity = 'travel_log' AND a.entity_id = $1 ORDER BY a.created_at DESC`, [id]),
+    /**
+     * What the client was billed for this trip (#214 §5.3), read through
+     * from the travel invoice rather than stored on the trip.
+     *
+     * Columns, not `SELECT *`, and this list is the whole of what the
+     * travel desk may see of the sales side (§4): the invoice, what has
+     * been received against it, when, its status and its PDF. No receipt
+     * rows, no TDS, no reminders, no collections notes, no margins — none
+     * of which this view carries anyway, which is why the same block
+     * serves every role instead of being assembled twice.
+     *
+     * `po_number`, `project_id`, `client_name` and the trip's cost are
+     * left out because the trip object beside it already carries them.
+     */
+    query(`SELECT chargeable, cancelled, billing_status, stage_id, invoice_no, invoice_date,
+                  invoice_amount, amount_received, payment_received_date, stage_status,
+                  days_overdue, invoice_document_id, billed_on_po_stage
+             FROM v_trip_billing WHERE travel_id = $1`, [id]),
   ]);
 
   res.json({
     data: {
       trip: trip.rows[0], vendor_invoices: invoices.rows, expense_claims: claims.rows,
       legs: legs.rows, invoice_lines: lines.rows, credit_notes: credits.rows, documents: files.rows,
+      billing: billing.rows[0] ?? null,
     },
   });
 });

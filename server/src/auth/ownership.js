@@ -215,7 +215,17 @@ function travelDocumentClause(alias) {
     -- clause HR uploads the proof and is then refused its own file: the
     -- document hangs off the payment row, which none of the clauses above
     -- reach.
-    OR EXISTS (SELECT 1 FROM travel_vendor_payments tvp WHERE tvp.document_id = ${alias}.id))`;
+    OR EXISTS (SELECT 1 FROM travel_vendor_payments tvp WHERE tvp.document_id = ${alias}.id)
+    -- The client's travel invoice, and only one a trip is actually billed
+    -- on (#214 §4). Three conditions, each load-bearing: the stage has to
+    -- be a travel invoice, some trip has to point at it, and the document
+    -- has to be that stage's own. An ordinary PO stage's invoice PDF, a
+    -- travel invoice nobody has linked a trip to, a PO and a quotation all
+    -- fail every one of them, so the travel desk still cannot open any of
+    -- them. This is the single clause §4 asks for and nothing wider.
+    OR EXISTS (SELECT 1 FROM payment_stages tps
+                JOIN travel_logs ttl ON ttl.billed_stage_id = tps.id
+               WHERE tps.document_id = ${alias}.id AND tps.kind = 'travel'))`;
 }
 
 export function documentClause(scope, params, { alias = 'd' } = {}) {

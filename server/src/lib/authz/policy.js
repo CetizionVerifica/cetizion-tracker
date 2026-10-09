@@ -115,6 +115,7 @@ export const RESTRICTIONS = {
   'api-token-scope': 'Limited to what the presented API token\'s role and person allow, and to reads unless the token may write.',
   'settings-override': 'Admin-only unless a named setting opens it to everybody.',
   'hr-travel-only': 'For the HR role, limited to the rows on trips and travel vendor invoices.',
+  'hr-travel-invoices-only': 'For the HR role, the sales side is narrowed to one thing: the travel invoice a trip is actually billed on \u2014 its number, date, amount, what has been received against it, when, its status and its PDF. No payment-stage list, no ordinary PO stage, no travel invoice nobody has linked a trip to, and no receipt rows, TDS, reminders, collections notes or margins.',
   'travel-desk-only': 'The handler allows the administrator and the HR role only: paying a travel agency is the travel desk\'s work, and the three access levels cannot say "admin and HR but not sales" on their own.',
 };
 
@@ -524,7 +525,11 @@ export const routes = [
   { method: 'POST', path: '/api/purchase-orders/:poNumber/email-read-checked', access: signedIn, restrictions: ['parent-owner'] },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/undo-from-email', access: mustBeAdmin, why: 'Deletes a PO registered from email with its stages and project, and puts its quotation back.' },
   { method: 'POST', path: '/api/purchase-orders/:poNumber/stages', access: signedIn },
-  { method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn },
+  {
+    method: 'GET', path: '/api/travel-logs/:travelId/full', access: signedIn,
+    restrictions: ['hr-travel-invoices-only'],
+    note: 'A trip with its legs, the agency\'s bills and their lines, credit notes, claims, files \u2014 and since the read-through phase (#214 \u00a75.3) a `billing` block read from v_trip_billing: the travel invoice this trip is billed on, as named columns rather than the stage. That block is how HR sees the sales side at all, and the whole of it: the invoice, what has been received, when, its status and its PDF (\u00a74). It is the same block for every role, because there is nothing in it a salesperson may see and the travel desk may not. Reading it needs no new route \u2014 this one is already HR\'s \u2014 and grants no generic payment-stage access: /api/payment-stages and /api/payments stay closed to HR.',
+  },
   { method: 'GET', path: '/api/vendor-invoices/:id/full', access: signedIn, note: 'A travel agency invoice with its lines, their trips, its credit notes and files (#196). Open as /api/vendor-invoices is.' },
   { method: 'POST', path: '/api/payment-stages/:id/invoice', access: signedIn },
   // Invoices we emailed that need a person (docs/email-po-plan.md §3.10.5).
