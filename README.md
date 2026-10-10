@@ -245,19 +245,11 @@ cetizion-tracker/
 │       └── routes/           dashboards, workflow actions, exports, webhooks, MCP
 └── web/
     └── src/
-        ├── styles/globals.css  Tailwind 4 theme, mapped onto the Mocha Glass tokens
-        ├── styles/mocha/       Mocha Glass: tokens, the mg- classes, motion, pickers
-        ├── components/ui/      Radix primitives in Mocha Glass; build from these
+        ├── styles/globals.css  Tailwind 4 theme tokens
+        ├── components/ui/      shadcn primitives — build from these
         ├── components/         ListPage, RecordForm, the shared dialogs
         └── pages/              one file per screen
 ```
-
-The interface is **Mocha Glass**: light by default with a full dark theme,
-Plus Jakarta Sans (Fraunces for page titles only), glass panels over a soft
-scene, radii 14 for controls, 18 for menus, 26 for cards and 28 for dialogs.
-Colours, radii and fonts come from the tokens in `web/src/styles/mocha/`, never
-from hand-written values; screens use the `mg-` classes and `components/ui`.
-Motion has a pause button and respects reduced motion.
 
 ---
 

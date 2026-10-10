@@ -43,8 +43,8 @@ async function signIn(page) {
   await page.getByLabel(label, { exact: true }).fill(who);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 }
 
 /**
@@ -59,10 +59,28 @@ async function palette(page, type) {
 
 test('sign in and see the dashboard', async ({ page }) => {
   await signIn(page);
-  // The product is "Sales Tracker"; the app carries no company name (web/CLAUDE.md §3).
-  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
-  // Six record types, not thirty screens.
   await expect(page.locator('nav').getByRole('link', { name: /^Deals/ })).toBeVisible();
+});
+
+/**
+ * The sidebar is grouped by the process (web/CLAUDE.md §3): every group is
+ * there in order, a folded group stays folded after a reload, and the app
+ * carries no company name.
+ */
+test('the sidebar groups follow the process and remember being folded', async ({ page }) => {
+  await signIn(page);
+  const nav = page.locator('nav');
+  const groups = nav.getByRole('button', { name: /^(Sell|Deliver|Money|Travel|Insights)$/ });
+  await expect(groups).toHaveText(['Sell', 'Deliver', 'Money', 'Travel', 'Insights']);
+  await expect(page.getByText('Sales Tracker', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Cetizion Verifica/)).toHaveCount(0);
+
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeHidden();
+  await page.reload();
+  await expect(nav.getByRole('button', { name: 'Sell' })).toHaveAttribute('aria-expanded', 'false');
+  await nav.getByRole('button', { name: 'Sell' }).click();
+  await expect(nav.getByRole('link', { name: /^Deals/ })).toBeVisible();
 });
 
 test('the palette finds a record by half its client name', async ({ page }) => {
@@ -91,8 +109,8 @@ test('the palette offers the verb, not the screen that owns it', async ({ page }
   await page.getByRole('button', { name: /Raise an invoice/ }).click();
   await expect(page.getByText('Invoice date is needed.')).toBeVisible();
   await page.keyboard.press('Escape');
-  // The home page is a day, so its heading is today's date.
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toBeVisible();
+  // The home page greets whoever signed in.
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toBeVisible();
 });
 
 test('a wrong password is refused', async ({ page }) => {
@@ -109,7 +127,7 @@ test('a wrong password is refused', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click();
   // A real alert, announced, not a div with a class on it.
   await expect(page.getByRole('alert')).toContainText(/do not match/);
-  await expect(page.getByRole('heading', { name: /\w+day, \d/ })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening)/ })).toHaveCount(0);
   // And the password box is cleared rather than left holding a wrong one.
   await expect(page.getByLabel('Password')).toHaveValue('');
 });
@@ -118,7 +136,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   await signIn(page);
   const client = `E2E Client ${stamp}`;
   await page.locator('nav').getByRole('link', { name: /^Deals/ }).click();
-  await page.getByRole('main').getByRole('button', { name: 'New deal', exact: true }).click();
+  await page.getByRole('button', { name: 'New quotation' }).first().click();
   await page.getByLabel(/^Client\*/).fill(client);
   await page.getByLabel('Service quoted').fill('EcoVadis');
   await page.getByLabel('Contact person').fill('Test Contact');
@@ -136,7 +154,7 @@ test('quote a new client, then find the client once under Companies', async ({ p
   // the rail and the deal is in the list it shares with orders.
   await expect(page.getByText('People')).toBeVisible();
   await expect(page.getByText('Test Contact').first()).toBeVisible();
-  await expect(page.getByRole('tab', { name: /Deals and orders/ })).toBeVisible();
+  await expect(page.getByText('Deals and orders')).toBeVisible();
   await expect(page.getByText('EcoVadis').first()).toBeVisible();
 });
 
@@ -182,7 +200,7 @@ test('every report chart has a table twin, and its rows link into the list', asy
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
   // These charts sit under More analysis, below the six questions, folded until opened.
-  await page.getByRole('button', { name: /^More analysis/ }).click();
+  await page.getByText('More analysis: pipeline, ageing, cash, win rate').click();
 
   // Before the toggle is touched: the chart is hidden from the tree and the
   // twin is there in text. A band with nothing in it still has a row.
@@ -223,7 +241,7 @@ test('Insights answers five questions, and a bar opens the list it counted', asy
   await card.getByRole('button', { name: 'Open as table' }).click();
   await card.getByRole('link', { name: band.label }).click();
   await expect(page).toHaveURL(new RegExp(`/quotations\\?follow_up=overdue&overdue_days=${band.key.replace('+', '%2B')}`));
-  await expect(page.getByText(`${band.count} of ${band.count}`)).toBeVisible();
+  await expect(page.getByText(`${band.count} record${band.count === 1 ? '' : 's'}`, { exact: true })).toBeVisible();
 });
 
 /**
@@ -338,27 +356,25 @@ test('the settings menu opens, with every item on it', async ({ page }) => {
 });
 
 /**
- * Light mode, end to end: choose it, and the document says so.
+ * Dark mode, end to end: light is the default (web/CLAUDE.md §1); choose
+ * dark, and the document says so.
  *
  * The class on <html> is the whole mechanism — every token in globals.css
  * hangs off `.dark` being present or absent — so this is the one assertion
  * that cannot pass while the theme is broken.
  */
-test('choosing light mode takes the dark class off the document', async ({ page }) => {
+test('choosing dark mode puts the dark class on the document', async ({ page }) => {
   await signIn(page);
-  // Light is the default now (Mocha Glass), so go dark first.
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+
   await page.getByRole('button', { name: 'Settings and sign out' }).click();
   await page.getByRole('menuitemradio', { name: 'Dark' }).click();
+
   await expect(page.locator('html')).toHaveClass(/dark/);
-
-  // The theme is a segment that stays open, so the same menu picks Light.
-  await page.getByRole('menuitemradio', { name: 'Light' }).click();
-
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
   // And it survives a reload, which is what the pre-paint script in
   // index.html exists for.
   await page.reload();
-  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await expect(page.locator('html')).toHaveClass(/dark/);
 });
 
 /**
@@ -523,9 +539,8 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   const { data: invite } = await (await page.request.post(`/api/portal-admin/contacts/${contactId}/invite`)).json();
 
   // Staff see the client's view from the company page.
-  await page.goto(`/companies/${companyId}?tab=preview`);
+  await page.goto(`/companies/${companyId}`);
   await page.getByRole('button', { name: 'Show the client\'s view' }).click();
-  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
   await expect(page.getByText('Taxable').first()).toBeVisible();
 
@@ -533,10 +548,10 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   const link = new URL(invite.url);
   await page.goto(link.pathname);
   await expect(page.getByRole('heading', { name: client })).toBeVisible();
-  await page.getByRole('tab', { name: 'Projects & orders' }).click();
+  await page.getByRole('button', { name: 'Projects & orders' }).click();
   await expect(page.getByText(`PO ${poNumber}`).first()).toBeVisible();
-  await expect(page.getByText('Still to bill').first()).toBeVisible();
-  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
+  await expect(page.getByText('Still to bill')).toBeVisible();
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('GST', { exact: true }).first()).toBeVisible();
   await expect(page.getByText(invoiceNo).first()).toBeVisible();
 
@@ -545,7 +560,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
   await page.getByLabel('Reference').fill(`UTR-${stamp}`);
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText(/finance team will check/)).toBeVisible();
-  await expect(page.getByText('Being checked', { exact: true })).toBeVisible();
+  await expect(page.getByText('Being checked')).toBeVisible();
 
   // Finance sees it in Collections and matches it by recording the receipt it reports.
   await page.goto('/collections');
@@ -557,7 +572,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
 
   // The client sees it recorded.
   await page.goto('/portal');
-  await page.getByRole('tab', { name: 'Invoices', exact: true }).click();
+  await page.getByRole('button', { name: 'Invoices', exact: true }).click();
   await expect(page.getByText('Payment recorded', { exact: true })).toBeVisible();
 });
 
@@ -570,7 +585,7 @@ test('the client portal shows each PO and its invoices with GST, and staff previ
 test('an admin sees every client email and can hold them', async ({ page }) => {
   await signIn(page);
   await page.goto('/settings/client-emails');
-  await expect(page.getByRole('heading', { name: 'Client emails', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Client emails' })).toBeVisible();
   const table = page.getByRole('table', { name: 'Kinds of client email' });
   await expect(table.getByText('Overdue payment reminder')).toBeVisible();
   await expect(table.getByText('Reply from the Inbox')).toBeVisible();
@@ -686,7 +701,7 @@ test('a service questionnaire: sent from an enquiry, filled in on a phone, and t
   await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
   await page.getByRole('button', { name: 'Send', exact: true }).first().click();
   await page.getByRole('button', { name: 'Make a link only' }).click();
-  const link = await page.getByTestId('questionnaire-link').first().innerText();
+  const link = await page.locator('.mono.small').filter({ hasText: '/q/' }).first().innerText();
   await page.keyboard.press('Escape');
 
   // The client, on a phone: a required answer is asked for, a conditional one appears.

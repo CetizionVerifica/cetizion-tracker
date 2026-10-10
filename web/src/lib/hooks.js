@@ -1,17 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
-import { fileSize } from './format.js';
 
 /**
  * Fetch on mount and whenever `deps` change, with a refetch handle so a
  * mutation elsewhere on the page can pull fresh totals.
  */
 export function useFetch(fetcher, deps = []) {
-  const [state, setState] = useState({ data: null, loading: true, error: null, errorStatus: null, for: null });
-  // Which deps the data on hand was fetched for. A refetch keeps them, so a page can
-  // keep showing its record (and any open dialog) while it reloads, and only show its
-  // skeleton when it moves to another record.
-  const depsKey = JSON.stringify(deps);
+  const [state, setState] = useState({ data: null, loading: true, error: null, errorStatus: null });
   const [tick, setTick] = useState(0);
   const latest = useRef(0);
 
@@ -23,12 +18,12 @@ export function useFetch(fetcher, deps = []) {
     Promise.resolve(fetcher())
       .then((result) => {
         if (cancelled || run !== latest.current) return;
-        setState({ data: result, loading: false, error: null, errorStatus: null, for: depsKey });
+        setState({ data: result, loading: false, error: null, errorStatus: null });
       })
       .catch((err) => {
         if (cancelled || err.name === 'AbortError' || run !== latest.current) return;
         // The status rides along so a screen can tell "not found" from "not now".
-        setState({ data: null, loading: false, error: err.message, errorStatus: err.status ?? null, for: depsKey });
+        setState({ data: null, loading: false, error: err.message, errorStatus: err.status ?? null });
       });
 
     return () => {
@@ -38,7 +33,7 @@ export function useFetch(fetcher, deps = []) {
   }, [...deps, tick]);
 
   const refetch = useCallback(() => setTick((n) => n + 1), []);
-  return { ...state, fresh: state.for === depsKey, refetch };
+  return { ...state, refetch };
 }
 
 export function useList(resource, params = {}, deps = []) {
@@ -51,25 +46,6 @@ const LOOKUP_DEFAULTS = { services: [], catalogue: [], travel_vendors: [], trave
 
 /** Lookups change rarely; fetch them once per session and share. */
 let lookupCache = null;
-/**
- * The document size limit, checked as a file is chosen so a file that is too
- * large is refused under its field instead of failing on save. `check(file)`
- * returns the file, or null when it is over the limit (and sets `error`).
- */
-export function useFileLimit() {
-  const maxBytes = useLookups().limits?.document_max_bytes;
-  const [error, setError] = useState(null);
-  const check = useCallback((file) => {
-    if (file && maxBytes && file.size > maxBytes) {
-      setError(`This file is ${fileSize(file.size)}: the limit is ${fileSize(maxBytes)}. Pick a smaller one.`);
-      return null;
-    }
-    setError(null);
-    return file;
-  }, [maxBytes]);
-  return [check, error];
-}
-
 export function useLookups() {
   const [data, setData] = useState(lookupCache);
   useEffect(() => {

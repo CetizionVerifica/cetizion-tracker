@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from './ui/button';
 import { useToast } from './ui.jsx';
 import { INVOICE_REASONS, PO_REASONS } from './EmailReview.jsx';
 import { api } from '../lib/api.js';
@@ -39,98 +40,85 @@ export function AutoEntryPanel() {
     }
   }
 
-  const narrow = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 719px)').matches;
-  const line = (d) => `${number(d.read)} decided · ${number(d.entered)} entered · ${number(d.review)} to review · ${number(d.set_aside)} set aside · ${number(d.ai_calls)} AI calls`;
+  const cell = 'px-2 py-1.5 text-right mono';
   return (
-    <section className="mg-glass mg-glass--strong app-ib-panel" data-a="rise" aria-labelledby="sec-entry" data-testid="auto-entry-panel">
-      <div className="app-ib-panel__head">
-        <div className="app-ib-panel__titles" style={{ flex: '1 1 420px' }}>
-          <h2 className="mg-panel__title" id="sec-entry">Mail auto-entry</h2>
-          <p className="mg-panel__hint" style={{ maxWidth: 820, lineHeight: 1.55 }}>
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5" data-testid="auto-entry-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[14px] font-semibold text-foreground">Mail auto-entry</div>
+          <p className="max-w-[80ch] text-[12.5px]/[1.6] text-secondary-text">
             What the email readers did over the last two weeks: the emails they decided on, the enquiries, quotations, POs and invoices they entered,
             what they sent to review, what triage set aside without a thorough reading, and what the AI cost.
           </p>
         </div>
-        <label className={now.triage_enabled ? 'mg-switch app-pill-switch is-on' : 'mg-switch app-pill-switch'}>
-          <input type="checkbox" role="switch" aria-label="Triage" checked={Boolean(now.triage_enabled)} disabled={busy} onChange={toggleTriage} />
-          <span>Triage</span>
-          <span aria-hidden="true">{now.triage_enabled ? 'On' : 'Off'}</span>
-        </label>
+        <Button size="sm" variant={now.triage_enabled ? 'secondary' : 'default'} className="h-8 px-4 text-[13px]" disabled={busy} onClick={toggleTriage}>
+          {now.triage_enabled ? 'Triage: switch off' : 'Triage: switch on'}
+        </Button>
       </div>
 
-      <p className="app-ib-now">
-        <strong>Now:</strong> {number(now.to_review)} in review{now.older_than_two_days ? ` (${number(now.older_than_two_days)} older than two days)` : ''}
+      <p className="text-[12.5px] text-foreground">
+        Now: {number(now.to_review)} in review{now.older_than_two_days ? ` (${number(now.older_than_two_days)} older than two days)` : ''}
         {' · '}{number(now.waiting)} invoice{now.waiting === 1 ? '' : 's'} waiting for {now.waiting === 1 ? 'its' : 'their'} PO
         {now.retrying ? ` · ${number(now.retrying)} read${now.retrying === 1 ? '' : 's'} to try again` : ''}
         {now.failed ? ` · ${number(now.failed)} given up on (admins were told)` : ''}
       </p>
 
-      {narrow ? (
-        <div className="mg-rows">
-          {[...s.days, { day: null, ...total }].map((d) => (
-            <div key={d.day || 'total'} className="mg-row">
-              <span className="mg-row__title">{d.day ? date(d.day) : 'Two weeks'}</span>
-              <span className="mg-row__amount mg-num">{usd(d.cost_usd)}</span>
-              <span className="mg-row__meta" style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>{line(d)}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mg-tablewrap">
-          <table className="mg-table" aria-label="Email readers, last two weeks">
-            <thead>
-              <tr>
-                <th>Day</th><th className="num">Emails decided</th><th className="num">Entered</th><th className="num">To review</th>
-                <th className="num">Set aside by triage</th><th className="num">AI calls</th><th className="num">AI spend</th>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] border-collapse text-[12.5px] text-secondary-text">
+          <thead>
+            <tr className="border-b border-border eyebrow">
+              <th className="px-2 py-1.5 text-left font-medium">Day</th>
+              <th className="px-2 py-1.5 text-right font-medium">Emails decided</th>
+              <th className="px-2 py-1.5 text-right font-medium">Entered</th>
+              <th className="px-2 py-1.5 text-right font-medium">To review</th>
+              <th className="px-2 py-1.5 text-right font-medium">Set aside by triage</th>
+              <th className="px-2 py-1.5 text-right font-medium">AI calls</th>
+              <th className="px-2 py-1.5 text-right font-medium">AI spend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.days.map((d) => (
+              <tr key={d.day} className="border-b border-border/60">
+                <td className="px-2 py-1.5 text-left">{date(d.day)}</td>
+                <td className={cell}>{number(d.read)}</td>
+                <td className={cell}>{number(d.entered)}</td>
+                <td className={cell}>{number(d.review)}</td>
+                <td className={cell}>{number(d.set_aside)}</td>
+                <td className={cell}>{number(d.ai_calls)}</td>
+                <td className={cell}>{usd(d.cost_usd)}</td>
               </tr>
-            </thead>
-            <tbody>
-              {s.days.map((d) => (
-                <tr key={d.day}>
-                  <td>{date(d.day)}</td>
-                  <td className="num">{number(d.read)}</td>
-                  <td className="num">{number(d.entered)}</td>
-                  <td className="num">{number(d.review)}</td>
-                  <td className="num">{number(d.set_aside)}</td>
-                  <td className="num">{number(d.ai_calls)}</td>
-                  <td className="num">{usd(d.cost_usd)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td>Two weeks</td>
-                <td className="num">{number(total.read)}</td>
-                <td className="num">{number(total.entered)}</td>
-                <td className="num">{number(total.review)}</td>
-                <td className="num">{number(total.set_aside)}</td>
-                <td className="num">{number(total.ai_calls)}</td>
-                <td className="num">{usd(total.cost_usd)}</td>
-              </tr>
-            </tfoot>
-          </table>
+            ))}
+            <tr className="font-semibold text-foreground">
+              <td className="px-2 py-1.5 text-left">Two weeks</td>
+              <td className={cell}>{number(total.read)}</td>
+              <td className={cell}>{number(total.entered)}</td>
+              <td className={cell}>{number(total.review)}</td>
+              <td className={cell}>{number(total.set_aside)}</td>
+              <td className={cell}>{number(total.ai_calls)}</td>
+              <td className={cell}>{usd(total.cost_usd)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {s.reasons.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[12.5px] font-medium text-foreground">Why items went to review</div>
+          <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-[12.5px] text-secondary-text">
+            {s.reasons.map((r) => (
+              <li key={`${r.reader}:${r.reason}`}>
+                {r.reader === 'po' ? 'PO' : 'Invoice'}: {(r.reader === 'po' ? PO_REASONS : INVOICE_REASONS)[r.reason] || r.reason} · {number(r.n)}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
-      <div className="app-ib-reasons">
-        {s.reasons.length > 0 && (
-          <>
-            <span className="mg-label">Why items went to review</span>
-            <div>
-              {s.reasons.map((r) => (
-                <span key={`${r.reader}:${r.reason}`} className={r.reader === 'po' ? 'mg-badge mg-badge--info' : 'mg-badge mg-badge--wait'}>
-                  {r.reader === 'po' ? 'PO' : 'Invoice'}: {(r.reader === 'po' ? PO_REASONS : INVOICE_REASONS)[r.reason] || r.reason} · {number(r.n)}
-                </span>
-              ))}
-            </div>
-          </>
-        )}
-        <p>
-          Documents are read by {models.reader}{models.reads_pdf ? ', which is sent the PDF itself' : ', from their text (a scan through OCR)'};
-          an image PDF is read again by {models.check}, and the two must agree. Triage uses {models.triage}.
-          {models.fallbacks?.length ? ` If the reader cannot be reached with zero data retention: ${models.fallbacks.join(', then ')}.` : ''}
-        </p>
-      </div>
-    </section>
+      <p className="text-[12px] text-muted-foreground">
+        Documents are read by {models.reader}{models.reads_pdf ? ', which is sent the PDF itself' : ', from their text (a scan through OCR)'};
+        an image PDF is read again by {models.check}, and the two must agree. Triage uses {models.triage}.
+        {models.fallbacks?.length ? ` If the reader cannot be reached with zero data retention: ${models.fallbacks.join(', then ')}.` : ''}
+      </p>
+    </div>
   );
 }

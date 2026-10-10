@@ -1,13 +1,5 @@
 # Frontend UI guide
 
-> **Superseded visual rules.** The Mocha Glass redesign replaces this guide's
-> visual rules: palette, fonts, radii, sidebar and page layout (Mocha Glass, see
-> `docs/ui-redesign/README.md`; tokens and classes in `src/styles/mocha/`, primitives in
-> `src/components/ui`, the shell in `src/components/shell`). Where this file and
-> Mocha Glass disagree on how something looks, Mocha Glass wins. Its non-visual
-> rules still apply: copy and wording, accessibility, one pattern per job, the
-> process order, no company branding, and checking light and dark.
-
 Read this before changing anything a user sees in `web/`. It is the rule book
 for the redesign (the design brief and the mockups live in the project's
 design files, outside this repository). The aim is one

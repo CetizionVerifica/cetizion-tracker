@@ -230,33 +230,11 @@ small { color: #6b6f76; }
  * without them a link loads the client's website *inside* the message,
  * which looks like the tracker and is not.
  */
-/**
- * The app's paper for a bare email (Wave 4): a message with no styling of
- * its own sits on the theme's paper rather than a white slab, so it follows
- * light and dark. The colours are the page's resolved tokens, passed in —
- * the frame cannot see the page's custom properties — and only colour
- * values are let through. A designed email keeps its own canvas.
- */
-const COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/deg]+\)|transparent)$/i;
-export const paperStyle = (paper) => {
-  if (!paper) return '';
-  const c = (k) => (COLOUR.test(String(paper[k] || '').trim()) ? String(paper[k]).trim() : null);
-  const rules = [
-    ['light', 'dark'].includes(paper.scheme) && `:root { color-scheme: ${paper.scheme}; }`,
-    c('text') && `body.plain { background: transparent; color: ${c('text')}; max-width: none; }`,
-    c('link') && `body.plain a { color: ${c('link')}; }`,
-    c('muted') && `body.plain blockquote, body.plain small, body.plain caption { color: ${c('muted')}; }`,
-    c('line') && `body.plain blockquote, body.plain th, body.plain td, body.plain hr { border-color: ${c('line')}; }`,
-    c('track') && `body.plain th, body.plain pre, body.plain code { background: ${c('track')}; }`,
-  ].filter(Boolean);
-  return rules.join(' ');
-};
-
-export const frameDoc = (html, showImages, { messageId = null, paper = null } = {}) => {
-  const plain = hasOwnStyling(html) ? '' : ' class="plain"';
+export const frameDoc = (html, showImages, { messageId = null } = {}) => {
   const ours = `<meta http-equiv="Content-Security-Policy" content="${framePolicy(showImages, messageId)}">`
     + `<base target="_blank" rel="noopener noreferrer">`
-    + `<style>${STYLE}${plain ? paperStyle(paper) : ''}</style>`;
+    + `<style>${STYLE}</style>`;
+  const plain = hasOwnStyling(html) ? '' : ' class="plain"';
   // The cid: images first, so the sanitiser sees an ordinary same-origin
   // src and the policy's one allowed path matches it.
   const clean = cleanMail(rewriteCid(html, messageId), showImages);
