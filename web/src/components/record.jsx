@@ -1,31 +1,42 @@
+import { Fragment, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
+import { Avatar, AvatarFallback } from './ui/avatar';
+import { Badge } from './ui/badge';
+import {
+  Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator,
+} from './ui/breadcrumb';
+import { Button } from './ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { ControlBar } from './shell/Shell.jsx';
+import { Separator } from './ui/separator';
 
 /**
- * The record page, as the Mocha Glass RecordHeader draws it — one shape for
- * Company, Project, Trip, Deal and Order.
+ * The record page, as the design draws it — one shape for Company,
+ * Project, Trip, Deal and Order.
  *
  * Those five pages each grew their own layout, so the same question
  * ("what is this and what is wrong with it?") was answered in five
- * arrangements. The design gives one: breadcrumbs beside the control bar,
- * a strong-glass header card (eyebrow, Fraunces title that wraps, its
- * state badges, at most one primary action and a ⋯ menu, then the key
- * facts as a `mg-facts` grid), the flow ladder or four figures, then the
- * record's own sections beside a rail.
+ * arrangements. The design gives one: a breadcrumb, a header with the
+ * facts on one line, four figures, then the record's own sections beside
+ * a 340px rail.
  *
  * The rule that keeps it readable is in the design's note on the company
  * record: the figures in the top row are **the ones somebody asks before
  * they pick up the phone**. Not every number the record has — the four
  * that decide what to say.
+ *
+ * Everything here is built on the shadcn primitives in ./ui. Where a
+ * shape has no primitive — the flow ladder's discs and connectors, the
+ * 44px row — it is drawn by hand against the same tokens, which is the
+ * only reason those two are not Card and Button like the rest.
  */
 
-/** A card that keeps the system's glass radius and its own padding. */
-const PANEL = 'gap-0 py-0';
+/** A card on the 12px card radius, with its own padding. */
+const PANEL = 'gap-0 rounded-lg border-border py-0 shadow-none';
 
 /**
  * Two letters, for the mark beside the title.
@@ -44,88 +55,128 @@ export function initialsOf(name) {
   return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
-const FIGURE_TONE = { late: 'text-late', waiting: 'text-caramel-text', settled: 'text-ok', info: 'text-info' };
-
 /**
- * A figure in the top row: a glass stat tile.
+ * A figure in the top row.
  *
  * `tone` colours the number, and is for money that is late or a state
  * that is wrong — never for decoration. The line underneath says what the
  * figure is made of, which is what stops a bare number being a puzzle.
- * `badge` is a state said in words under the figure ("1 invoice, 9 days late").
  */
-export function RecordStat({ label, value, detail, tone, badge }) {
+export function RecordStat({ label, value, detail, tone }) {
   return (
-    <div className="mg-glass mg-tile" data-a="rise">
-      <span className="mg-label">{label}</span>
-      <span className={cn('mg-tile__figure mg-num', FIGURE_TONE[tone])}>{value}</span>
-      {(badge || detail) && (
-        <span className="mg-tile__foot">
-          {badge}
-          {detail && <span>{detail}</span>}
-        </span>
-      )}
-    </div>
+    <Card className={PANEL}>
+      <CardContent className="px-5 py-4">
+        <div className="eyebrow">{label}</div>
+        <div className={cn(
+          'num mt-2 text-2xl font-semibold tracking-[-0.02em]',
+          tone === 'late' ? 'text-late' : tone === 'waiting' ? 'text-waiting' : tone === 'settled' ? 'text-settled' : 'text-foreground'
+        )}>
+          {value}
+        </div>
+        {detail && <div className="mt-1 text-[12px] text-secondary-text">{detail}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A card with a 44px header: a title, an optional hint, an optional action. */
+export function RecordSection({ title, hint, action, children, className }) {
+  return (
+    <Card className={cn(PANEL, 'overflow-hidden', className)}>
+      <CardHeader className="flex h-11 flex-row items-center gap-3 space-y-0 border-b border-border px-5 [.border-b]:pb-0">
+        {/* The title never shrinks: letting it wrap broke the 44px header
+            and pushed it into the hint beside it. The hint truncates instead. */}
+        <CardTitle className="shrink-0 font-display text-base font-bold text-foreground">{title}</CardTitle>
+        {hint && <span className="min-w-0 truncate text-[12.5px] font-normal text-muted-foreground">{hint}</span>}
+        {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
+      </CardHeader>
+      <CardContent className="p-0">{children}</CardContent>
+    </Card>
   );
 }
 
 /**
- * A row: an icon square, what it is and its meta line, then how much with
- * its state under it. The amount is right-aligned in tabular figures, so a
- * column of them reads as a column of money rather than as ragged text.
+ * A 44px row: what it is, what it is waiting on, and how much.
+ *
+ * The amount is mono, right-aligned and a fixed width, so a column of
+ * them reads as a column of money rather than as ragged text.
  */
-export function RecordRow({ icon: Icon, to, title, meta, chip, amount, muted, last }) {
+export function RecordRow({ icon: Icon, to, title, chip, amount, muted, last }) {
   const inner = (
     <>
-      {Icon && <span className="app-recrow__icon"><Icon strokeWidth={1.75} aria-hidden="true" /></span>}
-      <span className="app-recrow__text">
-        <b>{title}</b>
-        {meta && <span>{meta}</span>}
+      {Icon && <Icon className={cn('size-4 shrink-0', muted ? 'text-muted-foreground' : 'text-secondary-text')} strokeWidth={1.75} aria-hidden="true" />}
+      <span className={cn('min-w-0 flex-1 truncate text-[13px] font-medium', muted ? 'text-secondary-text' : 'text-foreground')}>
+        {title}
       </span>
-      {(amount !== undefined || chip) && (
-        <span className="app-recrow__end">
-          {amount !== undefined && <b>{amount}</b>}
-          {chip}
+      {chip}
+      {amount !== undefined && (
+        <span className={cn('num w-[110px] shrink-0 text-right text-[13px]', muted ? 'text-secondary-text' : 'text-foreground')}>
+          {amount}
         </span>
       )}
     </>
   );
-  const className = cn('app-recrow', muted && 'is-muted', last && 'is-last');
+  const className = cn(
+    'flex h-11 items-center gap-4 px-5 no-underline transition-colors duration-150',
+    !last && 'border-b border-border',
+    to && 'hover:bg-secondary'
+  );
   return to ? <Link to={to} className={className}>{inner}</Link> : <div className={className}>{inner}</div>;
 }
 
-/** The states a row can be in, as the system's badges: never hue alone. */
+/** The states a row can be in, as the design draws them: never hue alone. */
 const CHIP_TONES = {
-  late: 'mg-badge--late',
-  waiting: 'mg-badge--wait',
-  settled: 'mg-badge--ok',
-  info: 'mg-badge--info',
-  plain: 'mg-badge--plain',
+  late: 'border-late/30 bg-late/10 text-late',
+  waiting: 'border-waiting/28 bg-waiting/10 text-waiting',
+  settled: 'border-settled/28 bg-settled/10 text-settled',
+  info: 'border-info/28 bg-info/10 text-info',
+  plain: 'border-border bg-secondary text-secondary-text',
 };
 
 /**
- * A state, as a badge: late, waiting, settled, info or nothing. The word
- * is the state; the dot and the hue only agree with it.
+ * A state, as a badge.
+ *
+ * shadcn's own variants are default/secondary/destructive, which are not
+ * the four states this business has. `outline` is the neutral base and
+ * the tone supplies the colour, so the badge is still a Badge and still
+ * says late, waiting, settled or nothing.
  */
 export function Chip({ tone = 'plain', icon: Icon, className, children }) {
   return (
-    <span className={cn('mg-badge', CHIP_TONES[tone] || CHIP_TONES.plain, className)}>
-      {Icon && <Icon className="size-3" strokeWidth={2.4} aria-hidden="true" />}
+    <Badge
+      variant="outline"
+      className={cn('h-[22px] gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold', CHIP_TONES[tone] || CHIP_TONES.plain, className)}
+    >
+      {Icon && <Icon strokeWidth={2.4} aria-hidden="true" />}
       {children}
-    </span>
+    </Badge>
   );
 }
 
 /** A person in the rail: initials, name, and what they are to this record. */
-export function RailPerson({ name, detail, last, badge }) {
+export function RailPerson({ name, detail, last }) {
   return (
     <div className={cn('flex items-center gap-3 px-5 py-3', !last && 'border-b border-border')}>
-      <span className="mg-avatar size-[34px] shrink-0 text-[11.5px]">{initialsOf(name)}</span>
+      <Avatar className="size-7 shrink-0">
+        <AvatarFallback className="bg-secondary text-[10px] font-semibold text-primary">{initialsOf(name)}</AvatarFallback>
+      </Avatar>
       <div className="min-w-0 flex-1">
-        <div className="text-[13.5px] font-bold text-foreground [overflow-wrap:anywhere]">{name}</div>
-        {detail && <div className="text-[12px] text-muted-foreground">{detail}</div>}
+        <div className="truncate text-[13px] font-medium text-foreground">{name}</div>
+        {detail && <div className="truncate text-[12px] text-muted-foreground">{detail}</div>}
       </div>
-      {badge}
+    </div>
+  );
+}
+
+/** Something that happened, in the rail: what, when, and one line of detail. */
+export function RailEvent({ what, when, detail, last }) {
+  return (
+    <div className={cn('px-5 py-3', !last && 'border-b border-border')}>
+      <div className="flex gap-2">
+        <span className="text-[12.5px] font-medium text-foreground">{what}</span>
+        <span className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">{when}</span>
+      </div>
+      {detail && <div className="mt-0.5 text-[12px] text-secondary-text">{detail}</div>}
     </div>
   );
 }
@@ -137,34 +188,49 @@ export function RailPerson({ name, detail, last, badge }) {
  * the menu close when one is chosen and what makes the arrow keys work —
  * a plain button inside the menu does neither.
  */
-export function RecordMenuItem({ children, danger, ...props }) {
+export function RecordMenuItem({ children, ...props }) {
   return (
-    <DropdownMenuItem variant={danger ? 'destructive' : undefined} {...props}>
+    <DropdownMenuItem className="px-2.5 py-1.5 text-[13px] text-secondary-text focus:text-foreground" {...props}>
       {children}
     </DropdownMenuItem>
   );
 }
 
 /**
- * One rung of the FlowLadder: a disc, what that step is called, and a note
- * (a date, who, or what is missing).
+ * One rung of the flow: a disc, and what that step is called.
  *
  * `state` is handed in by the page and never worked out here. A step is
  * "current" for reasons only the record knows — the order decides it from
  * its stages, the deal from its status and its PO — so the component
  * draws the state it is given and holds no opinion about it.
  */
-export function FlowStep({ label, state = 'future', since, index }) {
+export function FlowStep({ label, state = 'future', since, n }) {
+  const done = state === 'done';
+  const current = state === 'current';
   return (
-    <li className={cn('mg-ladder__step', state === 'done' && 'is-done', state === 'current' && 'is-current', state === 'blocked' && 'is-blocked')} aria-current={state === 'current' ? 'step' : undefined}>
-      <span className="mg-ladder__disc">
-        {state === 'done' ? <Check strokeWidth={3} aria-hidden="true" /> : state === 'blocked' ? '!' : index + 1}
+    <li
+      aria-current={current ? 'step' : undefined}
+      className={cn('flex flex-none flex-col items-center gap-2', current ? 'w-[112px]' : 'w-[92px]')}
+    >
+      {/* Done is ticked in settled, where the record is now is the action
+          colour with a halo, and what has not happened yet is a hollow
+          numbered disc: web/CLAUDE.md §4. */}
+      <span className={cn(
+        'num grid size-6 place-items-center rounded-full text-[11px] font-bold',
+        done && 'bg-settled text-primary-foreground',
+        current && 'bg-primary text-primary-foreground ring-4 ring-primary/20',
+        !done && !current && 'border border-border-strong bg-card text-muted-foreground'
+      )}>
+        {done ? <Check className="size-3.5" strokeWidth={3} aria-hidden="true" /> : n}
       </span>
-      <span className="mg-ladder__text">
-        <span className="mg-ladder__label">{label}</span>
-        {since && <span className="mg-ladder__note">{since}</span>}
-        <span className="sr-only">{state === 'done' ? ', done' : state === 'current' ? ', next' : state === 'blocked' ? ', blocked' : ''}</span>
+      <span className={cn(
+        'text-center text-[12px]',
+        current ? 'font-semibold text-primary' : done ? 'font-medium text-foreground' : 'font-medium text-muted-foreground'
+      )}>
+        {label}
+        <span className="sr-only">{done ? ', done' : current ? ', now' : ', to come'}</span>
       </span>
+      {since && <span className="text-center text-[11px] text-muted-foreground">{since}</span>}
     </li>
   );
 }
@@ -178,52 +244,70 @@ export function FlowStep({ label, state = 'future', since, index }) {
  * earliest gap. A deal that was won and invoiced without an enquiry row
  * ever being created is at "Collected", not back at "Enquiry", and the
  * missing rung stays hollow to say so rather than dragging the marker
- * backwards. A step may say `blocked` (the discount was rejected).
+ * backwards.
  */
 export function flowSteps(reached) {
   const lastDone = reached.reduce((last, step, i) => (step.done ? i : last), -1);
   return reached.map((step, i) => ({
     label: step.label,
     since: step.since,
-    state: step.done ? 'done' : i === lastDone + 1 ? (step.blocked ? 'blocked' : 'current') : 'future',
+    state: step.done ? 'done' : i === lastDone + 1 ? 'current' : 'future',
   }));
 }
 
 /**
  * Where the record has got to, and the one move that takes it forward.
  *
- * A strong-glass panel: an optional banner (the discount's verdict), the
- * ladder, the sentence that is the page's whole opinion about the record,
- * the primary move and at most one secondary — everything else belongs in
- * the header's menu, which is the point of the shape. `note` is the small
- * print: what the primary button will actually do, and what is in the menu.
+ * This is what replaced six boxes of prose: the rail is read in a glance
+ * and the page's whole opinion about the record is the sentence under it.
+ * `actions` holds the primary move and at most one secondary — everything
+ * else belongs in the header's menu, which is the point of the shape.
+ * `note` is the small print: what the primary button will actually do,
+ * and what was moved into the menu.
  */
-export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, title = 'Where it stands', className }) {
-  const at = steps.findIndex((s) => s.state === 'current' || s.state === 'blocked');
-  const next = at >= 0 ? steps[at] : null;
+export function RecordFlow({ steps = [], verdict, actions, note }) {
+  const now = steps.find((step) => step.state === 'current');
+  // On a phone the rail scrolls sideways; start it with the current step in
+  // view, rather than showing the three oldest ticks and hiding where it is.
+  const rail = useRef(null);
+  useEffect(() => {
+    const ol = rail.current;
+    const at = ol?.querySelector('[aria-current="step"]');
+    if (ol && at && ol.scrollWidth > ol.clientWidth) ol.scrollLeft = at.offsetLeft - ol.offsetLeft - ol.clientWidth / 2 + at.clientWidth / 2;
+  }, [now?.label]);
   return (
-    <section className={cn('mg-glass mg-glass--strong app-flow', className)} data-a="rise" aria-label={title}>
-      {banner}
-      <div className="app-flow__head">
-        <h2>{title}</h2>
-        {steps.length > 0 && (
-          <span className={badge ? 'sr-only' : undefined}>{next ? `step ${at + 1} of ${steps.length} · next: ${next.label}` : steps.every((s) => s.state === 'done') ? 'every step done' : `${steps.length} steps`}</span>
-        )}
-        {badge && <div className="app-flow__badge">{badge}</div>}
-      </div>
-      {steps.length > 0 && (
-        <ol className="mg-ladder">
-          {steps.map((step, i) => <FlowStep key={step.label} {...step} index={i} />)}
-        </ol>
-      )}
+    <Card className={cn(PANEL, 'mt-6 px-6 py-5')}>
+      <ol ref={rail} aria-label="Progress" className="m-0 flex list-none items-center overflow-x-auto p-0 px-1">
+        {steps.map((step, i) => (
+          <Fragment key={step.label}>
+            {/* The connector is lit when the step behind it is done, so the
+                colour stops exactly where the record stopped. */}
+            {i > 0 && (
+              <li aria-hidden="true" className={cn('mb-[26px] h-0.5 min-w-4 flex-1 rounded-full', steps[i - 1].state === 'done' ? 'bg-settled' : 'bg-border')} />
+            )}
+            <FlowStep {...step} n={i + 1} />
+          </Fragment>
+        ))}
+      </ol>
+
       {(verdict || actions) && (
-        <div className="app-flow__say">
-          {verdict && <p>{verdict}</p>}
-          {actions && <div className="app-flow__acts">{actions}</div>}
-        </div>
+        <>
+          <Separator className="mt-5" />
+          <div className="mt-5 flex flex-wrap items-center gap-5">
+            {verdict && (
+              <div className="min-w-[min(320px,100%)] max-w-[64ch] flex-1">
+                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                  {now ? `Now · ${now.label}` : steps.length ? 'Complete' : 'Now'}
+                </div>
+                <p className="mt-1 text-[14px]/[1.6] text-foreground">{verdict}</p>
+              </div>
+            )}
+            {actions && <div className="flex flex-wrap items-center gap-3">{actions}</div>}
+          </div>
+        </>
       )}
-      {note && <p className="app-flow__note">{note}</p>}
-    </section>
+      {note && <p className="mt-3 max-w-[78ch] text-[12.5px]/[1.6] text-muted-foreground">{note}</p>}
+    </Card>
   );
 }
 
@@ -231,89 +315,80 @@ export function RecordFlow({ steps = [], verdict, actions, note, banner, badge, 
  * The whole page.
  *
  * `facts` is the line under the title — the handful of things that are
- * true about this record whatever else is happening. `factsGrid` is the
- * header's labelled facts (`[{ label, value }]`), `badges` its state, and
- * `headExtra` anything that belongs inside the header card (a banner).
- * `stats` is the four figures, and `flow` is the ladder that replaces them
- * on the records whose question is "how far has this got?". `rail` is
- * reference on the right (above the sections on narrow screens when
- * `railFirst`), and like Today's rail it should not hold the primary action.
+ * true about this record whatever else is happening. `stats` is the four
+ * figures, and `flow` is the ladder that replaces them on the records
+ * whose question is "how far has this got?" rather than "how much?".
+ * `rail` is 340px of reference on the right, and like Today's rail it
+ * should not hold the page's primary action.
  */
-export function RecordPage({
-  parent, parentTo, title, crumb, mark, markTone, eyebrow, badges, facts = [], factsGrid, headExtra,
-  action, menu, flow, stats, children, rail, railFirst = false, bodyClassName, notice,
-}) {
+export function RecordPage({ parent, parentTo, title, mark, markTone, facts = [], action, menu, flow, stats, children, rail }) {
   return (
-    <div className="app-page app-rec">
-      <div className="app-rec__bar">
-        <nav className="mg-crumbs" aria-label="Breadcrumb">
-          <Link to={parentTo}>{parent}</Link>
-          <span aria-hidden="true">›</span>
-          <b aria-current="page">{crumb || title}</b>
-        </nav>
-        <ControlBar />
-      </div>
+    <div className="flex flex-col">
+      <Breadcrumb className="px-4 pt-5 sm:px-8">
+        <BreadcrumbList className="gap-2 text-[12.5px] sm:gap-2">
+          <BreadcrumbItem>
+            <BreadcrumbLink asChild className="text-secondary-text hover:text-foreground">
+              <Link to={parentTo}>{parent}</Link>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbPage className="min-w-0 truncate text-foreground">{title}</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
 
-      <section className="mg-glass mg-glass--strong mg-record app-rec__head" data-a="rise">
-        <div className="app-rec__top">
-          {/* `false` means this record has no mark at all — the deal and the
-              order carry their identity in the title and the facts row.
-              `undefined` still falls back to the title's initials. */}
-          {mark !== false && (
-            <span className={cn('app-rec__mark', markTone === 'late' && 'text-late')} aria-hidden="true">
+      <header className="flex items-start gap-4 px-4 pt-4 sm:px-8">
+        {/* `false` means this record has no mark at all — the deal and the
+            order carry their identity in the title and the facts row, and
+            an empty 44px square with a gap beside it is worse than none.
+            `undefined` still falls back to the title's initials. */}
+        {mark !== false && (
+          <Avatar className="size-11 shrink-0 rounded-lg">
+            <AvatarFallback className={cn(
+              'rounded-lg bg-secondary text-[14px] font-semibold',
+              markTone === 'late' ? 'text-late' : 'text-primary'
+            )}>
               {mark ?? initialsOf(title)}
-            </span>
-          )}
-          <div className="app-rec__titles">
-            {eyebrow && <span className="mg-eyebrow">{eyebrow}</span>}
-            <h1 className="mg-record__title">{title}</h1>
-            {badges && <div className="app-rec__badges">{badges}</div>}
-            {facts.filter(Boolean).length > 0 && (
-              <div className="app-rec__line">
-                {facts.filter(Boolean).map((fact, i) => <span key={i}>{fact}</span>)}
-              </div>
-            )}
-          </div>
-          {(action || menu) && (
-            <div className="mg-record__actions">
-              {action}
-              {menu && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" className="mg-btn mg-btn--icon" aria-label="More actions">
-                      <MoreHorizontal className="size-[18px]" strokeWidth={2.2} aria-hidden="true" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-56">
-                    {menu}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+            </AvatarFallback>
+          </Avatar>
+        )}
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate font-display text-2xl/[1.25] font-bold tracking-[-0.02em] text-foreground">{title}</h1>
+          {facts.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-secondary-text">
+              {facts.filter(Boolean).map((fact, i) => <span key={i} className="min-w-0 truncate">{fact}</span>)}
             </div>
           )}
         </div>
-        {factsGrid?.length > 0 && (
-          <dl className="mg-facts">
-            {factsGrid.filter(Boolean).map((f) => (
-              <div key={f.label} className="min-w-0">
-                <dt>{f.label}</dt>
-                <dd>{f.value ?? <span className="font-normal text-muted-foreground">—</span>}</dd>
-              </div>
-            ))}
-          </dl>
+        {action}
+        {menu && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="secondary" size="icon-sm" aria-label="More actions" className="shrink-0 border border-border-strong text-secondary-text hover:text-foreground">
+                <MoreHorizontal strokeWidth={2.4} aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48 rounded-lg p-1.5">
+              {menu}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
-        {headExtra}
-      </section>
+      </header>
 
-      {flow}
+      {flow && <div className="px-4 sm:px-8">{flow}</div>}
 
-      {stats && <div className="app-rec__stats">{stats}</div>}
+      {stats && (
+        <div className="mt-6 grid gap-4 px-4 sm:grid-cols-2 sm:px-8 xl:grid-cols-4">
+          {stats}
+        </div>
+      )}
 
-      {notice}
-
-      <div className={cn('app-rec__body', rail && 'has-rail', rail && railFirst && 'rail-first', bodyClassName)}>
-        <div className="app-rec__main">{children}</div>
-        {rail && <aside className="app-rec__rail" aria-label="On this record">{rail}</aside>}
+      {/* The rail is 340px when there is one. Without it the sections take
+          the width, rather than leaving a column of nothing beside them. */}
+      <div className={cn('grid items-start gap-6 px-4 pt-6 pb-8 sm:px-8', rail && 'xl:grid-cols-[minmax(0,1fr)_340px]')}>
+        <div className="flex min-w-0 flex-col gap-4">{children}</div>
+        {rail && <aside className="flex flex-col gap-4">{rail}</aside>}
       </div>
     </div>
   );

@@ -31,7 +31,7 @@ const SECTION = { actions: 'Actions taken', highlights: 'Highlights', commitment
 const label = (s) => String(s || '').replace(/[._]/g, ' ');
 
 function Heading({ children }) {
-  return <div className="mt-3 text-[12px] font-semibold tracking-wide text-muted-foreground uppercase first:mt-0">{children}</div>;
+  return <div className="mt-3 eyebrow first:mt-0">{children}</div>;
 }
 
 function Lines({ items, render, empty = 'None' }) {
@@ -176,11 +176,11 @@ export default function PersonalMisCard({ enabled = false, recipients = { to: []
 
   const pdfQuery = asOf ? `?date=${asOf}` : '';
   return (
-    <section className="mg-glass mg-panel rp-card rp-full" data-a="rise" aria-labelledby="pmis-t">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="mg-panel__title" id="pmis-t">Personal daily MIS</h2>
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-foreground">
+            Personal daily MIS
             <Chip tone={enabled ? 'settled' : undefined}>{enabled ? 'On' : 'Off'}</Chip>
           </div>
           <div className="text-[12px] text-muted-foreground">Tuesday to Saturday at 08:40 IST, for the previous working day; tried again at 09:10 and 09:40</div>
@@ -188,7 +188,7 @@ export default function PersonalMisCard({ enabled = false, recipients = { to: []
             Each sales and admin user's day, written by AI from their mailbox and their records in the tracker, sent from their own mailbox to the recipients below with them copied. Every line must cite one of their facts, nothing may be left out, and the counts must be the tracker's; a report that fails is not sent. No report for a weekend, a holiday or a day of leave.
           </p>
         </div>
-        <Button variant={enabled ? 'secondary' : 'default'} size="sm" disabled={busy === 'switch'} onClick={toggle}>
+        <Button variant={enabled ? 'secondary' : 'default'} size="sm" className="h-8 px-4 text-[13px]" disabled={busy === 'switch'} onClick={toggle}>
           {enabled ? 'Switch off' : 'Switch on'}
         </Button>
       </div>
@@ -208,12 +208,12 @@ export default function PersonalMisCard({ enabled = false, recipients = { to: []
         <Field label="As of" hint="The report covers the working day before">
           <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-8 text-[12.5px]" />
         </Field>
-        <Button variant="secondary" size="sm" disabled={busy !== null} onClick={() => load(false)}>{busy === 'facts' ? 'Gathering…' : 'Show the facts'}</Button>
-        <Button variant="secondary" size="sm" disabled={busy !== null} onClick={() => load(true)}>{busy === 'ai' ? 'Writing…' : 'Preview with AI'}</Button>
-        <Button variant="secondary" size="sm" disabled={!who} asChild={Boolean(who)}>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy !== null} onClick={() => load(false)}>{busy === 'facts' ? 'Gathering…' : 'Show the facts'}</Button>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={busy !== null} onClick={() => load(true)}>{busy === 'ai' ? 'Writing…' : 'Preview with AI'}</Button>
+        <Button variant="secondary" size="sm" className="h-8 px-4 text-[13px]" disabled={!who} asChild={Boolean(who)}>
           {who ? <a href={`/api/mis-reports/personal/${who}/preview.pdf${pdfQuery}`} target="_blank" rel="noreferrer">Open the PDF</a> : <span>Open the PDF</span>}
         </Button>
-        <Button size="sm" disabled={!who || busy !== null} onClick={() => setSending(true)}>{busy === 'send' ? 'Sending…' : 'Send now'}</Button>
+        <Button size="sm" className="h-8 px-4 text-[13px]" disabled={!who || busy !== null} onClick={() => setSending(true)}>{busy === 'send' ? 'Sending…' : 'Send now'}</Button>
       </div>
       {person && (
         <div className="flex flex-col gap-1 border-t border-border pt-3">
@@ -245,6 +245,6 @@ export default function PersonalMisCard({ enabled = false, recipients = { to: []
           onConfirm={() => { setSending(false); send(); }}
         />
       )}
-    </section>
+    </div>
   );
 }

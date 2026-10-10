@@ -1,16 +1,13 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ChevronRight, Send, TriangleAlert } from 'lucide-react';
 import { ListPage } from '../components/ListPage.jsx';
-import { useToast } from '../components/ui.jsx';
+import { Alert, Badge, useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
-import { SalesViews, SummaryStrip, Tone, daysFrom, useRows, useTotal } from '../components/sales.jsx';
 import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
-import { plural } from '../components/daily.jsx';
 
 /**
  * Enquiries as leads (#24): where they come from, how they are qualified,
@@ -22,10 +19,6 @@ const STATUSES = ['New', 'Contacted', 'Qualified', 'Nurture', CONVERTED, 'Unqual
 const OPEN = ['New', 'Contacted', 'Qualified', 'Nurture'];
 const SECTORS = ['Agriculture', 'Metal Industry', 'Pharmaceutical', 'Other'];
 
-const enquiryTone = (s) => (s === 'Unqualified' ? 'late' : s === CONVERTED ? 'ok' : s === 'New' ? 'wait' : s === 'Nurture' ? 'plain' : 'info');
-const monthStart = () => `${today().slice(0, 7)}-01`;
-const MONTH = () => new Date().toLocaleDateString('en-GB', { month: 'long' });
-
 export default function Enquiries() {
   const lookups = useLookups();
   const toast = useToast();
@@ -35,158 +28,103 @@ export default function Enquiries() {
   const enquiryNo = params.get('q') || '';
   const [touching, setTouching] = useState(false);
   const [logged, setLogged] = useState(0);
-  const [version, setVersion] = useState(0);
   // The service questionnaire for one enquiry (#208). A "submitted" notification links here with ?questionnaire=.
   const [questionnaire, setQuestionnaire] = useState(() => (enquiryNo && params.get('questionnaire') ? { enquiry_no: enquiryNo } : null));
+  const [questionnaireVersion, setQuestionnaireVersion] = useState(0);
   useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
   const responseHours = Number(lookups.settings?.lead_first_response_hours || 24);
-  const sourceName = (r) => lookups.lead_sources.find((s) => s.id === r.source_id)?.name;
-
-  // The banner and the strip count every enquiry, not just this page, by
-  // the server's own follow-up rules (?risk=).
-  const missed = useRows('enquiries', { risk: 'follow_up_missed', limit: 6 }, [version, logged]);
-  const waiting = useRows('enquiries', { risk: 'no_reply', limit: 4 }, [version, logged]);
-  const openCount = useTotal('enquiries', { status: OPEN.join(',') }, [version]);
-  const converted = useTotal('enquiries', { status: CONVERTED, from: monthStart(), to: today() }, [version]);
-
-  const nextFollowUp = (r) => {
-    if (!r.next_follow_up_at) return r.expected_decision_date ? <span className="app-sub">decide by {date(r.expected_decision_date)}</span> : <span className="text-muted-foreground">—</span>;
-    const d = daysFrom(r.next_follow_up_at);
-    const late = OPEN.includes(r.status) && d < 0;
-    return (
-      <>
-        {late ? <Tone tone="late">{date(r.next_follow_up_at)}, {plural(-d, 'day')} late</Tone> : <span>{date(r.next_follow_up_at)}</span>}
-        {r.expected_decision_date && <span className="app-sub">decide by {date(r.expected_decision_date)}</span>}
-      </>
-    );
-  };
+  // Worked out from the rows the list already loaded, not a second request.
+  const attention = (rows) => ({
+    dueRows: rows.filter((e) => OPEN.includes(e.status) && e.next_follow_up_at && e.next_follow_up_at <= today()),
+    late: rows.filter((e) => e.status === 'New' && (Date.now() - new Date(e.created_at).getTime()) / 36e5 > responseHours),
+  });
 
   const columns = [
-    { key: 'enquiry_no', header: 'Enquiry', className: 'mono', render: (r) => <><b>{r.enquiry_no}</b><span className="app-sub">{date(r.enquiry_date)}</span></> },
-    { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.company_id ? <Link className="font-bold text-foreground no-underline" to={`/companies/${r.company_id}`}>{r.client_name}</Link> : r.client_name}{r.contact_person && <span className="app-sub font-normal">{r.contact_person}</span>}</> },
-    { key: 'service', header: 'Interested in', className: 'wrap', min: 160, render: (r) => <>{r.service || r.services_interested || <span className="text-muted-foreground">—</span>}{(sourceName(r) || r.source) && <span className="app-sub">{sourceName(r) || r.source}</span>}</> },
-    { key: 'estimated_value', header: 'Estimate', align: 'right', className: 'strong', render: (r) => (r.estimated_value ? money(r.estimated_value, r.currency) : <span className="text-muted-foreground">—</span>) },
-    { key: 'sales_person', header: 'Owner', className: 'nowrap', render: (r) => r.sales_person ?? <span className="text-muted-foreground">—</span> },
-    { key: 'status', header: 'Status', render: (r) => <><Tone tone={enquiryTone(r.status)}>{r.status}</Tone>{r.status === 'Unqualified' && r.unqualified_reason_id && <span className="app-sub">{lookups.lost_reasons.find((x) => x.id === r.unqualified_reason_id)?.name}</span>}</> },
-    { key: 'next_follow_up_at', header: 'Next follow-up', render: nextFollowUp },
+    { key: 'enquiry_no', header: 'Enquiry', className: 'mono', render: (r) => <>{r.enquiry_no}<div className="small muted">{date(r.enquiry_date)}</div></> },
+    { key: 'client_name', header: 'Client', className: 'strong', render: (r) => <>{r.company_id ? <Link to={`/companies/${r.company_id}`}>{r.client_name}</Link> : r.client_name}{r.contact_person && <div className="small muted">{r.contact_person}</div>}</> },
+    { key: 'source', header: 'Source', render: (r) => lookups.lead_sources.find((s) => s.id === r.source_id)?.name || <span className="muted">—</span> },
+    { key: 'service', header: 'Interested in', className: 'wrap', render: (r) => r.service || r.services_interested || <span className="muted">—</span> },
+    { key: 'estimated_value', header: 'Estimate', align: 'right', render: (r) => (r.estimated_value ? money(r.estimated_value, r.currency) : <span className="muted">—</span>) },
+    { key: 'sales_person', header: 'Owner', render: (r) => r.sales_person ?? <span className="muted">—</span> },
+    { key: 'status', header: 'Status', render: (r) => <><Badge tone={r.status === 'Unqualified' ? 'danger' : r.status === CONVERTED ? 'success' : r.status === 'New' ? 'warning' : 'info'}>{r.status}</Badge>{r.status === 'Unqualified' && r.unqualified_reason_id && <div className="small muted">{lookups.lost_reasons.find((x) => x.id === r.unqualified_reason_id)?.name}</div>}</> },
+    { key: 'next_follow_up_at', header: 'Next follow-up', render: (r) => r.next_follow_up_at ? <span style={{ color: r.next_follow_up_at <= today() && OPEN.includes(r.status) ? 'var(--late)' : undefined }}>{date(r.next_follow_up_at)}</span> : <span className="muted">—</span> },
+    { key: 'expected_decision_date', header: 'Decision by', render: (r) => date(r.expected_decision_date) },
     {
       key: 'questionnaire_status', header: 'Questionnaire',
       render: (r) => (
-        r.questionnaire_status ? (
-          <button type="button" className="qn-cell" title={`Questionnaire for ${r.enquiry_no}: open it`} onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
-            <QuestionnaireBadge status={r.questionnaire_status} /><ChevronRight aria-hidden="true" />
-          </button>
-        ) : (
-          <button type="button" className="mg-btn mg-btn--sm" title={`Send the questionnaire for ${r.enquiry_no}`} onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
-            <Send aria-hidden="true" />Send
-          </button>
-        )
+        <button type="button" className="btn btn--sm btn--ghost" onClick={(e) => { e.stopPropagation(); setQuestionnaire(r); }}>
+          {r.questionnaire_status ? <QuestionnaireBadge status={r.questionnaire_status} /> : 'Send'}
+        </button>
       ),
     },
     {
       key: 'quotation_no', header: 'Quotation',
-      render: (r) => r.quotation_no ? <Link className="app-ref" to={`/quotations/${encodeURIComponent(r.quotation_no)}`}>{r.quotation_no}</Link> : <span className="text-muted-foreground">—</span>,
+      render: (r) => r.quotation_no ? <Link className="mono" to={`/quotations/${encodeURIComponent(r.quotation_no)}`}>{r.quotation_no}</Link> : <span className="muted">—</span>,
     },
   ];
 
   const fields = (record) => [
-    { group: 'The enquiry', name: 'enquiry_no', label: 'Enquiry number', auto: 'enquiry' },
-    { group: 'The enquiry', name: 'enquiry_date', label: 'Enquiry date', type: 'date', default: today() },
-    { group: 'The enquiry', name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `Leaving New needs a source and the client; Qualified and "${CONVERTED}" need the services and an estimated value; Unqualified needs a reason. "${CONVERTED}" creates a draft quotation, a line per service, unless one is linked` },
-    { group: 'The enquiry', name: 'source_id', label: 'Lead source', type: 'select', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })), hint: 'Where this enquiry came from' },
-    { group: 'The enquiry', name: 'source', label: 'How it reached us', hint: 'In words: referral from…, the website form, an email, an event' },
-    { group: 'Client', name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'One spelling per client; a new name creates a company' },
-    { group: 'Client', name: 'sector', label: 'Sector', type: 'combo', options: sectors, hint: 'Pick from the list, or type a new sector' },
-    { group: 'Client', name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
-    { group: 'Client', name: 'contact_person', label: 'Contact person' },
+    { name: 'enquiry_no', label: 'Enquiry number', auto: 'enquiry' },
+    { name: 'enquiry_date', label: 'Enquiry date', type: 'date', default: today() },
+    { name: 'client_name', label: 'Client', required: true, type: 'combo', options: lookups.clients, hint: 'One spelling per client; a new name creates a company' },
+    { name: 'source', label: 'Enquiry source', hint: 'How the enquiry reached us, such as referral, website, email or event' },
+    { name: 'sector', label: 'Sector', type: 'combo', options: sectors },
+    { name: 'country', label: 'Country', type: 'combo', options: ['India', 'United Arab Emirates', 'Singapore', 'United Kingdom', 'United States'] },
+
+    { name: 'contact_person', label: 'Contact person' },
     // The address lives on the contact, and until now there was nowhere to
     // type it: the contact this name creates held a name and nothing else,
     // so sending the quotation, chasing payment, the portal and mailbox
     // matching all had nobody to reach (docs/client-data-gaps.md, gap 1).
-    { group: 'Client', name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
-    { group: 'Client', name: 'contact_phone', label: 'Contact phone' },
-    { group: 'What they want', name: 'service', label: 'Service asked for', type: 'combo', options: lookups.services, hint: 'Pick from the catalogue, or type it' },
-    { group: 'What they want', name: 'services_interested', label: 'Other services of interest' },
-    { group: 'What they want', name: 'estimated_value', label: 'Estimated value', type: 'money', hint: 'Carried onto the quotation when converted' },
-    { group: 'What they want', name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
-    { group: 'Owner and follow-up', name: 'sales_person', label: 'Owner', type: 'combo', options: lookups.sales_people },
-    { group: 'Owner and follow-up', name: 'sales_person_email', label: 'Owner email', type: 'email' },
-    { group: 'Owner and follow-up', name: 'next_follow_up_at', label: 'Next follow-up', type: 'date', hint: 'Blank: set from Settings when the status changes' },
-    { group: 'Owner and follow-up', name: 'expected_decision_date', label: 'Expected decision', type: 'date' },
-    { group: 'If it goes nowhere', name: 'unqualified_reason_id', label: 'Reason, if unqualified', type: 'select', options: lookups.lost_reasons.map((r) => ({ value: String(r.id), label: r.name })) },
-    { group: 'If it goes nowhere', name: 'unqualified_notes', label: 'Notes on that', span: 2 },
+    { name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
+    { name: 'contact_phone', label: 'Contact phone' },
+    { name: 'source_id', label: 'Source', type: 'select', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })), hint: 'Where this enquiry came from' },
+    { name: 'service', label: 'Service asked for', type: 'combo', options: lookups.services },
+    { name: 'services_interested', label: 'Other services of interest' },
+    { name: 'estimated_value', label: 'Estimated value', type: 'money', hint: 'Carried onto the quotation when converted' },
+    { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
+    { name: 'sales_person', label: 'Owner', type: 'combo', options: lookups.sales_people },
+    { name: 'sales_person_email', label: 'Owner email', type: 'email' },
+    { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `Leaving New needs a source and the client; Qualified and "${CONVERTED}" need the services and an estimated value; Unqualified needs a reason. "${CONVERTED}" creates a draft quotation, a line per service, unless one is linked` },
+    { name: 'next_follow_up_at', label: 'Next follow-up', type: 'date', hint: 'Blank: set from Settings when the status changes' },
+    { name: 'expected_decision_date', label: 'Expected decision', type: 'date' },
+    { name: 'unqualified_reason_id', label: 'Reason, if unqualified', type: 'select', options: lookups.lost_reasons.map((r) => ({ value: String(r.id), label: r.name })) },
+    { name: 'unqualified_notes', label: 'Notes on that', span: 2 },
     {
-      group: 'Quotation', name: 'quotation_no', label: 'Existing quotation', type: 'select', span: 'all',
+      name: 'quotation_no', label: 'Existing quotation', type: 'select', span: 2,
       hint: 'For an enquiry that was already quoted: link that quotation instead of creating a new one',
       options: [
         ...(record?.quotation_no && !lookups.quotations.some((q) => q.quotation_no === record.quotation_no) ? [{ value: record.quotation_no, label: record.quotation_no }] : []),
         ...lookups.quotations.map((q) => ({ value: q.quotation_no, label: `${q.quotation_no} — ${q.client_name} (${q.status})` })),
       ],
     },
-    { group: 'Quotation', name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
+    { name: 'notes', label: 'Notes', type: 'textarea', span: 'all' },
   ];
-
-  const summary = ({ filters, setFilters }) => {
-    const is = (want) => Object.keys(want).length === Object.keys(filters).length && Object.entries(want).every(([k, v]) => filters[k] === v);
-    const press = (want) => () => setFilters(is(want) ? {} : want);
-    const W_OPEN = { status: OPEN.join(',') };
-    const W_NEW = { risk: 'no_reply' };
-    const W_MISS = { risk: 'follow_up_missed' };
-    const W_CONV = { status: CONVERTED, from: monthStart(), to: today() };
-    return (
-      <SummaryStrip
-        label="Enquiries at a glance"
-        tiles={[
-          { key: 'open', label: 'Open enquiries', figure: openCount.total, foot: 'new, contacted, qualified or nurtured', onClick: press(W_OPEN), pressed: is(W_OPEN) },
-          { key: 'new', label: 'Waiting for a first call', figure: waiting.total, tone: waiting.total ? 'late' : undefined, foot: `over ${responseHours} hours, nobody has answered`, onClick: press(W_NEW), pressed: is(W_NEW) },
-          { key: 'miss', label: 'Follow-ups missed', figure: missed.total, tone: missed.total ? 'late' : undefined, foot: missed.total ? 'past their follow-up date' : 'nothing missed', onClick: press(W_MISS), pressed: is(W_MISS) },
-          { key: 'conv', label: `Converted in ${MONTH()}`, figure: converted.total, tone: converted.total ? 'ok' : undefined, foot: 'enquired this month, now quotations', onClick: press(W_CONV), pressed: is(W_CONV) },
-        ]}
-      />
-    );
-  };
 
   return (
     <>
     <ListPage
-      refreshToken={version}
-      eyebrow="Sales"
       title="Enquiries"
-      noun="enquiries"
-      subtitle="Every lead, from first contact to quotation: where it came from, who owns it, when to follow up, and what happened."
-      nav={<SalesViews />}
-      summary={summary}
+      subtitle="Every lead, from first contact to quotation: source, owner, next follow-up, and what happened"
       resource="enquiries"
       columns={columns}
       fields={fields}
-      formSize="lg"
-      formSubmitLabel="Create enquiry"
       newLabel="Enquiry"
       formTitle="enquiry"
       formIntro={`New → Contacted → Qualified → ${CONVERTED}. Set "${CONVERTED}" and a quotation is created with these details, or link one that exists. Drop a lead with "Unqualified" and a reason; "Nurture" parks it for later.`}
-      searchPlaceholder="Search client, enquiry no, service, sector"
-      quick={['sales_person', 'source_id', 'risk']}
-      extraFilterLabels={{ owner: 'Owner' }}
-      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email', 'risk'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
+      searchPlaceholder="Search client, enquiry no, service, sector…"
+      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
       dateFilterLabel="Enquiry date"
-      phone={(r) => ({
-        title: r.client_name,
-        amount: r.estimated_value ? money(r.estimated_value, r.currency) : '—',
-        meta: <>{r.enquiry_no} · {r.service || r.services_interested || 'no service yet'}{r.sales_person && <> · {r.sales_person}</>}{r.next_follow_up_at && <> · follow up {date(r.next_follow_up_at)}</>}{r.quotation_no && <> · {r.quotation_no}</>}</>,
-        state: <Tone tone={enquiryTone(r.status)}>{r.status}</Tone>,
-      })}
-      deleteTitle={(r) => `Delete ${r.enquiry_no}?`}
-      deleteText={(r) => `${r.client_name}${r.service ? `, ${r.service}` : ''}. Its notes, tasks and logged calls go with it. A quotation made from it stays. This cannot be undone.`}
+      refreshToken={questionnaireVersion}
       onSaved={(saved) => {
         invalidateLookups();
-        setVersion((v) => v + 1);
         if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
       }}
       filters={[
-        { name: 'status', label: 'Status', options: [{ value: OPEN.join(','), label: 'Open (not converted or dropped)' }, ...statuses] },
+        { name: 'status', label: 'Status', options: statuses },
         { name: 'source_id', label: 'Source', options: lookups.lead_sources.map((s) => ({ value: String(s.id), label: s.name })) },
         { name: 'sector', label: 'Sector', options: [{ value: '__none__', label: 'Not set' }, ...sectors] },
         { name: 'sales_person', label: 'Owner', options: lookups.sales_people },
@@ -201,30 +139,21 @@ export default function Enquiries() {
           { value: 'idle', label: 'Gone quiet' },
         ] },
       ]}
-      banner={(rows, { setFilters }) => <>
+      banner={(rows) => { const { dueRows, late } = attention(rows); return <>
         {enquiryNo && <EmailOrigin entity="enquiry" id={enquiryNo} />}
         {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}
-        {(missed.total > 0 || waiting.total > 0) && (
-          <div className="mg-banner mg-banner--wait" role="status">
-            <TriangleAlert aria-hidden="true" />
-            <div className="mg-banner__body">
-              <strong>
-                {[missed.total > 0 && `${plural(missed.total, 'follow-up')} ${missed.total === 1 ? 'is' : 'are'} overdue`, waiting.total > 0 && `${plural(waiting.total, 'new enquiry', 'new enquiries')} still waiting for a first call`].filter(Boolean).join(', and ')}
-              </strong>
-              {missed.total > 0 && <>Overdue: {missed.rows.map((e) => `${e.client_name}${e.next_follow_up_at ? ` (${date(e.next_follow_up_at)})` : ''}`).join(', ')}{missed.total > missed.rows.length ? ` and ${missed.total - missed.rows.length} more` : ''}. </>}
-              {waiting.total > 0 && <>Waiting over {responseHours} hours: {waiting.rows.map((e) => e.client_name).join(', ')}{waiting.total > waiting.rows.length ? ` and ${waiting.total - waiting.rows.length} more` : ''}. </>}
-              Counted across all your enquiries, not just this page.
-            </div>
-            <span className="flex flex-wrap gap-2 self-center">
-              {missed.total > 0 && <button type="button" className="mg-btn mg-btn--sm" onClick={() => setFilters({ risk: 'follow_up_missed' })}>Show the {missed.total} overdue</button>}
-              {waiting.total > 0 && <button type="button" className="mg-btn mg-btn--sm" onClick={() => setFilters({ risk: 'no_reply' })}>Show the {waiting.total} waiting</button>}
-            </span>
-          </div>
+        {(dueRows.length > 0 || late.length > 0) && (
+        <Alert tone="warning">
+          <span>
+            {dueRows.length > 0 && <><strong>{dueRows.length} follow-up{dueRows.length === 1 ? '' : 's'} due:</strong> {dueRows.slice(0, 6).map((e) => `${e.client_name} (${date(e.next_follow_up_at)})`).join(', ')}{dueRows.length > 6 ? ` and ${dueRows.length - 6} more` : ''}. </>}
+            {late.length > 0 && <><strong>{late.length} new enquir{late.length === 1 ? 'y has' : 'ies have'} waited over {responseHours} hours</strong> for a first contact: {late.slice(0, 4).map((e) => e.client_name).join(', ')}.</>}
+          </span>
+        </Alert>
         )}
-      </>}
+      </>; }}
     />
     {touching && <TouchDialog entity="enquiry" id={enquiryNo} start={{ channel: 'call', contact_id: null }} onClose={() => setTouching(false)} onSaved={() => { setTouching(false); setLogged((n) => n + 1); }} />}
-    {questionnaire && <QuestionnaireCard enquiry={questionnaire} onClose={() => setQuestionnaire(null)} onChanged={() => setVersion((n) => n + 1)} />}
+    {questionnaire && <QuestionnaireCard enquiry={questionnaire} onClose={() => setQuestionnaire(null)} onChanged={() => setQuestionnaireVersion((n) => n + 1)} />}
     </>
   );
 }

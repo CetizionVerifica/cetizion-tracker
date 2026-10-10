@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Link } from 'react-router-dom';
-import { CircleCheck, FileSpreadsheet } from 'lucide-react';
 import { PageHeader } from '../App.jsx';
-import { ConfirmDialog, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
+import { Alert, ConfirmDialog, ErrorState, Field, Input, Modal, Select, Stat, Tabs, Textarea, useToast } from '../components/ui.jsx';
 import { Chip } from '../components/record.jsx';
-import { DialogError, MoneyBanner, SkelPanel } from '../components/money.jsx';
-import { FailedCard } from '../components/daily.jsx';
-import { RecordTabs, SummaryStrip } from '../components/sales.jsx';
-import { count } from '../components/travel.jsx';
 import { Button } from '../components/ui/button';
 import { TravelDocumentsUpload } from '../components/TravelDocumentsUpload.jsx';
 import { Checkbox } from '../components/ui/checkbox.tsx';
@@ -36,19 +30,15 @@ const FIELD_LABELS = {
 };
 const FIELD_OPTIONS = [{ value: 'ignore', label: 'Not read' }, ...Object.entries(FIELD_LABELS).map(([value, label]) => ({ value, label }))];
 const TONES = { red: 'late', amber: 'waiting', blue: 'info', duplicate: 'plain' };
-const sentence = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
-/** What a flag's colour means, as its tooltip (never the internal code). */
-const FLAG_WORD = { red: 'Must be fixed before the commit', amber: 'Worth a look before the commit', blue: 'What the import decided', duplicate: 'Already in the tracker' };
 const MODES = ['flight', 'train', 'bus', 'cab', 'hotel', 'other'];
 const STATUSES = ['booked', 'cancelled', 'partly_refunded'];
 /** What a commit wrote, in the words the page uses. */
-const WRITTEN = [['trip', 'trip'], ['segment', 'leg'], ['vendor_invoice', 'agency invoice'], ['invoice_line', 'invoice line'],
-  ['credit_note', 'credit note'], ['traveller', 'new staff member', 'new staff']];
-const writtenText = (w = {}) => WRITTEN.map(([k, one, many]) => count(w[k] ?? 0, one, many)).join(', ');
+const WRITTEN = [['trip', 'trips'], ['segment', 'legs'], ['vendor_invoice', 'agency invoices'], ['invoice_line', 'invoice lines'],
+  ['credit_note', 'credit notes'], ['traveller', 'new staff']];
+const writtenText = (w = {}) => WRITTEN.map(([k, label]) => `${number(w[k] ?? 0)} ${label}`).join(', ');
 /** The review tab each kind of item is shown on. */
 const STEP_TAB = { traveller: 'travellers', trip: 'trips', segment: 'trips', vendor_invoice: 'invoices', invoice_line: 'invoices', credit_note: 'credits' };
-const opts = (list) => list.map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1).replace(/_/g, ' ') }));
-const STEP_WORD = { traveller: 'A traveller', trip: 'A trip', segment: 'A leg', vendor_invoice: 'An agency invoice', invoice_line: 'An invoice line', credit_note: 'A credit note' };
+const opts = (list) => list.map((v) => ({ value: v, label: v.replace(/_/g, ' ') }));
 
 function Flags({ item, omit = [] }) {
   const flags = item.flags.filter((f) => !omit.includes(f.code));
@@ -56,9 +46,9 @@ function Flags({ item, omit = [] }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1.5">
       {flags.map((f) => (
-        <span key={`${f.code}-${f.message}`} title={FLAG_WORD[f.level]} className="max-w-full">
+        <span key={`${f.code}-${f.message}`} title={f.code} className="max-w-full">
           {/* A long message wraps rather than running off a narrow screen. */}
-          <Chip tone={TONES[f.level] || 'plain'} className="h-auto min-h-[22px] max-w-full shrink whitespace-normal text-left leading-snug">{f.level === 'duplicate' ? `In the tracker: ${f.message.replace(/^already in the tracker( as| on)? ?/, '')}` : sentence(f.message)}</Chip>
+          <Chip tone={TONES[f.level] || 'plain'} className="h-auto min-h-[22px] max-w-full shrink whitespace-normal text-left leading-snug">{f.level === 'duplicate' ? `In the tracker: ${f.message.replace(/^already in the tracker( as| on)? ?/, '')}` : f.message}</Chip>
         </span>
       ))}
       {item.assumptions.map((a) => <span key={a} className="text-[11.5px] text-muted-foreground">Assumed: {a}</span>)}
@@ -126,11 +116,10 @@ function EditItem({ item, lookups, onSave, onClose }) {
     try { await onSave({ payload: changed }); onClose(); } catch (err) { setError(err.message); setBusy(false); }
   }
   return (
-    <Modal title="Correct this row" subtitle={[STEP_WORD[item.step], item.tab && `${item.tab}, row ${item.source_row}`].filter(Boolean).join(' · ') || undefined} onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button disabled={busy} aria-busy={busy || undefined} onClick={save}>{busy ? 'Saving…' : error ? 'Try again' : 'Save the row'}</Button></>}>
-      <DialogError error={error} what="the row" />
-      {item.flags.length > 0 && <div className="mb-3"><Flags item={item} /></div>}
-      <div className="mg-grid2">
+    <Modal title="Correct this row" subtitle={item.tab ? `${item.tab}, row ${item.source_row}` : undefined} onClose={onClose}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={busy} onClick={save}>Save</Button></>}>
+      {error && <Alert tone="danger">{error}</Alert>}
+      <div className="grid gap-3 sm:grid-cols-2">
         {fields.map((f) => (
           <Field key={f.name} label={f.label}>
             {f.type === 'select' ? (
@@ -161,13 +150,11 @@ export default function TravelImportReview() {
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [askCommit, setAskCommit] = useState(false);
-  const [committing, setCommitting] = useState(false);
   useEffect(() => { if (data?.data) setBatch(data.data); }, [data]);
 
   const bySeq = useMemo(() => new Map((batch?.items || []).map((it) => [it.seq, it])), [batch]);
-  if (error) return <><PageHeader title="Travel import" eyebrow="Settings › Import travel" /><div className="app-page"><FailedCard title="Couldn't load this import" text={`${error} The draft is unchanged; try again.`} onRetry={refetch}><Link className="mg-btn mg-btn--sm" to="/settings/import-travel">Back to Import travel</Link></FailedCard></div></>;
-  if (!batch) return <><PageHeader title="Travel import" eyebrow="Settings › Import travel" subtitle="Loading the review…" /><div className="app-page" aria-busy="true"><SkelPanel rows={1} /><SkelPanel rows={6} /></div></>;
+  if (error) return <><PageHeader title="Travel import" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
+  if (!batch) return <><PageHeader title="Travel import" /><div className="page"><div className="skeleton h-[120px]" /></div></>;
 
   const done = batch.status === 'committed';
   const steps = (step) => batch.items.filter((it) => it.step === step);
@@ -201,14 +188,10 @@ export default function TravelImportReview() {
   const patchBatch = (body) => call(`/import/travel/${batch.id}`, 'PATCH', body).catch(() => {});
 
   async function commit() {
-    setCommitting(true);
     try {
       const next = await call(`/import/travel/${batch.id}/commit`, 'POST', {});
       toast(`Committed: ${writtenText(next.written)}`, 'success');
-      setAskCommit(false);
-    } catch { /* toasted; the confirm stays open with Try again */ } finally {
-      setCommitting(false);
-    }
+    } catch { /* toasted */ }
   }
   async function remove() {
     await api.remove('import/travel', batch.id).then(() => navigate('/settings/import-travel')).catch((err) => toast(err.message, 'danger'));
@@ -230,7 +213,8 @@ export default function TravelImportReview() {
       <Include it={it} />
     </div>
   );
-  const rowClass = (it) => `app-irow ${it.existing_ref ? 'is-known' : ''} ${live(it) ? '' : 'is-out'}`;
+  const known = 'border-l-waiting bg-waiting/[0.06]';
+  const rowClass = (it) => `border-b border-l-[3px] border-border px-4 py-3 ${it.existing_ref ? known : 'border-l-transparent'} ${live(it) ? '' : 'opacity-50'}`;
 
   async function decideAll(step, action) {
     await call(`/import/travel/${batch.id}/duplicates`, 'POST', { step, action }).catch(() => {});
@@ -258,13 +242,7 @@ export default function TravelImportReview() {
       </div>
     );
   };
-  const none = (
-    <div className="mg-empty">
-      <h3 className="mg-empty__title">Nothing here matches the filter</h3>
-      <p className="mg-empty__text">Show all, or untick Flagged only, to see every row of this step.</p>
-      <button type="button" className="mg-btn mg-btn--sm" onClick={() => setFilter({ show: '', flagged: false })}>Show all</button>
-    </div>
-  );
+  const none = <p className="px-4 py-5 text-[13px] text-muted-foreground">Nothing here matches the filter.</p>;
 
   // The Summary step: per kind of record, what the commit does with it.
   const SUMMARY_ROWS = [['traveller', 'Travellers (new staff rows)'], ['trip', 'Trips'], ['segment', 'Legs'], ['vendor_invoice', 'Agency invoices'],
@@ -295,54 +273,33 @@ export default function TravelImportReview() {
   ];
   const openTab = (key) => { setTab(key); if (key === 'summary' || key === 'columns') setFilter({ show: '', flagged: false }); };
 
-  const failed = batch.status === 'failed';
-  const toWrite = Object.values(n).reduce((sum, v) => sum + Number(v || 0), 0);
-  const tabsForPanel = tabsList.map((t) => ({ key: t.key, label: t.label, count: t.warning ? undefined : t.count || undefined, warning: t.warning }));
-
   return (
     <>
       <PageHeader
         title={batch.filename}
-        eyebrow="Settings › Import travel"
-        subtitle={[batch.vendor_name, failed ? 'Could not be read' : done ? `Committed ${date(batch.committed_at)}` : 'Draft: nothing is written until you commit'].filter(Boolean).join(' · ')}
+        subtitle={[batch.vendor_name, done ? `Committed ${date(batch.committed_at)}` : 'Draft: nothing is written until you commit'].filter(Boolean).join(' · ')}
         actions={
           <div className="flex flex-wrap gap-2">
             {done && <TravelDocumentsUpload batchId={batch.id} />}
             {!done && <Button variant="ghost" onClick={() => setConfirmDelete(true)}>Delete draft</Button>}
-            {!done && !failed && <Button disabled={busy || s.blocking > 0} onClick={() => setAskCommit(true)}>{s.blocking > 0 ? `${count(s.blocking, 'row')} to fix before commit` : 'Commit'}</Button>}
+            {!done && <Button disabled={busy || s.blocking > 0} onClick={commit}>{s.blocking > 0 ? `${number(s.blocking)} to fix before commit` : 'Commit'}</Button>}
           </div>
         }
       />
-      <div className="app-page">
-        {failed && (
-          <MoneyBanner tone="late" role="alert" title="This workbook couldn't be read, so there is nothing to review."
-            action={<Link className="mg-btn mg-btn--sm" to="/settings/import-travel">Upload a corrected workbook</Link>}>
-            {batch.error || 'No tab had the columns the import needs.'} Fix the workbook and upload it again; this draft can be deleted.
-          </MoneyBanner>
-        )}
-        {!failed && (
-          <SummaryStrip
-            label="What this workbook holds"
-            tiles={[
-              { key: 'rows', label: 'Rows read', figure: number(batch.row_count) },
-              { key: 'trips', label: done ? 'Trips written' : 'New trips', figure: number(n.trip ?? 0), foot: `${count(n.segment ?? 0, 'leg')} ${done ? 'written' : 'to add'}` },
-              { key: 'inv', label: 'Agency invoices', figure: number(n.vendor_invoice ?? 0), foot: count(n.invoice_line ?? 0, 'line') },
-              { key: 'cn', label: 'Credit notes', figure: number(n.credit_note ?? 0) },
-              { key: 'dup', label: 'Already in the tracker', figure: number(s.duplicates ?? 0), foot: s.duplicates ? 'kept unless you update them' : null },
-              { key: 'fix', label: 'To fix', figure: number(s.blocking ?? 0), tone: s.blocking ? 'late' : undefined, foot: s.blocking ? 'red flags block the commit' : 'nothing blocks the commit' },
-            ]}
-          />
-        )}
+      <div className="page stack">
+        {/* Two to a row on a phone, rather than six screens of tiles before the review. */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6">
+          <Stat label="Rows read" value={number(batch.row_count)} />
+          <Stat label={done ? 'Trips written' : 'New trips'} value={number(n.trip ?? 0)} meta={`${number(n.segment ?? 0)} legs ${done ? 'written' : 'to add'}`} tone="brand" />
+          <Stat label="Agency invoices" value={number(n.vendor_invoice ?? 0)} meta={`${number(n.invoice_line ?? 0)} lines`} />
+          <Stat label="Credit notes" value={number(n.credit_note ?? 0)} />
+          <Stat label="Already in the tracker" value={number(s.duplicates ?? 0)} />
+          <Stat label="To fix" value={number(s.blocking ?? 0)} tone={s.blocking ? 'warn' : 'ok'} />
+        </div>
         {done && batch.summary?.written && (
-          <MoneyBanner tone="ok" icon={CircleCheck} title={`Committed: ${writtenText(batch.summary.written)}.`}
-            action={<TravelDocumentsUpload batchId={batch.id} className="mg-btn mg-btn--sm" />}>
-            Upload the tickets and invoice PDFs named by their numbers and they file themselves.
-          </MoneyBanner>
+          <Alert tone="success">Written: {writtenText(batch.summary.written)}. Upload the tickets and invoice PDFs named by their numbers to file them.</Alert>
         )}
-        {!failed && (
-        <section className="mg-glass mg-glass--strong app-tabpanel" data-a="rise" aria-label="The review">
-        <RecordTabs id="tir" label="Review steps" tabs={tabsForPanel.map((t) => ({ ...t, label: t.warning ? <>{t.label}<span className="mg-count app-count--late" title="Rows with a red flag">{t.warning}</span></> : t.label }))} active={tab} onChange={openTab} />
-        <div className="app-tabbody" id="tir-panel" role="tabpanel" aria-labelledby={`tir-tab-${tab}`}>
+        <Tabs tabs={tabsList} active={tab} onChange={openTab} />
         {STEP_OF[tab] && (
           filterBar({ step: STEP_OF[tab], total: steps(STEP_OF[tab]).length,
             showing: STEP_OF[tab] === 'trip' ? steps('trip').filter((t) => shown(t, legsOf(t))).length
@@ -351,7 +308,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'columns' && (batch.mapping?.tabs || []).map((t) => (
-          <div key={t.name} className="app-ibox">
+          <div key={t.name} className="rounded-lg border border-border bg-card">
             <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5">
               <label className="flex items-center gap-2 text-[13px] font-medium">
                 <input type="checkbox" checked={t.included} disabled={busy || done} onChange={(e) => {
@@ -374,9 +331,8 @@ export default function TravelImportReview() {
         ))}
 
         {tab === 'travellers' && (
-          <div className="app-ibox">
-            {steps('traveller').length === 0 ? <p className="app-tabnote px-4 py-5">No travellers to check in this workbook: every name matched the staff list, or no row named one.</p>
-              : !steps('traveller').some(matches) && none}
+          <div className="rounded-lg border border-border bg-card">
+            {!steps('traveller').some(matches) && none}
             {steps('traveller').filter(matches).map((it) => (
               <div key={it.id} className={rowClass(it)}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -393,7 +349,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'trips' && (
-          <div className="app-ibox">
+          <div className="rounded-lg border border-border bg-card">
             {!steps('trip').some((t) => shown(t, legsOf(t))) && none}
             {steps('trip').filter((t) => shown(t, legsOf(t))).map((trip) => {
               const p = trip.payload;
@@ -446,7 +402,7 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'invoices' && (
-          <div className="app-ibox">
+          <div className="rounded-lg border border-border bg-card">
             {!steps('vendor_invoice').some((i) => shown(i, linesOf(i))) && none}
             {steps('vendor_invoice').filter((i) => shown(i, linesOf(i))).map((inv) => {
               const lines = linesOf(inv);
@@ -493,8 +449,8 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'credits' && (
-          <div className="app-ibox">
-            {steps('credit_note').length === 0 ? <p className="app-tabnote px-4 py-5">No credit or cancellation notes in this workbook. A note in a later upload is matched to the invoice it reverses.</p>
+          <div className="rounded-lg border border-border bg-card">
+            {steps('credit_note').length === 0 ? <p className="px-4 py-5 text-[13px] text-muted-foreground">No credit or cancellation notes in this workbook.</p>
               : !steps('credit_note').some(matches) && none}
             {steps('credit_note').filter(matches).map((n) => (
               <div key={n.id} className={rowClass(n)}>
@@ -515,28 +471,28 @@ export default function TravelImportReview() {
         )}
 
         {tab === 'summary' && (
-          <div className="flex flex-col gap-4">
-            <div className="app-ibox overflow-x-auto">
-              <table className="mg-table">
+          <div className="stack">
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+              <table className="w-full min-w-[560px] text-[13px]">
                 <thead>
-                  <tr>
-                    <th scope="col">Record</th>
-                    <th scope="col" className="num">{done ? 'Written new' : 'New'}</th>
-                    <th scope="col" className="num">Updated from the sheet</th>
-                    <th scope="col" className="num">Kept as in the tracker</th>
-                    <th scope="col" className="num">Left out</th>
+                  <tr className="text-[12px] text-muted-foreground">
+                    <th className="px-4 py-2.5 text-left font-normal">Record</th>
+                    <th className="px-3 py-2.5 text-right font-normal">{done ? 'Written new' : 'New'}</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Updated from the sheet</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Kept as in the tracker</th>
+                    <th className="px-4 py-2.5 text-right font-normal">Left out</th>
                   </tr>
                 </thead>
                 <tbody>
                   {SUMMARY_ROWS.map(([step, label]) => {
                     const t = tally(step);
                     return (
-                      <tr key={step}>
-                        <td><b>{label}</b></td>
-                        <td className="num"><b>{number(t.create)}</b></td>
-                        <td className="num">{number(t.update)}</td>
-                        <td className="num">{number(t.keep)}</td>
-                        <td className="num text-muted-foreground">{number(t.out)}</td>
+                      <tr key={step} className="border-t border-border">
+                        <td className="px-4 py-2">{label}</td>
+                        <td className="num px-3 py-2 text-right font-medium">{number(t.create)}</td>
+                        <td className="num px-3 py-2 text-right">{number(t.update)}</td>
+                        <td className="num px-3 py-2 text-right">{number(t.keep)}</td>
+                        <td className="num px-4 py-2 text-right text-muted-foreground">{number(t.out)}</td>
                       </tr>
                     );
                   })}
@@ -544,38 +500,20 @@ export default function TravelImportReview() {
               </table>
             </div>
             {!done && (reds.length > 0 ? (
-              <MoneyBanner tone="late" title={`${count(reds.length, 'row')} still ${reds.length === 1 ? 'has' : 'have'} a red flag, so nothing can be committed yet.`}
-                action={<button type="button" className="mg-btn mg-btn--sm" onClick={() => { setTab(STEP_TAB[reds[0].step] || 'trips'); setFilter({ show: 'errors', flagged: false }); }}>Show them</button>}>
-                Correct each row, or untick it to leave it out.
-              </MoneyBanner>
+              <Alert tone="danger">
+                {number(reds.length)} item{reds.length === 1 ? '' : 's'} still {reds.length === 1 ? 'has' : 'have'} a red flag, so nothing can be committed yet.{' '}
+                <button type="button" className="underline" onClick={() => { setTab(STEP_TAB[reds[0].step] || 'trips'); setFilter({ show: 'errors', flagged: false }); }}>Show them</button>
+              </Alert>
             ) : (
-              // G2-2: the ready state, with the one commit path.
-              <MoneyBanner tone="ok" icon={CircleCheck} title="Ready to commit."
-                action={<button type="button" className="mg-btn mg-btn--primary mg-btn--sm" disabled={busy} onClick={() => setAskCommit(true)}>Commit</button>}>
-                {ambers ? `${count(ambers, 'row')} with an amber flag ${ambers === 1 ? 'is' : 'are'} worth a look first. ` : ''}It is one transaction: everything ticked is written, or nothing is.
-              </MoneyBanner>
+              <Alert tone="info">
+                Ready to commit{ambers ? `: ${number(ambers)} item${ambers === 1 ? '' : 's'} with an amber flag are worth a look first` : ''}. It is one transaction: everything ticked is written, or nothing is.
+              </Alert>
             ))}
+            {!done && <div><Button disabled={busy || reds.length > 0} onClick={commit}>Commit</Button></div>}
           </div>
-        )}
-        </div>
-        </section>
         )}
       </div>
 
-      {askCommit && (
-        <ConfirmDialog
-          title={`Commit ${count(toWrite, 'record')}?`}
-          message={`${writtenText(n)}${s.duplicates ? `, and ${count(s.duplicates, 'record')} already in the tracker kept or updated as chosen` : ''}. It is one transaction: everything ticked is written, or nothing is.`}
-          confirmLabel="Commit"
-          busyLabel={`Committing ${count(toWrite, 'record')}…`}
-          tone="primary"
-          busy={committing}
-          onConfirm={commit}
-          onClose={() => !committing && setAskCommit(false)}
-        >
-          {ambers > 0 && <div className="mt-3"><MoneyBanner tone="wait" title={`${count(ambers, 'row')} with an amber flag.`}>Worth a look first; they don't block the commit.</MoneyBanner></div>}
-        </ConfirmDialog>
-      )}
       {editing && <EditItem item={editing} lookups={lookups} onSave={(body) => patchItem(editing, body)} onClose={() => setEditing(null)} />}
       {confirmDelete && (
         <ConfirmDialog title="Delete this draft?" message={`The draft from "${batch.filename}" will be removed. Nothing in the tracker changes.`}

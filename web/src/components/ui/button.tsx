@@ -3,33 +3,31 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 import { Slot } from "radix-ui"
 
-/*
- * Mocha Glass buttons (design-system Button): fully rounded pills built on the
- * system's own .mg-btn classes. Heights 36 (sm), 44 (default), 48 (lg). The
- * primary is the coffee fill and jellies on press; every other kind gets the
- * softer press (both wired in styles/mocha/motion.js). One primary per view.
- */
 const buttonVariants = cva(
-  "mg-btn shrink-0 outline-none disabled:pointer-events-none aria-invalid:border-destructive aria-invalid:ring-4 aria-invalid:ring-late-soft [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "mg-btn--primary",
-        destructive: "mg-btn--danger",
-        outline: "",
-        secondary: "",
-        ghost: "mg-btn--ghost",
-        link: "mg-btn--ghost !h-auto !px-0 text-caramel-text underline-offset-4 hover:!bg-transparent hover:underline",
+        default: "bg-primary text-primary-foreground hover:bg-primary-hover",
+        destructive:
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
+        outline:
+          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost:
+          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+        link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "",
-        xs: "mg-btn--sm gap-1 px-2.5 text-xs [&_svg:not([class*='size-'])]:size-3.5",
-        sm: "mg-btn--sm gap-1.5",
-        lg: "mg-btn--lg",
-        icon: "mg-btn--icon",
-        "icon-xs": "mg-btn--sm mg-btn--icon [&_svg:not([class*='size-'])]:size-3.5",
-        "icon-sm": "mg-btn--sm mg-btn--icon",
-        "icon-lg": "mg-btn--lg mg-btn--icon",
+        default: "h-9 px-4 py-2 has-[>svg]:px-3",
+        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
+        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
+        icon: "size-9",
+        "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "size-8",
+        "icon-lg": "size-10",
       },
     },
     defaultVariants: {

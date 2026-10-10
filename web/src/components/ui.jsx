@@ -1,9 +1,10 @@
-import { useCallback, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { toneFor } from '../lib/format.js';
 import { useMediaQuery } from '../lib/hooks.js';
-import { CircleAlert, CircleCheck, Info, TriangleAlert, Upload } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { toast as sonnerToast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner.tsx';
 import { Skeleton } from '@/components/ui/skeleton.tsx';
@@ -14,6 +15,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog.tsx';
 import { Card as UiCard, CardContent, CardHeader } from '@/components/ui/card.tsx';
+import {
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table.tsx';
 
 /**
  * These keep the names and props every page already passes, and render the
@@ -38,17 +42,17 @@ const TONE = {
 
 export function Card({ title, hint, actions, children, flush = false, className = '' }) {
   return (
-    <UiCard className={cn('gap-0 py-0', className)}>
+    <UiCard className={cn('gap-0 rounded-lg border-border bg-card py-0 shadow-none', className)}>
       {/* The actions sit beside the title when there is room and under it
           when there is not. Held `shrink-0` beside it, a card header
           carrying two filters pushed a phone page past its viewport. */}
       {(title || actions) && (
-        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+        <CardHeader className="flex flex-col gap-3 border-b border-border px-4 py-3 [.border-b]:pb-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
           {/* The title keeps a readable width; actions too wide to sit
               beside it wrap onto their own line rather than squeezing it
               to a word per line. */}
           <div className="min-w-0 sm:flex-[1_1_260px]">
-            {title && <div className="text-[15px] font-semibold text-foreground">{title}</div>}
+            {title && <h2 className="font-display text-base font-bold text-foreground">{title}</h2>}
             {hint && <div className="measure mt-1 text-[12.5px] text-muted-foreground">{hint}</div>}
           </div>
           {actions && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div>}
@@ -60,6 +64,32 @@ export function Card({ title, hint, actions, children, flush = false, className 
 }
 
 /* ------------------------------------------------------------------ stat */
+
+export function Stat({ label, value, meta, tone = '', to, onClick }) {
+  // `warn` and `ok` are older names some pages still pass. `ok` stays plain:
+  // a zero is not news, and colouring it green says it is.
+  const accent = {
+    danger: 'text-late',
+    warning: 'text-waiting',
+    warn: 'text-waiting',
+    success: 'text-settled',
+    info: 'text-info',
+  }[tone];
+  const className = cn(
+    'flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors duration-150',
+    (to || onClick) && 'hover:border-primary/40 hover:bg-accent'
+  );
+  const inner = (
+    <>
+      <div className="eyebrow">{label}</div>
+      <div className={cn('num font-display text-2xl font-bold', accent || 'text-foreground')}>{value}</div>
+      {meta && <div className="text-[12px] text-muted-foreground">{meta}</div>}
+    </>
+  );
+  if (to) return <Link className={className} to={to}>{inner}</Link>;
+  if (onClick) return <button type="button" className={className} onClick={onClick}>{inner}</button>;
+  return <div className={className}>{inner}</div>;
+}
 
 
 /* ----------------------------------------------------------------- badge */
@@ -73,7 +103,7 @@ export function Badge({ children, tone, dot = false, className }) {
   // says anything here, which is the design's rule and also the accessible
   // one.
   return (
-    <UiBadge variant="outline" className={cn('gap-1.5 font-semibold', TONE[resolved] || TONE.neutral, className)}>
+    <UiBadge variant="outline" className={cn('gap-1.5 rounded-full font-semibold', TONE[resolved] || TONE.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />}
       {children}
     </UiBadge>
@@ -87,7 +117,7 @@ export function DocumentLink({ id, name }) {
   if (!id) return <span className="muted">—</span>;
   return (
     <a
-      className="mg-btn mg-btn--sm mg-btn--ghost"
+      className="btn btn--sm btn--ghost"
       href={api.documentUrl(id)}
       target="_blank"
       rel="noopener noreferrer"
@@ -122,7 +152,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
           <UiCard
             key={row.id ?? i}
             className={cn(
-              'gap-0 rounded-[18px] border-line py-0 shadow-none [background:var(--track)] [backdrop-filter:none]',
+              'gap-0 rounded-lg border-border bg-card py-0 shadow-none',
               onRowClick && 'cursor-pointer',
               rowClassName ? rowClassName(row) || '' : ''
             )}
@@ -134,7 +164,7 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
             <CardContent className="px-3 py-3">
             {labelled.map((col, index) => (
               <div key={col.key} className={cn('flex gap-3 py-1', index > 0 && 'border-t border-border/60 pt-2')}>
-                <span className="w-[38%] shrink-0 text-[11px] font-semibold tracking-[0.04em] text-muted-foreground uppercase">
+                <span className="eyebrow w-[38%] shrink-0">
                   {col.header}
                 </span>
                 <span className={cn('min-w-0 flex-1 wrap-anywhere text-[13px]', col.align === 'right' && 'num')}>
@@ -163,64 +193,82 @@ function CardList({ columns, rows, onRowClick, rowClassName }) {
  * cell would silently sort by something else. `label` names the table for
  * anybody who cannot see it sitting under a heading.
  */
-export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false, phone, phoneBelow = 768 }) {
-  // `phoneBelow`: a wide table (Wave 6 lists) switches to its phone rows
-  // under 1024px, so a tablet never scrolls a table sideways.
-  const wide = useMediaQuery(`(min-width: ${phone ? phoneBelow : 768}px)`);
+export function DataTable({ columns, rows, empty, onRowClick, footer, loading, rowClassName, label, sort, onSort, stickyHeader = false }) {
+  const wide = useMediaQuery('(min-width: 768px)');
   if (loading) return <TableSkeleton />;
   if (!rows.length) return empty || <Empty title="Nothing here yet" />;
 
   // One or the other, never both: rendering the rows twice put every row
-  // in the document twice and left the first match hidden. A page that
-  // draws its own phone row (`phone(row)`) gets the system's mg-rows.
-  if (!wide && phone) return <div className="mg-rows">{rows.map((row, i) => <PhoneSlot key={row.id ?? i}>{phone(row)}</PhoneSlot>)}</div>;
+  // in the document twice and left the first match hidden.
   if (!wide) return <CardList columns={columns} rows={rows} onRowClick={onRowClick} rowClassName={rowClassName} />;
 
   const [sortKey, sortDir] = String(sort || '').split(':');
 
-  /*
-   * The system's mg-table. `position: sticky` resolves against the nearest
-   * scrolling ancestor, so full-page lists opt in to a bounded wrapper
-   * (`stickyHeader`): the table gets the height and the page stops
-   * scrolling, one scroll region rather than two fighting. A table inside a
-   * record page does not, because there it is one section among several.
-   */
   return (
-    <div className={cn('mg-tablewrap', stickyHeader && 'is-sticky')}>
-      <table className="mg-table app-dtable">
+      /**
+       * `position: sticky` resolves against the nearest scrolling
+       * ancestor, and every one of these tables is wider than its box, so
+       * the horizontal wrapper is always that ancestor. A sticky header
+       * therefore does nothing unless this wrapper scrolls vertically too
+       * — which is why the same `position: sticky` in the old stylesheet
+       * never worked either.
+       *
+       * Full-page lists opt in: the table gets the height and the page
+       * stops scrolling, so there is one scroll region rather than two
+       * fighting. A table embedded in a record page does not, because
+       * there it is one section among several.
+       */
+      <div className="w-full">
+      <Table containerClassName={cn(stickyHeader && 'max-h-[calc(100dvh_-_17rem)] overflow-y-auto')}>
         {label && <caption className="sr-only">{label}</caption>}
-        <thead>
-          <tr>
+        <TableHeader>
+          <TableRow className="border-border hover:bg-transparent">
             {columns.map((col) => {
               const sortable = onSort && col.sortBy;
               const active = sortable && sortKey === col.sortBy;
               const next = active && sortDir === 'asc' ? 'desc' : 'asc';
               return (
-                <th
-                  key={col.key}
-                  scope="col"
-                  aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : undefined}
-                  aria-label={col.header ? undefined : 'Actions'}
-                  className={cn(col.align === 'right' && 'num', !col.header && 'actions')}
-                  style={col.width ? { width: col.width } : undefined}
-                >
-                  {sortable ? (
-                    <button type="button" data-active={active || undefined} onClick={() => onSort(`${col.sortBy}:${next}`)} title={`Sort by ${col.header}`}>
-                      {col.header}
-                    </button>
-                  ) : col.header}
-                </th>
+              <TableHead
+                key={col.key}
+                scope="col"
+                // Sticky, because a list of sixty rows loses its headers
+                // on the first scroll and every column becomes a guess.
+                aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : sortable ? 'none' : undefined}
+                className={cn(
+                  'h-row whitespace-nowrap bg-card px-3 text-[12px] font-semibold text-muted-foreground',
+                  stickyHeader && 'sticky top-0 z-10',
+                  col.align === 'right' && 'num text-right'
+                )}
+                style={col.width ? { width: col.width } : undefined}
+              >
+                {sortable ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(`${col.sortBy}:${next}`)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-[4px] hover:text-foreground',
+                      active && 'text-foreground'
+                    )}
+                  >
+                    {col.header}
+                    <span aria-hidden="true" className={cn('text-[10px]', !active && 'opacity-0 group-hover:opacity-60')}>
+                      {active ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
+                    </span>
+                  </button>
+                ) : col.header}
+              </TableHead>
               );
             })}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row, i) => (
-            <tr
+            <TableRow
               key={row.id ?? i}
               // A row that opens a record has to be openable without a
               // pointer. `tabIndex` and Enter give it that without a
-              // wrapper element inside the cell.
+              // wrapper element inside the cell, which shrink-wrapped the
+              // identifier column and broke references across three lines.
               tabIndex={onRowClick ? 0 : undefined}
               aria-label={onRowClick ? `Open ${String(row[columns[0].key] ?? 'this record')}` : undefined}
               onKeyDown={onRowClick ? (e) => {
@@ -229,38 +277,40 @@ export function DataTable({ columns, rows, empty, onRowClick, footer, loading, r
                 e.preventDefault();
                 onRowClick(row);
               } : undefined}
-              className={cn(onRowClick && 'is-clickable', rowClassName ? rowClassName(row) || '' : '')}
+              className={cn(
+                'border-border',
+                onRowClick && 'cursor-pointer',
+                rowClassName ? rowClassName(row) || '' : ''
+              )}
               onClick={onRowClick ? (e) => {
-                if (e.target.closest('button, a, input, select, label')) return;
+                if (e.target.closest('button, a, input, select')) return;
                 onRowClick(row);
               } : undefined}
             >
               {columns.map((col) => (
                 // Cells wrap rather than truncate: a client's name is the
-                // thing you came to read. Sentence columns keep a width.
-                <td
+                // thing you came to read.
+                <TableCell
                   key={col.key}
-                  className={cn(col.align === 'right' && 'num', !col.header && 'actions', col.className)}
+                  className={cn('px-3 py-2 align-top text-[13px] whitespace-normal', col.align === 'right' && 'num text-right', col.className)}
                 >
-                  {col.min ? <div style={{ minWidth: col.min }}>{cellOf(col, row)}</div> : cellOf(col, row)}
-                </td>
+                  {col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>}
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-        {footer && <tfoot><tr>{footer}</tr></tfoot>}
-      </table>
-    </div>
+        </TableBody>
+        {footer && <TableFooter className="bg-muted/40"><TableRow className="border-border">{footer}</TableRow></TableFooter>}
+      </Table>
+      </div>
   );
 }
-const PhoneSlot = ({ children }) => children;
-const cellOf = (col, row) => (col.render ? col.render(row) : row[col.key] ?? <span className="text-muted-foreground">—</span>);
 
 function TableSkeleton() {
   return (
     <div className="flex flex-col gap-2.5 p-4">
       {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} className="h-4 rounded-[6px]" style={{ width: `${100 - (i % 3) * 12}%` }} />
+        <Skeleton key={i} className="h-4 rounded-sm" style={{ width: `${100 - (i % 3) * 12}%` }} />
       ))}
     </div>
   );
@@ -273,7 +323,7 @@ export function Empty({ icon, title, text, action }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
       {icon && <div className="text-muted-foreground" aria-hidden="true">{icon}</div>}
-      <div className="text-[15px] font-semibold text-foreground">{title}</div>
+      <div className="font-display text-base font-bold text-foreground">{title}</div>
       {text && <p className="measure m-0 text-[13px] text-muted-foreground">{text}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>
@@ -288,17 +338,17 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
         className={cn(
-          'max-h-[86vh] gap-0 overflow-hidden p-0',
+          'max-h-[86vh] gap-0 overflow-hidden rounded-xl border-border bg-popover p-0',
           size === 'lg' ? 'sm:max-w-3xl' : size === 'sm' ? 'sm:max-w-md' : 'sm:max-w-xl'
         )}
       >
         <DialogHeader className="border-b border-border px-5 py-4 text-left">
-          <DialogTitle className="text-[15px] font-semibold">{title}</DialogTitle>
+          <DialogTitle className="font-display text-base font-bold">{title}</DialogTitle>
           {subtitle && <DialogDescription className="measure text-[12.5px]">{subtitle}</DialogDescription>}
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <DialogFooter className="border-t border-border px-5 py-3 sm:flex-wrap sm:justify-end">{footer}</DialogFooter>
+          <DialogFooter className="border-t border-border px-5 py-3 sm:justify-end">{footer}</DialogFooter>
         )}
       </DialogContent>
     </Dialog>
@@ -308,9 +358,9 @@ export function Modal({ title, subtitle, onClose, children, footer, size = '' })
 
 /* ---------------------------------------------------------------- fields */
 
-export function Field({ label, required, hint, error, children, as: Tag = 'label' }) {
+export function Field({ label, required, hint, error, children }) {
   return (
-    <Tag className={cn('flex flex-col gap-1.5', error && 'is-error')}>
+    <label className="flex flex-col gap-1.5">
       <span className="text-[12px] font-medium text-secondary-foreground">
         {label}
         {required && <span className="ml-0.5 text-late" aria-hidden="true">*</span>}
@@ -321,7 +371,7 @@ export function Field({ label, required, hint, error, children, as: Tag = 'label
       ) : hint ? (
         <span className="text-[12px] text-muted-foreground">{hint}</span>
       ) : null}
-    </Tag>
+    </label>
   );
 }
 
@@ -330,7 +380,7 @@ export function Input({ error, className, ...props }) {
   return (
     <UiInput
       aria-invalid={error ? true : undefined}
-      className={cn(className)}
+      className={cn('h-control rounded-md bg-secondary text-[13px]', className)}
       {...props}
     />
   );
@@ -342,8 +392,8 @@ export function Textarea({ error, className, ...props }) {
     <textarea
       aria-invalid={error ? true : undefined}
       className={cn(
-        'min-h-20 w-full rounded-[14px] border border-input bg-glass-strong px-3.5 py-2.5 text-[13.5px] text-foreground transition-[border-color,box-shadow] hover:border-glass-edge',
-        'placeholder:text-muted-foreground aria-invalid:border-late focus-visible:border-caramel focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-wait-soft',
+        'min-h-20 w-full rounded-md border border-input bg-secondary px-3 py-2 text-[13px] text-foreground',
+        'placeholder:text-muted-foreground aria-invalid:border-late',
         className
       )}
       {...props}
@@ -357,8 +407,8 @@ export function Select({ error, options = [], placeholder = '—', children, cla
     <select
       aria-invalid={error ? true : undefined}
       className={cn(
-        'h-11 w-full rounded-[14px] border border-input bg-glass-strong px-3.5 text-[13.5px] text-foreground transition-[border-color,box-shadow] hover:border-glass-edge',
-        'aria-invalid:border-late focus-visible:border-caramel focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-wait-soft',
+        'h-control w-full rounded-md border border-input bg-secondary px-2.5 text-[13px] text-foreground',
+        'aria-invalid:border-late',
         className
       )}
       {...props}
@@ -381,29 +431,13 @@ export function Combo({ options = [], listId, error, ...props }) {
   const id = useMemo(() => listId || `combo-${Math.random().toString(36).slice(2)}`, [listId]);
   return (
     <>
-      <input className={cn('mg-input', error && 'border-late')} aria-invalid={error ? true : undefined} list={id} {...props} />
+      <input className={`input ${error ? 'has-error' : ''}`} list={id} {...props} />
       <datalist id={id}>
         {options.map((opt) => (
           <option key={typeof opt === 'string' ? opt : opt.value} value={typeof opt === 'string' ? opt : opt.value} />
         ))}
       </datalist>
     </>
-  );
-}
-
-/**
- * A file field as the design system's drop zone (FilePicker): drop a file
- * anywhere on it, or press "Choose a file". pickers.js lights it while a
- * file is dragged over and shows the chosen file's name and size.
- */
-export function FileDrop({ text = 'Drop a PDF or image here', onFile, accept, label, id, error, ...props }) {
-  return (
-    <label className={cn('mg-file', error && 'is-error')}>
-      <Upload className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.8} aria-hidden="true" />
-      <span className="mg-drop__text">{text}</span>
-      <span className="mg-btn mg-btn--sm">Choose a file</span>
-      <input type="file" id={id} aria-label={label} accept={accept} aria-invalid={error ? true : undefined} onChange={(e) => onFile?.(e.target.files?.[0] || null)} {...props} />
-    </label>
   );
 }
 
@@ -414,13 +448,13 @@ export function Progress({ value }) {
   return (
     <div className="flex items-center gap-2">
       <div
-        className="h-2.5 flex-1 overflow-hidden rounded-full bg-track"
+        className="h-1.5 flex-1 overflow-hidden rounded-sm bg-secondary"
         role="progressbar"
         aria-valuenow={Math.round(pct * 100)}
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        <div className="h-full rounded-full bg-figure transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
+        <div className="h-full rounded-md bg-primary transition-[width] duration-150" style={{ width: `${pct * 100}%` }} />
       </div>
       <span className="num min-w-8 text-right text-[12px] text-muted-foreground">{Math.round(pct * 100)}%</span>
     </div>
@@ -428,6 +462,44 @@ export function Progress({ value }) {
 }
 
 
+export function BarList({ items, valueFormat = (v) => v, max: providedMax }) {
+  const max = providedMax ?? Math.max(...items.map((i) => Number(i.value) || 0), 1);
+  if (!items.length) return <Empty title="No data yet" />;
+  return (
+    <div className="flex flex-col gap-3">
+      {items.map((item, i) => (
+        <div key={item.label ?? i} className="flex flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 truncate text-[13px] text-foreground" title={item.label}>
+              {item.label || 'Not recorded'}
+            </span>
+            <span className="num shrink-0 text-[12.5px] text-secondary-foreground">{valueFormat(item.value, item)}</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-sm bg-secondary">
+            <div
+              className="h-full rounded-md bg-primary/80"
+              style={{ width: `${((Number(item.value) || 0) / max) * 100}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+export function KeyValues({ items }) {
+  return (
+    <dl className="auto-grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
+      {items.filter(Boolean).map((item) => (
+        <div key={item.label} className="min-w-0">
+          <dt className="eyebrow">{item.label}</dt>
+          <dd className="mt-0.5 ml-0 text-[13px] text-foreground">{item.value ?? <span className="text-muted-foreground">—</span>}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 
 export function Tabs({ tabs, active, onChange }) {
@@ -440,19 +512,19 @@ export function Tabs({ tabs, active, onChange }) {
           role="tab"
           aria-selected={active === tab.key}
           className={cn(
-            'flex h-10 items-center gap-2 border-b-[2.5px] px-3 text-[13px] font-bold transition-colors duration-150',
+            'flex h-control items-center gap-1.5 rounded-t-[6px] border-b-2 px-3 text-[13px] transition-colors duration-150',
             active === tab.key
-              ? 'border-caramel text-foreground'
+              ? 'border-primary font-medium text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           )}
           onClick={() => onChange(tab.key)}
         >
           {tab.label}
           {tab.count !== undefined && (
-            <span className={cn('num rounded-full px-1.5 text-[10.5px] font-extrabold', active === tab.key ? 'bg-caramel text-on-caramel' : 'bg-track text-secondary-text')}>{tab.count}</span>
+            <span className="num rounded-sm bg-secondary px-1.5 text-[11px] text-secondary-foreground">{tab.count}</span>
           )}
           {tab.warning ? (
-            <span className="num rounded-full bg-wait-soft px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
+            <span className="num rounded-sm bg-waiting/10 px-1.5 text-[11px] text-waiting" title={tab.warningTitle}>{tab.warning}</span>
           ) : null}
         </button>
       ))}
@@ -461,28 +533,33 @@ export function Tabs({ tabs, active, onChange }) {
 }
 
 
-const ALERT = {
-  info: ['', Info],
-  warning: ['mg-banner--wait', TriangleAlert],
-  danger: ['mg-banner--late', CircleAlert],
-  success: ['mg-banner--ok', CircleCheck],
-};
-
-/**
- * A note, hint or warning inside a page or dialog: the Mocha Glass banner
- * (tone tint, tone icon, theme text). Tone is never the only signal: the
- * text says what it is, and the icon agrees with it.
- */
 export function Alert({ tone = 'info', children }) {
-  const [cls, Icon] = ALERT[tone] || ALERT.info;
+  // Tone is never the only signal: the text says what it is, and the icon
+  // agrees with it.
+  const look = {
+    info: 'border-info/30 bg-info/10 text-info',
+    warning: 'border-waiting/30 bg-waiting/10 text-waiting',
+    danger: 'border-late/30 bg-late/10 text-late',
+    success: 'border-settled/30 bg-settled/10 text-settled',
+  }[tone] || 'border-info/30 bg-info/10 text-info';
   return (
-    <div className={cn('mg-banner', cls)} role="status">
-      <Icon strokeWidth={1.8} aria-hidden="true" />
-      <div className="mg-banner__body">{children}</div>
+    <div className={cn('alert flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px]', look)} role="status">
+      {children}
     </div>
   );
 }
 
+
+export function ErrorState({ message, onRetry }) {
+  return (
+    <Empty
+      icon={<TriangleAlert className="size-6" strokeWidth={1.75} />}
+      title="Could not load this"
+      text={message}
+      action={onRetry && <Button variant="outline" size="sm" onClick={onRetry}>Try again</Button>}
+    />
+  );
+}
 
 
 /* ---------------------------------------------------------------- toasts */
@@ -496,7 +573,6 @@ export const useToast = () => useCallback((message, tone = 'default') => {
   if (tone === 'danger') return sonnerToast.error(message);
   if (tone === 'success') return sonnerToast.success(message);
   if (tone === 'warning') return sonnerToast.warning(message);
-  if (tone === 'info') return sonnerToast.info(message);
   return sonnerToast(message);
 }, []);
 
@@ -504,8 +580,7 @@ export function ToastProvider({ children }) {
   return (
     <>
       {children}
-      {/* Bottom centre, above the dock (above the tab bar on a phone): styles/mocha/shell.css. */}
-      <Toaster position="bottom-center" offset={{ bottom: 100 }} mobileOffset={{ bottom: 96 }} closeButton toastOptions={{ className: 'toast' }} />
+      <Toaster position="bottom-right" richColors closeButton theme="dark" toastOptions={{ className: 'toast' }} />
     </>
   );
 }
@@ -519,25 +594,22 @@ export function ToastProvider({ children }) {
  * action whose own message says it can be run twice — a red button and a
  * calm sentence disagree, and the button is the one people read.
  */
-export function ConfirmDialog({ title, subtitle, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', onConfirm, onClose, busy, tone = 'danger', busyLabel = 'Working…', children }) {
+export function ConfirmDialog({ title, message, confirmLabel = 'Delete', onConfirm, onClose, busy, tone = 'danger' }) {
   return (
     <Modal
       title={title}
-      subtitle={subtitle}
       onClose={onClose}
       size="sm"
       footer={
         <>
-          {/* On a phone the two stack, full width and 44px tall (the dialog is a bottom sheet there). */}
-          <Button variant="outline" size="sm" onClick={onClose} disabled={busy} className="max-sm:h-11 max-sm:w-full">{cancelLabel}</Button>
-          <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy} aria-busy={busy || undefined} className="max-sm:h-11 max-sm:w-full">
-            {busy ? busyLabel : confirmLabel}
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant={tone === 'danger' ? 'destructive' : 'default'} size="sm" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Working…' : confirmLabel}
           </Button>
         </>
       }
     >
       <p className="measure m-0 text-[13px] text-secondary-foreground">{message}</p>
-      {children}
     </Modal>
   );
 }

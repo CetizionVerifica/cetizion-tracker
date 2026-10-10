@@ -41,27 +41,27 @@ export function AttachmentViewer({ attachments, index, onIndex, onClose, webLink
         // Right-click "Save image as" and dragging the picture out are the
         // two easy ways out of a page; neither is offered here.
         onContextMenu={(e) => e.preventDefault()}
-        className="app-av flex h-[92dvh] max-w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(1100px,calc(100%-2rem))]"
+        className="flex h-[92vh] max-w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[min(1100px,calc(100%-2rem))]"
       >
-        <header className="app-av__head">
+        <header className="flex items-center gap-2 border-b border-border px-4 py-2.5 pr-12">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="app-av__title">{att.name || 'Attachment'}</DialogTitle>
-            <DialogDescription className="app-av__sub">
+            <DialogTitle className="truncate text-[14px] font-semibold">{att.name || 'Attachment'}</DialogTitle>
+            <DialogDescription className="text-[12px] text-muted-foreground">
               {[att.size_bytes != null && fileSize(att.size_bytes), many && `${index + 1} of ${attachments.length}`, 'view only'].filter(Boolean).join(' · ')}
             </DialogDescription>
           </div>
           {many && (
-            <div className="app-av__nav">
-              <button type="button" onClick={() => go(-1)} aria-label="Previous attachment" className="mg-iconbtn">
+            <div className="flex shrink-0 gap-1">
+              <button type="button" onClick={() => go(-1)} aria-label="Previous attachment" className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
                 <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
               </button>
-              <button type="button" onClick={() => go(1)} aria-label="Next attachment" className="mg-iconbtn">
+              <button type="button" onClick={() => go(1)} aria-label="Next attachment" className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground">
                 <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
               </button>
             </div>
           )}
         </header>
-        <div className="app-av__body">
+        <div className="min-h-0 flex-1 select-text overflow-auto bg-secondary/40">
           <Viewer key={att.id} att={att} webLink={webLink} />
         </div>
       </DialogContent>
@@ -102,8 +102,8 @@ function Viewer({ att, webLink }) {
   if (loading) {
     return (
       <div className="p-6">
-        {att.view === 'office' && <p className="app-av__note" role="status">Converting the file for viewing…</p>}
-        <div className="mg-skel mx-auto h-[60vh] max-w-[800px]" />
+        {att.view === 'office' && <p className="mb-3 text-center text-[13px] text-muted-foreground" role="status">Converting the file for viewing…</p>}
+        <div className="skeleton mx-auto h-[60vh] max-w-[800px]" />
       </div>
     );
   }
@@ -119,14 +119,16 @@ function Viewer({ att, webLink }) {
 
 function NotViewable({ text, webLink }) {
   return (
-    <div className="mg-empty app-av__none">
-      <span className="mg-empty__mark" aria-hidden="true"><FileWarning strokeWidth={1.8} /></span>
-      <p className="mg-empty__text">{text}</p>
-      {webLink && (
-        <a href={webLink} target="_blank" rel="noopener noreferrer" className="mg-btn mg-btn--sm">
-          <ExternalLink className="size-4" strokeWidth={1.8} aria-hidden="true" />Open the message in Outlook
-        </a>
-      )}
+    <div className="grid h-full place-items-center p-6 text-center">
+      <div className="max-w-[360px]">
+        <FileWarning className="mx-auto mb-3 size-8 text-muted-foreground" strokeWidth={1.5} aria-hidden="true" />
+        <p className="text-[13px] text-secondary-text">{text}</p>
+        {webLink && (
+          <a href={webLink} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1 text-[13px] font-medium text-primary hover:underline">
+            <ExternalLink className="size-3.5" strokeWidth={1.75} aria-hidden="true" /> Open the message in Outlook
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -175,21 +177,21 @@ function PdfView({ bytes }) {
   const pages = doc ? Array.from({ length: doc.numPages }, (_, i) => i + 1) : [];
   return (
     <div ref={box} className="relative min-h-full">
-      <div className="app-av__tools">
+      <div className="sticky top-0 z-10 flex items-center justify-center gap-2 border-b border-border bg-card/95 px-3 py-1.5 text-[12px] text-secondary-text backdrop-blur">
         <span>{doc ? `${doc.numPages} page${doc.numPages === 1 ? '' : 's'}` : 'Opening…'}</span>
-        <span className="app-av__sep" aria-hidden="true" />
-        <button type="button" aria-label="Zoom out" disabled={zoom === 0} onClick={() => setZoom((z) => Math.max(0, z - 1))} className="mg-iconbtn app-av__zoom">
+        <span className="text-border">|</span>
+        <button type="button" aria-label="Zoom out" disabled={zoom === 0} onClick={() => setZoom((z) => Math.max(0, z - 1))} className="rounded-sm p-1 hover:bg-secondary disabled:opacity-40">
           <Minus className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
         </button>
-        <span className="mg-num app-av__pct">{Math.round(ZOOMS[zoom] * 100)}%</span>
-        <button type="button" aria-label="Zoom in" disabled={zoom === ZOOMS.length - 1} onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))} className="mg-iconbtn app-av__zoom">
+        <span className="num w-10 text-center">{Math.round(ZOOMS[zoom] * 100)}%</span>
+        <button type="button" aria-label="Zoom in" disabled={zoom === ZOOMS.length - 1} onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))} className="rounded-sm p-1 hover:bg-secondary disabled:opacity-40">
           <Plus className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
         </button>
-        <button type="button" onClick={() => setZoom(2)} className="mg-btn mg-btn--ghost mg-btn--sm">Fit width</button>
+        <button type="button" onClick={() => setZoom(2)} className="rounded-sm px-1.5 py-0.5 hover:bg-secondary">Fit width</button>
       </div>
       <div className="flex flex-col items-center gap-3 p-3">
         {doc && width > 0 && pages.map((n) => <PdfPage key={n} doc={doc} n={n} width={Math.max(200, width - 24) * ZOOMS[zoom]} />)}
-        {!doc && <div className="mg-skel h-[60vh] w-full max-w-[800px]" />}
+        {!doc && <div className="skeleton h-[60vh] w-full max-w-[800px]" />}
       </div>
     </div>
   );
@@ -231,7 +233,7 @@ function PdfPage({ doc, n, width }) {
       ref={canvas}
       aria-label={`Page ${n}`}
       style={{ width, height: width * ratio }}
-      className="app-av__paper max-w-none"
+      className="max-w-none bg-white shadow-sm"
     />
   );
 }
@@ -258,7 +260,7 @@ function ImageView({ bytes, type, name }) {
         alt={name || 'Attachment'}
         draggable={false}
         onClick={() => setFit((f) => !f)}
-        className={cn('app-av__paper', fit ? 'max-h-[calc(92vh-6rem)] max-w-full cursor-zoom-in object-contain' : 'max-w-none cursor-zoom-out')}
+        className={cn('bg-white shadow-sm', fit ? 'max-h-[calc(92vh-6rem)] max-w-full cursor-zoom-in object-contain' : 'max-w-none cursor-zoom-out')}
       />
     </div>
   );
@@ -273,25 +275,25 @@ function SheetView({ sheets }) {
   if (!sheets.length) return <NotViewable text="This spreadsheet has no sheets." />;
   return (
     <div className="flex h-full flex-col">
-      <div className="app-av__sheet">
+      <div className="min-h-0 flex-1 overflow-auto bg-card">
         {sheet.rows.length === 0 ? (
-          <p className="app-av__note p-6">This sheet is empty.</p>
+          <p className="p-6 text-center text-[13px] text-muted-foreground">This sheet is empty.</p>
         ) : (
-          <table className="app-av__grid">
-            <thead>
+          <table className="border-collapse text-[12px]">
+            <thead className="sticky top-0 z-10 bg-secondary">
               <tr>
-                <th className="is-corner" />
+                <th className="sticky left-0 z-20 border border-border bg-secondary px-2 py-1" />
                 {Array.from({ length: cols }, (_, c) => (
-                  <th key={c} scope="col">{letter(c)}</th>
+                  <th key={c} className="border border-border px-2 py-1 font-medium text-muted-foreground">{letter(c)}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {sheet.rows.map((row, r) => (
                 <tr key={r}>
-                  <th scope="row" className="mg-num">{r + 1}</th>
+                  <th className="sticky left-0 border border-border bg-secondary px-2 py-1 text-right font-medium text-muted-foreground num">{r + 1}</th>
                   {Array.from({ length: cols }, (_, c) => (
-                    <td key={c} title={row[c] || undefined}>{row[c] ?? ''}</td>
+                    <td key={c} className="max-w-[320px] truncate border border-border px-2 py-1 text-foreground" title={row[c] || undefined}>{row[c] ?? ''}</td>
                   ))}
                 </tr>
               ))}
@@ -299,11 +301,11 @@ function SheetView({ sheets }) {
           </table>
         )}
         {sheet.truncated && (
-          <p className="app-av__note p-2">Only the first 2,000 rows and 60 columns are shown here.</p>
+          <p className="p-2 text-[12px] text-muted-foreground">Only the first 2,000 rows and 60 columns are shown here.</p>
         )}
       </div>
       {sheets.length > 1 && (
-        <div className="mg-tabs app-av__sheets" role="tablist" aria-label="Sheets">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-t border-border bg-card px-2 py-1.5" role="tablist" aria-label="Sheets">
           {sheets.map((s, n) => (
             <button
               key={n}
@@ -311,6 +313,7 @@ function SheetView({ sheets }) {
               role="tab"
               aria-selected={n === i}
               onClick={() => setI(n)}
+              className={cn('shrink-0 rounded-md px-2.5 py-1 text-[12px]', n === i ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:bg-secondary/60')}
             >
               {s.name}
             </button>
@@ -324,8 +327,8 @@ function SheetView({ sheets }) {
 function TextView({ text, truncated }) {
   return (
     <div className="p-4">
-      <pre className="app-av__text">{text}</pre>
-      {truncated && <p className="app-av__note mt-2">Only the first part of this file is shown here.</p>}
+      <pre className="whitespace-pre-wrap break-words rounded-md bg-card p-4 font-mono text-[12.5px] text-foreground">{text}</pre>
+      {truncated && <p className="mt-2 text-[12px] text-muted-foreground">Only the first part of this file is shown here.</p>}
     </div>
   );
 }
@@ -351,7 +354,7 @@ function HtmlView({ html, title }) {
       onLoad={onLoad}
       srcDoc={frameDoc(html, false)}
       style={{ height }}
-      className="mail__body app-av__frame"
+      className="mail__body mx-auto block w-full max-w-[860px] rounded-md shadow-sm"
     />
   );
 }
@@ -362,12 +365,12 @@ const person = (p) => (p ? (p.name ? `${p.name} <${p.email}>` : p.email) : '');
 function EmailView({ email }) {
   return (
     <div className="mx-auto max-w-[860px] p-4">
-      <dl className="app-av__mailhead">
-        <dt>Subject</dt><dd className="is-strong">{email.subject || '(no subject)'}</dd>
-        <dt>From</dt><dd>{person(email.from) || '—'}</dd>
-        <dt>To</dt><dd>{email.to?.map(person).join(', ') || '—'}</dd>
-        {email.cc?.length > 0 && <><dt>Cc</dt><dd>{email.cc.map(person).join(', ')}</dd></>}
-        {email.sent_at && <><dt>Sent</dt><dd>{new Date(email.sent_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</dd></>}
+      <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-md border border-border bg-card px-3 py-2 text-[12.5px]">
+        <dt className="text-muted-foreground">Subject</dt><dd className="wrap-anywhere font-medium text-foreground">{email.subject || '(no subject)'}</dd>
+        <dt className="text-muted-foreground">From</dt><dd className="wrap-anywhere text-foreground">{person(email.from) || '—'}</dd>
+        <dt className="text-muted-foreground">To</dt><dd className="wrap-anywhere text-foreground">{email.to?.map(person).join(', ') || '—'}</dd>
+        {email.cc?.length > 0 && <><dt className="text-muted-foreground">Cc</dt><dd className="wrap-anywhere text-foreground">{email.cc.map(person).join(', ')}</dd></>}
+        {email.sent_at && <><dt className="text-muted-foreground">Sent</dt><dd className="text-foreground">{new Date(email.sent_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</dd></>}
       </dl>
       <HtmlView html={email.html || '<p></p>'} title={email.subject} />
     </div>

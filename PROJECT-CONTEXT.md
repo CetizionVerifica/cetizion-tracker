@@ -55,7 +55,7 @@ New features should follow both rules.
 ## 2. Stack and layout
 
 **Node 24 · Express 5 · PostgreSQL 17 · React 19 · Vite · Tailwind 4 ·
-shadcn/Radix in the Mocha Glass design system · pg-boss · Zod**
+shadcn/Radix · Recharts · pg-boss · Zod**
 
 The server runs TypeScript directly through Node's type stripping, with no
 build step. The codebase is being moved from `.js` to `.ts` one file at a time
@@ -90,10 +90,8 @@ cetizion-tracker/
 │       └── routes/         dashboards, workflow actions, exports, reports, webhooks
 └── web/
     ├── src/
-    │   ├── styles/globals.css   Tailwind theme mapped onto the Mocha Glass tokens
-    │   ├── styles/mocha/        Mocha Glass: tokens (light default + dark), mg- classes,
-    │   │                        motion.js (pause, reduced motion), pickers.js, one CSS per area
-    │   ├── components/ui/       Radix primitives in Mocha Glass; build from these
+    │   ├── styles/globals.css   theme tokens (dark + derived light mode)
+    │   ├── components/ui/       shadcn primitives; build from these
     │   ├── components/          ListPage, RecordForm, charts, shared dialogs
     │   ├── lib/                 api.js, auth, permissions, format helpers
     │   └── pages/               one file per screen
