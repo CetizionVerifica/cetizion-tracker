@@ -18,7 +18,10 @@ export const DOC_PATH = join(
   dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'issue-18-authorization.md'
 );
 
-export const currentDocument = () => readFileSync(DOC_PATH, 'utf8');
+const raw = () => readFileSync(DOC_PATH, 'utf8');
+// Compared with \n line endings: a Windows checkout (core.autocrlf) holds the
+// file with \r\n, and only the content can be out of date.
+export const currentDocument = () => raw().replace(/\r\n/g, '\n');
 export const expectedDocument = () => render(currentDocument());
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
@@ -36,7 +39,8 @@ if (isMain) {
   if (current === expected) {
     console.log('docs/issue-18-authorization.md was already up to date.');
   } else {
-    writeFileSync(DOC_PATH, expected);
+    // In the line endings the file already has, so a Windows checkout shows no change but the content.
+    writeFileSync(DOC_PATH, raw().includes('\r\n') ? expected.replace(/\n/g, '\r\n') : expected);
     console.log('Wrote docs/issue-18-authorization.md from the access policy.');
   }
 }
