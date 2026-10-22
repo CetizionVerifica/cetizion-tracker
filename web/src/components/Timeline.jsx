@@ -3,6 +3,7 @@ import { Badge, Card, ConfirmDialog, Empty, Field, Input, Modal, Select, Textare
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, fileSize, today } from '../lib/format.js';
+import { activityTitle } from '../lib/timelineTitle.js';
 import { EmailThreadDialog } from './EmailThread.jsx';
 import { FollowUpBanner, FOLLOW_UP_KINDS, useLogParam } from './FollowUpBanner.jsx';
 
@@ -53,10 +54,13 @@ export function Timeline({ entity, id, title = 'Activity' }) {
     finally { setBusy(false); }
   }
 
+  // The endpoint counts the open tasks among the rows it just returned and
+  // reports them beside the list (#103 item 7); the card dropped the number,
+  // so the title said only "Activity" whatever was outstanding.
   return (
     <Card
       flush
-      title={title}
+      title={activityTitle(title, data?.open_tasks)}
       hint="Notes, tasks, files and emails on this record, with its milestones, newest first."
       actions={
         <div className="card__actions">
