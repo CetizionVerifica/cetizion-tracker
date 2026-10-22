@@ -1,59 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Modal, Field, Input, Select, Alert, useToast } from './ui.jsx';
+import { Field, Input, Select, Alert } from './ui.jsx';
+import { ActionModal, useAction } from './actionModal.jsx';
 import { api } from '../lib/api.js';
 import { invalidateLookups, useDocumentUploads, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
-
-/** Shared plumbing: submit, surface field errors, toast, close. */
-function useAction({ onDone, successMessage }) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [fieldErrors, setFieldErrors] = useState({});
-
-  const run = async (fn) => {
-    setBusy(true);
-    setError(null);
-    setFieldErrors({});
-    try {
-      const result = await fn();
-      toast(typeof successMessage === 'function' ? successMessage(result?.data) : successMessage, 'success');
-      onDone?.(result?.data);
-      return true;
-    } catch (err) {
-      if (err.fields) setFieldErrors(err.fields);
-      setError(err.message);
-      setBusy(false);
-      return false;
-    }
-  };
-
-  return { busy, error, fieldErrors, run };
-}
-
-function ActionModal({ title, subtitle, onClose, onSubmit, busy, error, submitLabel, submitDisabled = false, children, size = 'sm' }) {
-  return (
-    <Modal
-      title={title}
-      subtitle={subtitle}
-      onClose={onClose}
-      size={size}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" form="action-form" className="btn btn--primary" disabled={busy || submitDisabled}>
-            {busy ? 'Saving…' : submitLabel}
-          </button>
-        </>
-      }
-    >
-      <form id="action-form" onSubmit={onSubmit} className="stack">
-        {error && <Alert tone="danger">{error}</Alert>}
-        {children}
-      </form>
-    </Modal>
-  );
-}
 
 /* --------------------------------------------------- record an invoice */
 
@@ -217,57 +167,6 @@ export function RecordPaymentDialog({ stage, onClose, onDone, advice }) {
           </Field>
         </div>
       </div>
-    </ActionModal>
-  );
-}
-
-/* -------------------------------------------------- pay a travel vendor */
-
-export function PayVendorDialog({ invoice, onClose, onDone }) {
-  // Owed is the bill less its credit notes (#196).
-  const outstanding = Math.max(Number(invoice.net_payable ?? invoice.invoice_amount ?? 0) - Number(invoice.amount_paid || 0), 0);
-  const [amount, setAmount] = useState(String(outstanding));
-  const [paidOn, setPaidOn] = useState(today());
-  const { busy, error, fieldErrors, run } = useAction({ onDone, successMessage: 'Vendor payment recorded' });
-
-  const submit = async (e) => {
-    e.preventDefault();
-    const ok = await run(() =>
-      api.action(`/vendor-invoices/${invoice.id}/pay`, {
-        amount_paid: Number(amount) + Number(invoice.amount_paid || 0),
-        payment_date: paidOn,
-      })
-    );
-    if (ok) onClose();
-  };
-
-  return (
-    <ActionModal
-      title="Pay the vendor"
-      subtitle={`${invoice.travel_vendor || 'Vendor'} · ${invoice.vendor_invoice_no || invoice.vendor_invoice_id}`}
-      onClose={onClose}
-      onSubmit={submit}
-      busy={busy}
-      error={error}
-      submitLabel="Record payment"
-    >
-      {invoice.invoice_amount === null ? (
-        <Alert tone="warning">
-          This invoice has no amount yet. Edit the invoice and enter the amount before paying it.
-        </Alert>
-      ) : (
-        <Alert>
-          Invoiced {money(invoice.invoice_amount)} · paid {money(invoice.amount_paid)} · outstanding{' '}
-          <strong>{money(outstanding)}</strong>
-          {invoice.pay_by && <> · due by {invoice.pay_by}</>}
-        </Alert>
-      )}
-      <Field label="Amount paid now" required error={fieldErrors.amount_paid}>
-        <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
-      </Field>
-      <Field label="Paid on" error={fieldErrors.payment_date}>
-        <Input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-      </Field>
     </ActionModal>
   );
 }

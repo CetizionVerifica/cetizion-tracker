@@ -97,13 +97,33 @@ export const STEPS = [
     hint: 'the ones waiting on finance',
     icon: 'trip',
     keywords: 'vendor bill travel pay holidays agent',
+    // Paying an agency is the travel desk's and an administrator's (#214).
+    // `adminOnly` would be wrong here: it would hide the verb from HR, who
+    // is exactly the role that does this work. The server refuses sales at
+    // the route either way; this stops the palette offering them a form
+    // whose only possible answer is 403.
+    roles: ['admin', 'hr'],
     picks: { type: 'bill', resource: 'vendor-invoices', params: { payment_status: 'Overdue,To Pay,Partially Paid,Enter amount,Enter date' }, label: 'Which bill?' },
     fields: [
-      f.money('amount_paid', 'Amount paid', { required: true }),
-      f.date('payment_date', 'Paid on', { value: today }),
+      // The settlement total this payment adds, as POST /pay reads it: what
+      // left the bank plus anything deducted at source. `mode: 'add'` below
+      // keeps it the transfer rather than a running total.
+      f.money('amount_paid', 'Amount transferred (with TDS)', { required: true }),
+      f.money('tds_amount', 'TDS deducted', { hint: 'Part of the figure above' }),
+      f.date('payment_date', 'Paid on', { value: today, max: today }),
+      f.choice('payment_mode', 'How it was paid', [
+        { value: 'bank_transfer', label: 'Bank transfer' },
+        { value: 'upi', label: 'UPI' },
+        { value: 'cheque', label: 'Cheque' },
+        { value: 'cash', label: 'Cash' },
+        { value: 'card', label: 'Card' },
+        { value: 'other', label: 'Other' },
+      ], { value: 'bank_transfer' }),
+      f.text('reference', 'Reference', { maxLength: 120 }),
     ],
+    body: () => ({ mode: 'add' }),
     endpoint: (record) => `/vendor-invoices/${record.id}/pay`,
-    done: 'Bill marked paid.',
+    done: 'Vendor payment recorded.',
   },
   {
     id: 'decide-claim',
@@ -253,17 +273,44 @@ export const JUMPS = [
   { id: 'go-tokens', verb: 'API tokens', to: '/settings/tokens', icon: 'waiting', adminOnly: true, keywords: 'api tokens mcp claude assistant access' },
 ];
 
-/** Everything, with the steps first: a verb is more useful than a screen. */
-export function commandsFor({ isAdmin, mode }) {
-  // `personalOnly` is the account page: shared mode is one account in an
-  // environment variable, so there is nothing personal to go to and the
-  // route answers 404. A palette entry that 404s is worse than no entry.
-  const allowed = (c) => (!c.adminOnly || isAdmin) && (!c.personalOnly || mode === 'database');
+/**
+ * Everything, with the steps first: a verb is more useful than a screen.
+ *
+ * Three gates, and they are not the same question:
+ *
+ *   `adminOnly`     an administrator's alone.
+ *   `roles`         the roles named, which is how a verb reaches HR and an
+ *                   administrator without reaching sales (#214). `adminOnly`
+ *                   cannot say that, and using it for a travel-desk verb
+ *                   would hide the verb from the desk that does the work.
+ *   `personalOnly`  the account page: shared mode is one account in an
+ *                   environment variable, so there is nothing personal to go
+ *                   to and the route answers 404. An entry that 404s is
+ *                   worse than no entry.
+ *
+ * Shared mode is a single full-access account, so it is an administrator and
+ * satisfies any `roles` list that names one.
+ */
+export function commandsFor({ isAdmin, isHr, mode }) {
+  const role = isAdmin ? 'admin' : isHr ? 'hr' : 'sales';
+  const allowed = (c) =>
+    (!c.adminOnly || isAdmin)
+    && (!c.roles || c.roles.includes(role))
+    && (!c.personalOnly || mode === 'database');
   return {
     steps: STEPS.filter(allowed),
     jumps: JUMPS.filter(allowed),
   };
 }
+
+/**
+ * A bound on an input (`min`, `max`), resolved the way a default is.
+ *
+ * A date bound is written as the same `today` helper the defaults use, so it
+ * has to be called rather than handed to the DOM — a function reaching an
+ * attribute is a bound that silently does nothing.
+ */
+export const fieldBound = (bound) => (typeof bound === 'function' ? bound() : bound);
 
 /** Defaults for a step's form, resolving the ones that are a function. */
 export function initialValues(step) {

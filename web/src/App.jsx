@@ -621,7 +621,7 @@ export default function App() {
 
   return (
     <SidebarContext.Provider value={sidebar}>
-    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} mode={mode} />
+    <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} isAdmin={isAdmin} isHr={isHr} mode={mode} />
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Below lg the sidebar is a Sheet over the page, not a column
           beside it: 240px of a 390px screen left the content a hundred and

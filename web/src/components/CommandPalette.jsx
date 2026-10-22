@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.tsx';
 import { api } from '../lib/api.js';
-import { bodyFor, commandsFor, initialValues, missingFields } from '../lib/commands.js';
+import { bodyFor, commandsFor, fieldBound, initialValues, missingFields } from '../lib/commands.js';
 import { useToast } from './ui.jsx';
 
 /**
@@ -165,6 +165,9 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
               className="h-control bg-muted text-[13px]"
               type={field.type}
               min={field.min}
+              // Resolved like `value` is, so a bound such as "today" is read
+              // when the palette opens rather than when the module loaded.
+              max={fieldBound(field.max)}
               step={field.step}
               maxLength={field.maxLength}
               value={values[field.name] ?? ''}
@@ -193,7 +196,7 @@ function StepForm({ step, record, values, setValues, error, busy, onRun, onBack 
   );
 }
 
-export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
+export function CommandPalette({ open, onOpenChange, isAdmin, isHr, mode }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [q, setQ] = useState('');
@@ -205,7 +208,7 @@ export function CommandPalette({ open, onOpenChange, isAdmin, mode }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, mode }), [isAdmin, mode]);
+  const { steps, jumps } = useMemo(() => commandsFor({ isAdmin, isHr, mode }), [isAdmin, isHr, mode]);
 
   const reset = useCallback(() => {
     setQ(''); setFound([]); setStep(null); setRecord(null);

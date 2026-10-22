@@ -180,14 +180,38 @@ for (const role of ['sales', 'admin']) {
       await expectCount(claimRow.getByRole('button', { name: 'Review' }), 'Claim Review');
     });
 
-    // ------------------------------------------- vendor Pay: both roles keep it
-    test('Vendor invoices: Pay stays available to both roles', async ({ page }) => {
+    // ----------------------------------------- vendor Pay: no longer sales'
+    //
+    // #85 left this open to every signed-in role, and #214 closed it: paying
+    // an agency is the travel desk's and an administrator's, so a sales user
+    // gets no Pay button and a 403 from the route behind it. The bill itself
+    // stays readable — this is about the payment, not the invoice.
+    test('Vendor invoices: Pay is not a sales user\'s', async ({ page }) => {
       await go(page, '/vendor-invoices', page.getByText('TRV-2026-E2E').first());
       const invoiceRow = page.getByRole('row', { name: /TRV-2026-E2E/ });
-      await expect(
-        invoiceRow.getByRole('button', { name: 'Pay' }),
-        'Pay is open to both roles by business decision',
-      ).toHaveCount(1);
+      await expect(invoiceRow, 'the bill is still readable by both roles').toBeVisible();
+      await expectCount(invoiceRow.getByRole('button', { name: 'Pay' }), 'Vendor Pay');
+    });
+
+    // ------------------------- vendor payment history and the correction
+    //
+    // The ledger is left out of the invoice's reply for a sales user, so
+    // there is no history to draw and no proof to open (#214).
+    test('Vendor invoice: the payment history and the correction are not a sales user\'s', async ({ page }) => {
+      await go(page, '/vendor-invoices', page.getByText('TRV-2026-E2E').first());
+      await page.getByText('TRV-2026-E2E').first().click();
+      await expect(page.getByRole('heading', { name: /TRV-2026-E2E/ })).toBeVisible();
+
+      await expectCount(page.getByText('Payments to the agency'), 'Vendor payment history');
+      // Not expectCount: the button needs a payment to correct, and whether
+      // the fixture has one is not what this test is about. What is certain
+      // either way is that a sales user never gets it.
+      if (!visible) {
+        await expect(
+          page.getByRole('button', { name: 'Correct a payment' }),
+          'Correct a payment must not be offered to a sales user',
+        ).toHaveCount(0);
+      }
     });
   });
 }

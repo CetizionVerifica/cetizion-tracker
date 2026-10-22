@@ -2,13 +2,17 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Card, DataTable, Badge, Empty, ErrorState, Tabs } from '../components/ui.jsx';
+import { Chip } from '../components/record.jsx';
 import {
-  RecordInvoiceDialog, RecordPaymentDialog, PayVendorDialog,
+  RecordInvoiceDialog, RecordPaymentDialog,
   ClaimDecisionDialog, ReimburseClaimDialog, ConvertQuotationDialog,
 } from '../components/actions.jsx';
+import { PayVendorDialog } from '../components/vendorPayments.jsx';
 import { api } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
 import { useFetch } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
+import { agencyInvoiceChip, mayRecordVendorPayment } from '../lib/vendorPayments.js';
 
 /**
  * One screen that answers "what is waiting on us?" — the workbook's
@@ -16,6 +20,8 @@ import { money, date } from '../lib/format.js';
  */
 export default function Worklist() {
   const { data, loading, error, refetch } = useFetch(() => api.raw('/dashboard/worklist'));
+  const { isAdmin, isHr } = useAuth();
+  const mayPayVendor = mayRecordVendorPayment({ isAdmin, isHr });
   const [tab, setTab] = useState('all');
   const [dialog, setDialog] = useState(null);
   const quiet = useFetch(() => api.raw('/communications/no-contact'));
@@ -155,9 +161,16 @@ export default function Worklist() {
                 { key: 'invoice_amount', header: 'Amount', align: 'right', render: (r) => money(r.invoice_amount) },
                 { key: 'amount_paid', header: 'Paid', align: 'right', render: (r) => money(r.amount_paid) },
                 { key: 'pay_by', header: 'Pay by', render: (r) => <>{date(r.pay_by)}<WorkingDaysLate row={r} /></> },
-                { key: 'payment_status', header: 'Status', render: (r) => <Badge>{r.payment_status}</Badge> },
-                { key: 'finance_action', header: 'What to do', className: 'wrap small' },
                 {
+                  key: 'payment_status',
+                  header: 'Agency status',
+                  render: (r) => {
+                    const chip = agencyInvoiceChip(r.payment_status);
+                    return chip ? <Chip tone={chip.tone}>{chip.label}</Chip> : <Badge>{r.payment_status}</Badge>;
+                  },
+                },
+                { key: 'finance_action', header: 'What to do', className: 'wrap small' },
+                ...(mayPayVendor ? [{
                   key: 'act',
                   header: '',
                   align: 'right',
@@ -173,7 +186,7 @@ export default function Worklist() {
                       </button>
                     </div>
                   ),
-                },
+                }] : []),
               ]}
             />
           </Card>
@@ -282,7 +295,7 @@ export default function Worklist() {
 
       {dialog?.type === 'invoice' && <RecordInvoiceDialog stage={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'payment' && <RecordPaymentDialog stage={dialog.row} onClose={close} onDone={done} />}
-      {dialog?.type === 'vendor' && <PayVendorDialog invoice={dialog.row} onClose={close} onDone={done} />}
+      {dialog?.type === 'vendor' && mayPayVendor && <PayVendorDialog invoice={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'decide' && <ClaimDecisionDialog claim={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'reimburse' && <ReimburseClaimDialog claim={dialog.row} onClose={close} onDone={done} />}
       {dialog?.type === 'convert' && <ConvertQuotationDialog quotation={dialog.row} onClose={close} onDone={done} />}
