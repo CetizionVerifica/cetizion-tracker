@@ -7,8 +7,9 @@
  *     GET    /api/questionnaires/:id                the form and its versions
  *     PATCH  /api/questionnaires/:id                { name?, active? }
  *     POST   /api/questionnaires/:id/versions       a new draft, copied from the latest
- *     PATCH  /api/questionnaire-versions/:id        { definition } (a draft only)
+ *     PATCH  /api/questionnaire-versions/:id        { definition?, pricing? } (a draft only)
  *     POST   /api/questionnaire-versions/:id/publish
+ *     POST   /api/questionnaire-versions/:id/preview-pricing   { answers } → the lines; saves nothing
  *     DELETE /api/questionnaire-versions/:id        (a draft only)
  *
  *   From an enquiry (its owner, or an admin)
@@ -32,8 +33,9 @@ import { requireAdmin } from '../auth/middleware.js';
 import { assertRecordReachable, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
-import { allQuestions, checkDefinition, prefillAnswers, prefillDifferences } from '../lib/questionnaireDefinition.js';
+import { allQuestions, checkAnswers, checkDefinition, prefillAnswers, prefillDifferences } from '../lib/questionnaireDefinition.js';
 import { createLink, emailLink, keepAnswers, oneFile, OPEN_STATUSES, responseClause, storeResponseFile, submitResponse } from '../lib/questionnaires.js';
+import { priceLines, pricingSchema, validatePricing } from '../lib/serviceQuotes/pricing.js';
 
 export const questionnaireRouter = Router();
 export const questionnaireVersionRouter = Router();
@@ -90,10 +92,17 @@ async function formWithVersions(id) {
     `SELECT q.*, s.name AS service_name FROM questionnaires q JOIN services s ON s.id = q.service_id WHERE q.id = $1`, [id]);
   if (!q) throw new ApiError(404, 'Questionnaire not found');
   const { rows: versions } = await query(
-    `SELECT v.id, v.version, v.status, v.definition, v.published_at, v.published_by, v.created_at, v.updated_at,
+    `SELECT v.id, v.version, v.status, v.definition, v.pricing, v.published_at, v.published_by, v.created_at, v.updated_at,
             (SELECT count(*)::int FROM questionnaire_responses r WHERE r.version_id = v.id) AS responses
        FROM questionnaire_versions v WHERE v.questionnaire_id = $1 ORDER BY v.version DESC`, [id]);
-  return { ...q, versions: versions.map((v) => ({ ...v, problems: v.status === 'draft' ? checkDefinition(v.definition).errors : [] })) };
+  return {
+    ...q,
+    versions: versions.map((v) => ({
+      ...v,
+      problems: v.status === 'draft' ? checkDefinition(v.definition).errors : [],
+      pricing_problems: v.status === 'draft' ? validatePricing(v.pricing, v.definition) : [],
+    })),
+  };
 }
 
 questionnaireRouter.get('/:id', async (req, res) => {
@@ -128,10 +137,14 @@ questionnaireRouter.post('/:id/versions', requireAdmin, async (req, res) => {
 
 // ------------------------------------------------------------ versions
 
-/** A draft may be saved half-built; what it lacks is listed, and publishing waits for it. */
+/**
+ * A draft may be saved half-built, its form and its pricing alike; what
+ * they lack is listed, and publishing waits for it.
+ */
 const draftSchema = z.object({
-  definition: z.object({ intro: z.string().max(4000).optional(), steps: z.array(z.any()).max(20) }).passthrough(),
-}).strict();
+  definition: z.object({ intro: z.string().max(4000).optional(), steps: z.array(z.any()).max(20) }).passthrough().optional(),
+  pricing: z.object({ lines: z.array(z.any()).max(50) }).passthrough().optional(),
+}).strict().refine((b) => b.definition || b.pricing, { message: 'Send the definition, the pricing or both' });
 
 async function draftVersion(db, id) {
   const { rows: [v] } = await db.query('SELECT * FROM questionnaire_versions WHERE id = $1 FOR UPDATE', [id]);
@@ -141,15 +154,21 @@ async function draftVersion(db, id) {
 }
 
 questionnaireVersionRouter.patch('/:id', requireAdmin, async (req, res) => {
-  const { definition } = parse(draftSchema, req.body);
-  const text = JSON.stringify(definition);
-  if (text.length > 400_000) throw new ApiError(422, 'This questionnaire is too large');
+  const body = parse(draftSchema, req.body);
+  const definitionText = body.definition ? JSON.stringify(body.definition) : null;
+  const pricingText = body.pricing ? JSON.stringify(body.pricing) : null;
+  if (definitionText?.length > 400_000) throw new ApiError(422, 'This questionnaire is too large');
+  if (pricingText?.length > 200_000) throw new ApiError(422, 'These pricing rules are too large');
   const id = intParam(req.params.id);
-  await transaction(async (db) => {
+  const saved = await transaction(async (db) => {
     await draftVersion(db, id);
-    await db.query('UPDATE questionnaire_versions SET definition = $2 WHERE id = $1', [id, text]);
+    const { rows: [v] } = await db.query(
+      `UPDATE questionnaire_versions SET definition = COALESCE($2::jsonb, definition), pricing = COALESCE($3::jsonb, pricing)
+        WHERE id = $1 RETURNING definition, pricing`, [id, definitionText, pricingText]);
+    return v;
   });
-  res.json({ data: { id, problems: checkDefinition(definition).errors } });
+  // Pricing is checked against the form as saved, so a renamed question shows up here.
+  res.json({ data: { id, problems: checkDefinition(saved.definition).errors, pricing_problems: validatePricing(saved.pricing, saved.definition) } });
 });
 
 questionnaireVersionRouter.post('/:id/publish', requireAdmin, async (req, res) => {
@@ -159,13 +178,48 @@ questionnaireVersionRouter.post('/:id/publish', requireAdmin, async (req, res) =
     const check = checkDefinition(v.definition);
     if (!check.ok) throw new ApiError(422, 'This questionnaire is not ready to publish', { problems: check.errors });
     if (!allQuestions(check.definition).length) throw new ApiError(422, 'Add at least one question before publishing', { problems: ['No questions yet'] });
+    const pricingProblems = validatePricing(v.pricing, check.definition);
+    if (pricingProblems.length) throw new ApiError(422, 'The pricing rules are not ready to publish', { problems: pricingProblems });
     await db.query(`UPDATE questionnaire_versions SET status = 'retired' WHERE questionnaire_id = $1 AND status = 'published'`, [v.questionnaire_id]);
-    // Stored as checked: trimmed, unknown fields refused.
-    await db.query(`UPDATE questionnaire_versions SET definition = $2 WHERE id = $1`, [id, JSON.stringify(check.definition)]);
+    // Stored as checked: trimmed, unknown fields refused. Then frozen with the version.
+    await db.query(`UPDATE questionnaire_versions SET definition = $2, pricing = $3 WHERE id = $1`,
+      [id, JSON.stringify(check.definition), JSON.stringify(pricingSchema.parse(v.pricing ?? { lines: [] }))]);
     await db.query(`UPDATE questionnaire_versions SET status = 'published', published_at = now(), published_by = $2 WHERE id = $1`, [id, who(req)]);
     return v.questionnaire_id;
   });
   res.json({ data: await formWithVersions(published) });
+});
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * What a version's pricing makes of sample answers, for the Pricing tab.
+ * Any version, draft or published; nothing is saved. The answers are
+ * checked as a client's would be, and what does not fit is listed rather
+ * than priced.
+ */
+questionnaireVersionRouter.post('/:id/preview-pricing', requireAdmin, async (req, res) => {
+  const { answers } = parse(z.object({ answers: z.record(z.string(), z.unknown()).default({}) }).strict(), req.body);
+  const id = intParam(req.params.id);
+  const { rows: [v] } = await query(
+    `SELECT v.definition, v.pricing, s.default_rate, s.unit, s.gst_rate, s.sac_code
+       FROM questionnaire_versions v
+       JOIN questionnaires q ON q.id = v.questionnaire_id
+       JOIN services s ON s.id = q.service_id
+      WHERE v.id = $1`, [id]);
+  if (!v) throw new ApiError(404, 'Version not found');
+  const problems = validatePricing(v.pricing, v.definition);
+  if (problems.length) throw new ApiError(422, 'Fix the pricing rules before previewing them', { problems });
+  const { values, errors } = checkAnswers(v.definition, answers);
+  const lines = priceLines(v, values, v).map((l) => ({ ...l, amount: round2(l.qty * l.rate) }));
+  res.json({
+    data: {
+      lines,
+      subtotal: round2(lines.reduce((t, l) => t + l.amount, 0)),
+      price_needed_count: lines.filter((l) => l.price_needed).length,
+      answer_errors: errors,
+    },
+  });
 });
 
 questionnaireVersionRouter.delete('/:id', requireAdmin, async (req, res) => {

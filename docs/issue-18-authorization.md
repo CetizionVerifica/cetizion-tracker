@@ -414,8 +414,9 @@ session is **401**, before any of these is considered.
 | `POST /api/questionnaire-responses/:id/submit` | any | Staff submitting what they filled in for the client (#208). |
 | **/api/questionnaire-versions** | | |
 | `DELETE /api/questionnaire-versions/:id` | **admin** | Discards a draft questionnaire version (#208). |
-| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire (#208). |
-| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once it passes every check; the previous version is retired. |
+| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire and its pricing rules (#208). |
+| `POST /api/questionnaire-versions/:id/preview-pricing` | **admin** | Shows the quotation lines a questionnaire version's pricing makes of sample answers (#208 phase 2); saves nothing. Admin › Templates. |
+| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once its form and pricing pass every check; the previous version is retired. |
 | **/api/questionnaires** | | |
 | `GET /api/questionnaires` | any | The service questionnaires, to choose one to send (#208). Templates, not client data: every signed-in user reads them; only admins write. |
 | `POST /api/questionnaires` | **admin** | Builds a service questionnaire (#208): what clients are asked before a quotation. Admin › Templates. |

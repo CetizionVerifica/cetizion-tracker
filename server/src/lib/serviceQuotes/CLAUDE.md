@@ -113,6 +113,14 @@ admin-entered), `catalogue` (the service's `default_rate`), `multiply`, `add`,
 `min`, `max`, `round_up`. Every `answer`/`count`/`rows`/`sum` key must exist
 in the same version's definition with a compatible type; checked on save.
 
+Two forms are fixed here so the Pricing tab (2C) builds them the same way:
+
+- `{ "sum": { "table": "sites", "column": "employees" } }`: a number or money
+  column of a table question, added up over its rows. Any row without a
+  value → *Price needed*, naming the row.
+- `{ "round_up": <value> }`: up to the next whole number (2.1 → 3), for
+  man-days and the like. Separate from the line's own qty rounding below.
+
 Evaluation (`priceLines(version, answers, service)`) is pure and returns
 `[{ rule_key, description, qty, rate, unit, gst_rate, sac_code, price_needed, why }]`:
 
