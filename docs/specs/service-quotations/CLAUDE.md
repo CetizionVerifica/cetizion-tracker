@@ -60,7 +60,7 @@ Nothing reaches a client without a salesperson pressing Send.
 | --- | --- | --- |
 | 1. Digital questionnaires | Builder, versions (frozen once published), client link, save and resume, staff fill-in, reminders, owner notice, answers on the enquiry | **Merged** (PR #212, 8 Oct 2026). Pending: `public_app_url` set in production; first two questionnaires built |
 | 1b. First questionnaires | ISO audits and Ecovadis questionnaires built from their Word files, as seed or by an admin | Waiting on the Word files |
-| 2. Quotation from answers | Pricing rules per questionnaire version, preview pricing, *Generate quotation*, *Price needed* flag and send block, Answers tab on the quotation | Server side built (2A pricing and preview; 2B generation, *Price needed* and the send block). Screens (2C) not started; the first services' pricing (2D) waits on rate cards (§9 Q2) |
+| 2. Quotation from answers | Pricing rules per questionnaire version, preview pricing, *Generate quotation*, *Price needed* flag and send block, Answers tab on the quotation | Built: 2A pricing and preview, 2B generation, *Price needed* and the send block, 2C the screens. The first services' pricing and worked examples (2D) wait on rate cards (§9 Q2) and the Word files (§9 Q1) |
 | 3. Designed templates | Designs per service (branding, ordered sections, rich text, placeholders), `quotation_sections`, rendering through `quotationPdf.js` with Standard unchanged | Not started. Can run in parallel with 2 |
 | 4. Reach and roll-out | Remaining services, portal *Questionnaires* section, Import from Word (AI draft for the admin), funnel on the sales report | Not started |
 
@@ -69,23 +69,23 @@ One PR per phase (or two), each with its own tests and a short guide in
 
 ## 4. Phase 2 acceptance criteria
 
-- [ ] An admin can add pricing lines to a **draft** questionnaire version on a
+- [x] An admin can add pricing lines to a **draft** questionnaire version on a
       Pricing tab; publishing validates them, and they freeze with the version.
-- [ ] *Preview pricing* takes sample answers and shows the lines and total it
+- [x] *Preview pricing* takes sample answers and shows the lines and total it
       would produce, without saving anything.
-- [ ] On a submitted response, *Generate quotation* creates a Draft quotation
+- [x] On a submitted response, *Generate quotation* creates a Draft quotation
       (new number from `claimNextId`) linked to the response and the enquiry, or,
       if the enquiry's quotation is Draft or Submitted, revises it (existing
       revise snapshot) and replaces its generated lines.
-- [ ] A line whose rule cannot be applied is created at rate 0 with
+- [x] A line whose rule cannot be applied is created at rate 0 with
       *Price needed*; the quotation cannot be sent or get an acceptance link
       until every such line is priced.
-- [ ] Won and Lost quotations are never regenerated.
-- [ ] Hand edits to generated lines are kept as ordinary edits; the quotation
+- [x] Won and Lost quotations are never regenerated.
+- [x] Hand edits to generated lines are kept as ordinary edits; the quotation
       shows "Generated from answers on <date>; edited since" once changed.
 - [ ] Worked-example tests for each configured service pin answers → lines →
       total.
-- [ ] Sales users can generate only from responses on their own enquiries.
+- [x] Sales users can generate only from responses on their own enquiries.
 
 ## 5. Phase 3 acceptance criteria
 
