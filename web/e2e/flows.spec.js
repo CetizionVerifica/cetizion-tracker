@@ -727,3 +727,156 @@ test('a service questionnaire: sent from an enquiry, filled in on a phone, and t
   await page.getByRole('button', { name: 'Submitted' }).first().click();
   await expect(page.getByText('Example Body')).toBeVisible();
 });
+
+/**
+ * A light and a dark capture at desktop and phone width, when E2E_SHOTS
+ * names a folder (web/CLAUDE.md §8: checked in both themes, at 1440 and 390),
+ * and each of `mine` (the parts this feature added) inside the screen at both.
+ */
+async function shots(page, name, mine = []) {
+  const dir = process.env.E2E_SHOTS;
+  if (!dir) return;
+  const size = page.viewportSize();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => { localStorage.setItem('cetizion.theme', t); document.documentElement.classList.toggle('dark', t === 'dark'); }, theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      // Narrowing a desktop window opens the sidebar as a drawer over the page (a phone that loads the
+      // page starts with it closed); Escape closes only that top layer, so a dialog beneath stays.
+      const drawer = page.locator('[role="dialog"]').filter({ hasText: 'Sales Tracker' });
+      if (width < 1024 && await drawer.count()) {
+        await page.keyboard.press('Escape');
+        await expect(drawer).toHaveCount(0);
+      }
+      await page.screenshot({ path: join(dir, `${name}-${theme}-${width}.png`), fullPage: true });
+      for (const part of mine) {
+        const box = await part.first().boundingBox();
+        expect(box, `${name}: part shown at ${width}`).toBeTruthy();
+        expect(box.x + box.width, `${name}: part fits ${width} wide`).toBeLessThanOrEqual(width + 1);
+      }
+    }
+  }
+  await page.evaluate(() => localStorage.removeItem('cetizion.theme'));
+  await page.setViewportSize(size);
+}
+
+test('a quotation from the answers: priced by the rules, Price needed holds Send, the rate goes in, then it goes for acceptance', async ({ page }) => {
+  await signIn(page);
+  await page.request.patch('/api/settings/public_app_url', { data: { value: new URL(page.url()).origin } });
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Audit ${stamp}`, default_rate: 25000, unit: 'day' } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E priced questionnaire' } })).json();
+  const versionId = form.versions[0].id;
+  await page.request.patch(`/api/questionnaire-versions/${versionId}`, { data: {
+    definition: { steps: [{ key: 'organisation', title: 'Your organisation', questions: [
+      { key: 'employee_count', type: 'number', label: 'Employees in scope', required: true, integer: true, min: 1 },
+    ] }] },
+    pricing: { lines: [
+      { key: 'audit', description: 'Certification audit', qty: { band: { of: { answer: 'employee_count' }, bands: [[1, 45, 3], [46, 125, 5]] } }, rate: { catalogue: true }, unit: 'man-day' },
+      // Broken on purpose: counting choices needs a multi-select, and employee_count is a number.
+      { key: 'report', description: 'Audit report', rate: { count: 'employee_count' } },
+      { key: 'large_sites', description: 'Large site review', qty: { band: { of: { answer: 'employee_count' }, bands: [[1, 50, 1]] } }, rate: { fixed: 8000 } },
+    ] },
+  } });
+
+  // The Pricing tab: the rules as lines; a broken one holds Publish back, saying why, with the problem beside its line.
+  await page.goto('/settings/templates');
+  await page.getByRole('button', { name: /Questionnaires/ }).first().click();
+  await page.getByText('E2E priced questionnaire').first().click();
+  const publish = page.getByRole('button', { name: 'Publish version 1' });
+  await expect(publish).toBeDisabled();
+  await expect(page.getByText('Publishing waits until the pricing problem on the Pricing tab is fixed and saved.')).toBeVisible();
+  await page.getByRole('tab', { name: 'Pricing · 1 to fix' }).click();
+  const line2 = page.getByRole('region', { name: 'Pricing line 2' });
+  await expect(line2.getByText(/counting needs a multi-select or checkbox question/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Pricing line 1' })).toBeVisible();
+  await shots(page, 'pricing-tab', [page.getByRole('region', { name: 'Pricing line 1' }), line2]);
+  // The server is still the judge: asked directly, it refuses the same publish.
+  expect((await page.request.post(`/api/questionnaire-versions/${versionId}/publish`)).status()).toBe(422);
+
+  // Fixed in the editor: a fixed rate of 15,000, saved; Publish comes back, and publishing works.
+  await line2.getByRole('combobox', { name: 'Rate', exact: true }).selectOption('fixed');
+  await line2.getByLabel('Rate: number').fill('15000');
+  await page.getByRole('button', { name: 'Save pricing' }).click();
+  await expect(line2.getByText(/counting needs/)).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Pricing', exact: true })).toBeVisible();
+  await expect(page.getByText(/Publishing waits until/)).toHaveCount(0);
+  await expect(publish).toBeEnabled();
+  await publish.click();
+  await expect(page.getByText('version 1 published', { exact: true })).toBeVisible();
+
+  // The client's answers: 120 employees, beyond the large-site band, so that line needs a price.
+  const { data: enquiry } = await (await page.request.post('/api/enquiries', { data: { client_name: `E2E Generated Client ${stamp}`, service: svc.name, status: 'New' } })).json();
+  const { data: sent } = await (await page.request.post('/api/questionnaire-responses', { data: { enquiry_no: enquiry.enquiry_no, questionnaire_id: form.id, send_email: false } })).json();
+  const token = new URL(sent.url).pathname.split('/q/')[1];
+  await page.request.put(`/api/public/questionnaire/${token}/answers`, { data: { step: 0, answers: { employee_count: 120 } } });
+  expect((await page.request.post(`/api/public/questionnaire/${token}/submit`, { data: { name: 'Asha Example', email: `asha-gen-${stamp}@example.com` } })).status()).toBe(200);
+
+  // Generate, from the enquiry's questionnaire.
+  await page.goto(`/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}`);
+  await page.getByRole('button', { name: 'Submitted' }).first().click();
+  await page.getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page.getByText(/It stays a Draft: nothing goes to the client/)).toBeVisible();
+  await shots(page, 'generate-dialog', [page.getByRole('dialog')]);
+  await page.getByRole('dialog').getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page).toHaveURL(/\/quotations\//);
+
+  // The quotation: where it came from, what needs a price and why, and Send held back.
+  await expect(page.getByText(/Generated from the questionnaire answers on/)).toBeVisible();
+  await expect(page.getByText('Price needed', { exact: true })).toBeVisible();
+  await expect(page.getByText('"employee_count" is 120, outside every band')).toBeVisible();
+  await expect(page.getByText('1 line needs a price before this can go to the client').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send to the client' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Send acceptance link' })).toHaveCount(0);
+  await expect(page.getByText('Certification audit')).toBeVisible();
+  await shots(page, 'quotation-price-needed', [
+    page.getByText(/Generated from the questionnaire answers on/), page.getByText('Price needed', { exact: true }),
+    page.getByText('"employee_count" is 120, outside every band'), page.getByRole('button', { name: 'Enter rate' }).filter({ visible: true }),
+  ]);
+
+  // The rate goes in: the flag clears, Send and the acceptance link come back.
+  await page.getByRole('button', { name: 'Enter rate' }).filter({ visible: true }).click();
+  await page.getByLabel(/^Rate \(/).fill('8000');
+  await page.getByRole('button', { name: 'Save line' }).click();
+  await expect(page.getByText('Price needed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send to the client' })).toBeEnabled();
+  await expect(page.getByText(/edited since/)).toBeVisible();
+  await shots(page, 'quotation-priced', [page.getByText(/edited since/), page.getByRole('button', { name: /lines? from these answers/ })]);
+
+  // It goes for acceptance, and the PDF opens.
+  const no = decodeURIComponent(new URL(page.url()).pathname.split('/quotations/')[1]);
+  const pdf = await page.request.get(`/api/quotations/${encodeURIComponent(no)}/pdf`);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()['content-type']).toContain('pdf');
+  await expect(page.getByRole('button', { name: 'Send acceptance link' })).toBeVisible();
+  const link = await page.request.post(`/api/quotations/${encodeURIComponent(no)}/acceptance-link`, { data: { email: false } });
+  expect([200, 201]).toContain(link.status());
+
+  // The Answers section: what the client said, read-only, and the way back to the enquiry's questionnaire.
+  await page.reload();
+  const answers = page.getByRole('button', { name: /lines? from these answers/ });
+  await expect(answers).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByText('Employees in scope')).toBeVisible();
+  const back = page.getByRole('link', { name: /Open the questionnaire on enquiry/ });
+  await expect(back).toHaveAttribute('href', `/enquiries?q=${encodeURIComponent(enquiry.enquiry_no)}&questionnaire=1`);
+  expect(await page.locator('section', { has: answers }).locator('input, textarea, select').count(), 'answers are read-only').toBe(0);
+  await back.click();
+  await expect(page.getByRole('dialog').getByText(`Questionnaire · ${enquiry.enquiry_no}`)).toBeVisible();
+  // Opened from a link, the dialog knows only the enquiry's number: Generate still finds the quotation and offers to revise it.
+  await page.getByRole('button', { name: 'Generate quotation' }).click();
+  await expect(page.getByRole('button', { name: `Revise ${no}` })).toBeVisible();
+  await expect(page.getByText(/is revised: its current version is kept in the history/)).toBeVisible();
+  // By keyboard: focus is inside the dialog, and Escape closes it alone, leaving the questionnaire open.
+  expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role=dialog]'))), 'focus moves into the dialog').toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: `Revise ${no}` })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByText(`Questionnaire · ${enquiry.enquiry_no}`)).toBeVisible();
+
+  // For comparison when E2E_SHOTS is set: a quotation typed by hand, untouched by this feature.
+  if (process.env.E2E_SHOTS) {
+    const { data: hand } = await (await page.request.post('/api/quotations', { data: { client_name: `E2E Hand Client ${stamp}`, service_quoted: 'Consulting', status: 'Draft' } })).json();
+    await page.request.post('/api/quotation-lines', { data: { quotation_id: hand.id, description: 'Consulting', qty: 1, rate: 20000, gst_rate: 18 } });
+    await page.goto(`/quotations/${encodeURIComponent(hand.quotation_no)}`);
+    await expect(page.getByText('Consulting').first()).toBeVisible();
+    await shots(page, 'quotation-by-hand');
+  }
+});

@@ -15,6 +15,7 @@ import { RegisterPoDialog } from '../components/RegisterPoDialog.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { AcceptanceLinks } from '../components/AcceptanceLinks.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { QuotationAnswers } from '../components/serviceQuotes/QuotationAnswers.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
@@ -119,6 +120,9 @@ export default function QuotationDetail() {
   const open = ['Draft', 'Submitted', 'Under Negotiation', 'On Hold'].includes(q.status);
   const won = q.status === 'Won - PO Received';
   const approvalBlocked = q.approval_status === 'pending' || q.approval_status === 'rejected';
+  // Lines a pricing rule could not price (#208): the server refuses to send until each has a rate; the count is its own.
+  const priceNeeded = Number(q.price_needed_count) || 0;
+  const priceNeededText = `${priceNeeded} line${priceNeeded === 1 ? ' needs' : 's need'} a price before this can go to the client`;
   const total = q.line_count ? q.total : q.quotation_value;
 
   const invoiced = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_invoiced || 0), 0);
@@ -150,6 +154,7 @@ export default function QuotationDetail() {
     if (q.approval_status === 'rejected') {
       return `The discount was rejected${q.approved_by ? ` by ${q.approved_by}` : ''}${q.approval_note ? `: ${q.approval_note}` : ''}. Revise the discount or the terms, then ask again.`;
     }
+    if (priceNeeded && open) return `${priceNeededText}. Enter the rate on each line marked Price needed.`;
     // Once an order exists the deal has moved past the quotation, so what
     // happened to the money is the headline. Asking `!sent_at` first told
     // a won, invoiced deal that it had not been sent yet, which is true
@@ -200,7 +205,8 @@ export default function QuotationDetail() {
   function primary() {
     if (!move) return null;
     const { label, onClick } = MOVES[move];
-    return <Button size="sm" className={FLOW_BUTTON} disabled={busy} onClick={onClick}>{label}</Button>;
+    const held = move === 'send' && priceNeeded > 0;
+    return <Button size="sm" className={FLOW_BUTTON} disabled={busy || held} onClick={onClick}>{label}</Button>;
   }
 
   function secondary() {
@@ -215,8 +221,9 @@ export default function QuotationDetail() {
   function note() {
     const rest = 'Everything else this deal can do is in the ⋯ menu.';
     if (move === 'register') {
-      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. Send, Client accepted, Revise and Ask approval are in the ⋯ menu.`;
+      return `Registering asks for the PO number, value, terms and the payment split, then creates ${q.project_id || 'the project'}, its onboarding tasks and the payment stages. ${priceNeeded ? 'Client accepted' : 'Send, Client accepted'}, Revise and Ask approval are in the ⋯ menu.`;
     }
+    if (move === 'send' && priceNeeded) return `${priceNeededText}. ${rest}`;
     if (move === 'send') return `Sending marks it as sent and can email the PDF to ${q.contact?.email || 'the client'}. ${rest}`;
     if (move === 'project') return `Creating the project opens it with its onboarding tasks, without a purchase order. ${rest}`;
     return rest;
@@ -251,7 +258,7 @@ export default function QuotationDetail() {
         menu={
           <>
             <RecordMenuItem onSelect={() => setEditing(true)}>Edit the quotation</RecordMenuItem>
-            {open && !approvalBlocked && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
+            {open && !approvalBlocked && !priceNeeded && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
             {open && !q.accepted_at && <RecordMenuItem onSelect={() => setAccepting(true)}>Record client acceptance</RecordMenuItem>}
             {!won && <RecordMenuItem onSelect={() => setRevising(true)}>Revise</RecordMenuItem>}
             {open && q.approval_status !== 'pending' && <RecordMenuItem onSelect={() => setRequesting(true)}>Ask for approval</RecordMenuItem>}
@@ -282,6 +289,19 @@ export default function QuotationDetail() {
           </Alert>
         )}
         <EmailOrigin entity="quotation" id={q.quotation_no} />
+
+        {/* Generated from questionnaire answers (#208): when, whether edited since, and what still needs a price. */}
+        {q.generated_at && (
+          <Alert tone="info">
+            <span>
+              Generated from the questionnaire answers{q.generated_from?.length > 1 ? ` (${q.generated_from.map((g) => g.service_name).join(', ')})` : ''} on {date(q.generated_at)}
+              {q.edited_since_generated ? '; edited since' : ''}.
+            </span>
+          </Alert>
+        )}
+        {priceNeeded > 0 && open && (
+          <Alert tone="warning"><span><strong>{priceNeededText}.</strong> Enter the rate on each line marked Price needed; Send and the acceptance link wait until then.</span></Alert>
+        )}
 
         {q.approval_status === 'approved' && (
           <Alert tone="success">
@@ -321,9 +341,21 @@ export default function QuotationDetail() {
                       {l.service_name && l.service_name !== l.description && (
                         <div className="text-[12px] text-muted-foreground">{l.service_name}</div>
                       )}
+                      {l.price_needed && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] text-muted-foreground">
+                          <Chip tone="waiting">Price needed</Chip>
+                          {l.price_needed_reason && <span>{l.price_needed_reason}</span>}
+                          {/* On a phone the rate column is off to the side of the scrolling table: the way to fix it sits here too. */}
+                          {!won && <Button variant="link" size="sm" className="h-auto p-0 text-[12px] sm:hidden" onClick={() => setLine(l)}>Enter rate</Button>}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">{Number(l.qty)} {l.unit || ''}</TableCell>
-                    <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">{money(l.rate, cur)}</TableCell>
+                    <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">
+                      {l.price_needed
+                        ? (won ? <span className="text-muted-foreground">—</span> : <><span className="text-muted-foreground sm:hidden">—</span><Button variant="link" size="sm" className="hidden h-auto p-0 text-[13px] sm:inline-flex" onClick={() => setLine(l)}>Enter rate</Button></>)
+                        : money(l.rate, cur)}
+                    </TableCell>
                     <TableCell className="mono px-3 text-right text-[13px] text-secondary-text">
                       {Number(l.discount_percent) ? `${Number(l.discount_percent)}%` : <span className="text-muted-foreground">—</span>}
                     </TableCell>
@@ -433,7 +465,12 @@ export default function QuotationDetail() {
           </RecordSection>
         )}
 
-        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !q.accepted_at} onChanged={refetch} />
+        {q.generated_from?.length > 0 && (
+          <RecordSection title="Answers" hint="What the client told us, that the generated lines were priced from">
+            <QuotationAnswers generatedFrom={q.generated_from} />
+          </RecordSection>
+        )}
+        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !priceNeeded && !q.accepted_at} onChanged={refetch} />
         <Timeline entity="quotation" id={q.quotation_no} />
       </RecordPage>
 

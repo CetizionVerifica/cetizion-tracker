@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, Badge, Field, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
 import { QuestionnaireForm, answerText, visible } from './QuestionnaireForm.jsx';
+import { GenerateQuotationDialog } from './serviceQuotes/GenerateQuotationDialog.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -36,6 +37,7 @@ export function QuestionnaireCard({ enquiry, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState(null);
   const [filling, setFilling] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const refresh = () => { list.refetch(); detail.refetch(); onChanged?.(); };
 
   async function act(path, body, ok) {
@@ -86,6 +88,7 @@ export function QuestionnaireCard({ enquiry, onClose, onChanged }) {
               </Alert>
             )}
             <div className="flex flex-wrap gap-2">
+              {r.status === 'submitted' && <button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => setGenerating(true)}>Generate quotation</button>}
               {open && <button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => setFilling(true)}>Fill in for the client</button>}
               {open && <button type="button" className="btn btn--sm" disabled={busy} onClick={() => act('link', {}, 'New link ready to copy')}>Copy a link</button>}
               {open && r.link_state !== 'none' && r.last_sent_to && <button type="button" className="btn btn--sm" disabled={busy} onClick={() => act('remind', {}, (d) => `Reminder sent to ${d.email?.to}`)}>Remind</button>}
@@ -107,6 +110,7 @@ export function QuestionnaireCard({ enquiry, onClose, onChanged }) {
           </div>
         )}
       </Modal>
+      {generating && r && <GenerateQuotationDialog response={r} enquiry={enquiry} onClose={() => setGenerating(false)} />}
       {filling && r && (
         <Modal title={`Fill in · ${r.questionnaire_name}`} subtitle={`For ${enquiry.client_name || enquiry.enquiry_no}. Saved as you go; submit when the client has answered everything.`} size="lg" onClose={() => { setFilling(false); refresh(); }}>
           <QuestionnaireForm
@@ -127,7 +131,8 @@ export function QuestionnaireCard({ enquiry, onClose, onChanged }) {
 }
 
 /** The answers so far, grouped by step, with the client's files. */
-function Answers({ response: r }) {
+/** A response's answers as text, step by step: also the quotation's Answers section (#208 phase 2C). */
+export function Answers({ response: r }) {
   const steps = r.definition?.steps || [];
   const byKey = new Map(steps.flatMap((s) => s.questions).map((q) => [q.key, q]));
   const names = Object.fromEntries((r.files || []).map((f) => [f.document_id, f.file_name]));

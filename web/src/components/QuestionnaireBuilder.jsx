@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
-import { Alert, Badge, DataTable, Empty, Field, Input, Modal, Select, Textarea, useToast } from './ui.jsx';
+import { Alert, Badge, DataTable, Empty, Field, Input, Modal, Select, Tabs, Textarea, useToast } from './ui.jsx';
 import { QuestionnaireForm } from './QuestionnaireForm.jsx';
+import { PricingEditor } from './serviceQuotes/PricingEditor.jsx';
+import { publishHold } from '../lib/pricingRules.js';
 import { api } from '../lib/api.js';
 import { useFetch, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -106,12 +108,22 @@ function QuestionnaireEditor({ id, onBack }) {
   const draft = q?.versions.find((v) => v.status === 'draft');
   const published = q?.versions.find((v) => v.status === 'published');
   const [def, setDef] = useState(null);
+  // The questions as last saved: what the server prices a preview against.
+  const [savedDef, setSavedDef] = useState(null);
   const [dirty, setDirty] = useState(false);
   const [problems, setProblems] = useState([]);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [tab, setTab] = useState('questions');
+  // The Pricing tab's own count, kept current as pricing is saved (the draft as loaded only knows the first).
+  const [pricingProblems, setPricingProblems] = useState(null);
+  const [pricingDirty, setPricingDirty] = useState(false);
+  const currentPricingProblems = pricingProblems ?? draft?.pricing_problems ?? [];
+  const hold = draft ? publishHold(currentPricingProblems, pricingDirty) : null;
 
-  useEffect(() => { if (draft) { setDef(structuredClone(draft.definition)); setProblems(draft.problems || []); setDirty(false); } else setDef(null); }, [draft?.id, draft?.updated_at]);
+  useEffect(() => { if (draft) { setDef(structuredClone(draft.definition)); setSavedDef(draft.definition); setProblems(draft.problems || []); setDirty(false); } else setDef(null); }, [draft?.id, draft?.updated_at]);
+  // A new draft brings its own pricing problems; the count kept for the last one would be wrong.
+  useEffect(() => { setPricingProblems(null); setPricingDirty(false); }, [draft?.id]);
 
   const change = (next) => { setDef(next); setDirty(true); };
   async function run(fn, ok) {
@@ -122,11 +134,16 @@ function QuestionnaireEditor({ id, onBack }) {
   }
   async function save() {
     const r = await run(() => api.raw(`/questionnaire-versions/${draft.id}`, { method: 'PATCH', body: { definition: def } }), 'Draft saved');
-    if (r) { setProblems(r.data.problems); setDirty(false); }
+    // The pricing is checked again against the questions as saved: renaming a question can break a rule.
+    if (r) { setProblems(r.data.problems); setPricingProblems(r.data.pricing_problems || []); setSavedDef(def); setDirty(false); }
     return r;
   }
   async function publish() {
-    if (dirty && !(await save())) return;
+    if (dirty) {
+      const r = await save();
+      // The questions as saved can break a pricing rule: Publish then waits, saying why.
+      if (!r || r.data.pricing_problems?.length) return;
+    }
     const r = await run(() => api.action(`/questionnaire-versions/${draft.id}/publish`), `Version ${draft.version} published: staff can send it now`);
     if (r) form.refetch();
   }
@@ -135,11 +152,11 @@ function QuestionnaireEditor({ id, onBack }) {
   return (
     <div className="stack">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn btn--sm btn--ghost" onClick={() => { if (!dirty || window.confirm('Leave without saving the draft?')) onBack(); }}><ChevronLeft className="size-3.5" aria-hidden="true" /> All questionnaires</button>
+        <button type="button" className="btn btn--sm btn--ghost" onClick={() => { if (!(dirty || pricingDirty) || window.confirm('Leave without saving the draft?')) onBack(); }}><ChevronLeft className="size-3.5" aria-hidden="true" /> All questionnaires</button>
         <span className="strong">{q.name}</span>
         <span className="small muted">{q.service_name}</span>
         {published && <Badge tone="success">version {published.version} published</Badge>}
-        {draft && <Badge tone="warning">version {draft.version} draft{dirty ? ', unsaved' : ''}</Badge>}
+        {draft && <Badge tone="warning">version {draft.version} draft{dirty || pricingDirty ? ', unsaved' : ''}</Badge>}
         <span className="ml-auto flex flex-wrap gap-2">
           <button type="button" className="btn btn--sm btn--ghost" disabled={busy} onClick={() => run(() => api.raw(`/questionnaires/${id}`, { method: 'PATCH', body: { active: !q.active } }), q.active ? 'Switched off: staff can no longer send it' : 'Switched on').then(() => form.refetch())}>{q.active ? 'Switch off' : 'Switch on'}</button>
         </span>
@@ -152,15 +169,22 @@ function QuestionnaireEditor({ id, onBack }) {
             <button type="button" className="btn btn--primary" disabled={busy} onClick={() => run(() => api.action(`/questionnaires/${id}/versions`)).then((r) => r && form.refetch())}>Edit as a new version</button>
             {published && <button type="button" className="btn" onClick={() => setPreview(published.definition)}>Preview as the client</button>}
           </div>
+          {published && (
+            <section className="stack">
+              <div className="strong">Pricing of version {published.version}</div>
+              <PricingEditor key={published.id} version={published} definition={published.definition} readOnly />
+            </section>
+          )}
         </div>
       ) : def && (
         <>
           <div className="flex flex-wrap gap-2">
             <button type="button" className="btn btn--sm" disabled={busy || !dirty} onClick={save}>Save draft</button>
             <button type="button" className="btn btn--sm" onClick={() => setPreview(def)}>Preview as the client</button>
-            <button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={publish}>Publish version {draft.version}</button>
+            <button type="button" className="btn btn--sm btn--primary" disabled={busy || Boolean(hold)} aria-describedby={hold ? 'publish-hold' : undefined} onClick={publish}>Publish version {draft.version}</button>
             {q.versions.length > 1 && <button type="button" className="btn btn--sm btn--ghost" disabled={busy} onClick={() => window.confirm('Discard this draft?') && run(() => api.remove('questionnaire-versions', draft.id), 'Draft discarded').then(() => form.refetch())}>Discard draft</button>}
           </div>
+          {hold && <p id="publish-hold" className="small" role="status">{hold}</p>}
           {problems.length > 0 && (
             <Alert tone="warning">
               <span>
@@ -170,7 +194,16 @@ function QuestionnaireEditor({ id, onBack }) {
               </span>
             </Alert>
           )}
-          <DefinitionEditor def={def} onChange={change} />
+          <Tabs active={tab} onChange={setTab} tabs={[
+            { key: 'questions', label: 'Questions' },
+            { key: 'pricing', label: `Pricing${currentPricingProblems.length ? ` · ${currentPricingProblems.length} to fix` : ''}` },
+          ]} />
+          {/* Both stay mounted, so moving between the tabs keeps unsaved changes in either. */}
+          <div hidden={tab !== 'questions'}><DefinitionEditor def={def} onChange={change} /></div>
+          <div hidden={tab !== 'pricing'}>
+            {dirty && <Alert tone="info"><span>The questions have unsaved changes; save the draft so pricing is checked against them.</span></Alert>}
+            <PricingEditor key={draft.id} version={draft} definition={def} savedDefinition={savedDef || draft.definition} problems={currentPricingProblems} onProblems={setPricingProblems} onDirty={setPricingDirty} />
+          </div>
         </>
       )}
 
