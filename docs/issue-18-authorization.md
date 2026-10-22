@@ -408,14 +408,16 @@ session is **401**, before any of these is considered.
 | `PATCH /api/questionnaire-responses/:id` | any | Staff filling in a questionnaire for the client, on an enquiry they own (#208). |
 | `POST /api/questionnaire-responses/:id/files` | any | A file for a file question, by staff filling in (#208). |
 | `POST /api/questionnaire-responses/:id/link` | any | A new link to the questionnaire, to copy or email (#208). |
+| `POST /api/questionnaire-responses/:id/quotation` | any | A Draft quotation priced from the answers, or the next revision of the enquiry's Draft or Submitted one (#208 phase 2): the owner of the enquiry, and admins. Never sent from here. |
 | `POST /api/questionnaire-responses/:id/remind` | any | Emails the client a reminder with a new link (#208). |
 | `POST /api/questionnaire-responses/:id/reopen` | any | A submitted questionnaire is open to changes again (#208). |
 | `POST /api/questionnaire-responses/:id/revoke` | any | Every open link to the questionnaire stops working (#208). |
 | `POST /api/questionnaire-responses/:id/submit` | any | Staff submitting what they filled in for the client (#208). |
 | **/api/questionnaire-versions** | | |
 | `DELETE /api/questionnaire-versions/:id` | **admin** | Discards a draft questionnaire version (#208). |
-| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire (#208). |
-| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once it passes every check; the previous version is retired. |
+| `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire and its pricing rules (#208). |
+| `POST /api/questionnaire-versions/:id/preview-pricing` | **admin** | Shows the quotation lines a questionnaire version's pricing makes of sample answers (#208 phase 2); saves nothing. Admin › Templates. |
+| `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once its form and pricing pass every check; the previous version is retired. |
 | **/api/questionnaires** | | |
 | `GET /api/questionnaires` | any | The service questionnaires, to choose one to send (#208). Templates, not client data: every signed-in user reads them; only admins write. |
 | `POST /api/questionnaires` | **admin** | Builds a service questionnaire (#208): what clients are asked before a quotation. Admin › Templates. |

@@ -3972,6 +3972,37 @@ INSERT INTO settings (key, value, notes) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ---------------------------------------------------------------------
+-- A quotation generated from a questionnaire's answers (098, #208 phase 2).
+-- Added here rather than in CREATE TABLE quotations, because
+-- questionnaire_responses is created above. A rate above 0 clears
+-- price_needed by itself; what is derived from these is in views.sql.
+-- ---------------------------------------------------------------------
+ALTER TABLE quotations
+  ADD COLUMN IF NOT EXISTS questionnaire_response_id int REFERENCES questionnaire_responses(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS generated_at timestamptz;
+CREATE INDEX IF NOT EXISTS quotations_questionnaire_response_idx
+  ON quotations (questionnaire_response_id) WHERE questionnaire_response_id IS NOT NULL;
+
+ALTER TABLE quotation_lines
+  ADD COLUMN IF NOT EXISTS generated boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS rule_key text,
+  ADD COLUMN IF NOT EXISTS price_needed boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS sac_code     text,   -- a pricing rule's own; null = the service's
+  -- the answers a generated line came from (spec D12: one quotation, each service's lines)
+  ADD COLUMN IF NOT EXISTS questionnaire_response_id int REFERENCES questionnaire_responses(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS quotation_lines_questionnaire_response_idx
+  ON quotation_lines (questionnaire_response_id) WHERE questionnaire_response_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION quotation_lines_price_given() RETURNS trigger AS $$
+BEGIN
+  IF NEW.price_needed AND NEW.rate > 0 THEN NEW.price_needed := false; END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS quotation_lines_price_given ON quotation_lines;
+CREATE TRIGGER quotation_lines_price_given BEFORE INSERT OR UPDATE ON quotation_lines
+  FOR EACH ROW EXECUTE FUNCTION quotation_lines_price_given();
+
+-- ---------------------------------------------------------------------
 -- What the company has paid a travel agency, as a ledger (096, #214).
 --
 -- Payments are rows, as a client's receipts are rows in `payments`; the

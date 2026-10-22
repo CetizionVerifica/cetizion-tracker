@@ -15,8 +15,9 @@ where it shipped, and is reused, not moved.
 | Questionnaire definition: shape, show-if, answer checks, prefill | `lib/questionnaireDefinition.js` | Phase 1. Reuse `allQuestions`, `isVisible`, `checkAnswers` |
 | Links, reach, emails, submit, reminders | `lib/questionnaires.js` | Phase 1. Reuse `responseClause` for row scoping |
 | Questionnaire and response routes | `routes/questionnaires.js` (`questionnaireRouter`, `questionnaireVersionRouter`, `questionnaireResponseRouter`) | Phase 1. New response routes go on `questionnaireResponseRouter` |
-| Pricing rules: schema, validation, evaluation | `lib/serviceQuotes/pricing.js` | Phase 2 |
-| Generate a Draft quotation from a response | `lib/serviceQuotes/generate.js` | Phase 2 (lines), phase 3 (sections) |
+| Pricing rules: schema, validation, evaluation | `lib/serviceQuotes/pricing.js` | Phase 2, built |
+| Generate a Draft quotation from a response | `lib/serviceQuotes/generate.js` | Phase 2 (lines), built; phase 3 (sections) |
+| *Price needed*: the send block, and why each line needs a price | `lib/serviceQuotes/priceNeeded.js` | Phase 2, built |
 | Placeholders: grammar, validation, filling | `lib/serviceQuotes/placeholders.js` | Phase 3 |
 | Rich text: safe JSON shape, to pdfmake blocks | `lib/serviceQuotes/richText.js` | Phase 3 |
 | Design schema and resolution (what a quotation prints with) | `lib/serviceQuotes/designs.js` | Phase 3 |
@@ -33,7 +34,9 @@ run them inside a transaction. New files may be `.ts` (see
 ## 2. Data model
 
 New migration at the next free number when the PR is opened (097 or later;
-`089_service_questionnaires.sql` is phase 1). Mirror every change in
+`089_service_questionnaires.sql` is phase 1). Phase 2's is
+`098_quotation_from_answers.sql`: 097 is taken on open branches, so check
+again before the PR. Mirror every change in
 `server/db/schema.sql`; computed values go in `server/db/views.sql`.
 
 ### Phase 2
@@ -45,7 +48,8 @@ ALTER TABLE quotations
 ALTER TABLE quotation_lines
   ADD COLUMN generated    boolean NOT NULL DEFAULT false,   -- written by a pricing rule
   ADD COLUMN rule_key     text,                              -- which pricing line made it
-  ADD COLUMN price_needed boolean NOT NULL DEFAULT false;
+  ADD COLUMN price_needed boolean NOT NULL DEFAULT false,
+  ADD COLUMN sac_code     text;        -- the rule's own; null = the service's (as built, 098)
 ```
 
 `questionnaire_versions.pricing` (jsonb, default `{"lines":[]}`) already
@@ -113,6 +117,14 @@ admin-entered), `catalogue` (the service's `default_rate`), `multiply`, `add`,
 `min`, `max`, `round_up`. Every `answer`/`count`/`rows`/`sum` key must exist
 in the same version's definition with a compatible type; checked on save.
 
+Two forms are fixed here so the Pricing tab (2C) builds them the same way:
+
+- `{ "sum": { "table": "sites", "column": "employees" } }`: a number or money
+  column of a table question, added up over its rows. Any row without a
+  value → *Price needed*, naming the row.
+- `{ "round_up": <value> }`: up to the next whole number (2.1 → 3), for
+  man-days and the like. Separate from the line's own qty rounding below.
+
 Evaluation (`priceLines(version, answers, service)`) is pure and returns
 `[{ rule_key, description, qty, rate, unit, gst_rate, sac_code, price_needed, why }]`:
 
@@ -149,6 +161,55 @@ in `generate.js`, one transaction:
 Sending is blocked while any line has `price_needed`: in `/:key/send` and in
 `/:key/acceptance-link`, a 422 saying how many lines need a price. Clearing the
 flag happens when a person sets a rate > 0 on the line.
+
+As built in phase 2 (server):
+
+- The shared pieces: `insertDraftQuotation` (`lib/enquiries.js`, also used by
+  `quoteWonEnquiry`) creates the Draft; `reviseQuotation`
+  (`lib/quotationRevisions.js`, also used by `/:key/revise`) is the whole
+  revision step, so a sent quotation goes back to Draft through the
+  pipeline-stage trigger as any revision does. Both were pinned by tests
+  before they were shared (`quoteWonEnquiry.test.js`, `quotationRevise.test.js`).
+- Every refusal comes before the first write: not reachable (404), no
+  longer on an enquiry, not submitted, no pricing rules, `new` when it has
+  a quotation, `revise` when it has none, and any status but Draft or
+  Submitted (Under Negotiation and On Hold included; spec §9 Q9).
+- Currency (spec D11): rates in the rules and the catalogue are in the
+  service's currency. `exchangeFor` converts them through INR with
+  `fx.ts`'s `newestRates` and `rateAges` (newest rate on or before today,
+  stale after four publishing days); a missing or stale rate makes every
+  line *Price needed* with the reason. The converted figure is the line's
+  rate; the conversion is recorded in the `generated_from_answers` entry.
+- Also refused before any write: a reopened response (its own message; the
+  status is stored and only set on a submitted one), lines whose totals with
+  GST, every line a revision keeps included, would not fit the quotation's
+  numeric(16,2) totals.
+- Locks, in this order: the enquiry, then the response, then the quotation.
+  The enquiry comes first so that every generation on one enquiry (several
+  services' responses at once, D12) queues there holding nothing else;
+  locking the response first deadlocked two services generating together.
+  Keep this order in anything added here (phase 3's sections included).
+- One quotation per enquiry (spec D12). A second service's questionnaire
+  revises it and adds its lines; generating a service again replaces only
+  the generated lines of that service, found through each line's
+  `questionnaire_response_id` (by its `service_id` if that response has
+  been deleted), so a newer response for the same service never adds a
+  second set. `quotations.questionnaire_response_id` is the response it was
+  last generated from; `fullQuotation` returns `generated_from`, every
+  contributing response with its service and line count, worked out from
+  the lines. "Edited since generated" compares each generated line with its
+  own creation, so a later service's generation does not hide an edit.
+- A rule's own `sac_code` is stored on its line; `fullQuotation` reads
+  `COALESCE(ql.sac_code, s.sac_code)`, so every other line reads as before
+  and the PDF prints the same.
+- Generating a service again replaces that service's generated lines,
+  edits made to them included; the version before is in the revision history. The Generate dialog says so
+  (web layer §2).
+- Why a line needs a price (`lib/serviceQuotes/priceNeeded.js`) is worked
+  out on read: the answers priced again with the conversion that entry
+  recorded. If the answers have changed since, it says only that the rules
+  could not price the line when it was generated. Staff only: the client's
+  views list their own line fields.
 
 ## 5. Placeholders and rich text (phase 3)
 

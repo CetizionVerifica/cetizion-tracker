@@ -50,8 +50,17 @@ a feature PR; that is a separate refactor.
 - On a submitted response, one primary button: **Generate quotation**. When
   the enquiry already has a Draft or Submitted quotation, the dialog says it
   will be revised (its current version kept in the history) and that lines you
-  added by hand stay. Won or Lost: the button is replaced by a sentence saying
-  why it cannot be generated.
+  added by hand, and other services' lines, stay. For a service not on it yet
+  it says its lines are added (spec D12: one quotation per enquiry). For one
+  already on it, it must also say that **that service's generated lines are
+  replaced, including any changes made to them since**, and that the version
+  before is kept in the history. Won or Lost: the button is replaced by a
+  sentence saying why it cannot be generated. Every other refusal (Under
+  Negotiation, On Hold, reopened, totals too large) shows the server's 422
+  sentence as it comes.
+- The quotation's Answers section lists every response in `generated_from`
+  (one per service), not only `questionnaire_response_id`, which is just the
+  latest.
 - On success, go to the quotation.
 
 ### Quotation page (phases 2–3)

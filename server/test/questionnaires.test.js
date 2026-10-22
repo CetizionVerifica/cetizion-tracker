@@ -302,4 +302,73 @@ describe('service questionnaires', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is n
     assert.equal((await runQuestionnaireReminders({ db: pool })).skipped, 'switched off in Settings');
     await pool.query(`UPDATE settings SET value = '3' WHERE key = 'questionnaire_reminder_days'`);
   });
+
+  test('pricing (phase 2): a draft saves with its problems listed, publishing waits for them, preview saves nothing, and it freezes with the version', async () => {
+    await pool.query(`UPDATE services SET default_rate = 25000, unit = 'engagement' WHERE id = $1`, [serviceId]);
+    const made = await as(admin).post('/api/questionnaires', { service_id: serviceId, name: 'Priced questionnaire' }).expect(201);
+    const draft = made.body.data.versions[0];
+    const MAN_DAYS = [[1, 45, 3], [46, 125, 5], [126, 425, 7]];
+    const PRICING = { lines: [
+      { key: 'audit', description: 'Certification audit', qty: { band: { of: { answer: 'employee_count' }, bands: MAN_DAYS } },
+        rate: { catalogue: true }, multiply: [{ rows: 'sites' }], unit: 'man-day' },
+      { key: 'stage1', description: 'Stage 1 review', include_if: { key: 'previously_certified', op: 'eq', value: false }, rate: { fixed: 15000 } },
+    ] };
+
+    assert.equal((await as(sam).patch(`/api/questionnaire-versions/${draft.id}`, { pricing: PRICING })).status, 403, 'admins only');
+    assert.equal((await as(sam).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: ANSWERS })).status, 403, 'admins only');
+    assert.equal((await as(admin).patch(`/api/questionnaire-versions/${draft.id}`, {})).status, 422, 'something to save');
+
+    // Half-built pricing saves, with what is wrong listed against the form as saved.
+    const broken = { lines: [{ key: 'audit', description: 'Audit', qty: { answer: 'legal_name' }, rate: { fixed: 1 } }] };
+    const saved = await as(admin).patch(`/api/questionnaire-versions/${draft.id}`, { definition: FORM, pricing: broken }).expect(200);
+    assert.deepEqual(saved.body.data.problems, []);
+    assert.match(saved.body.data.pricing_problems.join(' '), /"legal_name" is a text question/);
+    const form = await as(admin).get(`/api/questionnaires/${made.body.data.id}`).expect(200);
+    assert.deepEqual(form.body.data.versions[0].pricing, broken);
+    assert.match(form.body.data.versions[0].pricing_problems.join(' '), /"legal_name" is a text question/);
+
+    const refused = await as(admin).post(`/api/questionnaire-versions/${draft.id}/publish`);
+    assert.equal(refused.status, 422);
+    assert.equal(refused.body.error.message, 'The pricing rules are not ready to publish');
+    assert.equal((await as(admin).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: ANSWERS })).status, 422, 'no preview of broken rules');
+
+    // Pricing alone keeps the form as it was.
+    const fixed = await as(admin).patch(`/api/questionnaire-versions/${draft.id}`, { pricing: PRICING }).expect(200);
+    assert.deepEqual(fixed.body.data.pricing_problems, []);
+    const { rows: [kept] } = await pool.query('SELECT definition, pricing FROM questionnaire_versions WHERE id = $1', [draft.id]);
+    assert.deepEqual(kept.definition, FORM);
+    assert.deepEqual(kept.pricing, PRICING);
+
+    // 120 employees → 5 man-days, × 1 site, at the catalogue's 25,000; not certified, so Stage 1 too.
+    const preview = await as(admin).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: ANSWERS }).expect(200);
+    assert.deepEqual(preview.body.data.lines.map(({ rule_key, qty, rate, amount, unit, price_needed }) => ({ rule_key, qty, rate, amount, unit, price_needed })), [
+      { rule_key: 'audit', qty: 5, rate: 25000, amount: 125000, unit: 'man-day', price_needed: false },
+      { rule_key: 'stage1', qty: 1, rate: 15000, amount: 15000, unit: 'engagement', price_needed: false },
+    ]);
+    assert.equal(preview.body.data.subtotal, 140000);
+    assert.equal(preview.body.data.price_needed_count, 0);
+
+    // Out of band: kept, unpriced, with the reason. A sample answer of the wrong kind is listed, never priced.
+    const big = await as(admin).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: { ...ANSWERS, employee_count: 5000 } }).expect(200);
+    assert.equal(big.body.data.price_needed_count, 1);
+    assert.equal(big.body.data.lines[0].why, '"employee_count" is 5000, outside every band');
+    assert.equal(big.body.data.subtotal, 15000);
+    const wrong = await as(admin).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: { ...ANSWERS, employee_count: 'lots' } }).expect(200);
+    assert.ok(wrong.body.data.answer_errors.employee_count);
+    assert.equal(wrong.body.data.lines[0].why, '"employee_count" is not answered');
+    const { rows: [same] } = await pool.query('SELECT pricing, updated_at FROM questionnaire_versions WHERE id = $1', [draft.id]);
+    assert.deepEqual(same.pricing, PRICING, 'a preview saves nothing');
+
+    // Published: frozen with the version, and still previewable.
+    const published = await as(admin).post(`/api/questionnaire-versions/${draft.id}/publish`).expect(200);
+    assert.deepEqual(published.body.data.versions[0].pricing, PRICING);
+    assert.deepEqual(published.body.data.versions[0].pricing_problems, []);
+    assert.equal((await as(admin).patch(`/api/questionnaire-versions/${draft.id}`, { pricing: { lines: [] } })).status, 409);
+    await assert.rejects(pool.query(`UPDATE questionnaire_versions SET pricing = '{"lines":[]}' WHERE id = $1`, [draft.id]), /make a new version/);
+    await as(admin).post(`/api/questionnaire-versions/${draft.id}/preview-pricing`, { answers: ANSWERS }).expect(200);
+
+    // A new draft carries the pricing over.
+    const next = await as(admin).post(`/api/questionnaires/${made.body.data.id}/versions`).expect(201);
+    assert.deepEqual(next.body.data.versions.find((v) => v.status === 'draft').pricing, PRICING);
+  });
 });
