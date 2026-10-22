@@ -262,9 +262,10 @@ test('a quantity, rate or amount a quotation line cannot hold needs a price, nev
   assert.equal(line({ fixed: 9_999_999_999.99 }, { fixed: 1 }).price_needed, false);
   assert.match(needed(line({ fixed: 10_000_000_000 }, { fixed: 1 })), /quantity came to 10,00,00,00,000, more than a quotation line can hold \(9,99,99,99,999\.99\)/);
   assert.equal(line({ fixed: 1 }, { fixed: 99_999_999_999_999.99 }).price_needed, false);
-  assert.match(needed(line({ fixed: 1 }, { fixed: 1e14 })), /the rate came to .*, more than a quotation line can hold/);
+  assert.match(needed(line({ fixed: 1 }, { fixed: 1e14 })), /the rate came to .*, more than a quotation line can hold \(9,99,99,99,99,99,999\.99\)$/);
   assert.equal(line({ fixed: 1000 }, { fixed: 99_999_999_999.99 }).price_needed, false, 'amount 99,999,999,999,990: fits');
-  assert.match(needed(line({ fixed: 1e9 }, { fixed: 1e6 })), /the amount came to .*, more than a quotation line can hold/);
+  assert.match(needed(line({ fixed: 1e9 }, { fixed: 1e6 })), /the amount came to .*, more than a quotation line can hold \(9,99,99,99,99,99,999\.99\)$/,
+    'the limit as the column holds it, not 1 paisa short as a JavaScript number reads it');
 });
 
 // ── priceLines: which lines appear ──────────────────────────────────────
@@ -333,6 +334,47 @@ test('include-when: greater than, is one of, and answered', () => {
   assert.equal(when(answered, answers()), true);
   const { turnover, ...rest } = answers();
   assert.equal(when(answered, rest), false);
+});
+
+test('a rate factor converts every rate, the catalogue\'s and the rules\' alike, and leaves quantities alone', () => {
+  const pricing = { lines: [
+    { key: 'audit', description: 'Audit', qty: { fixed: 5 }, rate: { catalogue: true } },
+    { key: 'report', description: 'Report', rate: { fixed: 15000 } },
+    { key: 'band', description: 'Band', rate: { band: { of: { answer: 'employee_count' }, bands: [[1, 1000, 8350]] } } },
+  ] };
+  const lines = priceLines({ definition: definition(), pricing }, answers(), service, { rateFactor: 1 / 83.5 });
+  assert.deepEqual(lines.map((l) => [l.rule_key, l.qty, l.rate, l.price_needed]), [
+    ['audit', 5, 299.4, false],     // 25,000 / 83.5 = 299.401…
+    ['report', 1, 179.64, false],   // 15,000 / 83.5 = 179.640…
+    ['band', 1, 100, false],        //  8,350 / 83.5 = 100
+  ]);
+  // The other way: a factor above 1.
+  assert.equal(price({ rate: { fixed: 300 } }, answers(), service)[0].rate, 300);
+  assert.equal(priceLines({ definition: definition(), pricing: { lines: [{ key: 'x', description: 'X', rate: { fixed: 300 } }] } }, answers(), service, { rateFactor: 83.5 })[0].rate, 25050);
+});
+
+test('the line limits apply to the converted rate', () => {
+  const pricing = { lines: [{ key: 'x', description: 'X', rate: { fixed: 2e12 } }] };
+  assert.equal(priceLines({ definition: definition(), pricing }, answers(), service)[0].price_needed, false, 'fits before conversion');
+  const [converted] = priceLines({ definition: definition(), pricing }, answers(), service, { rateFactor: 100 });
+  assert.match(needed(converted), /the rate came to .*, more than a quotation line can hold/);
+});
+
+test('with no exchange rate, every line that would have been priced needs a price, with the reason given', () => {
+  const pricing = { lines: [
+    { key: 'audit', description: 'Audit', rate: { catalogue: true } },
+    { key: 'travel', description: 'Travel', qty: { answer: 'travel_sites' }, rate: { fixed: 8000 } },
+  ] };
+  const reason = 'no exchange rate for GBP on or before 22 Oct 2026 to convert the INR rate card into GBP';
+  const lines = priceLines({ definition: definition(), pricing }, { ...answers(), outside_pune: true }, service, { rateUnavailable: reason });
+  assert.equal(needed(lines[0]), reason);
+  assert.equal(needed(lines[1]), '"travel_sites" is not answered', 'a line already short of an answer keeps its own reason');
+});
+
+test('an exchange factor that is not a positive number is refused rather than used', () => {
+  for (const rateFactor of [0, -1, NaN, Infinity]) {
+    assert.throws(() => priceLines({ definition: definition(), pricing: { lines: [] } }, answers(), service, { rateFactor }), /exchange factor/, String(rateFactor));
+  }
 });
 
 test('lines come back in sort order, then rule order', () => {

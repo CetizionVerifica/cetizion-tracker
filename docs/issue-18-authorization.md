@@ -408,6 +408,7 @@ session is **401**, before any of these is considered.
 | `PATCH /api/questionnaire-responses/:id` | any | Staff filling in a questionnaire for the client, on an enquiry they own (#208). |
 | `POST /api/questionnaire-responses/:id/files` | any | A file for a file question, by staff filling in (#208). |
 | `POST /api/questionnaire-responses/:id/link` | any | A new link to the questionnaire, to copy or email (#208). |
+| `POST /api/questionnaire-responses/:id/quotation` | any | A Draft quotation priced from the answers, or the next revision of the enquiry's Draft or Submitted one (#208 phase 2): the owner of the enquiry, and admins. Never sent from here. |
 | `POST /api/questionnaire-responses/:id/remind` | any | Emails the client a reminder with a new link (#208). |
 | `POST /api/questionnaire-responses/:id/reopen` | any | A submitted questionnaire is open to changes again (#208). |
 | `POST /api/questionnaire-responses/:id/revoke` | any | Every open link to the questionnaire stops working (#208). |

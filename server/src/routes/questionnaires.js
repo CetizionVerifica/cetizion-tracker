@@ -23,6 +23,7 @@
  *     POST   /api/questionnaire-responses/:id/remind   email the client a reminder now
  *     POST   /api/questionnaire-responses/:id/revoke   every open link stops working
  *     POST   /api/questionnaire-responses/:id/reopen   a submitted response is open again
+ *     POST   /api/questionnaire-responses/:id/quotation   { mode: new|revise } a Draft quotation from the answers (#208 phase 2)
  *
  * A response not reachable by the caller is the same 404 as one that does
  * not exist.
@@ -36,6 +37,7 @@ import { ApiError } from '../middleware/error.js';
 import { allQuestions, checkAnswers, checkDefinition, prefillAnswers, prefillDifferences } from '../lib/questionnaireDefinition.js';
 import { createLink, emailLink, keepAnswers, oneFile, OPEN_STATUSES, responseClause, storeResponseFile, submitResponse } from '../lib/questionnaires.js';
 import { priceLines, pricingSchema, validatePricing } from '../lib/serviceQuotes/pricing.js';
+import { generateQuotation, MODES } from '../lib/serviceQuotes/generate.js';
 
 export const questionnaireRouter = Router();
 export const questionnaireVersionRouter = Router();
@@ -403,6 +405,18 @@ questionnaireResponseRouter.post('/:id/revoke', async (req, res) => {
   await reachableResponse(req, id);
   await query('UPDATE questionnaire_links SET revoked_at = now() WHERE response_id = $1 AND revoked_at IS NULL', [id]);
   res.json({ data: await responseView(req, id) });
+});
+
+/**
+ * A Draft quotation from a submitted response's answers, or the next
+ * revision of the enquiry's Draft or Submitted one. Nothing reaches the
+ * client from here: a person checks it and sends it.
+ */
+questionnaireResponseRouter.post('/:id/quotation', async (req, res) => {
+  const { mode } = parse(z.object({ mode: z.enum(MODES) }).strict(), req.body);
+  const responseId = intParam(req.params.id);
+  const data = await transaction((db) => generateQuotation(db, { responseId, mode, user: req.user, scope: scopeOf(req) }));
+  res.status(data.mode === 'new' ? 201 : 200).json({ data });
 });
 
 questionnaireResponseRouter.post('/:id/reopen', async (req, res) => {

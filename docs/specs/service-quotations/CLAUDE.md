@@ -60,7 +60,7 @@ Nothing reaches a client without a salesperson pressing Send.
 | --- | --- | --- |
 | 1. Digital questionnaires | Builder, versions (frozen once published), client link, save and resume, staff fill-in, reminders, owner notice, answers on the enquiry | **Merged** (PR #212, 8 Oct 2026). Pending: `public_app_url` set in production; first two questionnaires built |
 | 1b. First questionnaires | ISO audits and Ecovadis questionnaires built from their Word files, as seed or by an admin | Waiting on the Word files |
-| 2. Quotation from answers | Pricing rules per questionnaire version, preview pricing, *Generate quotation*, *Price needed* flag and send block, Answers tab on the quotation | Not started. Waiting on rate cards (§9 Q2) |
+| 2. Quotation from answers | Pricing rules per questionnaire version, preview pricing, *Generate quotation*, *Price needed* flag and send block, Answers tab on the quotation | Server side built (2A pricing and preview; 2B generation, *Price needed* and the send block). Screens (2C) not started; the first services' pricing (2D) waits on rate cards (§9 Q2) |
 | 3. Designed templates | Designs per service (branding, ordered sections, rich text, placeholders), `quotation_sections`, rendering through `quotationPdf.js` with Standard unchanged | Not started. Can run in parallel with 2 |
 | 4. Reach and roll-out | Remaining services, portal *Questionnaires* section, Import from Word (AI draft for the admin), funnel on the sales report | Not started |
 
@@ -118,6 +118,8 @@ One PR per phase (or two), each with its own tests and a short guide in
 | D8 | First two services: ISO audits and Ecovadis | Default, unchallenged |
 | D9 | Questionnaire and design editing: admins only | Default for Q5, unchallenged |
 | D10 | Invite and reminder emails are client emails and respect client-email holds (`lib/clientEmails.js`) | Fix on merge of #212 |
+| D12 | One quotation per enquiry; each service's questionnaire contributes its own generated lines (as `quoteWonEnquiry` puts a line per service on one quotation). A second service's questionnaire revises the enquiry's quotation and adds its lines; generating a service again replaces only that service's generated lines, keeping other services' and hand-added ones. `enquiries.quotation_no` stays the enquiry's one quotation; `quotation_lines.questionnaire_response_id` says which answers each line came from | Product owner, phase 2B review (Q8) |
+| D11 | A rate card in one currency prices a quotation in another through the ECB rates the tracker already keeps (`lib/fx.ts`, `exchange_rates`), via INR, at the newest rate on or before the quotation date. A missing rate, or one older than four publishing days (the reports' rule), leaves the line *Price needed* with the reason. The converted figure is the line's own rate; the rate used is recorded in the activity log | Shyam, phase 2B review |
 
 ## 7. Out of scope
 
@@ -163,4 +165,9 @@ Defaults apply until answered; a reply by number is enough.
    different layouts? Default: one house style.
 7. **Languages**: English only? Default: yes.
 8. **Multi-service enquiries**: one quotation combining several services'
-   questionnaires, or one quotation per service? Default: one per response.
+   questionnaires, or one quotation per service? **Answered: D12**, one
+   quotation per enquiry; each service's questionnaire contributes its own
+   generated lines.
+9. **Generating again for a quotation Under Negotiation or On Hold**: §4 names
+   Draft and Submitted only, so generation refuses these with a 422 that
+   says so. Should either be revised like Submitted? Default: refused.

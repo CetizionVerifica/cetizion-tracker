@@ -837,6 +837,14 @@ SELECT
   q.accepted_at,
   q.accepted_by_name,
   (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id) AS line_count,
+  -- Generated from a questionnaire's answers (#208 phase 2): computed here, never stored.
+  q.questionnaire_response_id,
+  q.generated_at,
+  (SELECT COUNT(*)::int FROM quotation_lines ql WHERE ql.quotation_id = q.id AND ql.price_needed) AS price_needed_count,
+  -- Each generated line against its own creation: a later service's generation does not hide an earlier edit (D12).
+  (q.generated_at IS NOT NULL AND EXISTS (
+     SELECT 1 FROM quotation_lines ql
+      WHERE ql.quotation_id = q.id AND ql.generated AND ql.updated_at > ql.created_at)) AS edited_since_generated,
   q.stage_id,
   st.name                                     AS stage,
   st.type                                     AS stage_type,

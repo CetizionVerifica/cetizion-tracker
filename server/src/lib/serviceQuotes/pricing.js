@@ -214,9 +214,16 @@ const round2 = (n) => Math.round(n * 100) / 100;
  */
 const MAX_QTY = 9_999_999_999.99;
 const MAX_RATE = 99_999_999_999_999.99;
-const MAX_AMOUNT = 99_999_999_999_999.99;
+export const MAX_AMOUNT = 99_999_999_999_999.99;   // also a quotation's subtotal, tax_total and total: numeric(16,2)
+/**
+ * A limit as the column holds it. 99,999,999,999,999.99 has more digits than
+ * a JavaScript number keeps (it reads back as …999.98), so the two large
+ * limits are written out rather than formatted.
+ */
+const LIMIT_TEXT = new Map([[MAX_QTY, '9,99,99,99,999.99'], [MAX_RATE, '9,99,99,99,99,99,999.99'], [MAX_AMOUNT, '9,99,99,99,99,99,999.99']]);
+export const limitText = (max) => LIMIT_TEXT.get(max);
 /** A number for a reason: Indian grouping, or 1.23e+20 when it is far beyond any line. */
-const money = (n) => (Math.abs(n) < 1e15 ? n.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : n.toPrecision(3));
+export const money = (n) => (Math.abs(n) < 1e15 ? n.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : n.toPrecision(3));
 // Quantities round up, never down (module CLAUDE.md §3); toFixed first so 0.1 × 3 is 0.3, not 0.31.
 const roundUp2 = (n) => Math.ceil(Number((n * 100).toFixed(6))) / 100;
 
@@ -315,8 +322,16 @@ function readsFrom(l) {
  * it reads is hidden by show-if (that part of the form did not apply to
  * this client). A line that cannot be worked out is kept with qty 1,
  * rate 0, price_needed and `why` naming the answer.
+ *
+ * Rates in the rules and the catalogue are in the service's currency. When
+ * the quotation is in another, the caller passes `rateFactor` (quotation
+ * currency per unit of the service's) and every rate is converted before
+ * the line limits are checked; or `rateUnavailable`, the reason no factor
+ * could be found, and every line that would have been priced needs a price
+ * instead. The conversion itself is the caller's (generate.js, fx.ts).
  */
-export function priceLines(version, answers = {}, service = {}) {
+export function priceLines(version, answers = {}, service = {}, { rateFactor = 1, rateUnavailable = null } = {}) {
+  if (!(Number.isFinite(rateFactor) && rateFactor > 0)) throw new Error('The exchange factor must be a positive number');
   const parsed = pricingSchema.safeParse(version?.pricing ?? { lines: [] });
   if (!parsed.success) throw new Error('The pricing rules are not valid; check them before pricing');
   const byKey = new Map(allQuestions(version?.definition).map((q) => [q.key, q]));
@@ -349,16 +364,17 @@ export function priceLines(version, answers = {}, service = {}) {
     }
     const rate = evaluate(l.rate, given, service);
     if (rate.why) return needed(rate.why);
+    if (rateUnavailable) return needed(rateUnavailable);
 
     if (!Number.isFinite(q)) return needed('the quantity could not be worked out (the numbers are too large)');
-    if (!Number.isFinite(rate.n)) return needed('the rate could not be worked out (the numbers are too large)');
+    if (!Number.isFinite(rate.n * rateFactor)) return needed('the rate could not be worked out (the numbers are too large)');
     q = roundUp2(q);
-    const r = round2(rate.n);
+    const r = round2(rate.n * rateFactor);
     if (!(q > 0)) return needed(`the quantity came to ${q}`);
-    if (q > MAX_QTY) return needed(`the quantity came to ${money(q)}, more than a quotation line can hold (${money(MAX_QTY)})`);
+    if (q > MAX_QTY) return needed(`the quantity came to ${money(q)}, more than a quotation line can hold (${limitText(MAX_QTY)})`);
     if (r < 0) return needed(`the rate came to ${r}`);
-    if (r > MAX_RATE) return needed(`the rate came to ${money(r)}, more than a quotation line can hold (${money(MAX_RATE)})`);
-    if (round2(q * r) > MAX_AMOUNT) return needed(`the amount came to ${money(round2(q * r))}, more than a quotation line can hold (${money(MAX_AMOUNT)})`);
+    if (r > MAX_RATE) return needed(`the rate came to ${money(r)}, more than a quotation line can hold (${limitText(MAX_RATE)})`);
+    if (round2(q * r) > MAX_AMOUNT) return needed(`the amount came to ${money(round2(q * r))}, more than a quotation line can hold (${limitText(MAX_AMOUNT)})`);
     out.push({ ...base, qty: q, rate: r, price_needed: false, why: null });
   });
 
