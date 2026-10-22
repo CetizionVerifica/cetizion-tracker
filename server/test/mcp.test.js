@@ -743,6 +743,85 @@ describe('MCP server scoping', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not s
       'merging is the Companies screen\'s, not this server\'s');
   });
 
+  /**
+   * Where a dialect-sensitive keyword really appears in a schema.
+   *
+   * Inside a `properties` map the keys are the tool's own field names, so a
+   * field called `definitions` is not the draft-7 keyword of that name. Only
+   * the keyword positions count.
+   */
+  const DIALECT_KEYWORDS = new Set(['prefixItems', 'definitions', '$defs', '$ref']);
+  function* dialectKeywords(node, path, inProperties = false) {
+    if (Array.isArray(node)) {
+      for (const [i, v] of node.entries()) yield* dialectKeywords(v, `${path}[${i}]`);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node)) {
+      if (inProperties) { yield* dialectKeywords(value, `${path}.${key}`); continue; }
+      if (DIALECT_KEYWORDS.has(key)) yield [key, `${path}.${key}`];
+      yield* dialectKeywords(value, `${path}.${key}`, key === 'properties' || key === 'patternProperties');
+    }
+  }
+
+  /**
+   * The schemas a client is asked to validate against (#50).
+   *
+   * The SDK converts our Zod shapes with no target and its converter reads a
+   * missing target as draft-7, so every tool went out declaring
+   * "http://json-schema.org/draft-07/schema#" while the SDK's own types
+   * promised 2020-12. Claude Desktop compiles outputSchema to check
+   * structuredContent, its validator is 2020-12 only, and it refused
+   * list_tasks before calling it. mcpSchema.test.js pins the correction
+   * itself; this is the one that fails if it is ever not wired in.
+   */
+  test('no tool declares a schema dialect a client cannot validate', async () => {
+    // An admin token that may write, so the full set is on the list and no
+    // tool's schemas go unchecked.
+    const t = (await token({ name: 'Schemas', role: 'admin', can_write: true })).token;
+    const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
+      .send({ jsonrpc: '2.0', id: 9400, method: 'tools/list', params: {} });
+
+    const tools = res.body.result.tools;
+    assert.ok(tools.length > 1, 'there is a list to check');
+    assert.ok(!JSON.stringify(res.body).includes('draft-07'), 'a draft-07 dialect reached a client');
+
+    const SUPPORTED = 'https://json-schema.org/draft/2020-12/schema';
+    for (const tool of tools) {
+      for (const which of ['inputSchema', 'outputSchema']) {
+        const schema = tool[which];
+        if (!schema) continue;
+        assert.equal(schema.$schema, SUPPORTED, `${tool.name}.${which} declares ${schema.$schema}`);
+        // Said once rather than inferred: the 2020-12 claim is only free while
+        // nothing tuple-shaped or reused is in there, which is all the two
+        // dialects disagree about for these shapes. By keyword and not by
+        // substring — get_kpis returns a glossary in a field it calls
+        // `definitions`, and a search for the text finds that and reports a
+        // draft-7 keyword block that is not there.
+        for (const [keyword, path] of dialectKeywords(schema, which)) {
+          assert.fail(`${tool.name}.${which} uses ${keyword} at ${path}, so the dialect it declares is no longer free`);
+        }
+      }
+    }
+
+    // The correction replaces a line; it does not rewrite the shapes. The
+    // output contract is what makes a query that stops returning a column
+    // fail loudly, so a flattened schema would cost that quietly.
+    const tasks = tools.find((x) => x.name === 'list_tasks');
+    assert.equal(tasks.outputSchema.type, 'object');
+    for (const field of ['items', 'total', 'offset', 'limit', 'has_more']) {
+      assert.ok(tasks.outputSchema.properties[field], `list_tasks no longer declares ${field}`);
+    }
+    assert.ok(tasks.inputSchema.properties.limit, 'list_tasks no longer declares its limit argument');
+
+    // And it still validates: structuredContent is checked against the Zod
+    // schema, not the JSON Schema, so correcting the dialect must not have
+    // bought compatibility by dropping the check.
+    const listed = await call(t, 'list_tasks');
+    assert.equal(listed.error, false, listed.text);
+    assert.ok(Array.isArray(JSON.parse(listed.text).items), 'list_tasks still answers with its declared shape');
+  });
+
   test('a reading token is not offered complete_task', async () => {
     const t = (await token({ name: 'Reader', role: 'admin' })).token;
     const res = await request(app).post('/api/mcp').set('Authorization', `Bearer ${t}`).set('Accept', 'application/json, text/event-stream')
