@@ -40,6 +40,18 @@ The ones pricing is likely to read:
 | ISO audits | `application_type` (`new_registration`, `transfer`, `extend_scope`, `add_standard`), `standards` (`iso_9001`, `iso_22000`, `iso_50001`, `iso_27001`, `iso_37001`, `iso_45001`, `iso_39001`, `other`), `employee_count`, `sites` (rows: `address`, `employees`, `shifts`, `function`), `previously_certified`, `integration` |
 | Ecovadis | `facilities` (rows), `permanent_male`, `permanent_female`, `contractor_male`, `contractor_female`, `plant_area_sqm`, `past_assessment`, `assessment_level` (`unit`, `group`), `medal_target` (`bronze` … `platinum`), `desired_timeline`, `certifications` |
 
+### The number of sites is the sites table, not a question
+
+There is no `site_count` question, though #239's Step 1 names one as an
+example key. The client lists each site as a row of the `sites` table
+(address, employees, shifts, function), and the number of sites is the
+number of rows: a pricing rule counts them with `{ "rows": "sites" }`. Asking
+for the number as well would let the two disagree (3 sites typed, 2 rows
+listed), and the project types each fact in one place. Step 2D's pricing
+counts the rows and never reads a `site_count` key; the form has none, so a
+rule that tried would be refused (`server/test/questionnaireFiles.test.js`).
+Ecovadis works the same way with its `facilities` table.
+
 ## Where they differ from the originals
 
 For the product owner to confirm:
@@ -62,3 +74,7 @@ For the product owner to confirm:
    website also asks it when they have a sustainability function), with an
    upload as well as a link.
 7. **Ecovadis facilities.** Up to 20 rows, rather than the website's four.
+8. **Ecovadis target medal.** As on the website, the target for the next
+   assessment is asked only of clients who had an EcoVadis assessment
+   before, so a client assessed for the first time is not asked which medal
+   they are aiming for.

@@ -30,7 +30,7 @@
         { "key": "standards_other", "type": "text", "label": "Which other standard?", "required": true, "show_if": { "key": "standards", "op": "eq", "value": "other" } },
         {
           "key": "audit_frequency", "type": "radio", "label": "Audit frequency",
-          "options": [{ "key": "every_12_months", "label": "Every 12 months" }]
+          "options": [{ "key": "annual", "label": "Every 12 months" }]
         },
         {
           "key": "integration", "type": "checkbox", "label": "If you apply for more than one standard: how integrated are your management systems?",

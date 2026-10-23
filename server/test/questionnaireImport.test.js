@@ -102,7 +102,7 @@ describe('importing a questionnaire definition', { skip: !ADMIN_URL && 'TEST_DAT
     assert.equal(qs.filter((q) => q.type === 'info' && q.show_if).length, 6, 'all six standard headings are conditional');
     assert.deepEqual(qs.find((q) => q.key === 'standards').options.map((o) => o.key),
       ['iso_9001', 'iso_22000', 'iso_50001', 'iso_27001', 'iso_37001', 'iso_45001', 'iso_39001', 'other']);
-    assert.equal(qs.find((q) => q.key === 'audit_frequency').options[0].key, 'every_12_months');
+    assert.equal(qs.find((q) => q.key === 'audit_frequency').options[0].key, 'annual');
   });
 
   test('a definition the builder could not publish is refused whole, listing why, and the draft is untouched', async () => {

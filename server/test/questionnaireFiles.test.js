@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { checkAnswers, checkDefinition } from '../src/lib/questionnaireDefinition.js';
+import { priceLines, validatePricing } from '../src/lib/serviceQuotes/pricing.js';
 
 /**
  * The first two questionnaires (#208 phase 1b, #239 Step 1), drafted from
@@ -58,4 +59,14 @@ test('ecovadis: a past assessment asks for its score, date and the medal targete
   assert.deepEqual(checkAnswers(def, { ...base, past_assessment: false }, { submit: true }).errors, {});
   assert.deepEqual(Object.keys(checkAnswers(def, { ...base, past_assessment: true }, { submit: true }).errors).sort(),
     ['assessment_date', 'ecovadis_score', 'medal_target']);
+});
+
+test('iso-audits: the number of sites is the rows of the sites table; there is no site_count to keep in step with it', () => {
+  const def = load('iso-audits');
+  const perSite = { lines: [{ key: 'site_visit', description: 'Site visit', qty: { rows: 'sites' }, rate: { fixed: 8000 } }] };
+  assert.deepEqual(validatePricing(perSite, def), [], 'a rule counting the rows is accepted');
+  assert.ok(validatePricing({ lines: [{ key: 'x', description: 'X', qty: { answer: 'site_count' }, rate: { fixed: 1 } }] }, def).length,
+    'a rule reading a site_count question is refused: the form has none');
+  const { values } = checkAnswers(def, { sites: [{ address: 'Pune', employees: 80 }, { address: 'Chennai', employees: 40 }, { address: 'Delhi', employees: 0 }] });
+  assert.equal(priceLines({ definition: def, pricing: perSite }, values)[0].qty, 3);
 });
