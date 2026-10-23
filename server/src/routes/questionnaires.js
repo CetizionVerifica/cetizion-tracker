@@ -8,6 +8,7 @@
  *     PATCH  /api/questionnaires/:id                { name?, active? }
  *     POST   /api/questionnaires/:id/versions       a new draft, copied from the latest
  *     PATCH  /api/questionnaire-versions/:id        { definition?, pricing? } (a draft only)
+ *     POST   /api/questionnaire-versions/:id/import { definition } a whole, valid form into a draft (never publishes)
  *     POST   /api/questionnaire-versions/:id/publish
  *     POST   /api/questionnaire-versions/:id/preview-pricing   { answers } → the lines; saves nothing
  *     DELETE /api/questionnaire-versions/:id        (a draft only)
@@ -171,6 +172,31 @@ questionnaireVersionRouter.patch('/:id', requireAdmin, async (req, res) => {
   });
   // Pricing is checked against the form as saved, so a renamed question shows up here.
   res.json({ data: { id, problems: checkDefinition(saved.definition).errors, pricing_problems: validatePricing(saved.pricing, saved.definition) } });
+});
+
+/**
+ * A whole definition from a file replaces a draft's questions (#208 phase
+ * 1b: the first forms, drafted as docs/questionnaires/*.json). Unlike a
+ * save, it must be complete: a definition publishing would refuse is
+ * refused here and nothing is written, so an import never leaves a draft
+ * half-replaced. It is stored as checked, keys and all; the pricing stays
+ * and is checked against it. Only a draft: never a published version, and
+ * importing never publishes.
+ */
+questionnaireVersionRouter.post('/:id/import', requireAdmin, async (req, res) => {
+  const { definition } = parse(z.object({ definition: z.unknown() }).strict(), req.body);
+  if (JSON.stringify(definition ?? null).length > 400_000) throw new ApiError(422, 'This questionnaire is too large');
+  const check = checkDefinition(definition);
+  if (!check.ok) throw new ApiError(422, 'This file is not a questionnaire the builder can take', { problems: check.errors });
+  if (!allQuestions(check.definition).length) throw new ApiError(422, 'This file has no questions', { problems: ['No questions yet'] });
+  const id = intParam(req.params.id);
+  const saved = await transaction(async (db) => {
+    await draftVersion(db, id);
+    const { rows: [v] } = await db.query(
+      'UPDATE questionnaire_versions SET definition = $2 WHERE id = $1 RETURNING definition, pricing', [id, JSON.stringify(check.definition)]);
+    return v;
+  });
+  res.json({ data: { id, problems: [], pricing_problems: validatePricing(saved.pricing, saved.definition) } });
 });
 
 questionnaireVersionRouter.post('/:id/publish', requireAdmin, async (req, res) => {

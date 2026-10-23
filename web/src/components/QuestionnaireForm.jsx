@@ -198,7 +198,14 @@ function TableControl({ q, value, onChange, error, disabled }) {
 }
 
 function Question({ q, value, onChange, errors, onUpload, fileNames, disabled }) {
-  if (q.type === 'info') return <p className="text-[14px]/[1.6] text-secondary-text">{q.label}</p>;
+  if (q.type === 'info') {
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="text-[14px]/[1.6] text-secondary-text">{q.label}</p>
+        {q.help && <p className="text-[12.5px]/[1.5] text-muted-foreground">{q.help}</p>}
+      </div>
+    );
+  }
   const error = q.type === 'table' ? errors : errors[q.key];
   const own = errors[q.key];
   const labelled = !['radio', 'yesno', 'multiselect', 'checkbox', 'table', 'file'].includes(q.type);

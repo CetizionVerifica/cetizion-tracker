@@ -465,6 +465,7 @@ export const routes = [
   { method: 'PATCH', path: '/api/questionnaires/:id', access: mustBeAdmin, why: 'Renames a questionnaire or switches it off (#208).' },
   { method: 'POST', path: '/api/questionnaires/:id/versions', access: mustBeAdmin, why: 'A new draft of a questionnaire (#208); published versions are frozen.' },
   { method: 'PATCH', path: '/api/questionnaire-versions/:id', access: mustBeAdmin, why: 'Edits a draft questionnaire and its pricing rules (#208).' },
+  { method: 'POST', path: '/api/questionnaire-versions/:id/import', access: mustBeAdmin, why: 'Replaces the questions of a draft questionnaire with a whole, valid definition from a file (#208 phase 1b); a published version is refused and nothing is published.' },
   { method: 'POST', path: '/api/questionnaire-versions/:id/publish', access: mustBeAdmin, why: 'Publishes a draft questionnaire (#208) once its form and pricing pass every check; the previous version is retired.' },
   { method: 'POST', path: '/api/questionnaire-versions/:id/preview-pricing', access: mustBeAdmin, why: 'Shows the quotation lines a questionnaire version\'s pricing makes of sample answers (#208 phase 2); saves nothing. Admin › Templates.' },
   { method: 'DELETE', path: '/api/questionnaire-versions/:id', access: mustBeAdmin, why: 'Discards a draft questionnaire version (#208).' },
