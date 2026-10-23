@@ -75,7 +75,11 @@ function buildServer(token) {
     // admin's here.
     if (write && !token.can_write) return;
     if (admin && token.role !== 'admin') return;
-    server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: out } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
+    // The top level is loose like every row (below): a client validates
+    // against the JSON Schema tools/list publishes, and a plain shape there
+    // is closed ("additionalProperties": false), so one field the schema
+    // does not name made Claude Desktop throw the whole answer away (#243).
+    server.registerTool(name, { description, inputSchema: shape, ...(out ? { outputSchema: z.looseObject(out) } : {}), annotations: { readOnlyHint: !write, destructiveHint: false, idempotentHint: !write } }, async (args) => {
       try {
         const result = await fn(args);
         await query('INSERT INTO api_token_log (token_id, tool, arguments, ok) VALUES ($1,$2,$3,true)', [token.id, name, JSON.stringify(args)]);
