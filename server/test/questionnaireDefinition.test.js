@@ -43,6 +43,19 @@ test('a well-formed definition passes, and is returned as checked', () => {
   assert.equal(r.definition.steps.length, 2);
 });
 
+test('a show-if value its question can give passes', () => {
+  for (const rule of [
+    { key: 'standards', op: 'in', value: ['iso_9001', 'iso_14001'] },
+    { key: 'standards', op: 'neq', value: 'iso_9001' },
+    { key: 'previously_certified', op: 'eq', value: false },
+    { key: 'employee_count', op: 'gte', value: 50 },
+    { key: 'legal_name', op: 'eq', value: 'Example' },
+  ]) {
+    const d = example(); d.steps[1].questions[2].show_if = rule;
+    assert.deepEqual(checkDefinition(d).errors, [], JSON.stringify(rule));
+  }
+});
+
 test('every rule a shape cannot say is reported in the admin\'s words', () => {
   const cases = [
     [(d) => { d.steps[1].questions[0].key = 'legal_name'; }, /used twice/],
@@ -53,6 +66,11 @@ test('every rule a shape cannot say is reported in the admin\'s words', () => {
     [(d) => { d.steps[0].questions[2].prefill = 'company.name'; }, /only a text question can be prefilled/],
     [(d) => { d.steps[1].questions[2].show_if = { key: 'sites', op: 'answered' }; d.steps[1].questions.push(d.steps[1].questions.splice(2, 1)[0]); }, /cannot depend on a table/],
     [(d) => { d.steps[1].questions[2].show_if = { key: 'previously_certified', op: 'in', value: true }; }, /needs a list/],
+    // A show-if value its question could never give: the section would never show (#208 phase 1b, files imported whole).
+    [(d) => { d.steps[1].questions[2].show_if = { key: 'standards', op: 'eq', value: 'iso_2700l' }; }, /"iso_2700l", not an option of "standards"/],
+    [(d) => { d.steps[1].questions[2].show_if = { key: 'standards', op: 'in', value: ['iso_9001', 'nope'] }; }, /"nope", not an option/],
+    [(d) => { d.steps[1].questions[2].show_if = { key: 'previously_certified', op: 'eq', value: 'true' }; }, /needs yes or no/],
+    [(d) => { d.steps[1].questions[2].show_if = { key: 'employee_count', op: 'gt', value: '5' }; }, /needs a number for "employee_count"/],
     [(d) => { d.steps[0].questions[0].key = 'Legal Name'; }, /Lower-case letters/],
     [(d) => { d.steps[0].questions[0].type = 'script'; }, /type/],
     [(d) => { d.steps[0].questions[0].onload = 'x'; }, /Unrecognized key/],

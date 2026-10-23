@@ -88,6 +88,24 @@ function shapeRules(q, where, errors) {
 }
 
 /**
+ * A show-if value the question it compares with could ever give, or why
+ * not. The builder only offers such values; a definition imported from a
+ * file is checked here, so a misspelt option key (a section that would
+ * never show) is refused rather than published.
+ */
+function showIfValueProblem(target, value) {
+  const values = Array.isArray(value) ? value : [value];
+  if (CHOICE.has(target.type)) {
+    const keys = new Set(target.options.map((o) => o.key));
+    const unknown = values.filter((v) => !keys.has(v));
+    return unknown.length ? `compares with ${unknown.map((v) => `"${v}"`).join(', ')}, not an option of "${target.key}"` : null;
+  }
+  if (target.type === 'yesno') return values.every((v) => typeof v === 'boolean') ? null : `needs yes or no (true or false) for "${target.key}"`;
+  if (['number', 'money'].includes(target.type)) return values.every((v) => typeof v === 'number') ? null : `needs a number for "${target.key}"`;
+  return null;
+}
+
+/**
  * The definition checked as a whole. `ok` false lists every problem in the
  * admin's words, so the builder can show them all at once.
  */
@@ -123,6 +141,10 @@ export function checkDefinition(input) {
         else if (['table', 'file', 'info'].includes(target.type)) errors.push(`${where}: "show if" cannot depend on a ${target.type} question`);
         else if (q.show_if.op === 'in' && !Array.isArray(q.show_if.value)) errors.push(`${where}: "is one of" needs a list of values`);
         else if (q.show_if.op !== 'answered' && q.show_if.value === undefined) errors.push(`${where}: "show if" needs a value to compare with`);
+        else if (q.show_if.op !== 'answered') {
+          const bad = showIfValueProblem(target, q.show_if.value);
+          if (bad) errors.push(`${where}: "show if" ${bad}`);
+        }
       }
       if (q.prefill && !['text', 'textarea'].includes(q.type)) errors.push(`${where}: only a text question can be prefilled`);
       before.set(q.key, q);

@@ -416,6 +416,7 @@ session is **401**, before any of these is considered.
 | **/api/questionnaire-versions** | | |
 | `DELETE /api/questionnaire-versions/:id` | **admin** | Discards a draft questionnaire version (#208). |
 | `PATCH /api/questionnaire-versions/:id` | **admin** | Edits a draft questionnaire and its pricing rules (#208). |
+| `POST /api/questionnaire-versions/:id/import` | **admin** | Replaces the questions of a draft questionnaire with a whole, valid definition from a file (#208 phase 1b); a published version is refused and nothing is published. |
 | `POST /api/questionnaire-versions/:id/preview-pricing` | **admin** | Shows the quotation lines a questionnaire version's pricing makes of sample answers (#208 phase 2); saves nothing. Admin › Templates. |
 | `POST /api/questionnaire-versions/:id/publish` | **admin** | Publishes a draft questionnaire (#208) once its form and pricing pass every check; the previous version is retired. |
 | **/api/questionnaires** | | |

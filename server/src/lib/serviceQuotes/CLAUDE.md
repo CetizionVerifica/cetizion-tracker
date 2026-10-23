@@ -14,7 +14,7 @@ where it shipped, and is reused, not moved.
 | --- | --- | --- |
 | Questionnaire definition: shape, show-if, answer checks, prefill | `lib/questionnaireDefinition.js` | Phase 1. Reuse `allQuestions`, `isVisible`, `checkAnswers` |
 | Links, reach, emails, submit, reminders | `lib/questionnaires.js` | Phase 1. Reuse `responseClause` for row scoping |
-| Questionnaire and response routes | `routes/questionnaires.js` (`questionnaireRouter`, `questionnaireVersionRouter`, `questionnaireResponseRouter`) | Phase 1. New response routes go on `questionnaireResponseRouter` |
+| Questionnaire and response routes | `routes/questionnaires.js` (`questionnaireRouter`, `questionnaireVersionRouter`, `questionnaireResponseRouter`) | Phase 1. New response routes go on `questionnaireResponseRouter`. Phase 1b: `POST /questionnaire-versions/:id/import` puts a whole definition, checked by `checkDefinition`, into a draft only and never publishes |
 | Pricing rules: schema, validation, evaluation | `lib/serviceQuotes/pricing.js` | Phase 2, built |
 | Generate a Draft quotation from a response | `lib/serviceQuotes/generate.js` | Phase 2 (lines), built; phase 3 (sections) |
 | *Price needed*: the send block, and why each line needs a price | `lib/serviceQuotes/priceNeeded.js` | Phase 2, built |

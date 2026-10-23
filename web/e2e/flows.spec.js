@@ -880,3 +880,86 @@ test('a quotation from the answers: priced by the rules, Price needed holds Send
     await shots(page, 'quotation-by-hand');
   }
 });
+
+test('a questionnaire imported from a file: kept exactly, conditional headings work, a bad file is refused, and it stays a draft', async ({ page }) => {
+  await signIn(page);
+  const formFile = (name) => join(here, '..', '..', 'docs', 'questionnaires', `${name}.json`);
+  const { data: svc } = await (await page.request.post('/api/services', { data: { name: `E2E Import ${stamp}` } })).json();
+  const { data: form } = await (await page.request.post('/api/questionnaires', { data: { service_id: svc.id, name: 'E2E imported questionnaire' } })).json();
+  const versionNow = async () => (await (await page.request.get(`/api/questionnaires/${form.id}`)).json()).data.versions[0];
+  const confirms = [];
+  page.on('dialog', (d) => { confirms.push(d.message()); d.accept(); });
+
+  await page.goto('/settings/templates');
+  await page.getByRole('button', { name: /Questionnaires/ }).first().click();
+  await page.getByText('E2E imported questionnaire').first().click();
+  const input = page.getByLabel('Questionnaire file to import');
+
+  // The ISO form goes in exactly as written, and stays a draft.
+  await input.setInputFiles(formFile('iso-audits'));
+  await expect(page.getByText('Imported from iso-audits.json: version 1 is still a draft')).toBeVisible();
+  expect(confirms.at(-1)).toMatch(/It stays a draft: nothing is published/);
+  let v = await versionNow();
+  expect(v.status).toBe('draft');
+  expect(v.definition).toEqual(JSON.parse(readFileSync(formFile('iso-audits'), 'utf8')));
+  await expect(page.getByText('Before it can be published')).toHaveCount(0);
+
+  // A guidance heading now takes a condition and help text in the builder.
+  await page.getByRole('button', { name: 'Food safety management (ISO 22000)' }).click();
+  const heading = page.locator('div.rounded-md', { has: page.getByRole('button', { name: 'Food safety management (ISO 22000)' }) });
+  await expect(heading.getByText('Show this question')).toBeVisible();
+  await expect(heading.getByRole('combobox').filter({ hasText: 'only if "Standard(s) applicable"' })).toHaveValue('standards');
+  await expect(heading.getByLabel('Help text')).toBeVisible();
+  await shots(page, 'import-builder', [page.getByRole('button', { name: 'Import from file' }), heading]);
+
+  // As the client: an ISO 9001 applicant never sees the food-safety section; one choosing ISO 22000 does.
+  await page.getByRole('button', { name: 'Preview as the client' }).click();
+  const preview = page.getByRole('dialog');
+  await preview.getByRole('radio', { name: 'New customer: a new registration' }).check();
+  await preview.getByRole('checkbox', { name: 'ISO 9001 Quality management' }).check();
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await preview.getByLabel(/Name and legal form/).fill('Example Pvt Ltd');
+  await preview.getByLabel(/^Address/).fill('1 Example Road, Pune');
+  await preview.getByLabel(/Representative person/).fill('A. Person');
+  await preview.getByLabel(/^Email/).fill('a.person@example.com');
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await preview.getByLabel(/Scope of certification/).fill('Manufacture of example parts');
+  await preview.getByLabel(/full-time employees/).fill('120');
+  if (!(await preview.getByLabel(/Site address/).count())) await preview.getByRole('button', { name: 'Add site' }).click();
+  await preview.getByLabel(/Site address/).first().fill('Pune');
+  await preview.getByLabel(/Number of employees/).first().fill('120');
+  await preview.getByRole('button', { name: 'Next' }).click();
+  await expect(preview.getByText('Do you currently hold a valid certificate')).toBeVisible();
+  await expect(preview.getByText('Food safety management (ISO 22000)')).toHaveCount(0);
+  await expect(preview.getByLabel(/Number of HACCPs/)).toHaveCount(0);
+  for (let i = 0; i < 3; i += 1) await preview.getByRole('button', { name: 'Back' }).click();
+  await preview.getByRole('checkbox', { name: 'ISO 22000 Food safety management' }).check();
+  for (let i = 0; i < 3; i += 1) await preview.getByRole('button', { name: 'Next' }).click();
+  await expect(preview.getByText('Food safety management (ISO 22000)')).toBeVisible();
+  await expect(preview.getByLabel(/Number of HACCPs/)).toBeVisible();
+  await shots(page, 'import-preview', [preview.getByText('Food safety management (ISO 22000)')]);
+  await page.keyboard.press('Escape');
+
+  // A file that is not JSON, and one the builder could not publish: both refused, the draft untouched.
+  await input.setInputFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from('{"steps": [') });
+  await expect(page.getByRole('alert').filter({ hasText: 'broken.json was not imported: The file is not valid JSON' })).toBeVisible();
+  const bad = { steps: [{ key: 'a', title: 'A', questions: [{ key: 'x', type: 'radio', label: 'X', options: [{ key: '12_month', label: '12 months' }] }] }] };
+  await input.setInputFiles({ name: 'bad-keys.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bad)) });
+  const refusal = page.getByRole('alert').filter({ hasText: 'bad-keys.json was not imported: This file is not a questionnaire the builder can take. The draft is unchanged.' });
+  await expect(refusal).toBeVisible();
+  await expect(refusal.getByText(/options\.0\.key: Lower-case letters/)).toBeVisible();
+  await expect(page.getByText('Before it can be published')).toHaveCount(0, { timeout: 1000 });
+  expect((await versionNow()).definition).toEqual(v.definition);
+
+  // Ecovadis replaces it, after saying so; then publishing is its own step, and a published version offers no import.
+  await input.setInputFiles(formFile('ecovadis'));
+  await expect(page.getByText('Imported from ecovadis.json: version 1 is still a draft')).toBeVisible();
+  expect(confirms.at(-1)).toMatch(/Replace the 60 questions in version 1 with the 36 from "ecovadis.json"/);
+  v = await versionNow();
+  expect(v.status).toBe('draft');
+  expect(v.definition).toEqual(JSON.parse(readFileSync(formFile('ecovadis'), 'utf8')));
+  await page.getByRole('button', { name: 'Publish version 1' }).click();
+  await expect(page.getByText('version 1 published', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import from file' })).toHaveCount(0);
+  expect((await page.request.post(`/api/questionnaire-versions/${v.id}/import`, { data: { definition: JSON.parse(readFileSync(formFile('iso-audits'), 'utf8')) } })).status()).toBe(409);
+});

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import { Alert, Badge, DataTable, Empty, Field, Input, Modal, Select, Tabs, Textarea, useToast } from './ui.jsx';
 import { QuestionnaireForm } from './QuestionnaireForm.jsx';
 import { PricingEditor } from './serviceQuotes/PricingEditor.jsx';
 import { publishHold } from '../lib/pricingRules.js';
+import { questionCount, readDefinitionFile } from '../lib/questionnaireImport.js';
 import { api } from '../lib/api.js';
 import { useFetch, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
@@ -133,11 +134,44 @@ function QuestionnaireEditor({ id, onBack }) {
     finally { setBusy(false); }
   }
   async function save() {
+    setImportError(null);
     const r = await run(() => api.raw(`/questionnaire-versions/${draft.id}`, { method: 'PATCH', body: { definition: def } }), 'Draft saved');
     // The pricing is checked again against the questions as saved: renaming a question can break a rule.
     if (r) { setProblems(r.data.problems); setPricingProblems(r.data.pricing_problems || []); setSavedDef(def); setDirty(false); }
     return r;
   }
+  /**
+   * A whole form from a .json file (#208 phase 1b) replaces the draft's
+   * questions, keys and all. The server refuses one it could not publish,
+   * and nothing changes; it never publishes. The pricing stays.
+   */
+  const fileInput = useRef(null);
+  // A refused file's reasons are about the file, so they sit apart from what the draft itself lacks.
+  const [importError, setImportError] = useState(null);
+  async function importFile(file) {
+    if (!file) return;
+    setImportError(null);
+    const read = readDefinitionFile(await file.text());
+    if (read.error) { setImportError({ text: `${file.name} was not imported: ${read.error}` }); return; }
+    const have = questionCount(def);
+    const theirs = questionCount(read.definition);
+    const replacing = have
+      ? `Replace the ${have} question${have === 1 ? '' : 's'} in version ${draft.version}${dirty ? ', and your unsaved changes,' : ''} with the ${theirs} from "${file.name}"?`
+      : `Import the ${theirs} questions from "${file.name}"${dirty ? ' in place of your unsaved changes' : ''}?`;
+    if (!window.confirm(`${replacing} It stays a draft: nothing is published.`)) return;
+    setBusy(true);
+    try {
+      const r = await api.action(`/questionnaire-versions/${draft.id}/import`, { definition: read.definition });
+      // The imported form at once, so a Save before the reload cannot put the old questions back.
+      setDef(structuredClone(read.definition)); setSavedDef(read.definition); setDirty(false);
+      setProblems([]); setPricingProblems(r.data.pricing_problems || []);
+      toast(`Imported from ${file.name}: version ${draft.version} is still a draft`, 'success');
+      form.refetch();
+    } catch (err) {
+      setImportError({ text: `${file.name} was not imported: ${err.message}. The draft is unchanged.`, problems: err.details?.problems || [] });
+    } finally { setBusy(false); }
+  }
+
   async function publish() {
     if (dirty) {
       const r = await save();
@@ -181,10 +215,24 @@ function QuestionnaireEditor({ id, onBack }) {
           <div className="flex flex-wrap gap-2">
             <button type="button" className="btn btn--sm" disabled={busy || !dirty} onClick={save}>Save draft</button>
             <button type="button" className="btn btn--sm" onClick={() => setPreview(def)}>Preview as the client</button>
+            <button type="button" className="btn btn--sm" disabled={busy} onClick={() => fileInput.current?.click()}>Import from file</button>
+            <input ref={fileInput} type="file" accept=".json,application/json" hidden aria-label="Questionnaire file to import"
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importFile(f); }} />
             <button type="button" className="btn btn--sm btn--primary" disabled={busy || Boolean(hold)} aria-describedby={hold ? 'publish-hold' : undefined} onClick={publish}>Publish version {draft.version}</button>
             {q.versions.length > 1 && <button type="button" className="btn btn--sm btn--ghost" disabled={busy} onClick={() => window.confirm('Discard this draft?') && run(() => api.remove('questionnaire-versions', draft.id), 'Draft discarded').then(() => form.refetch())}>Discard draft</button>}
           </div>
           {hold && <p id="publish-hold" className="small" role="status">{hold}</p>}
+          {importError && (
+            <Alert tone="warning">
+              <span role="alert">
+                {importError.text}
+                {importError.problems?.length > 0 && (
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{importError.problems.slice(0, 12).map((p) => <li key={p}>{p}</li>)}</ul>
+                )}
+                {importError.problems?.length > 12 && <span className="small"> and {importError.problems.length - 12} more.</span>}
+              </span>
+            </Alert>
+          )}
           {problems.length > 0 && (
             <Alert tone="warning">
               <span>
@@ -357,7 +405,7 @@ function QuestionEditor({ q, taken, earlier = [], onChange, column = false }) {
             <input type="checkbox" checked={Boolean(q.required)} onChange={(e) => set({ required: e.target.checked || undefined })} /> Required
           </label>
         )}
-        {q.type !== 'info' && <div className="span-all"><Field label="Help text" hint="Optional, under the question"><Input value={q.help || ''} onChange={(e) => set({ help: e.target.value })} /></Field></div>}
+        <div className="span-all"><Field label="Help text" hint={q.type === 'info' ? 'Optional, under the guidance' : 'Optional, under the question'}><Input value={q.help || ''} onChange={(e) => set({ help: e.target.value })} /></Field></div>
         {['text', 'textarea'].includes(q.type) && !column && (
           <Field label="Fill in from our records" hint="The client sees it filled in and can change it">
             <Select value={q.prefill || ''} placeholder="No" options={PREFILL} onChange={(e) => set({ prefill: e.target.value || undefined })} />
@@ -387,7 +435,8 @@ function QuestionEditor({ q, taken, earlier = [], onChange, column = false }) {
       </div>
       {CHOICE.has(q.type) && <OptionsEditor options={q.options || []} onChange={(options) => set({ options })} />}
       {q.type === 'table' && <ColumnsEditor columns={q.columns || []} onChange={(columns) => set({ columns })} />}
-      {!column && q.type !== 'info' && <ShowIfEditor rule={q.show_if} earlier={earlier} onChange={(show_if) => set({ show_if })} />}
+      {/* Guidance can be conditional too: a section's heading shows with its questions. */}
+      {!column && <ShowIfEditor rule={q.show_if} earlier={earlier} onChange={(show_if) => set({ show_if })} />}
     </div>
   );
 }

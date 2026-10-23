@@ -15,7 +15,7 @@ The server contract is in
 | Piece | File | State |
 | --- | --- | --- |
 | The form, one step at a time (client page, staff fill-in, preview) | `components/QuestionnaireForm.jsx` | Phase 1. Reuse for sample answers in previews |
-| The builder | `components/QuestionnaireBuilder.jsx` in `pages/Templates.jsx` (Settings › Templates › Questionnaires) | Phase 1. Gains a Pricing tab |
+| The builder | `components/QuestionnaireBuilder.jsx` in `pages/Templates.jsx` (Settings › Templates › Questionnaires) | Phase 1. Gains a Pricing tab. Phase 1b: *Import from file* on a draft (`lib/questionnaireImport.js` reads the file; the server judges it), and guidance text takes help and show-if |
 | Questionnaire status and answers on an enquiry | `components/QuestionnaireCard.jsx`, opened from the Questionnaire column in `pages/Enquiries.jsx` | Phase 1. Gains *Generate quotation* |
 | Client page `/q/<token>` | `pages/FillQuestionnaire.jsx` | Phase 1. Unchanged by phases 2–3 |
 | Pricing tab on a version | `components/serviceQuotes/PricingEditor.jsx` | Phase 2 |
