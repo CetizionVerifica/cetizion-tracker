@@ -115,9 +115,11 @@ export default function Enquiries() {
       formTitle="enquiry"
       formIntro={`New → Contacted → Qualified → ${CONVERTED}. Set "${CONVERTED}" and a quotation is created with these details, or link one that exists. Drop a lead with "Unqualified" and a reason; "Nurture" parks it for later.`}
       searchPlaceholder="Search client, enquiry no, service, sector…"
-      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
+      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
-      dateFilterLabel="Enquiry date"
+      // The day the enquiry reached us (enquiry_date); the server filters ?from=&to= on it.
+      dateFilterLabel="Received"
+      dateRange
       refreshToken={questionnaireVersion}
       onSaved={(saved) => {
         invalidateLookups();
