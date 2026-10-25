@@ -77,6 +77,17 @@ function statusTone(status, expired) {
   return 'info';
 }
 
+/**
+ * Whether the journey says this quotation's enquiry does not open for the
+ * viewer (server §6). Only a journey about this quotation and this very
+ * enquiry says so; until one arrives, the link stays.
+ */
+function enquiryClosed(journey, q) {
+  if (journey?.records?.quotation_no !== q.quotation_no) return false;
+  const step = journey.steps?.find((s) => s.key === 'enquiry');
+  return step?.record?.no === q.enquiry?.enquiry_no && step.reachable === false;
+}
+
 export default function QuotationDetail() {
   const { key } = useParams();
   const { isAdmin } = useAuth();
@@ -397,7 +408,7 @@ export default function QuotationDetail() {
             </GridFact>
             <GridFact label="Enquiry">
               {q.enquiry
-                ? journey?.records?.quotation_no === q.quotation_no && journey.steps?.find((s) => s.key === 'enquiry')?.reachable === false
+                ? enquiryClosed(journey, q)
                   ? <span className="mono">{q.enquiry.enquiry_no}</span>
                   : <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
                 : <span className="text-muted-foreground">—</span>}

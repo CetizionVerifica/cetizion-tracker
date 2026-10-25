@@ -144,7 +144,9 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
   as a removable chip ("Showing: quoted in the last 90 days ×").
 - Three columns: label, count, `money(value_inr, 'INR', { compact: true })`,
   "median N days here"; `without_rate` > 0 says how many were left out and
-  where to add the rate, as the stage board does.
+  where to add the rate, as the stage board does. Cards with `value_hidden`
+  are left out of the value too: when every card is, the header reads
+  "Owner only", and when some are, a muted line says how many.
 - Card (a `button` opening the drawer): client, owner initials, service,
   value in its own currency, the flag chip or plain days, a three-segment
   progress mark (`progress`, `aria-hidden`, the small step as text beside

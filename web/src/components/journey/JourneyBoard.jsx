@@ -8,11 +8,11 @@ import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs.tsx';
 import { useFetch, useLookups, useMediaQuery } from '../../lib/hooks.js';
-import { money, number, periodLabel } from '../../lib/format.js';
+import { number, periodLabel } from '../../lib/format.js';
 import { currentRecordPath, journeyBoard } from '../../lib/journey.js';
 import { localToday } from '../../lib/reportPeriods.js';
 import {
-  PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText, funnelFigures, isFiltered,
+  PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText, columnValueText, funnelFigures, hiddenText, isFiltered,
   medianText, periodPhrase, readBoardQuery, withFilters, withoutRateText,
 } from './boardModel.js';
 import { JourneyDrawer } from './JourneyDrawer.jsx';
@@ -254,6 +254,7 @@ function Column({ column, onOpen }) {
   const headingId = `journey-column-${column.key}`;
   const median = medianText(column.median_days);
   const left = withoutRateText(column.without_rate);
+  const hidden = hiddenText(column);
   return (
     <section aria-labelledby={headingId} className="min-w-0 rounded-lg border border-border bg-muted">
       <div className="rounded-t-lg border-b border-border bg-card px-3 py-2.5">
@@ -263,10 +264,11 @@ function Column({ column, onOpen }) {
         </div>
         {column.count > 0 && (
           <div className="num mt-1 text-[12px] text-muted-foreground">
-            {column.value_inr ? money(column.value_inr, 'INR', { compact: true }) : 'No value'}{median && <> · {median}</>}
+            {columnValueText(column)}{median && <> · {median}</>}
           </div>
         )}
         {left && <p className="m-0 mt-1 text-[12px] text-waiting">{left}</p>}
+        {hidden && <p className="m-0 mt-1 text-[12px] text-muted-foreground">{hidden}</p>}
       </div>
       {column.cards.length ? (
         <ul className="m-0 flex list-none flex-col gap-2 p-2">

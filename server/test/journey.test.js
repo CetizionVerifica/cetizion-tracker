@@ -28,6 +28,9 @@ const NAME = `journey_test_${process.pid}`;
 const PASSWORD = 'a-good-long-test-password';
 
 let app; let pool; let admin; let sam; let bea; let hema; let businessToday; let daysBefore;
+// The business day, as SQL. The routes count days from it, and the database's
+// CURRENT_DATE is the UTC one, a day behind from 00:00 to 05:30 in Mumbai.
+let T;
 const ids = {};
 
 describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not set' }, () => {
@@ -52,6 +55,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     ({ pool } = await import('../src/db.js'));
     assert.equal(pool.options.connectionString, url.toString(), 'the pool must be the throwaway database, never the one in .env');
     ({ businessToday } = await import('../src/lib/businessDate.ts'));
+    T = `'${businessToday()}'::date`;
     ({ daysBefore } = await import('../src/lib/journey/steps.js'));
     const { createUser } = await import('../src/lib/users.js');
     const signIn = async (email) => {
@@ -80,28 +84,28 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
         ('PRJ-T-P', 'Example Polymers', ${bea.id}, 'Bea Sales', 'Energy audit'),
         ('PRJ-T-W', 'Demo Castings', NULL, 'Bea Sales', 'ISO 9001 certification');
       INSERT INTO quotations (quotation_no, client_name, owner_user_id, sales_person, service_quoted, quotation_date, quotation_value, currency, status, sent_at, created_at, project_id) VALUES
-        ('Q-T-A', 'Example Textiles', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', CURRENT_DATE - 15, 300000, 'INR', 'Submitted', now() - interval '10 days', now() - interval '15 days', NULL),
-        ('Q-T-B', 'Sample Agro', ${sam.id}, 'Sam Sales', 'ISO 14001 certification', CURRENT_DATE - 30, 10000, 'EUR', 'Under Negotiation', now() - interval '28 days', now() - interval '30 days', NULL),
-        ('Q-T-C', 'Sample Forgings', ${bea.id}, 'Bea Sales', 'ISO 45001 certification', CURRENT_DATE - 70, 150000, 'INR', 'Won - PO Received', now() - interval '65 days', now() - interval '70 days', 'PRJ-T-C'),
-        ('Q-T-W1', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', CURRENT_DATE - 60, 90000, 'INR', 'Lost', now() - interval '59 days', now() - interval '60 days', 'PRJ-T-W'),
-        ('Q-T-W2', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', CURRENT_DATE - 50, 80000, 'INR', 'Won - PO Received', now() - interval '49 days', now() - interval '50 days', 'PRJ-T-W'),
-        ('Q-T-W3', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', CURRENT_DATE - 10, 5000, 'USD', 'Submitted', now() - interval '9 days', now() - interval '10 days', 'PRJ-T-W');
+        ('Q-T-A', 'Example Textiles', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', ${T} - 15, 300000, 'INR', 'Submitted', now() - interval '10 days', now() - interval '15 days', NULL),
+        ('Q-T-B', 'Sample Agro', ${sam.id}, 'Sam Sales', 'ISO 14001 certification', ${T} - 30, 10000, 'EUR', 'Under Negotiation', now() - interval '28 days', now() - interval '30 days', NULL),
+        ('Q-T-C', 'Sample Forgings', ${bea.id}, 'Bea Sales', 'ISO 45001 certification', ${T} - 70, 150000, 'INR', 'Won - PO Received', now() - interval '65 days', now() - interval '70 days', 'PRJ-T-C'),
+        ('Q-T-W1', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', ${T} - 60, 90000, 'INR', 'Lost', now() - interval '59 days', now() - interval '60 days', 'PRJ-T-W'),
+        ('Q-T-W2', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', ${T} - 50, 80000, 'INR', 'Won - PO Received', now() - interval '49 days', now() - interval '50 days', 'PRJ-T-W'),
+        ('Q-T-W3', 'Demo Castings', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', ${T} - 10, 5000, 'USD', 'Submitted', now() - interval '9 days', now() - interval '10 days', 'PRJ-T-W');
       INSERT INTO enquiries (enquiry_no, client_name, owner_user_id, sales_person, service, status, enquiry_date, created_at, estimated_value, quotation_no) VALUES
-        ('CTZ/ENQ/2026/901', 'Example Textiles', ${sam.id}, 'Sam Sales', 'ISO 9001 certification', 'Converted', CURRENT_DATE - 20, now() - interval '20 days', 250000, 'Q-T-A'),
-        ('CTZ/ENQ/2026/902', 'Example Ceramics', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', 'New', CURRENT_DATE - 5, now() - interval '5 days', 120000, NULL),
-        ('CTZ/ENQ/2026/903', 'Sample Paper', ${sam.id}, 'Sam Sales', 'Energy audit', 'Contacted', CURRENT_DATE - 30, now() - interval '30 days', NULL, NULL),
-        ('CTZ/ENQ/2026/904', 'Sample Dyes', ${sam.id}, 'Sam Sales', 'Energy audit', 'Unqualified', CURRENT_DATE - 10, now() - interval '10 days', NULL, NULL);
+        ('CTZ/ENQ/2026/901', 'Example Textiles', ${sam.id}, 'Sam Sales', 'ISO 9001 certification', 'Converted', ${T} - 20, now() - interval '20 days', 250000, 'Q-T-A'),
+        ('CTZ/ENQ/2026/902', 'Example Ceramics', ${bea.id}, 'Bea Sales', 'ISO 9001 certification', 'New', ${T} - 5, now() - interval '5 days', 120000, NULL),
+        ('CTZ/ENQ/2026/903', 'Sample Paper', ${sam.id}, 'Sam Sales', 'Energy audit', 'Contacted', ${T} - 30, now() - interval '30 days', NULL, NULL),
+        ('CTZ/ENQ/2026/904', 'Sample Dyes', ${sam.id}, 'Sam Sales', 'Energy audit', 'Unqualified', ${T} - 10, now() - interval '10 days', NULL, NULL);
       INSERT INTO purchase_orders (po_number, project_id, quotation_no, po_date, po_value) VALUES
-        ('PO-T-C1', 'PRJ-T-C', 'Q-T-C', CURRENT_DATE - 60, 100000),
-        ('PO-T-C2', 'PRJ-T-C', 'Q-T-C', CURRENT_DATE - 55, 50000),
-        ('PO-T-P1', 'PRJ-T-P', NULL, CURRENT_DATE - 60, 40000),
-        ('PO-T-W1', 'PRJ-T-W', NULL, CURRENT_DATE - 20, 80000);
-      INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, replaces_po_number) VALUES ('PO-T-P2', 'PRJ-T-P', CURRENT_DATE - 50, 45000, 'PO-T-P1');
-      INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, cancelled) VALUES ('PO-T-P3', 'PRJ-T-P', CURRENT_DATE - 40, 30000, true);
+        ('PO-T-C1', 'PRJ-T-C', 'Q-T-C', ${T} - 60, 100000),
+        ('PO-T-C2', 'PRJ-T-C', 'Q-T-C', ${T} - 55, 50000),
+        ('PO-T-P1', 'PRJ-T-P', NULL, ${T} - 60, 40000),
+        ('PO-T-W1', 'PRJ-T-W', NULL, ${T} - 20, 80000);
+      INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, replaces_po_number) VALUES ('PO-T-P2', 'PRJ-T-P', ${T} - 50, 45000, 'PO-T-P1');
+      INSERT INTO purchase_orders (po_number, project_id, po_date, po_value, cancelled) VALUES ('PO-T-P3', 'PRJ-T-P', ${T} - 40, 30000, true);
       INSERT INTO payment_stages (po_number, stage_no, stage_name, trigger_event, stage_percent, invoice_no, invoice_date, credit_days, amount_received, payment_received_date) VALUES
-        ('PO-T-C1', 1, 'Advance', 'On PO Registration', 0.5, 'INV-T-1', CURRENT_DATE - 50, 30, 0, NULL),
+        ('PO-T-C1', 1, 'Advance', 'On PO Registration', 0.5, 'INV-T-1', ${T} - 50, 30, 0, NULL),
         ('PO-T-C1', 2, 'On delivery', 'On Delivery', 0.5, NULL, NULL, NULL, 0, NULL),
-        ('PO-T-W1', 1, 'In full', 'On PO Registration', 1, 'INV-T-2', CURRENT_DATE - 15, 30, 80000, CURRENT_DATE - 3);
+        ('PO-T-W1', 1, 'In full', 'On PO Registration', 1, 'INV-T-2', ${T} - 15, 30, 80000, ${T} - 3);
     `);
     const { rows } = await pool.query(`SELECT quotation_no AS no, id FROM quotations UNION ALL SELECT enquiry_no, id FROM enquiries UNION ALL SELECT po_number, id FROM purchase_orders`);
     for (const r of rows) ids[r.no] = r.id;
@@ -147,7 +151,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.equal(a.quotation_owner_id, bea.id);
     assert.equal(a.sales_person, 'Bea Sales', 'the quotation\'s salesperson first');
     const card = (await of(admin, 'quotation=Q-T-A').expect(200)).body.data;
-    assert.equal(card.started_on, (await pool.query('SELECT (CURRENT_DATE - 20)::text AS d')).rows[0].d, 'the sale began with the enquiry');
+    assert.equal(card.started_on, (await pool.query(`SELECT (${T} - 20)::text AS d`)).rows[0].d, 'the sale began with the enquiry');
   });
 
   test('two POs on one quotation are one sale, added up', async () => {
@@ -243,7 +247,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.deepEqual(cardKeys(quoted), keys('A', 'B', 'C', 'W1', 'W2', 'W3', 'P'));
     assert.equal(quoted.cards.length, quoted.funnel.quoted);
     assert.deepEqual(cardKeys(await board(admin, '?cohort=with_po')), keys('C', 'W2', 'P'));
-    const { rows: [{ from }] } = await pool.query(`SELECT (CURRENT_DATE - 25)::text AS from`);
+    const { rows: [{ from }] } = await pool.query(`SELECT (${T} - 25)::text AS from`);
     // A began with its enquiry 20 days ago, W3 with its quotation 10 days ago; C and the rest began earlier.
     const recent = await board(admin, `?from=${from}&cohort=started`);
     assert.deepEqual(recent.funnel, { started: 4, quoted: 2, won: 0, with_po: 0 });
@@ -267,7 +271,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     const j = res.body.data;
     assert.equal(j.key, key.A());
     assert.deepEqual(j.steps.map((s) => [s.key, s.state]), [['enquiry', 'done'], ['quotation', 'current'], ['po', 'future']]);
-    assert.deepEqual(j.steps[0].record, { kind: 'enquiry', no: 'CTZ/ENQ/2026/901', date: (await pool.query('SELECT (CURRENT_DATE - 20)::text AS d')).rows[0].d });
+    assert.deepEqual(j.steps[0].record, { kind: 'enquiry', no: 'CTZ/ENQ/2026/901', date: (await pool.query(`SELECT (${T} - 20)::text AS d`)).rows[0].d });
     assert.deepEqual(j.steps[0].small.map((s) => s.state), ['done', 'done', 'current'], 'a done step keeps its small steps');
     assert.deepEqual(j.steps[0].facts.map((f) => f.label), ['Received', 'Source', 'Owner', 'Estimate', 'Status']);
     assert.deepEqual(j.steps[0].facts[3], { label: 'Estimate', value: 250000, kind: 'money', currency: 'INR' });

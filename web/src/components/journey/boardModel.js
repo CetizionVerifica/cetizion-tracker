@@ -205,15 +205,36 @@ export function cohortChipText(filters) {
 export function boardColumns(data) {
   return JOURNEY_STEPS.map((step) => {
     const summary = data?.steps?.find((s) => s.key === step.key) || {};
+    const cards = (data?.cards || []).filter((card) => card.step === step.key);
     return {
       ...step,
       count: Number(summary.count ?? 0),
       value_inr: summary.value_inr ?? null,
       without_rate: Number(summary.without_rate ?? 0),
       median_days: summary.median_days ?? null,
-      cards: (data?.cards || []).filter((card) => card.step === step.key),
+      // Values the server leaves out because their records are someone else's (server §6).
+      hidden: cards.filter((card) => card.value_hidden).length,
+      cards,
     };
   });
+}
+
+/**
+ * A column's value in rupees. With none to add up, it says why: every card
+ * is someone else's ("Owner only", as the cards say), or there is no value.
+ */
+export function columnValueText(column) {
+  if (column?.value_inr) return money(column.value_inr, 'INR', { compact: true });
+  return column?.hidden && column.hidden === column.count ? 'Owner only' : 'No value';
+}
+
+/** The note when some, not all, of a column's values are someone else's and left out of its total. */
+export function hiddenText(column) {
+  const n = column?.hidden || 0;
+  if (!n || n === column.count) return null;
+  return n === 1
+    ? '1 sale is left out of the value: its record is another owner\'s.'
+    : `${number(n)} sales are left out of the value: their records are other owners'.`;
 }
 
 /** "median 4 days here", or nothing when the column is empty. */

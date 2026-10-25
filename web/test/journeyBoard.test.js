@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_KEYS, DEFAULT_PERIOD, PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText,
+  BOARD_KEYS, DEFAULT_PERIOD, PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText, columnValueText, hiddenText,
   conversion, conversionText, drawerView, exitChip, funnelFigures, isFiltered, journeyLookup, medianText,
   openingStep, periodPhrase, periodRange, readBoardQuery, stepAfter, timelineOf, withFilters,
   withoutRateText, writeBoardQuery,
@@ -192,6 +192,18 @@ test('the columns are the three steps, each with its summary and its own cards i
     [['Enquiry', 1, ['e-3']], ['Quotation', 2, ['q-9', 'q-118']], ['PO', 0, []]]);
   assert.equal(columns[1].without_rate, 1);
   assert.deepEqual(boardColumns(null).map((c) => [c.key, c.count, c.cards.length]), [['enquiry', 0, 0], ['quotation', 0, 0], ['po', 0, 0]]);
+});
+
+test('a column with values hidden from the viewer says so, not "No value"', () => {
+  const hidden = card({ key: 'p-1', step: 'po', value: null, currency: null, value_inr: null, value_hidden: true });
+  const all = boardColumns({ steps: [{ key: 'po', count: 2, value_inr: 0 }], cards: [hidden, { ...hidden, key: 'p-2' }] })[2];
+  assert.equal(all.hidden, 2);
+  assert.equal(columnValueText(all), 'Owner only');
+  assert.equal(hiddenText(all), null, 'every value is hidden: the header says it');
+  const some = boardColumns({ steps: [{ key: 'po', count: 2, value_inr: 590000 }], cards: [hidden, card({ key: 'q-2', step: 'po' })] })[2];
+  assert.equal(columnValueText(some), '₹5.9L');
+  assert.equal(hiddenText(some), '1 sale is left out of the value: its record is another owner\'s.');
+  assert.equal(columnValueText({ count: 1, value_inr: 0, hidden: 0 }), 'No value');
 });
 
 test('a column says its median days here, and who it left out of its value', () => {

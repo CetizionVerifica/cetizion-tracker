@@ -83,9 +83,11 @@ export default function EnquiryDetail() {
     return <><PageHeader title="Enquiry" /><div className="page"><div className="skeleton h-[240px]" /></div></>;
   }
 
-  // Open until this enquiry's journey says otherwise, as on the board's drawer.
-  const ours = journey?.records?.enquiry_no === e.enquiry_no ? journey : null;
-  const quotationOpens = ours?.steps?.find((s) => s.key === 'quotation')?.reachable !== false;
+  // Open until the journey says this very quotation is closed to the viewer,
+  // as on the board's drawer: a journey loaded before a conversion or a
+  // relink describes another quotation, or none, and says nothing about it.
+  const quoted = journey?.records?.enquiry_no === e.enquiry_no ? journey.steps?.find((s) => s.key === 'quotation') : null;
+  const quotationOpens = !(e.quotation_no && quoted?.record?.no === e.quotation_no && quoted.reachable === false);
   const move = enquiryMove(e, { quotationOpens });
   const quotationPath = quotationOpens ? recordPath('quotation', e.quotation_no) : null;
   const received = enquiryReceived(e);
