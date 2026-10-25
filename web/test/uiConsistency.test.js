@@ -6,13 +6,15 @@
  *       components, and every token is defined for both themes;
  *   §1  the token pairs that carry text meet their contrast in both themes;
  *   §1  corners come from the radius scale;
- *   §4  every record page draws its progress with the shared process rail;
+ *   §4  every record page draws its progress with the shared process rail,
+ *       and the sales records draw the sale's three-step journey;
  *   §3  the app carries no company name.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { JOURNEY_STEPS } from '../src/lib/journey.js';
 
 const WEB = new URL('..', import.meta.url).pathname;
 const SRC = join(WEB, 'src');
@@ -82,15 +84,28 @@ test('the stylesheet keeps to the same radius scale', () => {
   assert.deepEqual(bad, []);
 });
 
+/** A file's code without its comments, so a note about the old rail is not the old rail. */
+const codeOf = (path) => codeLines(path).map(({ line }) => line).join('\n');
+
 test('records that move through a process show it with the shared rail (web/CLAUDE.md §4)', () => {
-  for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx', 'TripDetail.jsx']) {
-    const text = readFileSync(join(SRC, 'pages', page), 'utf8');
-    assert.match(text, /<RecordFlow\b/, `${page} has no process rail`);
-    assert.match(text, /flowSteps\(/, `${page} works out its rail by hand instead of with flowSteps`);
+  // The sales records show the sale's journey (docs/specs/sales-journey,
+  // C1), and none of them draws a ladder of its own beside it.
+  for (const page of ['EnquiryDetail.jsx', 'QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
+    const text = codeOf(join(SRC, 'pages', page));
+    assert.match(text, /<JourneyRail\b/, `${page} does not show the sale's journey`);
+    assert.doesNotMatch(text, /<RecordFlow\b|flowSteps\(/, `${page} draws a rail of its own instead of the journey`);
   }
-  const deal = readFileSync(join(SRC, 'pages/QuotationDetail.jsx'), 'utf8');
-  const labels = [...deal.matchAll(/\{ label: '([^']+)', done:/g)].map((m) => m[1]);
-  assert.deepEqual(labels, ['Enquiry', 'Quoted', 'Sent', 'Negotiation', 'Won', 'Project', 'Order', 'Invoiced', 'Paid']);
+  const rail = codeOf(join(SRC, 'components/journey/JourneyRail.jsx'));
+  assert.match(rail, /<RecordFlow\b/, 'the journey rail is drawn by hand instead of with RecordFlow');
+
+  // Travel is a different process, so the trip keeps a rail of its own.
+  const trip = codeOf(join(SRC, 'pages/TripDetail.jsx'));
+  assert.match(trip, /<RecordFlow\b/, 'TripDetail.jsx has no process rail');
+  assert.match(trip, /flowSteps\(/, 'TripDetail.jsx works out its rail by hand instead of with flowSteps');
+});
+
+test('the sales journey is three steps: Enquiry, Quotation, PO', () => {
+  assert.deepEqual(JOURNEY_STEPS.map((step) => step.label), ['Enquiry', 'Quotation', 'PO']);
 });
 
 // ------------------------------------------------------------------ tokens

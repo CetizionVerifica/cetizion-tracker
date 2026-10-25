@@ -275,6 +275,9 @@ session is **401**, before any of these is considered.
 | **/api/jobs** | | |
 | `GET /api/jobs` | any |  |
 | `POST /api/jobs/:name/run` | **admin** | A job by hand emails every client it decides is due. Not a preview, and not the caller's own records. |
+| **/api/journey** | | |
+| `GET /api/journey` | any | Every sale from enquiry to paid PO, by step (docs/specs/sales-journey). A sales user sees a sale when they own its enquiry, its quotation, or the project of one of its POs, and the column totals and funnel are counted from those sales only. Read only. |
+| `GET /api/journey/of` | any | The one sale holding an enquiry, quotation, PO or project, for its page's rail. A sale the caller cannot reach answers 404, the same as a record no sale holds, so asking does not confirm it exists. |
 | **/api/kpis** | | |
 | `GET /api/kpis/me` | any | Scoped: self-only. |
 | `GET /api/kpis/targets` | any | A salesperson sees the targets set for them; asking after somebody else's is refused in the handler the same way as /users/:userId. |

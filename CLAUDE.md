@@ -31,6 +31,7 @@ whichever is wrong in the same PR.
 | Feature | Spec | Module layers |
 | --- | --- | --- |
 | Service questionnaires → quotations (#208) | [docs/specs/service-quotations/CLAUDE.md](docs/specs/service-quotations/CLAUDE.md) | [server/src/lib/serviceQuotes/CLAUDE.md](server/src/lib/serviceQuotes/CLAUDE.md), [web/src/components/serviceQuotes/CLAUDE.md](web/src/components/serviceQuotes/CLAUDE.md) |
+| Sales journey: Enquiry → Quotation → PO | [docs/specs/sales-journey/CLAUDE.md](docs/specs/sales-journey/CLAUDE.md) | [server/src/lib/journey/CLAUDE.md](server/src/lib/journey/CLAUDE.md), [web/src/components/journey/CLAUDE.md](web/src/components/journey/CLAUDE.md) |
 
 ## Before a PR
 

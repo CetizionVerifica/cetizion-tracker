@@ -32,6 +32,7 @@ import { emailRouter, jobRouter } from './routes/emails.js';
 import { clientEmailRouter } from './routes/clientEmails.js';
 import { quotationDocRouter } from './routes/quotations.js';
 import { pipelineRouter } from './routes/pipeline.js';
+import { journeyRouter } from './routes/journey.js';
 import { registerRouter } from './routes/register.js';
 import { approvalRouter } from './routes/approvals.js';
 import { taskSummaryRouter, timelineRouter } from './routes/timeline.js';
@@ -172,6 +173,8 @@ app.use('/api/owners', ownerRouter);
 app.use('/api/emails', emailRouter);
 app.use('/api/client-emails', clientEmailRouter);
 app.use('/api/pipeline', pipelineRouter);
+// Every sale from enquiry to paid PO, by step: the Pipeline's Journey view and each record's rail.
+app.use('/api/journey', journeyRouter);
 app.use('/api/timeline', timelineRouter);
 app.use('/api/collections', collectionsRouter);
 app.use('/api/renewals', renewalsRouter);

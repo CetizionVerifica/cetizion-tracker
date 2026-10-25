@@ -1,6 +1,7 @@
 import { businessToday } from './businessDate.ts';
 import { assertEmailLooksReal, contactDetailsFrom, saveContactDetails } from './clientContacts.js';
 import { ApiError } from '../middleware/error.js';
+import { ownerClause } from '../auth/ownership.js';
 import { claimNextId } from './sequences.js';
 import { ENQUIRY_STATUS, QUOTATION_STATUS } from './statuses.js';
 
@@ -38,12 +39,37 @@ export function enquiryRuleErrors(before, after) {
 export async function saveEnquiry(client, ctx) {
   const fields = enquiryRuleErrors(ctx.before, ctx.after);
   if (fields) throw new ApiError(422, 'Please check the highlighted fields', { fields });
+  await assertQuotationReachable(client, ctx);
   // The contact's own details, onto the contact the trigger linked. Before
   // the quotation below, so a won enquiry's quotation inherits a contact
   // that already has an address (client-data-gaps.md, gap 1).
   assertEmailLooksReal(ctx.input?.contact_email);
   await saveContactDetails(client, ctx.after.contact_id, contactDetailsFrom(ctx.input));
   return quoteWonEnquiry(client, ctx);
+}
+
+/**
+ * An enquiry may be linked only to a quotation its saver can reach (#18),
+ * as linkProjectQuotation does for a project. The link is what makes a
+ * quotation this enquiry's sale, and the sales journey shows a sale to
+ * whoever owns its enquiry: without this, a sales user could type in a
+ * colleague's quotation number and follow that sale on their Journey board.
+ * A link that is not changing is left alone, so an enquiry an admin linked
+ * to someone else's quotation stays editable by its owner. Imports and MCP
+ * pass no scope and stay as unrestricted as they were.
+ */
+async function assertQuotationReachable(client, { before, after, scope }) {
+  const quotationNo = after.quotation_no;
+  if (!scope || !quotationNo || quotationNo === before?.quotation_no) return;
+  const params = [quotationNo];
+  const mine = ownerClause(scope, params, { alias: 'q' });
+  if (!mine) return;
+  const { rows } = await client.query(`SELECT 1 FROM quotations q WHERE q.quotation_no = $1 AND ${mine}`, params);
+  if (!rows.length) {
+    throw new ApiError(422, 'Please check the highlighted fields', {
+      fields: { quotation_no: 'No quotation with that number' },
+    });
+  }
 }
 
 /** The services an enquiry asks for, one per line: the service picked, then any others typed. */

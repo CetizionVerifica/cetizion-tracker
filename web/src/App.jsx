@@ -7,6 +7,7 @@ import DataQuality from './pages/DataQuality.jsx';
 import Tasks from './pages/Tasks.jsx';
 import FollowUps from './pages/FollowUps.jsx';
 import Enquiries from './pages/Enquiries.jsx';
+import EnquiryDetail from './pages/EnquiryDetail.jsx';
 import Companies from './pages/Companies.jsx';
 import CompanyDetail from './pages/CompanyDetail.jsx';
 import Deliverables from './pages/Deliverables.jsx';
@@ -668,6 +669,7 @@ export default function App() {
           <Route path="/deliverables" element={<Deliverables />} />
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/enquiries" element={<Enquiries />} />
+          <Route path="/enquiries/:key" element={<EnquiryDetail />} />
           <Route path="/quotations" element={<Quotations />} />
           <Route path="/quotations/:key" element={<QuotationDetail />} />
           <Route path="/pipeline" element={<Pipeline />} />

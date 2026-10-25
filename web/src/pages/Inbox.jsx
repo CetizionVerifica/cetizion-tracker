@@ -22,6 +22,7 @@ import { MailboxSwitcher } from '../components/mail/MailboxSwitcher.jsx';
 import { MESSAGE_ROW_H, MessageRow, Pager, PagerSpace, initials, since } from '../components/mail/MessageList.jsx';
 import { ReadingPane } from '../components/mail/ReadingPane.jsx';
 import { AttachmentNames } from '../components/mail/AttachmentStrip.jsx';
+import { recordPath } from '../lib/journey.js';
 
 /**
  * The shared sales inbox (#30): who owns each email, what is waiting on
@@ -617,7 +618,7 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
               identically whichever one the client had written to. */}
           {c.inbox_email && <> · to <span className="text-foreground">{c.inbox_email.split('@')[0]}@</span></>}
           {c.company_name && <> · <Link to={`/companies/${c.company_id}`}>{c.company_name}</Link></>}
-          {c.enquiry_no && <> · <Link to={`/enquiries?q=${encodeURIComponent(c.enquiry_no)}`}>{c.enquiry_no}</Link></>}
+          {c.enquiry_no && <> · <Link to={recordPath('enquiry', c.enquiry_no)}>{c.enquiry_no}</Link></>}
           {c.response_due_at && c.status === 'open' && <> · reply due {when(c.response_due_at)}</>}
         </p>
 

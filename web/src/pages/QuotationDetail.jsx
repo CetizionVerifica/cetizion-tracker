@@ -5,7 +5,9 @@ import { PageHeader } from '../App.jsx';
 import {
   Alert, ConfirmDialog, DocumentLink, Empty, ErrorState, Field, Input, Modal, Select, Textarea, useToast,
 } from '../components/ui.jsx';
-import { Chip, flowSteps, initialsOf, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { Chip, initialsOf, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
+import { recordPath } from '../lib/journey.js';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
@@ -33,13 +35,11 @@ import { quotationFields } from './Quotations.jsx';
  * where the deal is, and one button that moves it on. The rest are in the
  * menu, and the small print under the button names them so nobody hunts.
  *
- * The ladder is INFERRED, not recorded. The app keeps only the live
- * pipeline stage and `stage_changed_at`, so there is no history to read a
- * deal's path from. Every rung is therefore derived from a fact that is
- * actually stored — an enquiry row, `sent_at`, a purchase order, money
- * invoiced, money received. The design's second rung is "Qualified", but
- * nothing here records qualification, so this one says "Quoted", which is
- * true of every quotation that has a priced line.
+ * The rail is the sale's journey, Enquiry → Quotation → PO, the same one
+ * the order and the project draw (docs/specs/sales-journey). The server
+ * reads every step off a stored fact; this page no longer works out a
+ * ladder of its own. What it still decides is the sentence and the button
+ * under the rail, because those are about this quotation, not the sale.
  */
 
 const FLOW_BUTTON = 'h-8 px-4 text-[13px]';
@@ -77,12 +77,25 @@ function statusTone(status, expired) {
   return 'info';
 }
 
+/**
+ * Whether the journey says this quotation's enquiry does not open for the
+ * viewer (server §6). Only a journey about this quotation and this very
+ * enquiry says so; until one arrives, the link stays.
+ */
+function enquiryClosed(journey, q) {
+  if (journey?.records?.quotation_no !== q.quotation_no) return false;
+  const step = journey.steps?.find((s) => s.key === 'enquiry');
+  return step?.record?.no === q.enquiry?.enquiry_no && step.reachable === false;
+}
+
 export default function QuotationDetail() {
   const { key } = useParams();
   const { isAdmin } = useAuth();
   const toast = useToast();
   const lookups = useLookups();
   const [editing, setEditing] = useState(false);
+  // The journey the rail loaded: whether the enquiry opens for this viewer.
+  const [journey, setJourney] = useState(null);
   const [line, setLine] = useState(null);         // 'new' | line record
   const [removing, setRemoving] = useState(null);
   const [revising, setRevising] = useState(false);
@@ -128,24 +141,6 @@ export default function QuotationDetail() {
   const invoiced = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_invoiced || 0), 0);
   const received = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_received || 0), 0);
   const ordered = q.purchase_orders.reduce((sum, p) => sum + Number(p.po_value || 0), 0);
-
-  // The sales flow of web/CLAUDE.md §4, each rung read off a fact the
-  // database holds. Negotiation counts as passed once a sent deal is won
-  // or ordered; a deal won without ever being sent leaves it hollow rather
-  // than pretending it happened.
-  const hasOrder = q.purchase_orders.length > 0;
-  const reached = [
-    { label: 'Enquiry', done: Boolean(q.enquiry) },
-    { label: 'Quoted', done: q.line_count > 0 || Number(q.quotation_value) > 0 },
-    { label: 'Sent', done: Boolean(q.sent_at) },
-    { label: 'Negotiation', done: (won || hasOrder) && Boolean(q.sent_at) },
-    { label: 'Won', done: won || hasOrder },
-    { label: 'Project', done: Boolean(q.project_id) },
-    { label: 'Order', done: hasOrder },
-    { label: 'Invoiced', done: invoiced > 0 },
-    { label: 'Paid', done: ordered > 0 && received >= ordered - 0.5 },
-  ];
-  const steps = flowSteps(reached);
 
   function verdict() {
     if (q.approval_status === 'pending') {
@@ -267,11 +262,15 @@ export default function QuotationDetail() {
           </>
         }
         flow={
-          <RecordFlow
-            steps={steps}
+          // The quotation is a new object each time the page loads it, so
+          // the rail reloads with it after every action taken here.
+          <JourneyRail
+            of={{ quotation: q.quotation_no }}
             verdict={verdict()}
             actions={<>{primary()}{secondary()}</>}
             note={note()}
+            refreshKey={q}
+            onJourney={setJourney}
           />
         }
       >
@@ -409,7 +408,9 @@ export default function QuotationDetail() {
             </GridFact>
             <GridFact label="Enquiry">
               {q.enquiry
-                ? <Link className="mono" to={`/enquiries?q=${encodeURIComponent(q.enquiry.enquiry_no)}`}>{q.enquiry.enquiry_no}</Link>
+                ? enquiryClosed(journey, q)
+                  ? <span className="mono">{q.enquiry.enquiry_no}</span>
+                  : <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
                 : <span className="text-muted-foreground">—</span>}
             </GridFact>
             <GridFact label="Project">

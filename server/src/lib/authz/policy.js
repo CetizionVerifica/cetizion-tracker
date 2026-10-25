@@ -326,6 +326,8 @@ export const routes = [
   // ------------------------------------------------------------- pipeline
   { method: 'GET', path: '/api/pipeline', access: signedIn },
   { method: 'POST', path: '/api/pipeline/:key/move', access: signedIn },
+  { method: 'GET', path: '/api/journey', access: signedIn, restrictions: ['record-owner'], note: 'Every sale from enquiry to paid PO, by step (docs/specs/sales-journey). A sales user sees a sale when they own its enquiry, its quotation, or the project of one of its POs, and the column totals and funnel are counted from those sales only. Read only.' },
+  { method: 'GET', path: '/api/journey/of', access: signedIn, restrictions: ['record-owner'], note: 'The one sale holding an enquiry, quotation, PO or project, for its page\'s rail. A sale the caller cannot reach answers 404, the same as a record no sale holds, so asking does not confirm it exists.' },
 
   // ------------------------------------------------------------- timeline
   { method: 'GET', path: '/api/timeline', access: signedIn, restrictions: ['record-owner', 'mailbox-owner'], note: 'The record itself must be reachable (404 otherwise), and the email threads listed on it come only from mailboxes the caller may read: their own, shared ones, or a thread on a record they own.' },

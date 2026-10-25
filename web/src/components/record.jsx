@@ -1,7 +1,9 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, isValidElement, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, MoreHorizontal } from 'lucide-react';
+import { Check, CircleAlert, Clock, Info, MoreHorizontal } from 'lucide-react';
 import { cn } from 'cn';
+import { date } from '../lib/format.js';
+import { useMediaQuery } from '../lib/hooks.js';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { Badge } from './ui/badge';
 import {
@@ -13,6 +15,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import { Separator } from './ui/separator';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 /**
  * The record page, as the design draws it — one shape for Company,
@@ -196,6 +199,19 @@ export function RecordMenuItem({ children, ...props }) {
   );
 }
 
+/** A badge's glyph, so its tone is never colour alone (web/CLAUDE.md §1). */
+const TONE_GLYPHS = { late: CircleAlert, waiting: Clock, info: Info, settled: Check };
+
+/** What a screen reader hears after a step's name. */
+const STEP_WORDS = { done: ', done', current: ', now', exit: ', stopped here', skipped: ', skipped' };
+
+/**
+ * Whether a step carries more than a disc and a name. Such a rail lines its
+ * steps up by the disc rather than by the middle, because the steps are no
+ * longer all the same height.
+ */
+const isRich = (step) => Boolean(step.to || step.meta || step.badge || step.peek || step.state === 'skipped' || step.state === 'exit');
+
 /**
  * One rung of the flow: a disc, and what that step is called.
  *
@@ -203,34 +219,86 @@ export function RecordMenuItem({ children, ...props }) {
  * "current" for reasons only the record knows — the order decides it from
  * its stages, the deal from its status and its PO — so the component
  * draws the state it is given and holds no opinion about it.
+ *
+ * The sales journey asks more of a rung (docs/specs/sales-journey): `to`
+ * makes it a link to the step's record, `meta` is a muted line under the
+ * name (the record's number and date), `badge` a chip beside the name
+ * (days in step, in its tone; `{ label, tone }` or a Chip of your own) and
+ * `peek` what shows on hover and focus. Two states join the three: a step
+ * the record went past without one is `skipped`, hollow and "Not
+ * recorded"; the step a sale stopped at is `exit`. A rung given none of
+ * these draws exactly as it always has.
  */
-export function FlowStep({ label, state = 'future', since, n }) {
+export function FlowStep({ label, state = 'future', since, n, to, meta, badge, peek }) {
   const done = state === 'done';
   const current = state === 'current';
-  return (
-    <li
-      aria-current={current ? 'step' : undefined}
-      className={cn('flex flex-none flex-col items-center gap-2', current ? 'w-[112px]' : 'w-[92px]')}
-    >
+  const exit = state === 'exit';
+  const line = meta ?? (state === 'skipped' ? 'Not recorded' : undefined);
+  const chip = badge && (isValidElement(badge)
+    ? badge
+    : <Chip tone={badge.tone} icon={TONE_GLYPHS[badge.tone]}>{badge.label}</Chip>);
+
+  const name = (
+    <span className={cn(
+      'text-center text-[12px]',
+      current ? 'font-semibold text-primary' : exit ? 'font-semibold text-late' : done ? 'font-medium text-foreground' : 'font-medium text-muted-foreground'
+    )}>
+      {label}
+      <span className="sr-only">{STEP_WORDS[state] ?? ', to come'}</span>
+    </span>
+  );
+  const body = (
+    <>
       {/* Done is ticked in settled, where the record is now is the action
           colour with a halo, and what has not happened yet is a hollow
-          numbered disc: web/CLAUDE.md §4. */}
+          numbered disc: web/CLAUDE.md §4. Where a sale stopped is late
+          with a "!", so a lost deal never reads as one still in play. */}
       <span className={cn(
         'num grid size-6 place-items-center rounded-full text-[11px] font-bold',
         done && 'bg-settled text-primary-foreground',
         current && 'bg-primary text-primary-foreground ring-4 ring-primary/20',
-        !done && !current && 'border border-border-strong bg-card text-muted-foreground'
+        exit && 'bg-late text-late-foreground ring-4 ring-late/20',
+        !done && !current && !exit && 'border border-border-strong bg-card text-muted-foreground'
       )}>
-        {done ? <Check className="size-3.5" strokeWidth={3} aria-hidden="true" /> : n}
+        {done ? <Check className="size-3.5" strokeWidth={3} aria-hidden="true" /> : exit ? '!' : n}
       </span>
-      <span className={cn(
-        'text-center text-[12px]',
-        current ? 'font-semibold text-primary' : done ? 'font-medium text-foreground' : 'font-medium text-muted-foreground'
-      )}>
-        {label}
-        <span className="sr-only">{done ? ', done' : current ? ', now' : ', to come'}</span>
-      </span>
+      {chip ? <span className="flex flex-wrap items-center justify-center gap-1.5">{name}{chip}</span> : name}
+      {line && <span className="num text-center text-[11px] text-muted-foreground">{line}</span>}
       {since && <span className="text-center text-[11px] text-muted-foreground">{since}</span>}
+    </>
+  );
+
+  // The hover surface reaches past the rung by its own padding, pulled back
+  // with a negative margin, so a linked step's disc sits exactly where an
+  // unlinked one's does and the connectors still meet it.
+  const surface = 'flex flex-col items-center gap-2 rounded-md -mx-2 -my-1 px-2 py-1';
+  let target = null;
+  if (to) {
+    target = <Link to={to} className={cn(surface, 'no-underline transition-colors duration-150 hover:bg-accent')}>{body}</Link>;
+  } else if (peek) {
+    // Focusable without being a link, so the preview is there for a keyboard too.
+    target = <span tabIndex={0} className={surface}>{body}</span>;
+  }
+  if (target && peek) {
+    target = (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>{target}</TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6} className="max-w-[260px] px-3 py-2 text-left">{peek}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return (
+    <li
+      aria-current={current || exit ? 'step' : undefined}
+      className={isRich({ to, meta, badge, peek, state })
+        // As wide as what it holds, from the plain rung's width up.
+        ? cn('flex max-w-[208px] flex-none flex-col items-center', !target && 'gap-2', current || exit ? 'min-w-[112px]' : 'min-w-[92px]')
+        : cn('flex flex-none flex-col items-center gap-2', current ? 'w-[112px]' : 'w-[92px]')}
+    >
+      {target || body}
     </li>
   );
 }
@@ -255,6 +323,66 @@ export function flowSteps(reached) {
   }));
 }
 
+/** One small step: a dot, its name, and its date when one is known. */
+function SubStep({ label, state = 'future', date: when }) {
+  const done = state === 'done';
+  const current = state === 'current';
+  return (
+    <li aria-current={current ? 'step' : undefined} className="flex items-center gap-1.5 text-[12px]">
+      <span className={cn(
+        'grid size-3.5 shrink-0 place-items-center rounded-full',
+        done && 'bg-settled text-primary-foreground',
+        current && 'bg-primary ring-2 ring-primary/25',
+        !done && !current && 'border border-border-strong bg-card'
+      )}>
+        {done && <Check className="size-2.5" strokeWidth={3.5} aria-hidden="true" />}
+      </span>
+      <span className={current ? 'font-semibold text-primary' : done ? 'font-medium text-foreground' : 'text-muted-foreground'}>
+        {label}
+        <span className="sr-only">{STEP_WORDS[state] ?? ', to come'}</span>
+      </span>
+      {when && <span className="num text-[11px] text-muted-foreground">{date(when)}</span>}
+    </li>
+  );
+}
+
+/**
+ * The small steps inside the current big one, as a slim row under the rail.
+ *
+ * On a wide screen it sits under the step it belongs to. `at` is how far
+ * along the rail that step is (0 the first, 1 the last); the row is placed
+ * that share of the way across and pulled back by the same share of its
+ * own width, so it starts under the first step, ends under the last, and
+ * is centred under one in the middle, without measuring anything. On a
+ * phone it takes the full width and wraps.
+ */
+function SubSteps({ label, steps, at = 0 }) {
+  const wide = useMediaQuery('(min-width: 40rem)');
+  const share = `${Math.round(Math.min(1, Math.max(0, at)) * 100)}%`;
+  return (
+    <div className="mt-4 overflow-hidden">
+      <div
+        style={wide ? { marginLeft: share, transform: `translateX(-${share})` } : undefined}
+        className="rounded-md bg-muted px-3 py-2 sm:w-max sm:max-w-full"
+      >
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <span aria-hidden="true" className="eyebrow">{label}</span>
+          <ol aria-label={label} className="m-0 flex list-none flex-wrap items-center gap-x-2 gap-y-1.5 p-0">
+            {steps.map((step, i) => (
+              <Fragment key={step.label}>
+                {i > 0 && (
+                  <li aria-hidden="true" className={cn('h-px w-3 rounded-full', steps[i - 1].state === 'done' ? 'bg-settled' : 'bg-border-strong')} />
+                )}
+                <SubStep {...step} />
+              </Fragment>
+            ))}
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Where the record has got to, and the one move that takes it forward.
  *
@@ -264,9 +392,18 @@ export function flowSteps(reached) {
  * else belongs in the header's menu, which is the point of the shape.
  * `note` is the small print: what the primary button will actually do,
  * and what was moved into the menu.
+ *
+ * For the sales journey: `substeps` (`{ label, steps: [{ label, state,
+ * date }] }`) is the slim row of small steps inside the current one,
+ * `nowLabel` replaces the "Now · <step>" eyebrow ("Lost at Quotation"),
+ * and `placeholder` is drawn where the steps go while there are none to
+ * draw: a skeleton while they load, or a line saying they could not.
  */
-export function RecordFlow({ steps = [], verdict, actions, note }) {
+export function RecordFlow({ steps = [], verdict, actions, note, substeps, nowLabel, placeholder }) {
   const now = steps.find((step) => step.state === 'current');
+  // Where the record is: the current step, or the one a sale stopped at.
+  const where = now ?? steps.find((step) => step.state === 'exit');
+  const rich = steps.some(isRich);
   // On a phone the rail scrolls sideways; start it with the current step in
   // view, rather than showing the three oldest ticks and hiding where it is.
   const rail = useRef(null);
@@ -274,21 +411,31 @@ export function RecordFlow({ steps = [], verdict, actions, note }) {
     const ol = rail.current;
     const at = ol?.querySelector('[aria-current="step"]');
     if (ol && at && ol.scrollWidth > ol.clientWidth) ol.scrollLeft = at.offsetLeft - ol.offsetLeft - ol.clientWidth / 2 + at.clientWidth / 2;
-  }, [now?.label]);
+  }, [where?.label]);
   return (
     <Card className={cn(PANEL, 'mt-6 px-6 py-5')}>
-      <ol ref={rail} aria-label="Progress" className="m-0 flex list-none items-center overflow-x-auto p-0 px-1">
-        {steps.map((step, i) => (
-          <Fragment key={step.label}>
-            {/* The connector is lit when the step behind it is done, so the
-                colour stops exactly where the record stopped. */}
-            {i > 0 && (
-              <li aria-hidden="true" className={cn('mb-[26px] h-0.5 min-w-4 flex-1 rounded-full', steps[i - 1].state === 'done' ? 'bg-settled' : 'bg-border')} />
-            )}
-            <FlowStep {...step} n={i + 1} />
-          </Fragment>
-        ))}
-      </ol>
+      {placeholder ?? (
+        // A rich rail keeps room round its steps for their hover surface and
+        // focus ring, which the sideways scroll would otherwise clip. Both are
+        // `relative` so the screen-reader words (absolutely placed) scroll
+        // with their steps instead of widening the whole page on a phone.
+        <ol ref={rail} aria-label="Progress" className={rich ? 'relative m-0 flex list-none items-start overflow-x-auto p-0 px-4 py-2.5' : 'relative m-0 flex list-none items-center overflow-x-auto p-0 px-1'}>
+          {steps.map((step, i) => (
+            <Fragment key={step.label}>
+              {/* The connector is lit when the step behind it is done, so the
+                  colour stops exactly where the record stopped. */}
+              {i > 0 && (
+                <li aria-hidden="true" className={cn(rich ? 'mt-[11px]' : 'mb-[26px]', 'h-0.5 min-w-4 flex-1 rounded-full', steps[i - 1].state === 'done' ? 'bg-settled' : 'bg-border')} />
+              )}
+              <FlowStep {...step} n={i + 1} />
+            </Fragment>
+          ))}
+        </ol>
+      )}
+
+      {!placeholder && substeps?.steps?.length > 0 && (
+        <SubSteps {...substeps} at={where && steps.length > 1 ? steps.indexOf(where) / (steps.length - 1) : 0} />
+      )}
 
       {(verdict || actions) && (
         <>
@@ -296,8 +443,8 @@ export function RecordFlow({ steps = [], verdict, actions, note }) {
           <div className="mt-5 flex flex-wrap items-center gap-5">
             {verdict && (
               <div className="min-w-[min(320px,100%)] max-w-[64ch] flex-1">
-                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
-                  {now ? `Now · ${now.label}` : steps.length ? 'Complete' : 'Now'}
+                <div className={cn('text-[11px] font-bold uppercase tracking-[0.12em]', where?.state === 'exit' ? 'text-late' : 'text-primary')}>
+                  {nowLabel ?? (now ? `Now · ${now.label}` : steps.length ? 'Complete' : 'Now')}
                 </div>
                 <p className="mt-1 text-[14px]/[1.6] text-foreground">{verdict}</p>
               </div>

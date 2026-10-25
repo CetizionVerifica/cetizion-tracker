@@ -4,8 +4,9 @@ import { PageHeader } from '../App.jsx';
 import { ClipboardList, FileText, Flag, FolderKanban, Plane } from 'lucide-react';
 import { cn } from 'cn';
 import {
-  Chip, RailPerson, RecordFlow, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat, flowSteps,
+  Chip, RailPerson, RecordMenuItem, RecordPage, RecordRow, RecordSection, RecordStat,
 } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
 import { Checklist } from '../components/checklist.jsx';
 import { Button } from '../components/ui/button.tsx';
 import { ErrorState, useToast, ConfirmDialog } from '../components/ui.jsx';
@@ -37,9 +38,14 @@ import { poRevisionFields } from '../lib/poRevision.js';
  * links to the order record, which is where stages belong (C6). The
  * project manager keeps exactly one button, the delivery date, because it
  * is the only fact on this page that moves money.
+ *
+ * The rail across the top is the sale the project delivers, Enquiry →
+ * Quotation → PO (docs/specs/sales-journey): the same journey its deal and
+ * its orders show. How far onboarding has got is the small print under it
+ * and the checklist below, not a second ladder.
  */
 
-/** The template's four stages, in order, as the ladder across the top. */
+/** The template's four stages, in order: the checklist's stage choices start here. */
 const LIFECYCLE = ['Onboarding', 'Execution', 'Delivery', 'Closure'];
 
 export default function ProjectDetail() {
@@ -136,14 +142,6 @@ export default function ProjectDetail() {
     }
   }
 
-  // A lifecycle stage is done when every step under it is. Stages the
-  // template never used are left out rather than drawn as a gap.
-  const used = LIFECYCLE.filter((stage) => onboarding.some((s) => s.stage === stage));
-  const ladder = flowSteps(used.map((stage) => {
-    const steps = onboarding.filter((s) => s.stage === stage && s.effective_status !== 'N/A');
-    return { label: stage, done: steps.length > 0 && steps.every((s) => s.effective_status === 'Done') };
-  }));
-
   // What recording the delivery date would actually do, in money. The
   // design's sentence, computed rather than written: it is the reason the
   // button is the only one on the page.
@@ -189,8 +187,10 @@ export default function ProjectDetail() {
           </>
         )}
         flow={(
-          <RecordFlow
-            steps={ladder}
+          // What the page loaded is a new object each time it loads, so the
+          // rail reloads with it after every action taken here.
+          <JourneyRail
+            of={{ project: p.project_id }}
             verdict={verdict}
             actions={p.actual_delivery_date
               ? <Button variant="secondary" onClick={() => setDialog({ type: 'edit' })}>Edit the project</Button>
@@ -198,6 +198,7 @@ export default function ProjectDetail() {
             note={progress?.total
               ? `Onboarding · ${progress.done} of ${progress.total} done${progress.left ? ` · ${progress.left} left` : ''}${progress.waiting ? `, ${progress.waiting} of them with another team` : ''}.`
               : 'No checklist on this project yet.'}
+            refreshKey={data}
           />
         )}
         stats={(
