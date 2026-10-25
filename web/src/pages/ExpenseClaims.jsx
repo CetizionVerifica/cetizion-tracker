@@ -70,6 +70,9 @@ export default function ExpenseClaims() {
         title="Expense claims"
         subtitle="Out-of-pocket costs claimed against a trip"
         resource="expense-claims"
+        // The date picker filters ?from=&to= on submission_date: the day the claim was submitted.
+        dateFilterLabel="Submitted"
+        dateRange
         columns={columns}
         fields={fields}
         newLabel="Claim"
