@@ -126,8 +126,10 @@ export function enquiryTone(status) {
  * over everything; a qualified enquiry is ready to become one; anything
  * else moves on by talking to the client.
  */
-export function enquiryMove(e) {
-  if (e?.quotation_no) return 'open_quotation';
+export function enquiryMove(e, { quotationOpens = true } = {}) {
+  // A quotation someone else owns does not open for this viewer (server §6),
+  // so the enquiry's own move, a call, is the one offered.
+  if (e?.quotation_no) return quotationOpens ? 'open_quotation' : 'log_call';
   if (e?.status === QUALIFIED) return 'convert';
   return 'log_call';
 }
@@ -164,11 +166,12 @@ function followUp(e, on) {
  * test can pin it. Dates typed as dates read as typed; the times the
  * server stamps (first reply, conversion) are read in the reader's day.
  */
-export function enquiryVerdict(e, lookups, on = today()) {
+export function enquiryVerdict(e, lookups, on = today(), { quotationOpens = true } = {}) {
   if (!e) return '';
   const owner = e.sales_person;
   if (e.quotation_no) {
-    return `Quoted as ${e.quotation_no}${e.converted_at ? ` on ${localDate(e.converted_at)}` : ''}. The quotation carries the sale from here.`;
+    const whose = quotationOpens ? '' : ' Someone else owns the quotation, so it opens for them.';
+    return `Quoted as ${e.quotation_no}${e.converted_at ? ` on ${localDate(e.converted_at)}` : ''}. The quotation carries the sale from here.${whose}`;
   }
   if (e.status === UNQUALIFIED) {
     const why = unqualifiedBecause(e, lookups);

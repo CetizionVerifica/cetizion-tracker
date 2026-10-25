@@ -87,6 +87,8 @@ test('one move by state: a quotation wins, a qualified enquiry converts, the res
   assert.equal(enquiryMove({ ...fresh, status: 'Qualified', quotation_no: 'Q-201' }), 'open_quotation');
   assert.equal(enquiryMove({ ...fresh, status: CONVERTED, quotation_no: 'Q-201' }), 'open_quotation');
   assert.equal(enquiryMove({ ...fresh, status: 'Qualified' }), 'convert');
+  assert.equal(enquiryMove({ ...fresh, status: CONVERTED, quotation_no: 'Q-201' }, { quotationOpens: false }), 'log_call',
+    'someone else\'s quotation does not open, so the enquiry\'s own move is offered');
   for (const status of ['New', 'Contacted', 'Nurture', 'Unqualified', CONVERTED]) {
     assert.equal(enquiryMove({ ...fresh, status }), 'log_call', status);
   }
@@ -153,6 +155,10 @@ test('a dropped, a converted and a quoted enquiry each say where they ended', ()
   assert.equal(
     enquiryVerdict({ ...fresh, status: CONVERTED, quotation_no: 'Q-201', converted_at: '2026-10-23T06:30:00Z' }, LOOKUPS, TODAY),
     'Quoted as Q-201 on 23 Oct 2026. The quotation carries the sale from here.'
+  );
+  assert.equal(
+    enquiryVerdict({ ...fresh, status: CONVERTED, quotation_no: 'Q-201' }, LOOKUPS, TODAY, { quotationOpens: false }),
+    'Quoted as Q-201. The quotation carries the sale from here. Someone else owns the quotation, so it opens for them.'
   );
 });
 

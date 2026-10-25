@@ -210,7 +210,11 @@ test('a card shows its value in its own currency, and says when it has none', ()
   assert.equal(cardValue(card({ value: 12000, currency: 'EUR' })), '€12,000');
   assert.equal(cardValue(card({ step: 'enquiry', value: null })), 'No estimate');
   assert.equal(cardValue(card({ value: null })), 'No value', 'never ₹0');
-  assert.equal(cardValue(card({ step: 'po', value: 900000, currency: null })), 'Several currencies');
+  // POs in several currencies, as the server sends them: no value of their own, rupees when every PO has a rate.
+  assert.equal(cardValue(card({ step: 'po', value: null, currency: null, value_inr: 190000 })), '₹1,90,000 across currencies');
+  assert.equal(cardValue(card({ step: 'po', value: null, currency: null, value_inr: null })), 'Several currencies');
+  assert.equal(cardValue(card({ value: null, currency: null, value_inr: null, value_hidden: true })), 'Owner only', 'someone else\'s record, not a missing value');
+  assert.equal(cardValue(card({ step: 'po', value: null, currency: null, value_inr: null, value_hidden: true })), 'Owner only');
 });
 
 test('a card says one thing about time: where it stopped, else its flag, else its days', () => {

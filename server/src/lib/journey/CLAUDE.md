@@ -63,7 +63,7 @@ lowest-id live PO; else 404.
 | Enquiry | `enquiry_id`, `enquiry_no`, `enquiry_date`, `enquiry_created_at`, `enquiry_status`, `enquiry_first_responded_at`, `enquiry_last_contacted_at`, `enquiry_estimated_value`, `enquiry_currency`, `enquiry_source`, `enquiry_unqualified_reason` (name) |
 | Quotation | `quotation_id`, `quotation_no`, `quotation_date`, `quotation_created_at`, `quotation_status`, `quotation_value` (`total` when it has lines, else `quotation_value`), `quotation_currency`, `line_count`, `price_needed_count`, `sent_at`, `accepted_at`, `closed_at`, `stage`, `stage_type`, `approval_status`, `expired`, `lost_reason`, `expected_close_date`, `project_id` (the quotation's, else the project of its first live PO) |
 | POs (live, aggregated) | `po_count`, `po_numbers text[]` (by `po_date`, then id), `first_po_id`, `first_po_number`, `first_po_date` (min `po_date`), `first_po_created_at`, `po_value_total`, `po_currency` (the one currency, else null), `pos_without_stages` (count with `stage_count = 0`), `stage_count`, `invoiced_total`, `received_total`, `stages_to_invoice`, `overdue_stages`, `overdue_amount` (Σ `due_now_amount` of Overdue stages), `billable_stages` (stages whose `stage_status` is not `Not Due` and that are not on hold), `next_stage_due` (earliest `invoice_due_date` of a stage not Paid), `fully_paid` (every live PO `payment_status = 'Fully Paid'`), `last_paid_on` (max `payment_received_date`), `delivered` (every live PO has `actual_delivery_date`) |
-| Start | `started_on date` = the first of these that is set, in this order (`COALESCE`, not the earliest): `enquiry_date`, `enquiry_created_at`, `quotation_date`, `quotation_created_at`, `first_po_date`, `first_po_created_at` |
+| Start | Not a column. `startedOn(row)` in `steps.js` is the business day of the first of these that is set, in this order (not the earliest): `enquiry_date`, `enquiry_created_at`, `quotation_date`, `quotation_created_at`, `first_po_date`, `first_po_created_at`. A cast in the view would read a timestamp in the database's time zone (UTC), not the business one |
 
 Read from the views that already compute things (`v_quotations`,
 `v_purchase_orders`, `v_payment_stages`); do not re-derive their figures.
@@ -146,7 +146,7 @@ One `{ verb, label }` for the current step; `null` for an exited journey.
 | Step and state | `verb` | `label` |
 | --- | --- | --- |
 | Enquiry, Contacted not reached (§3.3: status New and no contact date) | `contact` | `Contact them` |
-| Enquiry, Qualified reached | `convert` | `Convert to quotation` |
+| Enquiry, status Qualified (a Converted one with no quotation linked is followed up, as its page offers) | `convert` | `Convert to quotation` |
 | Enquiry, otherwise | `follow_up` | `Log a call` |
 | Quotation, approval pending | `approve` | `Review the discount` |
 | Quotation, `price_needed_count > 0` | `price` | `Price the lines` |
@@ -162,7 +162,7 @@ The web always opens the record of the current step for it (spec C4).
 
 ### 3.7 Funnel
 
-`funnel(rows, from, to)`: the cohort is rows with `started_on` in
+`funnel(rows, from, to)`: the cohort is rows whose `startedOn(row)` (§2) is in
 `[from, to]`, exited ones included. `started` = cohort size; `quoted` = with
 a quotation or `po_count > 0`; `won` = quotation Won reached or `po_count >
 0`; `with_po` = `po_count > 0`. Each figure holds the next, so the funnel
@@ -243,14 +243,21 @@ with `fields`.
   "client_name": "Midal Cables", "company_id": 7,
   "service": "ISO 9001 certification", "sales_person": "Shyam Sharma",
   "value": 590000, "currency": "INR", "value_inr": 590000,            // the current step's value
+  "value_hidden": false,                  // true: the current step's record is someone else's (§6), so value, currency, value_inr are null
   "records": { "enquiry_no": "CTZ/ENQ/2026/004", "quotation_no": "Q-118", "po_number": null, "project_id": null },
   "started_on": "2026-09-18"
 }
 ```
 
 The current step's value: Enquiry → `enquiry_estimated_value`; Quotation →
-`quotation_value`; PO → `po_value_total` (`po_currency`; null when mixed).
-`records.po_number` is the first live PO's.
+`quotation_value`; PO → `po_value_total` (`po_currency`). POs in several
+currencies have `value` and `currency` null and still a `value_inr` (each
+PO converted at its own date) when every PO has a rate. `records.po_number`
+is the first live PO's.
+
+`steps[].value_inr` adds every card's `value_inr`; `without_rate` counts the
+cards with a value to convert and no rupees (a PO in several currencies
+counts as one with a value); a hidden value is in neither.
 
 Order: by step (enquiry, quotation, po), then flag tone (late, waiting,
 info, none), then `days_in_step` descending, then `key`.
@@ -308,14 +315,19 @@ dates); the web formats them.
 - Sales: rows where `enquiry_owner_id = me OR quotation_owner_id = me OR
   me = ANY(project_owner_ids)` (spec D7).
 - What a sales user sees of a record they do not own (spec D11,
-  `reachableSteps`, `cardFor`, `detailFor` in `steps.js`): the enquiry is
-  theirs by `enquiry_owner_id`, the quotation by `quotation_owner_id`, the
-  PO by either `quotation_owner_id` or a project owner, as each record's own
-  page reaches it. A step whose record is not theirs keeps its number,
+  `reachableSteps`, `cardFor`, `detailFor` in `steps.js`), by the rule each
+  record's own page uses: the enquiry by `enquiry_owner_id`, the quotation
+  by `quotation_owner_id`, and the PO step only when **every** live PO it
+  adds up opens by `purchaseOrderClause` (the owner of the quotation the PO
+  names in its own `quotation_no`, or of its own project). queries.js asks
+  that as the `po_reachable` column (`poReachColumn`); the sale's
+  `quotation_owner_id` is not enough, because a PO with no quotation number
+  joins its project's quotation (§2) and its page still refuses that
+  quotation's owner. A step whose record is not theirs keeps its number,
   state and small steps, with `reachable: false` and no `facts`. When that
   step is the current one, the card's `value`, `currency` and `value_inr`
-  are null, `next` is null, and an overdue flag reads `"N stages overdue"`
-  instead of the amount. Build the predicate the way
+  are null, `value_hidden` is true, `next` is null, and an overdue flag
+  reads `"N stages overdue"` instead of the amount. Build the predicate the way
   `auth/ownership.js` builds its others (`scopeOf(req)`, parameters pushed,
   never interpolated), as a function in `queries.js` with its own unit test
   of the SQL text.

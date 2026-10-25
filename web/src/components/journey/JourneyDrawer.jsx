@@ -123,6 +123,9 @@ function DrawerBody({ card }) {
                   <button
                     type="button"
                     ref={(el) => { buttons.current[s.key] = el; }}
+                    // One stop in the tab order, the open step: the arrows
+                    // move from there, so focus and the open step never part.
+                    tabIndex={s.key === at ? 0 : -1}
                     aria-pressed={s.key === at}
                     aria-controls={panelId}
                     onClick={() => setAt(s.key)}

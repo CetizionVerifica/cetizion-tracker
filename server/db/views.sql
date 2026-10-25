@@ -1292,10 +1292,10 @@ SELECT
   COALESCE(p.fully_paid, false)                                     AS fully_paid,
   p.last_paid_on,
   p.next_stage_due,
-  COALESCE(p.delivered, false)                                      AS delivered,
-  -- When the sale began: the first of these the records hold, in this order.
-  COALESCE(e.enquiry_date, e.created_at::date, q.quotation_date, q.created_at::date,
-           p.first_po_date, p.first_po_created_at::date)            AS started_on
+  -- When the sale began is worked out in lib/journey/steps.js (startedOn)
+  -- from the dates above: a timestamp's day is the business day it fell on,
+  -- which a cast here would read in the database's time zone instead.
+  COALESCE(p.delivered, false)                                      AS delivered
 FROM anchors a
 LEFT JOIN v_quotations q ON q.id = a.quotation_id
 LEFT JOIN enquiries e ON e.id = a.enquiry_id

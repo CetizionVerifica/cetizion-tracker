@@ -146,7 +146,8 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.equal(a.enquiry_owner_id, sam.id);
     assert.equal(a.quotation_owner_id, bea.id);
     assert.equal(a.sales_person, 'Bea Sales', 'the quotation\'s salesperson first');
-    assert.equal(a.started_on, (await pool.query('SELECT (CURRENT_DATE - 20)::text AS d')).rows[0].d, 'the sale began with the enquiry');
+    const card = (await of(admin, 'quotation=Q-T-A').expect(200)).body.data;
+    assert.equal(card.started_on, (await pool.query('SELECT (CURRENT_DATE - 20)::text AS d')).rows[0].d, 'the sale began with the enquiry');
   });
 
   test('two POs on one quotation are one sale, added up', async () => {
@@ -196,7 +197,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     const data = await board(admin);
     const b = data.cards.find((c) => c.key === key.B());
     assert.deepEqual(Object.keys(b), ['key', 'step', 'exit', 'small_step', 'progress', 'days_in_step', 'step_since', 'flag', 'next',
-      'client_name', 'company_id', 'service', 'sales_person', 'value', 'currency', 'value_inr', 'records', 'started_on']);
+      'client_name', 'company_id', 'service', 'sales_person', 'value', 'currency', 'value_inr', 'value_hidden', 'records', 'started_on']);
     assert.equal(b.step, 'quotation');
     assert.equal(b.small_step, 'Negotiating');
     assert.deepEqual(b.progress, ['skipped', 'current', 'future']);
@@ -335,6 +336,23 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.deepEqual(own.steps.map((s) => s.reachable), [false, true, false], 'Bea does not own the enquiry');
     assert.equal(own.value, 300000);
     assert.ok((await of(admin, 'quotation=Q-T-A').expect(200)).body.data.steps.slice(0, 2).every((s) => s.reachable && s.facts.length));
+  });
+
+  test('a PO opens as its own page opens: by the quotation it names or its project, not by the sale\'s quotation', async () => {
+    // PO-T-W1 names no quotation and sits on PRJ-T-W, which nobody owns; the
+    // journey joins it to Bea's won Q-T-W2, but its own page refuses her.
+    await as(bea).get('/api/purchase-orders/PO-T-W1').expect(404);
+    const w2 = (await of(bea, 'quotation=Q-T-W2').expect(200)).body.data;
+    assert.equal(w2.step, 'po');
+    assert.deepEqual([w2.steps[1].reachable, w2.steps[2].reachable, w2.steps[2].facts], [true, false, []]);
+    assert.deepEqual([w2.value, w2.value_hidden, w2.next], [null, true, null]);
+    assert.equal(w2.steps[2].record.no, 'PO-T-W1', 'the number still shows');
+    // Sam owns PRJ-T-C, and both POs of Q-T-C name that quotation and sit on it.
+    await as(sam).get('/api/purchase-orders/PO-T-C1').expect(200);
+    const c = (await of(sam, 'quotation=Q-T-C').expect(200)).body.data;
+    assert.equal(c.steps[2].reachable, true);
+    assert.ok(c.steps[2].facts.length > 0);
+    assert.equal((await of(admin, 'quotation=Q-T-W2').expect(200)).body.data.steps[2].reachable, true);
   });
 
   test('HR is refused both routes', async () => {

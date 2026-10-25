@@ -192,6 +192,7 @@ One branch, one PR, one commit per stream so the history reads by part.
 | C8 | Plan ↔ code | A project can carry several quotations, and a PO may name none | Server §2: a PO with no quotation joins the won (else newest) quotation on its project; a project page shows that quotation's journey |
 | C9 | Spec ↔ code (found while building) | Server §3.4 counted days from `created_at`; §3.5's slow label was a bare "24 days"; §3.7's Quoted could be smaller than Won; the web counted Stuck only itself | Fixed in code and spec: D12, "Slow 24 days" (word + tone, `web/CLAUDE.md` §1), D13, the server's `stuck_count` |
 | C10 | Spec ↔ code (found while building) | D7 let a sales user reach a sale through one record but showed every record's facts | D11 |
+| C11 | Spec ↔ code (found in review) | D11 judged the PO step by the sale's quotation owner or any project owner; a PO's own page asks the quotation the PO names or its own project. The Enquiry page's button opened a quotation the viewer could not. `started_on` was cast in UTC. POs in several currencies dropped out of the column's rupees. A Converted enquiry with no quotation got "Convert" on the card and "Log a call" on its page | Server §6 (`po_reachable`, every live PO), web §2 (`onJourney`), server §2 (`startedOn`), server §5 (`value_hidden`, column sums), server §3.6 (convert only when Qualified) |
 
 ## 9. Open questions
 

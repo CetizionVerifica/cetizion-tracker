@@ -228,13 +228,14 @@ function Funnel({ data, filters, wide, onCohort }) {
       )}
       {chip && (
         <div className="mt-3">
-          <Chip tone="info" className="pr-1">
+          {/* A custom period makes a long phrase; it wraps inside the strip on a phone. */}
+          <Chip tone="info" className="h-auto min-h-[22px] max-w-full whitespace-normal py-0.5 pr-1 text-left">
             {chip}
             <button
               type="button"
               onClick={() => onCohort('')}
               aria-label="Show every sale again"
-              className="grid size-5 place-items-center rounded-full hover:bg-info/15"
+              className="grid size-5 shrink-0 place-items-center rounded-full hover:bg-info/15"
             >
               <X className="size-3" strokeWidth={2.4} aria-hidden="true" />
             </button>
@@ -318,7 +319,7 @@ function JourneyCard({ card, onOpen }) {
         </span>
         <span className="mt-0.5 block text-[12.5px] text-secondary-text">{card.service || 'No service named'}</span>
         <span className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className={cn('num text-[13px] font-semibold', card.value == null ? 'text-muted-foreground' : 'text-foreground')}>{cardValue(card)}</span>
+          <span className={cn('num text-[13px] font-semibold', card.value == null && card.value_inr == null ? 'text-muted-foreground' : 'text-foreground')}>{cardValue(card)}</span>
           <span className="ml-auto">
             {status.chip
               ? <Chip tone={status.chip.tone} icon={TONE_GLYPHS[status.chip.tone]}>{status.chip.label}</Chip>

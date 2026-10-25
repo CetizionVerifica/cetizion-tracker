@@ -89,6 +89,12 @@ All new props optional; a call with today's props renders exactly as today.
   its number and date but is not a link and has no preview.
 - The PO page asks by `{ po }`, or by its quotation or project when the PO
   is cancelled or replaced (those are in no journey).
+- `onJourney(journey)` hears each journey as it arrives, so a page can drop
+  its own links to a record with `reachable: false`: the Enquiry page shows
+  the quotation number unlinked and offers **Log a call** instead of
+  **Open the quotation**; the Quotation page shows the enquiry number
+  unlinked. Until the journey arrives, links stay (open unless the server
+  says otherwise).
 - On a phone the rail scrolls sideways with the current step centred, as
   `RecordFlow` already does.
 
@@ -100,9 +106,10 @@ All new props optional; a call with today's props renders exactly as today.
 
 - `Sheet` from the right (`components/ui/sheet.tsx`), 460px, full width on
   a phone. Header: client, service, value. A vertical rail of the three
-  steps as buttons (`aria-pressed` on the open one); opening shows the
-  current step. ↑/↓ move between steps, Esc closes and focus returns to
-  the card.
+  steps as buttons (`aria-pressed` on the open one, and the only one in
+  the tab order, so focus and the open step never part); opening shows the
+  current step. ↑/↓ (and Home/End) move between steps, Esc closes and
+  focus returns to the card.
 - Body for the open step: its facts (formatted with `lib/format.js`), its
   small steps, and the record's `Timeline` (`entity`/`id` of that record)
   limited to what the component shows by default.
@@ -190,7 +197,9 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
   button.
 - No drag on the Journey board.
 - Money with `lib/format.js`; another currency is named; a missing value
-  reads "No estimate" or "No value", never ₹0.
+  reads "No estimate" or "No value", never ₹0. A hidden one
+  (`value_hidden`) reads "Owner only"; POs in several currencies read
+  "₹1,90,000 across currencies", or "Several currencies" with no rate.
 
 ## 5. Tests
 

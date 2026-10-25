@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { RecordFlow } from '../record.jsx';
 import { Button } from '../ui/button';
@@ -26,11 +26,16 @@ import { factValue, journeyOf, railProps } from '../../lib/journey.js';
  *
  * `refreshKey` is anything that changes when the page reloads its record
  * (the record itself will do), so the rail catches up after an action.
+ * `onJourney` hears each journey as it arrives, so the page can tell which
+ * of its links the viewer may open (`steps[].reachable`, server §6).
  */
-export function JourneyRail({ of, verdict, actions, note, refreshKey }) {
+export function JourneyRail({ of, verdict, actions, note, refreshKey, onJourney }) {
   const { pathname } = useLocation();
   const journey = useFetch(() => journeyOf(of), [JSON.stringify(of), refreshKey]);
   const page = { verdict, actions, note };
+  const heard = useRef(onJourney);
+  heard.current = onJourney;
+  useEffect(() => { if (journey.data) heard.current?.(journey.data); }, [journey.data]);
 
   // A reload keeps the journey it had until the new one arrives, so acting
   // on the page does not flash the rail back to a skeleton.

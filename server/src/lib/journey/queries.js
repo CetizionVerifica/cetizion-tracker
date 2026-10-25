@@ -8,6 +8,7 @@
  * Every value from a request is a parameter. Nothing is interpolated except
  * column aliases taken from fixed maps in this file.
  */
+import { purchaseOrderClause } from '../../auth/ownership.js';
 import { RATES, rateOn } from '../salesReport.js';
 import { JOURNEY_SETTINGS } from './steps.js';
 
@@ -27,6 +28,20 @@ export function journeyClause(scope, params, { alias = 'j' } = {}) {
   params.push(scope.ownerId);
   const n = params.length;
   return `(${alias}.enquiry_owner_id = $${n} OR ${alias}.quotation_owner_id = $${n} OR $${n} = ANY(${alias}.project_owner_ids))`;
+}
+
+/**
+ * Whether this scope may open every live PO in the sale, by the rule each
+ * PO's own page uses (purchaseOrderClause: the owner of the quotation the PO
+ * names, or of the project it sits under), as a column for reachableSteps.
+ * Not the sale's reach: a PO with no quotation number joins its project's
+ * quotation here, and that quotation's owner cannot open it, and owning one
+ * PO's project does not open the others whose figures the step adds up.
+ */
+export function poReachColumn(scope, params) {
+  const each = purchaseOrderClause(scope, params, { alias: 'rp' });
+  if (!each) return 'true AS po_reachable';
+  return `COALESCE((SELECT bool_and(${each}) FROM purchase_orders rp WHERE rp.po_number = ANY(j.po_numbers)), false) AS po_reachable`;
 }
 
 /**
@@ -82,11 +97,12 @@ async function selectJourneys(db, { ctes = '', where = [], extra = '', tail = ''
 export async function journeyRows(db, scope, filters = {}) {
   const params = [];
   const where = [];
+  const extra = `, ${poReachColumn(scope, params)}`;
   const mine = journeyClause(scope, params);
   if (mine) where.push(mine);
   if (filters.sales_person) { params.push(String(filters.sales_person)); where.push(`j.sales_person = $${params.length}`); }
   if (filters.service) { params.push(String(filters.service)); where.push(`j.service = $${params.length}`); }
-  return selectJourneys(db, { where }, params);
+  return selectJourneys(db, { where, extra }, params);
 }
 
 /**
@@ -131,7 +147,7 @@ export async function journeyOfRecord(db, scope, kind, value) {
   const [row] = await selectJourneys(db, {
     ctes: of.ctes ? of.ctes(k) : '',
     where: [of.match(k)],
-    extra: `, ${mine || 'true'} AS reachable`,
+    extra: `, ${mine || 'true'} AS reachable, ${poReachColumn(scope, params)}`,
     tail: `${of.order || ''} LIMIT 1`,
   }, params);
   if (!row?.reachable) return null;

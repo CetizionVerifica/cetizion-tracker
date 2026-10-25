@@ -62,6 +62,8 @@ export default function EnquiryDetail() {
   const [questionnaire, setQuestionnaire] = useState(false);
   // Bumped when the page logs a call, so the timeline below shows it.
   const [logged, setLogged] = useState(0);
+  // The journey the rail loaded: whether the quotation opens for this viewer.
+  const [journey, setJourney] = useState(null);
 
   const { data, error, errorStatus, refetch } = useFetch(() => api.get('enquiries', key), [key]);
   // The address may name it by number or by id. Going from one enquiry to
@@ -81,8 +83,11 @@ export default function EnquiryDetail() {
     return <><PageHeader title="Enquiry" /><div className="page"><div className="skeleton h-[240px]" /></div></>;
   }
 
-  const move = enquiryMove(e);
-  const quotationPath = recordPath('quotation', e.quotation_no);
+  // Open until this enquiry's journey says otherwise, as on the board's drawer.
+  const ours = journey?.records?.enquiry_no === e.enquiry_no ? journey : null;
+  const quotationOpens = ours?.steps?.find((s) => s.key === 'quotation')?.reachable !== false;
+  const move = enquiryMove(e, { quotationOpens });
+  const quotationPath = quotationOpens ? recordPath('quotation', e.quotation_no) : null;
   const received = enquiryReceived(e);
   const source = enquirySource(e, lookups);
   const dropped = e.status === UNQUALIFIED ? unqualifiedBecause(e, lookups) : null;
@@ -126,7 +131,7 @@ export default function EnquiryDetail() {
             {/* Converting straight from New or Contacted is allowed: the
                 server asks for the services and an estimate on the way. A
                 dropped enquiry is set going again with Edit first. */}
-            {move === 'log_call' && e.status !== UNQUALIFIED && (
+            {move === 'log_call' && e.status !== UNQUALIFIED && !e.quotation_no && (
               <RecordMenuItem onSelect={() => setForm('convert')}>Convert to quotation</RecordMenuItem>
             )}
             <RecordMenuItem onSelect={() => setQuestionnaire(true)}>{asked.button}</RecordMenuItem>
@@ -137,13 +142,14 @@ export default function EnquiryDetail() {
           // rail reloads with it after a save, a call or a conversion here.
           <JourneyRail
             of={{ enquiry: e.enquiry_no }}
-            verdict={enquiryVerdict(e, lookups)}
+            verdict={enquiryVerdict(e, lookups, undefined, { quotationOpens })}
             actions={<>
               {primary()}
               {move === 'convert' && <Button variant="secondary" size="sm" className={FLOW_BUTTON} onClick={logCall}>Log a call</Button>}
             </>}
             note={enquiryNote(move)}
             refreshKey={e}
+            onJourney={setJourney}
           />
         }
         rail={events.length > 0 && (
@@ -190,7 +196,9 @@ export default function EnquiryDetail() {
             <Fact label="Sector">{e.sector || NONE}</Fact>
             <Fact label="Country">{e.country || NONE}</Fact>
             <Fact label="Quotation">
-              {quotationPath ? <Link className="mono" to={quotationPath}>{e.quotation_no}</Link> : <span className="text-muted-foreground">None yet</span>}
+              {quotationPath
+                ? <Link className="mono" to={quotationPath}>{e.quotation_no}</Link>
+                : e.quotation_no ? <span className="mono">{e.quotation_no}</span> : <span className="text-muted-foreground">None yet</span>}
             </Fact>
             <Fact label="Next follow-up">
               {e.next_follow_up_at

@@ -83,6 +83,8 @@ export default function QuotationDetail() {
   const toast = useToast();
   const lookups = useLookups();
   const [editing, setEditing] = useState(false);
+  // The journey the rail loaded: whether the enquiry opens for this viewer.
+  const [journey, setJourney] = useState(null);
   const [line, setLine] = useState(null);         // 'new' | line record
   const [removing, setRemoving] = useState(null);
   const [revising, setRevising] = useState(false);
@@ -257,6 +259,7 @@ export default function QuotationDetail() {
             actions={<>{primary()}{secondary()}</>}
             note={note()}
             refreshKey={q}
+            onJourney={setJourney}
           />
         }
       >
@@ -394,7 +397,9 @@ export default function QuotationDetail() {
             </GridFact>
             <GridFact label="Enquiry">
               {q.enquiry
-                ? <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
+                ? journey?.records?.quotation_no === q.quotation_no && journey.steps?.find((s) => s.key === 'enquiry')?.reachable === false
+                  ? <span className="mono">{q.enquiry.enquiry_no}</span>
+                  : <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
                 : <span className="text-muted-foreground">—</span>}
             </GridFact>
             <GridFact label="Project">

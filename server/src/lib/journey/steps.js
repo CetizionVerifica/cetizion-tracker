@@ -230,7 +230,9 @@ export function nextAction(row, { step, exit }) {
     // "Status New" read as the journey still being at New: an enquiry still
     // marked New that has had a call logged is past contacting.
     if (!reached('enquiry', row, 'Contacted')) return { verb: 'contact', label: 'Contact them' };
-    if (reached('enquiry', row, 'Qualified')) return { verb: 'convert', label: 'Convert to quotation' };
+    // Only a Qualified enquiry converts, as its page offers (spec §4 E). One
+    // marked Converted with no quotation linked is followed up and edited.
+    if (row.enquiry_status === 'Qualified') return { verb: 'convert', label: 'Convert to quotation' };
     return { verb: 'follow_up', label: 'Log a call' };
   }
   if (step === 'quotation') {
@@ -276,6 +278,15 @@ function valueAt(step, row) {
   return { value: row.po_value_total ?? null, currency: row.po_currency ?? null, value_inr: row.po_value_inr ?? null };
 }
 
+/**
+ * The business day the sale began: the first of its records' dates that is
+ * set, in this order, each date before the day its record was keyed in.
+ */
+export function startedOn(row) {
+  return dayOf(row.enquiry_date ?? row.enquiry_created_at ?? row.quotation_date ?? row.quotation_created_at
+    ?? row.first_po_date ?? row.first_po_created_at ?? null);
+}
+
 /** The board's card for a row (server layer §5). `state` is journeyState(row, …). */
 export function toCard(row, state) {
   return {
@@ -293,13 +304,14 @@ export function toCard(row, state) {
     service: row.service ?? null,
     sales_person: row.sales_person ?? null,
     ...valueAt(state.step, row),
+    value_hidden: false,
     records: {
       enquiry_no: row.enquiry_no ?? null,
       quotation_no: row.quotation_no ?? null,
       po_number: row.first_po_number ?? null,
       project_id: row.project_id ?? null,
     },
-    started_on: dayOf(row.started_on),
+    started_on: startedOn(row),
   };
 }
 
@@ -398,7 +410,7 @@ export function inCohort(row, cohort) {
 }
 
 const startedIn = (row, from, to) => {
-  const started = dayOf(row.started_on);
+  const started = startedOn(row);
   return started != null && started >= from && started <= to;
 };
 
@@ -445,19 +457,24 @@ function median(values) {
 
 /**
  * The three columns' figures, counted from the cards returned, so scoping
- * and filtering narrow the cards and change no arithmetic. A value with no
- * rate for its date is left out of the rupees and counted as such.
+ * and filtering narrow the cards and change no arithmetic. Every card with a
+ * value in rupees adds it, POs in several currencies included (each PO is
+ * converted at its own date). A value with no rate for its date is left out
+ * of the rupees and counted as such; a value hidden from this caller is in
+ * neither.
  */
 export function summariseSteps(cards) {
+  // A PO card with no value of its own and none hidden is one in several currencies.
+  const toConvert = (c) => !c.value_hidden && (c.value != null || (c.step === 'po' && !c.currency));
   return STEPS.map(({ key, label }) => {
     const here = cards.filter((c) => c.step === key);
-    const converted = here.filter((c) => c.value != null && c.value_inr != null);
+    const converted = here.filter((c) => c.value_inr != null);
     return {
       key,
       label,
       count: here.length,
       value_inr: Math.round(converted.reduce((t, c) => t + Number(c.value_inr), 0) * 100) / 100,
-      without_rate: here.filter((c) => c.value != null && c.value_inr == null).length,
+      without_rate: here.filter((c) => c.value_inr == null && toConvert(c)).length,
       median_days: median(here.map((c) => c.days_in_step).filter((d) => d != null)),
     };
   });
@@ -499,8 +516,9 @@ export function journeyBoard(rows, settings, today, { period, stuck = false, clo
 /**
  * Which steps' records this scope may open, by the same reach each record's
  * own page gives (auth/ownership.js): an enquiry and a quotation by their
- * owner, a PO by the owner of its quotation or of its project. An admin
- * reaches every step.
+ * owner; the PO step only when every live PO it adds up opens, each by the
+ * owner of the quotation it names or of its project, which queries.js asks
+ * the database (`po_reachable`, poReachColumn). An admin reaches every step.
  */
 export function reachableSteps(row, scope) {
   if (scope.unrestricted) return { enquiry: true, quotation: true, po: true };
@@ -509,7 +527,7 @@ export function reachableSteps(row, scope) {
   return {
     enquiry: owns(row.enquiry_owner_id),
     quotation: owns(row.quotation_owner_id),
-    po: owns(row.quotation_owner_id) || (row.project_owner_ids ?? []).some(owns),
+    po: row.po_reachable === true,
   };
 }
 
@@ -524,7 +542,7 @@ export function cardFor(card, row, scope) {
   const flag = card.flag?.kind === 'overdue'
     ? { ...card.flag, label: `${plural(num(row.overdue_stages), 'stage')} overdue` }
     : card.flag;
-  return { ...card, value: null, currency: null, value_inr: null, flag, next: null };
+  return { ...card, value: null, currency: null, value_inr: null, value_hidden: true, flag, next: null };
 }
 
 /**

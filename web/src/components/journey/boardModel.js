@@ -239,10 +239,15 @@ export function withoutRateText(n) {
  * and none is made up.
  */
 export function cardValue(card) {
-  if (card?.value === null || card?.value === undefined || card?.value === '') {
-    return card?.step === 'enquiry' ? 'No estimate' : 'No value';
+  // The record is someone else's (server §6): it has a value, just not one to show here.
+  if (card?.value_hidden) return 'Owner only';
+  const missing = card?.value === null || card?.value === undefined || card?.value === '';
+  // POs in several currencies have no one figure in theirs; the server's
+  // rupees, each PO at its own date's rate, when every one has a rate.
+  if (card?.step === 'po' && missing && !card.currency) {
+    return card.value_inr != null ? `${money(card.value_inr, 'INR')} across currencies` : 'Several currencies';
   }
-  if (card.step === 'po' && !card.currency) return 'Several currencies';
+  if (missing) return card?.step === 'enquiry' ? 'No estimate' : 'No value';
   return money(card.value, card.currency || 'INR');
 }
 
