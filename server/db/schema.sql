@@ -1161,6 +1161,17 @@ INSERT INTO settings (key, value, notes) VALUES
   ('quotation_expiry_grace_days', '14', 'Days after valid_until before a quotation sent from the tracker is marked lost as expired.')
 ON CONFLICT (key) DO NOTHING;
 
+-- The Journey board, the Pipeline's default view (099, docs/specs/sales-journey
+-- D4): when a sale is slow or stuck, and how long a paid one stays on it. The
+-- steps themselves are computed on read from v_sales_journey (views.sql).
+INSERT INTO settings (key, value, notes) VALUES
+  ('journey_stuck_enquiry_days', '7', 'Days an enquiry can wait before the Journey board calls it slow; stuck after twice this.'),
+  ('journey_stuck_quotation_days', '21', 'Days a quotation can stay open before the Journey board calls it slow; stuck after twice this.'),
+  ('journey_unsent_days', '5', 'Days a quotation can stay unsent before the Journey board nudges.'),
+  ('journey_stuck_po_days', '30', 'Days a PO can go with nothing invoiced before the Journey board calls it slow; stuck after twice this.'),
+  ('journey_paid_visible_days', '30', 'Days a fully paid sale stays on the Journey board.')
+ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------- enquiry stamps
 -- Stamps: the first response, the conversion, and a default follow-up date.
 CREATE OR REPLACE FUNCTION enquiry_stamps() RETURNS trigger AS $$
