@@ -136,19 +136,32 @@ Every record that moves through a process (enquiry, quotation, project, PO, paym
 trip) follows the same order, top to bottom:
 
 1. Breadcrumb, then header: identity, status chip, owner, overflow menu.
-2. **Process rail** (`RecordFlow` and `flowSteps` in `components/record.jsx`; never draw
-   one by hand): the steps of its journey as numbered discs; done steps filled `settled`
-   with a tick, the current step filled `primary` with a halo, later steps hollow and
-   muted. The current step is the one after the furthest step reached, so a skipped step
-   stays hollow instead of dragging the marker back. Under it, a "Now · <step>" eyebrow,
-   **one sentence** saying what the current step waits on and who, and the one primary
-   button that moves it on. Each step is read off a stored fact, never typed.
+2. **Process rail** (`RecordFlow` in `components/record.jsx`; never draw one by hand):
+   the steps of its journey as numbered discs; done steps filled `settled` with a tick,
+   the current step filled `primary` with a halo, later steps hollow and muted. The
+   current step is the one after the furthest step reached, so a step the record went
+   past without one stays hollow ("Not recorded") instead of dragging the marker back;
+   the step a process stopped at is filled `late` with a "!". Under it, a "Now · <step>"
+   eyebrow, **one sentence** saying what the current step waits on and who, and the one
+   primary button that moves it on. Each step is read off a stored fact, never typed.
 3. Key figures strip (2–4 stat tiles).
 4. Body sections, each with a section title.
 5. Timeline (tasks, notes, files, activity with who did what).
 
-The sales flow is Enquiry → Quoted → Sent → Negotiation → Won → Project → Order →
-Invoiced → Paid. Travel is Trip → Agency bill → Agency paid → Client invoice → Client paid.
+**The sales flow is the sale's journey: Enquiry → Quotation → PO**, three steps drawn the
+same way on every sales record (`docs/specs/sales-journey/CLAUDE.md`). The enquiry,
+quotation, PO and project pages draw it with `<JourneyRail of={…}>`
+(`components/journey/JourneyRail.jsx`), which asks the server where the sale is and
+renders `RecordFlow`; the page passes its own sentence, button and small print through
+and never works out a journey step itself. Each step with a record links to it and
+shows its number and date, and previews its first facts on hover or focus. The current
+step carries days in step in its flag's tone, with its small steps in a slim row under
+the rail (Priced → Sent → Negotiating → Accepted → Won inside Quotation). A sale that
+stopped says where ("Lost at Quotation"); a paid one reads "Complete · paid". If the
+journey cannot load, the rail says so in one line and the page keeps its button.
+
+Travel is a different process and keeps its own rail, worked out by the page with
+`flowSteps`: Trip → Agency bill → Agency paid → Client invoice → Client paid.
 
 ## 5. Components
 
@@ -189,7 +202,7 @@ Button variants: `default` (primary, once per view), `outline` (secondary), `gho
 `test/uiConsistency.test.js` checks the parts of this file a machine can: no hex or
 Tailwind palette colours in components, every token defined in both themes, the
 contrast of every text/ground pair, every CSS variable defined, radii on the scale,
-page titles matching their sidebar names, the process rail on the Deal,
-Order and Project pages (and the Deal's nine steps), and no company name in the app. If it fails,
+page titles matching their sidebar names, the journey rail on the Deal, Order and
+Project pages (and its three steps), Trip's own rail, and no company name in the app. If it fails,
 fix the screen or the token; add to its exceptions only for something that is
 deliberately not themed (a third-party logo, an email body, the PDF preview).
