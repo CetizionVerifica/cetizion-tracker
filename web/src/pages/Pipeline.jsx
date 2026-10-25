@@ -1,23 +1,79 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../App.jsx';
 import { Badge, ErrorState, Field, Input, Modal, Select, Textarea, useToast } from '../components/ui.jsx';
 import { initialsOf } from '../components/record.jsx';
+import { JourneyBoard } from '../components/journey/JourneyBoard.jsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs.tsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, money } from '../lib/format.js';
+
+/**
+ * Pipeline: every open sale, two ways (docs/specs/sales-journey, D2).
+ *
+ * **Journey**, the default, is the whole sale by where it has got to:
+ * Enquiry, Quotation, PO (components/journey/JourneyBoard.jsx).
+ * **Quotation stages** (`?view=stages`) is the stage board as it always
+ * was, kept for weighted forecasting.
+ *
+ * The switch and the owner sit in the header because both views filter by
+ * owner. The owner travels in the address bar (`sales_person`, the name
+ * the journey's API takes too), so a link carries it and switching views
+ * keeps it.
+ */
+export default function Pipeline() {
+  const lookups = useLookups();
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') === 'stages' ? 'stages' : 'journey';
+  const person = params.get('sales_person') || '';
+
+  // A new view is a step Back can undo; a new owner just replaces the address.
+  const put = (key, value, { replace = true } = {}) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value); else next.delete(key);
+    setParams(next, { replace });
+  };
+
+  // Manual activation: the arrow keys move between the two and Enter picks
+  // one. Automatic activation also fires on the focus a click brings, which
+  // put the same view in the history twice and made Back seem to do nothing.
+  return (
+    <Tabs value={view} activationMode="manual" onValueChange={(v) => put('view', v === 'stages' ? 'stages' : '', { replace: false })} className="gap-0">
+      <PageHeader
+        title="Pipeline"
+        subtitle={view === 'stages'
+          ? 'Open deals by stage. Drag a card to move it, or use its Move to list; moving to Lost asks why.'
+          : 'Every open sale from enquiry to paid PO. The button on a card moves it on.'}
+        actions={(
+          <>
+            <TabsList aria-label="View" className="group-data-[orientation=horizontal]/tabs:h-control">
+              <TabsTrigger value="journey" className="px-3 text-[13px]">Journey</TabsTrigger>
+              <TabsTrigger value="stages" className="px-3 text-[13px]">Quotation stages</TabsTrigger>
+            </TabsList>
+            <Select value={person} placeholder="Owner: everyone" aria-label="Owner" options={lookups.sales_people} onChange={(e) => put('sales_person', e.target.value)} />
+          </>
+        )}
+      />
+      <TabsContent value="journey"><JourneyBoard /></TabsContent>
+      <TabsContent value="stages"><QuotationStages person={person} /></TabsContent>
+    </Tabs>
+  );
+}
 
 /**
  * The quotation pipeline as a board (#25): one column per open stage, each
  * card a quotation, dragged between stages. Moving to Lost asks why. The
  * weighted total per column and the forecast by expected close month sit
  * above the board.
+ *
+ * Unchanged by the journey, except that the owner it filters by is the
+ * page's, kept in the address bar and shared with the Journey view.
  */
-export default function Pipeline() {
+function QuotationStages({ person }) {
   const navigate = useNavigate();
   const toast = useToast();
   const lookups = useLookups();
-  const [person, setPerson] = useState('');
   const [dragging, setDragging] = useState(null);
   const [over, setOver] = useState(null);
   const [losing, setLosing] = useState(null);   // { card, stage }
@@ -74,11 +130,6 @@ export default function Pipeline() {
 
   return (
     <>
-      <PageHeader
-        title="Pipeline"
-        subtitle="Open deals by stage. Drag a card to move it, or use its Move to list; moving to Lost asks why."
-        actions={<Select value={person} placeholder="Owner: everyone" options={lookups.sales_people} onChange={(e) => setPerson(e.target.value)} />}
-      />
       <div className="page stack">
         {error && <ErrorState message={error} onRetry={refetch} />}
         {board && (
