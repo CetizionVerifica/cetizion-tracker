@@ -10,6 +10,8 @@ import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useDebounced, useList } from '../lib/hooks.js';
 import { date } from '../lib/format.js';
+import { localToday } from '../lib/reportPeriods.js';
+import { LIST_DATE_PRESETS, listPresetOf, listPresetRange } from '../lib/listDateRange.js';
 
 /**
  * The standard list screen: search, filters, CSV export, create / edit /
@@ -34,6 +36,7 @@ export function ListPage({
   initialFilters,
   initialSearch,
   dateFilterLabel = 'Date',
+  dateRange = false,
   refreshToken,
   onSaved,
   rowActions = true,
@@ -53,7 +56,10 @@ export function ListPage({
    * and a view pointing at any other filter quietly did nothing.
    */
   const fromUrl = {};
-  for (const { name } of filters) {
+  // A list with `dateRange` shows a picker for ?from=&to= on its resource's
+  // date column, so the pair is a filter like any other.
+  const urlKeys = [...filters.map((f) => f.name), ...(dateRange ? ['from', 'to'] : [])];
+  for (const name of urlKeys) {
     const value = urlParams.get(name);
     if (value) fromUrl[name] = value;
   }
@@ -118,7 +124,7 @@ export function ListPage({
    */
   useEffect(() => {
     const next = new URLSearchParams(urlParams);
-    for (const { name } of filters) {
+    for (const name of urlKeys) {
       if (filterValues[name]) next.set(name, filterValues[name]);
       else next.delete(name);
     }
@@ -261,6 +267,15 @@ export function ListPage({
               />
             </div>
 
+            {dateRange && (
+              <DateRangeFilter
+                label={dateFilterLabel}
+                from={filterValues.from || ''}
+                to={filterValues.to || ''}
+                onChange={({ from, to }) => setFilterValues(({ from: _f, to: _t, ...rest }) => ({ ...rest, ...(from ? { from } : {}), ...(to ? { to } : {}) }))}
+              />
+            )}
+
             {(showMore ? filters : filters.slice(0, INLINE)).map((filter) => (
               <FilterSelect key={filter.name} filter={filter} value={filterValues[filter.name] || ''} onChange={(v) => setFilter(filter.name, v)} />
             ))}
@@ -277,8 +292,8 @@ export function ListPage({
               </button>
             )}
 
-            {/* A date range arrives only from a report link, so show it and let it be removed. */}
-            {(filterValues.from || filterValues.to) && (
+            {/* Without a picker, a date range arrives only from a report link, so show it and let it be removed. */}
+            {!dateRange && (filterValues.from || filterValues.to) && (
               <span className="small nowrap">
                 {dateFilterLabel}: {filterValues.from ? date(filterValues.from) : 'start'} – {filterValues.to ? date(filterValues.to) : 'today'}
                 <button
@@ -416,6 +431,51 @@ const SLICE_LABEL = {
 };
 
 /** "The 4 records behind the Reports chart: 1 Sep 2026 – 30 Sep 2026, lost before a quotation." */
+/**
+ * A preset menu for the list's date column, with From and To fields once a
+ * range is set or "Custom range" is picked. Both ends are inclusive and
+ * either may be left open; the server reads them as ?from=&to=.
+ */
+function DateRangeFilter({ label, from, to, onChange }) {
+  const preset = listPresetOf(from, to, localToday());
+  // "Custom range" with no dates yet has nothing in the URL to say so.
+  const [custom, setCustom] = useState(false);
+  const showFields = custom || preset !== '';
+  return (
+    <span className="date-range">
+      <select
+        className="select"
+        aria-label={label}
+        value={preset || (custom ? 'custom' : '')}
+        onChange={(e) => {
+          const key = e.target.value;
+          setCustom(key === 'custom');
+          if (key === 'custom') return;
+          onChange(listPresetRange(key, localToday()) || { from: '', to: '' });
+        }}
+      >
+        <option value="">{label}: any time</option>
+        {LIST_DATE_PRESETS.map((p) => <option key={p.key} value={p.key}>{label}: {p.label.charAt(0).toLowerCase() + p.label.slice(1)}</option>)}
+      </select>
+      {showFields && (
+        <>
+          <input className="input" type="date" aria-label={`${label} from`} value={from} max={to || undefined} onChange={(e) => { setCustom(true); onChange({ from: e.target.value, to }); }} />
+          <span className="small muted" aria-hidden="true">to</span>
+          <input className="input" type="date" aria-label={`${label} to`} value={to} min={from || undefined} onChange={(e) => { setCustom(true); onChange({ from, to: e.target.value }); }} />
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            aria-label={`Remove ${label.toLowerCase()} filter`}
+            onClick={() => { setCustom(false); onChange({ from: '', to: '' }); }}
+          >
+            <X className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </>
+      )}
+    </span>
+  );
+}
+
 function reportBannerText(q, total) {
   const parts = [`${date(q.report_from)} – ${date(q.report_to)}`];
   if (q.report_outcome) parts.push(SLICE_LABEL.outcome[q.report_outcome] ?? q.report_outcome);
