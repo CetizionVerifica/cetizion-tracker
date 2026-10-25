@@ -27,6 +27,7 @@ import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate, wake } from '../lib/inbox.js';
 import { isSyncing, kickSync } from '../lib/mailbox/autoSync.js';
 import { logCreated } from '../lib/recordActs.js';
+import { ownerNameFor } from '../lib/owners.js';
 
 export const inboxRouter = Router();
 
@@ -439,7 +440,9 @@ const convertSchema = z.object({
   client_name: z.string().trim().max(200).optional(),
   contact_person: z.string().trim().max(120).optional(),
   service: z.string().trim().max(300).optional(),
-  sales_person: z.string().trim().max(120).optional(),
+  // null is a choice: no owner. Left out, the conversation's assignee is used
+  // when it is a sales user (lib/owners.js ownerNameFor).
+  sales_person: z.string().trim().max(120).nullish(),
   source_id: z.coerce.number().int().positive().optional(),
   notes: z.string().max(2000).optional(),
 });
@@ -453,13 +456,18 @@ inboxRouter.post('/:id/convert', async (req, res) => {
   const client = v.client_name || c.company_name;
   if (!client) throw new ApiError(422, 'Please check the highlighted fields', { fields: { client_name: 'Which company is this?' } });
   const enquiry = await transaction(async (db) => {
+    // An assignee is a login or a typed name, not necessarily anybody's
+    // account name, so it becomes the Owner only as the account name of the
+    // sales user it names; otherwise the enquiry starts with no owner rather
+    // than with one more spelling of somebody.
+    const salesPerson = v.sales_person !== undefined ? (v.sales_person || null) : await ownerNameFor(db, c.assignee);
     const { rows: [src] } = v.source_id ? { rows: [{ id: v.source_id }] } : await db.query(`SELECT id FROM lead_sources WHERE name = 'Inbound email or call'`);
     const { rows: [{ first }] } = await db.query('SELECT MIN(sent_at) AS first FROM email_messages WHERE thread_id = $1', [c.thread_id]);
     const created = await createEnquiryFromEmail(db, {
       threadId: c.thread_id, fromEmail: c.from_email, fromName: c.from_name,
       enquiry: {
         dated_at: first || new Date().toISOString(), client_name: client, status: 'New',
-        contact_person: v.contact_person || c.contact_name || c.from_name || null, sales_person: v.sales_person || c.assignee || null,
+        contact_person: v.contact_person || c.contact_name || c.from_name || null, sales_person: salesPerson,
         service: v.service || c.subject || null, source_id: src?.id ?? null,
         notes: v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, first_responded_at: c.first_response_at,
       },

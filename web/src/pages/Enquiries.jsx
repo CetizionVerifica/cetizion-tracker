@@ -5,8 +5,10 @@ import { Alert, Badge, useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { OwnerDuplicates } from '../components/OwnerDuplicates.jsx';
 import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerFills, ownerOptions } from '../lib/owners.js';
 import { date, money, today } from '../lib/format.js';
 
 /**
@@ -31,6 +33,8 @@ export default function Enquiries() {
   // The service questionnaire for one enquiry (#208). A "submitted" notification links here with ?questionnaire=.
   const [questionnaire, setQuestionnaire] = useState(() => (enquiryNo && params.get('questionnaire') ? { enquiry_no: enquiryNo } : null));
   const [questionnaireVersion, setQuestionnaireVersion] = useState(0);
+  // Bumped when owner spellings are merged, so the list shows the new names.
+  const [ownersMerged, setOwnersMerged] = useState(0);
   useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = lookups.enums?.enquiry || STATUSES;
   const sectors = lookups.sectors.length ? lookups.sectors : SECTORS;
@@ -85,7 +89,7 @@ export default function Enquiries() {
     { name: 'services_interested', label: 'Other services of interest' },
     { name: 'estimated_value', label: 'Estimated value', type: 'money', hint: 'Carried onto the quotation when converted' },
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
-    { name: 'sales_person', label: 'Owner', type: 'combo', options: lookups.sales_people },
+    { name: 'sales_person', label: 'Owner', type: 'select', options: ownerOptions(lookups), fills: ownerFills(lookups), hint: OWNER_HINT },
     { name: 'sales_person_email', label: 'Owner email', type: 'email' },
     { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `Leaving New needs a source and the client; Qualified and "${CONVERTED}" need the services and an estimated value; Unqualified needs a reason. "${CONVERTED}" creates a draft quotation, a line per service, unless one is linked` },
     { name: 'next_follow_up_at', label: 'Next follow-up', type: 'date', hint: 'Blank: set from Settings when the status changes' },
@@ -120,7 +124,7 @@ export default function Enquiries() {
       // The day the enquiry reached us (enquiry_date); the server filters ?from=&to= on it.
       dateFilterLabel="Received"
       dateRange
-      refreshToken={questionnaireVersion}
+      refreshToken={questionnaireVersion + ownersMerged}
       onSaved={(saved) => {
         invalidateLookups();
         if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
@@ -142,6 +146,7 @@ export default function Enquiries() {
         ] },
       ]}
       banner={(rows) => { const { dueRows, late } = attention(rows); return <>
+        <OwnerDuplicates onMerged={() => setOwnersMerged((n) => n + 1)} />
         {enquiryNo && <EmailOrigin entity="enquiry" id={enquiryNo} />}
         {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}
         {(dueRows.length > 0 || late.length > 0) && (

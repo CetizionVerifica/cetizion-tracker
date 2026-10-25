@@ -165,6 +165,13 @@ lookupRouter.get('/', async (req, res) => {
       purchase_orders: pos.rows,
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
+      // Who the Owner field may name: the active sales users on the platform.
+      // An admin picks any of them; a sales user is offered only themselves,
+      // as sales_people above offers them no colleagues.
+      owners: (await query(
+        `SELECT id, btrim(name) AS name, email FROM users
+          WHERE active AND role = 'sales' AND btrim(name) <> '' ${scope.unrestricted ? '' : 'AND id = $1'}
+          ORDER BY name`, scope.unrestricted ? [] : [scope.ownerId])).rows,
       staff: (await query('SELECT id, name, role FROM staff WHERE active ORDER BY name')).rows,
       clients: clients.rows.map((r) => r.name),
       companies: clients.rows,
