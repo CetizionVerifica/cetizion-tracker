@@ -30,6 +30,8 @@ export const ACTIONS = {
   USER_DEACTIVATED: 'user.deactivated',
   USER_REACTIVATED: 'user.reactivated',
   COMPANY_MERGED: 'company.merged',
+  // Owner spellings folded into one (lib/owners.js).
+  OWNER_MERGED: 'owner.merged',
   JOB_RUN: 'job.run',
   EMAIL_TEST_SENT: 'email.test_sent',
   // An admin held or released the emails that go to clients (lib/clientEmails.js).

@@ -312,6 +312,10 @@ export const routes = [
   { method: 'GET', path: '/api/companies/:id/full', access: signedIn },
   { method: 'POST', path: '/api/companies/:id/merge', access: mustBeAdmin, why: 'A merge folds every record of one client into another and deletes the loser. It cannot be undone from the UI.' },
 
+  // --------------------------------------------------------------- owners
+  { method: 'GET', path: '/api/owners/duplicates', access: mustBeAdmin, why: 'Counts the records behind every Owner spelling across the whole book, not only the caller\'s own.' },
+  { method: 'POST', path: '/api/owners/merge', access: mustBeAdmin, why: 'Rewrites the Owner on every record carrying the merged spellings and fills in their owner. It cannot be undone from the UI.' },
+
   // --------------------------------------------------------------- emails
   { method: 'GET', path: '/api/emails', access: signedIn, restrictions: ['record-owner'], note: 'A sales user sees only the client emails on records they own; an admin sees every email.' },
   { method: 'GET', path: '/api/emails/:id', access: signedIn, restrictions: ['record-owner'], note: 'An email that is not a client email on one of the caller\'s records is a 404 for a sales user.' },

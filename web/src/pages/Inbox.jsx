@@ -10,6 +10,7 @@ import {
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups, useRowsThatFit } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { keepPlace } from '../lib/pageFit.js';
 import { useAuth } from '../lib/auth.jsx';
 // The pieces of a mail client (docs/inbox-outlook-plan.md §3.7), each its
@@ -714,13 +715,13 @@ function Conversation({ id, refreshKey = 0, onBack, onChanged }) {
           </div>
         )}
       </div>
-      {converting && <ConvertDialog c={c} people={lookups.sales_people} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
+      {converting && <ConvertDialog c={c} owners={ownerOptions(lookups)} sources={lookups.lead_sources || []} onClose={() => setConverting(false)} onDone={() => { setConverting(false); conv.refetch(); onChanged(); }} />}
       {snoozing && <SnoozeDialog onClose={() => setSnoozing(false)} onSnooze={(until) => { setSnoozing(false); update({ status: 'snoozed', snoozed_until: until }, 'Snoozed'); }} />}
     </div>
   );
 }
 
-function ConvertDialog({ c, people, sources, onClose, onDone }) {
+function ConvertDialog({ c, owners, sources, onClose, onDone }) {
   const toast = useToast();
   const [v, setV] = useState({ client_name: c.company_name || '', contact_person: c.contact_name || c.from_name || '', service: c.subject || '', sales_person: c.assignee || '', source_id: '', notes: '' });
   const [busy, setBusy] = useState(false);
@@ -740,7 +741,7 @@ function ConvertDialog({ c, people, sources, onClose, onDone }) {
         <Field label="Company" required><Input value={v.client_name} onChange={set('client_name')} /></Field>
         <Field label="Contact"><Input value={v.contact_person} onChange={set('contact_person')} /></Field>
         <div className="span-all"><Field label="Service asked for"><Input value={v.service} onChange={set('service')} /></Field></div>
-        <Field label="Owner"><Input list="convert-people" value={v.sales_person} onChange={set('sales_person')} /><datalist id="convert-people">{people.map((p) => <option key={p} value={p} />)}</datalist></Field>
+        <Field label="Owner" hint={OWNER_HINT}><Select value={v.sales_person} options={owners(v)} onChange={set('sales_person')} /></Field>
         <Field label="Source" hint="Blank: Inbound email or call"><Select value={v.source_id} options={sources.map((x) => ({ value: String(x.id), label: x.name }))} onChange={set('source_id')} /></Field>
         <div className="span-all"><Field label="Notes"><Textarea rows={2} value={v.notes} onChange={set('notes')} /></Field></div>
       </div>

@@ -4,6 +4,7 @@ import { ListPage } from '../components/ListPage.jsx';
 import { Badge, DocumentLink } from '../components/ui.jsx';
 import { ConvertQuotationDialog } from '../components/actions.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { money, date } from '../lib/format.js';
 
 /** The quotation form, shared with the quotation page. */
@@ -23,7 +24,7 @@ export function quotationFields(lookups) {
     { name: 'contact_email', label: 'Contact email', type: 'email', hint: 'Saved on the contact. Used to send the quotation and to chase payment' },
     { name: 'contact_phone', label: 'Contact phone' },
     { name: 'service_quoted', label: 'Service quoted', type: 'combo', options: lookups.services, span: 2, hint: 'The subject line; price it on the quotation page as lines' },
-    { name: 'sales_person', label: 'Sales person', type: 'combo', options: lookups.sales_people },
+    { name: 'sales_person', label: 'Sales person', type: 'select', options: ownerOptions(lookups), hint: OWNER_HINT },
     { name: 'sales_person_email', label: 'Sales person email', type: 'email' },
     { name: 'quotation_value', label: 'Quotation value', type: 'money', hint: 'Replaced by the line total once lines are added' },
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
