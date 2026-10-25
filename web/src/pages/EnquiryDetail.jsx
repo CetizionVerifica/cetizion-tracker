@@ -16,7 +16,7 @@ import { date, money } from '../lib/format.js';
 import { recordPath } from '../lib/journey.js';
 import {
   CONVERTED, MOVE_LABELS, UNQUALIFIED, enquiryEvents, enquiryFields, enquiryMove, enquiryNote, enquiryReceived,
-  enquirySource, enquiryTitle, enquiryTone, enquiryVerdict, followUpMissed, questionnaireLine, unqualifiedBecause,
+  enquirySource, offersConvert, enquiryTitle, enquiryTone, enquiryVerdict, followUpMissed, questionnaireLine, unqualifiedBecause,
 } from '../lib/enquiries.js';
 
 /**
@@ -130,10 +130,7 @@ export default function EnquiryDetail() {
           <>
             <RecordMenuItem onSelect={() => setForm('edit')}>Edit the enquiry</RecordMenuItem>
             {move === 'open_quotation' && <RecordMenuItem onSelect={logCall}>Log a call</RecordMenuItem>}
-            {/* Converting straight from New or Contacted is allowed: the
-                server asks for the services and an estimate on the way. A
-                dropped enquiry is set going again with Edit first. */}
-            {move === 'log_call' && e.status !== UNQUALIFIED && !e.quotation_no && (
+            {offersConvert(e, move) && (
               <RecordMenuItem onSelect={() => setForm('convert')}>Convert to quotation</RecordMenuItem>
             )}
             <RecordMenuItem onSelect={() => setQuestionnaire(true)}>{asked.button}</RecordMenuItem>

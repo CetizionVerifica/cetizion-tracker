@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { matchRoutes } from 'react-router';
 import {
-  CONVERTED, ENQUIRY_STATUSES, MOVE_LABELS, enquiryEvents, enquiryFields, enquiryMove, enquiryNote, enquiryReceived,
+  CONVERTED, ENQUIRY_STATUSES, MOVE_LABELS, enquiryEvents, enquiryFields, enquiryMove, enquiryNote, enquiryReceived, offersConvert,
   enquirySectors, enquirySource, enquiryStatuses, enquiryTitle, enquiryTone, enquiryVerdict, followUpMissed,
   questionnaireLine, unqualifiedBecause,
 } from '../src/lib/enquiries.js';
@@ -93,6 +93,15 @@ test('one move by state: a quotation wins, a qualified enquiry converts, the res
     assert.equal(enquiryMove({ ...fresh, status }), 'log_call', status);
   }
   assert.deepEqual(MOVE_LABELS, { open_quotation: 'Open the quotation', convert: 'Convert to quotation', log_call: 'Log a call' });
+});
+
+test('the menu offers Convert beside a call only where saving would make a quotation', () => {
+  for (const status of ['New', 'Contacted', 'Nurture']) assert.equal(offersConvert({ ...fresh, status }), true, status);
+  // Qualified converts with the main button; a linked enquiry has its quotation.
+  assert.equal(offersConvert({ ...fresh, status: 'Qualified' }), false);
+  assert.equal(offersConvert({ ...fresh, status: 'New', quotation_no: 'Q-201' }, 'log_call'), false);
+  assert.equal(offersConvert({ ...fresh, status: 'Unqualified' }), false, 'set going again with Edit first');
+  assert.equal(offersConvert({ ...fresh, status: CONVERTED }), false, 'a removed link is put back with Edit; saving creates nothing');
 });
 
 test('the small print follows the button', () => {

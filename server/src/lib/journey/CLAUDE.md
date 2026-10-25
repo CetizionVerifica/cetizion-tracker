@@ -59,8 +59,8 @@ lowest-id live PO; else 404.
 | Group | Columns |
 | --- | --- |
 | Identity | `journey_key`, `anchor` (`'quotation'`, `'enquiry'`, `'po'`) |
-| Who | `client_name`, `company_id`, `sales_person` (quotation's, else enquiry's, else project's), `service` (`service_quoted`, else enquiry `service`, else project `primary_service`), `enquiry_owner_id`, `quotation_owner_id`, `project_owner_ids int[]` (owners of the projects of its live POs) |
-| Enquiry | `enquiry_id`, `enquiry_no`, `enquiry_date`, `enquiry_created_at`, `enquiry_status`, `enquiry_first_responded_at`, `enquiry_last_contacted_at`, `enquiry_estimated_value`, `enquiry_currency`, `enquiry_source`, `enquiry_unqualified_reason` (name) |
+| Who | `client_name`, `company_id`, `sales_person` (quotation's, else enquiry's, else project's), `service` (`service_quoted`, else enquiry `service`, else project `primary_service`), `enquiry_owner_id`, `quotation_owner_id`, `project_owner_ids int[]` (owners of the projects it sits on: its own `project_id` and the projects of its live POs) |
+| Enquiry | `enquiry_id`, `enquiry_no`, `enquiry_sales_person` (the enquiry's own), `enquiry_date`, `enquiry_created_at`, `enquiry_status`, `enquiry_first_responded_at`, `enquiry_last_contacted_at`, `enquiry_estimated_value`, `enquiry_currency`, `enquiry_source`, `enquiry_unqualified_reason` (name) |
 | Quotation | `quotation_id`, `quotation_no`, `quotation_date`, `quotation_created_at`, `quotation_status`, `quotation_value` (`total` when it has lines, else `quotation_value`), `quotation_currency`, `line_count`, `price_needed_count`, `sent_at`, `accepted_at`, `closed_at`, `stage`, `stage_type`, `approval_status`, `expired`, `lost_reason`, `expected_close_date`, `project_id` (the quotation's, else the project of its first live PO) |
 | POs (live, aggregated) | `po_count`, `po_numbers text[]` (by `po_date`, then id), `first_po_id`, `first_po_number`, `first_po_date` (min `po_date`), `first_po_created_at`, `po_value_total`, `po_currency` (the one currency, else null), `pos_without_stages` (count with `stage_count = 0`), `stage_count`, `invoiced_total`, `received_total`, `stages_to_invoice`, `overdue_stages`, `overdue_amount` (Σ `due_now_amount` of Overdue stages), `billable_stages` (stages whose `stage_status` is not `Not Due` and that are not on hold), `next_stage_due` (earliest `invoice_due_date` of a stage not Paid), `fully_paid` (every live PO `payment_status = 'Fully Paid'`), `last_paid_on` (max `payment_received_date`), `delivered` (every live PO has `actual_delivery_date`) |
 | Start | Not a column. `startedOn(row)` in `steps.js` is the business day of the first of these that is set, in this order (not the earliest): `enquiry_date`, `enquiry_created_at`, `quotation_date`, `quotation_created_at`, `first_po_date`, `first_po_created_at`. A cast in the view would read a timestamp in the database's time zone (UTC), not the business one |
@@ -295,7 +295,7 @@ its quotation or project instead.
 `small` is filled for every step that has a record (so the drawer can show
 any step), using §3.3 for that step. `facts`, up to six per step:
 
-- Enquiry: Received, Source, Owner (`sales_person`), Estimate, Status,
+- Enquiry: Received, Source, Owner (`enquiry_sales_person`, the enquiry's own, not the sale's), Estimate, Status,
   Unqualified because (when set).
 - Quotation: Quotation no., Date, Value, Sent, Client said (Accepted on /
   No answer yet), Expected close; Lost because (when lost).

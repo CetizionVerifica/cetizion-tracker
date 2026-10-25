@@ -22,7 +22,7 @@ const S = DEFAULT_SETTINGS;
 // A sale at each step, plain enough that one override says what a test is about.
 const enquiry = (over = {}) => ({
   journey_key: 'e-1', anchor: 'enquiry', client_name: 'Example Textiles', sales_person: 'Asha Rao', service: 'ISO 9001',
-  enquiry_id: 1, enquiry_no: 'CTZ/ENQ/2026/901', enquiry_date: ago(2), enquiry_date: ago(2), enquiry_status: 'New',
+  enquiry_sales_person: 'Asha Rao', enquiry_id: 1, enquiry_no: 'CTZ/ENQ/2026/901', enquiry_date: ago(2), enquiry_date: ago(2), enquiry_status: 'New',
   enquiry_estimated_value: 450000, enquiry_currency: 'INR', enquiry_value_inr: 450000, enquiry_source: 'Referral',
   po_count: 0, po_numbers: [], ...over,
 });
@@ -518,6 +518,8 @@ describe('the card and the full journey', () => {
       { label: 'Estimate', value: 450000, kind: 'money', currency: 'INR' },
       { label: 'Status', value: 'New', kind: 'text' },
     ]);
+    // The enquiry's own owner, even once the sale's quotation is someone else's.
+    assert.equal(stepFacts('enquiry', enquiry({ sales_person: 'Bea Sales' }))[2].value, 'Asha Rao');
     const unqualified = stepFacts('enquiry', enquiry({ enquiry_status: 'Unqualified', enquiry_unqualified_reason: 'No budget this year' }));
     assert.deepEqual(unqualified.at(-1), { label: 'Unqualified because', value: 'No budget this year', kind: 'text' });
   });

@@ -328,7 +328,7 @@ export function stepFacts(key, row) {
     return [
       date('Received', row.enquiry_date ?? row.enquiry_created_at),
       text('Source', row.enquiry_source),
-      text('Owner', row.sales_person),
+      text('Owner', row.enquiry_sales_person),
       amount('Estimate', row.enquiry_estimated_value, row.enquiry_currency),
       text('Status', row.enquiry_status),
       ...(row.enquiry_unqualified_reason ? [text('Unqualified because', row.enquiry_unqualified_reason)] : []),

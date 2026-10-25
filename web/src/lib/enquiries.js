@@ -134,6 +134,18 @@ export function enquiryMove(e, { quotationOpens = true } = {}) {
   return 'log_call';
 }
 
+/**
+ * Whether the ⋯ menu also offers Convert to quotation, when the page's move
+ * is a call. Converting straight from New, Contacted or Nurture is allowed:
+ * the server asks for the services and an estimate on the way. A dropped
+ * enquiry is set going again with Edit first, and a Converted one whose
+ * link was removed is linked with Edit: saving it again creates no
+ * quotation (the server's quoteWonEnquiry), so Convert would do nothing.
+ */
+export function offersConvert(e, move = enquiryMove(e)) {
+  return move === 'log_call' && !e?.quotation_no && e?.status !== UNQUALIFIED && e?.status !== CONVERTED;
+}
+
 /** The button for each move. */
 export const MOVE_LABELS = {
   open_quotation: 'Open the quotation',

@@ -121,6 +121,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
 
   const as = (who) => ({
     get: (p) => request(app).get(p).set('Cookie', who.cookie),
+    post: (p, b) => request(app).post(p).set('Cookie', who.cookie).send(b),
     patch: (p, b) => request(app).patch(p).set('Cookie', who.cookie).send(b),
   });
   const key = { A: () => `q-${ids['Q-T-A']}`, B: () => `q-${ids['Q-T-B']}`, C: () => `q-${ids['Q-T-C']}`, W1: () => `q-${ids['Q-T-W1']}`,
@@ -274,6 +275,8 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.deepEqual(j.steps[0].record, { kind: 'enquiry', no: 'CTZ/ENQ/2026/901', date: (await pool.query(`SELECT (${T} - 20)::text AS d`)).rows[0].d });
     assert.deepEqual(j.steps[0].small.map((s) => s.state), ['done', 'done', 'current'], 'a done step keeps its small steps');
     assert.deepEqual(j.steps[0].facts.map((f) => f.label), ['Received', 'Source', 'Owner', 'Estimate', 'Status']);
+    // Sam's enquiry, though the sale's quotation (and so its sales_person) is Bea's.
+    assert.deepEqual(j.steps[0].facts[2], { label: 'Owner', value: 'Sam Sales', kind: 'text' });
     assert.deepEqual(j.steps[0].facts[3], { label: 'Estimate', value: 250000, kind: 'money', currency: 'INR' });
     assert.equal(j.steps[1].small.find((s) => s.state === 'current').label, 'Sent');
     assert.deepEqual(j.steps[2], { key: 'po', label: 'PO', state: 'future', record: null, since: null, small: [], facts: [], reachable: false });
@@ -381,5 +384,46 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     await pool.query(`DELETE FROM settings WHERE key = 'journey_stuck_enquiry_days'`);
     assert.equal(await flagOfD(), null, 'a missing row is the default too');
     await pool.query(`INSERT INTO settings (key, value) VALUES ('journey_stuck_enquiry_days', '7')`);
+  });
+
+  // ------------------------------------------------- how a sale is reached
+
+  test('an enquiry cannot be linked to a quotation its saver cannot reach, so the link cannot reach a sale', async () => {
+    // Q-T-W3 is Bea's, and no enquiry names it.
+    const made = await as(sam).post('/api/enquiries', { client_name: 'Example Looms', status: 'New', quotation_no: 'Q-T-W3' });
+    assert.equal(made.status, 422, JSON.stringify(made.body));
+    assert.ok(made.body.error.fields.quotation_no);
+    assert.equal((await pool.query(`SELECT 1 FROM enquiries WHERE client_name = 'Example Looms'`)).rowCount, 0, 'nothing saved');
+
+    const moved = await as(sam).patch(`/api/enquiries/${ids['CTZ/ENQ/2026/903']}`, { quotation_no: 'Q-T-W3' });
+    assert.equal(moved.status, 422, JSON.stringify(moved.body));
+    assert.equal((await pool.query(`SELECT quotation_no FROM enquiries WHERE enquiry_no = 'CTZ/ENQ/2026/903'`)).rows[0].quotation_no, null);
+    assert.ok(!(await board(sam)).cards.some((c) => c.key === key.W3()), "Bea's sale stays off Sam's board");
+    await of(sam, 'quotation=Q-T-W3').expect(404);
+
+    // A link that is not changing is left alone: Sam's enquiry names Bea's Q-T-A.
+    await as(sam).patch(`/api/enquiries/${ids['CTZ/ENQ/2026/901']}`, { quotation_no: 'Q-T-A', notes: 'Called back' }).expect(200);
+    // An admin links whatever they like; the enquiry's owner then reaches that sale.
+    await as(admin).patch(`/api/enquiries/${ids['CTZ/ENQ/2026/903']}`, { quotation_no: 'Q-T-W3' }).expect(200);
+    await of(sam, 'quotation=Q-T-W3').expect(200);
+    await pool.query(`UPDATE enquiries SET quotation_no = NULL WHERE enquiry_no = 'CTZ/ENQ/2026/903'`);
+  });
+
+  test("a project's owner reaches the sale on it before its first PO", async () => {
+    await pool.query(`
+      INSERT INTO projects (project_id, client_name, owner_user_id, sales_person, primary_service) VALUES ('PRJ-T-N', 'Sample Weaves', ${sam.id}, 'Sam Sales', 'Energy audit');
+      INSERT INTO quotations (quotation_no, client_name, owner_user_id, sales_person, service_quoted, quotation_date, quotation_value, currency, status, project_id)
+        VALUES ('Q-T-N', 'Sample Weaves', ${bea.id}, 'Bea Sales', 'Energy audit', ${T} - 5, 70000, 'INR', 'Won - PO Received', 'PRJ-T-N');
+    `);
+    try {
+      const { rows: [row] } = await pool.query(`SELECT journey_key, po_count, project_owner_ids FROM v_sales_journey WHERE quotation_no = 'Q-T-N'`);
+      assert.deepEqual([row.po_count, row.project_owner_ids], [0, [sam.id]]);
+      const n = (await of(sam, 'project=PRJ-T-N').expect(200)).body.data;
+      assert.equal(n.key, row.journey_key);
+      // Bea's quotation: by number only (D11).
+      assert.deepEqual([n.steps[1].reachable, n.steps[1].facts, n.value_hidden], [false, [], true]);
+    } finally {
+      await pool.query(`DELETE FROM quotations WHERE quotation_no = 'Q-T-N'; DELETE FROM projects WHERE project_id = 'PRJ-T-N'`);
+    }
   });
 });

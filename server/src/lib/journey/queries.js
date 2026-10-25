@@ -17,8 +17,10 @@ import { JOURNEY_SETTINGS } from './steps.js';
  * when it sees them all.
  *
  * A sale is yours when you own any record in it: its enquiry, its quotation,
- * or the project one of its live POs sits under (spec D7) — the same reach
- * `scopedSources` gives a PO through its quotation or its project. A sale
+ * or a project it sits on, its own or one of its live POs' (spec D7) — the
+ * same reach `scopedSources` gives a PO through its quotation or its project.
+ * An enquiry's link to a quotation counts only because saveEnquiry refuses
+ * one the saver cannot reach (lib/enquiries.js). A sale
  * whose records are all unowned is nobody's, and only an admin sees it, as
  * everywhere else (auth/ownership.js). The one parameter is referenced three
  * times on purpose: one value, three places.

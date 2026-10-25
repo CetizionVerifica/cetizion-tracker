@@ -1240,9 +1240,15 @@ SELECT
   COALESCE(q.service_quoted, e.service, pr.primary_service)         AS service,
   e.owner_user_id                                                   AS enquiry_owner_id,
   q.owner_user_id                                                   AS quotation_owner_id,
-  COALESCE(p.project_owner_ids, '{}')                               AS project_owner_ids,
+  -- Whoever owns a project the sale sits on (spec D7): the project of each
+  -- live PO, and the sale's own project, which a won quotation reaches
+  -- before its first PO is registered.
+  ARRAY(SELECT DISTINCT o FROM unnest(COALESCE(p.project_owner_ids, '{}') || pr.owner_user_id) AS o
+         WHERE o IS NOT NULL ORDER BY o)                            AS project_owner_ids,
   e.id                                                              AS enquiry_id,
   e.enquiry_no,
+  -- The enquiry's own owner, for its step; sales_person above is the sale's.
+  e.sales_person                                                    AS enquiry_sales_person,
   e.enquiry_date,
   e.created_at                                                      AS enquiry_created_at,
   e.status                                                          AS enquiry_status,

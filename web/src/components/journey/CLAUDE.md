@@ -171,7 +171,9 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
   Converted (the server creates the draft quotation, as from the list);
   otherwise **Log a call** (`TouchDialog` from `Timeline.jsx`). Once a
   quotation exists the button is **Open the quotation**. Edit and the rest
-  are in the ⋯ menu.
+  are in the ⋯ menu. A Converted enquiry with no quotation (its link was
+  removed) is linked again with Edit; it is never offered Convert, because
+  saving it creates nothing (server `quoteWonEnquiry`).
 - Body: "About the enquiry" (contact, services interested, estimated value,
   sector, country, next follow-up, notes), the `QuestionnaireCard` content
   or a link to open it as the list does, `EmailOrigin` for the enquiry,
