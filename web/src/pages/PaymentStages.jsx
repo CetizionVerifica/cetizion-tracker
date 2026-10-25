@@ -120,6 +120,9 @@ export default function PaymentStages() {
         title="Invoicing"
         subtitle="Every stage on every PO — status is computed, never typed"
         resource="payment-stages"
+        // The date picker filters ?from=&to= on invoice_date: the day the stage was invoiced; a stage not yet invoiced has none.
+        dateFilterLabel="Invoiced"
+        dateRange
         columns={columns}
         fields={fields}
         newLabel="Stage"

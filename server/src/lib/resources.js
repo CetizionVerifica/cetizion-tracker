@@ -324,6 +324,8 @@ export const resources = {
     defaultSort: 'project_id DESC',
     search: ['project_id', 'client_name', 'primary_service', 'project_manager', 'sales_person'],
     filters: ['project_stage', 'payment_status', 'project_manager', 'client_name', 'sales_person', 'company_id'],
+    // The list's date picker (?from=&to=) filters on the planned start.
+    dateFilter: 'planned_start_date',
     columns: [
       'project_id', 'client_name', 'primary_service', 'project_manager',
       'project_manager_email', 'sales_person', 'planned_start_date',
@@ -501,6 +503,8 @@ export const resources = {
     defaultSort: 'po_number, stage_no',
     search: ['po_number', 'stage_name', 'invoice_no', 'client_name', 'project_id'],
     filters: ['po_number', 'project_id', 'stage_status', 'trigger_event', 'client_name', 'invoice_no', 'document_id'],
+    // The list's date picker (?from=&to=) filters on the invoice date; a stage not yet invoiced has none.
+    dateFilter: 'invoice_date',
     columns: [
       'po_number', 'stage_no', 'stage_name', 'trigger_event', 'stage_percent',
       'invoice_no', 'invoice_date', 'amount_received', 'payment_received_date',
@@ -574,6 +578,7 @@ export const resources = {
     search: ['travel_id', 'employee_name', 'destination', 'po_number', 'client_name', 'origin'],
     filters: ['po_number', 'project_id', 'arranged_by', 'vendor_invoice_status', 'reimbursement_status', 'employee_name',
       'trip_type_id', 'vendor_id', 'staff_id', 'cancelled', 'chargeable'],
+    dateFilter: 'travel_start_date',
     columns: [
       'travel_id', 'po_number', 'service_delivered', 'employee_name',
       'employee_email', 'purpose', 'destination', 'travel_start_date',
@@ -625,6 +630,7 @@ export const resources = {
     defaultSort: 'invoice_date DESC NULLS FIRST, id DESC',
     search: ['vendor_invoice_id', 'travel_id', 'vendor_invoice_no', 'travel_vendor', 'employee_name'],
     filters: ['travel_id', 'payment_status', 'travel_vendor', 'project_id', 'vendor_id'],
+    dateFilter: 'invoice_date',
     // The invoice PDF (#196 §4.4).
     hasDocument: true,
     columns: [
@@ -677,6 +683,7 @@ export const resources = {
     defaultSort: 'submission_date DESC NULLS LAST, id DESC',
     search: ['claim_id', 'travel_id', 'employee_name', 'expense_category'],
     filters: ['travel_id', 'approval_status', 'status', 'employee_name', 'claim_month', 'project_id'],
+    dateFilter: 'submission_date',
     columns: [
       'claim_id', 'travel_id', 'expense_category', 'claim_month',
       'amount_claimed', 'submission_date', 'approval_status', 'approved_by',
@@ -1176,6 +1183,7 @@ export const resources = {
     defaultSort: 'credit_note_date DESC NULLS LAST, id DESC',
     search: ['credit_note_no', 'remarks'],
     filters: ['vendor_id', 'against_invoice_id', 'kind', 'segment_id'],
+    dateFilter: 'credit_note_date',
     columns: ['vendor_id', 'credit_note_no', 'credit_note_date', 'against_invoice_id', 'segment_id', 'kind',
       'refund_amount', 'cancellation_charges', 'remarks', 'document_id'],
     schema: z.object({
