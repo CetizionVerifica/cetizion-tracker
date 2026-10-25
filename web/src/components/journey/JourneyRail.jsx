@@ -40,7 +40,7 @@ export function JourneyRail({ of, verdict, actions, note, refreshKey }) {
         {...page}
         placeholder={journey.loading
           ? <Skeleton className="h-[96px] rounded-md" />
-          : <Unavailable onRetry={journey.refetch} />}
+          : <Unavailable notFound={journey.errorStatus === 404} onRetry={journey.refetch} />}
       />
     );
   }
@@ -72,12 +72,16 @@ function Peek({ facts }) {
   );
 }
 
-/** One muted line where the rail would be, and a way to try again. */
-function Unavailable({ onRetry }) {
+/**
+ * One muted line where the rail would be. A 404 is an answer, not a
+ * failure (a cancelled PO, a project with no order yet), so it offers no
+ * retry; anything else does.
+ */
+function Unavailable({ notFound, onRetry }) {
   return (
     <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-muted-foreground">
-      The journey for this record could not be loaded.
-      <Button variant="link" size="sm" className="h-auto p-0 text-[12.5px]" onClick={onRetry}>Try again</Button>
+      {notFound ? 'This record is not part of a sale yet.' : 'The journey for this record could not be loaded.'}
+      {!notFound && <Button variant="link" size="sm" className="h-auto p-0 text-[12.5px]" onClick={onRetry}>Try again</Button>}
     </p>
   );
 }

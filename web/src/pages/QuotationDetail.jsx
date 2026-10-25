@@ -7,6 +7,7 @@ import {
 } from '../components/ui.jsx';
 import { Chip, initialsOf, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
 import { JourneyRail } from '../components/journey/JourneyRail.jsx';
+import { recordPath } from '../lib/journey.js';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
@@ -393,7 +394,7 @@ export default function QuotationDetail() {
             </GridFact>
             <GridFact label="Enquiry">
               {q.enquiry
-                ? <Link className="mono" to={`/enquiries?q=${encodeURIComponent(q.enquiry.enquiry_no)}`}>{q.enquiry.enquiry_no}</Link>
+                ? <Link className="mono" to={recordPath('enquiry', q.enquiry.enquiry_no)}>{q.enquiry.enquiry_no}</Link>
                 : <span className="text-muted-foreground">—</span>}
             </GridFact>
             <GridFact label="Project">

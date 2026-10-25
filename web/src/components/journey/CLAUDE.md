@@ -80,9 +80,15 @@ All new props optional; a call with today's props renders exactly as today.
   and the eyebrow says "Lost at Quotation" / "Unqualified at Enquiry"; paid
   → all done, eyebrow "Complete · paid".
 - Loading: a `Skeleton` of the rail's height, verdict and actions already
-  shown. Error or 404: the verdict and actions still show, with one muted
-  line "The journey for this record could not be loaded." and a retry. The
-  page never loses its primary button because the journey failed.
+  shown. Error: the verdict and actions still show, with one muted line
+  "The journey for this record could not be loaded." and a retry. 404 is an
+  answer, not a failure: "This record is not part of a sale yet.", no
+  retry. The page never loses its primary button because the journey
+  failed.
+- A step with `reachable: false` (a record the viewer does not own) shows
+  its number and date but is not a link and has no preview.
+- The PO page asks by `{ po }`, or by its quotation or project when the PO
+  is cancelled or replaced (those are in no journey).
 - On a phone the rail scrolls sideways with the current step centred, as
   `RecordFlow` already does.
 
@@ -103,7 +109,8 @@ All new props optional; a call with today's props renders exactly as today.
 - Footer: on the current step, one primary button with `next.label`
   linking to `currentRecordPath(card)`; on any step with a record, **Open
   full page**. A step with no record says "Not recorded" and offers
-  nothing.
+  nothing. A step with `reachable: false` says someone else owns it, shows
+  no timeline and offers no **Open full page**.
 
 ### `JourneyBoard` (B)
 
@@ -121,7 +128,8 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
   actions with the owner select. Quotation stages is today's board,
   untouched; keep its code, moved into its own function in the same file.
 - Toolbar: period (Last 30 / 90 / 365 days, or This financial year:
-  April to March), owner, service, **Stuck only** toggle with its count,
+  April to March), owner, service, **Stuck only** toggle with its count
+  (the server's `stuck_count`, the same with the switch on or off),
   **Show closed** toggle.
 - Funnel strip: four figures, Started, Quoted, Won, With PO, each a button
   that sets `cohort`; a conversion chip between figures ("74% quoted")
@@ -158,18 +166,22 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
 - Body: "About the enquiry" (contact, services interested, estimated value,
   sector, country, next follow-up, notes), the `QuestionnaireCard` content
   or a link to open it as the list does, `EmailOrigin` for the enquiry,
-  and the `Timeline` on the right rail.
+  and the `Timeline` at the end of the body (as on the other record pages,
+  `web/CLAUDE.md` §4 item 5).
 - Load with the generic resource route by `enquiry_no`
   (`api.get('enquiries', key)`); check `lib/crud.js` reads `naturalKey`.
   404 → `NotFound`.
-- Do not copy the enquiry form's field list: export it from
-  `Enquiries.jsx` (or move it to `lib/`) and use it from both.
+- Do not copy the enquiry form's field list: it lives in
+  `lib/enquiries.js` (`enquiryFields`) and both pages use it.
 
 ## 4. Rules specific to this feature
 
 - Three big steps, labelled exactly Enquiry, Quotation, PO, everywhere.
 - Every link to an enquiry, quotation or PO uses `recordPath` (numbers have
-  slashes and spaces).
+  slashes and spaces). The questionnaire link in `QuotationAnswers.jsx`
+  still opens the list (`/enquiries?q=…&questionnaire=1`), because the
+  list is where that dialog lives; server emails (`notify`, `followUps`)
+  still link to the list's search too.
 - Status is word + tone + glyph: `late` for overdue and stuck, `waiting` for
   slow, unsent, approval and price, `info` for nurturing, `settled` for
   done. Use `Chip`/`Badge`, never a hand-rolled pill.
@@ -185,8 +197,9 @@ filters in the URL (`useSearchParams`): `sales_person`, `service`, `stuck`,
 - `web/test/journey.test.js`: `recordPath` encodes slashes and spaces and
   returns null for a missing number; `currentRecordPath` per step.
 - `web/test/journeyBoard.test.js`: the funnel's conversion percentages
-  (zero denominators), filter ⇄ URL round trip, cohort chip text.
-- `web/test/uiConsistency.test.js`: Quotation, PO and Project pages render
+  (zero denominators), filter ⇄ URL round trip, cohort chip text, a step
+  open unless the server says `reachable: false`.
+- `web/test/uiConsistency.test.js`: Enquiry, Quotation, PO and Project pages render
   `<JourneyRail`; `JourneyRail.jsx` renders `<RecordFlow`; Trip keeps
   `<RecordFlow` and `flowSteps(`; `JOURNEY_STEPS` labels are exactly
   Enquiry, Quotation, PO.

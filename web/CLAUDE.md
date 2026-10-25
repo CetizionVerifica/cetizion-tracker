@@ -158,7 +158,14 @@ shows its number and date, and previews its first facts on hover or focus. The c
 step carries days in step in its flag's tone, with its small steps in a slim row under
 the rail (Priced → Sent → Negotiating → Accepted → Won inside Quotation). A sale that
 stopped says where ("Lost at Quotation"); a paid one reads "Complete · paid". If the
-journey cannot load, the rail says so in one line and the page keeps its button.
+journey cannot load, the rail says so in one line and the page keeps its button. A
+record the viewer does not own shows its number but is not a link.
+
+The one other place the journey is drawn is the Journey board's step drawer
+(`components/journey/JourneyDrawer.jsx`): its three steps run down the side as buttons
+that switch the panel beside them (`aria-pressed`, ↑/↓), so they are not a `RecordFlow`,
+but they use the same discs, colours and connector as the rail. Nothing else draws
+journey steps by hand.
 
 Travel is a different process and keeps its own rail, worked out by the page with
 `flowSteps`: Trip → Agency bill → Agency paid → Client invoice → Client paid.

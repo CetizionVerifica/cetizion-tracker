@@ -166,6 +166,9 @@ One branch, one PR, one commit per stream so the history reads by part.
 | D8 | Lost and Unqualified sales are hidden unless "Show closed"; Paid ones show for `journey_paid_visible_days` | Plan §3.2 |
 | D9 | A funnel number filters the board to its cohort, closed sales included, so the figure opens the records behind it (`web/CLAUDE.md` §2.5) | This spec |
 | D10 | Below `lg` the board is three tabs; the rail stacks vertically on a phone | Plan §3.5 |
+| D11 | A sales user sees a linked record they do not own by its number only: no facts, no value, no link, no next action (server §6). This settles §9 question 1 | Integration review, 25 Oct; follows question 1's default |
+| D12 | Days in step count from each record's own date (enquiry date, quotation date, PO date), not the day it was keyed in | Integration review, 25 Oct: imported records looked a day old |
+| D13 | The funnel never widens: a sale with a PO counts as quoted even with no quotation on record | Integration review, 25 Oct |
 
 ## 7. Out of scope
 
@@ -187,11 +190,13 @@ One branch, one PR, one commit per stream so the history reads by part.
 | C6 | Plan ↔ code | The plan's owner filter is by person; Pipeline filters by the free-text `sales_person` | The board uses the same `sales_person` filter and `lookups.sales_people` |
 | C7 | Plan ↔ code | Enquiry numbers contain slashes (`CTZ/ENQ/2026/004`) | Links always `encodeURIComponent` the number; journey keys use internal ids (`q-12`) |
 | C8 | Plan ↔ code | A project can carry several quotations, and a PO may name none | Server §2: a PO with no quotation joins the won (else newest) quotation on its project; a project page shows that quotation's journey |
+| C9 | Spec ↔ code (found while building) | Server §3.4 counted days from `created_at`; §3.5's slow label was a bare "24 days"; §3.7's Quoted could be smaller than Won; the web counted Stuck only itself | Fixed in code and spec: D12, "Slow 24 days" (word + tone, `web/CLAUDE.md` §1), D13, the server's `stuck_count` |
+| C10 | Spec ↔ code (found while building) | D7 let a sales user reach a sale through one record but showed every record's facts | D11 |
 
 ## 9. Open questions
 
 None blocking. Defaults apply until Shyam says otherwise:
 
-1. Should a sales user see a linked record's number when they do not own it
-   (D7)? Default: yes, the number only; opening it is refused as today.
+1. ~~Should a sales user see a linked record's number when they do not own
+   it (D7)?~~ Settled by D11: the number only.
 2. Should the journey reach Renewals later? Default: not in this spec.

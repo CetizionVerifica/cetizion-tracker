@@ -13,7 +13,7 @@ import { currentRecordPath, journeyBoard } from '../../lib/journey.js';
 import { localToday } from '../../lib/reportPeriods.js';
 import {
   PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText, funnelFigures, isFiltered,
-  medianText, periodPhrase, readBoardQuery, stuckCount, withFilters, withoutRateText,
+  medianText, periodPhrase, readBoardQuery, withFilters, withoutRateText,
 } from './boardModel.js';
 import { JourneyDrawer } from './JourneyDrawer.jsx';
 
@@ -79,7 +79,8 @@ export function JourneyBoard() {
         )}
         <Toggle on={filters.stuck} onClick={() => set({ stuck: !filters.stuck })}>
           Stuck only
-          {data && <span className="num rounded-sm bg-secondary px-1.5 text-[11px] text-secondary-text">{number(stuckCount(cards))}</span>}
+          {/* The server counts it before the switch, so it reads the same on and off. */}
+          {data?.stuck_count != null && <span className="num rounded-sm bg-secondary px-1.5 text-[11px] text-secondary-text">{number(data.stuck_count)}</span>}
         </Toggle>
         <Toggle on={filters.closed} onClick={() => set({ closed: !filters.closed })}>Show closed</Toggle>
       </div>

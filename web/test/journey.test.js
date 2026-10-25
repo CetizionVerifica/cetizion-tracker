@@ -99,7 +99,7 @@ test('days in step reads as a phrase', () => {
 
 test('the current step shows days in step in the tone of its flag', () => {
   assert.deepEqual(stepBadge({ days_in_step: 4, flag: null }), { label: '4 days', tone: 'plain' });
-  assert.deepEqual(stepBadge({ days_in_step: 24, flag: { kind: 'slow', label: '24 days', tone: 'waiting' } }), { label: '24 days', tone: 'waiting' });
+  assert.deepEqual(stepBadge({ days_in_step: 24, flag: { kind: 'slow', label: 'Slow 24 days', tone: 'waiting' } }), { label: 'Slow 24 days', tone: 'waiting' });
   assert.deepEqual(stepBadge({ days_in_step: 48, flag: { kind: 'stuck', label: 'Stuck 48 days', tone: 'late' } }), { label: 'Stuck 48 days', tone: 'late' });
   // A flag about something other than time lends its tone; the page's sentence says what it is.
   assert.deepEqual(stepBadge({ days_in_step: 12, flag: { kind: 'overdue', label: '₹3,00,000 overdue', tone: 'late' } }), { label: '12 days', tone: 'late' });
@@ -113,7 +113,7 @@ const atQuotation = {
   exit: null,
   small_step: 'Accepted',
   days_in_step: 24,
-  flag: { kind: 'slow', label: '24 days', tone: 'waiting' },
+  flag: { kind: 'slow', label: 'Slow 24 days', tone: 'waiting' },
   steps: [
     {
       key: 'enquiry', label: 'Enquiry', state: 'done',
@@ -157,7 +157,7 @@ test('on its own page the rail links every other record, and not the one you are
   assert.equal(quotation.to, undefined, 'no link to the page you are on');
   assert.deepEqual(quotation.facts, []);
   assert.equal(quotation.meta, 'Q-118 · 01 Oct 2026');
-  assert.deepEqual(quotation.badge, { label: '24 days', tone: 'waiting' });
+  assert.deepEqual(quotation.badge, { label: 'Slow 24 days', tone: 'waiting' });
 
   assert.deepEqual({ to: po.to, meta: po.meta, state: po.state }, { to: undefined, meta: undefined, state: 'future' });
 
@@ -171,6 +171,14 @@ test('from the enquiry the same journey links the quotation, the current step', 
   assert.equal(steps[0].to, undefined);
   assert.equal(steps[1].to, '/quotations/Q-118');
   assert.deepEqual(steps[1].facts.map((f) => f.label), ['Quotation no.']);
+});
+
+test('a record someone else owns shows its number and is not a link', () => {
+  const theirs = { ...atQuotation, steps: [{ ...atQuotation.steps[0], reachable: false, facts: [] }, ...atQuotation.steps.slice(1)] };
+  const [enquiry] = railProps(theirs, '/quotations/Q-118').steps;
+  assert.equal(enquiry.to, undefined);
+  assert.equal(enquiry.meta, 'CTZ/ENQ/2026/004 · 18 Sep 2026');
+  assert.deepEqual(enquiry.facts, []);
 });
 
 test('a step the sale went past without a record is hollow and goes nowhere', () => {

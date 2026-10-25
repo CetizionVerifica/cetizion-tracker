@@ -162,11 +162,15 @@ const reached = (key, row, label) => SMALL[key](row).find((s) => s.label === lab
 
 // ---------------------------------------------------------------- §3.4 days in step
 
-/** When the sale entered a step; null when that step has no record. */
+/**
+ * When the sale entered a step; null when that step has no record. Each
+ * record's own date first, the day it was keyed in only when that is blank:
+ * a sheet imported today holds enquiries that arrived months ago.
+ */
 export function stepSince(key, row) {
   if (!hasRecord[key](row)) return null;
-  if (key === 'enquiry') return dayOf(row.enquiry_created_at);
-  if (key === 'quotation') return dayOf(row.quotation_created_at);
+  if (key === 'enquiry') return dayOf(row.enquiry_date ?? row.enquiry_created_at);
+  if (key === 'quotation') return dayOf(row.quotation_date ?? row.quotation_created_at);
   return dayOf(row.first_po_date ?? row.first_po_created_at);
 }
 
@@ -211,7 +215,7 @@ export function flagOf(row, { step, exit, days }, settings) {
     }
     const limit = limitFor(step, row, settings);
     if (limit != null && days > limit * 2) return { kind: 'stuck', label: `Stuck ${plural(days, 'day')}`, tone: 'late' };
-    if (limit != null && days > limit) return { kind: 'slow', label: plural(days, 'day'), tone: 'waiting' };
+    if (limit != null && days > limit) return { kind: 'slow', label: `Slow ${plural(days, 'day')}`, tone: 'waiting' };
   }
   if (step === 'enquiry' && row.enquiry_status === 'Nurture') return { kind: 'nurture', label: 'Nurturing', tone: 'info' };
   return null;
@@ -380,10 +384,14 @@ export function journeyDetail(row, settings = DEFAULT_SETTINGS, today = business
 
 // ---------------------------------------------------------------- §3.7 funnel
 
-/** Is this row in the named cohort? Membership asks only what has happened, so exited sales count. */
+/**
+ * Is this row in the named cohort? Membership asks only what has happened, so
+ * exited sales count. Each cohort holds the next: a sale ordered with no
+ * quotation on record still got past quoting, so the funnel never widens.
+ */
 export function inCohort(row, cohort) {
   if (cohort === 'started') return true;
-  if (cohort === 'quoted') return hasRecord.quotation(row);
+  if (cohort === 'quoted') return hasRecord.quotation(row) || hasPo(row);
   if (cohort === 'won') return wonReached(row) || hasPo(row);
   if (cohort === 'with_po') return hasPo(row);
   return false;
@@ -459,21 +467,77 @@ export function summariseSteps(cards) {
  * GET /api/journey from the rows this caller may see, already narrowed by
  * owner and service. The funnel is counted before the board's own switches
  * (stuck, closed, cohort), so pressing a figure shows the same number of cards.
+ * `stuck_count` is counted before the Stuck only switch, so the switch can
+ * say how many it would keep whether it is on or off. `shown` lets a caller
+ * (the route, for a restricted scope) narrow what a card says about records
+ * it does not own.
  */
-export function journeyBoard(rows, settings, today, { period, stuck = false, closed = false, cohort = null } = {}) {
+export function journeyBoard(rows, settings, today, { period, stuck = false, closed = false, cohort = null, shown = (card) => card } = {}) {
   const cards = [];
+  let stuckCount = 0;
   for (const row of rows) {
     const state = journeyState(row, settings, today);
     if (!visibleOnBoard(row, state, settings, today, { closed, cohort, period })) continue;
-    if (stuck && !STUCK_KINDS.includes(state.flag?.kind)) continue;
-    cards.push(toCard(row, state));
+    const isStuck = STUCK_KINDS.includes(state.flag?.kind);
+    if (isStuck) stuckCount += 1;
+    if (stuck && !isStuck) continue;
+    cards.push(shown(toCard(row, state), row));
   }
   cards.sort(compareCards);
   return {
     period,
     funnel: funnel(rows, period.from, period.to),
     steps: summariseSteps(cards),
+    stuck_count: stuckCount,
     cards,
     settings,
+  };
+}
+
+// ---------------------------------------------------------------- §6 records the caller does not own
+
+/**
+ * Which steps' records this scope may open, by the same reach each record's
+ * own page gives (auth/ownership.js): an enquiry and a quotation by their
+ * owner, a PO by the owner of its quotation or of its project. An admin
+ * reaches every step.
+ */
+export function reachableSteps(row, scope) {
+  if (scope.unrestricted) return { enquiry: true, quotation: true, po: true };
+  const me = Number(scope.ownerId);
+  const owns = (id) => id != null && Number(id) === me;
+  return {
+    enquiry: owns(row.enquiry_owner_id),
+    quotation: owns(row.quotation_owner_id),
+    po: owns(row.quotation_owner_id) || (row.project_owner_ids ?? []).some(owns),
+  };
+}
+
+/**
+ * A card as a caller sees it: when the current step's record is someone
+ * else's, its value and the amount in an overdue flag are left out (spec D7,
+ * §9 question 1: the number only), and so is the next action, which opens a
+ * record they cannot. Where the sale is still shows.
+ */
+export function cardFor(card, row, scope) {
+  if (reachableSteps(row, scope)[card.step]) return card;
+  const flag = card.flag?.kind === 'overdue'
+    ? { ...card.flag, label: `${plural(num(row.overdue_stages), 'stage')} overdue` }
+    : card.flag;
+  return { ...card, value: null, currency: null, value_inr: null, flag, next: null };
+}
+
+/**
+ * One journey as a caller sees it: each step says whether its record can be
+ * opened, and a step whose record is someone else's keeps its number, state
+ * and small steps (the card says as much) but not its facts.
+ */
+export function detailFor(detail, row, scope) {
+  const reach = reachableSteps(row, scope);
+  return {
+    ...cardFor(detail, row, scope),
+    steps: detail.steps.map((s) => (reach[s.key] || !s.record
+      ? { ...s, reachable: Boolean(s.record) }
+      : { ...s, reachable: false, facts: [] })),
   };
 }

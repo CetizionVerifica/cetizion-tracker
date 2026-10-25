@@ -185,7 +185,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     const data = await board(admin);
     const today = businessToday();
     assert.deepEqual(data.period, { from: daysBefore(today, 90), to: today });
-    assert.deepEqual(data.funnel, { started: 10, quoted: 6, won: 3, with_po: 3 });
+    assert.deepEqual(data.funnel, { started: 10, quoted: 7, won: 3, with_po: 3 }, 'the PO-only sale got past quoting');
     assert.deepEqual(data.steps.map((s) => [s.key, s.label, s.count]), [['enquiry', 'Enquiry', 2], ['quotation', 'Quotation', 3], ['po', 'PO', 3]]);
     assert.deepEqual(data.settings, { enquiry_days: 7, quotation_days: 21, unsent_days: 5, po_days: 30, paid_visible_days: 30 });
     // Lost and unqualified wait for Show closed; the paid sale stays, paid three days ago.
@@ -201,7 +201,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.equal(b.small_step, 'Negotiating');
     assert.deepEqual(b.progress, ['skipped', 'current', 'future']);
     assert.equal(b.days_in_step, 30);
-    assert.deepEqual(b.flag, { kind: 'slow', label: '30 days', tone: 'waiting' });
+    assert.deepEqual(b.flag, { kind: 'slow', label: 'Slow 30 days', tone: 'waiting' });
     assert.deepEqual(b.next, { verb: 'follow_up', label: 'Follow up' });
     assert.deepEqual([b.value, b.currency, b.value_inr], [10000, 'EUR', 900000], 'euros at the rate on the quotation\'s date');
     assert.ok(Number.isInteger(b.company_id), 'the client is linked to its company');
@@ -239,7 +239,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
 
   test('a funnel figure opens its cohort, closed sales included', async () => {
     const quoted = await board(admin, '?cohort=quoted');
-    assert.deepEqual(cardKeys(quoted), keys('A', 'B', 'C', 'W1', 'W2', 'W3'));
+    assert.deepEqual(cardKeys(quoted), keys('A', 'B', 'C', 'W1', 'W2', 'W3', 'P'));
     assert.equal(quoted.cards.length, quoted.funnel.quoted);
     assert.deepEqual(cardKeys(await board(admin, '?cohort=with_po')), keys('C', 'W2', 'P'));
     const { rows: [{ from }] } = await pool.query(`SELECT (CURRENT_DATE - 25)::text AS from`);
@@ -271,7 +271,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.deepEqual(j.steps[0].facts.map((f) => f.label), ['Received', 'Source', 'Owner', 'Estimate', 'Status']);
     assert.deepEqual(j.steps[0].facts[3], { label: 'Estimate', value: 250000, kind: 'money', currency: 'INR' });
     assert.equal(j.steps[1].small.find((s) => s.state === 'current').label, 'Sent');
-    assert.deepEqual(j.steps[2], { key: 'po', label: 'PO', state: 'future', record: null, since: null, small: [], facts: [] });
+    assert.deepEqual(j.steps[2], { key: 'po', label: 'PO', state: 'future', record: null, since: null, small: [], facts: [], reachable: false });
   });
 
   test('/of by quotation number or id, and by either PO of a sale', async () => {
@@ -323,6 +323,20 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     assert.equal((await of(sam, 'project=PRJ-T-W')).status, 404, 'an unowned project is nobody\'s');
   });
 
+  test('a salesperson sees the facts and value only of the records they own; the rest by number', async () => {
+    // Sam owns Q-T-A's enquiry; Bea owns the quotation.
+    const a = (await of(sam, 'quotation=Q-T-A').expect(200)).body.data;
+    assert.deepEqual(a.steps.map((s) => [s.key, s.reachable, s.facts.length > 0]), [['enquiry', true, true], ['quotation', false, false], ['po', false, false]]);
+    assert.equal(a.steps[1].record.no, 'Q-T-A');
+    assert.deepEqual([a.value, a.value_inr], [null, null]);
+    const card = (await board(sam)).cards.find((c) => c.key === key.A());
+    assert.deepEqual([card.step, card.value, card.value_inr], ['quotation', null, null]);
+    const own = (await of(bea, 'quotation=Q-T-A').expect(200)).body.data;
+    assert.deepEqual(own.steps.map((s) => s.reachable), [false, true, false], 'Bea does not own the enquiry');
+    assert.equal(own.value, 300000);
+    assert.ok((await of(admin, 'quotation=Q-T-A').expect(200)).body.data.steps.slice(0, 2).every((s) => s.reachable && s.facts.length));
+  });
+
   test('HR is refused both routes', async () => {
     assert.equal((await as(hema).get('/api/journey')).status, 403);
     assert.equal((await of(hema, 'quotation=Q-T-B')).status, 403);
@@ -337,7 +351,7 @@ describe('the sales journey', { skip: !ADMIN_URL && 'TEST_DATABASE_URL is not se
     await as(admin).patch('/api/settings/journey_stuck_enquiry_days', { value: '2' }).expect(200);
     assert.deepEqual(await flagOfD(), { kind: 'stuck', label: 'Stuck 5 days', tone: 'late' });
     await as(admin).patch('/api/settings/journey_stuck_enquiry_days', { value: '3' }).expect(200);
-    assert.deepEqual(await flagOfD(), { kind: 'slow', label: '5 days', tone: 'waiting' });
+    assert.deepEqual(await flagOfD(), { kind: 'slow', label: 'Slow 5 days', tone: 'waiting' });
     assert.equal((await board(admin)).settings.enquiry_days, 3);
 
     await pool.query(`UPDATE settings SET value = '' WHERE key = 'journey_stuck_enquiry_days'`);

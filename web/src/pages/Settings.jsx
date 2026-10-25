@@ -347,6 +347,17 @@ const GROUPS = [
     ],
   },
   {
+    title: 'Sales journey',
+    hint: 'when the Journey board on Pipeline calls a sale slow; stuck after twice this',
+    items: [
+      { key: 'journey_stuck_enquiry_days', label: 'An enquiry is slow after', unit: 'days' },
+      { key: 'journey_stuck_quotation_days', label: 'An open quotation is slow after', unit: 'days' },
+      { key: 'journey_unsent_days', label: 'Nudge a quotation still unsent after', unit: 'days' },
+      { key: 'journey_stuck_po_days', label: 'A PO with nothing invoiced is slow after', unit: 'days' },
+      { key: 'journey_paid_visible_days', quiet: true, label: 'A paid sale stays on the board for', unit: 'days' },
+    ],
+  },
+  {
     title: 'What counts as a problem',
     hint: 'the thresholds behind the red and amber on every page',
     items: [

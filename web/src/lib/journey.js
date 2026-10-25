@@ -145,8 +145,9 @@ function recordLine(record) {
  *
  * A step with a record links to it and shows its number and date, and its
  * first three facts are the preview on hover. The record whose page this
- * is (`pathname`) is the one exception: a link to the page you are on is a
- * dead end, so it shows its number and nothing to press. The current step
+ * is (`pathname`) is one exception: a link to the page you are on is a
+ * dead end, so it shows its number and nothing to press. A record the
+ * caller does not own (`reachable: false`) is the other. The current step
  * carries days in step and its small steps; a sale that stopped says where.
  *
  * `facts` rides along on each step for the component to turn into the
@@ -155,7 +156,8 @@ function recordLine(record) {
 export function railProps(journey, pathname = '') {
   const given = journey?.steps || [];
   const steps = given.map((step) => {
-    const path = step.record ? recordPath(step.record.kind, step.record.no) : null;
+    // A record someone else owns shows its number but is not a link: its page would refuse.
+    const path = step.record && step.reachable !== false ? recordPath(step.record.kind, step.record.no) : null;
     const elsewhere = Boolean(path) && !samePath(path, pathname);
     return {
       label: step.label,

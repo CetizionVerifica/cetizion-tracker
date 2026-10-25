@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   BOARD_KEYS, DEFAULT_PERIOD, PERIODS, boardColumns, boardRequest, cardStatus, cardValue, cohortChipText,
   conversion, conversionText, drawerView, exitChip, funnelFigures, isFiltered, journeyLookup, medianText,
-  openingStep, periodPhrase, periodRange, readBoardQuery, stepAfter, stuckCount, timelineOf, withFilters,
+  openingStep, periodPhrase, periodRange, readBoardQuery, stepAfter, timelineOf, withFilters,
   withoutRateText, writeBoardQuery,
 } from '../src/components/journey/boardModel.js';
 
@@ -205,20 +205,6 @@ test('a column says its median days here, and who it left out of its value', () 
   assert.match(withoutRateText(3), /^3 sales are left out .* their currency/);
 });
 
-test('Stuck only counts the sales its server rule keeps', () => {
-  const cards = [
-    card({ flag: { kind: 'stuck', label: 'Stuck 48 days', tone: 'late' } }),
-    card({ flag: { kind: 'slow', label: '24 days', tone: 'waiting' } }),
-    card({ flag: { kind: 'overdue', label: '₹3,00,000 overdue', tone: 'late' } }),
-    card({ flag: { kind: 'unsent', label: 'Unsent 6 days', tone: 'waiting' } }),
-    card({ flag: { kind: 'approval', label: 'Discount needs approval', tone: 'waiting' } }),
-    card({ flag: { kind: 'nurture', label: 'Nurturing', tone: 'info' } }),
-    card({ flag: null }),
-  ];
-  assert.equal(stuckCount(cards), 4);
-  assert.equal(stuckCount(undefined), 0);
-});
-
 test('a card shows its value in its own currency, and says when it has none', () => {
   assert.equal(cardValue(card()), '₹5,90,000');
   assert.equal(cardValue(card({ value: 12000, currency: 'EUR' })), '€12,000');
@@ -282,11 +268,14 @@ test('once it arrives each step carries its record line, small steps and facts',
   };
   const { steps } = drawerView(card(), detail);
   assert.deepEqual(steps.map((s) => s.lines), [['CTZ/ENQ/2026/004', '18 Sep 2026'], ['Q-118', '01 Oct 2026'], ['Not recorded']]);
+  assert.deepEqual(steps.map((s) => s.reachable), [true, true, true], 'open unless the server says otherwise');
   assert.equal(steps[0].facts[0].value, 'Email');
   assert.equal(steps[1].small[0].label, 'Priced');
   assert.equal(steps[1].since, '2026-10-01');
   const several = drawerView(card(), { ...detail, steps: [detail.steps[0], detail.steps[1], { ...detail.steps[2], state: 'current', record: { kind: 'po', no: 'PO 4500183', date: '2026-10-20', count: 3 } }] });
   assert.deepEqual(several.steps[2].lines, ['PO 4500183', '20 Oct 2026 · +2 more']);
+  const theirs = drawerView(card(), { ...detail, steps: [{ ...detail.steps[0], reachable: false, facts: [] }, detail.steps[1], detail.steps[2]] });
+  assert.equal(theirs.steps[0].reachable, false, 'someone else\'s enquiry: no Open full page, no timeline');
 });
 
 test('each step\'s timeline is its record\'s, by the number its page uses', () => {

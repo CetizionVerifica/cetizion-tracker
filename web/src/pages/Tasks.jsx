@@ -5,12 +5,13 @@ import { Badge, Card, DataTable, Empty, Select, useToast } from '../components/u
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
+import { recordPath } from '../lib/journey.js';
 
 /** Every open task across the tracker (#22): what is due, for whom, on which record. */
 const LINK = {
   company: (id) => `/companies/${id}`,
   contact: () => '/companies',
-  enquiry: (id) => `/enquiries?q=${encodeURIComponent(id)}`,
+  enquiry: (id) => recordPath('enquiry', id),
   quotation: (id) => `/quotations/${encodeURIComponent(id)}`,
   project: (id) => `/projects/${encodeURIComponent(id)}`,
   purchase_order: (id) => `/purchase-orders/${encodeURIComponent(id)}`,

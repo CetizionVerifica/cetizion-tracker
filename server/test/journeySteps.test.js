@@ -4,6 +4,7 @@ import { journeyClause } from '../src/lib/journey/queries.js';
 import {
   COHORTS, DEFAULT_SETTINGS, STUCK_KINDS, bigStates, compareCards, dayOf, daysBefore, flagOf, funnel, journeyBoard,
   journeyDetail, journeyState, nextAction, smallSteps, stepAndExit, stepFacts, summariseSteps, toCard, visibleOnBoard,
+  cardFor, detailFor, reachableSteps,
 } from '../src/lib/journey/steps.js';
 
 /**
@@ -21,13 +22,13 @@ const S = DEFAULT_SETTINGS;
 // A sale at each step, plain enough that one override says what a test is about.
 const enquiry = (over = {}) => ({
   journey_key: 'e-1', anchor: 'enquiry', client_name: 'Example Textiles', sales_person: 'Asha Rao', service: 'ISO 9001',
-  enquiry_id: 1, enquiry_no: 'CTZ/ENQ/2026/901', enquiry_date: ago(2), enquiry_created_at: ago(2), enquiry_status: 'New',
+  enquiry_id: 1, enquiry_no: 'CTZ/ENQ/2026/901', enquiry_date: ago(2), enquiry_date: ago(2), enquiry_status: 'New',
   enquiry_estimated_value: 450000, enquiry_currency: 'INR', enquiry_value_inr: 450000, enquiry_source: 'Referral',
   po_count: 0, po_numbers: [], started_on: ago(2), ...over,
 });
 const quotation = (over = {}) => ({
   journey_key: 'q-1', anchor: 'quotation', client_name: 'Sample Forgings', sales_person: 'Asha Rao', service: 'ISO 14001',
-  quotation_id: 1, quotation_no: 'Q-TEST-1', quotation_date: ago(3), quotation_created_at: ago(3), quotation_status: 'Submitted',
+  quotation_id: 1, quotation_no: 'Q-TEST-1', quotation_date: ago(3), quotation_date: ago(3), quotation_status: 'Submitted',
   stage_type: 'open', line_count: 2, quotation_value: 590000, quotation_currency: 'INR', quotation_value_inr: 590000,
   price_needed_count: 0, approval_status: 'not_needed', sent_at: `${ago(2)}T06:00:00Z`, accepted_at: null,
   po_count: 0, po_numbers: [], started_on: ago(3), ...over,
@@ -168,6 +169,15 @@ describe('§3.4 days in step', () => {
     assert.deepEqual([state(po()).step_since, state(po()).days_in_step], [ago(4), 4]);
   });
 
+  test('a record counts from its own date, not the day it was keyed in', () => {
+    // A sheet imported today holds an enquiry received forty days ago.
+    const imported = state(enquiry({ enquiry_date: ago(40), enquiry_created_at: TODAY }));
+    assert.deepEqual([imported.step_since, imported.days_in_step], [ago(40), 40]);
+    assert.equal(state(quotation({ quotation_date: ago(30), quotation_created_at: TODAY })).days_in_step, 30);
+    assert.equal(state(enquiry({ enquiry_date: null, enquiry_created_at: ago(6) })).days_in_step, 6, 'no date: the day it was keyed in');
+    assert.equal(state(quotation({ quotation_date: null, quotation_created_at: ago(6) })).days_in_step, 6);
+  });
+
   test('a PO with no date counts from when it was registered', () => {
     const s = state(po({ first_po_date: null, first_po_created_at: `${ago(6)}T08:00:00Z` }));
     assert.deepEqual([s.step_since, s.days_in_step], [ago(6), 6]);
@@ -181,7 +191,7 @@ describe('§3.4 days in step', () => {
     // 20:00 UTC on the 24th is 01:30 on the 25th in Mumbai.
     assert.equal(dayOf('2026-10-24T20:00:00Z'), '2026-10-25');
     assert.equal(dayOf(new Date('2026-10-24T20:00:00Z')), '2026-10-25');
-    assert.equal(state(enquiry({ enquiry_created_at: new Date('2026-10-24T20:00:00Z') })).days_in_step, 0);
+    assert.equal(state(enquiry({ enquiry_date: null, enquiry_created_at: new Date('2026-10-24T20:00:00Z') })).days_in_step, 0);
     assert.equal(dayOf(null), null);
     assert.equal(dayOf('2026-10-01'), '2026-10-01');
   });
@@ -189,17 +199,17 @@ describe('§3.4 days in step', () => {
 
 describe('§3.5 the flag', () => {
   test('Enquiry: on time at the limit, slow a day over, stuck a day over twice it', () => {
-    const at = (d) => flag(enquiry({ enquiry_created_at: ago(d) }));
+    const at = (d) => flag(enquiry({ enquiry_date: ago(d) }));
     assert.equal(at(7), null);
-    assert.deepEqual(at(8), { kind: 'slow', label: '8 days', tone: 'waiting' });
+    assert.deepEqual(at(8), { kind: 'slow', label: 'Slow 8 days', tone: 'waiting' });
     assert.equal(at(14).kind, 'slow');
     assert.deepEqual(at(15), { kind: 'stuck', label: 'Stuck 15 days', tone: 'late' });
   });
 
   test('Quotation: the same at 21 and 42 days', () => {
-    const at = (d) => flag(quotation({ quotation_created_at: ago(d) }));
+    const at = (d) => flag(quotation({ quotation_date: ago(d) }));
     assert.equal(at(21), null);
-    assert.deepEqual(at(22), { kind: 'slow', label: '22 days', tone: 'waiting' });
+    assert.deepEqual(at(22), { kind: 'slow', label: 'Slow 22 days', tone: 'waiting' });
     assert.equal(at(42).kind, 'slow');
     assert.deepEqual(at(43), { kind: 'stuck', label: 'Stuck 43 days', tone: 'late' });
   });
@@ -207,17 +217,17 @@ describe('§3.5 the flag', () => {
   test('PO: the same at 30 and 60 days, but only until the first invoice', () => {
     const at = (d, over = {}) => flag(po({ first_po_date: ago(d), ...over }));
     assert.equal(at(30), null);
-    assert.deepEqual(at(31), { kind: 'slow', label: '31 days', tone: 'waiting' });
+    assert.deepEqual(at(31), { kind: 'slow', label: 'Slow 31 days', tone: 'waiting' });
     assert.equal(at(60).kind, 'slow');
     assert.deepEqual(at(61), { kind: 'stuck', label: 'Stuck 61 days', tone: 'late' });
     assert.equal(at(200, { invoiced_total: 1 }), null, 'invoiced: the PO clock has stopped');
   });
 
   test('Unsent: a quotation not yet sent, after unsent_days', () => {
-    const draft = (d) => quotation({ quotation_status: 'Draft', sent_at: null, quotation_created_at: ago(d) });
+    const draft = (d) => quotation({ quotation_status: 'Draft', sent_at: null, quotation_date: ago(d) });
     assert.equal(flag(draft(5)), null);
     assert.deepEqual(flag(draft(6)), { kind: 'unsent', label: 'Unsent 6 days', tone: 'waiting' });
-    assert.equal(flag(quotation({ quotation_created_at: ago(6) })), null, 'a sent one is not nudged');
+    assert.equal(flag(quotation({ quotation_date: ago(6) })), null, 'a sent one is not nudged');
   });
 
   test('Overdue: the amount owed, as the web writes money; across currencies, the stages', () => {
@@ -235,30 +245,30 @@ describe('§3.5 the flag', () => {
 
   test('Nurturing: an enquiry being kept warm, unless it has been waiting too long', () => {
     assert.deepEqual(flag(enquiry({ enquiry_status: 'Nurture' })), { kind: 'nurture', label: 'Nurturing', tone: 'info' });
-    assert.equal(flag(enquiry({ enquiry_status: 'Nurture', enquiry_created_at: ago(8) })).kind, 'slow');
+    assert.equal(flag(enquiry({ enquiry_status: 'Nurture', enquiry_date: ago(8) })).kind, 'slow');
   });
 
   test('first match wins, in the order of the table', () => {
     assert.equal(flag(po({ overdue_stages: 1, overdue_amount: 10, first_po_date: ago(100) })).kind, 'overdue', 'overdue before stuck');
     assert.equal(flag(quotation({ approval_status: 'pending', price_needed_count: 2 })).kind, 'approval', 'approval before price');
-    assert.equal(flag(quotation({ price_needed_count: 2, quotation_status: 'Draft', sent_at: null, quotation_created_at: ago(9) })).kind, 'price', 'price before unsent');
-    assert.equal(flag(quotation({ quotation_status: 'Draft', sent_at: null, quotation_created_at: ago(50) })).kind, 'unsent', 'unsent before stuck');
-    assert.equal(flag(quotation({ approval_status: 'pending', quotation_created_at: ago(50) })).kind, 'approval', 'approval before stuck');
+    assert.equal(flag(quotation({ price_needed_count: 2, quotation_status: 'Draft', sent_at: null, quotation_date: ago(9) })).kind, 'price', 'price before unsent');
+    assert.equal(flag(quotation({ quotation_status: 'Draft', sent_at: null, quotation_date: ago(50) })).kind, 'unsent', 'unsent before stuck');
+    assert.equal(flag(quotation({ approval_status: 'pending', quotation_date: ago(50) })).kind, 'approval', 'approval before stuck');
   });
 
   test('a sale that stopped carries no flag', () => {
-    assert.equal(flag(quotation({ stage_type: 'lost', quotation_created_at: ago(100), approval_status: 'pending' })), null);
-    assert.equal(flag(enquiry({ enquiry_status: 'Unqualified', enquiry_created_at: ago(100) })), null);
+    assert.equal(flag(quotation({ stage_type: 'lost', quotation_date: ago(100), approval_status: 'pending' })), null);
+    assert.equal(flag(enquiry({ enquiry_status: 'Unqualified', enquiry_date: ago(100) })), null);
     assert.equal(flag(po({ fully_paid: true, first_po_date: ago(100), overdue_stages: 1 })), null);
   });
 
   test('the thresholds are the ones passed in', () => {
-    assert.equal(flag(enquiry({ enquiry_created_at: ago(3) }), { ...S, enquiry_days: 2 }).kind, 'slow');
-    assert.equal(flag(enquiry({ enquiry_created_at: ago(5) }), { ...S, enquiry_days: 2 }).kind, 'stuck');
+    assert.equal(flag(enquiry({ enquiry_date: ago(3) }), { ...S, enquiry_days: 2 }).kind, 'slow');
+    assert.equal(flag(enquiry({ enquiry_date: ago(5) }), { ...S, enquiry_days: 2 }).kind, 'stuck');
   });
 
   test('one day is one day', () => {
-    assert.equal(flag(enquiry({ enquiry_created_at: ago(1) }), { ...S, enquiry_days: 0 }).label, 'Stuck 1 day');
+    assert.equal(flag(enquiry({ enquiry_date: ago(1) }), { ...S, enquiry_days: 0 }).label, 'Stuck 1 day');
   });
 
   test('flagOf leaves a sale whose days are unknown alone, except to say it is being nurtured', () => {
@@ -318,11 +328,18 @@ describe('§3.7 the funnel', () => {
   ];
 
   test('the cohort is the sales started in the period, both ends included, stopped ones counted', () => {
-    assert.deepEqual(funnel(rows, '2026-07-27', TODAY), { started: 7, quoted: 4, won: 3, with_po: 2 });
+    assert.deepEqual(funnel(rows, '2026-07-27', TODAY), { started: 7, quoted: 5, won: 3, with_po: 2 });
   });
 
-  test('a sale that began at a PO counts as won and with a PO, though nothing was quoted', () => {
-    assert.deepEqual(funnel(rows, TODAY, TODAY), { started: 1, quoted: 0, won: 1, with_po: 1 });
+  test('a sale that began at a PO counts as quoted, won and with a PO: it got past quoting with nothing on record', () => {
+    assert.deepEqual(funnel(rows, TODAY, TODAY), { started: 1, quoted: 1, won: 1, with_po: 1 });
+  });
+
+  test('each figure holds the next, so the funnel never widens', () => {
+    for (const [from, to] of [['2026-07-27', TODAY], [TODAY, TODAY], ['2026-09-01', TODAY]]) {
+      const f = funnel(rows, from, to);
+      assert.ok(f.started >= f.quoted && f.quoted >= f.won && f.won >= f.with_po, `${from}..${to}`);
+    }
   });
 
   test('an empty period is all zeros', () => {
@@ -363,12 +380,12 @@ describe('§3.8 who is on the board', () => {
 
 describe('the board', () => {
   const rows = [
-    enquiry({ journey_key: 'e-slow', enquiry_created_at: ago(9) }),
+    enquiry({ journey_key: 'e-slow', enquiry_date: ago(9) }),
     enquiry({ journey_key: 'e-fresh' }),
-    enquiry({ journey_key: 'e-nurture', enquiry_status: 'Nurture', enquiry_created_at: ago(1) }),
-    quotation({ journey_key: 'q-stuck', quotation_created_at: ago(50) }),
+    enquiry({ journey_key: 'e-nurture', enquiry_status: 'Nurture', enquiry_date: ago(1) }),
+    quotation({ journey_key: 'q-stuck', quotation_date: ago(50) }),
     quotation({ journey_key: 'q-price', price_needed_count: 1 }),
-    quotation({ journey_key: 'q-unsent', quotation_status: 'Draft', sent_at: null, quotation_created_at: ago(8) }),
+    quotation({ journey_key: 'q-unsent', quotation_status: 'Draft', sent_at: null, quotation_date: ago(8) }),
     quotation({ journey_key: 'q-norate', quotation_currency: 'AED', quotation_value_inr: null }),
     quotation({ journey_key: 'q-lost', stage_type: 'lost' }),
     po({ journey_key: 'q-overdue', overdue_stages: 1, overdue_amount: 1000, first_po_date: ago(10) }),
@@ -378,7 +395,7 @@ describe('the board', () => {
 
   test('the shape of the answer', () => {
     const b = board();
-    assert.deepEqual(Object.keys(b), ['period', 'funnel', 'steps', 'cards', 'settings']);
+    assert.deepEqual(Object.keys(b), ['period', 'funnel', 'steps', 'stuck_count', 'cards', 'settings']);
     assert.deepEqual(b.period, { from: '2026-07-27', to: TODAY });
     assert.deepEqual(b.settings, { enquiry_days: 7, quotation_days: 21, unsent_days: 5, po_days: 30, paid_visible_days: 30 });
     assert.deepEqual(b.steps.map((s) => s.key), ['enquiry', 'quotation', 'po']);
@@ -393,6 +410,12 @@ describe('the board', () => {
   test('Stuck only keeps the flags about time and money, not a missing price or nurturing', () => {
     assert.deepEqual(STUCK_KINDS, ['stuck', 'slow', 'overdue', 'unsent']);
     assert.deepEqual(board({ stuck: true }).cards.map((c) => c.key), ['e-slow', 'q-stuck', 'q-unsent', 'q-overdue']);
+  });
+
+  test('the stuck count is the same with the switch on or off, and counts only cards on the board', () => {
+    assert.equal(board().stuck_count, 4);
+    assert.equal(board({ stuck: true }).stuck_count, 4);
+    assert.equal(board({ cohort: 'quoted' }).stuck_count, 3, 'within the cohort: q-stuck, q-unsent and q-overdue');
   });
 
   test('column figures are counted from the cards returned', () => {
@@ -461,7 +484,7 @@ describe('the card and the full journey', () => {
   });
 
   test('a done step keeps its small steps, so the drawer can open it', () => {
-    const detail = journeyDetail(po({ enquiry_id: 1, enquiry_status: 'Converted', enquiry_created_at: ago(30) }), S, TODAY);
+    const detail = journeyDetail(po({ enquiry_id: 1, enquiry_status: 'Converted', enquiry_date: ago(30) }), S, TODAY);
     assert.deepEqual(detail.steps.map((s) => s.small.length), [3, 5, 5]);
     assert.equal(detail.steps[0].since, ago(30));
   });
@@ -508,5 +531,40 @@ describe('the card and the full journey', () => {
       ['po', po({ overdue_stages: 1, overdue_amount: 1, po_count: 4 })]]) {
       assert.ok(stepFacts(key, row).length <= 6, key);
     }
+  });
+});
+
+describe('§6 what a sales user sees of records they do not own', () => {
+  const ME = { unrestricted: false, ownerId: 7 };
+  const ADMIN = { unrestricted: true, ownerId: null };
+  // Asha (7) owns the enquiry; someone else owns the quotation and the project.
+  const shared = po({ enquiry_id: 1, enquiry_no: 'CTZ/ENQ/2026/901', enquiry_status: 'Converted', enquiry_owner_id: 7,
+    quotation_owner_id: 8, project_owner_ids: [8], overdue_stages: 1, overdue_amount: 25000 });
+
+  test('each record by its own page\'s reach; a PO through its quotation or its project', () => {
+    assert.deepEqual(reachableSteps(shared, ME), { enquiry: true, quotation: false, po: false });
+    assert.deepEqual(reachableSteps(shared, ADMIN), { enquiry: true, quotation: true, po: true });
+    assert.equal(reachableSteps({ ...shared, project_owner_ids: [8, 7] }, ME).po, true);
+    assert.equal(reachableSteps({ ...shared, quotation_owner_id: 7 }, ME).po, true);
+    assert.equal(reachableSteps({ ...shared, enquiry_owner_id: null }, { unrestricted: false, ownerId: null }).enquiry, false);
+  });
+
+  test('a card on someone else\'s step keeps where it is, not its value, the sum overdue or a next action', () => {
+    const card = cardFor(toCard(shared, state(shared)), shared, ME);
+    assert.deepEqual([card.step, card.small_step, card.next], ['po', 'Billable', null]);
+    assert.deepEqual([card.value, card.currency, card.value_inr], [null, null, null]);
+    assert.deepEqual(card.flag, { kind: 'overdue', label: '1 stage overdue', tone: 'late' });
+    const mine = toCard(shared, state(shared));
+    assert.deepEqual(cardFor(mine, shared, ADMIN), mine, 'an admin sees it all');
+  });
+
+  test('the full journey says which records open, and shows facts only for those', () => {
+    const detail = detailFor(journeyDetail(shared, S, TODAY), shared, ME);
+    assert.deepEqual(detail.steps.map((s) => [s.key, s.reachable, s.facts.length > 0, s.small.length]),
+      [['enquiry', true, true, 3], ['quotation', false, false, 5], ['po', false, false, 5]]);
+    assert.equal(detail.steps[1].record.no, 'Q-TEST-1', 'the number still shows (spec §9 question 1)');
+    assert.equal(detail.value, null);
+    const quote = detailFor(journeyDetail(quotation(), S, TODAY), quotation(), ADMIN);
+    assert.deepEqual(quote.steps.map((s) => s.reachable), [false, true, false], 'a step with no record has nothing to open');
   });
 });

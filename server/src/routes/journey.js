@@ -9,7 +9,8 @@
  *
  * Read only: a step, a flag or a next action is never written anywhere.
  * Both are scoped (journeyClause): a sales user sees a sale when they own a
- * record in it. HR never reaches either; hrGate refuses it first.
+ * record in it, and sees the facts and value only of the records they own
+ * (cardFor, detailFor). HR never reaches either; hrGate refuses it first.
  */
 import { Router } from 'express';
 import { z } from 'zod';
@@ -18,7 +19,7 @@ import { query } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { businessToday } from '../lib/businessDate.ts';
 import { journeyOfRecord, journeyRows, journeySettings, OF_KINDS } from '../lib/journey/queries.js';
-import { COHORTS, daysBefore, journeyBoard, journeyDetail } from '../lib/journey/steps.js';
+import { cardFor, COHORTS, daysBefore, detailFor, journeyBoard, journeyDetail } from '../lib/journey/steps.js';
 
 export const journeyRouter = Router();
 
@@ -57,12 +58,14 @@ journeyRouter.get('/', async (req, res) => {
   if (from > to) throw invalid({ from: 'The period starts after it ends' });
 
   const db = { query };
+  const scope = scopeOf(req);
   const [settings, rows] = await Promise.all([
     journeySettings(db),
-    journeyRows(db, scopeOf(req), { sales_person: f.sales_person, service: f.service }),
+    journeyRows(db, scope, { sales_person: f.sales_person, service: f.service }),
   ]);
   res.json({ data: journeyBoard(rows, settings, today, {
     period: { from, to }, stuck: Boolean(f.stuck), closed: Boolean(f.closed), cohort: f.cohort ?? null,
+    shown: (card, row) => cardFor(card, row, scope),
   }) });
 });
 
@@ -80,7 +83,8 @@ journeyRouter.get('/of', async (req, res) => {
   const [kind] = given;
   const db = { query };
   // Read before the settings: a refusal costs one query and says nothing more than a miss does.
-  const row = await journeyOfRecord(db, scopeOf(req), kind, parsed.data[kind]);
+  const scope = scopeOf(req);
+  const row = await journeyOfRecord(db, scope, kind, parsed.data[kind]);
   if (!row) throw new ApiError(404, 'Journey not found');
-  res.json({ data: journeyDetail(row, await journeySettings(db), businessToday()) });
+  res.json({ data: detailFor(journeyDetail(row, await journeySettings(db), businessToday()), row, scope) });
 });

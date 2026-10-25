@@ -88,8 +88,9 @@ function DrawerBody({ card }) {
 
   const step = steps.find((s) => s.key === at) ?? steps[0];
   // A step's record is read off the sale's numbers, so both buttons are
-  // there before the journey arrives; a step with no record has neither.
-  const pagePath = currentRecordPath({ step: step.key, records: sale.records });
+  // there before the journey arrives; a step with no record has neither,
+  // and nor does one whose record is someone else's.
+  const pagePath = step.reachable ? currentRecordPath({ step: step.key, records: sale.records }) : null;
   const nextPath = currentRecordPath(sale);
   const showNext = Boolean(step.state === 'current' && sale.next && nextPath);
 
@@ -155,7 +156,7 @@ function DrawerBody({ card }) {
 
         {/* Keyed by the record, so another step's timeline starts from its
             own first page and filter rather than the last one's. */}
-        {detail && timelineOf(step.record) && (
+        {detail && step.reachable && timelineOf(step.record) && (
           <div className="px-5 pb-5">
             <Timeline key={step.key} {...timelineOf(step.record)} />
           </div>
@@ -255,6 +256,11 @@ function StepPanel({ step, sale, badge, journey }) {
         </p>
       ) : (
         <>
+          {!step.reachable && (
+            <p className="m-0 text-[13px] text-secondary-text">
+              Someone else owns this {step.label === 'PO' ? 'PO' : step.label.toLowerCase()}, so only its number shows here.
+            </p>
+          )}
           {step.facts.length > 0 && (
             <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
               {step.facts.map((fact) => (

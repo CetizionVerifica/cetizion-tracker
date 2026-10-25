@@ -416,10 +416,10 @@ export function RecordFlow({ steps = [], verdict, actions, note, substeps, nowLa
     <Card className={cn(PANEL, 'mt-6 px-6 py-5')}>
       {placeholder ?? (
         // A rich rail keeps room round its steps for their hover surface and
-        // focus ring, which the sideways scroll would otherwise clip. It is
+        // focus ring, which the sideways scroll would otherwise clip. Both are
         // `relative` so the screen-reader words (absolutely placed) scroll
         // with their steps instead of widening the whole page on a phone.
-        <ol ref={rail} aria-label="Progress" className={rich ? 'relative m-0 flex list-none items-start overflow-x-auto p-0 px-4 py-2.5' : 'm-0 flex list-none items-center overflow-x-auto p-0 px-1'}>
+        <ol ref={rail} aria-label="Progress" className={rich ? 'relative m-0 flex list-none items-start overflow-x-auto p-0 px-4 py-2.5' : 'relative m-0 flex list-none items-center overflow-x-auto p-0 px-1'}>
           {steps.map((step, i) => (
             <Fragment key={step.label}>
               {/* The connector is lit when the step behind it is done, so the

@@ -9,6 +9,7 @@ import {
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
+import { recordPath } from '../lib/journey.js';
 
 /**
  * One screen that answers "what is waiting on us?" — the workbook's
@@ -263,7 +264,7 @@ export default function Worklist() {
             <DataTable
               rows={[
                 ...q.quotations.map((r) => ({ ...r, kind: 'Quotation', to: `/quotations/${encodeURIComponent(r.ref)}` })),
-                ...q.enquiries.map((r) => ({ ...r, kind: 'Enquiry', to: `/enquiries?q=${encodeURIComponent(r.ref)}` })),
+                ...q.enquiries.map((r) => ({ ...r, kind: 'Enquiry', to: recordPath('enquiry', r.ref) })),
                 ...q.invoices.map((r) => ({ ...r, ref: r.invoice_no, status: `${r.days_overdue} days overdue`, kind: 'Overdue invoice', to: '/collections' })),
               ]}
               empty={<Empty icon="✓" title="Everyone has been contacted recently" />}

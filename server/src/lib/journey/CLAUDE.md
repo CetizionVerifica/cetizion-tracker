@@ -61,9 +61,9 @@ lowest-id live PO; else 404.
 | Identity | `journey_key`, `anchor` (`'quotation'`, `'enquiry'`, `'po'`) |
 | Who | `client_name`, `company_id`, `sales_person` (quotation's, else enquiry's, else project's), `service` (`service_quoted`, else enquiry `service`, else project `primary_service`), `enquiry_owner_id`, `quotation_owner_id`, `project_owner_ids int[]` (owners of the projects of its live POs) |
 | Enquiry | `enquiry_id`, `enquiry_no`, `enquiry_date`, `enquiry_created_at`, `enquiry_status`, `enquiry_first_responded_at`, `enquiry_last_contacted_at`, `enquiry_estimated_value`, `enquiry_currency`, `enquiry_source`, `enquiry_unqualified_reason` (name) |
-| Quotation | `quotation_id`, `quotation_no`, `quotation_date`, `quotation_created_at`, `quotation_status`, `quotation_value` (`total` when it has lines, else `quotation_value`), `quotation_currency`, `line_count`, `price_needed_count`, `sent_at`, `accepted_at`, `closed_at`, `stage`, `stage_type`, `approval_status`, `expired`, `lost_reason`, `expected_close_date`, `project_id` |
-| POs (live, aggregated) | `po_count`, `po_numbers text[]` (by `po_date`, then id), `first_po_id`, `first_po_number`, `first_po_date` (min `po_date`), `first_po_created_at`, `po_value_total`, `po_currency` (the one currency, else null), `pos_without_stages` (count with `stage_count = 0`), `stage_count`, `invoiced_total`, `received_total`, `stages_to_invoice`, `overdue_stages`, `overdue_amount` (Σ `due_now_amount` of Overdue stages), `billable_stages` (stages whose `stage_status` is not `Not Due` or `On Hold`), `fully_paid` (every live PO `payment_status = 'Fully Paid'`), `last_paid_on` (max `payment_received_date`), `delivered` (every live PO has `actual_delivery_date`) |
-| Start | `started_on date` = first of `enquiry_date`, `enquiry_created_at`, `quotation_date`, `quotation_created_at`, `first_po_date`, `first_po_created_at` |
+| Quotation | `quotation_id`, `quotation_no`, `quotation_date`, `quotation_created_at`, `quotation_status`, `quotation_value` (`total` when it has lines, else `quotation_value`), `quotation_currency`, `line_count`, `price_needed_count`, `sent_at`, `accepted_at`, `closed_at`, `stage`, `stage_type`, `approval_status`, `expired`, `lost_reason`, `expected_close_date`, `project_id` (the quotation's, else the project of its first live PO) |
+| POs (live, aggregated) | `po_count`, `po_numbers text[]` (by `po_date`, then id), `first_po_id`, `first_po_number`, `first_po_date` (min `po_date`), `first_po_created_at`, `po_value_total`, `po_currency` (the one currency, else null), `pos_without_stages` (count with `stage_count = 0`), `stage_count`, `invoiced_total`, `received_total`, `stages_to_invoice`, `overdue_stages`, `overdue_amount` (Σ `due_now_amount` of Overdue stages), `billable_stages` (stages whose `stage_status` is not `Not Due` and that are not on hold), `next_stage_due` (earliest `invoice_due_date` of a stage not Paid), `fully_paid` (every live PO `payment_status = 'Fully Paid'`), `last_paid_on` (max `payment_received_date`), `delivered` (every live PO has `actual_delivery_date`) |
+| Start | `started_on date` = the first of these that is set, in this order (`COALESCE`, not the earliest): `enquiry_date`, `enquiry_created_at`, `quotation_date`, `quotation_created_at`, `first_po_date`, `first_po_created_at` |
 
 Read from the views that already compute things (`v_quotations`,
 `v_purchase_orders`, `v_payment_stages`); do not re-derive their figures.
@@ -113,20 +113,24 @@ Accepted → `accepted_at`, Registered → `first_po_date`).
 
 ### 3.4 Days in step
 
-`step_since`: Enquiry → `enquiry_created_at`; Quotation →
-`quotation_created_at`; PO → `first_po_date`, else `first_po_created_at`.
-`days_in_step = today − step_since` in whole days, never negative.
+`step_since`: each record's own date first, the day it was keyed in only
+when that is blank. Enquiry → `enquiry_date`, else `enquiry_created_at`;
+Quotation → `quotation_date`, else `quotation_created_at`; PO →
+`first_po_date`, else `first_po_created_at`. (Counting from `created_at` made
+every bulk-imported record look a day old.) `days_in_step = today −
+step_since` in whole days, never negative; a timestamp is read as the
+business day it fell on (`businessDate.ts`).
 
 ### 3.5 Flag: at most one, first match wins
 
 | # | When | `kind` | `label` | `tone` |
 | --- | --- | --- | --- | --- |
-| 1 | step `po`, `overdue_stages > 0` | `overdue` | `"<money> overdue"` (`overdue_amount`, `po_currency`) | `late` |
+| 1 | step `po`, `overdue_stages > 0` | `overdue` | `"<money> overdue"` (`overdue_amount`, `po_currency`); POs in several currencies: `"N stages overdue"` | `late` |
 | 2 | step `quotation`, `approval_status = 'pending'` | `approval` | `"Discount needs approval"` | `waiting` |
 | 3 | step `quotation`, `price_needed_count > 0`, not won | `price` | `"N lines need a price"` (1: "1 line needs a price") | `waiting` |
 | 4 | step `quotation`, Sent not reached, `days > journey_unsent_days` | `unsent` | `"Unsent <d> days"` | `waiting` |
 | 5 | over the step's limit × 2 | `stuck` | `"Stuck <d> days"` | `late` |
-| 6 | over the step's limit | `slow` | `"<d> days"` | `waiting` |
+| 6 | over the step's limit | `slow` | `"Slow <d> days"` | `waiting` |
 | 7 | step `enquiry`, status Nurture | `nurture` | `"Nurturing"` | `info` |
 
 "Over" is strictly greater (7 days on a 7-day limit is fine). The PO limit
@@ -141,7 +145,7 @@ One `{ verb, label }` for the current step; `null` for an exited journey.
 
 | Step and state | `verb` | `label` |
 | --- | --- | --- |
-| Enquiry, status New | `contact` | `Contact them` |
+| Enquiry, Contacted not reached (§3.3: status New and no contact date) | `contact` | `Contact them` |
 | Enquiry, Qualified reached | `convert` | `Convert to quotation` |
 | Enquiry, otherwise | `follow_up` | `Log a call` |
 | Quotation, approval pending | `approve` | `Review the discount` |
@@ -160,8 +164,12 @@ The web always opens the record of the current step for it (spec C4).
 
 `funnel(rows, from, to)`: the cohort is rows with `started_on` in
 `[from, to]`, exited ones included. `started` = cohort size; `quoted` = with
-a quotation; `won` = quotation Won reached or `po_count > 0`; `with_po` =
-`po_count > 0`. Rates are not stored or returned; the web divides.
+a quotation or `po_count > 0`; `won` = quotation Won reached or `po_count >
+0`; `with_po` = `po_count > 0`. Each figure holds the next, so the funnel
+never widens: a sale ordered with no quotation on record still got past
+quoting. Rates are not stored or returned; the web divides. The funnel is
+counted after the owner and service filters and the caller's scope, and
+before the board's switches (stuck, closed, cohort).
 
 ### 3.8 Board visibility
 
@@ -198,7 +206,8 @@ own date with `RATES` / `rateOn` from `lib/salesReport.js`, the way
 Query: `sales_person`, `service` (exact), `stuck=1` (flag `stuck` or `slow`
 or `overdue` or `unsent`), `closed=1`, `from`, `to` (`YYYY-MM-DD`, funnel
 period; default the 90 days to today), `cohort` (`started` | `quoted` |
-`won` | `with_po`). Anything malformed → 422 with `fields`.
+`won` | `with_po`). Anything malformed, or a parameter given twice → 422
+with `fields`.
 
 ```jsonc
 { "data": {
@@ -209,6 +218,7 @@ period; default the 90 days to today), `cohort` (`started` | `quoted` |
     { "key": "quotation", "label": "Quotation", "count": 16, "value_inr": 12000000, "without_rate": 1, "median_days": 11 },
     { "key": "po", "label": "PO", "count": 11, "value_inr": 14000000, "without_rate": 0, "median_days": 26 }
   ],
+  "stuck_count": 6,                      // cards on the board that "Stuck only" keeps, counted before that switch
   "cards": [ Card ],
   "settings": { "enquiry_days": 7, "quotation_days": 21, "unsent_days": 5, "po_days": 30, "paid_visible_days": 30 }
 } }
@@ -228,7 +238,7 @@ period; default the 90 days to today), `cohort` (`started` | `quoted` |
   "progress": ["done", "current", "future"], // the three big steps' states (§3.2)
   "days_in_step": 24,
   "step_since": "2026-10-01",
-  "flag": { "kind": "slow", "label": "24 days", "tone": "waiting" },   // or null
+  "flag": { "kind": "slow", "label": "Slow 24 days", "tone": "waiting" },   // or null
   "next": { "verb": "register_po", "label": "Register the PO" },       // or null
   "client_name": "Midal Cables", "company_id": 7,
   "service": "ISO 9001 certification", "sales_person": "Shyam Sharma",
@@ -243,13 +253,16 @@ The current step's value: Enquiry → `enquiry_estimated_value`; Quotation →
 `records.po_number` is the first live PO's.
 
 Order: by step (enquiry, quotation, po), then flag tone (late, waiting,
-none), then `days_in_step` descending.
+info, none), then `days_in_step` descending, then `key`.
 
 ### `GET /api/journey/of`
 
 Exactly one of `enquiry`, `quotation`, `po`, `project` (the record's own
-number or id, as on its page). 422 if none or several; 404 when no journey
-holds the record or the caller cannot reach it.
+number, or its id when no record has that number, as `lib/crud.js` reads a
+key). 422 if none or several; 404 (`"Journey not found"`, the same for a
+miss and a refusal) when no journey holds the record or the caller cannot
+reach it. A cancelled or replaced PO is in no journey, so its page asks by
+its quotation or project instead.
 
 ```jsonc
 { "data": {
@@ -260,6 +273,7 @@ holds the record or the caller cannot reach it.
       "state": "done",                    // 'done' | 'current' | 'future' | 'skipped' | 'exit'
       "record": { "kind": "enquiry", "no": "CTZ/ENQ/2026/004", "date": "2026-09-18" },  // or null
       "since": "2026-09-18",              // when the sale entered this step, null if never
+      "reachable": true,                  // the caller may open this record (§6); false with no record
       "small": [ { "label": "New", "state": "done", "date": null }, ... ],
       "facts": [ { "label": "Source", "value": "Email", "kind": "text" },
                  { "label": "Estimate", "value": 450000, "kind": "money", "currency": "INR" },
@@ -282,13 +296,26 @@ any step), using §3.3 for that step. `facts`, up to six per step:
   Received, Next stage due (the earliest `invoice_due_date` of a stage not
   Paid), Overdue (when any).
 
-Values are raw (numbers, ISO dates); the web formats them.
+Six at most: where a step has a seventh, one replaces another rather than
+being added (Lost because replaces Expected close; Overdue replaces Next
+stage due). POs in several currencies show their sums as the text "In
+several currencies", never a made-up total. Values are raw (numbers, ISO
+dates); the web formats them.
 
 ## 6. Scoping and authorization
 
 - Admin (unrestricted scope): every journey.
 - Sales: rows where `enquiry_owner_id = me OR quotation_owner_id = me OR
-  me = ANY(project_owner_ids)` (spec D7). Build the predicate the way
+  me = ANY(project_owner_ids)` (spec D7).
+- What a sales user sees of a record they do not own (spec D11,
+  `reachableSteps`, `cardFor`, `detailFor` in `steps.js`): the enquiry is
+  theirs by `enquiry_owner_id`, the quotation by `quotation_owner_id`, the
+  PO by either `quotation_owner_id` or a project owner, as each record's own
+  page reaches it. A step whose record is not theirs keeps its number,
+  state and small steps, with `reachable: false` and no `facts`. When that
+  step is the current one, the card's `value`, `currency` and `value_inr`
+  are null, `next` is null, and an overdue flag reads `"N stages overdue"`
+  instead of the amount. Build the predicate the way
   `auth/ownership.js` builds its others (`scopeOf(req)`, parameters pushed,
   never interpolated), as a function in `queries.js` with its own unit test
   of the SQL text.

@@ -201,17 +201,6 @@ export function cohortChipText(filters) {
 
 /* --------------------------------------------------------------- columns */
 
-/**
- * The flags "Stuck only" keeps: the server's `stuck=1` rule (server §5),
- * repeated here only to count them on the toggle before it is pressed.
- */
-const STUCK_FLAGS = ['stuck', 'slow', 'overdue', 'unsent'];
-
-/** How many of the cards the board holds would stay with "Stuck only" on. */
-export function stuckCount(cards) {
-  return (cards || []).filter((card) => STUCK_FLAGS.includes(card.flag?.kind)).length;
-}
-
 /** The three columns, each with the server's summary and its own cards, in the server's order. */
 export function boardColumns(data) {
   return JOURNEY_STEPS.map((step) => {
@@ -339,6 +328,8 @@ export function drawerView(card, detail) {
     state: step.state,
     lines: recordLines(step),
     record: step.record ?? null,
+    // Unknown until the journey arrives; only the server's false closes a record.
+    reachable: step.reachable !== false,
     since: step.since ?? null,
     small: step.small ?? [],
     facts: step.facts ?? [],

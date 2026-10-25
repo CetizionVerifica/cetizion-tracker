@@ -90,7 +90,7 @@ const codeOf = (path) => codeLines(path).map(({ line }) => line).join('\n');
 test('records that move through a process show it with the shared rail (web/CLAUDE.md §4)', () => {
   // The sales records show the sale's journey (docs/specs/sales-journey,
   // C1), and none of them draws a ladder of its own beside it.
-  for (const page of ['QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
+  for (const page of ['EnquiryDetail.jsx', 'QuotationDetail.jsx', 'PurchaseOrderDetail.jsx', 'ProjectDetail.jsx']) {
     const text = codeOf(join(SRC, 'pages', page));
     assert.match(text, /<JourneyRail\b/, `${page} does not show the sale's journey`);
     assert.doesNotMatch(text, /<RecordFlow\b|flowSteps\(/, `${page} draws a rail of its own instead of the journey`);
