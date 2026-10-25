@@ -27,6 +27,7 @@ import { userRouter } from './routes/users.js';
 import { activityRouter } from './routes/activity.js';
 import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
+import { ownerRouter } from './routes/owners.js';
 import { emailRouter, jobRouter } from './routes/emails.js';
 import { clientEmailRouter } from './routes/clientEmails.js';
 import { quotationDocRouter } from './routes/quotations.js';
@@ -168,6 +169,7 @@ app.use('/api/activity', activityRouter);
 // Workflow routes are mounted ahead of the generic CRUD ones so their
 // two-segment paths (/:id/full, /:id/convert) are matched first.
 app.use('/api/companies', companyRouter);
+app.use('/api/owners', ownerRouter);
 app.use('/api/emails', emailRouter);
 app.use('/api/client-emails', clientEmailRouter);
 app.use('/api/pipeline', pipelineRouter);

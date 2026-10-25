@@ -120,6 +120,7 @@ export default function PurchaseOrders() {
         ['payment_status', 'from', 'to', 'live'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
       )}
       dateFilterLabel="PO date"
+      dateRange
       onRowClick={(row) => navigate(`/purchase-orders/${encodeURIComponent(row.po_number)}`)}
       filters={[
         { name: 'payment_status', label: 'Status', options: ['Overdue', 'To Invoice', 'No stages', 'Pending', 'Up to date', 'Fully Paid'] },

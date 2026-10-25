@@ -403,6 +403,9 @@
     border-bottom: 1px solid var(--border);
   }
   .toolbar .input, .toolbar .select { width: auto; min-width: 180px; }
+  /* The date-range filter: a preset menu, then From and To at a date's own width. */
+  .toolbar .date-range { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .toolbar .date-range .input { min-width: 0; width: 150px; }
   /* A filter in the page header sizes to itself. Left at the `width: 100%`
      a form field wants, each one claims the whole actions column and the
      row becomes a stack — which is what the Schedule filters were doing. */

@@ -17,6 +17,7 @@ import { ProjectVisits } from './Schedule.jsx';
 import { DeliverablesTable } from '../components/Deliverables.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { money, date, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
@@ -436,7 +437,7 @@ export default function ProjectDetail() {
             { name: 'primary_service', label: 'Primary service', type: 'combo', options: lookups.services, span: 2 },
             { name: 'project_manager', label: 'Project manager' },
             { name: 'project_manager_email', label: 'Manager email', type: 'email' },
-            { name: 'sales_person', label: 'Sales person' },
+            { name: 'sales_person', label: 'Sales person', type: 'select', options: ownerOptions(lookups), hint: OWNER_HINT },
             { name: 'planned_start_date', label: 'Planned start', type: 'date' },
             { name: 'planned_delivery_date', label: 'Planned delivery', type: 'date' },
             { name: 'service_request_no', label: 'Service request no.', hint: 'e.g. CV108: how a trip with no PO finds this project' },

@@ -5,6 +5,7 @@ import { Alert, Badge, useToast } from '../components/ui.jsx';
 import { FollowUpBanner, useLogParam } from '../components/FollowUpBanner.jsx';
 import { TouchDialog } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { OwnerDuplicates } from '../components/OwnerDuplicates.jsx';
 import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
 import { date, money, today } from '../lib/format.js';
@@ -34,6 +35,8 @@ export default function Enquiries() {
   // The service questionnaire for one enquiry (#208). A "submitted" notification links here with ?questionnaire=.
   const [questionnaire, setQuestionnaire] = useState(() => (enquiryNo && params.get('questionnaire') ? { enquiry_no: enquiryNo } : null));
   const [questionnaireVersion, setQuestionnaireVersion] = useState(0);
+  // Bumped when owner spellings are merged, so the list shows the new names.
+  const [ownersMerged, setOwnersMerged] = useState(0);
   useLogParam(() => setTouching(true), Boolean(enquiryNo));
   const statuses = enquiryStatuses(lookups);
   const sectors = enquirySectors(lookups);
@@ -84,10 +87,12 @@ export default function Enquiries() {
       formTitle="enquiry"
       formIntro={`New → Contacted → Qualified → ${CONVERTED}. Set "${CONVERTED}" and a quotation is created with these details, or link one that exists. Drop a lead with "Unqualified" and a reason; "Nurture" parks it for later.`}
       searchPlaceholder="Search client, enquiry no, service, sector…"
-      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'from', 'to', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
+      initialFilters={Object.fromEntries(['status', 'sector', 'sales_person', 'source_id', 'owner', 'from_email'].map((k) => [k, params.get(k)]).filter(([, v]) => v))}
       initialSearch={params.get('q') || undefined}
-      dateFilterLabel="Enquiry date"
-      refreshToken={questionnaireVersion}
+      // The day the enquiry reached us (enquiry_date); the server filters ?from=&to= on it.
+      dateFilterLabel="Received"
+      dateRange
+      refreshToken={questionnaireVersion + ownersMerged}
       onSaved={(saved) => {
         invalidateLookups();
         if (saved?.quotation_created) toast(`Quotation ${saved.quotation_created} created`, 'success');
@@ -109,6 +114,7 @@ export default function Enquiries() {
         ] },
       ]}
       banner={(rows) => { const { dueRows, late } = attention(rows); return <>
+        <OwnerDuplicates onMerged={() => setOwnersMerged((n) => n + 1)} />
         {enquiryNo && <EmailOrigin entity="enquiry" id={enquiryNo} />}
         {enquiryNo && <FollowUpBanner entity="enquiry" id={enquiryNo} version={logged} onLog={() => setTouching(true)} />}
         {(dueRows.length > 0 || late.length > 0) && (

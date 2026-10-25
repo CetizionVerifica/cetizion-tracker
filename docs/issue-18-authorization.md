@@ -341,6 +341,9 @@ session is **401**, before any of these is considered.
 | `POST /api/notifications/read-all` | any | Scoped: record-owner. |
 | `GET /api/notifications/summary` | any | Scoped: record-owner. |
 | `POST /api/notifications/sweep` | **admin** | The same work as the notifications.daily job. Running a job by hand is operational. |
+| **/api/owners** | | |
+| `GET /api/owners/duplicates` | **admin** | Counts the records behind every Owner spelling across the whole book, not only the caller's own. |
+| `POST /api/owners/merge` | **admin** | Rewrites the Owner on every record carrying the merged spellings and fills in their owner. It cannot be undone from the UI. |
 | **/api/payment-stages** | | |
 | `POST /api/payment-stages/:id/invoice` | any |  |
 | `POST /api/payment-stages/:id/payment` | any |  |

@@ -222,6 +222,23 @@ describe('new enquiries from email', { skip: !ADMIN_URL && 'set TEST_DATABASE_UR
     assert.deepEqual(t, { entity: 'enquiry', entity_id: body.data.enquiry_no });
   });
 
+  test('10b. a converted enquiry takes its assignee as Owner only as a sales user\'s account name', async () => {
+    // Priya Sales (test 9) is an active sales user who signs in as priya@cetizionverifica.com.
+    const box = await mailbox({ shared: true });
+    await db.query(`UPDATE settings SET value = 'false' WHERE key = 'auto_enquiries_enabled'`);
+    const convert = async (assignee, body) => {
+      await deliver(box, [rfq({ from: { email: `${uid('who')}@assigned.com`, name: 'A' }, conversation_id: uid('assigned') })]);
+      const { rows: [conv] } = await db.query(
+        `SELECT ic.id FROM inbox_conversations ic JOIN email_threads t ON t.id = ic.thread_id
+          WHERE t.account_id = $1 AND ic.enquiry_no IS NULL ORDER BY ic.id DESC LIMIT 1`, [box.id]);
+      await db.query('UPDATE inbox_conversations SET assignee = $2 WHERE id = $1', [conv.id, assignee]);
+      return (await agent.post(`/api/inbox/${conv.id}/convert`).send({ client_name: 'Assigned Ltd', ...body }).expect(201)).body.data;
+    };
+    assert.equal((await convert('PRIYA@cetizionverifica.com', {})).sales_person, 'Priya Sales', 'a login becomes the account name');
+    assert.equal((await convert('priya', {})).sales_person, null, 'a name nobody carries is not an owner');
+    assert.equal((await convert('priya@cetizionverifica.com', { sales_person: null })).sales_person, null, 'no owner, chosen');
+  });
+
   test('11. our email naming a tracker quotation, with no enquiry, makes a Converted enquiry on it, and the reply joins', async () => {
     const { rows: [q] } = await db.query(
       `INSERT INTO quotations (quotation_no, client_name, quotation_date, quotation_value, service_quoted, status) VALUES ('CTZ/QT/2026/901', 'Quoted Cables Ltd', CURRENT_DATE - 1, 250000, 'ISO 9001', 'Submitted') RETURNING *`);

@@ -4,6 +4,7 @@ import { PageHeader } from '../App.jsx';
 import { Alert, Badge, Card, ConfirmDialog, DataTable, Empty, Field, Input, Modal, Select, Stat, Textarea, useToast } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
 import { date, money } from '../lib/format.js';
 
 /**
@@ -92,7 +93,7 @@ function ManualDialog({ lookups, onClose, onSaved }) {
         <Field label="Client" required><Input list="eng-clients" value={v.client_name} onChange={(e) => set('client_name', e.target.value)} /><datalist id="eng-clients">{lookups.clients.map((c) => <option key={c} value={c} />)}</datalist></Field>
         <Field label="Service" required><Input list="eng-services" value={v.service_name} onChange={(e) => set('service_name', e.target.value)} /><datalist id="eng-services">{lookups.services.map((c) => <option key={c} value={c} />)}</datalist></Field>
         <Field label="Valid until" required hint="When it expires or is next due"><Input type="date" value={v.valid_until} onChange={(e) => set('valid_until', e.target.value)} /></Field>
-        <Field label="Owner"><Input list="eng-people" value={v.owner} onChange={(e) => set('owner', e.target.value)} /><datalist id="eng-people">{lookups.sales_people.map((c) => <option key={c} value={c} />)}</datalist></Field>
+        <Field label="Owner" hint={OWNER_HINT}><Select value={v.owner} options={ownerOptions(lookups)({})} onChange={(e) => set('owner', e.target.value)} /></Field>
         <div className="span-all"><Field label="Notes"><Textarea rows={2} value={v.notes} onChange={(e) => set('notes', e.target.value)} /></Field></div>
       </form>
     </Modal>

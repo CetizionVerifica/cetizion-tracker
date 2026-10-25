@@ -4,7 +4,7 @@ import { cn } from 'cn';
 
 import { SettingsPane } from '../pages/SettingsArea.jsx';
 import { api } from '../lib/api.js';
-import { useFetch } from '../lib/hooks.js';
+import { invalidateLookups, useFetch } from '../lib/hooks.js';
 import { ago } from '../lib/format.js';
 import { ErrorState, Field, Input, Modal, Select as LegacySelect, useToast } from './ui.jsx';
 import { initialsOf } from './record.jsx';
@@ -69,6 +69,8 @@ export function UsersAdmin() {
     setBusy(user.id);
     try {
       await api.users.update(user.id, body);
+      // Who may be picked as an Owner comes from the lookups.
+      invalidateLookups();
       toast(message, 'success');
       refetch();
     } catch (err) {
@@ -274,6 +276,7 @@ function UserForm({ user, minPassword, onClose, onSaved }) {
         await api.users.create({
           name: form.name, email: form.email, role: form.role, password: form.password,
         });
+        invalidateLookups();
         onSaved(`${form.name} can now sign in`);
       } else {
         // Only what changed, so an untouched field is never rewritten.
@@ -283,6 +286,7 @@ function UserForm({ user, minPassword, onClose, onSaved }) {
         if (form.role !== user.role) changes.role = form.role;
         if (Object.keys(changes).length === 0) return onClose();
         await api.users.update(user.id, changes);
+        invalidateLookups();
         onSaved(`${form.name} updated`);
       }
     } catch (err) {
