@@ -4,7 +4,8 @@ import { Clock } from 'lucide-react';
 import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
-import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection, RecordStat } from '../components/record.jsx';
+import { Chip, RecordMenuItem, RecordPage, RecordSection, RecordStat } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
 import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
@@ -34,6 +35,11 @@ import { poRevisionFields } from '../lib/poRevision.js';
  * The header keeps one overflow menu and no primary button, because the
  * primary button belongs to the flow panel, next to the sentence that
  * explains why it is the thing to press.
+ *
+ * The rail across the top is the sale's journey, Enquiry → Quotation → PO
+ * (docs/specs/sales-journey), with the order's own small steps under PO.
+ * Delivery is not one of them: it stays in the sentence, which says which
+ * stage the delivery date unlocks.
  */
 
 const MS_PER_DAY = 86_400_000;
@@ -261,19 +267,11 @@ export default function PurchaseOrderDetail() {
   const toChase = stages.find((s) => CHASEABLE.includes(s.stage_status));
   const lockedOnDelivery = stages.find((s) => s.stage_status === 'Not Due' && s.trigger_event === 'On Delivery');
 
-  // Each rung's state is worked out here and handed to the flow, because
-  // what "current" means is the order's business, not the component's.
-  const reached = [
-    { label: 'Registered', done: Boolean(po.po_date) },
-    { label: 'Split set', done: po.stage_count > 0 && !stagesOff },
-    {
-      label: stages.some((s) => s.trigger_event === 'On PO Registration') ? 'Advance billable' : 'Billable',
-      done: stages.some((s) => s.invoice_no),
-    },
-    { label: 'Delivered', done: Boolean(po.actual_delivery_date) },
-    { label: 'Fully paid', done: po.stage_count > 0 && stages.every((s) => s.stage_status === 'Paid') },
-  ];
-  const steps = flowSteps(reached);
+  // A cancelled or replaced order is in no journey (the server ignores it),
+  // so its rail shows the sale it was part of: through its quotation, or
+  // else through its project, which finds the live order that took over.
+  const live = !po.cancelled && !po.replaced_by_po_number;
+  const railRecord = live ? { po: po.po_number } : po.quotation_no ? { quotation: po.quotation_no } : { project: po.project_id };
 
   function verdict() {
     if (!stages.length) return 'No payment stages are set, so nothing on this order can be invoiced.';
@@ -379,10 +377,13 @@ export default function PurchaseOrderDetail() {
           </>
         }
         flow={
-          <RecordFlow
-            steps={steps}
+          // What the page loaded is a new object each time it loads, so
+          // the rail reloads with it after every action taken here.
+          <JourneyRail
+            of={railRecord}
             verdict={verdict()}
             actions={primary()}
+            refreshKey={data}
           />
         }
         stats={(
