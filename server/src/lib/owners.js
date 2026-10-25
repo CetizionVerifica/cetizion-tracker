@@ -20,9 +20,9 @@
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { ACTIONS, logActivity } from './activity.js';
-import { compact, similarNamePairs } from './names.ts';
+import { compact, normalizeName, similarNamePairs } from './names.ts';
+import { changeRecordOwner } from './ownershipHistory.js';
 import { resources } from './resources.js';
-import { assignOwnerFromSalesperson } from './salespersonOwner.js';
 
 /** The records that name an owner, in the order a merge reports them. */
 const TABLES = ['enquiries', 'quotations', 'projects'];
@@ -86,9 +86,13 @@ export async function duplicateOwners() {
 
   return [...groups.values()]
     .filter((members) => members.length > 1)
-    // Account names alone, with no record carrying any of them, give
-    // nothing to fold: two users called alike is for Settings → Users.
-    .filter((members) => members.some((m) => weight(m) > 0))
+    // Something to fold means a spelling that is nobody's account and is on
+    // records. Account names alone are not duplicates, even when records
+    // carry them: two colleagues called alike ("Ravi Kumar", "Ravi Kumar
+    // Reddy") would otherwise sit in the banner for good, now that the
+    // Owner field writes exact account names. Two users called alike is for
+    // Settings → Users & roles.
+    .filter((members) => members.some((m) => !m.sales_user && weight(m) > 0))
     .map((members) => {
       // The sales user's own name first, because landing on it is what
       // gives the records an owner; then the spelling with most history.
@@ -118,11 +122,23 @@ export async function duplicateOwners() {
  * is nobody's account would fold the duplicates and still leave every
  * record unowned.
  *
+ * Exactly one such user, too: two accounts with one name would leave the
+ * records under a name that no longer says whose they are.
+ *
  * Ownership is only ever filled in, never moved: a record a sales user
  * already owns stays theirs whatever its Owner text now says, because a
  * clean-up of spellings is not the place to take records off somebody.
- * The assignment goes through assignOwnerFromSalesperson, so it lands in
- * ownership_history and the activity log like an admin's own save.
+ * An unowned record goes to that user and nobody else, even when its Owner
+ * email names a colleague: the person merging just said whose it is. It
+ * goes through changeRecordOwner, so it lands in ownership_history and the
+ * activity log like an explicit assignment.
+ *
+ * Two other places hold an owner as text and are moved with the records:
+ * an engagement's owner, which a renewal quotation copies, and a sales API
+ * token's person, which is the whole of what that token may read
+ * (lib/mcp/data.js). Left behind, the first would bring the old spelling
+ * back on the next renewal and the second would leave the token reading
+ * nothing.
  *
  * One transaction, with the activity row that records the merge inside it:
  * the old spellings are gone afterwards, and that row is the only place
@@ -138,27 +154,79 @@ export async function mergeOwners({ from, into, actor }) {
     const { rows: users } = await client.query(
       `SELECT id FROM users WHERE active AND role = 'sales' AND btrim(name) = $1`, [target]);
     if (!users.length) throw new ApiError(422, `${target} is not a sales user on the platform. Merge into one of them`);
+    if (users.length > 1) throw new ApiError(422, `${users.length} sales users are called ${target}. Rename one in Settings → Users & roles, then merge`);
+    const ownerId = users[0].id;
+
+    // Another sales user's own name is a different person, never a
+    // spelling to fold: merging it would rewrite their records and hand
+    // their assistant token to someone else.
+    const { rows: others } = await client.query(
+      `SELECT btrim(name) AS name FROM users
+        WHERE active AND role = 'sales' AND id <> $2
+          AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = ANY($1::text[])
+        ORDER BY 1`, [sources.map(normalizeName), ownerId]);
+    if (others.length) {
+      throw new ApiError(422, `${others.map((o) => o.name).join(', ')} ${others.length === 1 ? 'is a sales user' : 'are sales users'} in their own right, so cannot be merged into ${target}`);
+    }
+
     const moved = {};
     let owned = 0;
     for (const table of TABLES) {
+      const def = resources[table];
       const { rows } = await client.query(
         `UPDATE ${table} SET sales_person = $2 WHERE btrim(sales_person) = ANY($1::text[]) RETURNING *`,
         [sources, target]);
       moved[table] = rows.length;
       for (const row of rows) {
         if (row.owner_user_id !== null) continue;
-        const after = await assignOwnerFromSalesperson(client, resources[table], row, { fields: ['sales_person'], actor });
-        if (after?.owner_user_id != null) owned += 1;
+        await changeRecordOwner(client, {
+          entityType: def.table,
+          // The natural key where there is one, as assignOwnerFromSalesperson does.
+          entityIdOrKey: String(def.naturalKey && row[def.naturalKey] != null ? row[def.naturalKey] : row.id),
+          expectedOwnerId: null,
+          newOwnerId: ownerId,
+          reason: `Owner set by merging ${sources.join(', ')} into ${target}`,
+          actor,
+        });
+        owned += 1;
       }
     }
+
+    const { rowCount: engagements } = await client.query(
+      `UPDATE engagements SET owner = $2, updated_at = now() WHERE btrim(owner) = ANY($1::text[])`, [sources, target]);
+    moved.engagements = engagements;
+    // Matched as the token's scope matches it: ignoring case and spacing.
+    const { rowCount: tokens } = await client.query(
+      `UPDATE api_tokens SET person = $2
+        WHERE role = 'sales' AND revoked_at IS NULL
+          AND lower(regexp_replace(btrim(person), '\\s+', ' ', 'g')) = ANY($1::text[])`,
+      [sources.map(normalizeName), target]);
 
     await logActivity(client, {
       actor,
       action: ACTIONS.OWNER_MERGED,
       entityType: 'owner',
       entityId: target,
-      metadata: { from: sources, into: target, moved, owner_assigned: owned },
+      metadata: { from: sources, into: target, owner_user_id: ownerId, moved, owner_assigned: owned, tokens_moved: tokens },
     });
-    return { merged: sources, into: target, moved, owner_assigned: owned };
+    return { merged: sources, into: target, moved, owner_assigned: owned, tokens_moved: tokens };
   });
+}
+
+/**
+ * The account name of the one active sales user that `text` names, by
+ * email or by name ignoring case and spacing; null for anybody else. For a
+ * value that arrives as text from elsewhere, such as an inbox
+ * conversation's assignee (a login), before it becomes a record's Owner.
+ */
+export async function ownerNameFor(db, text) {
+  const value = String(text ?? '').trim();
+  if (!value) return null;
+  const { rows } = await db.query(
+    `SELECT max(btrim(name)) AS name FROM users
+      WHERE active AND role = 'sales'
+        AND (lower(btrim(email)) = lower($1)
+             OR lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2)
+     HAVING count(*) = 1`, [value, normalizeName(value)]);
+  return rows[0]?.name ?? null;
 }

@@ -7,6 +7,7 @@ import { Checkbox } from './ui/checkbox.tsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { invalidateLookups, useFetch, useLookups } from '../lib/hooks.js';
+import { OWNER_HINT } from '../lib/owners.js';
 
 /** Where this browser remembers that the owner duplicates banner was dismissed. */
 const DUPES_HIDDEN = 'cetizion.owners.duplicates';
@@ -62,14 +63,18 @@ function OwnerDuplicatesBanner({ onMerged }) {
   const listed = expanded ? groups : groups.slice(0, SHOWN);
 
   /**
-   * A same-name group has nothing to weigh up, so everything starts ticked;
-   * a shares-a-name group starts with nothing ticked, because "Ravi Kumar"
-   * and "Ravi Shankar" may be two people.
+   * A same-name group with a sales user to keep has nothing to weigh up, so
+   * every other spelling starts ticked. Anything else starts with nothing
+   * ticked: "Ravi Kumar" and "Ravi Shankar" may be two people, and a group
+   * with no account among it has no obvious person to fold into. Another
+   * sales user's own name is never ticked; the server refuses it.
    */
   function openGroup(group) {
     setReview(group);
     setKeepName(group.suggested_keep);
-    setChosen(new Set(group.certain ? group.members.map((m) => m.name) : []));
+    setChosen(new Set(group.certain && group.suggested_keep
+      ? group.members.filter((m) => !m.sales_user).map((m) => m.name)
+      : []));
   }
 
   const toggle = (name) => setChosen((prev) => {
@@ -94,7 +99,12 @@ function OwnerDuplicatesBanner({ onMerged }) {
     try {
       const { data } = await api.action('/owners/merge', { from: losing.map((m) => m.name), into: keepName });
       const owned = data?.owner_assigned ?? 0;
-      toast(`${plural(losing.length, 'spelling')} merged into ${keepName}${owned ? `. ${plural(owned, 'record')} now owned by them.` : ''}`, 'success');
+      const tokens = data?.tokens_moved ?? 0;
+      toast([
+        `${plural(losing.length, 'spelling')} merged into ${keepName}.`,
+        owned && `${plural(owned, 'record')} now owned by them.`,
+        tokens && `${plural(tokens, 'assistant token')} now ${tokens === 1 ? 'reads' : 'read'} their records.`,
+      ].filter(Boolean).join(' '), 'success');
       invalidateLookups();
       setReview(null);
       setRefresh((n) => n + 1);
@@ -165,9 +175,11 @@ function OwnerDuplicatesBanner({ onMerged }) {
         <Modal
           size="lg"
           title={review.certain ? 'The same owner, written differently' : 'Which of these are the same person?'}
-          subtitle={review.certain
-            ? 'These differ only by case, spacing or punctuation, so there is nothing to weigh up.'
-            : 'These share a name. That does not make them one person — two colleagues can share a first name. Tick only the ones that are genuinely the same.'}
+          subtitle={!review.suggested_keep
+            ? 'None of these names is a sales user on the platform, so there is no account to fold them into yet. If this is someone missing from the platform, add them in Settings → Users & roles, then come back; otherwise pick the colleague these records really belong to.'
+            : review.certain
+              ? 'These differ only by case, spacing or punctuation, so there is nothing to weigh up.'
+              : 'These share a name. That does not make them one person — two colleagues can share a first name. Tick only the ones that are genuinely the same.'}
           onClose={() => setReview(null)}
           footer={(
             <div className="flex w-full items-center justify-between gap-3">
@@ -189,7 +201,7 @@ function OwnerDuplicatesBanner({ onMerged }) {
           )}
         >
           <div className="mb-3 max-w-sm">
-            <Field label="Merge into" hint="A sales user on the platform. Add people in Settings → Users.">
+            <Field label="Merge into" hint={OWNER_HINT}>
               <Select
                 value={keepName ?? ''}
                 placeholder="Select a user…"
@@ -222,6 +234,12 @@ function OwnerDuplicatesBanner({ onMerged }) {
                         <span className="block text-[12px] text-muted-foreground">{describe(m)}</span>
                       </span>
                     </>
+                  ) : m.sales_user ? (
+                    // Another person's account: never folded into somebody else.
+                    <span className="min-w-0 flex-1 pl-[30px]">
+                      <span className="block truncate text-[13px] font-medium">{m.name}</span>
+                      <span className="block text-[12px] text-muted-foreground">{describe(m)} · their own account, so it is not merged</span>
+                    </span>
                   ) : (
                     <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                       <Checkbox
@@ -256,10 +274,10 @@ function OwnerDuplicatesBanner({ onMerged }) {
             <div className="mt-4">
               <Alert tone="danger">
                 <span className="measure">
-                  Every enquiry, deal and project with the owner{' '}
+                  Every enquiry, deal, project and renewal with the owner{' '}
                   <strong>{losing.map((m) => m.name).join(', ')}</strong> is renamed to{' '}
                   <strong>{keepName}</strong>.{' '}
-                  Records nobody owns yet become {keepName}&apos;s, so they appear on their lists. Records someone already owns stay theirs.{' '}
+                  Records nobody owns yet become {keepName}&apos;s, so they appear on their lists. Records someone already owns stay theirs. An assistant token set up under one of these names follows to {keepName}.{' '}
                   This cannot be undone.
                 </span>
               </Alert>

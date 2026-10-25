@@ -8,7 +8,7 @@ import { EmailOrigin } from '../components/EmailOrigin.jsx';
 import { OwnerDuplicates } from '../components/OwnerDuplicates.jsx';
 import { QuestionnaireBadge, QuestionnaireCard } from '../components/QuestionnaireCard.jsx';
 import { invalidateLookups, useLookups } from '../lib/hooks.js';
-import { OWNER_HINT, ownerOptions } from '../lib/owners.js';
+import { OWNER_HINT, ownerFills, ownerOptions } from '../lib/owners.js';
 import { date, money, today } from '../lib/format.js';
 
 /**
@@ -89,7 +89,7 @@ export default function Enquiries() {
     { name: 'services_interested', label: 'Other services of interest' },
     { name: 'estimated_value', label: 'Estimated value', type: 'money', hint: 'Carried onto the quotation when converted' },
     { name: 'currency', label: 'Currency', type: 'select', options: lookups.enums?.currency || ['INR'], default: 'INR' },
-    { name: 'sales_person', label: 'Owner', type: 'select', options: ownerOptions(lookups), hint: OWNER_HINT },
+    { name: 'sales_person', label: 'Owner', type: 'select', options: ownerOptions(lookups), fills: ownerFills(lookups), hint: OWNER_HINT },
     { name: 'sales_person_email', label: 'Owner email', type: 'email' },
     { name: 'status', label: 'Status', type: 'select', options: statuses, default: 'New', required: true, hint: `Leaving New needs a source and the client; Qualified and "${CONVERTED}" need the services and an estimated value; Unqualified needs a reason. "${CONVERTED}" creates a draft quotation, a line per service, unless one is linked` },
     { name: 'next_follow_up_at', label: 'Next follow-up', type: 'date', hint: 'Blank: set from Settings when the status changes' },
