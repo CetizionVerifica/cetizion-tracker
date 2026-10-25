@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
+import { MIN_ROWS, rowsThatFit } from './pageFit.js';
 
 /**
  * Fetch on mount and whenever `deps` change, with a refetch handle so a
@@ -134,4 +135,36 @@ export function useMediaQuery(query) {
     return () => mq.removeEventListener('change', onChange);
   }, [query]);
   return matches;
+}
+
+/**
+ * How many rows of `rowHeight` an element has room for (#250), re-measured
+ * as the window changes, or null until it has been laid out.
+ *
+ * Returns `[measure, rows]`: pass `measure` as the element's ref. A ref
+ * callback rather than a ref object, so an element that appears later (the
+ * inbox's list, back from the setup screen) is measured when it does.
+ *
+ * The first measurement is taken at once, so the list is not fetched at a
+ * guessed size and then again at the right one; later ones wait until the
+ * resize has settled, so dragging a window edge is one request, not one
+ * per pixel.
+ */
+export function useRowsThatFit(rowHeight, { min = MIN_ROWS, settleMs = 150 } = {}) {
+  const [node, setNode] = useState(null);
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    if (!node) return undefined;
+    const measure = () => setRows(rowsThatFit(node.clientHeight, rowHeight, min));
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    let timer = null;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(measure, settleMs);
+    });
+    observer.observe(node);
+    return () => { clearTimeout(timer); observer.disconnect(); };
+  }, [node, rowHeight, min, settleMs]);
+  return [setNode, rows];
 }

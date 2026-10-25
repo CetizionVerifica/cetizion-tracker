@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/select.tsx';
 import { cn } from 'cn';
 import { api } from '../lib/api.js';
-import { useFetch, useLookups } from '../lib/hooks.js';
+import { useFetch, useLookups, useRowsThatFit } from '../lib/hooks.js';
+import { keepPlace } from '../lib/pageFit.js';
 import { useAuth } from '../lib/auth.jsx';
 // The pieces of a mail client (docs/inbox-outlook-plan.md §3.7), each its
 // own component so this page stops growing: the message view with its
@@ -17,7 +18,7 @@ import { useAuth } from '../lib/auth.jsx';
 // the rows of a folder; the pane a folder's conversation is read in.
 import { Message, when } from '../components/mail/MessageView.jsx';
 import { MailboxSwitcher } from '../components/mail/MailboxSwitcher.jsx';
-import { MessageRow, Pager, initials, since } from '../components/mail/MessageList.jsx';
+import { MESSAGE_ROW_H, MessageRow, Pager, PagerSpace, initials, since } from '../components/mail/MessageList.jsx';
 import { ReadingPane } from '../components/mail/ReadingPane.jsx';
 import { AttachmentNames } from '../components/mail/AttachmentStrip.jsx';
 
@@ -38,8 +39,6 @@ const VIEWS = [
   { key: 'closed', label: 'Done' },
 ];
 
-/** Conversations per page; the server's default too. */
-const PAGE_SIZE = 50;
 /** How often the open page asks the server to pull mail, and re-reads what it has. */
 const SYNC_EVERY_MS = 60_000;
 const REFRESH_EVERY_MS = 20_000;
@@ -54,7 +53,7 @@ function Tag({ tone = 'plain', mono = false, children }) {
   };
   return (
     <span className={cn(
-      'inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-semibold',
+      'inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold',
       mono && 'num font-medium', tones[tone]
     )}>
       {children}
@@ -90,6 +89,14 @@ function stateTag(row) {
   return null;
 }
 
+/**
+ * How tall a team-inbox row is, in px, whatever it holds (#250); see
+ * MESSAGE_ROW_H for why it is fixed.
+ *
+ * 14 + 20 name + 20 subject + 39 snippet + 30 chips/attachments + 14 + 1 border.
+ */
+const THREAD_ROW_H = 138;
+
 const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref) {
   // An option in a listbox rather than a button, so a screen reader says
   // "2 of 4, selected" and the arrow keys mean what they look like they
@@ -107,8 +114,9 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
           onSelect(row);
         }
       }}
+      style={{ height: THREAD_ROW_H }}
       className={cn(
-        'flex w-full cursor-pointer gap-3 border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
+        'flex w-full cursor-pointer gap-3 overflow-hidden border-b border-border px-5 py-3.5 text-left transition-colors duration-150',
         selected ? 'border-l-2 border-l-primary bg-card' : 'border-l-2 border-l-transparent hover:bg-card'
       )}
     >
@@ -119,23 +127,23 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
         {initials(row.from_name || row.company_name, row.from_email)}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
+        <span className="flex h-5 items-center gap-2">
           {/* Nobody has opened it yet. A dot rather than bolding the row:
               weight would reflow the line the moment somebody read it, and
               the name is already semibold on every row. It sits in a fixed
               gutter so a read row lines up with an unread one. */}
-          <span className="flex w-2 shrink-0 items-center self-center" aria-hidden="true">
+          <span className="flex w-2 shrink-0 items-center" aria-hidden="true">
             {row.unread && <span className="size-1.5 rounded-full bg-primary" />}
           </span>
           <span
-            className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground"
+            className="min-w-0 flex-1 truncate text-[13px]/5 font-semibold text-foreground"
             title={[row.company_name, row.from_name, row.from_email].filter(Boolean).join(' · ')}
           >
             {row.company_name || row.from_name || row.from_email}
             {row.company_name && row.from_name && <span className="font-normal text-secondary-text"> · {row.from_name}</span>}
           </span>
           {row.has_attachments && (
-            <Paperclip className="size-3 shrink-0 self-center text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
+            <Paperclip className="size-3 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-label="Has an attachment" />
           )}
           {/* Overdue is carried by the timestamp, not by a chip of its own.
               It is a fact about *when*, and on a quiet week every thread in
@@ -143,7 +151,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
               timestamps say the same thing without displacing the chips
               that differ from row to row. */}
           <span
-            className={cn('shrink-0 text-[11.5px]', row.overdue ? 'font-medium text-late' : 'text-muted-foreground')}
+            className={cn('shrink-0 text-[11.5px]/5', row.overdue ? 'font-medium text-late' : 'text-muted-foreground')}
             title={row.overdue ? 'Nobody has replied to this yet' : undefined}
           >
             {since(row.last_message_at)}
@@ -153,7 +161,7 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             are scanning for, and a clipped one with no way to read it is
             worse than a wrapped one. */}
         <span className={cn(
-          'mt-0.5 block truncate text-[12.5px]',
+          'mt-0.5 block h-[18px] truncate text-[12.5px]/[18px]',
           row.unread ? 'font-medium text-foreground' : 'text-secondary-text'
         )} title={row.subject || '(no subject)'}>
           {row.subject || '(no subject)'}
@@ -166,19 +174,19 @@ const ThreadRow = forwardRef(function ThreadRow({ row, selected, onSelect }, ref
             email is rarely a sentence.
 
             A mailbox set to metadata-only stores no snippet, so the band
-            simply does not appear for it rather than showing a blank line. */}
-        {row.snippet && (
-          <span className="mt-1 block line-clamp-2 text-[12px]/[1.45] text-muted-foreground">
-            {row.snippet}
-          </span>
-        )}
-        <AttachmentNames names={row.attachment_names} />
+            is left empty for it. Empty rather than gone: every row is the
+            same height, so the page can hold exactly what fits (#250). */}
+        <span className="mt-1 block h-[35px] line-clamp-2 text-[12px]/[17.5px] text-muted-foreground">
+          {row.snippet}
+        </span>
         {/* Two chips at most: what this thread is, and whose it is. The
             row had up to six, all the same size, so the one that differed
-            between rows was the hardest to find. */}
-        <span className="mt-1.5 flex flex-wrap gap-1.5">
+            between rows was the hardest to find. The attachment names
+            follow on the same line rather than adding one of their own. */}
+        <span className="mt-1.5 flex h-6 min-w-0 items-center gap-1.5 overflow-hidden">
           {stateTag(row)}
           {row.assignee ? <Tag>{row.assignee}</Tag> : <Tag>no owner</Tag>}
+          <AttachmentNames names={row.attachment_names} className="mt-0 min-w-0 flex-1 flex-nowrap overflow-hidden" />
         </span>
       </span>
     </div>
@@ -211,10 +219,16 @@ export default function Inbox() {
   // counts, for the switcher. Re-read with the list, so the counts move.
   const mailboxes = useFetch(() => api.raw('/mail/mailboxes'), []);
   const boxes = mailboxes.data?.data ?? [];
+  /**
+   * One screen of conversations a page (#250): as many rows as the list has
+   * room for, so it never scrolls and Newer / Older reach the rest. Null
+   * until the list has been measured, and nothing is fetched before then.
+   */
+  const [measureList, pageSize] = useRowsThatFit(folderView ? MESSAGE_ROW_H : THREAD_ROW_H);
   const listUrl = folderView
-    ? `/mail/folders/${encodeURIComponent(mb)}/${encodeURIComponent(f)}/messages?${new URLSearchParams({ ...(q ? { q } : {}), ...(unreadOnly ? { unread: '1' } : {}), ...(flaggedOnly ? { flagged: '1' } : {}), page: String(page), page_size: String(PAGE_SIZE) })}`
-    : `${view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`}&page=${page}&page_size=${PAGE_SIZE}`;
-  const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : api.raw(listUrl)), [listUrl]);
+    ? `/mail/folders/${encodeURIComponent(mb)}/${encodeURIComponent(f)}/messages?${new URLSearchParams({ ...(q ? { q } : {}), ...(unreadOnly ? { unread: '1' } : {}), ...(flaggedOnly ? { flagged: '1' } : {}), page: String(page), page_size: String(pageSize) })}`
+    : `${view === 'closed' ? '/inbox?view=all&status=closed' : `/inbox?view=${view}${q ? `&q=${encodeURIComponent(q)}` : ''}`}&page=${page}&page_size=${pageSize}`;
+  const list = useFetch(() => (view === 'setup' ? Promise.resolve({ data: [] }) : !pageSize ? Promise.resolve(null) : api.raw(listUrl)), [listUrl]);
   const s = summary.data?.data;
   const putMany = (changes) => {
     const n = new URLSearchParams(params);
@@ -272,6 +286,19 @@ export default function Inbox() {
     return () => { clearInterval(pulling); clearInterval(refreshing); document.removeEventListener('visibilitychange', onVisible); };
   }, [view, refetchList, refetchSummary, refetchMailboxes]);
 
+  // A taller or shorter window changes how many rows a page holds; the
+  // page changes with it, so the conversation that was at the top stays on
+  // screen rather than the list jumping somewhere else.
+  const lastPageSize = useRef(pageSize);
+  useEffect(() => {
+    const before = lastPageSize.current;
+    lastPageSize.current = pageSize;
+    if (!before || !pageSize || before === pageSize) return;
+    const next = keepPlace(page, before, pageSize);
+    if (next !== page) put('p', next > 1 ? String(next) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
+
   // A page that no longer exists — the last few threads on it were closed
   // or the search narrowed — goes to the last one that does.
   useEffect(() => {
@@ -303,6 +330,7 @@ export default function Inbox() {
   // thread arriving above the selected one moves its index, which must not
   // pull focus out of the reply box or the search field.
   const listRef = useRef(null);
+  const setListNode = useCallback((node) => { listRef.current = node; measureList(node); }, [measureList]);
   useEffect(() => {
     if (at < 0 || !listRef.current?.contains(document.activeElement)) return;
     rowRefs.current[at]?.focus({ preventScroll: false });
@@ -338,7 +366,10 @@ export default function Inbox() {
 
   return (
     <div className="flex h-dvh flex-col">
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[400px_minmax(0,1fr)]">
+      {/* One row, exactly the height of the screen. Without `grid-rows`
+          the grid's row grows to whatever the list holds, and the whole
+          page scrolled instead of the list fitting (#250). */}
+      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[400px_minmax(0,1fr)]">
         {/* The list. Its own header, because this screen is a place you
             live in rather than a page you visit. */}
         <div className={cn(
@@ -424,13 +455,13 @@ export default function Inbox() {
           </div>
 
           <div
-            ref={listRef}
+            ref={setListNode}
             role="listbox"
             aria-label="Conversations"
             onKeyDown={onListKey}
             className="min-h-0 flex-1 overflow-y-auto focus:outline-none"
           >
-            {list.loading && !list.data ? (
+            {!pageSize || (list.loading && !list.data) ? (
               <div className="p-5"><div className="skeleton h-[120px]" /></div>
             ) : list.error ? (
               <Empty title="Not available" text={list.error} />
@@ -458,7 +489,7 @@ export default function Inbox() {
             )))}
           </div>
 
-          {meta && meta.total > 0 && (
+          {meta && meta.total > 0 ? (
             <Pager
               page={Math.min(page, meta.pages)}
               pages={meta.pages}
@@ -471,7 +502,7 @@ export default function Inbox() {
                 put('p', n > 1 ? String(n) : null);
               }}
             />
-          )}
+          ) : <PagerSpace />}
         </div>
 
         {/* The reading pane. On a phone it takes the screen, and the back
