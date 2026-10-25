@@ -95,7 +95,8 @@ export default function Quotations() {
           // was quoted (Reports' quoted-vs-won bars) and one owner's records.
           ['status', 'sector', 'sales_person', 'from', 'to', 'close_month', 'month', 'owner', 'from_email'].map((key) => [key, params.get(key)]).filter(([, value]) => value)
         )}
-        dateFilterLabel="Quotation date"
+        dateFilterLabel="Quoted"
+        dateRange
         // A saved quotation can change the lists other forms offer (won
         // quotations for a PO, existing ones for an enquiry).
         onSaved={() => invalidateLookups()}

@@ -67,6 +67,9 @@ export default function Projects() {
       title="Projects"
       subtitle="Every registered project, with its POs, stages and money rolled up"
       resource="projects"
+      // The date picker filters ?from=&to= on planned_start_date: when the project is planned to begin.
+      dateFilterLabel="Start date"
+      dateRange
       columns={columns}
       fields={fields}
       newLabel="Project"
