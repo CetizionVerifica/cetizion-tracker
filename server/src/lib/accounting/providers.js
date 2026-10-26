@@ -25,7 +25,7 @@ export async function draftForStage(stageId) {
        LEFT JOIN companies c ON c.id = p.company_id LEFT JOIN quotations q ON q.quotation_no = po.quotation_no
       WHERE s.id = $1`, [stageId]);
   if (!s) throw Object.assign(new Error('Payment stage not found'), { status: 404 });
-  const { rows: settings } = await query(`SELECT key, value FROM settings WHERE key IN ('company_state_code','gst_rate_default','company_gstin')`);
+  const { rows: settings } = await query(`SELECT key, value FROM settings WHERE key IN ('company_state_code','company_gstin')`);
   const set = Object.fromEntries(settings.map((r) => [r.key, r.value]));
   // The stage amount INCLUDES GST: take it out at the quotation's own rates
   // (stageGst.js, the same split the portal shows), never add it on top.
@@ -53,6 +53,10 @@ export async function draftForStage(stageId) {
     // taxable value and GST, as GSTR-1 does, and they add up to the total.
     currency: s.currency, taxable, gst_rate: split.rate, ...tax, total: Number(s.stage_amount),
     parts,
+    // What a system that books the invoice must not guess: whether both
+    // states are known (CGST + SGST or IGST rests on it), whether the rate
+    // is only the default, and whether it is an export.
+    supply_known: Boolean(ourState && theirState), estimated: split.estimated, exported: split.exported,
     place_of_supply: theirState, supply: tax.intra ? 'intra-state (CGST + SGST)' : 'inter-state (IGST)',
     invoice_no: s.invoice_no || null, problems,
   };
@@ -106,19 +110,96 @@ export async function zohoPull(sinceIso, opts = {}) {
   return entries;
 }
 
+/**
+ * Which Zoho tax a part of an invoice needs, as the key an admin maps it
+ * under (Accounting → Mappings, kind "tax"):
+ *   intra:<rate>   GST at that rate within our state (Zoho's CGST + SGST group)
+ *   inter:<rate>   GST at that rate to another state (Zoho's IGST tax)
+ *   export         an export invoice, no GST (Zoho's tax exemption for it)
+ *   exempt         a domestic line at 0% (Zoho's tax exemption for it)
+ */
+export function zohoTaxKey(part, draft) {
+  if (draft.currency !== 'INR') return 'export';
+  if (!Number(part.rate)) return 'exempt';
+  return `${draft.intra ? 'intra' : 'inter'}:${Number(part.rate)}`;
+}
+
+/**
+ * A tax mapping's key as it is stored and looked up, so "Intra:18",
+ * " intra:18.0 " and "intra:18%" are the one key "intra:18". Null for a
+ * key that is none of the shapes above, which the mappings form refuses.
+ */
+export function normaliseTaxKey(raw) {
+  const s = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '').replace(/%$/, '');
+  if (s === 'export' || s === 'exempt') return s;
+  const m = s.match(/^(intra|inter):(\d+(?:\.\d+)?)$/);
+  return m ? `${m[1]}:${Number(m[2])}` : null;
+}
+
+const refuse = (message) => Object.assign(new Error(message), { status: 422 });
+
+/**
+ * The Zoho Books invoice for a draft: one line per GST rate, each with the
+ * Zoho tax that rate maps to. Without a tax on each line Zoho applied the
+ * item's own tax to everything, so a mixed 18% + 5% invoice or an export
+ * came out with the wrong GST.
+ *
+ * Each line is sent at its share of the stage amount WITH its GST in
+ * (`is_inclusive_tax`), so Zoho's total is the stage amount to the paisa:
+ * sending the taxable value instead let Zoho round CGST and SGST again and
+ * land a paisa away from what the client was billed.
+ *
+ * Refuses, saying what to do, wherever it would otherwise guess: a draft
+ * with the wrong GST is worse than no draft.
+ *
+ * @param taxes Map of normalised tax key -> Zoho tax id (or exemption id for export/exempt)
+ */
+export function zohoInvoiceBody(draft, { item = null, taxes = new Map(), date = new Date().toISOString().slice(0, 10) } = {}) {
+  const exported = draft.currency !== 'INR';
+  if (!draft.parts?.length) throw refuse('This draft has no GST breakdown; open it again from the stage to rebuild it');
+  if (draft.estimated) throw refuse("The PO's quotation has no lines, so its GST rate is only assumed. Add the quotation's lines, then create the draft");
+  if (!exported && !draft.supply_known) {
+    throw refuse("CGST + SGST or IGST cannot be decided: set company_state_code in Settings, and the client's GSTIN or the quotation's place of supply");
+  }
+  const parts = draft.parts;
+  const missing = [...new Set(parts.map((p) => zohoTaxKey(p, draft)).filter((k) => !taxes.get(k)))];
+  if (missing.length) {
+    throw refuse(`Map ${missing.map((k) => `"${k}"`).join(', ')} to ${missing.length === 1 ? 'its Zoho tax' : 'their Zoho taxes'} first (Accounting → Mappings, kind "tax")`);
+  }
+  return {
+    customer_id: draft.customer.books_ref, reference_number: draft.reference, date,
+    gst_no: draft.customer.gstin || undefined,
+    // An export is filed as one; anything else keeps the customer's own treatment in Zoho.
+    ...(exported ? { gst_treatment: 'overseas' } : {}),
+    place_of_supply: (draft.place_of_supply && (STATE_ALPHA[draft.place_of_supply] || STATE_ALPHA[Number(draft.place_of_supply)])) || undefined,
+    is_inclusive_tax: true,
+    line_items: parts.map((p) => {
+      const key = zohoTaxKey(p, draft);
+      const exemption = key === 'export' || key === 'exempt';
+      return {
+        ...(item ? { item_id: item } : {}),
+        description: parts.length > 1 ? `${draft.description} · GST ${p.rate}%` : draft.description,
+        rate: p.total, quantity: 1,
+        ...(exemption ? { tax_exemption_id: taxes.get(key) } : { tax_id: taxes.get(key) }),
+      };
+    }),
+    notes: `Tracker stage ${draft.stage_id}`,
+  };
+}
+
 export async function zohoCreateDraft(draft, opts = {}) {
   assertNotStaging('Creating invoices in the books');
-  if (!draft.customer.books_ref) throw Object.assign(new Error('Map this client to a Zoho customer first (Accounting → Mappings)'), { status: 422 });
-  const { rows: [item] } = await query(`SELECT books_ref FROM accounting_mappings WHERE kind = 'service' AND tracker_ref = 'default'`);
-  const j = await zohoFetch('/invoices', {
-    method: 'POST', ...opts,
-    body: {
-      customer_id: draft.customer.books_ref, reference_number: draft.reference, date: new Date().toISOString().slice(0, 10),
-      gst_no: draft.customer.gstin || undefined, place_of_supply: (draft.place_of_supply && (STATE_ALPHA[draft.place_of_supply] || STATE_ALPHA[Number(draft.place_of_supply)])) || undefined,
-      line_items: [{ ...(item ? { item_id: item.books_ref } : {}), description: draft.description, rate: draft.taxable, quantity: 1 }],
-      notes: `Tracker stage ${draft.stage_id}`,
-    },
-  });
+  if (!draft.customer.books_ref) throw refuse('Map this client to a Zoho customer first (Accounting → Mappings)');
+  // The default item and every tax mapping, in one read; the newest mapping
+  // wins if two were ever saved for one key before keys were normalised.
+  const { rows } = await query(
+    `SELECT kind, tracker_ref, books_ref FROM accounting_mappings
+      WHERE (kind = 'service' AND tracker_ref = 'default') OR kind = 'tax' ORDER BY id`);
+  const item = rows.find((r) => r.kind === 'service')?.books_ref ?? null;
+  const taxes = new Map();
+  for (const r of rows) if (r.kind === 'tax' && normaliseTaxKey(r.tracker_ref)) taxes.set(normaliseTaxKey(r.tracker_ref), r.books_ref);
+  const body = zohoInvoiceBody(draft, { item, taxes });
+  const j = await zohoFetch('/invoices', { method: 'POST', ...opts, body });
   return { system: 'zoho', books_id: j.invoice?.invoice_id, number: j.invoice?.invoice_number, status: j.invoice?.status };
 }
 

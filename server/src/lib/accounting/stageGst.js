@@ -1,5 +1,5 @@
 import { query } from '../../db.js';
-import { splitInclusive } from './gst.js';
+import { paisa, splitInclusive } from './gst.js';
 
 /**
  * The GST inside a payment stage's amount, the one way the accounting module
@@ -36,8 +36,6 @@ export async function defaultGstRate(db = { query }) {
   const n = Number(r?.value);
   return Number.isFinite(n) && n >= 0 && String(r?.value ?? '').trim() !== '' ? n : 18;
 }
-
-const paisa = (n) => Math.round(Number(n) * 100) / 100;
 
 /**
  * Split one stage. `stage` needs stage_amount, currency and rate_mix (from
