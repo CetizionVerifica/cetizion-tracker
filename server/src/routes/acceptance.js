@@ -26,14 +26,13 @@ import { notify } from '../lib/notify.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import { documentStorageReady, uploadDocument } from '../lib/documents.js';
 import { fullQuotation } from './quotations.js';
-import { assertPricedForClient } from '../lib/serviceQuotes/priceNeeded.js';
+import { CLOSED_STATUSES as CLOSED, NOT_READY_FOR_CLIENT, assertReadyForClient, recordAcceptance } from '../lib/quotationReady.js';
 
 export const acceptanceRouter = Router();
 export const publicAcceptanceRouter = Router();
 
 const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const CLOSED = ['Won - PO Received', 'Lost', 'Dropped'];
 
 async function baseUrl() {
   const { rows: [r] } = await query(`SELECT value FROM settings WHERE key = 'public_app_url'`);
@@ -63,9 +62,7 @@ acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
   // deliberately left alone.
   const q = await fullQuotation(req.params.key, scopeOf(req));
   if (CLOSED.includes(q.status)) throw new ApiError(422, `The quotation is already ${q.status.toLowerCase()}`);
-  if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
-  if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
-  assertPricedForClient(q);
+  assertReadyForClient(q);
   if (!q.lines.length && !q.quotation_value) throw new ApiError(422, 'Add the quotation lines or a value before sending it for acceptance');
   const to = body.to || q.contact?.email || null;
   if (body.email && !to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
@@ -215,6 +212,10 @@ publicAcceptanceRouter.post('/:token/accept', async (req, res) => {
   const { a: pre, key } = await openLink(req.params.token);
   if (!['sent', 'viewed'].includes(pre.status)) throw new ApiError(409, 'This quotation has already been answered through this link.');
   const q = await fullQuotation(key);
+  // Ready for the client now, not only when the link was made: a discount
+  // raised past the limit since, or a line that lost its price, waits. The
+  // client is told plainly and nothing is stored or uploaded.
+  try { assertReadyForClient(q); } catch { throw new ApiError(409, NOT_READY_FOR_CLIENT); }
   const pdf = await quotationPdf(q);
   const sha = crypto.createHash('sha256').update(pdf).digest('hex');
   let documentId = null;
@@ -230,11 +231,9 @@ publicAcceptanceRouter.post('/:token/accept', async (req, res) => {
               ip = $5, user_agent = $6, snapshot = $7, pdf_sha256 = $8, pdf_document_id = $9, viewed_at = COALESCE(viewed_at, now())
         WHERE id = $1 RETURNING id, status, decided_at, decided_by_name`,
       [a.id, parsed.data.name, parsed.data.email || null, parsed.data.comment || null, ip, ua, JSON.stringify(q), sha, documentId]);
-    // The pipeline trigger moves an accepted open quotation to "Verbal yes, awaiting PO".
-    await db.query(
-      `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
-              status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
-        WHERE id = $1`, [q.id, parsed.data.name]);
+    // Checked again under lock and written in the one place acceptance is
+    // (lib/quotationReady.js); an open quotation moves to "Verbal yes, awaiting PO".
+    await recordAcceptance(db, q.id, parsed.data.name, { clientFacing: true });
     if (documentId) await db.query(`INSERT INTO attachments (entity, entity_id, document_id, label, uploaded_by) VALUES ('quotation', $1, $2, $3, 'client')`, [q.quotation_no, documentId, `Accepted by ${parsed.data.name}`]);
     return done;
   });

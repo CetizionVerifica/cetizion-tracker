@@ -136,6 +136,9 @@ export default function QuotationDetail() {
   // Lines a pricing rule could not price (#208): the server refuses to send until each has a rate; the count is its own.
   const priceNeeded = Number(q.price_needed_count) || 0;
   const priceNeededText = `${priceNeeded} line${priceNeeded === 1 ? ' needs' : 's need'} a price before this can go to the client`;
+  // May it go to the client, or be recorded as accepted by them? The server's
+  // rule (lib/quotationReady.js), read once here for every control that needs it.
+  const readyForClient = open && !approvalBlocked && !priceNeeded;
   const total = q.line_count ? q.total : q.quotation_value;
 
   const invoiced = q.purchase_orders.reduce((sum, p) => sum + Number(p.total_invoiced || 0), 0);
@@ -185,7 +188,9 @@ export default function QuotationDetail() {
    * registering a PO while the button said "Send to the client".
    */
   const move = q.approval_status === 'pending' ? (isAdmin ? 'approve' : null)
-    : open && !approvalBlocked && !q.sent_at ? 'send'
+    : readyForClient && !q.sent_at ? 'send'
+    // Unsent with a line still to price: the verdict says what to do; no button the server would refuse.
+    : open && priceNeeded && !q.sent_at ? null
     : open && !q.purchase_orders.length ? 'register'
     : won && !q.project_id ? 'project'
     : null;
@@ -253,8 +258,9 @@ export default function QuotationDetail() {
         menu={
           <>
             <RecordMenuItem onSelect={() => setEditing(true)}>Edit the quotation</RecordMenuItem>
-            {open && !approvalBlocked && !priceNeeded && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
-            {open && !q.accepted_at && <RecordMenuItem onSelect={() => setAccepting(true)}>Record client acceptance</RecordMenuItem>}
+            {readyForClient && <RecordMenuItem onSelect={() => setSending(true)}>Send to the client</RecordMenuItem>}
+            {/* The client accepting is the quotation reaching them: the same rule as Send. */}
+            {readyForClient && !q.accepted_at && <RecordMenuItem onSelect={() => setAccepting(true)}>Record client acceptance</RecordMenuItem>}
             {!won && <RecordMenuItem onSelect={() => setRevising(true)}>Revise</RecordMenuItem>}
             {open && q.approval_status !== 'pending' && <RecordMenuItem onSelect={() => setRequesting(true)}>Ask for approval</RecordMenuItem>}
             {!q.purchase_orders.length && <RecordMenuItem onSelect={() => setRegistering(true)}>Register the PO</RecordMenuItem>}
@@ -471,7 +477,7 @@ export default function QuotationDetail() {
             <QuotationAnswers generatedFrom={q.generated_from} />
           </RecordSection>
         )}
-        <AcceptanceLinks quotation={q} canSend={open && !approvalBlocked && !priceNeeded && !q.accepted_at} onChanged={refetch} />
+        <AcceptanceLinks quotation={q} canSend={readyForClient && !q.accepted_at} onChanged={refetch} />
         <Timeline entity="quotation" id={q.quotation_no} />
       </RecordPage>
 

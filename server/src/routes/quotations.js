@@ -20,7 +20,8 @@ import { UNRESTRICTED, ownerClause, scopeOf } from '../auth/ownership.js';
 import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { reviseQuotation } from '../lib/quotationRevisions.js';
-import { assertPricedForClient, priceNeededReasons } from '../lib/serviceQuotes/priceNeeded.js';
+import { priceNeededReasons } from '../lib/serviceQuotes/priceNeeded.js';
+import { assertReadyForClient, recordAcceptance } from '../lib/quotationReady.js';
 import { sendMail } from '../lib/mail.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import { documentStorageReady, uploadDocument } from '../lib/documents.js';
@@ -161,9 +162,7 @@ const sendSchema = z.object({
 quotationDocRouter.post('/:key/send', async (req, res) => {
   const body = sendSchema.parse(req.body || {});
   const q = await fullQuotation(req.params.key, scopeOf(req));
-  if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
-  if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
-  assertPricedForClient(q);
+  assertReadyForClient(q);
   let email = null;
   const to = body.email ? body.to || q.contact?.email : null;
   if (body.email && !to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });
@@ -205,20 +204,19 @@ quotationDocRouter.post('/:key/accept', async (req, res) => {
   const parsed = acceptSchema.safeParse(req.body || {});
   if (!parsed.success) throw new ApiError(422, 'Please check the highlighted fields', { fields: { accepted_by_name: parsed.error.issues[0].message } });
   const q = await loadQuotation(req.params.key, { query }, scopeOf(req));
+  // The client accepting it is the quotation reaching them, so the same rule
+  // as sending it (an approved discount, every line priced), checked again
+  // under lock where it is written: lib/quotationReady.js.
   const updated = await transaction(async (client) => {
     await actAs(client, req.user);
-    const { rows: [u] } = await client.query(
-      `UPDATE quotations SET accepted_at = now(), accepted_by_name = $2,
-              status = CASE WHEN status IN ('Draft','Submitted','On Hold') THEN 'Under Negotiation' ELSE status END
-        WHERE id = $1 RETURNING accepted_at, accepted_by_name, status`,
-      [q.id, parsed.data.accepted_by_name]
-    );
+    const u = await recordAcceptance(client, q.id, parsed.data.accepted_by_name, { once: true });
     await logUpdated(client, req.user, {
       entity: 'quotation', ref: q.quotation_no, changes: {},
       extra: { event: 'accepted', client_name: q.client_name, accepted_by_name: u.accepted_by_name },
     });
     await logStageMoves(client, req.user, [q.id]);
-    return u;
+    const { id: _id, ...shown } = u;
+    return shown;
   });
   res.json({ data: updated });
 });
