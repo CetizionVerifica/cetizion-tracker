@@ -42,6 +42,19 @@ $$ LANGUAGE sql STABLE;
 --   4. A PO in another currency (an export): no GST.
 -- Taxable is the total over (1 + rate), to the paisa; GST takes what is left,
 -- so taxable + GST is always exactly the total.
+-- The rupee rate for a currency in force on a day: 1 for INR, else the
+-- newest exchange_rates row on or before that day, else NULL (a gap, never
+-- zero and never a later rate). One definition, so profitability's totals
+-- (v_project_profitability) and the cost lines on a project's page
+-- (routes/profitability.js) cannot convert the same cost two ways.
+CREATE OR REPLACE FUNCTION fx_rate_on(p_currency text, p_day date)
+RETURNS numeric AS $$
+  SELECT CASE WHEN p_currency = 'INR' THEN 1::numeric ELSE (
+    SELECT x.rate FROM exchange_rates x
+     WHERE x.from_currency = p_currency AND x.to_currency = 'INR' AND x.effective_from <= p_day
+     ORDER BY x.effective_from DESC LIMIT 1) END;
+$$ LANGUAGE sql STABLE;
+
 CREATE OR REPLACE FUNCTION po_gst_split(p_po text, p_total numeric, p_stage int DEFAULT NULL)
 RETURNS TABLE (taxable numeric, gst numeric, gst_rate numeric, source text) AS $$
   WITH books AS (
@@ -973,31 +986,27 @@ FROM companies c;
 -- gaps and left out of the sums, never taken as zero silently.
 -- ---------------------------------------------------------------------
 CREATE VIEW v_project_profitability AS
--- The rate in force on the PO's own date, from the exchange_rates table
--- the sales reports read. The fx_rate_% settings this used to read were
--- retired by migration 013 and can no longer hold a value: every foreign
--- PO converted to NULL, so the project showed real costs against no
--- revenue and reported a loss it had not made.
-WITH fx AS (
-  SELECT 'INR'::text AS currency, 1::numeric AS rate, '0001-01-01'::date AS effective_from
-  UNION ALL
-  SELECT from_currency, rate, effective_from FROM exchange_rates WHERE to_currency = 'INR'
-),
-po AS (
+-- The rate in force on the PO's own date (fx_rate_on), from the
+-- exchange_rates table the sales reports read. The fx_rate_% settings this
+-- used to read were retired by migration 013 and can no longer hold a
+-- value: every foreign PO converted to NULL, so the project showed real
+-- costs against no revenue and reported a loss it had not made.
+--
+-- Revenue is the PO value BEFORE GST. A PO's value is the quotation's
+-- total with GST in, and that GST is collected for the government, not
+-- earned: counting it made every margin look 18% better than it was. The
+-- split is the portal's own (po_gst_split); an export carries none.
+-- Invoiced and received stay as billed and banked, GST and all.
+WITH po AS (
   SELECT v.project_id,
-         SUM(v.po_value * r.rate)        AS revenue,
+         SUM(net.taxable * r.rate)       AS revenue,
          SUM(v.total_invoiced * r.rate)  AS invoiced,
          SUM(v.total_received * r.rate)  AS received,
          COUNT(*) FILTER (WHERE r.rate IS NULL) AS revenue_gaps,
          MIN(v.po_date)                  AS first_po_date
     FROM v_purchase_orders v
-    LEFT JOIN LATERAL (
-      SELECT fx.rate FROM fx
-       WHERE fx.currency = v.currency
-         AND fx.effective_from <= COALESCE(v.po_date, CURRENT_DATE)
-       ORDER BY fx.effective_from DESC
-       LIMIT 1
-    ) r ON true
+    CROSS JOIN LATERAL (SELECT fx_rate_on(v.currency, COALESCE(v.po_date, CURRENT_DATE)) AS rate) r
+    LEFT JOIN LATERAL po_gst_split(v.po_number, v.po_value) net ON true
    GROUP BY v.project_id
 ),
 -- A trip counts against its PO's project, or its own project when it has
@@ -1023,12 +1032,18 @@ claims AS (
     FROM employee_expense_claims c JOIN trips tr ON tr.travel_id = c.travel_id
    GROUP BY tr.project_id
 ),
+-- A cost in another currency at the ONE rate in force on the day it was
+-- incurred (fx_rate_on), as a PO is; a cost with no date, on the day it
+-- was entered, so its rupees do not move each day the rates feed adds a
+-- rate. Joined to every stored rate, as it was, each cost was counted once
+-- per rate and grew daily. Before any rate for its currency: a gap, never zero.
 manual AS (
   SELECT pc.project_id,
-         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'paid')      AS paid,
-         SUM(pc.amount * fx.rate) FILTER (WHERE pc.status = 'committed') AS committed,
-         COUNT(*) FILTER (WHERE pc.amount IS NULL OR fx.rate IS NULL)    AS gaps
-    FROM project_costs pc LEFT JOIN fx ON fx.currency = pc.currency
+         SUM(pc.amount * r.rate) FILTER (WHERE pc.status = 'paid')      AS paid,
+         SUM(pc.amount * r.rate) FILTER (WHERE pc.status = 'committed') AS committed,
+         COUNT(*) FILTER (WHERE pc.amount IS NULL OR r.rate IS NULL)    AS gaps
+    FROM project_costs pc
+    CROSS JOIN LATERAL (SELECT fx_rate_on(pc.currency, COALESCE(pc.incurred_on, pc.created_at::date)) AS rate) r
    GROUP BY pc.project_id
 ),
 totals AS (
