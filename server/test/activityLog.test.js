@@ -25,6 +25,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
   let createUser;
   let activity;
   let resetLimiter;
+  let superCookie;
 
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -51,6 +52,8 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
     process.env.DATABASE_URL = dbUrl;
     process.env.AUTH_MODE = 'database';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
+    process.env.SUPER_ADMIN_EMAIL = 'super@example.com';
+    process.env.SUPER_ADMIN_PASSWORD = 'a-good-long-super-password';
     // Nothing leaves this process: 'log' is the default and the safe one.
     process.env.EMAIL_MODE = 'log';
 
@@ -65,6 +68,11 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
         try { loginLimiter.resetKey(ip); } catch { /* not a key this store knows */ }
       }
     };
+
+    const superSignIn = await request(app).post('/api/super-admin/login')
+      .send({ email: 'super@example.com', password: 'a-good-long-super-password' });
+    assert.equal(superSignIn.status, 200, JSON.stringify(superSignIn.body));
+    superCookie = superSignIn.headers['set-cookie'];
   });
 
   after(async () => {
@@ -245,13 +253,20 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
 
   // ==================================================== the user events
 
+  /**
+   * Accounts are changed only in the super admin portal, so these acts are
+   * recorded as the super admin: not a users row, so no actor id, and its
+   * name in metadata like the shared admin's. The staff cookie each test
+   * holds is who would have done it before; it is not used to write.
+   */
   describe('account administration', () => {
-    const post = (cookie, body) => request(app).post('/api/users').set('Cookie', cookie).send(body);
-    const patch = (cookie, id, body) => request(app).patch(`/api/users/${id}`).set('Cookie', cookie).send(body);
-    const setPassword = (cookie, id, body) =>
-      request(app).post(`/api/users/${id}/password`).set('Cookie', cookie).send(body);
+    const SUPER = 'Super admin (super@example.com)';
+    const post = (_staff, body) => request(app).post('/api/super-admin/users').set('Cookie', superCookie).send(body);
+    const patch = (_staff, id, body) => request(app).patch(`/api/super-admin/users/${id}`).set('Cookie', superCookie).send(body);
+    const setPassword = (_staff, id, body) =>
+      request(app).post(`/api/super-admin/users/${id}/password`).set('Cookie', superCookie).send(body);
 
-    test('creating an account records user.created, by the admin who did it', async () => {
+    test('creating an account records user.created, by the super admin', async () => {
       await clean();
       const admin = await asAdmin();
 
@@ -263,12 +278,12 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       const rows = await logged();
       assert.equal(rows.length, 1);
       assert.equal(rows[0].action, 'user.created');
-      assert.equal(rows[0].actor_user_id, admin.user.id);
-      assert.equal(rows[0].actor_type, 'user');
+      assert.equal(rows[0].actor_user_id, null);
+      assert.equal(rows[0].actor_type, 'super_admin');
       assert.equal(rows[0].entity_type, 'user');
       assert.equal(rows[0].entity_id, String(res.body.data.id));
       assert.deepEqual(rows[0].metadata, {
-        name: 'Nina', email: 'nina@example.com', role: 'sales', active: true, actor_name: 'Alice',
+        name: 'Nina', email: 'nina@example.com', role: 'sales', active: true, phone: null, time_zone: null, actor_name: SUPER,
       });
     });
 
@@ -286,7 +301,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows[0].entity_id, String(sam.id));
       assert.deepEqual(rows[0].metadata, {
         changed_fields: ['name', 'role'], old_name: 'Sam', new_name: 'Samuel',
-        old_role: 'sales', new_role: 'admin', actor_name: 'Alice',
+        old_role: 'sales', new_role: 'admin', actor_name: SUPER,
       });
     });
 
@@ -299,7 +314,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
 
       const rows = await logged();
       assert.equal(rows[0].action, 'user.updated');
-      assert.deepEqual(rows[0].metadata, { changed_fields: [], actor_name: 'Alice' });
+      assert.deepEqual(rows[0].metadata, { changed_fields: [], actor_name: SUPER });
     });
 
     test('switching an account off records user.deactivated, and only that', async () => {
@@ -320,7 +335,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
         old_active: true,
         new_active: false,
         sessions_revoked: true,
-        actor_name: 'Alice',
+        actor_name: SUPER,
       });
     });
 
@@ -338,7 +353,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows.length, 1);
       assert.equal(rows[0].action, 'user.reactivated');
       assert.deepEqual(rows[0].metadata, {
-        changed_fields: ['active'], old_active: false, new_active: true, actor_name: 'Alice',
+        changed_fields: ['active'], old_active: false, new_active: true, actor_name: SUPER,
       });
     });
 
@@ -367,7 +382,7 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(rows.length, 1);
       assert.equal(rows[0].action, 'user.password_reset');
       assert.equal(rows[0].entity_id, String(sam.id));
-      assert.deepEqual(rows[0].metadata, { sessions_revoked: true, actor_name: 'Alice' });
+      assert.deepEqual(rows[0].metadata, { sessions_revoked: true, actor_name: SUPER });
 
       const written = JSON.stringify(rows[0]);
       for (const secret of ['another-good-long-password', PASSWORD, '$2b$', 'ctz_session']) {
@@ -388,17 +403,19 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       assert.equal(row.role, 'admin', 'and the edit itself did not happen');
     });
 
-    test('a sales user changing accounts is refused and records nothing', async () => {
+    test('a staff session changing accounts is refused and records nothing', async () => {
       await clean();
-      await asAdmin();
+      const admin = await asAdmin();
       const sales = await asSales();
 
-      const attempts = [
-        post(sales.cookie, { name: 'X', email: 'x@example.com', password: PASSWORD }),
-        patch(sales.cookie, sales.user.id, { name: 'Sam Two' }),
-        setPassword(sales.cookie, sales.user.id, { password: 'another-good-long-password' }),
-      ];
-      for (const attempt of attempts) assert.equal((await attempt).status, 403);
+      for (const who of [admin, sales]) {
+        const attempts = [
+          request(app).post('/api/users').set('Cookie', who.cookie).send({ name: 'X', email: 'x@example.com', password: PASSWORD }),
+          request(app).patch(`/api/users/${sales.user.id}`).set('Cookie', who.cookie).send({ name: 'Sam Two' }),
+          request(app).post(`/api/users/${sales.user.id}/password`).set('Cookie', who.cookie).send({ password: 'another-good-long-password' }),
+        ];
+        for (const attempt of attempts) assert.ok([403, 404].includes((await attempt).status));
+      }
 
       assert.deepEqual(await logged(), []);
     });
@@ -415,7 +432,10 @@ describe('the activity log', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run
       const admin = await asAdmin();
       const sam = await createUser({ name: 'Sam', email: 'sam@example.com', password: PASSWORD }, db);
 
-      await patch(admin.cookie, sam.id, { name: 'Samuel' });
+      await activity.logActivity(pool, {
+        actor: activity.actorFrom({ mode: 'database', id: admin.user.id, name: 'Alice' }),
+        action: activity.ACTIONS.USER_UPDATED, entityType: 'user', entityId: sam.id, metadata: {},
+      });
       const before = await logged();
       assert.equal(before.length, 1);
       assert.equal(before[0].actor_user_id, admin.user.id);

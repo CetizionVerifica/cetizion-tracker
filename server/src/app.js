@@ -24,6 +24,7 @@ import { importRouter } from './routes/import.js';
 import { travelImportRouter } from './routes/travelImport.js';
 import { documentRouter } from './routes/documents.js';
 import { userRouter } from './routes/users.js';
+import { superAdminRouter } from './routes/superAdmin.js';
 import { activityRouter } from './routes/activity.js';
 import { ownershipRouter } from './routes/ownership.js';
 import { companyRouter } from './routes/companies.js';
@@ -143,6 +144,9 @@ app.use('/api/hooks', incomingHooksRouter);
 app.use('/api/portal', portalRouter);
 // MCP clients authenticate with an API token instead of a session (#50).
 app.use('/api/mcp', mcpRouter);
+// The super admin portal manages accounts with its own sign-in and cookie,
+// never a staff session; see auth/superAdmin.js.
+app.use('/api/super-admin', superAdminRouter);
 
 // Everything past this line needs a session.
 app.use('/api', requireAuth);

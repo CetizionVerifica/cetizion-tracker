@@ -30,6 +30,18 @@ const DB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'db');
 const MIGRATION = readFileSync(join(DB_DIR, 'migrations', '044_activity_log.sql'), 'utf8');
 const SCHEMA = readFileSync(join(DB_DIR, 'schema.sql'), 'utf8');
 
+// Later migrations that change activity_log itself, their activity_log
+// statements only, so the upgraded table is compared with schema.sql as it
+// stands today rather than as 044 left it. 101 lets the super admin portal
+// record its acts as actor_type 'super_admin'.
+const LATER = ['101_super_admin_actor.sql']
+  .map((file) => readFileSync(join(DB_DIR, 'migrations', file), 'utf8').replace(/--.*$/gm, ''))
+  .join(';')
+  .split(';')
+  .filter((statement) => /ALTER TABLE activity_log\b/.test(statement))
+  .map((statement) => `${statement.trim()};`)
+  .join('\n');
+
 // All 017 asks of the schema before it. Phase 1A created this table and
 // Phase 1C added session_version; neither is anything this migration reads.
 const BEFORE = `
@@ -89,6 +101,7 @@ describe('migration 017 — activity_log', { skip: !ADMIN_URL && 'set TEST_DATAB
     withBoth(async (upgraded, rebuilt) => {
       await upgraded.query(BEFORE);
       await upgraded.query(MIGRATION);
+      await upgraded.query(LATER);
       await rebuilt.query(SCHEMA);
 
       for (const sql of [COLUMNS, CHECKS, INDEXES]) {

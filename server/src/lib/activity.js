@@ -15,8 +15,12 @@
  */
 import { pool } from '../db.js';
 
-/** The three authorities a request can arrive through. Matches the CHECK. */
-export const ACTOR_TYPES = ['user', 'shared_admin', 'system'];
+/**
+ * The authorities an act can come from. Matches the CHECK. 'super_admin' is
+ * the super admin portal (auth/superAdmin.js): like the shared admin it is
+ * not a users row, but it is a different credential with different powers.
+ */
+export const ACTOR_TYPES = ['user', 'shared_admin', 'super_admin', 'system'];
 
 /**
  * Every action key this phase writes. Machine keys, dotted, stable —
@@ -29,6 +33,14 @@ export const ACTIONS = {
   USER_PASSWORD_RESET: 'user.password_reset',
   USER_DEACTIVATED: 'user.deactivated',
   USER_REACTIVATED: 'user.reactivated',
+  // Only the super admin portal deletes an account, and it archives it: the
+  // row stays so the records and reports that name the person still do.
+  USER_DELETED: 'user.deleted',
+  // The deleted account's Excel backup (lib/userDeletion.js): made and
+  // checked, downloaded later, or a deletion that stopped part way.
+  USER_BACKUP_CREATED: 'user.backup_created',
+  USER_BACKUP_DOWNLOADED: 'user.backup_downloaded',
+  USER_DELETION_FAILED: 'user.deletion_failed',
   COMPANY_MERGED: 'company.merged',
   // Owner spellings folded into one (lib/owners.js).
   OWNER_MERGED: 'owner.merged',

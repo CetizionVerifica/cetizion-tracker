@@ -161,7 +161,7 @@ export default function Login() {
             {refused && !error && (
               <Alert variant="destructive">
                 <AlertDescription>
-                  That account cannot sign in here. Ask an admin to add it under Users &amp; roles,
+                  That account cannot sign in here. Ask the super admin to add it,
                   or sign in with a password.
                 </AlertDescription>
               </Alert>
@@ -250,7 +250,7 @@ export default function Login() {
           </div>
 
           <p className="text-[11.5px]/[1.6] text-muted-foreground">
-            There is no sign-up. An admin creates accounts under Settings → Users &amp; roles.
+            There is no sign-up. The super admin creates accounts.
           </p>
         </CardContent>
       </Card>
