@@ -45,14 +45,56 @@ export function checkGstin(raw) {
 }
 
 /** Intra-state supply pays CGST + SGST; inter-state pays IGST. */
-export function splitTax(taxable, rate, { ourState, theirState }) {
-  const tax = Math.round(Number(taxable) * Number(rate)) / 100;
+export function splitTax(taxable, rate, states) {
+  return splitGstAmount(Math.round(Number(taxable) * Number(rate)) / 100, states);
+}
+
+/** An amount of GST already worked out, as CGST + SGST within the state or IGST outside it. */
+export function splitGstAmount(gst, { ourState, theirState }) {
+  const tax = Math.round(Number(gst) * 100) / 100;
   const intra = ourState && theirState && String(ourState).padStart(2, '0') === String(theirState).padStart(2, '0');
   if (intra) {
     const half = Math.round(tax * 50) / 100;
     return { cgst: half, sgst: Math.round((tax - half) * 100) / 100, igst: 0, tax, intra: true };
   }
   return { cgst: 0, sgst: 0, igst: tax, tax, intra: false };
+}
+
+const paisa = (n) => Math.round(Number(n) * 100) / 100;
+
+/**
+ * The taxable value and GST inside an amount that already INCLUDES GST.
+ *
+ * A PO's value, and so every stage amount, is such an amount: the
+ * quotation's total, grossed up at its own rates (views.sql, po_gst_split,
+ * which the portal uses). Adding GST to it again is the mistake this
+ * exists to prevent.
+ *
+ * `mix` is the quotation's pre-tax amount per GST rate, [{ rate, amount }];
+ * the total is shared out in proportion to each rate's GROSS amount, so a
+ * total that came from those lines splits back into them. Empty, or all
+ * zero: the whole total at `fallbackRate`. Taxable is each part over
+ * (1 + rate), to the paisa; GST takes what is left, and the rounding paisa
+ * of the share-out lands on the largest part, so the parts always add up
+ * to the total exactly.
+ *
+ * @returns {{ rate, total, taxable, gst }[]} largest part first
+ */
+export function splitInclusive(total, mix = [], fallbackRate = 18) {
+  const whole = paisa(total);
+  const rates = (mix || [])
+    .map((m) => ({ rate: Number(m.rate) || 0, gross: Number(m.amount) * (1 + (Number(m.rate) || 0) / 100) }))
+    .filter((m) => m.gross > 0)
+    .sort((a, b) => b.gross - a.gross);
+  const base = rates.reduce((n, m) => n + m.gross, 0);
+  const shares = rates.length && base > 0
+    ? rates.map((m) => ({ rate: m.rate, total: paisa(whole * (m.gross / base)) }))
+    : [{ rate: Number(fallbackRate) || 0, total: whole }];
+  shares[0].total = paisa(shares[0].total + whole - shares.reduce((n, s) => n + s.total, 0));
+  return shares.map((s) => {
+    const taxable = paisa(s.total / (1 + s.rate / 100));
+    return { rate: s.rate, total: s.total, taxable, gst: paisa(s.total - taxable) };
+  });
 }
 
 /**
