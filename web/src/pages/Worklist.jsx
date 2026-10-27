@@ -9,6 +9,7 @@ import {
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 import { money, date } from '../lib/format.js';
+import { recordPath } from '../lib/journey.js';
 
 /**
  * One screen that answers "what is waiting on us?" — the workbook's
@@ -55,7 +56,7 @@ export default function Worklist() {
     <>
       <PageHeader
         title="Action list"
-        subtitle="Everything waiting on finance, HR or sales — in priority order"
+        subtitle="Everything waiting on finance, HR or sales, most urgent first. Each row carries its next step."
         actions={<button type="button" className="btn" onClick={refetch}>Refresh</button>}
       />
 
@@ -128,7 +129,7 @@ export default function Worklist() {
                   render: (r) => (
                     <div className="table__actions">
                       {r.stage_status === 'To Invoice' ? (
-                        <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'invoice', row: r })}>
+                        <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'invoice', row: r })}>
                           Invoice
                         </button>
                       ) : (
@@ -165,7 +166,7 @@ export default function Worklist() {
                     <div className="table__actions">
                       <button
                         type="button"
-                        className={`btn btn--sm ${r.payment_status === 'Overdue' ? 'btn--primary' : ''}`}
+                        className="btn btn--sm"
                         onClick={() => setDialog({ type: 'vendor', row: r })}
                         disabled={r.invoice_amount === null}
                       >
@@ -198,7 +199,7 @@ export default function Worklist() {
                   render: (r) => (
                     <div className="table__actions">
                       {r.status === 'Pending approval' ? (
-                        <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'decide', row: r })}>
+                        <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'decide', row: r })}>
                           Review
                         </button>
                       ) : (
@@ -248,7 +249,7 @@ export default function Worklist() {
                   align: 'right',
                   render: (r) => (
                     <div className="table__actions">
-                      <button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ type: 'convert', row: r })}>
+                      <button type="button" className="btn btn--sm" onClick={() => setDialog({ type: 'convert', row: r })}>
                         Register project
                       </button>
                     </div>
@@ -263,7 +264,7 @@ export default function Worklist() {
             <DataTable
               rows={[
                 ...q.quotations.map((r) => ({ ...r, kind: 'Quotation', to: `/quotations/${encodeURIComponent(r.ref)}` })),
-                ...q.enquiries.map((r) => ({ ...r, kind: 'Enquiry', to: `/enquiries?q=${encodeURIComponent(r.ref)}` })),
+                ...q.enquiries.map((r) => ({ ...r, kind: 'Enquiry', to: recordPath('enquiry', r.ref) })),
                 ...q.invoices.map((r) => ({ ...r, ref: r.invoice_no, status: `${r.days_overdue} days overdue`, kind: 'Overdue invoice', to: '/collections' })),
               ]}
               empty={<Empty icon="✓" title="Everyone has been contacted recently" />}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Badge, Field, Modal, Textarea, useToast } from './ui.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
+import { AttachmentStrip } from './mail/AttachmentStrip.jsx';
 
 /**
  * One synced email conversation (#29), with a reply that goes out from the
@@ -29,7 +30,7 @@ export function EmailThreadDialog({ threadId, onClose, onReplied, footerExtra })
   return (
     <Modal size="lg" title={t ? (t.subject || 'Email thread') : 'Loading…'} subtitle={t && `${t.company_name || 'Unmatched sender'}${t.contact_name ? ` · ${t.contact_name}` : ''} · ${t.mailbox}`} onClose={onClose}
       footer={<>{footerExtra}<button type="button" className="btn" onClick={onClose}>Close</button>{t?.mailbox_status === 'active' && <button type="button" className="btn btn--primary" disabled={busy || !reply.trim()} onClick={send}>{busy ? 'Sending…' : 'Send reply'}</button>}</>}>
-      {!t ? <div className="skeleton" style={{ height: 160 }} /> : (
+      {!t ? <div className="skeleton h-[160px]" /> : (
         <div className="stack">
           {t.visibility !== 'share_everything' && <div className="small muted">The mailbox owner shares {t.visibility === 'subject' ? 'subjects only' : 'only who and when'}.</div>}
           {t.messages.map((m) => (
@@ -38,12 +39,12 @@ export function EmailThreadDialog({ threadId, onClose, onReplied, footerExtra })
                 <span className="strong">{m.from_name || m.from_email}</span>
                 <span className="small muted">to {m.to_emails.join(', ')}{m.cc_emails.length ? `, cc ${m.cc_emails.join(', ')}` : ''}</span>
                 {m.sent_from_tracker_by && <Badge tone="info">sent from the tracker by {m.sent_from_tracker_by}</Badge>}
-                {m.has_attachments && <Badge>attachments</Badge>}
                 <span className="small muted mail__when">{new Date(m.sent_at).toLocaleString()}</span>
               </div>
               {m.body_html
                 ? <iframe className="mail__body" title={`email ${m.id}`} sandbox="" srcDoc={`<base target="_blank"><style>body{font:13px system-ui,sans-serif;margin:8px;color:#0f172a}img{max-width:100%}</style>${m.body_html}`} />
                 : m.snippet ? <div className="mail__snippet">{m.snippet}</div> : null}
+              <AttachmentStrip attachments={m.attachments || []} bodyHtml={m.body_html} webLink={m.web_link} className="mt-2" />
             </div>
           ))}
           {t.mailbox_status === 'active'

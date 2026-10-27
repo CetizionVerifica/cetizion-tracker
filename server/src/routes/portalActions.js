@@ -2,6 +2,7 @@
  * What clients said in the portal (#198 phase 2, §4): the staff worklist.
  *
  *   GET  /api/portal-admin/actions?status=open&kind=query|payment_advice|confirmed&po_number=
+ *   GET  /api/portal-admin/actions/by-stage      the latest action on each invoice, for the badges
  *   POST /api/portal-admin/actions/:id/resolve   { status: 'resolved' | 'rejected', resolution }
  *
  * Signed in: admins see every client's actions, anyone else those on a PO
@@ -62,6 +63,24 @@ portalActionsRouter.get('/', async (req, res) => {
        LEFT JOIN contacts ct ON ct.id = a.contact_id
       WHERE true ${where.length ? `AND ${where.join(' AND ')}` : ''} ${scope}
       ORDER BY a.created_at DESC LIMIT 300`, params);
+  res.json({ data: rows });
+});
+
+/**
+ * The client's latest word on each invoice, for the badges on Collections and
+ * the Payment stages list (the PO page reads the full list for its one PO).
+ * One row per stage that has any action, so it stays small however long the
+ * history grows.
+ */
+portalActionsRouter.get('/by-stage', async (req, res) => {
+  const params = [];
+  const scope = reachable(req, params);
+  const { rows } = await query(
+    `SELECT DISTINCT ON (x.stage_id) x.stage_id, a.id, a.kind, a.status, a.note, a.amount, a.paid_on, a.resolved_at, a.created_at
+       FROM portal_client_action_stages x
+       JOIN portal_client_actions a ON a.id = x.action_id
+      WHERE true ${scope}
+      ORDER BY x.stage_id, a.created_at DESC, a.id DESC`, params);
   res.json({ data: rows });
 });
 

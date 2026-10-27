@@ -4,6 +4,8 @@ import { requireAdmin } from '../auth/middleware.js';
 import { ownerClause, purchaseOrderClause, scopeOf } from '../auth/ownership.js';
 import { query } from '../db.js';
 import { CATEGORY_SETTINGS, assertCategoriesUnused, parseCategoryList } from '../lib/reportDefinitions.js';
+import { smtpMaySendAs } from '../lib/mail.js';
+import { ApiError } from '../middleware/error.js';
 import { STATUS } from '../lib/resources.js';
 import { nameKey } from '../lib/salesReport.js';
 import { isSequence, nextId, yearFor } from '../lib/sequences.js';
@@ -104,6 +106,13 @@ lookupRouter.get('/', async (req, res) => {
              UNION
              SELECT e.sales_person FROM enquiries e
               WHERE e.sales_person IS NOT NULL ${pplE}
+             ${scope.unrestricted
+               // An admin is also offered every active sales user by their
+               // account name: picking one is what makes them the record's
+               // owner (lib/salespersonOwner.js), and a spelling only the
+               // old data carries would not.
+               ? `UNION SELECT u.name FROM users u WHERE u.active AND u.role = 'sales'`
+               : ''}
              ORDER BY 1`, ppl.params),
       // One spelling per client: the companies table (#20).
       query('SELECT id, name, sector FROM companies ORDER BY name'),
@@ -156,6 +165,13 @@ lookupRouter.get('/', async (req, res) => {
       purchase_orders: pos.rows,
       trips: trips.rows,
       sales_people: people.rows.map((r) => r.name),
+      // Who the Owner field may name: the active sales users on the platform.
+      // An admin picks any of them; a sales user is offered only themselves,
+      // as sales_people above offers them no colleagues.
+      owners: (await query(
+        `SELECT id, btrim(name) AS name, email FROM users
+          WHERE active AND role = 'sales' AND btrim(name) <> '' ${scope.unrestricted ? '' : 'AND id = $1'}
+          ORDER BY name`, scope.unrestricted ? [] : [scope.ownerId])).rows,
       staff: (await query('SELECT id, name, role FROM staff WHERE active ORDER BY name')).rows,
       clients: clients.rows.map((r) => r.name),
       companies: clients.rows,
@@ -190,6 +206,54 @@ settingsRouter.get('/', async (req, res) => {
   res.json({ data: rows });
 });
 
+const unprocessable = (message) => new ApiError(422, message, { fields: { value: message } });
+const isNone = (v) => v.toLowerCase() === 'none';
+
+/**
+ * Who the scheduled reports go from (mis-report-sender-plan.md §A3), and
+ * the personal reports' AI ceiling: saved only when the reports could use
+ * it, so a wrong value is refused with the reason instead of being found at
+ * 08:56.
+ */
+const SENDER_SETTINGS = {
+  async mis_sender_account_id(v) {
+    if (isNone(v)) return 'none';
+    if (!/^\d+$/.test(v)) throw unprocessable('Choose a connected mailbox, or none for the SMTP sender');
+    const { rows: [a] } = await query('SELECT * FROM connected_accounts WHERE id = $1', [Number(v)]);
+    if (!a || a.status === 'disconnected') throw unprocessable('That mailbox is not connected');
+    // A mailbox that needs reconnecting may be chosen (it is still the right
+    // one); the card says so and the reports fall back until it is fixed.
+    if (!a.is_shared && !a.may_send_reports) throw unprocessable(`${a.email} is a personal mailbox. Its owner allows reports to be sent from it on the Mailboxes page.`);
+    return String(a.id);
+  },
+  async mis_sender_address(v) {
+    if (isNone(v)) return 'none';
+    const address = v.trim();
+    if (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(address)) throw unprocessable('Enter an email address, or none');
+    const { rows: [s] } = await query(`SELECT value FROM settings WHERE key = 'mis_sender_account_id'`);
+    if (!/^\d+$/.test(String(s?.value || '').trim()) && !smtpMaySendAs(address)) {
+      throw unprocessable(`The SMTP sender cannot send as ${address}. Add it to EMAIL_FROM_ALLOWED on the server, or send through a mailbox that has Send As on it.`);
+    }
+    return address;
+  },
+  async mis_sender_name(v) {
+    if (isNone(v)) return 'none';
+    const name = v.trim();
+    if (name.length > 80 || /[<>"\r\n]/.test(name)) throw unprocessable('A name of up to 80 characters, without < > or quotes');
+    return name;
+  },
+  // The personal daily MIS's own AI ceiling (§B4.2): a whole number, 0 stops it.
+  // The personal daily MIS on or off (§B2): a plain true or false.
+  async personal_mis_enabled(v) {
+    if (!['true', 'false'].includes(v.trim().toLowerCase())) throw unprocessable('true or false');
+    return v.trim().toLowerCase();
+  },
+  async personal_mis_ai_limit(v) {
+    if (!/^\d{1,4}$/.test(v.trim()) || Number(v) > 1000) throw unprocessable('A whole number of calls a day, from 0 to 1000');
+    return String(Number(v));
+  },
+};
+
 // Changing a setting changes what the whole tracker computes — an FX rate
 // re-values every historical deal in every report — so it is an admin act.
 // Reading them stays open: the lists and rates drive forms sales users need.
@@ -211,6 +275,7 @@ settingsRouter.patch('/:key', requireAdmin, async (req, res) => {
   // The Reports section's category lists are JSON (lib/reportDefinitions.js):
   // saved cleaned, or refused with the reason, never stored half-readable.
   let stored = value.trim();
+  if (Object.hasOwn(SENDER_SETTINGS, req.params.key)) stored = await SENDER_SETTINGS[req.params.key](stored);
   if (Object.hasOwn(CATEGORY_SETTINGS, req.params.key)) {
     const names = parseCategoryList(value);
     await assertCategoriesUnused({ query }, req.params.key, names);

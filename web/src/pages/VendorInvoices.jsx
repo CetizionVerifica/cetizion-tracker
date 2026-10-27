@@ -76,7 +76,7 @@ export default function VendorInvoices() {
           <div className="table__actions">
             <button
               type="button"
-              className={`btn btn--sm ${r.payment_status === 'Overdue' ? 'btn--primary' : ''}`}
+              className="btn btn--sm"
               onClick={(e) => { e.stopPropagation(); setPaying(r); }}
               disabled={r.invoice_amount === null}
             >
@@ -108,9 +108,12 @@ export default function VendorInvoices() {
       {tab === 'invoices' ? (
         <ListPage
           refreshToken={version}
-          title="Travel vendor invoices"
+          title="Vendor invoices"
           subtitle="HR records the bill; finance pays by the following month-end. One bill can cover several trips."
           resource="vendor-invoices"
+          // The date picker filters ?from=&to= on invoice_date: the date on the vendor's bill.
+          dateFilterLabel="Invoice date"
+          dateRange
           columns={columns}
           fields={vendorInvoiceFields(lookups)}
           onRowClick={(row) => navigate(`/vendor-invoices/${row.id}`)}
@@ -128,6 +131,8 @@ export default function VendorInvoices() {
           title="Credit and cancellation notes"
           subtitle="What the travel agency gave back. A note on a leg marks it cancelled or partly refunded."
           resource="vendor-credit-notes"
+          dateFilterLabel="Note date"
+          dateRange
           columns={creditColumns}
           fields={creditNoteFields(lookups)}
           newLabel="Credit note"

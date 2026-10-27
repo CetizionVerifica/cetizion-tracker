@@ -4,17 +4,19 @@ import { Clock } from 'lucide-react';
 import { cn } from 'cn';
 import { PageHeader } from '../App.jsx';
 import { Alert, Badge, DocumentLink, ErrorState, useToast } from '../components/ui.jsx';
-import { Chip, flowSteps, RecordFlow, RecordMenuItem, RecordPage, RecordSection } from '../components/record.jsx';
+import { Chip, RecordMenuItem, RecordPage, RecordSection, RecordStat } from '../components/record.jsx';
+import { JourneyRail } from '../components/journey/JourneyRail.jsx';
 import { Button } from '../components/ui/button';
 import { RecordInvoiceDialog, RecordPaymentDialog, PaymentSplitDialog } from '../components/actions.jsx';
 import { RecordForm } from '../components/RecordForm.jsx';
 import { Timeline } from '../components/Timeline.jsx';
 import { EmailOrigin } from '../components/EmailOrigin.jsx';
+import { clientWord } from '../components/ClientSaid.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { mayDeleteResource } from '../lib/permissions.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
-import { money, date, localDate, percent, number } from '../lib/format.js';
+import { money, date, percent, number } from '../lib/format.js';
 import { poCurrencyFields } from '../lib/poCurrency.js';
 import { poRevisionFields } from '../lib/poRevision.js';
 
@@ -33,6 +35,11 @@ import { poRevisionFields } from '../lib/poRevision.js';
  * The header keeps one overflow menu and no primary button, because the
  * primary button belongs to the flow panel, next to the sentence that
  * explains why it is the thing to press.
+ *
+ * The rail across the top is the sale's journey, Enquiry → Quotation → PO
+ * (docs/specs/sales-journey), with the order's own small steps under PO.
+ * Delivery is not one of them: it stays in the sentence, which says which
+ * stage the delivery date unlocks.
  */
 
 const MS_PER_DAY = 86_400_000;
@@ -127,15 +134,6 @@ function poTone(status) {
  * which is what stops a column of ten identical buttons from hiding the
  * one that matters.
  */
-/** What the client last said about a stage in the portal (#198 §4), in staff words. */
-function clientWord(a) {
-  const on = localDate(a.created_at);
-  if (a.kind === 'confirmed') return { tone: 'success', text: `Client confirmed ${on}` };
-  if (a.kind === 'query') return a.status === 'open' ? { tone: 'warning', text: 'Client query open', note: a.note } : { tone: 'neutral', text: `Client query ${a.status} ${localDate(a.resolved_at)}` };
-  if (a.status === 'open') return { tone: 'info', text: `Client reports paying ${money(a.amount)} on ${date(a.paid_on)}: to check in Collections` };
-  return { tone: a.status === 'matched' ? 'success' : 'neutral', text: `Client's payment advice ${a.status}` };
-}
-
 function StageRung({ stage, action, last, onChanged, client }) {
   // Amber is "you can bill this and have not"; red is "this is late".
   // The header chip uses the same two, so a rung never disagrees with it.
@@ -205,8 +203,8 @@ function Fact({ label, value, tone }) {
 /** A card in the rail: a small caps label over a short list. */
 function RailCard({ title, children }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-5">
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-muted-foreground">{title}</div>
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
+      <div className="eyebrow">{title}</div>
       {children}
     </div>
   );
@@ -243,7 +241,7 @@ export default function PurchaseOrderDetail() {
     return (
       <>
         <PageHeader title={poNumber} />
-        <div className="page"><div className="skeleton" style={{ height: 200 }} /></div>
+        <div className="page"><div className="skeleton h-[200px]" /></div>
       </>
     );
   }
@@ -269,19 +267,11 @@ export default function PurchaseOrderDetail() {
   const toChase = stages.find((s) => CHASEABLE.includes(s.stage_status));
   const lockedOnDelivery = stages.find((s) => s.stage_status === 'Not Due' && s.trigger_event === 'On Delivery');
 
-  // Each rung's state is worked out here and handed to the flow, because
-  // what "current" means is the order's business, not the component's.
-  const reached = [
-    { label: 'Registered', done: Boolean(po.po_date) },
-    { label: 'Split set', done: po.stage_count > 0 && !stagesOff },
-    {
-      label: stages.some((s) => s.trigger_event === 'On PO Registration') ? 'Advance billable' : 'Billable',
-      done: stages.some((s) => s.invoice_no),
-    },
-    { label: 'Delivered', done: Boolean(po.actual_delivery_date) },
-    { label: 'Fully paid', done: po.stage_count > 0 && stages.every((s) => s.stage_status === 'Paid') },
-  ];
-  const steps = flowSteps(reached);
+  // A cancelled or replaced order is in no journey (the server ignores it),
+  // so its rail shows the sale it was part of: through its quotation, or
+  // else through its project, which finds the live order that took over.
+  const live = !po.cancelled && !po.replaced_by_po_number;
+  const railRecord = live ? { po: po.po_number } : po.quotation_no ? { quotation: po.quotation_no } : { project: po.project_id };
 
   function verdict() {
     if (!stages.length) return 'No payment stages are set, so nothing on this order can be invoiced.';
@@ -367,7 +357,7 @@ export default function PurchaseOrderDetail() {
           <span className="mono text-[12.5px] text-foreground">{amount(po.po_value)}</span>,
           `${po.payment_terms_days}-day terms`,
           po.quotation_no && (
-            <Link to={`/quotations?q=${encodeURIComponent(po.quotation_no)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.quotation_no}</Link>
+            <Link to={`/quotations/${encodeURIComponent(po.quotation_no)}`} className="mono text-[12.5px] text-secondary-text no-underline hover:text-foreground">{po.quotation_no}</Link>
           ),
           <Chip tone={poTone(po.payment_status)} icon={/overdue|to invoice/i.test(po.payment_status) ? Clock : undefined}>
             {po.payment_status}
@@ -387,12 +377,41 @@ export default function PurchaseOrderDetail() {
           </>
         }
         flow={
-          <RecordFlow
-            steps={steps}
+          // What the page loaded is a new object each time it loads, so
+          // the rail reloads with it after every action taken here.
+          <JourneyRail
+            of={railRecord}
             verdict={verdict()}
             actions={primary()}
+            refreshKey={data}
           />
         }
+        stats={(
+          <>
+            {/* The order's money in four figures (web/CLAUDE.md §4), each
+                computed by the server: what is owed now, what can be billed
+                now, what has been billed, and what has come in. */}
+            <RecordStat
+              label="Due now"
+              value={amount(po.balance_due_now)}
+              detail={toChase?.stage_status === 'Overdue' ? `Invoice ${toChase.invoice_no} is overdue` : 'Invoiced and not yet paid'}
+              tone={toChase?.stage_status === 'Overdue' ? 'late' : undefined}
+            />
+            <RecordStat
+              label="To bill now"
+              value={amount(po.balance_to_bill)}
+              detail={toRaise ? `Stage ${toRaise.stage_no} is ready to invoice` : 'Nothing billable yet'}
+              tone={Number(po.balance_to_bill) > 0 ? 'waiting' : undefined}
+            />
+            <RecordStat label="Billed" value={amount(po.total_invoiced)} detail={`of ${amount(po.po_value)} ordered`} />
+            <RecordStat
+              label="Received"
+              value={amount(po.total_received)}
+              detail={`${amount(Number(po.po_value) - Number(po.total_received))} still to come`}
+              tone={Number(po.total_received) >= Number(po.po_value) - 0.5 && Number(po.po_value) > 0 ? 'settled' : undefined}
+            />
+          </>
+        )}
         rail={
           <>
             <RailCard title="Order facts">
@@ -470,7 +489,7 @@ export default function PurchaseOrderDetail() {
           hint={stages.length
             ? `${stages.map((s) => Math.round(Number(s.stage_percent) * 100)).join(' / ')} — totals ${percent(po.stages_percent_total)}`
             : 'none set'}
-          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newStage' })}>+ Stage</Button>}
+          action={<Button variant="secondary" size="sm" className={ROW_BUTTON} onClick={() => setDialog({ type: 'newStage' })}>Add a stage</Button>}
         >
           {stages.length === 0 ? (
             <p className="px-5 py-4 text-[12.5px] text-muted-foreground">

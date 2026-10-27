@@ -1,5 +1,6 @@
 import { PageHeader } from '../App.jsx';
 import { Card, Empty, ErrorState, Stat } from '../components/ui.jsx';
+import { OwnerDuplicates } from '../components/OwnerDuplicates.jsx';
 import { api } from '../lib/api.js';
 import { useFetch } from '../lib/hooks.js';
 
@@ -25,6 +26,9 @@ export default function DataQuality() {
 
       <div className="page stack">
         {error && <ErrorState message={error} onRetry={refetch} />}
+
+        {/* The same person under several Owner names splits every report by owner. */}
+        <OwnerDuplicates />
 
         {!error && !loading && !missing.length && (
           <Card>

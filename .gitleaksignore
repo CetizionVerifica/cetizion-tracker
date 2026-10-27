@@ -1,0 +1,5 @@
+# Findings checked by hand and known not to be secrets (gitleaks fingerprints: commit:file:rule:line).
+# The option key "every_12_months" in the ISO audits questionnaire (#208 phase 1b) read as a generic API key;
+# the key is now "annual", and these lines only exist in the commit that first added the form.
+d46ac22e3a61e6c5a52379f5355e12ca639a7326:docs/questionnaires/iso-audits.json:generic-api-key:33
+d46ac22e3a61e6c5a52379f5355e12ca639a7326:server/test/questionnaireImport.test.js:generic-api-key:105

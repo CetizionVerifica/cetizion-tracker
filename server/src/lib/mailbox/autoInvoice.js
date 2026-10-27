@@ -30,7 +30,6 @@ import { notify } from '../notify.js';
 import { businessToday } from '../businessDate.ts';
 import { documentStorageReady, uploadDocument } from '../documents.js';
 import { NORMALISED_INVOICE_NO, recordInvoice } from '../invoices.js';
-import { emailNewInvoice } from '../portalNotices.js';
 import { ApiError } from '../../middleware/error.js';
 import { near } from './pdfQuotation.js';
 import { mainText } from './enquiryDetect.js';
@@ -479,8 +478,8 @@ async function notifyOutcomes(ctx) {
       entity: 'purchase_order', entityId: r.po_number, link: `/purchase-orders/${encodeURIComponent(r.po_number)}`,
       dedupeKey: `invoice-recorded:${r.po_number}:${r.invoice_no}`,
     }).catch(() => {});
-    // The client's portal contacts hear of it too (#198 phase 3); past mail never.
-    await emailNewInvoice(r.stage_id, { sentBy: 'invoice reader' }).catch((err) => console.error('[portal] new-invoice email', err));
+    // No portal email (#198 phase 3): we emailed this invoice to the client
+    // ourselves, so they already have it (lib/portalNotices.js).
   }
   const WHY = {
     po_not_found: 'its PO is not in the tracker', several_pos: 'more than one PO could be it', amount_not_a_stage: 'its amount is not one of the PO\'s stages',

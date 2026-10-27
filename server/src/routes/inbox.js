@@ -26,6 +26,8 @@ import { createEnquiryFromEmail } from '../lib/mailbox/enquiryFromEmail.js';
 import { trimQuotedPreview } from '../lib/mailbox/quotes.js';
 import { fillTemplate, wake } from '../lib/inbox.js';
 import { isSyncing, kickSync } from '../lib/mailbox/autoSync.js';
+import { logCreated } from '../lib/recordActs.js';
+import { ownerNameFor } from '../lib/owners.js';
 
 export const inboxRouter = Router();
 
@@ -194,7 +196,12 @@ const LIST = `
          -- already stored this as NULL. The privacy choice was made
          -- before the row existed, not on the way out.
          last.snippet,
-         COALESCE(last.has_attachments, false) AS has_attachments
+         COALESCE(last.has_attachments, false) AS has_attachments,
+         -- What is attached to the newest message, by name, so the list
+         -- shows the files before anybody opens the thread. Names are
+         -- stored only where the mailbox's visibility lets them be, so
+         -- this says no more than the mailbox shares.
+         last.attachment_names
     FROM inbox_conversations c
     JOIN inboxes i ON i.id = c.inbox_id
     -- Which shared address the thread actually arrived at. With more than
@@ -206,7 +213,9 @@ const LIST = `
     LEFT JOIN companies co ON co.id = c.company_id
     LEFT JOIN contacts ct ON ct.id = c.contact_id
     LEFT JOIN LATERAL (
-      SELECT m.snippet, m.has_attachments
+      SELECT m.snippet, m.has_attachments,
+             (SELECT array_agg(x.name ORDER BY x.id) FROM email_attachments x
+               WHERE x.message_id = m.id AND NOT x.is_inline AND x.name IS NOT NULL) AS attachment_names
         FROM email_messages m
        WHERE m.thread_id = t.id
        ORDER BY m.sent_at DESC, m.id DESC
@@ -431,7 +440,9 @@ const convertSchema = z.object({
   client_name: z.string().trim().max(200).optional(),
   contact_person: z.string().trim().max(120).optional(),
   service: z.string().trim().max(300).optional(),
-  sales_person: z.string().trim().max(120).optional(),
+  // null is a choice: no owner. Left out, the conversation's assignee is used
+  // when it is a sales user (lib/owners.js ownerNameFor).
+  sales_person: z.string().trim().max(120).nullish(),
   source_id: z.coerce.number().int().positive().optional(),
   notes: z.string().max(2000).optional(),
 });
@@ -445,17 +456,24 @@ inboxRouter.post('/:id/convert', async (req, res) => {
   const client = v.client_name || c.company_name;
   if (!client) throw new ApiError(422, 'Please check the highlighted fields', { fields: { client_name: 'Which company is this?' } });
   const enquiry = await transaction(async (db) => {
+    // An assignee is a login or a typed name, not necessarily anybody's
+    // account name, so it becomes the Owner only as the account name of the
+    // sales user it names; otherwise the enquiry starts with no owner rather
+    // than with one more spelling of somebody.
+    const salesPerson = v.sales_person !== undefined ? (v.sales_person || null) : await ownerNameFor(db, c.assignee);
     const { rows: [src] } = v.source_id ? { rows: [{ id: v.source_id }] } : await db.query(`SELECT id FROM lead_sources WHERE name = 'Inbound email or call'`);
     const { rows: [{ first }] } = await db.query('SELECT MIN(sent_at) AS first FROM email_messages WHERE thread_id = $1', [c.thread_id]);
-    return createEnquiryFromEmail(db, {
+    const created = await createEnquiryFromEmail(db, {
       threadId: c.thread_id, fromEmail: c.from_email, fromName: c.from_name,
       enquiry: {
         dated_at: first || new Date().toISOString(), client_name: client, status: 'New',
-        contact_person: v.contact_person || c.contact_name || c.from_name || null, sales_person: v.sales_person || c.assignee || null,
+        contact_person: v.contact_person || c.contact_name || c.from_name || null, sales_person: salesPerson,
         service: v.service || c.subject || null, source_id: src?.id ?? null,
         notes: v.notes || `From the ${c.inbox_name} inbox: "${c.subject || ''}" from ${c.from_email}`, first_responded_at: c.first_response_at,
       },
     });
+    await logCreated(db, req.user, { entity: 'enquiry', ref: created.enquiry_no, row: created, extra: { from_email: c.from_email, thread_id: c.thread_id } });
+    return created;
   });
   res.status(201).json({ data: enquiry });
 });

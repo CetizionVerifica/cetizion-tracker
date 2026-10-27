@@ -306,3 +306,25 @@ reminder carries no link).
 |---|---|
 | `server/test/portal.test.js` | Recording an invoice emails the portal contacts, with the address and the GST; once however often it is recorded; not to a contact who opted out; nothing when switched off in Settings, or when the client's Invoices section is off |
 | `server/test/reminders.test.js` | A reminder carries the portal only for a contact who can sign in to its invoices; the run adds the public address, and leaves it out when switched off |
+
+---
+
+## 9. Shyam's answers (7 October 2026)
+
+Given after phases 1 to 3 were merged. Everything not listed stays as built.
+
+| Question | Answer | Change |
+|---|---|---|
+| §7.4 #7, rate limit | 50 an hour | A client can now send 50 answers or uploads an hour from one address (`server/src/routes/portal.js`) |
+| §7.4 #9, stage badges | PO page, Collections and Payment stages | The client's latest word on each invoice also shows in Collections' invoice rows and in the Payment stages list's Status column. `GET /api/portal-admin/actions/by-stage` returns it, one row per invoice, scoped like the PO (`web/src/components/ClientSaid.jsx`) |
+| §8.4 #1, two emails for one invoice | Skip the portal email | An invoice we emailed to the client ourselves is not announced: the email reader no longer sends it, and the new-invoice email is skipped for any stage the reader found in our sent mail (recorded, linked, or recorded by hand from the review queue), even when a person records it again later (`server/src/lib/portalNotices.js`) |
+| §8.4 #2, who gets the new-invoice email | Not every contact | The billing contacts allowed into the portal, else the first contact allowed in, as a payment reminder picks its contact |
+| §8.4 #3, sign-in page or link | No | Open: the choice is with Shyam (a one-time link expires after 20 minutes). The email still links to the sign-in page |
+| §8.4 #5, address set in production | Not set | Nothing to change in code. Until *Address clients open links on* is set in Settings, reminders carry no portal link and only staff-recorded invoices are announced |
+
+Kept as built: §5's GST split, the staff-only "GST estimated" flag, the
+invoice state from the money, the invoices of cancelled POs, the "Projects"
+switch label, who is told, confirmations, resolving queries by hand, "seen by
+staff", where clients upload, the section switches, rejections needing a
+reason, opting out, no announcement of past invoices, and the contact-email
+scope.
