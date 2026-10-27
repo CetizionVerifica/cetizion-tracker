@@ -27,7 +27,7 @@ export default function Projects() {
     // r.currency is null when the project's POs use more than one, and a sum
     // across currencies means nothing — so show a dash, not a rupee figure.
     { key: 'total_contract_value', header: 'Contract', align: 'right', render: (r) => projectAmount(r, r.total_contract_value) },
-    { key: 'total_received', header: 'Received', align: 'right', render: (r) => projectAmount(r, r.total_received) },
+    { key: 'total_received', header: 'Received (incl. TDS)', align: 'right', render: (r) => projectAmount(r, r.total_received) },
     { key: 'balance_due_now', header: 'Due now', align: 'right', className: 'strong', render: (r) => projectAmount(r, r.balance_due_now) },
     { key: 'balance_to_bill', header: 'To bill', align: 'right', render: (r) => (r.balance_to_bill > 0 ? projectAmount(r, r.balance_to_bill) : <span className="muted">—</span>) },
     { key: 'margin', header: 'Margin', align: 'right', render: (r) => { const m = margins[r.project_id]; return m?.margin_percent == null ? <span className="muted">—</span> : <span title={`Margin ${m.margin} · cost ${m.total_cost}`}><Badge tone={marginTone(Number(m.margin_percent))}>{m.margin_percent}%</Badge>{m.low_margin && ' ⚑'}</span>; } },

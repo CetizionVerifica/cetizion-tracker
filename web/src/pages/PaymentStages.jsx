@@ -48,7 +48,7 @@ export default function PaymentStages() {
     { key: 'invoice_no', header: 'Invoice', className: 'mono small', render: (r) => (r.invoice_no ? <>{r.invoice_no}<div className="muted">{date(r.invoice_date)}</div></> : <span className="muted">—</span>) },
     { key: 'document_id', header: 'Document', render: (r) => <DocumentLink id={r.document_id} name={r.document_name} /> },
     { key: 'invoice_due_date', header: 'Due', render: (r) => date(r.invoice_due_date) },
-    { key: 'amount_received', header: 'Received', align: 'right', render: (r) => money(r.amount_received, r.currency) },
+    { key: 'amount_received', header: 'Received (incl. TDS)', align: 'right', render: (r) => money(r.amount_received, r.currency) },
     { key: 'due_now_amount', header: 'Due now', align: 'right', className: 'strong', render: (r) => money(r.due_now_amount, r.currency) },
     { key: 'to_bill_amount', header: 'To bill', align: 'right', render: (r) => (r.to_bill_amount > 0 ? money(r.to_bill_amount, r.currency) : <span className="muted">—</span>) },
     { key: 'stage_status', header: 'Status', render: (r) => <><Badge>{r.stage_status}</Badge><ClientSaidBadge said={clientSaid.get(r.id)} /></> },
