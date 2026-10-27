@@ -47,7 +47,7 @@ const fmtDate = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLoc
 function Sheet({ children }) {
   return (
     <div className="min-h-dvh bg-background px-4 py-10 sm:px-6 sm:py-16">
-      <Card className="mx-auto w-full max-w-[720px] gap-0 rounded-[14px] py-0">
+      <Card className="mx-auto w-full max-w-[720px] gap-0 rounded-xl py-0">
         <CardContent className="px-5 py-6 sm:px-8 sm:py-8">{children}</CardContent>
       </Card>
     </div>
@@ -95,7 +95,7 @@ export default function AcceptQuotation({ token }) {
   if (state.dead) {
     return (
       <Sheet>
-        <h1 className="text-xl font-semibold text-foreground">This link is not available</h1>
+        <h1 className="font-display text-xl font-bold text-foreground">This link is not available</h1>
         <p className="mt-2 text-[14px]/[1.6] text-secondary-text">{state.dead}</p>
         <p className="mt-4 text-[13px] text-muted-foreground">
           If you were expecting a quotation, reply to the email that brought you here and we will send a fresh link.
@@ -110,8 +110,8 @@ export default function AcceptQuotation({ token }) {
 
   return (
     <Sheet>
-      <div className="text-[12px] font-semibold uppercase tracking-[0.1em] text-primary">{seller.name}</div>
-      <h1 className="mt-2 text-[24px]/[1.25] font-semibold tracking-[-0.02em] text-foreground">
+      <div className="eyebrow text-primary">{seller.name}</div>
+      <h1 className="mt-2 font-display text-2xl/[1.25] font-bold text-foreground">
         Quotation for {q.client_name}
       </h1>
       <p className="mt-1.5 text-[13px] text-secondary-text">
@@ -171,7 +171,7 @@ export default function AcceptQuotation({ token }) {
           </div>
         )}
         <Separator className="my-2" />
-        <div className="flex justify-between text-[16px] font-semibold text-foreground">
+        <div className="flex justify-between font-display text-lg font-bold text-foreground">
           <span>Total</span><span className="tabular-nums">{fmtMoney(q.total, q.currency)}</span>
         </div>
       </div>
@@ -208,7 +208,7 @@ export default function AcceptQuotation({ token }) {
       {open && !mode && (
         <div className="mt-8">
           <Separator />
-          <h2 className="mt-6 text-[15px] font-semibold text-foreground">Accept this quotation</h2>
+          <h2 className="mt-6 font-display text-base font-bold text-foreground">Accept this quotation</h2>
           <p className="mt-1 text-[13px] text-secondary-text">
             Your name is recorded with the date. {seller.name} will ask for a purchase order next.
           </p>
@@ -227,7 +227,7 @@ export default function AcceptQuotation({ token }) {
       {mode && (
         <form className="mt-8" onSubmit={submit}>
           <Separator />
-          <h2 className="mt-6 text-[15px] font-semibold text-foreground">
+          <h2 className="mt-6 font-display text-base font-bold text-foreground">
             {mode === 'accept' ? 'Accept this quotation' : 'Ask a question or request a change'}
           </h2>
 
@@ -252,7 +252,7 @@ export default function AcceptQuotation({ token }) {
             </div>
 
             {mode === 'accept' && (
-              <div className="flex items-start gap-3 rounded-[10px] border border-border bg-secondary/40 px-4 py-3">
+              <div className="flex items-start gap-3 rounded-lg border border-border bg-secondary/40 px-4 py-3">
                 <Checkbox
                   id="accept-agree"
                   checked={form.agree}

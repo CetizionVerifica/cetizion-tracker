@@ -7,9 +7,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { ownerClause, scopeOf, scopedSources } from '../auth/ownership.js';
-import { query } from '../db.js';
+import { query, transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { pipelineCards, summarisePipeline } from '../lib/pipeline.js';
+import { actAs, logStageMoves } from '../lib/recordActs.js';
 import { RATES, rateOn } from '../lib/salesReport.js';
 
 export const pipelineRouter = Router();
@@ -74,19 +75,24 @@ pipelineRouter.post('/:key/move', async (req, res) => {
   // in a read before it, and a card that is not this caller's simply matches
   // no row (#18 Phase 2C).
   const mine = ownerClause(scopeOf(req), moveParams, { alias: 'quotations' });
-  const { rows } = await query(
-    `UPDATE quotations SET stage_id = $2::int, probability = COALESCE($3::int, probability),
-            lost_reason_id = CASE WHEN $4::text = 'lost' THEN $5::int ELSE NULL END,
-            lost_notes = CASE WHEN $4::text = 'lost' THEN $6::text ELSE NULL END,
-            -- the competitor belongs to a loss: kept unless sent (blank clears it), dropped on reopening
-            competitor = CASE WHEN $4::text <> 'lost' THEN NULL WHEN $10::boolean THEN NULLIF($7::text, '') ELSE competitor END,
-            expected_close_date = COALESCE($8::date, expected_close_date),
-            next_step = COALESCE($9::text, next_step)
-      WHERE (quotation_no = $1 OR (id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)))
-        ${mine ? `AND ${mine}` : ''}
-      RETURNING id`,
-    moveParams
-  );
+  const rows = await transaction(async (client) => {
+    await actAs(client, req.user);
+    const { rows: moved } = await client.query(
+      `UPDATE quotations SET stage_id = $2::int, probability = COALESCE($3::int, probability),
+              lost_reason_id = CASE WHEN $4::text = 'lost' THEN $5::int ELSE NULL END,
+              lost_notes = CASE WHEN $4::text = 'lost' THEN $6::text ELSE NULL END,
+              -- the competitor belongs to a loss: kept unless sent (blank clears it), dropped on reopening
+              competitor = CASE WHEN $4::text <> 'lost' THEN NULL WHEN $10::boolean THEN NULLIF($7::text, '') ELSE competitor END,
+              expected_close_date = COALESCE($8::date, expected_close_date),
+              next_step = COALESCE($9::text, next_step)
+        WHERE (quotation_no = $1 OR (id::text = $1 AND NOT EXISTS (SELECT 1 FROM quotations WHERE quotation_no = $1)))
+          ${mine ? `AND ${mine}` : ''}
+        RETURNING id`,
+      moveParams
+    );
+    await logStageMoves(client, req.user, moved.map((r) => r.id));
+    return moved;
+  });
   if (!rows.length) throw new ApiError(404, 'Quotation not found');
   const { rows: [q] } = await query('SELECT * FROM v_quotations WHERE id = $1', [rows[0].id]);
   res.json({ data: q });

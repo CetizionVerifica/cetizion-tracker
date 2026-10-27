@@ -29,6 +29,7 @@ import { scopeOf } from '../auth/ownership.js';
 import { transaction } from '../db.js';
 import { ApiError } from '../middleware/error.js';
 import { registerPurchaseOrder } from '../lib/purchaseOrders.js';
+import { actAs, logRegistration } from '../lib/recordActs.js';
 import { STATUS } from '../lib/statuses.js';
 import { settleReview } from './poReview.js';
 
@@ -72,7 +73,9 @@ registerRouter.post('/:key/register', async (req, res) => {
   const scope = scopeOf(req);
   const { review_id: reviewId, ...input } = parsed.data;
   const data = await transaction(async (client) => {
+    await actAs(client, req.user);
     const registered = await registerPurchaseOrder(client, { ...input, quotation: decodeURIComponent(req.params.key) }, { scope });
+    await logRegistration(client, req.user, registered);
     if (reviewId) await settleReview(client, req, reviewId, { poNumber: registered.po_number, quotationNo: registered.quotation_no });
     return registered;
   });

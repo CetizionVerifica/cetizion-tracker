@@ -64,3 +64,34 @@ describe('Microsoft Graph delta paging', () => {
     assert.equal(r.deltaLink, 'https://graph.microsoft.com/v1.0/next?page=2');
   });
 });
+
+describe('Microsoft Graph attachment list', () => {
+  test('asks only for what every attachment type has, and reads an inline picture\'s content id on its own', async () => {
+    const asked = [];
+    globalThis.fetch = async (url) => {
+      const u = new URL(url);
+      asked.push(u.pathname + u.search);
+      // Graph refuses a $select naming a property only one attachment type has.
+      if (/contentId/.test(u.searchParams.get('$select') || '')) {
+        return new Response(JSON.stringify({ error: { code: 'BadRequest', message: "Could not find a property named 'contentId' on type 'microsoft.graph.attachment'." } }), { status: 400 });
+      }
+      const body = u.pathname.endsWith('/attachments')
+        ? { value: [
+          { '@odata.type': '#microsoft.graph.fileAttachment', id: 'a1', name: 'PO.pdf', contentType: 'application/pdf', size: 10, isInline: false },
+          { '@odata.type': '#microsoft.graph.fileAttachment', id: 'a2', name: 'logo.png', contentType: 'image/png', size: 5, isInline: true },
+          { '@odata.type': '#microsoft.graph.itemAttachment', id: 'a3', name: 'Fwd: RFQ', contentType: null, size: 900, isInline: false },
+        ] }
+        : { '@odata.type': '#microsoft.graph.fileAttachment', id: 'a2', contentId: 'logo@sig', contentBytes: 'iVBORw0=' };
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    const list = await microsoftProvider({ email: 'box@example.test' }, tokens).attachmentList('msg-1');
+    assert.deepEqual(list.map((a) => [a.provider_id, a.name, a.kind, a.is_inline, a.content_id]), [
+      ['a1', 'PO.pdf', 'file', false, null],
+      ['a2', 'logo.png', 'file', true, 'logo@sig'],
+      ['a3', 'Fwd: RFQ', 'item', false, null],
+    ]);
+    assert.equal(asked.length, 2, 'the list, then the one inline picture');
+    assert.ok(asked[1].endsWith('/attachments/a2'));
+  });
+});
+

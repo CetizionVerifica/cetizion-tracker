@@ -2,7 +2,8 @@
  * Client acceptance of quotations (#53).
  *
  * Signed in:
- *   POST /api/quotations/:key/acceptance-link  { email, to, message }  a new link (earlier open ones are revoked)
+ *   POST /api/quotations/:key/acceptance-link  { email, to, message }  a new link (earlier open ones are revoked);
+ *                                                                      refused while a line needs a price (#208)
  *   GET  /api/quotations/:key/acceptances                              the links and what happened to them
  *   POST /api/quotations/:key/acceptances/:id/revoke
  *
@@ -25,6 +26,7 @@ import { notify } from '../lib/notify.js';
 import { quotationPdf } from '../lib/quotationPdf.js';
 import { documentStorageReady, uploadDocument } from '../lib/documents.js';
 import { fullQuotation } from './quotations.js';
+import { assertPricedForClient } from '../lib/serviceQuotes/priceNeeded.js';
 
 export const acceptanceRouter = Router();
 export const publicAcceptanceRouter = Router();
@@ -63,6 +65,7 @@ acceptanceRouter.post('/:key/acceptance-link', async (req, res) => {
   if (CLOSED.includes(q.status)) throw new ApiError(422, `The quotation is already ${q.status.toLowerCase()}`);
   if (q.approval_status === 'pending') throw new ApiError(422, 'The discount on this quotation is awaiting approval');
   if (q.approval_status === 'rejected') throw new ApiError(422, 'The discount on this quotation was rejected; revise it first');
+  assertPricedForClient(q);
   if (!q.lines.length && !q.quotation_value) throw new ApiError(422, 'Add the quotation lines or a value before sending it for acceptance');
   const to = body.to || q.contact?.email || null;
   if (body.email && !to) throw new ApiError(422, 'No email address: add one on the contact, or type one', { fields: { to: 'Required' } });

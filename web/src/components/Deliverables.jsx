@@ -43,7 +43,7 @@ export function DeliverablesTable({ params, preset = {}, title = 'Certificates a
   ].filter(Boolean);
 
   return (
-    <Card flush title={title} hint={hint} actions={<button type="button" className="btn btn--sm btn--primary" onClick={() => setDialog({ mode: 'new' })}>+ Issue</button>}>
+    <Card flush title={title} hint={hint} actions={<button type="button" className="btn btn--sm" onClick={() => setDialog({ mode: 'new' })}>Issue a certificate</button>}>
       <DataTable rows={rows} loading={loading && !data} columns={cols} empty={<Empty title="Nothing recorded yet" text="Record what the client holds: its reference, dates, scope and file. An expiry date schedules the renewal." />} />
       {dialog?.mode === 'withdraw' && <WithdrawDialog row={dialog.row} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}
       {dialog && dialog.mode !== 'withdraw' && <DeliverableDialog mode={dialog.mode} row={dialog.row} preset={preset} onClose={() => setDialog(null)} onDone={() => { setDialog(null); refetch(); }} />}

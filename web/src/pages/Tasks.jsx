@@ -5,12 +5,13 @@ import { Badge, Card, DataTable, Empty, Select, useToast } from '../components/u
 import { api } from '../lib/api.js';
 import { useFetch, useLookups } from '../lib/hooks.js';
 import { date, today } from '../lib/format.js';
+import { recordPath } from '../lib/journey.js';
 
 /** Every open task across the tracker (#22): what is due, for whom, on which record. */
 const LINK = {
   company: (id) => `/companies/${id}`,
   contact: () => '/companies',
-  enquiry: (id) => `/enquiries?q=${encodeURIComponent(id)}`,
+  enquiry: (id) => recordPath('enquiry', id),
   quotation: (id) => `/quotations/${encodeURIComponent(id)}`,
   project: (id) => `/projects/${encodeURIComponent(id)}`,
   purchase_order: (id) => `/purchase-orders/${encodeURIComponent(id)}`,
@@ -57,7 +58,7 @@ export default function Tasks() {
               { key: 'title', header: 'Task', className: 'strong wrap', render: (t) => <>{t.title}{t.description && <div className="small muted">{t.description}</div>}</> },
               { key: 'entity', header: 'On', render: (t) => <Link className="mono small" to={LINK[t.entity]?.(t.entity_id) || '/'}>{t.entity.replace('_', ' ')} {t.entity_id}</Link> },
               { key: 'type', header: 'Type', render: (t) => t.type.replace('_', ' ') },
-              { key: 'due_at', header: 'Due', render: (t) => t.due_at ? <span style={{ color: t.status !== 'done' && t.due_at < today() ? 'var(--danger-fg)' : undefined }}>{date(t.due_at)}</span> : <span className="muted">—</span> },
+              { key: 'due_at', header: 'Due', render: (t) => t.due_at ? <span style={{ color: t.status !== 'done' && t.due_at < today() ? 'var(--late)' : undefined }}>{date(t.due_at)}</span> : <span className="muted">—</span> },
               { key: 'priority', header: 'Priority', render: (t) => <Badge tone={t.priority === 'high' ? 'danger' : t.priority === 'low' ? 'neutral' : 'info'}>{t.priority}</Badge> },
               { key: 'assignee', header: 'For', render: (t) => t.assignee || <span className="muted">—</span> },
               { key: 'status', header: 'Status', render: (t) => <Badge tone={t.status === 'done' ? 'success' : t.status === 'in_progress' ? 'info' : 'neutral'}>{t.status.replace('_', ' ')}</Badge> },

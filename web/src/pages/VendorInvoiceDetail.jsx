@@ -50,7 +50,7 @@ export default function VendorInvoiceDetail() {
   }
 
   if (error) return <><PageHeader title="Vendor invoice" /><div className="page"><ErrorState message={error} onRetry={refetch} /></div></>;
-  if (loading || !invoice) return <><PageHeader title="Vendor invoice" /><div className="page"><div className="skeleton" style={{ height: 200 }} /></div></>;
+  if (loading || !invoice) return <><PageHeader title="Vendor invoice" /><div className="page"><div className="skeleton h-[200px]" /></div></>;
 
   const lineFields = [
     { name: 'vendor_invoice_id', label: 'Invoice', type: 'hidden' },
@@ -112,7 +112,7 @@ export default function VendorInvoiceDetail() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-[12.5px] text-secondary-text">
               <thead>
-                <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b border-border eyebrow">
                   <th className="px-5 py-2 text-left font-medium">Trip</th>
                   <th className="px-2 py-2 text-left font-medium">Leg</th>
                   <th className="px-2 py-2 text-right font-medium">Fare</th>

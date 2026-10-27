@@ -10,7 +10,7 @@ and the team have entered. The plan is in
 | **Daily Sales Briefing** | every day at 08:56 IST | the previous day |
 | **Weekly Sales MIS Report** | every Monday at 08:54 IST | the previous Monday to Sunday |
 
-Both go to the same recipients, **from the shared sales mailbox** with the
+Both go to the same recipients, **from the chosen sender** (see below) with the
 **PDF attached**. The weekly PDF is two A4 pages. The daily PDF follows the
 reference briefing ([mis-briefing-fix-plan.md](mis-briefing-fix-plan.md) §3):
 at a glance (Metric / Count / Detail), key highlights with their source
@@ -92,23 +92,106 @@ an AI, or once the readers' daily AI ceiling is reached, the briefing lists
 what the readers made and the MIS uses the Reports page's own sentences.
 The report goes either way.
 
+## The personal daily MIS
+
+One email a morning per person, about their previous working day, to management
+(`/mnt/project-files/plans/mis-report-sender-plan.md` Part B). Every sentence of it is written by
+the AI from that person's facts, and checked against them before it can go.
+
+* **Who**: every active sales or admin user (not HR) whose personal mailbox is connected, unless an
+  admin exempted them (**Settings → Users & roles → ⋯ → Exempt from the personal daily MIS**). The
+  person cannot switch it off. Off for everyone until an admin presses **Switch on** on the card
+  (`personal_mis_enabled`).
+* **When**: `reports.personal_daily` at 08:40 IST Tuesday to Saturday, for Monday to Friday, before
+  the 08:56 briefing. No report for a Saturday, a Sunday, a holiday (Settings → Holidays) or a day of
+  approved leave (the person's staff row, matched by email). A report the AI could not write, or
+  that failed the checks, is tried again by `reports.personal_daily_retry` at 09:10 and 09:40; what
+  still fails at 09:40 is **not sent**, the run is recorded as failed with the reason, and admins get
+  an alert. Each person is sent once a day by the schedule; one person's failure does not stop the
+  next.
+* **How**: from the person's own mailbox (it sits in their Sent Items), to `mis_to`, copying `mis_cc`
+  and the person, with the PDF attached. Subject `Daily MIS · <Name> · Tue 6 Oct 2026`. When the
+  mailbox cannot send, it goes by SMTP from `EMAIL_FROM` as "<Name> · Daily MIS" and admins are
+  told. A person whose mailbox needs reconnecting gets no report from the schedule. The same
+  switches as every email apply (`emails_enabled`, `EMAIL_MODE`, the sandbox allowlist).
+* **The seven sections**: summary of the day with the counts, actions taken, from the mailbox
+  (what mattered, commitments, replies owed, awaiting a reply), in email but not in the tracker,
+  waiting on them (with **no action yesterday**), today, and for management. Code adds only the
+  headings.
+* **Team reports**: the Daily Sales Briefing ends with whose personal report went and why the
+  others did not ("Sent: 6 · Not sent: Priya (mailbox needs reconnecting)").
+* **The notice**: everyone whose report goes sees once, on Today, "Each morning a summary of your
+  previous day's work email and your actions in the tracker is sent to management from your
+  mailbox, copied to you", and it stays on their Mailboxes page. The report does not wait for them
+  to read it: the card says how many have not yet seen it.
+* **My daily MIS**: on Today, each person sees every report that went about them, as its PDF.
+* **The card** (Reports → Scheduled reports → Personal daily MIS): the switch, how many will be
+  sent, are exempt or have no mailbox, and for any one person the facts beside the AI's report, the
+  PDF, **Send now** and their runs. Send now always sends (an admin decided), but never a report
+  that failed the checks.
+* **Before going live**: run it with `EMAIL_MODE=sandbox` and `EMAIL_ALLOWLIST` set to management's
+  addresses for a week, and read the reports against the people's own days.
+
+How a report is written and checked:
+
+* **The facts** (`server/src/lib/misPersonal.js`, `personalFacts`): the person's acts in the tracker
+  (activity rows, notes, tasks made and completed, calls and meetings, collection follow-ups, visits
+  planned, reassignments), the email they sent and received with clients in their own mailbox, the
+  overdue rows that are theirs with **no action yesterday** worked out by code, and their tasks and
+  visits for the day. Internal-only mail, automatic replies, bulk mail and blocked senders are left
+  out and counted. A body the mailbox does not store is read live and never written back. Every
+  fact has an id (`act:…`, `msg:…`, a thread, a pending row's key, `task:…`, `visit:…`).
+* **The checks** (`server/src/lib/misAi.js`, `checkPersonal`): a line citing what is not in the
+  facts, with a number the cited facts do not carry, or at a time that is not the act's, is
+  dropped. Every act and sent email must be cited, every overdue row and every reply owed must be
+  there; the AI is asked once more for what it missed, and a report still missing any is refused.
+  Wrong counts refuse it. Who owes a reply and "no action yesterday" are code's. Something "in
+  email, not in the tracker" is dropped when the tracker has it.
+* **Its own AI ceiling**: `personal_mis_ai_limit` (default 30 a day), counted as `mis_personal`,
+  apart from the email readers' ceiling.
+* **Privacy**: the preview never shows another person's mail text, nor the subject when their
+  mailbox shares only metadata.
+
 ## Running and checking
 
 **Reports → Scheduled reports** (admins):
 
 - each report's **on/off switch**, a **preview** of the figures and the
   email as of any date, the **PDF**, and **Send now**;
-- the recipients (To, Cc), the **sender mailbox** (a connected shared
-  mailbox; otherwise the server's SMTP sender), and the Overdue threshold;
-- the **run history**: every report generated, how it went (sales mailbox,
-  SMTP, or logged only), to whom, the PDF, and **Resend**.
+- the recipients (To, Cc) and the Overdue threshold;
+- the **Sender**: the mailbox the reports go through (a connected shared
+  mailbox, a personal mailbox whose owner allowed it, or the server's SMTP
+  sender), an optional **Send as** address and **display name**, a line
+  saying what the next report will go from, and **Send a test to me**;
+- the **run history**: every report generated, how it went (which From,
+  through which mailbox or SMTP, or logged only), to whom, the PDF, and
+  **Resend**.
+
+### The sender
+
+- **A shared mailbox** can always send. **A personal mailbox** can only when
+  its owner turns on *Allow scheduled reports to be sent from this mailbox*
+  on the Mailboxes page; sending from it puts the report in their Sent Items.
+- **Send as** (e.g. `mis@`) shows another address in From. Through a
+  mailbox, Exchange must grant that mailbox (or the person who connected it)
+  **Send As** or **Send on Behalf** on the address; the Microsoft 365 admin
+  does this in the Exchange admin centre. Without it Graph refuses, and the
+  report goes by SMTP with an alert that says so. By SMTP, the address must be
+  `EMAIL_FROM` or one listed in `EMAIL_FROM_ALLOWED`; otherwise the SMTP
+  sender uses `EMAIL_FROM`.
+- **Send a test to me** sends a short email with a small PDF to the admin
+  pressing it, by exactly the reports' path, and says what happened. It
+  mails nobody else and records no run.
 
 The schedule sends each period once; Send now and Resend always send. The
 two jobs also appear under Settings → Emails & jobs with **Run now**. Every
 email goes through the usual switches (`emails_enabled`, `EMAIL_MODE`, the
 sandbox allowlist, checked per recipient) and is in the email log. If the
-sales mailbox cannot send, the report goes by SMTP and admins are told; if
-nothing can send, the run is recorded as failed and an alert is raised.
+chosen mailbox cannot send — Graph refuses, or the mailbox needs
+reconnecting, is disconnected, or its owner withdrew the permission — the
+report goes by SMTP, the run says why, and admins are told (at most once a
+day). If nothing can send, the run is recorded as failed and an alert is
+raised.
 
 ## Cut-over
 

@@ -225,7 +225,7 @@ export default function Companies() {
                 <li
                   key={m.id}
                   className={cn(
-                    'flex items-center gap-3 rounded-[10px] border px-3 py-2.5 transition-colors',
+                    'flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors',
                     keeping
                       ? 'border-l-[3px] border-primary/40 border-l-primary bg-primary/5'
                       : ticked

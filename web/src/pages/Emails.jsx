@@ -203,7 +203,7 @@ function summarise(result) {
   return JSON.stringify(result).slice(0, 80);
 }
 
-function EmailBody({ id, onClose }) {
+export function EmailBody({ id, onClose }) {
   const { data, loading } = useFetch(() => api.raw(`/emails/${id}`), [id]);
   const e = data?.data;
   return (
@@ -215,7 +215,7 @@ function EmailBody({ id, onClose }) {
       footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
     >
       {loading || !e
-        ? <div className="skeleton" style={{ height: 120 }} />
+        ? <div className="skeleton h-[120px]" />
         : <pre className="m-0 font-[inherit] whitespace-pre-wrap">{e.body_text}</pre>}
     </Modal>
   );

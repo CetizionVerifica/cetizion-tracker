@@ -499,12 +499,21 @@ describe('expense claim authorisation', { skip: !ADMIN_URL && 'set TEST_DATABASE
       return res.body.data;
     };
 
-    test('a sales user may record a vendor payment — that is the agreed rule', async () => {
+    /**
+     * #85's rule was that paying a vendor is ordinary work for admin and
+     * sales. #214 narrowed it: paying a travel agency is the travel desk's
+     * work with the administrator, and the gate sales came through was never
+     * a decision — just the consequence of leaving the route open. The
+     * capability is withdrawn here deliberately.
+     */
+    test('a sales user may no longer record a vendor payment (#214)', async () => {
       const invoice = await makeInvoice();
       const res = await as(sales.cookie)('post', `/api/vendor-invoices/${invoice.id}/pay`)
         .send({ amount_paid: 2000, payment_date: '2026-02-10' });
-      assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(Number(res.body.data.amount_paid), 2000);
+      assert.equal(res.status, 403, JSON.stringify(res.body));
+
+      const { rows } = await db.query('SELECT amount_paid FROM travel_vendor_invoices WHERE id = $1', [invoice.id]);
+      assert.equal(Number(rows[0].amount_paid), 0, 'the refusal left the invoice alone');
     });
 
     test('an admin may too', async () => {
@@ -515,14 +524,14 @@ describe('expense claim authorisation', { skip: !ADMIN_URL && 'set TEST_DATABASE
 
     test('paying is recorded, with the account that recorded it', async () => {
       const invoice = await makeInvoice();
-      await as(sales.cookie)('post', `/api/vendor-invoices/${invoice.id}/pay`).send({ amount_paid: 750 });
+      await as(admin.cookie)('post', `/api/vendor-invoices/${invoice.id}/pay`).send({ amount_paid: 750 });
 
       const { rows } = await db.query(
         'SELECT * FROM activity_log WHERE action = $1 AND entity_id = $2',
         ['vendor_invoice.paid', invoice.vendor_invoice_id]
       );
       assert.equal(rows.length, 1, 'one audit row');
-      assert.equal(rows[0].actor_user_id, sales.user.id);
+      assert.equal(rows[0].actor_user_id, admin.user.id);
       assert.equal(rows[0].metadata.amount_paid_after, 750);
     });
 

@@ -67,7 +67,7 @@ export function PortalAnswers({ onPaid }) {
                   <div className="table__actions">
                     {a.invoices.map((i) => (done.has(i.id)
                       ? <Badge key={i.id} tone="success">{a.invoices.length > 1 ? `${i.invoice_no} matched` : 'Matched'}</Badge>
-                      : <button key={i.id} type="button" className="btn btn--sm btn--primary" onClick={() => setMatch({ advice: a, stage: i })}>{a.invoices.length > 1 ? `Match ${i.invoice_no}` : 'Match'}</button>))}
+                      : <button key={i.id} type="button" className="btn btn--sm" onClick={() => setMatch({ advice: a, stage: i })}>{a.invoices.length > 1 ? `Match ${i.invoice_no}` : 'Match'}</button>))}
                     <button type="button" className="btn btn--sm btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
                   </div>
                 );
@@ -90,7 +90,7 @@ export function PortalAnswers({ onPaid }) {
                   {a.thread_id
                     ? <button type="button" className="btn btn--sm" onClick={() => setThread(a.thread_id)}>Reply</button>
                     : <Link className="btn btn--sm" to={`/companies/${a.company_id}`}>Open company</Link>}
-                  <button type="button" className="btn btn--sm btn--primary" onClick={() => setSettle({ action: a, status: 'resolved' })}>Resolved</button>
+                  <button type="button" className="btn btn--sm" onClick={() => setSettle({ action: a, status: 'resolved' })}>Resolved</button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={() => setSettle({ action: a, status: 'rejected' })}>Reject</button>
                 </div>
               ),

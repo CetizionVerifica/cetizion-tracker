@@ -8,6 +8,7 @@
 import { Router } from 'express';
 import { assertRecordReachable, parentClause, scopeOf, threadClause } from '../auth/ownership.js';
 import { query } from '../db.js';
+import { ownEmailClause } from '../lib/clientEmails.js';
 import { ApiError } from '../middleware/error.js';
 
 export const timelineRouter = Router();
@@ -105,6 +106,18 @@ async function recordEvents(entity, id) {
   return events;
 }
 
+/**
+ * The emails on a record, as far as the caller may see them. Any other
+ * record is already gated above, so all its emails show. A company is open
+ * to everyone, but the quotations and reminders under it are not: a sales
+ * user sees only the client emails on records they own there.
+ */
+function ownEmails(scope, entity, emailWhere, params) {
+  const p = [...params];
+  const mine = entity === 'company' ? ownEmailClause(scope, p, 'email_log') : '';
+  return query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE (${emailWhere})${mine ? ` AND ${mine}` : ''}`, p);
+}
+
 timelineRouter.get('/', async (req, res) => {
   const entity = String(req.query.entity || '');
   const id = String(req.query.id || '');
@@ -135,7 +148,7 @@ timelineRouter.get('/', async (req, res) => {
         FROM task_targets x WHERE x.task_id = t.id AND NOT (x.entity = t.entity AND x.entity_id = t.entity_id)) AS targets
       FROM tasks t WHERE EXISTS (SELECT 1 FROM task_targets tt WHERE tt.task_id = t.id AND tt.entity = $2 AND tt.entity_id = $1)`, [id, entity]) : { rows: [] },
     wants('file') ? query('SELECT a.id, a.label, a.uploaded_by, a.created_at, a.shared_with_client, a.uploaded_by_contact_id IS NOT NULL AS from_client, d.id AS document_id, d.file_name, d.size_bytes, d.content_type FROM attachments a JOIN documents d ON d.id = a.document_id WHERE a.entity = $2 AND a.entity_id = $1', [id, entity]) : { rows: [] },
-    wants('email') ? query(`SELECT id, to_email, subject, template, status, reason, sent_by, created_at FROM email_log WHERE ${emailWhere}`, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
+    wants('email') ? ownEmails(scopeOf(req), entity, emailWhere, entity === 'company' ? [id] : [id, entity]) : { rows: [] },
     wants('event') ? recordEvents(entity, id) : [],
     // Threads follow the mailbox rule as well as the record's (074): a
     // company's timeline is open to everybody, but the subjects of a
