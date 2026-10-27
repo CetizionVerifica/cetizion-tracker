@@ -43,4 +43,4 @@ export function ownerNamed(lookups, text) {
   return matches.length === 1 ? matches[0].name : '';
 }
 
-export const OWNER_HINT = 'A sales user on the platform. An admin adds people in Settings → Users & roles.';
+export const OWNER_HINT = 'A sales user on the platform. The super admin adds people in the super admin portal.';

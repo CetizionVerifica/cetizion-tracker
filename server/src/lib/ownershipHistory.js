@@ -125,6 +125,8 @@ export async function changeRecordOwner(
     changedBySnapshot = { id: actor.userId, name: actor.name };
   } else if (actor.type === 'shared_admin') {
     changedBySnapshot = { id: null, name: actor.name || 'admin' };
+  } else if (actor.type === 'super_admin') {
+    changedBySnapshot = { id: null, name: actor.name || 'super admin' };
   } else {
     changedBySnapshot = { id: null, name: 'system' };
   }

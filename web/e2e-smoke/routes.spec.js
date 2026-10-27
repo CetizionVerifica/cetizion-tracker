@@ -26,7 +26,7 @@ const ROUTES = [
   '/notifications', '/inbox', '/money/invoice-run', '/travel',
   '/vendor-invoices', '/payables', '/expense-claims', '/travel-dashboard',
   '/settings/company', '/settings/holidays', '/settings/rates', '/settings/assumptions',
-  '/settings/templates', '/settings/users', '/settings/sign-in', '/settings/tokens',
+  '/settings/templates', '/settings/sign-in', '/settings/tokens',
   '/settings/mailboxes', '/settings/document-notes', '/settings/webhooks', '/settings/import', '/settings/emails',
 ];
 

@@ -307,7 +307,15 @@ describe('the personal daily MIS: facts and checks', { skip: !ADMIN_URL && 'set 
   });
 
   test('an act on a user names the person, not their id', async () => {
-    await as(admin)('patch', `/api/users/${hari.user.id}`).send({ name: 'Hari Prasad' }).expect(200);
+    // Accounts are edited in the super admin portal now; an act on a user
+    // that this admin is recorded as doing still has to read by name.
+    await db.query(`UPDATE users SET name = 'Hari Prasad' WHERE id = $1`, [hari.user.id]);
+    const { logActivity, actorFrom, ACTIONS } = await import('../src/lib/activity.js');
+    await logActivity(pool, {
+      actor: actorFrom({ mode: 'database', id: admin.user.id, name: admin.user.name }),
+      action: ACTIONS.USER_UPDATED, entityType: 'user', entityId: hari.user.id,
+      metadata: { changed_fields: ['name'] },
+    });
     const f = await misPersonal.personalFacts({ userId: admin.user.id, today: reportDay });
     const edit = f.acts.find((a) => a.entity === 'user' && a.entity_id === String(hari.user.id));
     assert.ok(edit, JSON.stringify(f.acts.map((a) => a.kind)));

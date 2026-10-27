@@ -29,6 +29,7 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
   let app;
   let pool;
   let cookie;
+  let superCookie;
 
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -58,6 +59,8 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
     process.env.AUTH_USERNAME = 'shared-admin';
     process.env.AUTH_PASSWORD = 'the-shared-password-in-env';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
+    process.env.SUPER_ADMIN_EMAIL = 'super@example.com';
+    process.env.SUPER_ADMIN_PASSWORD = 'a-good-long-super-password';
 
     ({ default: app } = await import('../src/app.js'));
     ({ pool } = await import('../src/db.js'));
@@ -66,6 +69,10 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
       .send({ username: 'shared-admin', password: 'the-shared-password-in-env' });
     assert.equal(signIn.status, 200, 'the shared password still signs in');
     cookie = signIn.headers['set-cookie'];
+    const superSignIn = await request(app).post('/api/super-admin/login')
+      .send({ email: 'super@example.com', password: 'a-good-long-super-password' });
+    assert.equal(superSignIn.status, 200, JSON.stringify(superSignIn.body));
+    superCookie = superSignIn.headers['set-cookie'];
   });
 
   after(async () => {
@@ -79,13 +86,19 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
 
   const clean = () => db.query('DELETE FROM users');
 
-  test('the shared admin may reach Users management', async () => {
+  test('the shared admin may read the user list, but not change it', async () => {
     await clean();
 
     const res = await request(app).get('/api/users').set('Cookie', cookie);
 
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.data, [], 'no accounts yet, which is the starting point');
+
+    // Accounts are made in the super admin portal only.
+    const made = await request(app).post('/api/users').set('Cookie', cookie)
+      .send({ name: 'Alice', email: 'alice@example.com', role: 'admin', password: PASSWORD });
+    assert.equal(made.status, 404);
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM users')).rows[0].n, 0);
   });
 
   test('the whole preparation for a cutover, in order', async () => {
@@ -101,13 +114,13 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
       'switching now would lock everybody out'
     );
 
-    // The shared admin creates the real accounts.
-    const madeAdmin = await request(app).post('/api/users').set('Cookie', cookie)
+    // The super admin creates the real accounts.
+    const madeAdmin = await request(app).post('/api/super-admin/users').set('Cookie', superCookie)
       .send({ name: 'Alice', email: 'alice@example.com', role: 'admin', password: PASSWORD });
     assert.equal(madeAdmin.status, 201);
     assert.equal(madeAdmin.body.data.role, 'admin');
 
-    const madeSales = await request(app).post('/api/users').set('Cookie', cookie)
+    const madeSales = await request(app).post('/api/super-admin/users').set('Cookie', superCookie)
       .send({ name: 'Sam', email: 'sam@example.com', role: 'sales', password: PASSWORD });
     assert.equal(madeSales.status, 201);
 
@@ -118,7 +131,7 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
 
   test('the accounts it creates cannot be used to sign in until the mode changes', async () => {
     await clean();
-    await request(app).post('/api/users').set('Cookie', cookie)
+    await request(app).post('/api/super-admin/users').set('Cookie', superCookie)
       .send({ name: 'Alice', email: 'alice@example.com', role: 'admin', password: PASSWORD });
 
     // Still shared mode: a real account is not a second way in.
@@ -130,10 +143,10 @@ describe('the Users API in shared mode', { skip: !ADMIN_URL && 'set TEST_DATABAS
 
   test('the last-admin guard applies here too', async () => {
     await clean();
-    const created = await request(app).post('/api/users').set('Cookie', cookie)
+    const created = await request(app).post('/api/super-admin/users').set('Cookie', superCookie)
       .send({ name: 'Alice', email: 'alice@example.com', role: 'admin', password: PASSWORD });
 
-    const res = await request(app).patch(`/api/users/${created.body.data.id}`).set('Cookie', cookie)
+    const res = await request(app).patch(`/api/super-admin/users/${created.body.data.id}`).set('Cookie', superCookie)
       .send({ active: false });
 
     // Even though the shared password would still get somebody in, the

@@ -25,7 +25,9 @@ describe('the purge rule for abandoned uploads', () => {
     // Whatever declares a document_id column in schema.sql must appear in
     // the rule. This is the assertion that would have caught attachments.
     const tables = [...schema.matchAll(/CREATE TABLE(?: IF NOT EXISTS)? (\w+) \(([\s\S]*?)\n\);/g)]
-      .filter(([, , body]) => /^\s*document_id\s/m.test(body))
+      // Any column ending in document_id: pdf_document_id and
+      // backup_document_id hold a file just as surely as document_id does.
+      .filter(([, , body]) => /^\s*\w*document_id\s/m.test(body))
       .map(([, name]) => name);
 
     assert.ok(tables.length >= 4, `expected several tables with a document, found ${tables.join(', ')}`);

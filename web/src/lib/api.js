@@ -118,10 +118,8 @@ export const api = {
       }),
     logout: () => request('/auth/logout', { method: 'POST' }),
   },
+  // Read only: accounts are managed in the super admin portal (pages/SuperAdmin.jsx).
   users: {
     list: () => request('/users'),
-    create: (body) => request('/users', { method: 'POST', body }),
-    update: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
-    setPassword: (id, password) => request(`/users/${id}/password`, { method: 'POST', body: { password } }),
   },
 };

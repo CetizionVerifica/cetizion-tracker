@@ -58,6 +58,16 @@ export const AUTH_MECHANISMS = {
     proof: 'A 40-60 character random token from the emailed or copied link, SHA-256 hashed and matched against questionnaire_links.token_hash, with expiry, revoke and the status of the response checked on every use.',
     description: 'A client filling in a service questionnaire (#208). The token is the credential and it is bound to one response: its questions, its own answers and its own files.',
   },
+  'super-admin-credentials': {
+    authenticates: true,
+    proof: 'An email and password checked in constant time against SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD (plain or a scrypt hash) in the environment; the route is 404 while either is blank.',
+    description: 'The super admin portal sign-in: open because it is how a super admin session is obtained.',
+  },
+  'super-admin-session': {
+    authenticates: true,
+    proof: 'The signed cetizion_super_admin cookie (a key derived from SESSION_SECRET, distinct from the staff and portal ones), unexpired and naming the SUPER_ADMIN_EMAIL currently in the environment.',
+    description: 'The super admin portal (/super-admin), which manages every account. No staff session reaches it and it reaches no staff route.',
+  },
   'portal-link-token': {
     authenticates: true,
     proof: 'A single-use random token, SHA-256 hashed and matched against portal_links.token_hash, unused and within 20 minutes, exchanged under FOR UPDATE for a portal session.',
@@ -195,6 +205,19 @@ export const routes = [
   { method: 'POST', path: '/api/portal/documents', access: 'public', mechanism: 'portal-session', openBecause: 'The client uploads a file onto one of their own projects or POs (#198), checked against the session\'s company; PDF, image, Word or Excel only, within the document size limit.', restrictions: ['record-owner', 'portal-section'] },
   { method: 'DELETE', path: '/api/portal/documents/:id', access: 'public', mechanism: 'portal-session', openBecause: 'The client takes back their own upload, until our team has seen it (#198).', restrictions: ['record-owner', 'portal-section'] },
 
+  // ------------------------------------------------- super admin portal
+  { method: 'POST', path: '/api/super-admin/login', access: 'public', mechanism: 'super-admin-credentials', openBecause: 'This is how a super admin session is obtained.' },
+  { method: 'POST', path: '/api/super-admin/logout', access: 'public', mechanism: 'none', openBecause: 'It only clears the super admin cookie of the caller.' },
+  { method: 'GET', path: '/api/super-admin/me', access: 'public', mechanism: 'super-admin-session', openBecause: 'The portal asks whether it is signed in; 401 without a super admin session.', restrictions: ['self-only'] },
+  { method: 'GET', path: '/api/super-admin/users', access: 'public', mechanism: 'super-admin-session', openBecause: 'Every account, without hashes, for the super admin only.' },
+  { method: 'POST', path: '/api/super-admin/users', access: 'public', mechanism: 'super-admin-session', openBecause: 'The super admin creates an account; recorded in the activity log.' },
+  { method: 'PATCH', path: '/api/super-admin/users/:id', access: 'public', mechanism: 'super-admin-session', openBecause: 'The super admin edits an account or switches it off; one active admin always remains.' },
+  { method: 'POST', path: '/api/super-admin/users/:id/password', access: 'public', mechanism: 'super-admin-session', openBecause: 'The super admin sets a new password on an account, ending its sessions.' },
+  { method: 'GET', path: '/api/super-admin/users/:id/deletion-plan', access: 'public', mechanism: 'super-admin-session', openBecause: 'What deleting an account would involve, and who may take over its open records. Reads only.' },
+  { method: 'DELETE', path: '/api/super-admin/users/:id', access: 'public', mechanism: 'super-admin-session', openBecause: 'The super admin deletes an account, only after its Excel backup is stored privately and read back intact; refused for the last active admin.' },
+  { method: 'GET', path: '/api/super-admin/deleted-users', access: 'public', mechanism: 'super-admin-session', openBecause: 'Deleted accounts and their backups, for the super admin only.' },
+  { method: 'GET', path: '/api/super-admin/deleted-users/:id/backup', access: 'public', mechanism: 'super-admin-session', openBecause: 'The Excel backup of a deleted account, fetched from private storage through the API, checked against its SHA-256 and recorded in the activity log.' },
+
   // ------------------------------------------------------------- MCP
   { method: 'POST', path: '/api/mcp', access: 'public', mechanism: 'api-token', openBecause: 'MCP clients authenticate with an API token instead of a session (#50). No token, no answer.', restrictions: ['api-token-scope'] },
   { method: 'GET', path: '/api/mcp', access: 'public', mechanism: 'none', openBecause: 'A fixed 405 telling a client to use POST. It reads nothing and reveals nothing.' },
@@ -299,10 +322,7 @@ export const routes = [
   { method: 'GET', path: '/api/documents/:id', access: signedIn },
 
   // ---------------------------------------------------------------- users
-  { method: 'GET', path: '/api/users', access: mustBeAdmin, why: 'The account list, including roles and who is switched off.' },
-  { method: 'POST', path: '/api/users', access: mustBeAdmin, why: 'Creating an account is handing out a key.' },
-  { method: 'PATCH', path: '/api/users/:id', access: mustBeAdmin, why: 'Changing a role or switching an account off.' },
-  { method: 'POST', path: '/api/users/:id/password', access: mustBeAdmin, why: 'Setting somebody\'s password.' },
+  { method: 'GET', path: '/api/users', access: mustBeAdmin, why: 'The account list, read only, including roles and who is switched off. Accounts are changed only in the super admin portal (/api/super-admin/users).' },
 
   // ------------------------------------------------------------- activity
   { method: 'GET', path: '/api/activity', access: mustBeAdmin, why: 'The audit log: what everybody did and when. Read-only and admin-only (#18 Phase 1.5).' },

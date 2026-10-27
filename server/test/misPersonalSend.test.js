@@ -70,6 +70,8 @@ describe('the personal daily MIS goes out', { skip: !ADMIN_URL && 'set TEST_DATA
     process.env.AUTH_MODE = 'database';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
     process.env.EMAIL_MODE = 'log';
+    process.env.SUPER_ADMIN_EMAIL = 'super@example.com';
+    process.env.SUPER_ADMIN_PASSWORD = 'a-good-long-super-password';
     delete process.env.SMTP_HOST;
     delete process.env.OPENROUTER_API_KEY;
 
@@ -287,13 +289,17 @@ describe('the personal daily MIS goes out', { skip: !ADMIN_URL && 'set TEST_DATA
     assert.equal(noMailbox.body.data.notice.show, false);
   });
 
-  test('only an admin exempts someone, and it is logged', async () => {
-    const res = await as(admin)('patch', `/api/users/${pia.user.id}`).send({ daily_mis: false }).expect(200);
+  test('only the super admin exempts someone, and it is logged', async () => {
+    const superSignIn = await request(app).post('/api/super-admin/login')
+      .send({ email: 'super@example.com', password: 'a-good-long-super-password' }).expect(200);
+    const res = await request(app).patch(`/api/super-admin/users/${pia.user.id}`)
+      .set('Cookie', superSignIn.headers['set-cookie']).send({ daily_mis: false }).expect(200);
     assert.equal(res.body.data.daily_mis, false);
     const { rows: [log] } = await db.query(`SELECT metadata FROM activity_log WHERE entity_type = 'user' AND entity_id = $1 ORDER BY id DESC LIMIT 1`, [String(pia.user.id)]);
     assert.deepEqual(log.metadata.changed_fields, ['daily_mis']);
     assert.equal(log.metadata.new_daily_mis, false);
     await as(sam)('patch', `/api/users/${sam.user.id}`).send({ daily_mis: false }).expect(403);
+    await as(admin)('patch', `/api/users/${sam.user.id}`).send({ daily_mis: false }).expect(404);
     const list = await as(admin)('get', '/api/users').expect(200);
     assert.equal(list.body.data.find((u) => u.id === pia.user.id).daily_mis, false);
   });

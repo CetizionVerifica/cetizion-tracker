@@ -6,6 +6,12 @@ import request from 'supertest';
 /**
  * Managing accounts through the API (#18 Phase 1B-B).
  *
+ * Accounts are changed only through the super admin portal; /api/users is
+ * the read-only list an admin's screens use. So the writes below go to
+ * /api/super-admin/users with the super admin's cookie, whichever staff
+ * cookie the test is holding, and the first test proves no staff session
+ * can change an account at all.
+ *
  * Runs in database mode, because that is where an admin and a sales user
  * can both be signed in and told apart. The shared admin's access to the
  * same routes is proved in usersApiShared.test.js, in its own process.
@@ -15,6 +21,8 @@ import request from 'supertest';
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL;
 const PASSWORD = 'a-good-long-test-password';
+const SUPER_EMAIL = 'super@example.com';
+const SUPER_PASSWORD = 'a-good-long-super-password';
 
 describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }, () => {
   let dbUrl;
@@ -23,6 +31,7 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
   let pool;
   let createUser;
   let resetLimiter;
+  let superCookie;
 
   before(async () => {
     const admin = new pg.Client({ connectionString: ADMIN_URL });
@@ -49,6 +58,8 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     process.env.DATABASE_URL = dbUrl;
     process.env.AUTH_MODE = 'database';
     process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-to-pass';
+    process.env.SUPER_ADMIN_EMAIL = SUPER_EMAIL;
+    process.env.SUPER_ADMIN_PASSWORD = SUPER_PASSWORD;
 
     ({ default: app } = await import('../src/app.js'));
     ({ pool } = await import('../src/db.js'));
@@ -60,6 +71,10 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
         try { loginLimiter.resetKey(ip); } catch { /* not a key this store knows */ }
       }
     };
+
+    const res = await request(app).post('/api/super-admin/login').send({ email: SUPER_EMAIL, password: SUPER_PASSWORD });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    superCookie = res.headers['set-cookie'];
   });
 
   after(async () => {
@@ -101,31 +116,44 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
   }
 
   const get = (cookie) => request(app).get('/api/users').set('Cookie', cookie);
-  const post = (cookie, body) => request(app).post('/api/users').set('Cookie', cookie).send(body);
-  const patch = (cookie, id, body) => request(app).patch(`/api/users/${id}`).set('Cookie', cookie).send(body);
-  const setPassword = (cookie, id, body) =>
-    request(app).post(`/api/users/${id}/password`).set('Cookie', cookie).send(body);
+  // The staff cookie each test passes is who would have done it before; the
+  // super admin is who may do it now.
+  const post = (_staff, body) => request(app).post('/api/super-admin/users').set('Cookie', superCookie).send(body);
+  const patch = (_staff, id, body) => request(app).patch(`/api/super-admin/users/${id}`).set('Cookie', superCookie).send(body);
+  const setPassword = (_staff, id, body) =>
+    request(app).post(`/api/super-admin/users/${id}/password`).set('Cookie', superCookie).send(body);
 
   // ------------------------------------------------------------- access
 
-  test('an admin may use it; a sales user may not; a stranger may not', async () => {
+  test('an admin may read the list; a sales user may not; a stranger may not', async () => {
     await clean();
     const admin = await asAdmin();
     const sales = await asSales();
 
     assert.equal((await get(admin.cookie)).status, 200);
-
-    for (const call of [
-      get(sales.cookie),
-      post(sales.cookie, { name: 'X', email: 'x@example.com', password: PASSWORD }),
-      patch(sales.cookie, admin.user.id, { name: 'Renamed' }),
-      setPassword(sales.cookie, admin.user.id, { password: PASSWORD }),
-    ]) {
-      const res = await call;
-      assert.equal(res.status, 403, 'a sales user is turned away from every verb');
-    }
-
+    assert.equal((await get(sales.cookie)).status, 403, 'a sales user is turned away');
     assert.equal((await request(app).get('/api/users')).status, 401, 'signed out is 401, not 403');
+  });
+
+  test('no staff session can change an account: that is the super admin portal\'s alone', async () => {
+    await clean();
+    const admin = await asAdmin();
+    const sales = await asSales();
+
+    for (const who of [admin, sales]) {
+      for (const call of [
+        request(app).post('/api/users').set('Cookie', who.cookie).send({ name: 'X', email: 'x@example.com', password: PASSWORD }),
+        request(app).patch(`/api/users/${sales.user.id}`).set('Cookie', who.cookie).send({ name: 'Renamed' }),
+        request(app).post(`/api/users/${sales.user.id}/password`).set('Cookie', who.cookie).send({ password: 'another-long-password' }),
+        request(app).post('/api/super-admin/users').set('Cookie', who.cookie).send({ name: 'X', email: 'x@example.com', password: PASSWORD }),
+      ]) {
+        const res = await call;
+        assert.ok([401, 403, 404].includes(res.status), `${who.user.role}: ${res.status}`);
+      }
+    }
+    const after = await rowOf(sales.user.id);
+    assert.equal(after.name, 'Sam', 'nothing changed');
+    assert.equal((await rows()).length, 2, 'nobody was added');
   });
 
   test('a sales user promoted to admin may use it on the next request', async () => {
@@ -177,7 +205,7 @@ describe('the Users API', { skip: !ADMIN_URL && 'set TEST_DATABASE_URL to run' }
     assert.equal(res.status, 200);
     assert.equal(res.body.data.length, 3);
     assert.deepEqual(Object.keys(res.body.data[0]).sort(), [
-      'active', 'created_at', 'daily_mis', 'email', 'id', 'last_login_at', 'name', 'role', 'updated_at',
+      'active', 'created_at', 'daily_mis', 'deleted_at', 'email', 'id', 'last_login_at', 'name', 'phone', 'role', 'time_zone', 'updated_at',
     ]);
     const text = JSON.stringify(res.body);
     assert.ok(!/password_hash|scrypt/.test(text), text);

@@ -176,7 +176,7 @@ function OwnerDuplicatesBanner({ onMerged }) {
           size="lg"
           title={review.certain ? 'The same owner, written differently' : 'Which of these are the same person?'}
           subtitle={!review.suggested_keep
-            ? 'None of these names is a sales user on the platform, so there is no account to fold them into yet. If this is someone missing from the platform, add them in Settings → Users & roles, then come back; otherwise pick the colleague these records really belong to.'
+            ? 'None of these names is a sales user on the platform, so there is no account to fold them into yet. If this is someone missing from the platform, ask the super admin to add them, then come back; otherwise pick the colleague these records really belong to.'
             : review.certain
               ? 'These differ only by case, spacing or punctuation, so there is nothing to weigh up.'
               : 'These share a name. That does not make them one person — two colleagues can share a first name. Tick only the ones that are genuinely the same.'}

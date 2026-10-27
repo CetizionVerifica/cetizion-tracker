@@ -277,6 +277,8 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       const list = await as(salesA)('get', '/api/users');
       assert.equal(list.status, 403, JSON.stringify(list.body));
 
+      // The admin-only gate turns a sales user away first; and accounts are
+      // changed only in the super admin portal, so there is nothing behind it.
       const demote = await as(salesA)('patch', `/api/users/${admin.user.id}`).send({ role: 'sales' });
       assert.equal(demote.status, 403, JSON.stringify(demote.body));
 
@@ -295,9 +297,11 @@ describe('authorisation role matrix', { skip: !ADMIN_URL && 'set TEST_DATABASE_U
       assert.equal(rows[0].role, 'sales', 'still a sales user');
     });
 
-    test('an administrator may', async () => {
+    test('an administrator may read the roster, but not change it', async () => {
       const res = await as(admin)('get', '/api/users');
       assert.equal(res.status, 200, JSON.stringify(res.body));
+      const change = await as(admin)('patch', `/api/users/${salesA.user.id}`).send({ role: 'admin' });
+      assert.equal(change.status, 404, JSON.stringify(change.body));
     });
 
     test('each person sees themselves at /api/auth/me', async () => {

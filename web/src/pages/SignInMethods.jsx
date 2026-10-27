@@ -56,7 +56,7 @@ export function SignInMethods() {
   return (
     <SettingsPane
       title="Sign-in methods"
-      description="Microsoft 365 and Google sign people into an account that already exists here. Neither can create one, so an admin still adds the person under Users & roles first."
+      description="Microsoft 365 and Google sign people into an account that already exists here. Neither can create one, so the super admin still adds the person in the super admin portal first."
     >
       {mode !== 'database' && (
         <Alert tone="warning">
